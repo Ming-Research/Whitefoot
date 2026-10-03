@@ -300,10 +300,11 @@ fn type_holds_heap(
     match ty {
         CheckedType::Buffer { .. }
         | CheckedType::Window { capacity: None, .. }
-        | CheckedType::Segments { .. }
-        | CheckedType::KeySet => true,
-        // An entry binding's referent, never a value of its own [SHARE-2].
-        CheckedType::KeyedEntries { .. } => false,
+        | CheckedType::Segments { .. } => true,
+        // A key set's memory is the runtime's, as a shared object's state is
+        // [SHARE-1], and keyed entries are an entry binding's referent, never
+        // a value of their own [SHARE-2].
+        CheckedType::KeySet | CheckedType::KeyedEntries { .. } => false,
         CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => program
             .elements
             .get(element.index())

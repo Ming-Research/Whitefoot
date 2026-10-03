@@ -343,10 +343,8 @@ void wf__key_set_new(struct wf_key_set *out, uint64_t capacity);
 void wf__key_set_put(struct wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload);
 void wf__key_set_add(struct wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount);
 uint64_t wf__key_set_payload(const struct wf_key_set *set, uint64_t index);
-const unsigned char *wf__key_set_key(const struct wf_key_set *set, uint64_t index, uint64_t *length);
-/* Gives a set's memory back: `wf__key_set_free` takes the set's `store`
- * alone, NULL for none, as the emitted code holds a set in two registers. */
-void wf__key_set_release(struct wf_key_set *set);
+/* Gives a set's memory back, taking the set's `store` alone, NULL for none,
+ * as the emitted code holds a set in two registers. */
 void wf__key_set_free(void *store);
 
 /* A table of `Option<V>` slots of `slot_size` bytes aligned to `slot_align`,
@@ -396,8 +394,6 @@ uint64_t wf__table_hold_keys(void *hold, const struct wf_key_set *set);
 void wf__table_hold_take(void *hold);
 void *wf__table_hold_slot(void *hold, uint64_t position);
 void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
-void wf__table_whole_take(void *table);
-void wf__table_whole_release(void *table);
 
 /* A guard that reads a table [SHARE-2, SHARE-3]: after it reads false, its
  * statement begins a watch reserved in its frame, registers it on each unit

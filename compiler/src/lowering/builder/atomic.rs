@@ -371,8 +371,16 @@ impl IrBuilder<'_> {
             owned: !borrowed,
         };
 
+        // [SHARE-2] the statement reads each index atom when it begins, and
+        // a table's take reads its header keys' bytes and key sets: every
+        // table with header entries is taken before the guard and the block,
+        // with each unit before it the statement reaches, so nothing the
+        // block writes or releases can change the keys the take reads.
+        let headed = headers.iter().map(|header| header.unit).max();
         if let Some(guard) = guard {
-            self.lower_guard(&region, guard)?;
+            self.lower_guard(&region, guard, headed)?;
+        } else if let Some(last) = headed {
+            self.take_units_through(&region, last)?;
         }
         self.atomics.push(region.clone());
         let lowered = self.lower_statements(body, give_target);
@@ -458,10 +466,14 @@ impl IrBuilder<'_> {
 
     /// The guard: its units, taken again each time a statement that wrote
     /// one wakes it, and its value, read until it holds [SHARE-3].
+    /// The guard, after taking the units it reads and every table with
+    /// header entries, through the unit `headed` (lower_atomic), each time it
+    /// is evaluated.
     fn lower_guard(
         &mut self,
         region: &AtomicRegion,
         guard: &CheckedExpression,
+        headed: Option<usize>,
     ) -> Result<(), LoweringFailure> {
         let mut roots = Vec::new();
         expression_roots(guard, &mut roots);
@@ -480,7 +492,7 @@ impl IrBuilder<'_> {
             drops: Vec::new(),
         })?;
         self.current = Some(acquire);
-        if let Some(&last) = read.iter().next_back() {
+        if let Some(last) = read.iter().next_back().copied().max(headed) {
             self.take_units_through(region, last)?;
         }
         self.bind_entries(region, &roots)?;

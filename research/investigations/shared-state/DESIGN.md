@@ -1,5 +1,9 @@
 # Shared state: one handle, locked by parts
 
+This record keeps the working names of the discussion, `Table` and `Keys`;
+specification v0.86 names them `KeyedTable` and `KeySet`, with `KeyedEntries`
+for the entries a binding names over a set (`design/language/waiting/shared-objects/keyed-tables`).
+
 ## The question
 
 A shared object is state that several contexts reach through `Shared<T>`
@@ -92,7 +96,11 @@ effect as locking the whole object".
   run time. It appears only as a field of a shared state, is built empty with
   a capacity inside the argument of `shared_new`, and is never moved into or
   out of a state whole, so it has no second, unshared representation to
-  convert to and from.
+  convert to and from. The owner later withdrew this confinement (Q18): a
+  table is a value `keyed_table_new` builds, with the one representation
+  wherever it is, and a statement may write over a state's table or swap it,
+  which exchanges the tables' entries so the state's table never moves
+  (compiler/waiting-contexts/state-locks).
 - `SharedMap<V>` disappears: `Shared<Table<V>>` is the old map, and
   `SharedMapState<V>` is the table.
 - The table's interior stays concurrent in the runtime. Entries under
@@ -306,6 +314,54 @@ statements in nine files.
   whose flag is false while the serving handles carry true, and the bodies
   read it as an ordinary field of the handle's holder.
 
+## Measured
+
+`redis-bench.sh quick` on the owner's i9-14900K under WSL2, firn at the head
+against firn at `cea9188d4`, the branch before this design, with the runs of
+each build interleaved
+([raw lines](../../experiments/io-completion-bench/shared-state-14900k-samples.csv)).
+Ratios are the head's rate to `cea9188d4`'s.
+
+The first comparison, at `f8ca277a9`, found two costs the design did not
+intend:
+
+| Test | 4 CPUs | 8 CPUs | 16 CPUs |
+|---|---:|---:|---:|
+| `LPUSH` | 0.89 | 0.86 | 0.78 |
+| `RPOP` | 0.88 | 0.83 | 0.82 |
+| `SADD` | 0.84 | 0.86 | 0.78 |
+| `HSET` | 0.89 | 0.88 | 0.83 |
+| `MSET` | 0.58 | 0.19 | 0.06 |
+
+- **`MSET`.** Every statement that names keys builds a key set, and its
+  store and arena came from the context pool, whose free lists sit behind
+  one lock every driver takes: about eight takes and gives for ten keys.
+  The cost grew with the drivers. Each driver now keeps the last set it
+  freed for its next one.
+- **One hot key.** firn's client grew from 80 to 280 bytes with the
+  connection commands, and a read of one of its fields through a reference
+  copied the whole client first; at 280 bytes LLVM no longer removed the
+  copies, and `SADD`'s statement made six `memcpy` calls inside its block
+  where `cea9188d4`'s made one. A field read through a reference now loads
+  that field alone.
+
+After both, on 4, 8 and 16 server CPUs, `SET`, `GET`, `INCR`, `ZADD` and
+`LRANGE_100` answered 0.97 to 1.02, the four tests on one hot key 0.89 to
+1.00, and `MSET` 0.80, 0.84 and 0.90; with the append-only file on, on 4,
+0.88 to 1.00. Two costs remain:
+
+- `MSET` builds an ordered set that owns its keys' bytes, a binary search
+  and a copy per key, where `cea9188d4`'s statement collected the keys'
+  places in the request and sorted them; profiles put the difference in the
+  set's insertion. It is the price of keys that are values when a
+  statement begins.
+- On one hot key the head stays 4% to 11% below on some counts. Profiles of
+  `SADD` on four drivers spend 60% of the CPU waiting for the cell in both
+  builds and show no further step of the head's, so the cause is unknown.
+
+The append-only file's records and every reply are unchanged (firn under
+the design, above).
+
 ## Refused along the way
 
 - **A block with no target whose locks, keys included, the compiler derives
@@ -353,5 +409,7 @@ statements in nine files.
 - releasing a unit once its block no longer uses it, after the last taking;
 - wait lists per entry instead of per table;
 - a cheaper read of one entry than the reader count;
-- the names `Table` and `Keys`, the payload operations, and the spelling of
-  header bindings.
+- the names, the payload operations and the spelling of header bindings,
+  which v0.86 settles as `KeyedTable`, `KeySet` and `KeyedEntries`,
+  `key_set_put` and `key_set_add`, and `e = &s^.t[k]`, for the owner to
+  confirm.

@@ -1797,3 +1797,53 @@ fn a_needle_declared_inside_the_loop_declines_the_wide_probe() {
         assert_eq!(probe_needle_counts(program), Vec::<usize>::new());
     });
 }
+
+/// A field read through a reference loads that field alone, never the whole
+/// referent: a copy of a large referent made to project one field stays a
+/// copy of every byte in the optimized program, as firn's client did inside
+/// its atomic statements.
+#[test]
+fn a_field_read_through_a_reference_loads_the_field_alone() {
+    let source = format!(
+        r#"struct Wide {{
+  first: u64;
+  second: u64;
+  third: u64;
+  fourth: u64;
+}}
+
+struct Outer {{
+  stamp: u64;
+  wide: Wide;
+}}
+
+fn third_of(outer: &Outer) -> result: u64 reads(outer) {{
+  return outer^.wide.third;
+}}
+
+{PLAIN_ENTRY}"#
+    );
+    with_ir(source.as_bytes(), |program| {
+        let function = function(program, "third_of");
+        let mut field_loads = 0;
+        for block in function.blocks() {
+            for instruction in block.instructions() {
+                let IrInstruction::Define { operation, .. } = instruction else {
+                    continue;
+                };
+                match operation {
+                    IrOperation::Load {
+                        referent: IrAddressed::Nominal(_),
+                        ..
+                    } => panic!("a field read loaded a whole aggregate: {operation:?}"),
+                    IrOperation::ProjectStruct { .. } => {
+                        panic!("a field read projected a loaded aggregate: {operation:?}")
+                    }
+                    IrOperation::Load { .. } => field_loads += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(field_loads, 1, "one load, of the field itself");
+    });
+}

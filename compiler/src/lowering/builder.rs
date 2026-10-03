@@ -2097,6 +2097,19 @@ impl<'program> IrBuilder<'program> {
                 ty,
                 ..
             } => {
+                // A field read through a reference loads that field alone. A
+                // copy of the whole referent made to project one field stays
+                // a copy of every byte once the referent is large: firn's
+                // 280-byte client was copied whole six times inside one
+                // atomic statement's block to read single fields.
+                if self.behind_reference(value)? {
+                    let address = self.lower_borrowed_place_address(expression)?;
+                    let field_value = self.load_storage_value(address)?;
+                    if self.value_type(field_value)? != lower_type(self.erasure, *ty)? {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    }
+                    return Ok(field_value);
+                }
                 let aggregate = self.expression(value)?;
                 let nominal = self.erased(*nominal)?;
                 self.define(
@@ -2109,6 +2122,24 @@ impl<'program> IrBuilder<'program> {
                     },
                 )
             }
+        }
+    }
+
+    /// Whether `expression` is a place behind a reference whose fields have
+    /// addresses: the referent of a reference binding held as the referent's
+    /// address, as `lower_addressed_borrow` requires, or a field of one at
+    /// any depth.
+    fn behind_reference(&self, expression: &CheckedExpression) -> Result<bool, LoweringFailure> {
+        match expression {
+            CheckedExpression::DerefAddressed { binding, ty, .. } => {
+                let Some(storage) = self.bindings.get(binding).copied() else {
+                    return Ok(false);
+                };
+                let referent = self.addressed_referent(lower_type(self.erasure, *ty)?)?;
+                Ok(self.value_type(storage)? == IrType::Address(referent))
+            }
+            CheckedExpression::ProjectValue { value, .. } => self.behind_reference(value),
+            _ => Ok(false),
         }
     }
 

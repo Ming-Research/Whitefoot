@@ -538,7 +538,7 @@ impl IrBuilder<'_> {
     ///
     /// A Box borrow addresses its owner's pointer slot, just as aggregate
     /// borrows address their owner's inline storage.
-    fn addressed_referent(&self, ty: IrType) -> Result<IrAddressed, LoweringFailure> {
+    pub(super) fn addressed_referent(&self, ty: IrType) -> Result<IrAddressed, LoweringFailure> {
         let referent = IrAddressed::of(ty).ok_or(LoweringFailure::InvalidCheckedProgram)?;
         if let IrAddressed::Nominal(nominal) = referent
             && !matches!(

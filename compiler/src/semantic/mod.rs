@@ -902,6 +902,12 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by REF-4.
         mechanical_fix: &'static str,
     },
+    /// [REF-4] a range reference was formed over the keyed entries an entry
+    /// binding names, which are entries of a table and no run of storage.
+    RangeOverKeyedEntries {
+        /// Exact restructuring required by REF-4.
+        mechanical_fix: &'static str,
+    },
     /// [WIN-3] a move out of a window slot or an array element.
     MoveOutOfSlot {
         /// Exact restructuring required by WIN-3.
@@ -1147,6 +1153,13 @@ pub enum SemanticIssueKind {
     AtomicKeyNotBytes {
         /// The key's value.
         found: String,
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// An entry binding whose index atom reads through the statement's
+    /// binding or an earlier entry binding, which the statement reads when
+    /// it begins, before it holds the state [SHARE-2].
+    AtomicKeyReadsTheState {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },

@@ -12,7 +12,8 @@
  * wf_table_entry for one key, a hold for several keys or the whole table,
  * and a watch for a guard. So one statement may hold entries of several
  * bindings and several tables at once, and this unit keeps nothing per
- * thread.
+ * thread for a statement; it keeps each driver's spare key set memory, which
+ * no statement holds.
  */
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
@@ -33,6 +34,10 @@
 /* The calling thread's user of a map, whose spare memory a hold's keys
  * reuse. */
 #define WF_CMAP_CURRENT_USER(map) wf_cmap_user_at((map), wf__driver_index())
+/* Each driver's spare key set memory, which the driver alone uses. */
+#include "concurrent_map.h"
+static void *wf_key_set_spares[WF_CMAP_MAX_USERS];
+#define WF_CMAP_SPARE_KEYS() (wf_key_set_spares[wf__driver_index()])
 #include "concurrent_map.c"
 
 /* What a statement on one key keeps in its frame: the entry's unlock, the
@@ -70,12 +75,6 @@ void wf__key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length,
 }
 
 uint64_t wf__key_set_payload(const wf_key_set *set, uint64_t index) { return wf_cmap_key_set_payload(set, index); }
-
-const unsigned char *wf__key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length) {
-    return wf_cmap_key_set_key(set, index, length);
-}
-
-void wf__key_set_release(wf_key_set *set) { wf_cmap_key_set_release(set); }
 
 void wf__key_set_free(void *store) { wf_cmap_key_set_free_store(store); }
 
@@ -156,22 +155,6 @@ void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width,
     wf_cmap *map = h->map;
     if (wf_cmap_hold_release(h, tag_offset, tag_width, none_tag))
         table_written(map);
-}
-
-/* A statement takes a table whole before any of its entries, never after:
- * one holding an entry would wait for itself. */
-void wf__table_whole_take(void *table) {
-    wf_cmap *map = (wf_cmap *)table;
-    wf_cmap_user *u = wf_cmap_user_at(map, wf__driver_index());
-    if (wf_cmap_holds_whole(u) || atomic_load_explicit(&u->active, memory_order_relaxed) != 0)
-        abort();
-    wf_cmap_hold(u);
-}
-
-void wf__table_whole_release(void *table) {
-    wf_cmap *map = (wf_cmap *)table;
-    wf_cmap_unhold(wf_cmap_user_at(map, wf__driver_index()));
-    table_written(map);
 }
 
 void wf__watch_table(void *watch, void *table) { wf__watch_unit(watch, &((wf_cmap *)table)->watch); }

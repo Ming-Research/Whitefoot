@@ -688,7 +688,7 @@ Re-slicing is admitted: `&part^[a..b]` under `a <= b <= part^.len`.
 `&s[i]`, where `s` is a place of type `Segments<T>` [TYPE-9], forms a range reference over segment i, the run of T elements from boundary i to boundary i + 1, under [OP-4]'s obligation `i < s.len`; its `len` is that segment's length.
 `&s.all` forms a range reference over every element of `s` in segment order, and its `len` is their total; `all` is not a field and occupies no declaration domain. In both forms the segment subscript or `all` is the last suffix of the `borrow_expr`.
 As a resolved place [REF-1], `&s[i]` names `s` extended by an index step capturing i, so two segments of one `Segments` are separated exactly as two elements of one array are, and `&s.all` names `s` extended by a range step whose captured endpoints are values no relation names, so it overlaps every segment [OWN-7].
-A range reference over a `Ring` is a hard error citing REF-4 at the complete `psuffix`, carrying a repair [DIAG-1], because a wrapped window is two extents and `&[T]` has one `len`.
+A range reference over a `Ring` is a hard error citing REF-4 at the complete `psuffix`, carrying a repair [DIAG-1], because a wrapped window is two extents and `&[T]` has one `len`. A range reference over the `KeyedEntries` an entry binding names is a hard error citing REF-4 at the complete `psuffix`, carrying a repair, because its elements are entries of a table, each where its own key keeps it, and no run of storage [SHARE-2].
 A range reference dies with the bound that formed it exactly as any other reference does [REF-2].
 
 [OWN-7] Overlap: resolved `p` overlaps resolved `q` iff one is a prefix of the other.
@@ -2211,7 +2211,7 @@ A value of the prelude type `KeySet` is a key set: its `len` distinct keys, in i
 [SHARE-2] Atomic statements.
 An `atomic_stmt` [GRAM-4] has a target, the `place` after its first `&`; a binding, its first `IDENT`; entry bindings, each a later `IDENT` with the `place` after its `&`; a block; and optionally a guard, the `expr` after `when`.
 The target has type `Shared<T>`, and the binding is a reference variable of kind `&T` whose path is the state of the object the target names.
-An entry binding's place is the binding, then `^`, then field selections that end at a field of type `KeyedTable<V>`, then one index step whose atom has type `&[u8]` or is a place of type `KeySet`. The entry binding is a reference variable of the kind this table gives:
+An entry binding's place is the binding, then `^`, then field selections through no `Box` [TYPE-9] that end at a field of type `KeyedTable<V>`, or none when the state itself has that type, then one index step whose atom has type `&[u8]` or is a place of type `KeySet`. The atom is no `move`, and it reads no path through the binding or an entry binding, since the statement reads it when it begins, before it holds the state. The entry binding is a reference variable of the kind this table gives:
 
 | index atom | entry binding |
 |---|---|

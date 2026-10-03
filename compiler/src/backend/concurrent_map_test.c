@@ -2148,8 +2148,22 @@ static void key_sets(void) {
         wf_cmap_key_set_payload(&set, WORDS - 1) != 2 || wf_cmap_key_set_payload(&set, 2) != 1 || !key_is(&set, WORDS, "\xff", 1))
         fail("put or add disagrees (len, payload of ab)", set.len, wf_cmap_key_set_payload(&set, 4));
     wf_cmap_key_set_release(&set);
-    if (set.len != 0 || set.store != NULL || atomic_load(&blocks_out) != before)
-        fail("a released set kept memory (len, blocks)", set.len, (uint64_t)(atomic_load(&blocks_out) - before));
+    /* A released set's store and arena stay as the thread's spare, two
+     * blocks, which the next set reuses whole and a drop gives back. */
+    int64_t kept = atomic_load(&blocks_out) - before;
+    if (set.len != 0 || set.store != NULL || kept > 2)
+        fail("a released set kept more than its spare (len, blocks)", set.len, (uint64_t)kept);
+    wf_cmap_key_set_new(&set, 4);
+    wf_cmap_key_set_put(&set, (const unsigned char *)"spare", 5, 1);
+    wf_cmap_key_set_put(&set, (const unsigned char *)"kept", 4, 2);
+    if (atomic_load(&blocks_out) - before != kept || set.len != 2 || !key_is(&set, 0, "kept", 4) ||
+        !key_is(&set, 1, "spare", 5))
+        fail("a set built after a released one took memory or lost keys (blocks, len)",
+             (uint64_t)(atomic_load(&blocks_out) - before), set.len);
+    wf_cmap_key_set_release(&set);
+    wf_cmap_key_set_drop_spare();
+    if (atomic_load(&blocks_out) != before)
+        fail("a dropped spare kept memory (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
     /* Many keys of many lengths, added in no order, some of them again,
      * against a count of each key's additions. */
     enum { MANY = 1000 };
@@ -2180,9 +2194,11 @@ static void key_sets(void) {
         if (k >= MANY || wf_cmap_key_set_payload(&set, i) != added[k])
             fail("a grown set's payload is not its key's count (key, payload)", k, wf_cmap_key_set_payload(&set, i));
     }
-    /* Released through its memory alone, as compiled code does. */
+    /* Released through its memory alone, as compiled code does, with the
+     * spare it may leave. */
     wf_cmap_key_set_free_store(set.store);
     wf_cmap_key_set_free_store(NULL);
+    wf_cmap_key_set_drop_spare();
     if (atomic_load(&blocks_out) != before)
         fail("a set released through its memory kept some (blocks)", (uint64_t)(atomic_load(&blocks_out) - before), 0);
     wf_cmap_key_set_new(&set, 1ull << 60);

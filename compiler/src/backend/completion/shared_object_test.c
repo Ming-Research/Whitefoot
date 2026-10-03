@@ -505,9 +505,10 @@ static void guard_phase_end(void) {
     if (atomic_load(&watch_written) != written)
         fail("a write found a watch left on a unit after its guard was true (wakes)",
              atomic_load(&watch_written) - written, 0);
-    if (wf__keyed_table_count(guard_table) != 3 || *state_of(guard_object) != 2)
-        fail("the guard phase's writes were not kept (entries, object)", wf__keyed_table_count(guard_table),
-             *state_of(guard_object));
+    /* The entry's tag is the slot's first word, 0 for None. */
+    uint64_t kept = wf__keyed_table_count(guard_table, 0, sizeof(uint64_t), 0);
+    if (kept != 3 || *state_of(guard_object) != 2)
+        fail("the guard phase's writes were not kept (entries, object)", kept, *state_of(guard_object));
     while (wf__keyed_table_drain(guard_table) != NULL) {
     }
     wf__keyed_table_free(guard_table);

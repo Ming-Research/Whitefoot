@@ -116,7 +116,7 @@ slowest there.
 
 ## Design of the program
 
-`apps/firn` is a module program of seven modules and about 6,600 lines;
+`apps/firn` is a module program of seven modules and about 7,700 lines;
 [its README](../../../apps/firn/README.md) lists them. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 

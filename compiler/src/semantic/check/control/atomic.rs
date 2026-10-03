@@ -28,7 +28,9 @@ pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a
 pub(in crate::semantic::check) const SHARE2_NAME_A_TABLE_ENTRY: &str = "write the entry binding as `name = &s^.table[key]`, where `s` is the statement's binding and `table` a field of type `KeyedTable<V>` in its state";
 /// The repair for an index atom that is neither a byte range nor a key set
 /// [SHARE-2].
-pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement";
+pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`";
+/// [SHARE-2] repair for an index atom that reads the state.
+pub(in crate::semantic::check) const SHARE2_KEY_BEFORE_THE_STATEMENT: &str = "compute the key into a local before the statement, through an earlier atomic statement if it comes from the state: a statement reads its keys when it begins, before it holds the state";
 /// The repair for a waiting call inside an atomic statement [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome";
 /// The repair for an atomic statement inside another [SHARE-2].
@@ -222,11 +224,16 @@ impl Checker<'_, '_> {
                     },
                 );
             };
+            let earlier = entries
+                .iter()
+                .map(|entry: &CheckedEntryBinding| entry.binding)
+                .collect::<Vec<_>>();
             let entry = self.check_entry_binding(
                 context,
                 node,
                 &header,
                 binding,
+                &earlier,
                 &mut block_bindings,
                 counters,
                 scope.loops.len(),
@@ -404,6 +411,7 @@ impl Checker<'_, '_> {
         node: NodeId,
         header: &EntryHeader<'_>,
         state_binding: BindingId,
+        earlier: &[BindingId],
         block_bindings: &mut HashMap<DeclarationId, LocalBinding>,
         counters: &mut ControlCounters<'_>,
         loop_depth: usize,
@@ -454,6 +462,50 @@ impl Checker<'_, '_> {
                 shape("a keyed table not reached through the statement's binding"),
             );
         }
+        // Field selections alone reach the table, or none when the state is
+        // the table: a table behind a `Box` or an index is no unit of the
+        // state's layout (compiler/waiting-contexts/state-locks).
+        let by_fields = table
+            .reference
+            .as_ref()
+            .and_then(|reference| reference.paths.first())
+            .is_some_and(|place| {
+                place
+                    .path
+                    .iter()
+                    .all(|step| matches!(step, PlaceStep::Field(_)))
+            });
+        if !by_fields {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                header.place,
+                shape("a keyed table reached through a `Box` or an index"),
+            );
+        }
+        // An index atom is a place or a range the statement reads when it
+        // begins; a `move` is neither.
+        if self
+            .types
+            .declarations
+            .tree
+            .has_fixed(header.atom, crate::syntax::terminal::FixedTerminal::Move)?
+        {
+            return self.types.declarations.issue_node(
+                SemanticRule::Share2,
+                header.atom,
+                SemanticIssueKind::AtomicKeyNotBytes {
+                    found: "a value `move` takes".to_owned(),
+                    mechanical_fix: SHARE2_KEY_A_BYTE_RANGE,
+                },
+            );
+        }
+        // The statement reads its index atoms when it begins, before it holds
+        // the state, so none reads through its bindings.
+        let reads_the_state = |places: &[ResolvedPlace]| {
+            places.iter().any(|place| {
+                matches!(place.root, PlaceRoot::Binding(root) if root == state_binding || earlier.contains(&root))
+            })
+        };
         // The index atom: a reference variable or borrow of one key, or a
         // place holding a key set, which the statement borrows.
         let atom_place = self
@@ -518,6 +570,15 @@ impl Checker<'_, '_> {
                 .as_ref()
                 .map(|reference| reference.paths.clone())
                 .unwrap_or_default();
+            if reads_the_state(&places) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Share2,
+                    header.atom,
+                    SemanticIssueKind::AtomicKeyReadsTheState {
+                        mechanical_fix: SHARE2_KEY_BEFORE_THE_STATEMENT,
+                    },
+                );
+            }
             for place in &places {
                 for path in self.effect_paths_for_place(node, place, block_bindings)? {
                     effects.add_read(path);
@@ -546,6 +607,20 @@ impl Checker<'_, '_> {
                             .types
                             .checked_value_name(key.mode, key.expression.ty())?,
                         mechanical_fix: SHARE2_KEY_A_BYTE_RANGE,
+                    },
+                );
+            }
+            if reads_the_state(
+                key.reference
+                    .as_ref()
+                    .map(|reference| reference.paths.as_slice())
+                    .unwrap_or_default(),
+            ) {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Share2,
+                    header.atom,
+                    SemanticIssueKind::AtomicKeyReadsTheState {
+                        mechanical_fix: SHARE2_KEY_BEFORE_THE_STATEMENT,
                     },
                 );
             }
@@ -579,13 +654,14 @@ impl Checker<'_, '_> {
         // write of the table, or of anything holding it, invalidates the
         // binder, and the entries of one table are taken as overlapping
         // [OWN-7], since two of the header's keys may be one. Entries over a
-        // key set name its keys as well, so a write of the set while the
-        // binder is valid invalidates it [SHARE-2].
+        // key set are anchored at its keys, so a write of the set while the
+        // binder is valid invalidates it [SHARE-2], while a write through the
+        // binder writes an entry and nothing of the set.
         let unknown = |mut place: ResolvedPlace| {
             place.path.push(PlaceStep::Index(CapturedValue::unknown()));
             place
         };
-        let mut selected = vec![
+        let selected = vec![
             table
                 .reference
                 .as_ref()
@@ -594,12 +670,14 @@ impl Checker<'_, '_> {
                 .map(unknown)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?,
         ];
-        selected.extend(set_places.into_iter().map(unknown));
         if let Some(reference) = block_bindings
             .get_mut(&header.declaration.id())
             .and_then(|local| local.reference.as_mut())
         {
             reference.paths.extend(selected.iter().cloned());
+            reference
+                .anchors
+                .extend(set_places.into_iter().map(unknown));
         }
         self.body.record_reference_origins(binding, &selected);
         Ok(CheckedEntryBinding {

@@ -77,6 +77,13 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A table subscripted in a block is refused without a repair.** `s^.map[k]`
+  in an atomic block is OP-4's type mismatch, "an indexable base", against
+  `KeyedTable<V>`, and names nothing a writer can do instead, where the
+  intended form is an entry binding in the header, `e = &s^.map[k]`
+  [SHARE-2]. The change: give that refusal a repair naming the header form.
+  Found by the adversarial tests of the keyed tables.
+
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
   `left == right`, let `make() -> Pair` return `Pair(1, 1)`. A helper
@@ -551,6 +558,18 @@ rarely insert at the same place.
   identities and needs no inventory change.
 
 ## Containers and storage lowering
+
+- **The no-heap declaration withdraws no memory the runtime's pool gives.**
+  [STOR-8] withdraws `Box`, the runtime-capacity shapes and `Segments` and
+  the rows that allocate them, while a shared object's state, a keyed
+  table's entries and a key set's store come from the context runtime's
+  pool, which a no-heap bundle may still use through `shared_new`,
+  `keyed_table_new` and `key_set_put`. The checker refused `KeySet` there
+  for a while, which [STOR-8] does not name; it no longer does. The
+  question for the owner: whether the declaration means no allocation at
+  all, which would withdraw those three types and their rows too, or no use
+  of the program's heap, as written. Reopen with the first no-heap bundle
+  that reaches shared state.
 
 - **A hash map offers no sample or bounded visit.**
   `std::collections::hash_map` visits every pair (`hash_map_each`) and
@@ -1042,12 +1061,18 @@ rarely insert at the same place.
   value from the enum's layout. Reopen when a program needs a set of byte
   strings shared between contexts.
 
-- **Entry nodes over 512 bytes come from the pool under its one lock.**
-  `new_node` takes a large key's node from the context pool, whose free
-  lists sit behind one spin lock (`wf_pool_take` in
+- **Entry nodes over 512 bytes, and large key sets, come from the pool under
+  its one lock.** `new_node` takes a large key's node from the context pool,
+  whose free lists sit behind one spin lock (`wf_pool_take` in
   `compiler/src/backend/completion/bridge.c`), while smaller nodes come from
-  per-user chunks. A workload of long keys from many drivers would contend
-  on it. Reopen when a measured workload's keys exceed 512 bytes.
+  per-user chunks. A key set's memory comes from the same pool; each driver
+  keeps the last set it freed, up to 1,024 keys in 64 KiB, for its next
+  (`first_store` in `compiler/src/backend/concurrent_map.c`), since firn's
+  `MSET` on four drivers answered 0.58 of its rate before key sets while
+  every set took and gave that memory. A workload of long keys, of sets past
+  those bounds, or of statements that each build two sets at once, from many
+  drivers, would contend on the lock. Reopen when a measured workload's keys
+  exceed 512 bytes or its sets exceed the spare's bounds.
 
 - **A statement on one key takes two dependent cache misses where firn's
   old keyspace took one.** `wf_cmap_lock_entry`
@@ -2299,7 +2324,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,215 lines: the file
+  `compiler/src/backend/completion/bridge.c` has 4,216 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
@@ -3074,10 +3099,11 @@ condition under which it is taken up.
 
 ## Verification tooling
 
-- **The trusted runtime is large and growing.** Every program links about
-  20,000 lines of C and LLVM IR in `compiler/src/backend` that no checker
-  reads (the scheduler, the completion bridge at 3,871 lines, the hosts' I/O
-  adapters, the concurrent map at 1,130), and each language feature has
+- **The trusted runtime is large and growing.** Every program links from
+  about 27,000 lines of C and LLVM IR in `compiler/src/backend`, its tests
+  aside, that no checker reads (the scheduler, the completion bridge at 4,216
+  lines, the hosts' I/O adapters, the concurrent map at 2,398), and each
+  language feature has
   added to it: the shared map's first claim protocol let one key hold two
   cells until a review found it
   (`research/investigations/concurrent-map/DESIGN.md`, reuse and a key's

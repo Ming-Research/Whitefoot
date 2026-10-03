@@ -40,8 +40,10 @@
  * WF_CMAP_EXHAUSTED() when memory is short. Cell arrays of 2 MiB or more and
  * the chunks entries are carved from are mapped from the host here. It may
  * also supply WF_CMAP_HOST_FIELDS, members of its own placed in every map,
- * and WF_CMAP_CURRENT_USER(map), the user the calling thread holds, whose
- * spare memory a hold's keys then reuse.
+ * WF_CMAP_CURRENT_USER(map), the user the calling thread holds, whose
+ * spare memory a hold's keys then reuse, and WF_CMAP_SPARE_KEYS(), a
+ * `void *` place only the calling thread uses, where the memory of the last
+ * key set it freed is kept for its next one.
  */
 #if !defined(WF_CMAP_TAKE) || !defined(WF_CMAP_GIVE) || !defined(WF_CMAP_YIELD) || !defined(WF_CMAP_EXHAUSTED)
 #error "the includer supplies WF_CMAP_TAKE, WF_CMAP_GIVE, WF_CMAP_YIELD and WF_CMAP_EXHAUSTED"
@@ -1335,6 +1337,10 @@ typedef struct {
 /* The least keys a store grows to, and bytes an arena does. */
 #define KEY_SET_MIN_ROOM 8ull
 #define KEY_SET_MIN_BYTES 64ull
+/* The largest store, and arena, a thread keeps as its spare: a set of up to
+ * 1,024 keys whose bytes fit in 64 KiB. */
+#define KEY_SET_SPARE_ROOM 1024ull
+#define KEY_SET_SPARE_BYTES (64ull * 1024)
 
 /* Byte order, a proper prefix first. A key of no bytes may have no
  * address. */
@@ -1359,6 +1365,24 @@ static key_store *new_store(uint64_t room) {
     s->bytes_room = 0;
     s->bytes = NULL;
     return s;
+}
+
+/* A set's first store, with room for `room` keys: the calling thread's
+ * spare, with the arena it kept, when it has one that large. A statement
+ * naming keys builds a set each time it runs, and the pool the stores come
+ * from keeps its free lists behind one lock every driver takes, so `MSET`'s
+ * set on four drivers spent more time there than in its statement; with the
+ * spare, a thread that has built one such set takes no memory for the next. */
+static key_store *first_store(uint64_t room) {
+#ifdef WF_CMAP_SPARE_KEYS
+    key_store *spare = WF_CMAP_SPARE_KEYS();
+    if (spare != NULL && spare->room >= room) {
+        WF_CMAP_SPARE_KEYS() = NULL;
+        spare->bytes_used = 0;
+        return spare;
+    }
+#endif
+    return new_store(room);
 }
 
 /* An item's bytes; a key of no bytes has those of no arena. */
@@ -1393,16 +1417,17 @@ static uint64_t find_key(const wf_key_set *set, const unsigned char *key, uint64
 static void insert_key(wf_key_set *set, uint64_t at, const unsigned char *key, uint64_t length,
                        uint64_t payload) {
     key_store *s = set->store;
-    if (s == NULL || set->len == s->room) {
-        uint64_t room = s == NULL || s->room < KEY_SET_MIN_ROOM / 2 ? KEY_SET_MIN_ROOM : s->room * 2;
+    if (s == NULL) {
+        s = first_store(KEY_SET_MIN_ROOM);
+        set->store = s;
+    } else if (set->len == s->room) {
+        uint64_t room = s->room < KEY_SET_MIN_ROOM / 2 ? KEY_SET_MIN_ROOM : s->room * 2;
         key_store *grown = new_store(room);
-        if (s != NULL) {
-            grown->bytes_used = s->bytes_used;
-            grown->bytes_room = s->bytes_room;
-            grown->bytes = s->bytes;
-            memcpy(grown->items, s->items, (size_t)set->len * sizeof(key_item));
-            WF_CMAP_GIVE(s, store_bytes(s->room));
-        }
+        grown->bytes_used = s->bytes_used;
+        grown->bytes_room = s->bytes_room;
+        grown->bytes = s->bytes;
+        memcpy(grown->items, s->items, (size_t)set->len * sizeof(key_item));
+        WF_CMAP_GIVE(s, store_bytes(s->room));
         s = grown;
         set->store = s;
     }
@@ -1433,7 +1458,7 @@ static void insert_key(wf_key_set *set, uint64_t at, const unsigned char *key, u
 
 void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity) {
     set->len = 0;
-    set->store = capacity == 0 ? NULL : new_store(capacity < KEY_SET_FIRST_LIMIT ? capacity : KEY_SET_FIRST_LIMIT);
+    set->store = capacity == 0 ? NULL : first_store(capacity < KEY_SET_FIRST_LIMIT ? capacity : KEY_SET_FIRST_LIMIT);
 }
 
 void wf_cmap_key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload) {
@@ -1470,13 +1495,35 @@ const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, 
     return item_bytes(set->store, item);
 }
 
+static void give_store(key_store *s) {
+    if (s->bytes != NULL)
+        WF_CMAP_GIVE(s->bytes, (size_t)s->bytes_room);
+    WF_CMAP_GIVE(s, store_bytes(s->room));
+}
+
+/* A freed store becomes the calling thread's spare when it has none and the
+ * store is no larger than a spare may be (first_store). */
 void wf_cmap_key_set_free_store(void *store) {
     key_store *s = store;
     if (s == NULL)
         return;
-    if (s->bytes != NULL)
-        WF_CMAP_GIVE(s->bytes, (size_t)s->bytes_room);
-    WF_CMAP_GIVE(s, store_bytes(s->room));
+#ifdef WF_CMAP_SPARE_KEYS
+    if (WF_CMAP_SPARE_KEYS() == NULL && s->room <= KEY_SET_SPARE_ROOM && s->bytes_room <= KEY_SET_SPARE_BYTES) {
+        WF_CMAP_SPARE_KEYS() = s;
+        return;
+    }
+#endif
+    give_store(s);
+}
+
+/* Gives back the calling thread's spare store, if it keeps one. */
+void wf_cmap_key_set_drop_spare(void) {
+#ifdef WF_CMAP_SPARE_KEYS
+    key_store *spare = WF_CMAP_SPARE_KEYS();
+    WF_CMAP_SPARE_KEYS() = NULL;
+    if (spare != NULL)
+        give_store(spare);
+#endif
 }
 
 void wf_cmap_key_set_release(wf_key_set *set) {

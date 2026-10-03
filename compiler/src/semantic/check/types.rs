@@ -446,11 +446,12 @@ impl<'unit> Checker<'_, 'unit> {
         };
         // [STOR-8] a unit carrying the no-heap declaration cannot name `Box`,
         // a runtime-capacity shape or `Segments`, which is the type half of what that
-        // declaration withdraws; the call half is judged at the `call`.
+        // declaration withdraws; the call half is judged at the `call`. A key
+        // set's memory is the runtime's, as a shared object's state is, and
+        // keyed entries name a table's, so the declaration withdraws neither.
         if self.types.declarations.no_heap
             && (shape == crate::ContainerShape::Box
-                || shape == crate::ContainerShape::KeySet
-                || arguments.len() == 1)
+                || (arguments.len() == 1 && shape != crate::ContainerShape::KeyedEntries))
             && !self.types.declarations.tree.is_prelude_node(node)?
         {
             return self.types.declarations.issue_node(

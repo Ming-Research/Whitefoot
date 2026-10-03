@@ -1,5 +1,11 @@
 # A concurrent hash index under keyed atomic statements
 
+The language forms this record measured, `SharedMap<V>` with its keyed and
+whole-map statements, have since been replaced by one shared state whose
+keyed tables are fields, their entries named in a statement's header
+([shared state](../shared-state/DESIGN.md)); the index this record builds and
+measures is the runtime those tables use.
+
 ## The question
 
 Every client of `apps/firn` reaches its keyspace through one shared object, so

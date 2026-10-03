@@ -81,6 +81,8 @@ pub(super) const REF3_RETURN_AN_INDEX: &str =
 
 /// [REF-4]'s restructuring for a range reference over a `Ring`.
 pub(super) const REF4_RING: &str = "a ring hands out single slots; take the elements one at a time";
+/// [REF-4] repair for a range over keyed entries.
+pub(super) const REF4_KEYED_ENTRIES: &str = "keyed entries are entries of a table, not a run of storage; reach them one at a time as `entries^[i]`";
 
 /// [WIN-3]'s restructuring for a move out of a window slot or array element.
 pub(super) const WIN3_NO_TAKE: &str = "use take_back, remove_at, or swap [OP-10, OP-11]";
@@ -178,6 +180,11 @@ pub(super) struct ReferenceInfo {
     /// join, where [REF-1] takes the union of the incoming edges' sets and
     /// every check must hold for every member.
     pub(super) paths: Vec<ResolvedPlace>,
+    /// Places a write or move of which invalidates the reference as one of
+    /// its paths would, though the reference names nothing of them: the key
+    /// set an entry binder's entries follow [SHARE-2], whose elements a write
+    /// through the binder does not write.
+    pub(super) anchors: Vec<ResolvedPlace>,
     pub(super) validity: ReferenceValidity,
     /// Header validity variables this reference still depends on. A freshly
     /// formed reference has none. Copying a reference name retains the
@@ -203,6 +210,7 @@ impl ReferenceInfo {
         Self {
             kind,
             paths,
+            anchors: Vec::new(),
             validity: ReferenceValidity::Valid,
             loop_dependencies: Vec::new(),
             preservations: Vec::new(),
@@ -244,6 +252,11 @@ impl ReferenceInfo {
         for path in &other.paths {
             if !self.paths.contains(path) {
                 self.paths.push(path.clone());
+            }
+        }
+        for anchor in &other.anchors {
+            if !self.anchors.contains(anchor) {
+                self.anchors.push(anchor.clone());
             }
         }
         let superseded = self
@@ -722,10 +735,15 @@ impl<'unit> Checker<'_, 'unit> {
             let Some(reference) = &mut local.reference else {
                 continue;
             };
-            if reference.paths.iter().any(|path| match path.root {
-                PlaceRoot::Binding(binding) => leaving.contains(&binding),
-                PlaceRoot::Constant(_) => false,
-            }) {
+            if reference
+                .paths
+                .iter()
+                .chain(&reference.anchors)
+                .any(|path| match path.root {
+                    PlaceRoot::Binding(binding) => leaving.contains(&binding),
+                    PlaceRoot::Constant(_) => false,
+                })
+            {
                 reference.invalidate(InvalidationEvent::RootScopeEnded);
             }
         }
@@ -1440,6 +1458,17 @@ impl<'unit> Checker<'_, 'unit> {
                 // [OP-4] a runtime-capacity `Array<T>` is an indexable base
                 // exactly as the constant-capacity one is [TYPE-9].
                 CheckedType::Buffer { element } => self.types.element_type(element)?,
+                // [REF-4] keyed entries are each where its key's node keeps
+                // it, no run of storage [SHARE-2].
+                CheckedType::KeyedEntries { .. } => {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Ref4,
+                        suffix,
+                        SemanticIssueKind::RangeOverKeyedEntries {
+                            mechanical_fix: REF4_KEYED_ENTRIES,
+                        },
+                    );
+                }
                 _ => {
                     return self.types.declarations.issue_node(
                         SemanticRule::Op4,
@@ -1930,7 +1959,7 @@ impl<'unit> TypeContext<'unit> {
                 .values_mut()
                 .filter_map(|local| local.reference.as_mut())
             {
-                for path in &mut reference.paths {
+                for path in reference.paths.iter_mut().chain(&mut reference.anchors) {
                     path.supersede_binding(binding);
                 }
             }
@@ -1979,8 +2008,14 @@ impl<'unit> TypeContext<'unit> {
             if primitive_write || !reference.is_valid() {
                 continue;
             }
-            let mut invalidated = false;
+            let mut invalidated = reference
+                .anchors
+                .iter()
+                .any(|anchor| written.may_be_prefix_of(&oracle, anchor, include_equal));
             for path in &reference.paths {
+                if invalidated {
+                    break;
+                }
                 if !written.may_be_prefix_of(&oracle, path, include_equal) {
                     continue;
                 }
