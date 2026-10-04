@@ -209,6 +209,21 @@ A run directory keeps every unit's output under `logs/`, its server's under
 [--reference TESTS_TSV]` summarizes a directory again. The result files here
 are copies of `tests.tsv` and `units.tsv`.
 
+The manual `io-bench` workflow can run this same protocol on an Ubuntu runner,
+building Firn from the dispatched branch with that revision's compiler and
+keeping the released framework calls unchanged. For the integrated command
+branch:
+
+```sh
+gh workflow run io-bench.yml --ref claude/firn-framework \
+  -f firn_compat=true -f compare_firn=false -f compare_windows_workers=false
+```
+
+The `firn-compat-COMMIT` artifact retains the exact revision, executable and
+reference hashes, toolchain versions, raw unit and server logs, attempts and
+summary tables. A successful job means the harness completed; interpret its
+compatibility outcomes and limitations as below.
+
 ## Columns
 
 `units.tsv` has one row per unit:

@@ -16,6 +16,10 @@ name: io-bench
 on:
   workflow_dispatch:
     inputs:
+      firn_compat:
+        description: Run the released Redis 7.0.15 compatibility suite against this exact Firn revision
+        type: boolean
+        default: false
       compare_firn:
         description: Compare candidate Firn with exact published PR208 and pre208 on one Linux host
         type: boolean
@@ -43,6 +47,76 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # Runs the maintained external compatibility protocol on the dispatched tree.
+  # The artifact records compatibility outcomes; a successful harness execution
+  # is not a claim that Firn implements every Redis command.
+  firn-compat:
+    if: ${{ inputs.firn_compat }}
+    name: Firn compatibility (Redis 7.0.15 suite)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Linux tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld redis-tools tcl python3 coreutils curl make time
+          rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: firn-compat-${{ hashFiles('compiler/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            firn-compat-${{ hashFiles('compiler/Cargo.lock') }}-
+      - name: Build the exact dispatched Firn revision
+        env:
+          WHITEFOOT_SCRATCH_ROOT: ${{ runner.temp }}/firn-compat-scratch
+        run: |
+          mkdir -p "$RUNNER_TEMP/firn-compat"
+          git rev-parse HEAD > "$RUNNER_TEMP/firn-compat/revision.txt"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          perl .github/run-check.pl firn/compat-build \
+            compiler/target/gate/whitefootc --full-lto \
+            --graph apps/firn/modules.wfg --entry firn \
+            -o "$RUNNER_TEMP/firn-compat/firn"
+          sha256sum "$RUNNER_TEMP/firn-compat/firn" \
+            research/experiments/redis-compat/redis-7.0.15-tests.tsv \
+            > "$RUNNER_TEMP/firn-compat/inputs.sha256"
+          { clang --version; rustc --version; redis-cli --version; } \
+            > "$RUNNER_TEMP/firn-compat/toolchain.txt"
+      - name: Run the released suite and recorded reference
+        env:
+          WHITEFOOT_SCRATCH_ROOT: ${{ runner.temp }}/firn-compat-scratch
+          WHITEFOOT_CHECK_TIMEOUT: "7200"
+          REDIS_COMPAT_CACHE: ${{ runner.temp }}/redis-compat-cache
+        run: |
+          perl .github/run-check.pl redis-compat \
+            bash research/experiments/redis-compat/run.sh \
+            --out "$RUNNER_TEMP/firn-compat/results" \
+            --reference research/experiments/redis-compat/redis-7.0.15-tests.tsv \
+            firn "$RUNNER_TEMP/firn-compat/firn" \
+            2>&1 | tee "$RUNNER_TEMP/firn-compat/run.log"
+      - name: Publish the compatibility summary
+        if: always()
+        run: |
+          {
+            echo '## Firn compatibility'
+            echo 'Counts describe the released external suite, without --tolerant; they are not a full Redis compatibility claim.'
+            echo '```text'
+            cat "$RUNNER_TEMP/firn-compat/revision.txt" 2>/dev/null || true
+            cat "$RUNNER_TEMP/firn-compat/results/summary.txt" 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firn-compat-${{ github.sha }}
+          path: ${{ runner.temp }}/firn-compat
+
   # Opt-in recovery experiment; the ordinary dispatch keeps its existing jobs.
   # Cross-revision Firn results measure the complete implementation. The
   # same-source preparation comparison is a separate native observation.
@@ -168,7 +242,7 @@ jobs:
           path: ${{ runner.temp }}/firn-recovery
 
   bench-linux:
-    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn && !inputs.firn_compat }}
     name: bench-linux (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -284,7 +358,7 @@ jobs:
   # not known in advance; a table whose probe refused the label says so on its
   # own label line.
   bench-linux-read:
-    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn && !inputs.firn_compat }}
     name: bench-linux-read (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -363,7 +437,7 @@ jobs:
             bench-read.txt
 
   bench-macos-read:
-    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn && !inputs.firn_compat }}
     name: bench-macos-read (macos-14)
     runs-on: macos-14
     timeout-minutes: 120
@@ -461,7 +535,7 @@ jobs:
   # worker and a used, fully reaped IOCP path. C2 has ordinary synchronous call
   # boundaries; no cross-call completion overlap or speed threshold is required.
   bench-windows:
-    if: ${{ !inputs.compare_firn }}
+    if: ${{ !inputs.compare_firn && !inputs.firn_compat }}
     name: bench-windows-measured (windows-latest)
     runs-on: windows-latest
     timeout-minutes: 120
