@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 import hashlib
 import json
+import random
 from pathlib import Path
 import subprocess
 import tempfile
@@ -112,9 +113,34 @@ def run(command, **kwargs):
     return result, time.monotonic() - start
 
 
+def verify_sha1(binary):
+    """Independent binary vectors; no expected digest comes from Halo."""
+    rng = random.Random(0x51A115)
+    samples = [b'', b'abc', b'a\0b']
+    for i in range(1000):
+        # Force every padding boundary, then multiple blocks and longer inputs.
+        length = i if i < 130 else rng.randrange(0, 4097)
+        samples.append(rng.randbytes(length))
+    times = []
+    for index, data in enumerate(samples):
+        escaped = ''.join('\\%03d' % b for b in data).encode('ascii')
+        source = b'return redis.sha1hex("' + escaped + b'")'
+        result, seconds = run([str(binary)], input=fixture(source))
+        times.append(seconds)
+        if result.returncode:
+            raise AssertionError(f'SHA-1 vector {index}: native exit {result.returncode}')
+        actual = canonical(json.loads(result.stdout))
+        expected = canonical({'type': 'bulk', 'bytes': hashlib.sha1(data).hexdigest()})
+        if actual != expected:
+            raise AssertionError(f'SHA-1 vector {index}, length {len(data)}: {actual} != {expected}')
+    print(f'SHA-1: 3 fixed + 1000 seeded random binary vectors match hashlib; '
+          f'total {sum(times):.3f}s, range {min(times):.4f}..{max(times):.4f}s', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--compiler', required=True)
+    parser.add_argument('--verify-sha1', action='store_true', help='compare 1000 random binary inputs with hashlib')
     parser.add_argument('--binary', type=Path, help='reuse an already built test executable')
     parser.add_argument('--filter', default='')
     parser.add_argument('--report', type=Path)
@@ -155,6 +181,8 @@ def main():
                 return 2
         report += [f'Executable SHA-256: `{hashlib.sha256(binary.read_bytes()).hexdigest()}`.',
                    f'Compiler SHA-256: `{hashlib.sha256(Path(args.compiler).read_bytes()).hexdigest()}`.', '']
+        if args.verify_sha1:
+            verify_sha1(binary)
         rows = []
         summary = defaultdict(Counter)
         observed = {}

@@ -1,0 +1,109 @@
+alias Value = pkg::value::Value;
+
+const redis_err: Array<u8, 4> = "ERR ";
+
+const redis_field: Array<u8, 3> = "err";
+
+const redis_script: Array<u8, 9> = " script: ";
+
+const redis_on: Array<u8, 5> = ", on ";
+
+fn value_text(engine: &Engine, value: Value, out: &Box<Slots<u8>>) -> r: unit reads(engine), writes(out) {
+  match string_of(engine: engine, value: value) {
+    Some(value: view) => {
+      let h = cvt::<u32, u64>(view.handle);
+      if h < engine^.vm.heap.strings.inner.len {
+        let n = engine^.vm.heap.strings.inner[h].payload.bytes.inner.len;
+        for (i in 0_u64..n) {
+          let b = engine^.vm.heap.strings.inner[h].payload.bytes.inner[i];
+          if b == 0_u8 {
+            break;
+          }
+          byte(out: out, b: b);
+        }
+      }
+      return unit;
+    }
+    None() => {
+    }
+  }
+  match number_of(value: value) {
+    Is(x: n) => {
+      let buffer = array_filled::<u8, 32>(value: 0_u8);
+      let count = pkg::number::format_number(value: n, out: &buffer[0_u64..32_u64]);
+      text(out: out, bytes: &buffer[0_u64..count]);
+    }
+    Not() => {
+      text(out: out, bytes: &nonstring[0_u64..30_u64]);
+    }
+  }
+  return unit;
+}
+
+fn error_field(engine: &Engine, table: Value) -> r: Value reads(engine) {
+  let key = Value::Nil();
+  loop {
+    match table_next(engine: engine, table: table, key: key) {
+      Err(..) => {
+        return Value::Nil();
+      }
+      Ok(value: next) => {
+        match next {
+          None() => {
+            return Value::Nil();
+          }
+          Some(value: pair) => {
+            set key = pair.key;
+            let bytes = box_slots_new::<u8>(capacity: 0_u64);
+            value_text(engine: engine, value: key, out: &bytes);
+            let same = False();
+            if bytes.inner.len == 3_u64 {
+              set same = True();
+              for (i in 0_u64..3_u64) {
+                if bytes.inner[i] != redis_field[i] {
+                  set same = False();
+                }
+              }
+            }
+            if same {
+              return pair.val;
+            }
+          }
+        }
+      }
+    }
+  }
+  return Value::Nil();
+}
+
+fn format_redis_error(engine: &Engine, source: &[u8], line: u64, locate: Bool) -> r: Box<Slots<u8>> reads(engine), reads(source) {
+  doc "Mirrors eval.c's string-to-error-table handler and script_lua.c's final EVAL reply. The caller supplies the failing Lua line; locate requests Lua's prefix for a VM error not yet located.";
+  let out = box_slots_new::<u8>(capacity: 0_u64);
+  let error = error_value(engine: engine);
+  let tag = kind(value: error);
+  if tag == 4_u8 {
+    let message = error_field(engine: engine, table: error);
+    value_text(engine: engine, value: message, out: &out);
+  } else {
+    text(out: &out, bytes: &redis_err[0_u64..4_u64]);
+    if locate {
+      if line > 0_u64 {
+        text(out: &out, bytes: &location[1_u64..13_u64]);
+        decimal(out: &out, number: line);
+        byte(out: &out, b: 58_u8);
+        byte(out: &out, b: 32_u8);
+      }
+    }
+    value_text(engine: engine, value: error, out: &out);
+  }
+  if line > 0_u64 {
+    let digest = sha1hex(bytes: source);
+    text(out: &out, bytes: &redis_script[0_u64..9_u64]);
+    text(out: &out, bytes: &digest[0_u64..40_u64]);
+    text(out: &out, bytes: &redis_on[0_u64..5_u64]);
+    text(out: &out, bytes: &location[0_u64..13_u64]);
+    decimal(out: &out, number: line);
+    byte(out: &out, b: 46_u8);
+  }
+  return move out;
+}
