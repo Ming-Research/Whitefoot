@@ -643,3 +643,27 @@ checksum equals the ordered one's, so the two produce the same keys and the
 same last-wins values. This is a single-threaded fixture with its own
 storage; E's cost in firn is measured on the 14900K once it is implemented.
 Remove the fixture when that measurement supersedes it.
+
+**Measurement 8: E in firn.** E implemented (PR #221) and measured on the
+14900K at one CPU against `cea9188d4` (`base`) and PR #212's head
+`b098d8996` (`b212`), the same commands with the byte-ordered set. The
+first run (37205750504) put E at 1.476 and 1.446 µs of CPU per `MSET`
+against `b212`'s 1.534 and `base`'s 1.359 and 1.383, and its profile named
+two costs of the implementation, not the design: the hold's heap sort of
+ten ranks, 114.8 ns, and 27 ns of `calloc`, `malloc` and `free` for firn's
+per-command index arrays. Insertion over the ranks for up to 32 keys, and
+one reusable array in firn's client, replaced them. The second run
+(37207940703), two passes of five seconds:
+
+| Image | CPU per `MSET`, µs | Profile ns per `MSET` |
+|---|---:|---:|
+| `base` | 1.388, 1.394 | 1,411.5 |
+| `b212` | 1.517, 1.535 | 1,541.7 |
+| E | 1.297, 1.351 | 1,402.6 |
+
+`memcmp` fell from `b212`'s 130.9 ns to 34.4, `cea9188d4`'s 71.4 less the
+old sort's share, and `memmove` from 50.0 to 8.1; `try_entry` is back at
+`base`'s cost (144.1 against 146.5 ns), so the unexplained 10 ns of
+Measurement 6 went with the byte-ordered set. E carries the parser's
+`read_line` (56.0 ns), which PR #218 removes separately, so E without that
+regression would spend about 3% less than `cea9188d4` per `MSET`.
