@@ -86,6 +86,19 @@ jobs:
           rustup default stable
           redis-benchmark --version
 
+      # A runner service starts without the login shell's PATH, where rustup
+      # puts cargo; the step stops on the first missing tool and names it.
+      - name: Check the host's tools
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          for tool in clang ld.lld cargo rustc redis-benchmark redis-cli taskset perl python3; do
+            command -v "$tool" >/dev/null || { echo "missing: $tool"; exit 1; }
+          done
+          echo "cpus: $(nproc)"
+
       - name: Build each revision's firn with its own compiler
         env:
           REVISIONS: ${{ inputs.compare_revisions }}
