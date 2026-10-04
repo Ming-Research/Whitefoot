@@ -1,0 +1,206 @@
+alias Error = json::text::Error;
+
+fn success(result: Result<unit, Error>) -> yes: Bool pure {
+  match move result {
+    Ok(value: done) => {
+      return True();
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn refusal(result: Result<unit, Error>, code: u8, offset: u64) -> yes: Bool pure {
+  match move result {
+    Ok(value: done) => {
+      return False();
+    }
+    Err(error: problem) => {
+      if problem.code != code {
+        return False();
+      }
+      return problem.offset == offset;
+    }
+  }
+}
+
+const key_x: Array<u8, 1> = "x";
+
+const key_y: Array<u8, 1> = "y";
+
+const one: Array<u8, 1> = "1";
+
+const bad_number: Array<u8, 2> = "01";
+
+const bad_utf8: Array<u8, 1> =[255_u8];
+
+const prefix_bytes: Array<u8, 7> = "prefix:";
+
+const expected_bytes: Array<u8, 40> = "prefix:{\"x\":1,\"y\":[false,true,null,\"x\"]}";
+
+fn writer_checks() -> failures: u64 pure {
+  let failures = 0_u64;
+  let slash = False();
+  let writer = json::encode::new(escape_slash: slash);
+  let output = box_slots_new::<u8>(capacity: 0_u64);
+  for (i in 0_u64..7_u64) {
+    let b = prefix_bytes[i];
+    record_byte(buffer: &output, byte: b);
+  }
+  let result_0 = json::encode::finish(writer: &writer, output: &output);
+  if refusal(result: move result_0, code: 19_u8, offset: 7_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_1 = json::encode::end_object(writer: &writer, output: &output);
+  if refusal(result: move result_1, code: 18_u8, offset: 7_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_2 = json::encode::end_array(writer: &writer, output: &output);
+  if refusal(result: move result_2, code: 18_u8, offset: 7_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_3 = json::encode::key(writer: &writer, output: &output, bytes: &key_x[0_u64..1_u64]);
+  if refusal(result: move result_3, code: 16_u8, offset: 7_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_4 = json::encode::begin_object(writer: &writer, output: &output);
+  if success(result: move result_4) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_5 = json::encode::string(writer: &writer, output: &output, bytes: &key_x[0_u64..1_u64]);
+  if refusal(result: move result_5, code: 16_u8, offset: 8_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_6 = json::encode::number(writer: &writer, output: &output, bytes: &one[0_u64..1_u64]);
+  if refusal(result: move result_6, code: 16_u8, offset: 8_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_7 = json::encode::key(writer: &writer, output: &output, bytes: &key_x[0_u64..1_u64]);
+  if success(result: move result_7) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_8 = json::encode::key(writer: &writer, output: &output, bytes: &key_x[0_u64..1_u64]);
+  if refusal(result: move result_8, code: 17_u8, offset: 12_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_9 = json::encode::end_object(writer: &writer, output: &output);
+  if refusal(result: move result_9, code: 17_u8, offset: 12_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_10 = json::encode::end_array(writer: &writer, output: &output);
+  if refusal(result: move result_10, code: 18_u8, offset: 12_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_11 = json::encode::finish(writer: &writer, output: &output);
+  if refusal(result: move result_11, code: 19_u8, offset: 12_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_12 = json::encode::number(writer: &writer, output: &output, bytes: &bad_number[0_u64..2_u64]);
+  if refusal(result: move result_12, code: 13_u8, offset: 1_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_13 = json::encode::string(writer: &writer, output: &output, bytes: &bad_utf8[0_u64..1_u64]);
+  if refusal(result: move result_13, code: 12_u8, offset: 0_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_14 = json::encode::number(writer: &writer, output: &output, bytes: &one[0_u64..1_u64]);
+  if success(result: move result_14) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_15 = json::encode::end_array(writer: &writer, output: &output);
+  if refusal(result: move result_15, code: 18_u8, offset: 13_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_16 = json::encode::key(writer: &writer, output: &output, bytes: &key_y[0_u64..1_u64]);
+  if success(result: move result_16) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_17 = json::encode::begin_array(writer: &writer, output: &output);
+  if success(result: move result_17) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_18 = json::encode::key(writer: &writer, output: &output, bytes: &key_x[0_u64..1_u64]);
+  if refusal(result: move result_18, code: 16_u8, offset: 19_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_19 = json::encode::false(writer: &writer, output: &output);
+  if success(result: move result_19) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_20 = json::encode::true(writer: &writer, output: &output);
+  if success(result: move result_20) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_21 = json::encode::null(writer: &writer, output: &output);
+  if success(result: move result_21) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_22 = json::encode::string(writer: &writer, output: &output, bytes: &key_x[0_u64..1_u64]);
+  if success(result: move result_22) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_23 = json::encode::end_object(writer: &writer, output: &output);
+  if refusal(result: move result_23, code: 18_u8, offset: 38_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_24 = json::encode::end_array(writer: &writer, output: &output);
+  if success(result: move result_24) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_25 = json::encode::end_object(writer: &writer, output: &output);
+  if success(result: move result_25) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_26 = json::encode::finish(writer: &writer, output: &output);
+  if success(result: move result_26) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  let result_27 = json::encode::null(writer: &writer, output: &output);
+  if refusal(result: move result_27, code: 5_u8, offset: 40_u64) {
+  } else {
+    set failures = failures +wrap 1_u64;
+  }
+  if output.inner.len != 40_u64 {
+    set failures = failures +wrap 1_u64;
+  }
+  for (i in 0_u64..40_u64) {
+    if i < output.inner.len {
+      let b = output.inner[i];
+      let expected = expected_bytes[i];
+      if b != expected {
+        set failures = failures +wrap 1_u64;
+      }
+    } else {
+      set failures = failures +wrap 1_u64;
+    }
+  }
+  return failures;
+}

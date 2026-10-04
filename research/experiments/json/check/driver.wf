@@ -1,0 +1,191 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+
+fn read_exact(factory: &HandleFactory, input: &InputStream, bytes: &[u8], count: u64) -> complete: Bool writes(factory), writes(input), writes(bytes) waits contract {
+  requires count <= bytes^.len;
+} {
+  let position = 0_u64;
+  loop @read {
+    if position >= count {
+      return True();
+    }
+    let deadline = None<std::time::Instant>();
+    match std::io::read_next(factory: factory, input: input, destination: bytes, start: position, end: count, deadline: deadline) {
+      Ok(value: next) => {
+        if next == position {
+          return False();
+        }
+        set position = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn word(bytes: &[u8], start: u64) -> value: u64 reads(bytes) {
+  let value = 0_u64;
+  for (offset in 0_u64..8_u64) {
+    let index = start +wrap offset;
+    if index < bytes^.len {
+      let byte = bytes^[index];
+      let wide = cvt::<u8, u64>(byte);
+      let distance = offset *wrap 8_u64;
+      let shift = cvt.wrap::<u64, u32>(distance);
+      let part = ishl.wrap(wide, shift);
+      set value = ior(value, part);
+    }
+  }
+  return value;
+}
+
+fn emit(factory: &HandleFactory, output: &OutputStream, bytes: &[u8], count: u64) -> complete: Bool reads(bytes), writes(factory), writes(output) waits contract {
+  requires count <= bytes^.len;
+} {
+  let position = 0_u64;
+  loop @write {
+    if position >= count {
+      return True();
+    }
+    let deadline = None<std::time::Instant>();
+    match std::io::write_once(factory: factory, output: output, source: bytes, start: position, end: count, deadline: deadline) {
+      Ok(value: next) => {
+        if next == position {
+          return False();
+        }
+        set position = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn hex_line(buffer: &Box<Slots<u8>>, bytes: &[u8]) -> result: unit reads(bytes), writes(buffer) {
+  for (i in 0_u64..bytes^.len) {
+    let b = bytes^[i];
+    let high = ishr.wrap(b, 4_u32);
+    let low = iand(b, 15_u8);
+    let a = high +wrap 48_u8;
+    if high >= 10_u8 {
+      set a = high +wrap 87_u8;
+    }
+    let z = low +wrap 48_u8;
+    if low >= 10_u8 {
+      set z = low +wrap 87_u8;
+    }
+    record_byte(buffer: buffer, byte: a);
+    record_byte(buffer: buffer, byte: z);
+  }
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: directory, write: writable) = move cwd;
+  std::fs::close_directory_write(factory: &factory, directory: move writable);
+  std::fs::close_directory(factory: &factory, directory: move directory);
+  let header = array_filled::<u8, 17>(value: 0_u8);
+  let payload = array_filled::<u8, 65536>(value: 0_u8);
+  let output = box_slots_new::<u8>(capacity: 0_u64);
+  let events = box_slots_new::<u8>(capacity: 0_u64);
+  let line = box_slots_new::<u8>(capacity: 0_u64);
+  loop @records {
+    let received = read_exact(factory: &factory, input: &input, bytes: &header[0_u64..17_u64], count: 17_u64);
+    if received {
+    } else {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let op = header[0_u64];
+    if op == 0_u8 {
+      return std::process::exit_status(code: 0_u8);
+    }
+    let length = word(bytes: &header[0_u64..17_u64], start: 1_u64);
+    let depth = word(bytes: &header[0_u64..17_u64], start: 9_u64);
+    if length > 65536_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    let read = read_exact(factory: &factory, input: &input, bytes: &payload[0_u64..65536_u64], count: length);
+    if read {
+    } else {
+      return std::process::exit_status(code: 1_u8);
+    }
+    json::text::clear(buffer: &output);
+    json::text::clear(buffer: &events);
+    json::text::clear(buffer: &line);
+    let result = Ok<unit, json::text::Error>(value: unit);
+    let slash = op == 2_u8;
+    if op == 1_u8 {
+      set result = roundtrip(source: &payload[0_u64..length], output: &output, events: &events, depth: depth, slash: slash);
+    } else if op == 2_u8 {
+      set result = roundtrip(source: &payload[0_u64..length], output: &output, events: &events, depth: depth, slash: slash);
+    } else if op == 3_u8 {
+      match json::number::convert(source: &payload[0_u64..length]) {
+        Some(value: number) => {
+          let bits = reinterpret::<f64, u64>(number);
+          record_word(buffer: &output, value: bits);
+        }
+        None() => {
+          let problem = json::text::error(code: 13_u8, offset: 0_u64);
+          set result = Err<unit, json::text::Error>(error: move problem);
+        }
+      }
+    } else if op == 4_u8 {
+      let failures = writer_checks();
+      record_word(buffer: &output, value: failures);
+    } else if op == 5_u8 {
+      let writer = json::encode::new(escape_slash: slash);
+      set result = json::encode::string(writer: &writer, output: &output, bytes: &payload[0_u64..length]);
+    } else if op == 6_u8 {
+      let writer = json::encode::new(escape_slash: slash);
+      set result = json::encode::number(writer: &writer, output: &output, bytes: &payload[0_u64..length]);
+    } else {
+      return std::process::exit_status(code: 2_u8);
+    }
+    match move result {
+      Ok(value: done) => {
+        record_byte(buffer: &line, byte: 79_u8);
+        record_byte(buffer: &line, byte: 75_u8);
+        record_byte(buffer: &line, byte: 32_u8);
+        let n = output.inner.len;
+        hex_line(buffer: &line, bytes: &output.inner[0_u64..n]);
+        record_byte(buffer: &line, byte: 32_u8);
+        let e = events.inner.len;
+        hex_line(buffer: &line, bytes: &events.inner[0_u64..e]);
+      }
+      Err(error: problem) => {
+        json::text::clear(buffer: &events);
+        record_byte(buffer: &events, byte: problem.code);
+        record_word(buffer: &events, value: problem.offset);
+        let n = problem.message.len;
+        for (i in 0_u64..n) {
+          if i < problem.message.len {
+            let b = problem.message[i];
+            record_byte(buffer: &events, byte: b);
+          }
+        }
+        record_byte(buffer: &line, byte: 69_u8);
+        record_byte(buffer: &line, byte: 82_u8);
+        record_byte(buffer: &line, byte: 82_u8);
+        record_byte(buffer: &line, byte: 32_u8);
+        let event_length = events.inner.len;
+        hex_line(buffer: &line, bytes: &events.inner[0_u64..event_length]);
+      }
+    }
+    record_byte(buffer: &line, byte: 10_u8);
+    let n = line.inner.len;
+    let sent = emit(factory: &factory, output: &out, bytes: &line.inner[0_u64..n], count: n);
+    if sent {
+    } else {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}

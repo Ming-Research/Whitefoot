@@ -1,0 +1,4 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+
+public fn main(inputs: Inputs) -> status: ExitStatus pure waits doc "JSON oracle adapter: streaming 17-byte records (opcode u8, payload length u64 LE, depth u64 LE), followed by payload, max 65536 bytes. Opcode 0 exits; 1 decodes and re-encodes; 2 additionally escapes slash; 3 converts a number; 4 tests writer state errors; 5 writes a raw UTF-8 string; 6 writes caller number text. Output is one ASCII line: OK hex-output hex-events, or ERR hex-diagnostic where diagnostic is code u8, offset u64 LE, then message bytes. Decode events use tags 1 object begin, 2 end, 3 array begin, 4 end, 5 key, 6 string, 7 number, 8 true, 9 false, 10 null, 11 EOF; text events have u64 length and UTF-8 bytes, numbers have start/end/bits u64.";

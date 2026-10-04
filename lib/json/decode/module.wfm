@@ -7,7 +7,7 @@ public enum Event {
   ArrayEnd();
   Key();
   String();
-  Number(start: u64, end: u64, value: f64);
+  Number(public start: u64, public end: u64, public value: f64);
   True();
   False();
   Null();
