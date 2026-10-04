@@ -554,3 +554,29 @@ fits the key set's copies and moves (H1 and H2) at about 20 ns per `MSET`.
 20 ns per `MSET` at one CPU; its code differs from `base`'s only in a test
 of the statement's own hold on an already locked cell, which this workload
 never reaches, so the cause is not yet known.
+
+**Measurement 4: every nanosecond.** The same three images on the 14900K at
+one CPU, each profiled for 19,885,260 `MSET`s at 999 samples a second with
+DWARF-unwound callers and every row above 0.01% kept (run 37192870481):
+`base` spends 1,390.3 ns of server CPU per `MSET`, `main` 1,499.3 and `lean`
+1,465.8. The per-symbol differences of `main` from `base` sum to 109.8 ns of
+the 109.1 measured, and group as follows:
+
+| Source | ns per `MSET` | Rows |
+|---|---:|---|
+| request parser | +38.7 | `read_line` +55.2, `parse_multibulk` -16.5; `lean` leaves +2.6 |
+| statement code outside libc | -83.9 | removed: `sift_held` 100.0, `wf__shared_map_held` 91.1, `hold_keys` 43.8, `wf__shared_map_key` 33.4, `release_keys` 18.1; added: `run_mset` itself +110.4 (the key set's search and comparison inlined into it), `wf__table_hold_take` 35.2, `insert_key` 25.5, `fill_slots` 14.5, `hold_release` 9.3, `hold_keys` 7.6 |
+| libc called from the statement | +114.8 | three code regions of libc, +42.0, +37.2 and +21.3, one more +9.0, and their PLT stubs +7.9 |
+| cell locks | +19.4 | `try_entry` +9.8, `acquire_entry` +9.6 |
+| kernel | +21.9 | send path, the same reply bytes; `lean` shows +6.7, so part is variation |
+| other | +3.0 | `bytes_new` +4.3 and smaller rows |
+
+The libc region that grows by 37.2 ns is called from `try_entry` (the
+lock's key comparison, also in `base`) and from `run_mset`, where the key
+set's binary search compares keys; the other regions appear only in the new
+images and are below the caller report's 1% threshold. Which libc functions
+they are, copies, moves or comparisons, needs libc's symbols. So the key set
+does cost about 115 ns per `MSET` in libc against the old statement's sort,
+but the redesigned hold saves about 84 ns in its own code, leaving the
+statement about 31 ns dearer; the parser, now explained, adds 39 ns; the
+cell locks 19 ns; the kernel row is within this run's variation.
