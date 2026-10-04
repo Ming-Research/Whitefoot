@@ -579,7 +579,7 @@ if [ "$MODE" = compare ]; then
                     --sort dso,symbol --percent-limit 0.01 -g none >"$OUT/profile-$name-$n.txt" 2>/dev/null
                 if [ -n "$PERF_CALLERS" ]; then
                     "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
-                        --sort dso,symbol --percent-limit 1 -g caller,0.5,callee,function,percent \
+                        --sort dso,symbol --percent-limit 0.3 -g caller,0.5,callee,function,percent \
                         >"$OUT/callers-$name-$n.txt" 2>/dev/null
                     "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --children \
                         --sort symbol --percent-limit 1 -g none >"$OUT/inclusive-$name-$n.txt" 2>/dev/null
