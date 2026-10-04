@@ -719,7 +719,7 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let count = args^.inner.len;
   let pairs = count / 2_u64;
   let keys = key_set_new(capacity: pairs);
-  let positions = key_positions(count: pairs);
+  key_positions(positions: &client^.key_metadata, count: pairs);
   for @pairs (pair in 0_u64..pairs) {
     let doubled = pair *wrap 2_u64;
     let index = doubled +wrap 1_u64;
@@ -727,14 +727,14 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let key = &input^[place.start..place.end];
     let next = index +wrap 1_u64;
     let at = key_set_insert(keys: &keys, key: key);
-    if at < positions.inner.len {
-      set positions.inner[at] = next;
+    if at < client^.key_metadata.inner.len {
+      set client^.key_metadata.inner[at] = next;
     }
   }
   let logged = store^.logging;
   atomic s = &store^.state, slots = &s^.map[keys] {
     for @stored (at in 0_u64..keys.len) {
-      let position = key_position(positions: &positions, index: at);
+      let position = key_position(positions: &client^.key_metadata, index: at);
       let lapsed = held_lapsed(slot: &slots^[at], now: time^.check);
       if lapsed {
         if logged {
@@ -1307,39 +1307,41 @@ fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let count = args^.inner.len;
   let keys = key_set_new(capacity: count);
   let named = count -sat 1_u64;
-  let ranks = key_positions(count: named);
+  key_positions(positions: &client^.key_metadata, count: named);
   for @named (index in 1_u64..count) {
     let place = key_bounds(input: input, args: args, index: index);
     let key = &input^[place.start..place.end];
     let rank = key_set_insert(keys: &keys, key: key);
     let step = index -wrap 1_u64;
-    if step < ranks.inner.len {
-      set ranks.inner[step] = rank;
+    if step < client^.key_metadata.inner.len {
+      set client^.key_metadata.inner[step] = rank;
     }
   }
   reply_array(client: client, count: named);
   set client^.now = time^.check;
   let logged = store^.logging;
   atomic s = &store^.state, slots = &s^.map[keys] {
-    for @answers (step in 0_u64..ranks.inner.len) {
-      let rank = ranks.inner[step];
-      if rank < slots^.len {
-        let kind = entry_kind(slot: &slots^[rank], client: client);
-        if client^.state == state_expired {
-          if logged {
-            let index = step +wrap 1_u64;
-            let place = key_bounds(input: input, args: args, index: index);
-            let key = &input^[place.start..place.end];
-            log_removal(log: &s^.meta.log, key: key);
+    for @answers (step in 0_u64..client^.key_metadata.inner.len) {
+      if step < client^.key_metadata.inner.len {
+        let rank = client^.key_metadata.inner[step];
+        if rank < slots^.len {
+          let kind = entry_kind(slot: &slots^[rank], client: client);
+          if client^.state == state_expired {
+            if logged {
+              let index = step +wrap 1_u64;
+              let place = key_bounds(input: input, args: args, index: index);
+              let key = &input^[place.start..place.end];
+              log_removal(log: &s^.meta.log, key: key);
+            }
           }
-        }
-        if kind == 1_u64 {
-          reply_held_text(slot: &slots^[rank], client: client);
+          if kind == 1_u64 {
+            reply_held_text(slot: &slots^[rank], client: client);
+          } else {
+            reply_nil(client: client);
+          }
         } else {
           reply_nil(client: client);
         }
-      } else {
-        reply_nil(client: client);
       }
     }
   }
@@ -1351,7 +1353,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let count = args^.inner.len;
   let pairs = count / 2_u64;
   let keys = key_set_new(capacity: pairs);
-  let positions = key_positions(count: pairs);
+  key_positions(positions: &client^.key_metadata, count: pairs);
   for @pairs (pair in 0_u64..pairs) {
     let doubled = pair *wrap 2_u64;
     let index = doubled +wrap 1_u64;
@@ -1359,8 +1361,8 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     let key = &input^[place.start..place.end];
     let next = index +wrap 1_u64;
     let at = key_set_insert(keys: &keys, key: key);
-    if at < positions.inner.len {
-      set positions.inner[at] = next;
+    if at < client^.key_metadata.inner.len {
+      set client^.key_metadata.inner[at] = next;
     }
   }
   set client^.now = time^.check;
@@ -1373,7 +1375,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
         let kind = entry_kind(slot: &slots^[rank], client: client);
         if client^.state == state_expired {
           if logged {
-            let position = key_position(positions: &positions, index: rank);
+            let position = key_position(positions: &client^.key_metadata, index: rank);
             let index = position -wrap 1_u64;
             let place = key_bounds(input: input, args: args, index: index);
             let key = &input^[place.start..place.end];
@@ -1389,7 +1391,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     if blocked {
     } else {
       for @stored (at in 0_u64..keys.len) {
-        let position = key_position(positions: &positions, index: at);
+        let position = key_position(positions: &client^.key_metadata, index: at);
         let value_span = arg(args: args, index: position);
         let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
         put_text(slot: &slots^[at], value: move value, expires: 0_u64);

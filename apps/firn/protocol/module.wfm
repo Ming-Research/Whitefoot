@@ -22,7 +22,7 @@ public struct Settings {
 }
 
 public struct Client {
-  doc "What one connection's commands work with. Replies are written into bytes, a window filled to its capacity, up to at, where the next reply starts. A command that changes or reads the keyspace in an atomic statement passes the client as its visitor's environment: now is the instant expiries are read against, low, high and number carry the command's numbers in and a visitor's results out, state reports what the visitor found, items and scores hold the owned keys and scores the command prepared, each key hashed when it was made so that no hash is computed inside an atomic statement, the last to be used first, keys is the environment the key protocols take, and random is the state SPOP draws from while it runs. The connection's own state follows: id is its number, counted from 1 in the order the server accepted it; name is the name CLIENT SETNAME gave it, empty for none; authenticated is true once the connection has given the password, or from its start when it was accepted with no password required, as Redis's authenticated flag; locked is true while a password is required and the connection has not authenticated, the server reading the password again before each request while authenticated is false; closing is set by QUIT, after whose reply the connection ends; unix_us is the calendar time in microseconds as the clocks were last read; and settings is the server's configuration that does not change while it runs.";
+  doc "What one connection's commands work with. Replies are written into bytes, a window filled to its capacity, up to at, where the next reply starts. A command that changes or reads the keyspace in an atomic statement passes the client as its visitor's environment: now is the instant expiries are read against, low, high and number carry the command's numbers in and a visitor's results out, state reports what the visitor found, items and scores hold the owned keys and scores the command prepared, each key hashed when it was made so that no hash is computed inside an atomic statement, the last to be used first, key_metadata is reusable zeroed command metadata indexed by key-set insertion position or argument position, keys is the environment the key protocols take, and random is the state SPOP draws from while it runs. The connection's own state follows: id is its number, counted from 1 in the order the server accepted it; name is the name CLIENT SETNAME gave it, empty for none; authenticated is true once the connection has given the password, or from its start when it was accepted with no password required, as Redis's authenticated flag; locked is true while a password is required and the connection has not authenticated, the server reading the password again before each request while authenticated is false; closing is set by QUIT, after whose reply the connection ends; unix_us is the calendar time in microseconds as the clocks were last read; and settings is the server's configuration that does not change while it runs.";
   public bytes: Box<Slots<u8>>;
   public at: u64;
   public now: u64;
@@ -32,6 +32,7 @@ public struct Client {
   public high: i64;
   public items: Box<Slots<Key>>;
   public scores: Box<Slots<f64>>;
+  public key_metadata: Box<Slots<u64>>;
   public keys: KeyEnv;
   public random: u64;
   public id: u64;

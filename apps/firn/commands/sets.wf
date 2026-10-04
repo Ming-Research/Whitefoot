@@ -1443,15 +1443,15 @@ fn run_combine(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   if storing {
     set first = 2_u64;
   }
-  let positions = key_positions(count: args^.inner.len);
-  let keys = operand_keys(input: input, args: args, first: first, end: count, storing: storing, positions: &positions);
+  key_positions(positions: &client^.key_metadata, count: args^.inner.len);
+  let keys = operand_keys(input: input, args: args, first: first, end: count, storing: storing, positions: &client^.key_metadata);
   let now = time^.check;
   let result = hash_map_new::<Key, unit, ceiling>(capacity: 0_u64);
   let lapsed = False();
   set client^.state = state_absent;
   set client^.number = 0_u64;
   atomic s = &store^.state, slots = &s^.map[keys] {
-    let found = survey(slots: slots, keys: &keys, positions: &positions, now: now);
+    let found = survey(slots: slots, keys: &keys, positions: &client^.key_metadata, now: now);
     if found.wrong {
       set client^.state = state_wrong;
     } else {
@@ -1459,7 +1459,7 @@ fn run_combine(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
       if storing {
         if found.lapsed {
           for @lapsing (at in 0_u64..keys.len) {
-            let payload = key_position(positions: &positions, index: at);
+            let payload = key_position(positions: &client^.key_metadata, index: at);
             let named = iand(payload, operand_named);
             if named != 0_u64 {
               let kind = set_kind(slot: &slots^[at], now: now);
@@ -1478,7 +1478,7 @@ fn run_combine(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
       } else {
         set lapsed = found.lapsed;
       }
-      let size = gather(slots: slots, keys: &keys, positions: &positions, found: found, operation: operation, env: env, now: now, result: &result);
+      let size = gather(slots: slots, keys: &keys, positions: &client^.key_metadata, found: found, operation: operation, env: env, now: now, result: &result);
       set client^.number = size;
       if storing {
         let target = found.destination;
@@ -1573,15 +1573,15 @@ fn run_sintercard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
     set index = index +wrap 2_u64;
   }
   let not_storing = False();
-  let positions = key_positions(count: args^.inner.len);
-  let keys = operand_keys(input: input, args: args, first: 2_u64, end: end, storing: not_storing, positions: &positions);
+  key_positions(positions: &client^.key_metadata, count: args^.inner.len);
+  let keys = operand_keys(input: input, args: args, first: 2_u64, end: end, storing: not_storing, positions: &client^.key_metadata);
   let now = time^.check;
   let unused = hash_map_new::<Key, unit, ceiling>(capacity: 0_u64);
   let lapsed = False();
   let size = 0_u64;
   set client^.state = state_done;
   atomic s = &store^.state, slots = &s^.map[keys] {
-    let found = survey(slots: slots, keys: &keys, positions: &positions, now: now);
+    let found = survey(slots: slots, keys: &keys, positions: &client^.key_metadata, now: now);
     set lapsed = found.lapsed;
     if found.wrong {
       set client^.state = state_wrong;
@@ -1590,7 +1590,7 @@ fn run_sintercard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
       let every = True();
       let filtered = True();
       let counting = False();
-      set size = combine(slots: slots, keys: &keys, positions: &positions, from: found.smallest, env: env, now: now, every: every, wanted: filtered, limit: limit, keep: counting, result: &unused);
+      set size = combine(slots: slots, keys: &keys, positions: &client^.key_metadata, from: found.smallest, env: env, now: now, every: every, wanted: filtered, limit: limit, keep: counting, result: &unused);
     }
   }
   if lapsed {
