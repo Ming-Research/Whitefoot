@@ -111,8 +111,53 @@ slowest there.
 1. **This stage.** Move the subset into `apps/firn`, answer the protocol's
    shapes, add the suite's value types and commands, measure against the
    criteria and close what they find.
-2. **Deployment.** The owner sets which features suffice for deployment.
+2. **Deployment.** Complete standalone application workloads under the
+   [deployment direction](#deployment-direction), with the remaining work
+   tracked under [firn in the TODO](../../../docs/todo.md#firn).
 3. **Scaling.** The keyspace past two cores, measured on the i9-14900K.
+
+## Deployment direction
+
+The deployment milestone uses firn to demonstrate Whitefoot through a useful
+standalone Redis replacement. Cache/session storage and scripted conditional
+updates are the core scenarios. Select existing applications or components
+whose business logic stays unchanged when pointed at firn through their
+ordinary clients; a leaderboard or queue can broaden the evidence once its
+consumer is selected. The specific consumers remain to be selected, not
+assumed supported. A count of implemented commands or passing tests does not
+by itself establish that these scenarios work.
+
+Release evidence must cover the selected applications end to end, the Redis
+semantics they use, concurrent operations, recovery and sustained operation.
+Compare throughput, tail latency, memory and core scaling under the same
+workload, semantics, durability settings and host conditions, naming engine
+versions and separating client limits from server costs. Report missing
+features, mismatches and losses as well as gains, and distinguish Whitefoot
+source from compiler-supplied native runtime support. The earlier benchmark
+criteria and results remain evidence for their stated workloads, not a
+deployment verdict or a requirement to win every possible workload.
+
+Replication, Sentinel, Cluster, modules and feature families unused by the
+selected applications do not gate this first standalone release. Their
+deferral does not claim compatibility with them; revisit the boundary when
+a selected application needs one. Operational correctness within the chosen
+boundary, including bounded memory and durable recovery when enabled, is
+part of the milestone rather than optional polish.
+
+The scripting milestone will implement Lua in Whitefoot for Redis's sandboxed
+Lua 5.1 environment, not as a separate general-purpose Lua distribution.
+Start with a vertical slice that executes a representative script through
+compilation, dynamic
+values, closures, object reclamation and Redis command calls. Before choosing
+its mechanisms, record candidates' data dependencies and a criterion that
+can reject their correctness or cost. Compare interpreter execution with
+Redis's Lua and complete script requests with Redis; use LuaJIT as an
+additional comparison with its mode reported, not a JIT requirement for
+release. A result that exposes a Whitefoot gap is evidence to address that
+gap, not a reason to substitute native Lua and credit the result to
+Whitefoot. The [Lua TODO](../../../docs/todo.md#firn) holds the unfinished
+work; no VM representation, GC algorithm or locking mechanism is selected
+here.
 
 ## Design of the program
 
