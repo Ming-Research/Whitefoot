@@ -330,8 +330,8 @@ impl Checker<'_, '_> {
                     .iter()
                     .any(|statement| statement_mentions(statement, binding))
         };
-        // [SHARE-2] the guard and block use every entry binding, and reach
-        // the state through the binding or an entry binding.
+        // [SHARE-2] the guard and block use every table binding, and reach
+        // the state through the binding or a table binding.
         for (entry, place) in entries.iter().zip(entry_places) {
             if !touched(entry.binding) {
                 return self.types.declarations.issue_node(
@@ -447,8 +447,9 @@ impl Checker<'_, '_> {
         counters
             .binding_names
             .push(declaration.spelling().to_owned());
-        let reference =
+        let mut reference =
             ReferenceInfo::formed(ReferenceKind::Single, ResolvedPlace::binding(binding));
+        reference.atomic_sources.push(binding);
         self.body
             .record_reference_origins(binding, &reference.paths);
         block_bindings.insert(
@@ -863,8 +864,37 @@ impl Checker<'_, '_> {
         let Some(local) = bindings.get(&declaration) else {
             return Ok(());
         };
-        if local.binding != state {
+        if local.binding != state
+            && !local
+                .reference
+                .as_ref()
+                .is_some_and(|reference| reference.atomic_sources.contains(&state))
+        {
             return Ok(());
+        }
+        let mut bases = local
+            .reference
+            .as_ref()
+            .map(|reference| {
+                reference
+                    .paths
+                    .iter()
+                    .filter(|path| path.root == PlaceRoot::Binding(state))
+                    .map(|path| {
+                        path.path
+                            .iter()
+                            .take_while(|step| matches!(step, PlaceStep::Field(_)))
+                            .filter_map(|step| match step {
+                                PlaceStep::Field(field) => Some(*field),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if local.binding == state {
+            bases.push(Vec::new());
         }
         let suffixes = self
             .types
@@ -911,17 +941,18 @@ impl Checker<'_, '_> {
             reaches_table = self.table_entry_type(ty).is_some();
         }
         let grant = self.body.atomic_grant.as_mut().unwrap();
-        if let Some(index) = grant
-            .tables
-            .iter()
-            .position(|table| fields.starts_with(table))
-        {
+        if let Some(index) = grant.tables.iter().position(|table| {
+            bases.iter().any(|base| {
+                let reached = base.iter().chain(&fields).copied().collect::<Vec<_>>();
+                reached.starts_with(table)
+            })
+        }) {
             grant.refusals.push((node, SemanticIssueKind::AtomicTableNotGranted {
                 table: grant.names[index].clone(), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
             }));
         } else if reaches_table {
             grant.refusals.push((node, SemanticIssueKind::AtomicTableNotGranted {
-                table: "a table reached through a Box".to_owned(), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
+                table: "a table reached through the state binding".to_owned(), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
             }));
         }
         Ok(())

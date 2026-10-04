@@ -1,0 +1,22 @@
+struct Store {
+  map: KeyedTable<u8>;
+  count: u8;
+}
+
+fn touch(env: &Store) -> result: unit writes(env.map) {
+  let fresh = keyed_table_new::<u8>(capacity: 0_u64);
+  set env^.map = move fresh;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let state = Store(map: move table, count: 0_u8);
+  let store = shared_new::<Store>(value: move state);
+  let counted = 0_u64;
+  atomic s = &store, t = &s^.map {
+    touch(env: s);
+    set counted = keyed_table_count::<u8>(table: t);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

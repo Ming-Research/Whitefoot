@@ -3,9 +3,8 @@
 //! A reference is a local name for a path [REF-1]. It is not storage of its
 //! own, it carries no permission marker, no region and no loan, and it never
 //! escapes the function that formed it [REF-3]. What the checker therefore
-//! has to carry for a reference binding is exactly three things: the set of
-//! paths it names, whether it is a `&T` or a `&[T]` [REF-4], and whether it
-//! is still valid [REF-2].
+//! carries each reference's possible paths and kind [REF-4], validity
+//! [REF-2], preservation dependencies and atomic-header origins [SHARE-2].
 //!
 //! The validity fact is threaded through the statement walk rather than
 //! recomputed on demand, because [REF-2]'s closing sentence puts it outside
@@ -135,6 +134,8 @@ pub(super) enum InvalidationEvent {
     /// A call's substituted row writes a proper prefix of the path
     /// [EFF-5 clause 3].
     CallWrite,
+    /// A call writes a whole binding's table or a prefix [SHARE-2].
+    WholeTableWritten,
     /// The scope of the local variable the path starts at ended.
     RootScopeEnded,
     /// A window operation moved the boundary or the logical origin the
@@ -156,6 +157,7 @@ impl InvalidationEvent {
             Self::PrefixWritten => "a proper prefix of the reference's path was written",
             Self::PrefixMoved => "the reference's path or a prefix of it was moved out of",
             Self::CallWrite => "a call wrote a proper prefix of the reference's path",
+            Self::WholeTableWritten => "a call wrote the whole binding's table or a prefix of it",
             Self::RootScopeEnded => "the scope of the local variable the path starts at ended",
             Self::WindowBoundaryMoved => {
                 "a window operation moved the boundary or origin the reference was formed under"
@@ -185,6 +187,9 @@ pub(super) struct ReferenceInfo {
     /// set an entry binder's entries follow [SHARE-2], whose elements a write
     /// through the binder does not write.
     pub(super) anchors: Vec<ResolvedPlace>,
+    /// Header bindings through which this reference was formed. Joins keep
+    /// every origin: sharing a physical target does not transfer a grant.
+    pub(super) atomic_sources: Vec<BindingId>,
     pub(super) validity: ReferenceValidity,
     /// Header validity variables this reference still depends on. A freshly
     /// formed reference has none. Copying a reference name retains the
@@ -195,6 +200,12 @@ pub(super) struct ReferenceInfo {
     /// Conjunctive event-site questions needed to preserve this reference.
     /// They become obligations only when the reference is used.
     pub(super) preservations: Vec<CheckedCallSeparation>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct LoopReferenceSummary {
+    pub(super) paths: Vec<ResolvedPlace>,
+    pub(super) atomic_sources: Vec<BindingId>,
 }
 
 impl ReferenceInfo {
@@ -211,10 +222,23 @@ impl ReferenceInfo {
             kind,
             paths,
             anchors: Vec::new(),
+            atomic_sources: Vec::new(),
             validity: ReferenceValidity::Valid,
             loop_dependencies: Vec::new(),
             preservations: Vec::new(),
         }
+    }
+
+    fn formed_through(
+        kind: ReferenceKind,
+        paths: Vec<ResolvedPlace>,
+        parent: Option<&Self>,
+    ) -> Self {
+        let mut reference = Self::formed_paths(kind, paths);
+        if let Some(parent) = parent {
+            reference.atomic_sources.clone_from(&parent.atomic_sources);
+        }
+        reference
     }
 
     pub(super) const fn is_valid(&self) -> bool {
@@ -249,6 +273,11 @@ impl ReferenceInfo {
     /// An index one edge superseded is superseded after the join too, so the
     /// same capture on both edges stays one member rather than two.
     pub(super) fn join(&mut self, other: &Self) {
+        for source in &other.atomic_sources {
+            if !self.atomic_sources.contains(source) {
+                self.atomic_sources.push(*source);
+            }
+        }
         for path in &other.paths {
             if !self.paths.contains(path) {
                 self.paths.push(path.clone());
@@ -533,6 +562,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// [REF-1] one root is added once; a differing shape becomes a cone
     /// whose finite anchor can only shorten. Repeated visits cannot unroll
     /// its unknown tail or mint additional captured identities.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn join_loop_reference_summary(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -540,6 +570,7 @@ impl<'unit> Checker<'_, 'unit> {
         ty: CheckedType,
         kind: ReferenceKind,
         paths: &[ResolvedPlace],
+        atomic_sources: &[BindingId],
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<bool, CheckStop> {
         let mut contributions = Vec::new();
@@ -556,17 +587,27 @@ impl<'unit> Checker<'_, 'unit> {
             contributions.push((path, readonly));
         }
         let summaries = &mut self.body.loop_reference_summaries;
-        let paths = match summaries.entry(token) {
+        let summary = match summaries.entry(token) {
             std::collections::hash_map::Entry::Vacant(entry) => {
                 // Preserve all static entry alternatives until a contribution
                 // leaves those shapes. Merely entering a loop must not lose
                 // a previously established sibling-field separation.
-                entry.insert(contributions.into_iter().map(|(path, _)| path).collect());
+                entry.insert(LoopReferenceSummary {
+                    paths: contributions.into_iter().map(|(path, _)| path).collect(),
+                    atomic_sources: atomic_sources.to_vec(),
+                });
                 return Ok(true);
             }
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
         };
         let mut changed = false;
+        for source in atomic_sources {
+            if !summary.atomic_sources.contains(source) {
+                summary.atomic_sources.push(*source);
+                changed = true;
+            }
+        }
+        let paths = &mut summary.paths;
         for (incoming, incoming_readonly) in contributions {
             if !incoming.has_descendant()
                 && paths.iter().any(|current| {
@@ -1069,7 +1110,13 @@ impl<'unit> Checker<'_, 'unit> {
             return Ok(TypedExpression {
                 expression,
                 mode: CheckedMode::Reference,
-                reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Single, places)),
+                reference: Some(ReferenceInfo::formed_through(
+                    ReferenceKind::Single,
+                    places,
+                    root_binding
+                        .as_ref()
+                        .and_then(|local| local.reference.as_ref()),
+                )),
                 reference_value: true,
                 effects,
                 accesses,
@@ -1136,7 +1183,13 @@ impl<'unit> Checker<'_, 'unit> {
         } else {
             vec![place]
         };
-        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Single, places.clone());
+        let mut reference = ReferenceInfo::formed_through(
+            ReferenceKind::Single,
+            places.clone(),
+            root_binding
+                .as_ref()
+                .and_then(|local| local.reference.as_ref()),
+        );
         if let Some(CheckedPlaceStep::Subscript(index)) = path.last()
             && matches!(ty, CheckedType::KeyedEntries { .. })
             && let CheckedExpression::BorrowAddressed { root: keys, .. } = &index.offset
@@ -1146,7 +1199,12 @@ impl<'unit> Checker<'_, 'unit> {
                 path: keys.path.iter().map(CheckedPlaceStep::place_step).collect(),
             };
             let anchors = self.replace_reference_roots_for_entries(key_place, bindings);
-            reference.anchors.extend(anchors);
+            reference
+                .anchors
+                .extend(anchors.into_iter().map(|mut anchor| {
+                    anchor.path.push(PlaceStep::Index(CapturedValue::unknown()));
+                    anchor
+                }));
         }
         let kind = ReferenceKind::Single;
         let expression = CheckedExpression::BorrowAddressed {
@@ -1313,7 +1371,11 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Range,
-            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference: Some(ReferenceInfo::formed_through(
+                ReferenceKind::Range,
+                places,
+                root_binding.and_then(|local| local.reference.as_ref()),
+            )),
             reference_value: true,
             effects: carried.effects,
             accesses,
@@ -1618,7 +1680,11 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Range,
-            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
+            reference: Some(ReferenceInfo::formed_through(
+                ReferenceKind::Range,
+                places,
+                root_binding.and_then(|local| local.reference.as_ref()),
+            )),
             reference_value: true,
             effects: carried.effects,
             accesses,
@@ -2010,7 +2076,10 @@ impl<'unit> TypeContext<'unit> {
                 local.call_value = false;
             }
         }
-        let include_equal = matches!(event, InvalidationEvent::PrefixMoved);
+        let include_equal = matches!(
+            event,
+            InvalidationEvent::PrefixMoved | InvalidationEvent::WholeTableWritten
+        );
         let primitive_write = !include_equal
             && !matches!(
                 written.path.last(),

@@ -1411,6 +1411,14 @@ impl<'unit> Checker<'_, 'unit> {
                             LexicalUseRole::PlaceBase,
                         )?;
                         if selected.ty == CheckedType::KeySet {
+                            if self
+                                .types
+                                .declarations
+                                .tree
+                                .has_fixed(offset_node, FixedTerminal::Move)?
+                            {
+                                return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a table by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
+                            }
                             Some(self.check_place_borrow(
                                 context,
                                 offset_node,
@@ -1428,12 +1436,16 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 None
             };
+            let set_place = set.is_some();
             let mut offset = match set {
                 Some(set) => set,
                 None => self.check_atom(context, offset_node, &mut probe, loop_depth)?,
             };
             let captured = if table_entry.is_some() {
                 if offset.expression.ty() == CheckedType::KeySet {
+                    if !set_place {
+                        return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a table by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
+                    }
                     if self.body.table_set_borrow != Some(suffix) {
                         return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableEntriesNotBorrowed { mechanical_fix: "write `&t^[keys]`: the entries under a key set are reached only as a reference of kind `&KeyedEntries<V>`" });
                     }

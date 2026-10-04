@@ -603,7 +603,8 @@ struct BodyChecker {
     /// owning loop resolves its variables before the function is published;
     /// the function driver clears this scratch state on every retry.
     deferred_loop_reference_uses: Vec<references::DeferredLoopReferenceUse>,
-    loop_reference_summaries: HashMap<references::LoopReferenceToken, Vec<ResolvedPlace>>,
+    loop_reference_summaries:
+        HashMap<references::LoopReferenceToken, references::LoopReferenceSummary>,
     /// [REF-1, EFF-1] for each loop, the bindings a write reaches its
     /// backedge with where its header depends on them: a reference live at
     /// the header captured an index from the binding, or the binding is a

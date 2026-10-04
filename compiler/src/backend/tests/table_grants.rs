@@ -17,6 +17,7 @@ fn witness(name: &str) -> Vec<u8> {
 fn whole_table_witnesses_detect_read_selection_in_write_position() {
     for (name, expected) in [
         ("whole-binding-entry", 22),
+        ("whole-binding-alias", 22),
         ("whole-binding-count-sees-own-writes", 21),
         ("whole-binding-passed-to-callee", 1),
         ("whole-binding-guard", 1),

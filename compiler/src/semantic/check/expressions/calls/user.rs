@@ -515,6 +515,7 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
+        let mut written_whole = Vec::new();
         if let Some(grant) = self.body.atomic_grant.as_mut() {
             for effect in &substituted {
                 if effect.place.root != PlaceRoot::Binding(grant.state) {
@@ -538,6 +539,9 @@ impl<'unit> Checker<'_, 'unit> {
                             grant.whole.iter().find(|(path, _)| *path == table_path)
                         {
                             grant.touched.push(*binding);
+                            if effect.write && table_path.starts_with(&effect.place.path) {
+                                written_whole.push(*binding);
+                            }
                         } else {
                             grant.refusals.push((node, SemanticIssueKind::AtomicRowReachesTable {
                                 callee: signature.name.clone(), path: signature.parameters[effect.argument].name.clone(), table: grant.names[index].clone(),
@@ -549,6 +553,13 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
 
+        for binding in written_whole {
+            self.types.invalidate_references(
+                bindings,
+                &ResolvedPlace::binding(binding),
+                &InvalidationEvent::WholeTableWritten,
+            )?;
+        }
         let result = signature.result;
         let result_mode = signature.result_mode;
         let (formal_effects, formal_contract) = match formal {

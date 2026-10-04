@@ -482,6 +482,7 @@ impl<'unit> Checker<'_, 'unit> {
                     expected_type,
                     previous_kind,
                     &reference.paths,
+                    &reference.atomic_sources,
                     bindings,
                 )?
             {
