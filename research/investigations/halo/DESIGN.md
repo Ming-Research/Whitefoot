@@ -270,4 +270,9 @@ private to the runtime), which lands first.
 - **E3, checked operands.** The same loop with checked and with `u8`-bounded
   operand access, to price G4.
 
+- **Oracle corpus.** 80 EVAL scripts (Lua 5.1 core semantics, the Redis
+  scripting API, application scripts, the codec libraries) with the replies
+  Redis 7.0.15 gives, in a RESP-typed form; the same runner pointed at firn
+  compares a Halo build ([experiments/halo-oracle](../../experiments/halo-oracle/)).
+
 Each experiment states its falsifier before it runs.
