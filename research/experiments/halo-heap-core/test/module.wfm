@@ -1,0 +1,1 @@
+public fn main(inputs: std::process::Inputs) -> r: std::process::ExitStatus pure waits doc "Short deterministic heap comparison trace.";

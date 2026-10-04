@@ -1,0 +1,848 @@
+alias Value = pkg::value::Value;
+
+fn is_nil(v: Value) -> r: Bool pure {
+  match v {
+    Nil() => {
+      return True();
+    }
+    False() => {
+      return False();
+    }
+    True() => {
+      return False();
+    }
+    Num(..) => {
+      return False();
+    }
+    Str(..) => {
+      return False();
+    }
+    Tab(..) => {
+      return False();
+    }
+    Fun(..) => {
+      return False();
+    }
+    Builtin(..) => {
+      return False();
+    }
+  }
+}
+
+fn equal(a: Value, b: Value) -> r: Bool pure {
+  match a {
+    Nil() => {
+      return is_nil(v: b);
+    }
+    False() => {
+      match b {
+        False() => {
+          return True();
+        }
+        Nil() => {
+        }
+        True() => {
+        }
+        Num(n: y) => {
+        }
+        Str(h: y) => {
+        }
+        Tab(h: y) => {
+        }
+        Fun(h: y) => {
+        }
+        Builtin(id: y) => {
+        }
+      }
+    }
+    True() => {
+      match b {
+        True() => {
+          return True();
+        }
+        Nil() => {
+        }
+        False() => {
+        }
+        Num(n: y) => {
+        }
+        Str(h: y) => {
+        }
+        Tab(h: y) => {
+        }
+        Fun(h: y) => {
+        }
+        Builtin(id: y) => {
+        }
+      }
+    }
+    Num(n: x) => {
+      match b {
+        Num(n: y) => {
+          return feq(x, y);
+        }
+        Nil() => {
+        }
+        False() => {
+        }
+        True() => {
+        }
+        Str(h: y) => {
+        }
+        Tab(h: y) => {
+        }
+        Fun(h: y) => {
+        }
+        Builtin(id: y) => {
+        }
+      }
+    }
+    Str(h: x) => {
+      match b {
+        Str(h: y) => {
+          return x == y;
+        }
+        Nil() => {
+        }
+        False() => {
+        }
+        True() => {
+        }
+        Num(n: y) => {
+        }
+        Tab(h: y) => {
+        }
+        Fun(h: y) => {
+        }
+        Builtin(id: y) => {
+        }
+      }
+    }
+    Tab(h: x) => {
+      match b {
+        Tab(h: y) => {
+          return x == y;
+        }
+        Nil() => {
+        }
+        False() => {
+        }
+        True() => {
+        }
+        Num(n: y) => {
+        }
+        Str(h: y) => {
+        }
+        Fun(h: y) => {
+        }
+        Builtin(id: y) => {
+        }
+      }
+    }
+    Fun(h: x) => {
+      match b {
+        Fun(h: y) => {
+          return x == y;
+        }
+        Nil() => {
+        }
+        False() => {
+        }
+        True() => {
+        }
+        Num(n: y) => {
+        }
+        Str(h: y) => {
+        }
+        Tab(h: y) => {
+        }
+        Builtin(id: y) => {
+        }
+      }
+    }
+    Builtin(id: x) => {
+      match b {
+        Builtin(id: y) => {
+          return x == y;
+        }
+        Nil() => {
+        }
+        False() => {
+        }
+        True() => {
+        }
+        Num(n: y) => {
+        }
+        Str(h: y) => {
+        }
+        Tab(h: y) => {
+        }
+        Fun(h: y) => {
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn key_hash(heap: &Heap, key: Value) -> r: u64 reads(heap.strings) {
+  match key {
+    Nil() => {
+      return 0_u64;
+    }
+    False() => {
+      return 0_u64;
+    }
+    True() => {
+      return 1_u64;
+    }
+    Num(n: x) => {
+      if feq(x, 0.0_f64) {
+        return 0_u64;
+      }
+      let bits = reinterpret::<f64, u64>(x);
+      let high = ishr(bits, 32_u32);
+      let low = iand(bits, 4294967295_u64);
+      let sum = low + high;
+      return iand(sum, 4294967295_u64);
+    }
+    Str(h: x) => {
+      let i = cvt::<u32, u64>(x);
+      if i < heap^.strings.inner.len {
+        if heap^.strings.inner[i].live {
+          return heap^.strings.inner[i].payload.hash;
+        }
+      }
+      return 0_u64;
+    }
+    Tab(h: x) => {
+      return cvt::<u32, u64>(x);
+    }
+    Fun(h: x) => {
+      return cvt::<u32, u64>(x);
+    }
+    Builtin(id: x) => {
+      return cvt::<u32, u64>(x);
+    }
+  }
+}
+
+fn integer_key(key: Value) -> r: u64 pure {
+  match pkg::value::num_of(v: key) {
+    Is(x: number) => {
+      if cvt.defined::<f64, u64>(number) {
+        let k = cvt::<f64, u64>(number);
+        let back = cvt.nearest::<u64, f64>(k);
+        if feq(back, number) {
+          return k;
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  return 0_u64;
+}
+
+fn table_handle(heap: &Heap, t: Value) -> r: Option<u64> reads(heap) {
+  match pkg::value::tab_of(v: t) {
+    Handle(h: hv) => {
+      let i = cvt::<u32, u64>(hv);
+      if i < heap^.tables.inner.len {
+        if heap^.tables.inner[i].live {
+          return Some<u64>(value: i);
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return None<u64>();
+}
+
+fn main_position(heap: &Heap, key: Value, n: u64) -> r: u64 reads(heap.strings) {
+  doc "Bundled Redis ltable.c hashnum sums the unchanged double words modulo 2^32, with zero normalized. Strings and booleans use hashpow2; numbers and handles use hashmod. A zero-size hash has virtual dummy index zero.";
+  if n == 0_u64 {
+    return 0_u64;
+  }
+  let hash = key_hash(heap: heap, key: key);
+  let modulus = n;
+  match key {
+    Str(..) => {
+    }
+    False() => {
+    }
+    True() => {
+    }
+    Nil() => {
+    }
+    Num(..) => {
+      let last = n - 1_u64;
+      set modulus = ior(last, 1_u64);
+    }
+    Tab(..) => {
+      let last = n - 1_u64;
+      set modulus = ior(last, 1_u64);
+    }
+    Fun(..) => {
+      let last = n - 1_u64;
+      set modulus = ior(last, 1_u64);
+    }
+    Builtin(..) => {
+      let last = n - 1_u64;
+      set modulus = ior(last, 1_u64);
+    }
+  }
+  if modulus > 0_u64 {
+    return hash % modulus;
+  }
+  return 0_u64;
+}
+
+fn node_find(heap: &Heap, nodes: &Box<Slots<Node>>, key: Value) -> r: Option<u64> reads(heap.strings), reads(nodes) {
+  let i = main_position(heap: heap, key: key, n: nodes^.inner.len);
+  loop @chain {
+    if i < nodes^.inner.len {
+      if equal(a: nodes^.inner[i].key, b: key) {
+        return Some<u64>(value: i);
+      }
+      set i = cvt::<u32, u64>(nodes^.inner[i].next);
+    } else {
+      return None<u64>();
+    }
+  }
+  return None<u64>();
+}
+
+fn power_capacity(n: u64) -> r: u64 pure {
+  let cap = 1_u64;
+  if n == 0_u64 {
+    return 0_u64;
+  }
+  loop @power {
+    if cap >= n {
+      return cap;
+    }
+    if cap <= 33554432_u64 {
+      set cap = cap * 2_u64;
+    } else {
+      return 0_u64;
+    }
+  }
+  return 0_u64;
+}
+
+fn values_new(n: u64) -> r: Box<Slots<Value>> pure {
+  let b = box_slots_new::<Value>(capacity: n);
+  for (i in 0_u64..n) {
+    if b.inner.len < b.inner.cap {
+      let nil = Value::Nil();
+      place_back(window: &b.inner, value: nil);
+    }
+  }
+  return move b;
+}
+
+fn nodes_new(n: u64) -> r: Box<Slots<Node>> pure {
+  let b = box_slots_new::<Node>(capacity: n);
+  for (i in 0_u64..n) {
+    if b.inner.len < b.inner.cap {
+      let nil = Value::Nil();
+      let node = Node(next: no_handle, key: nil, val: nil);
+      place_back(window: &b.inner, value: node);
+    }
+  }
+  return move b;
+}
+
+fn new_table(heap: &Heap, asize: u32, hsize: u32) -> r: Value writes(heap) {
+  let a = cvt::<u32, u64>(asize);
+  let h = cvt::<u32, u64>(hsize);
+  if a > 67108864_u64 {
+    return Value::Nil();
+  }
+  let n = power_capacity(n: h);
+  if h > 0_u64 {
+    if n == 0_u64 {
+      return Value::Nil();
+    }
+  }
+  let array = values_new(n: a);
+  let nodes = nodes_new(n: n);
+  let ro = False();
+  let t = Table(array: move array, nodes: move nodes, node_count: 0_u32, lastfree: n, meta: no_handle, read_only: ro, flags: 255_u8);
+  match alloc_table(heap: heap, payload: move t) {
+    Some(value: hv) => {
+      return Value::Tab(h: hv);
+    }
+    None() => {
+      return Value::Nil();
+    }
+  }
+}
+
+fn table_get(heap: &Heap, t: Value, key: Value) -> r: Value reads(heap) {
+  match table_handle(heap: heap, t: t) {
+    Some(value: ti) => {
+      if ti < heap^.tables.inner.len {
+        let k = integer_key(key: key);
+        if k > 0_u64 {
+          let i = k - 1_u64;
+          if i < heap^.tables.inner[ti].payload.array.inner.len {
+            return heap^.tables.inner[ti].payload.array.inner[i];
+          }
+        }
+        match node_find(heap: heap, nodes: &heap^.tables.inner[ti].payload.nodes, key: key) {
+          Some(value: i) => {
+            if i < heap^.tables.inner[ti].payload.nodes.inner.len {
+              return heap^.tables.inner[ti].payload.nodes.inner[i].val;
+            }
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return Value::Nil();
+}
+
+fn insert_parts(heap: &Heap, array: &Box<Slots<Value>>, nodes: &Box<Slots<Node>>, lastfree: &u64, node_count: &u32, key: Value, val: Value) -> r: Bool reads(heap.strings), writes(array), writes(nodes), writes(lastfree), writes(node_count) {
+  doc "luaH_set/newkey: lookup reuses a retained key even with nil value. New keys may replace a nil-valued main position without clearing its chain; only getfreepos exhaustion requests rehash.";
+  let k = integer_key(key: key);
+  if k > 0_u64 {
+    let i = k - 1_u64;
+    if i < array^.inner.len {
+      set array^.inner[i] = val;
+      return True();
+    }
+  }
+  match node_find(heap: heap, nodes: nodes, key: key) {
+    Some(value: i) => {
+      if i < nodes^.inner.len {
+        set nodes^.inner[i].val = val;
+        return True();
+      }
+    }
+    None() => {
+    }
+  }
+  let mp = main_position(heap: heap, key: key, n: nodes^.inner.len);
+  if mp < nodes^.inner.len {
+    let fresh = is_nil(v: nodes^.inner[mp].key);
+    if is_nil(v: nodes^.inner[mp].val) {
+    } else {
+      set fresh = True();
+      let free = cvt::<u32, u64>(no_handle);
+      loop @free {
+        let upper = lastfree^;
+        if upper > 0_u64 {
+          let candidate = upper - 1_u64;
+          set lastfree^ = candidate;
+          if candidate < nodes^.inner.len {
+            if is_nil(v: nodes^.inner[candidate].key) {
+              set free = candidate;
+              break @free;
+            }
+          }
+        } else {
+          return False();
+        }
+      }
+      if free > 4294967295_u64 {
+        return False();
+      }
+      if free < nodes^.inner.len {
+        let other = main_position(heap: heap, key: nodes^.inner[mp].key, n: nodes^.inner.len);
+        if other != mp {
+          loop @previous {
+            if other < nodes^.inner.len {
+              let next = cvt::<u32, u64>(nodes^.inner[other].next);
+              if next == mp {
+                break @previous;
+              }
+              set other = next;
+            } else {
+              return False();
+            }
+          }
+          if other < nodes^.inner.len {
+            let link = cvt::<u64, u32>(free);
+            set nodes^.inner[other].next = link;
+            let displaced = nodes^.inner[mp];
+            set nodes^.inner[free] = displaced;
+            set nodes^.inner[mp].next = no_handle;
+            let nil = Value::Nil();
+            set nodes^.inner[mp].val = nil;
+          }
+        } else {
+          set nodes^.inner[free].next = nodes^.inner[mp].next;
+          let link = cvt::<u64, u32>(free);
+          set nodes^.inner[mp].next = link;
+          set mp = free;
+        }
+      } else {
+        return False();
+      }
+    }
+    if mp < nodes^.inner.len {
+      set nodes^.inner[mp].key = key;
+      set nodes^.inner[mp].val = val;
+      if fresh {
+        set node_count^ = node_count^ +sat 1_u32;
+      }
+      return True();
+    }
+  }
+  return False();
+}
+
+fn histogram(nums: &Array<u64, 27>, key: Value) -> r: unit writes(nums) {
+  let k = integer_key(key: key);
+  if k > 0_u64 {
+    if k <= 67108864_u64 {
+      let p = 1_u64;
+      let bin = 0_u64;
+      loop @bin {
+        if p >= k {
+          break @bin;
+        }
+        if p <= 33554432_u64 {
+          set p = p * 2_u64;
+          set bin = bin +sat 1_u64;
+        } else {
+          break @bin;
+        }
+      }
+      if bin < 27_u64 {
+        let old = nums^[bin];
+        set nums^[bin] = old +sat 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn rehash(heap: &Heap, ti: u64, extra: Value) -> r: Bool writes(heap) {
+  doc "ltable.c numusearray, numusehash, computesizes and resize select sizes, with its 32-bit-int MAXBITS of 26. Count the extra key even when its new value is nil. Retained nil nodes disappear at rehash.";
+  if ti < heap^.tables.inner.len {
+    let nums = array_filled::<u64, 27>(value: 0_u64);
+    let total = 1_u64;
+    histogram(nums: &nums, key: extra);
+    for (i in 0_u64..heap^.tables.inner[ti].payload.array.inner.len) {
+      if is_nil(v: heap^.tables.inner[ti].payload.array.inner[i]) {
+      } else {
+        let k = i + 1_u64;
+        let f = cvt.nearest::<u64, f64>(k);
+        let key = Value::Num(n: f);
+        histogram(nums: &nums, key: key);
+        set total = total +sat 1_u64;
+      }
+    }
+    for (i in 0_u64..heap^.tables.inner[ti].payload.nodes.inner.len) {
+      if is_nil(v: heap^.tables.inner[ti].payload.nodes.inner[i].val) {
+      } else {
+        histogram(nums: &nums, key: heap^.tables.inner[ti].payload.nodes.inner[i].key);
+        set total = total +sat 1_u64;
+      }
+    }
+    let size = 0_u64;
+    let used = 0_u64;
+    let count = 0_u64;
+    let power = 1_u64;
+    for (bin in 0_u64..27_u64) {
+      set count = count +sat nums[bin];
+      let half = power / 2_u64;
+      if count > half {
+        set size = power;
+        set used = count;
+      }
+      if power <= 33554432_u64 {
+        set power = power * 2_u64;
+      }
+    }
+    if used <= total {
+      let remaining = total - used;
+      let cap = power_capacity(n: remaining);
+      if remaining > 0_u64 {
+        if cap == 0_u64 {
+          return False();
+        }
+      }
+      let array = values_new(n: size);
+      let nodes = nodes_new(n: cap);
+      let lastfree = cap;
+      let node_count = 0_u32;
+      for (i in 0_u64..heap^.tables.inner[ti].payload.array.inner.len) {
+        let val = heap^.tables.inner[ti].payload.array.inner[i];
+        if is_nil(v: val) {
+        } else {
+          let k = i + 1_u64;
+          let f = cvt.nearest::<u64, f64>(k);
+          let key = Value::Num(n: f);
+          if insert_parts(heap: heap, array: &array, nodes: &nodes, lastfree: &lastfree, node_count: &node_count, key: key, val: val) {
+          } else {
+            return False();
+          }
+        }
+      }
+      for (j in 0_u64..heap^.tables.inner[ti].payload.nodes.inner.len) {
+        let n = heap^.tables.inner[ti].payload.nodes.inner.len;
+        let last = n - 1_u64;
+        let i = last - j;
+        let node = heap^.tables.inner[ti].payload.nodes.inner[i];
+        if is_nil(v: node.val) {
+        } else if insert_parts(heap: heap, array: &array, nodes: &nodes, lastfree: &lastfree, node_count: &node_count, key: node.key, val: node.val) {
+        } else {
+          return False();
+        }
+      }
+      let old = table_bytes(array: heap^.tables.inner[ti].payload.array.inner.len, nodes: heap^.tables.inner[ti].payload.nodes.inner.len);
+      let fresh = table_bytes(array: size, nodes: cap);
+      if fresh > old {
+        let delta = fresh - old;
+        if charge(heap: heap, amount: delta) {
+        } else {
+          return False();
+        }
+      } else {
+        let delta = old - fresh;
+        uncharge(heap: heap, amount: delta);
+      }
+      if ti < heap^.tables.inner.len {
+        set heap^.tables.inner[ti].payload.array = move array;
+        set heap^.tables.inner[ti].payload.nodes = move nodes;
+        set heap^.tables.inner[ti].payload.node_count = node_count;
+        set heap^.tables.inner[ti].payload.lastfree = lastfree;
+        return True();
+      }
+    }
+  }
+  return False();
+}
+
+fn table_set(heap: &Heap, t: Value, key: Value, val: Value) -> r: Result<unit, TableError> writes(heap) {
+  if is_nil(v: key) {
+    let e = TableError::NilKey();
+    return Err<unit, TableError>(error: e);
+  }
+  match pkg::value::num_of(v: key) {
+    Is(x: number) => {
+      if feq(number, number) {
+      } else {
+        let e = TableError::NanKey();
+        return Err<unit, TableError>(error: e);
+      }
+    }
+    Not() => {
+    }
+  }
+  match table_handle(heap: heap, t: t) {
+    Some(value: ti) => {
+      if ti < heap^.tables.inner.len {
+        set heap^.tables.inner[ti].payload.flags = 0_u8;
+        let k = integer_key(key: key);
+        if k > 0_u64 {
+          let i = k - 1_u64;
+          if i < heap^.tables.inner[ti].payload.array.inner.len {
+            set heap^.tables.inner[ti].payload.array.inner[i] = val;
+            return Ok<unit, TableError>(value: unit);
+          }
+        }
+        match node_find(heap: heap, nodes: &heap^.tables.inner[ti].payload.nodes, key: key) {
+          Some(value: i) => {
+            if i < heap^.tables.inner[ti].payload.nodes.inner.len {
+              set heap^.tables.inner[ti].payload.nodes.inner[i].val = val;
+              return Ok<unit, TableError>(value: unit);
+            }
+          }
+          None() => {
+          }
+        }
+        if table_insert(heap: heap, ti: ti, key: key, val: val) {
+          return Ok<unit, TableError>(value: unit);
+        }
+        if rehash(heap: heap, ti: ti, extra: key) {
+          if table_insert(heap: heap, ti: ti, key: key, val: val) {
+            return Ok<unit, TableError>(value: unit);
+          }
+        }
+        let e = TableError::Overflow();
+        return Err<unit, TableError>(error: e);
+      }
+    }
+    None() => {
+    }
+  }
+  let e = TableError::InvalidTable();
+  return Err<unit, TableError>(error: e);
+}
+
+fn table_insert(heap: &Heap, ti: u64, key: Value, val: Value) -> r: Bool writes(heap) {
+  if ti < heap^.tables.inner.len {
+    if insert_parts(heap: heap, array: &heap^.tables.inner[ti].payload.array, nodes: &heap^.tables.inner[ti].payload.nodes, lastfree: &heap^.tables.inner[ti].payload.lastfree, node_count: &heap^.tables.inner[ti].payload.node_count, key: key, val: val) {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn table_border(heap: &Heap, t: Value) -> r: u64 reads(heap) {
+  doc "ltable.c luaH_getn and unbound_search, including MAX_INT linear fallback.";
+  match table_handle(heap: heap, t: t) {
+    Some(value: ti) => {
+      if ti < heap^.tables.inner.len {
+        let j = heap^.tables.inner[ti].payload.array.inner.len;
+        let i = 0_u64;
+        if j > 0_u64 {
+          let last = j - 1_u64;
+          if last < heap^.tables.inner[ti].payload.array.inner.len {
+            if is_nil(v: heap^.tables.inner[ti].payload.array.inner[last]) {
+              loop @array_border {
+                if i > j {
+                  return i;
+                }
+                let distance = j - i;
+                if distance <= 1_u64 {
+                  return i;
+                }
+                let sum = i +sat j;
+                let m = sum / 2_u64;
+                let f = cvt.nearest::<u64, f64>(m);
+                let probe = Value::Num(n: f);
+                let val = table_get(heap: heap, t: t, key: probe);
+                if is_nil(v: val) {
+                  set j = m;
+                } else {
+                  set i = m;
+                }
+              }
+            }
+          }
+        }
+        if heap^.tables.inner[ti].payload.nodes.inner.len == 0_u64 {
+          return j;
+        }
+        set i = j;
+        set j = j +sat 1_u64;
+        loop @unbound {
+          let f = cvt.nearest::<u64, f64>(j);
+          let probe = Value::Num(n: f);
+          let val = table_get(heap: heap, t: t, key: probe);
+          if is_nil(v: val) {
+            break @unbound;
+          }
+          set i = j;
+          set j = j *sat 2_u64;
+          if j > 2147483645_u64 {
+            let k = 1_u64;
+            loop @linear (
+              invariant positive: k >= 1_u64
+            ) {
+              let linear_f = cvt.nearest::<u64, f64>(k);
+              let probe_key = Value::Num(n: linear_f);
+              let linear_val = table_get(heap: heap, t: t, key: probe_key);
+              if is_nil(v: linear_val) {
+                return k - 1_u64;
+              }
+              set k = k +sat 1_u64;
+            }
+          }
+        }
+        loop @hash_border {
+          if i <= j {
+            let distance = j - i;
+            if distance <= 1_u64 {
+              return i;
+            }
+            let sum = i +sat j;
+            let m = sum / 2_u64;
+            let f = cvt.nearest::<u64, f64>(m);
+            let linear_key = Value::Num(n: f);
+            let val = table_get(heap: heap, t: t, key: linear_key);
+            if is_nil(v: val) {
+              set j = m;
+            } else {
+              set i = m;
+            }
+          } else {
+            return i;
+          }
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return 0_u64;
+}
+
+fn table_next(heap: &Heap, t: Value, key: Value) -> r: Result<Option<Pair>, TableError> reads(heap) {
+  doc "ltable.c findindex and luaH_next: array indices then node indices; nil-valued retained keys remain valid cursors.";
+  match table_handle(heap: heap, t: t) {
+    Some(value: ti) => {
+      if ti < heap^.tables.inner.len {
+        let start = 0_u64;
+        let node_start = 0_u64;
+        let scan_array = True();
+        if is_nil(v: key) {
+        } else {
+          let k = integer_key(key: key);
+          let alen = heap^.tables.inner[ti].payload.array.inner.len;
+          if k > 0_u64 {
+            if k <= alen {
+              set start = k;
+            } else {
+              set scan_array = False();
+            }
+          } else {
+            set scan_array = False();
+          }
+          if scan_array {
+          } else {
+            match node_find(heap: heap, nodes: &heap^.tables.inner[ti].payload.nodes, key: key) {
+              Some(value: i) => {
+                set node_start = i +sat 1_u64;
+              }
+              None() => {
+                let e = TableError::InvalidNext();
+                return Err<Option<Pair>, TableError>(error: e);
+              }
+            }
+          }
+        }
+        if scan_array {
+          for (i in start..heap^.tables.inner[ti].payload.array.inner.len) {
+            let val = heap^.tables.inner[ti].payload.array.inner[i];
+            if is_nil(v: val) {
+            } else {
+              let k = i + 1_u64;
+              let f = cvt.nearest::<u64, f64>(k);
+              let key_out = Value::Num(n: f);
+              let pair = Pair(key: key_out, val: val);
+              let some = Some<Pair>(value: pair);
+              return Ok<Option<Pair>, TableError>(value: some);
+            }
+          }
+        }
+        for (i in node_start..heap^.tables.inner[ti].payload.nodes.inner.len) {
+          let node = heap^.tables.inner[ti].payload.nodes.inner[i];
+          if is_nil(v: node.val) {
+          } else {
+            let pair = Pair(key: node.key, val: node.val);
+            let some = Some<Pair>(value: pair);
+            return Ok<Option<Pair>, TableError>(value: some);
+          }
+        }
+        let none = None<Pair>();
+        return Ok<Option<Pair>, TableError>(value: none);
+      }
+    }
+    None() => {
+    }
+  }
+  let e = TableError::InvalidTable();
+  return Err<Option<Pair>, TableError>(error: e);
+}
