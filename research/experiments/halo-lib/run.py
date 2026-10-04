@@ -41,6 +41,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--compiler', type=Path, required=True)
     p.add_argument('--lua', type=Path, required=True)
+    p.add_argument('--redis-source', type=Path, required=True, help='Redis 7.0.15 source tree for rand.c and bundled Lua headers')
+    p.add_argument('--cc', default='cc')
     p.add_argument('--cache', type=Path)
     p.add_argument('--adapter', type=Path, help='reuse an already built adapter')
     p.add_argument('--sample', action='store_true', help='size the run with numeric.lua only')
@@ -53,8 +55,19 @@ def main():
     rows = []
     revision = run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True).stdout.decode().strip()
     sources = {str(path.relative_to(ROOT)): digest(path) for path in sorted((ROOT / 'lib/halo/vm').glob('*')) if path.is_file()}
-    sources.update({str(path.relative_to(ROOT)): digest(path) for path in sorted(HERE.glob('*.lua'))})
+    sources.update({str(path.relative_to(ROOT)): digest(path) for path in sorted(HERE.glob('*')) if path.suffix in ('.lua', '.c', '.py')})
+    sources['Reference lua.o'] = digest(a.lua.parent / 'lua.o')
+    sources['Reference liblua.a'] = digest(a.lua.parent / 'liblua.a')
+    sources['Redis deps/lua/src/linit.c'] = digest(a.redis_source / 'deps/lua/src/linit.c')
+    sources['Redis src/rand.c'] = digest(a.redis_source / 'src/rand.c')
+    sources['Redis src/script_lua.c'] = digest(a.redis_source / 'src/script_lua.c')
     with tempfile.TemporaryDirectory(prefix='build-', dir=HERE) as scratch:
+        reference = Path(scratch) / 'redis-lua'
+        initialization = Path(scratch) / 'linit.o'
+        started = time.monotonic()
+        run([a.cc, '-O2', '-DluaL_openlibs=halo_original_openlibs', '-I', a.redis_source / 'deps/lua/src', '-c', a.redis_source / 'deps/lua/src/linit.c', '-o', initialization])
+        run([a.cc, '-O2', '-I', a.redis_source / 'deps/lua/src', '-I', a.redis_source / 'src', HERE / 'reference.c', a.redis_source / 'src/rand.c', initialization, a.lua.parent / 'lua.o', a.lua.parent / 'liblua.a', '-lm', '-o', reference])
+        print(f'Reference bootstrap build: {time.monotonic() - started:.3f}s', flush=True)
         adapter = a.adapter or Path(scratch) / 'run'
         if not a.adapter:
             command = [a.compiler, '--graph', HERE / 'modules.wfg', '--entry', 'run', '-o', adapter]
@@ -65,7 +78,11 @@ def main():
             print(f'Native build: {time.monotonic() - started:.3f}s', flush=True)
         for name in names:
             source = (HERE / f'{name}.lua').read_bytes()
-            expected = run([a.lua, HERE / 'reference.lua'], input=source, capture_output=True).stdout
+            oracle = reference if name == 'random' else a.lua
+            expected = run([oracle, HERE / 'reference.lua'], input=source, capture_output=True).stdout
+            if name != 'random':
+                control = run([reference, HERE / 'reference.lua'], input=source, capture_output=True).stdout
+                assert compare(expected, control), 'relinked Lua changed a non-random observation'
             for budget in (18446744073709551615, 7, 1):
                 started = time.monotonic()
                 result = run([adapter], input=struct.pack('<Q', budget) + source, capture_output=True, timeout=60)
@@ -80,7 +97,7 @@ def main():
                     mismatches.append({'script': name, 'budget': budget, 'diff': text})
         record = {'source_revision': revision, 'source_sha256': sources, 'adapter_sha256': digest(adapter), 'compiler_sha256': digest(a.compiler), 'lua_sha256': digest(a.lua), 'rows': rows, 'mismatches': mismatches}
         if a.results:
-            a.results.write_text('# Halo library comparison results\n\n' + f'{len(rows)} script/budget comparisons; {sum(x["equal"] for x in rows)} equal; {len(mismatches)} mismatched.\n\n' + 'Reference-only bootstrap replaces the standalone Lua executable\'s libc random with Redis 7.0.15 rand.c/script_lua.c semantics. Each corpus source is otherwise identical.\n\n' + '```json\n' + json.dumps(record, indent=2) + '\n```\n')
+            a.results.write_text('# Halo library comparison results\n\n' + f'{len(rows)} script/budget comparisons; {sum(x["equal"] for x in rows)} equal; {len(mismatches)} mismatched.\n\n' + 'Reference-only C bootstrap installs callbacks from Redis 7.0.15 script_lua.c and links its original rand.c. Each corpus source is identical.\n\n' + '```json\n' + json.dumps(record, indent=2) + '\n```\n')
     return bool(mismatches)
 
 

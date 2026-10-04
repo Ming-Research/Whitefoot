@@ -59,7 +59,8 @@ This file stays with the library code while any of these adaptations remain.
 
 Redis random portions:
 
-Copyright (c) 2010-2012, Salvatore Sanfilippo.
+Copyright (c) 2010-2012, Salvatore Sanfilippo <antirez at gmail dot com>.
+Copyright (c) 2009-2021, Redis Ltd.
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
