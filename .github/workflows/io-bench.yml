@@ -94,6 +94,7 @@ jobs:
             tree="$RUNNER_TEMP/tree-$name"
             git worktree add --detach "$tree" "${pair#*=}"
             echo "revision,$name,$(git -C "$tree" rev-parse HEAD)" | tee -a "$RUNNER_TEMP/compare/revisions.csv"
+            cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
             make -C "$tree/compiler" build
             "$tree/compiler/target/gate/whitefootc" --full-lto \
               --graph "$tree/apps/firn/modules.wfg" --entry firn -o "$RUNNER_TEMP/compare/$name"
