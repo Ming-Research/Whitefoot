@@ -710,19 +710,22 @@ fn main() -> status: std::process::ExitStatus pure {
     with_checked(source, |checked| {
         let plan = super::specialize::PhysicalFunctions::build(&checked.data)
             .expect("accepted call inventory must close");
+        // Compiler-owned [PRE-1] records are emitted only when called. This
+        // fixture calls box_new; its other records, including nongeneric
+        // key-set operations and key_prepare, remain absent. Ordinary
+        // definitions and linked host declarations are still emitted.
+        let emitted = |function: &crate::semantic::CheckedFunction| {
+            function.body.is_some()
+                || !crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str())
+                || function.name == "box_new"
+        };
         for function in checked.data.executable_functions() {
             let variants = plan
                 .variants
                 .iter()
                 .filter(|variant| variant.source == function.id)
                 .count();
-            // A compiler-owned [PRE-1] record is emitted where a call reaches
-            // it: a generic one's instance exists only where called, and the
-            // key set's four, which take no type parameter, are not called
-            // here.
-            let record = function.body.is_none()
-                && crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str());
-            let expected = usize::from(!record || !function.name.starts_with("key_set_"));
+            let expected = usize::from(emitted(function));
             assert_eq!(
                 variants, expected,
                 "{}: one heap leaves one release environment, and every ordinary \
@@ -751,7 +754,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 .copied()
                 .filter(|source| {
                     let function = &checked.data.functions[source.0 as usize];
-                    function.body.is_some() || !function.name.starts_with("key_set_")
+                    emitted(function)
                 })
                 .collect::<Vec<_>>(),
             "physical order follows ordinary discovery order"

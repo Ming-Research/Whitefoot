@@ -441,15 +441,18 @@ running Darwin arm64. A Linux CI comparison is a separate environment.
    the sorted paired ratios. Repeat the entire matrix at most once after an
    identified environmental correction; retain both runs. Do not keep the
    best rounds or reinterpret missing cells as passing.
-4. The provisional recovery target is MSET median throughput at least 0.97
-   of the pre-regression image in every stable measured cell, with SET/GET
-   at least 0.97 of the published PR208 image. Report p50/p95/p99, memory and
-   allocations as well. A stable p99 increase over 10 percent, increased
-   per-request key copying, a correctness failure, or failure of a throughput
-   target rejects a claim of completed recovery and requires investigation.
-   If latency control itself differs by more than 10 percent, latency is
-   inconclusive. These tolerances are experimental criteria, not a change to
-   the user's performance goal or proof about the unavailable original host.
+4. The owner's acceptance target is no end-to-end regression against the
+   original high-performance revision `cea9188d4`, for MSET and the SET/GET
+   controls. The published PR208 image is an attribution reference only.
+   There is no permitted three-percent throughput loss: a reproducible
+   decrease fails the target, while a difference unresolved by the identical
+   control is inconclusive rather than passing. Report paired ratios,
+   p50/p95/p99, memory and allocations; investigate reproducible latency
+   increases as well. Increased per-request key copying or a correctness
+   failure also rejects completion. The noise thresholds in criterion 3
+   determine whether a measurement is interpretable, not an allowed
+   regression. These comparisons establish results only for their measured
+   environment, not for the unavailable original host.
 
 The falsifier for the attribution is that removing copies and insertion moves
 fails to reduce preparation time, or preparation improves while full MSET
