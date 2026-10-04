@@ -591,6 +591,87 @@ declared separately from the six-round full acceptance matrix. Keep all
 observations and identify scratch variants by their source and image hashes;
 neither partial completion nor a failed noise control establishes a win.
 
+The [50 throughput and latency samples](../../experiments/io-completion-bench/firn-caller-m1pro-mset.csv) and
+[50 RSS observations](../../experiments/io-completion-bench/firn-caller-m1pro-memory.csv)
+complete this caller diagnostic on the unpinned eight-core Apple M1 Pro,
+32 GiB RAM, macOS 26.6.2 / Darwin 25.6.0 arm64. One server driver and two
+client threads ran Redis 7.0.15's ten-key MSET with three-byte values,
+50 clients, a 100,000-key random domain and pipeline depth sixteen.
+Every image used 100,000 warmup requests and the same configured request
+count, 6,395,737 per round, sized from the fastest pilot for a twelve-second
+target.
+
+The throughput noise control failed: current/identical paired median
+0.999934 was centered, but its inclusive interquartile range 0.056682
+exceeded the declared 0.05 limit. Every paired p50/p95/p99 control ratio
+was within 0.90–1.10. Throughput conclusions remain inconclusive; the
+following paired medians are descriptive, and neither caller change is
+adopted. Small gains against the slower current implementation do not
+establish recovery against the original revision.
+
+| Caller image | Throughput/current | Throughput/original | p99/original |
+| --- | ---: | ---: | ---: |
+| Current | 1.000000 | 0.709656 | 1.492365 |
+| Inline classification, at most sixteen keys | 1.034214 | 0.741320 | 1.428401 |
+| Reused output buffers, at most sixteen keys | 1.033324 | 0.733238 | 1.454277 |
+
+The [compact manifest](../../experiments/io-completion-bench/firn-caller-m1pro-metadata.json)
+records the exact ten-round schedule, CSV hashes, compiler and executable
+SHA-256 identities, and each variant's source fingerprint and changed-file
+hashes. The current image is `9f5dc61af74ac7e1767a6ccbecd71b36d3f4ad9b`;
+its identical control uses the same executable. The original is
+`cea9188d46ae531b3f6eb5ec7d9e1c340c240aaf`. Both scratch applications derive
+from `5ddde4aadbb8a2fac6096b2b03da50bd53d4be9e`, whose production Firn
+inputs match the current image. Compiler and runtime stayed fixed. RSS
+medians were 22,416 KiB current, 22,400 inline, 22,312 reuse and 22,280
+original; sampled RSS is not an allocation count or a continuous peak.
+Retain these three linked files as attribution evidence until superseded
+or invalidated. No combined gain is inferred from this failed-noise trial.
+
+### Short-key comparator experiment
+
+A separate scratch comparison keeps heap sort, source ownership, private
+indices and the common byte acquisition order unchanged. The current native
+image still calls `memcmp` from preparation and heap comparisons; the sample
+profile does not show libc itself dominating the loss. The question is
+whether removing those calls for short keys reduces complete preparation
+cost enough to merit an end-to-end trial.
+
+For a common prefix length between eight and sixteen bytes, compare the
+first eight bytes as an unsigned big-endian word, loaded with fixed-size
+`memcpy`. If equal and longer than eight bytes, compare eight bytes beginning
+at `common length - 8`; its overlapping bytes have already compared equal.
+The two windows cover the whole common prefix without unaligned access or
+an overread. Equal words retain the ordinary proper-prefix length rule.
+Other lengths use the current comparator. Bounds validation precedes every
+load; word loads are independent and the earliest unequal word selects the
+answer. This adds no inter-key dependency, mutable cache, allocation or
+source-preparation pass. No prepared representation or public API changes.
+
+Before measuring, compare signs with an independent bytewise oracle for
+empty, equal, binary and unequal-length prefix keys, unaligned spans and
+spans ending at the source boundary. Include lengths 0, 1, 7, 8, 9, 15, 16,
+17, 32 and 256, with early and late distinctions. Wrong byte order, omission
+of the second window and wrong prefix order must each fail the oracle.
+Inspect native code to confirm that the intended short path has no libc
+comparison call. Run the maintained runtime variants as well.
+
+Measure unchanged heap preparation, the comparator candidate and an
+identical candidate control in one executable, using the same runtime-count
+and function-pointer dispatch for each. Use six balanced paired rounds,
+hundred-millisecond pilot sizing, counts 4, 10, 16, 17 and 64, the existing
+orders and head/tail distributions, and ten-key decimal-shaped input matching
+the client distribution. Keep every observation. Apply the existing identical
+control stability rules, expressing candidate/control throughput as control
+preparation time divided by candidate preparation time. Reject the candidate
+if the decimal ten-key target has no stable gain beyond control variation,
+another cell has a reproducible
+regression, or the intended short path still calls libc. An inconclusive
+cell remains unverified. A useful preparation result only selects the next
+otherwise-identical Firn trial; the original end-to-end baseline remains the
+acceptance requirement. Scratch code is removed after the comparison, with
+its criterion, identities and relevant raw evidence retained here.
+
 ### Small-batch sorting experiment
 
 The first M1 Pro preparation-only comparison, restricted to ten keys, found
@@ -615,6 +696,74 @@ criteria above. Select the candidate only if it removes the observed
 ten-key long-prefix regression without a stable preparation-time regression
 above three percent in another trial cell; any inconclusive cell remains
 unverified. A microbenchmark win still requires the full Firn comparison.
+This three-percent experiment reporting band does not permit a regression
+against the original end-to-end baseline.
+
+The scratch binary-insertion implementation using `memmove` failed that
+criterion. The [2,880 timing samples](../../experiments/io-completion-bench/prepared-small-sort-m1pro-times.csv)
+cover all 120 cells: five counts, four key lengths (8, 16, 32 and 256),
+three source orders, two distinguishing-byte positions, four algorithm
+labels and six paired rounds. The labels were ordered insertion, heap,
+candidate and an identical candidate control. All ran in one executable
+with counts parsed at runtime; both prepared functions were `noinline`
+and used the same volatile function-pointer dispatch. This avoids the
+ten-key pilot's constant-count specialization. Forward/reverse round pairs
+balanced positions; each cell used equal iteration counts across algorithms.
+The host was the same unpinned M1 Pro, Darwin 25.6.0 arm64, using Apple
+Clang 21.0.0 with `-std=c11 -O2`; the
+[metadata](../../experiments/io-completion-bench/prepared-small-sort-m1pro-metadata.json)
+retains the full flags and snapshot identities.
+
+| Ten shuffled keys, distinction at tail | Ordered insert, median ns | Heap, median ns | Candidate, median ns | Paired candidate/heap time |
+| --- | ---: | ---: | ---: | ---: |
+| 16 bytes | 281.97 | 190.23 | 349.50 | 1.838 |
+| 256 bytes | 463.42 | 536.39 | 621.91 | 1.159 |
+
+Of 120 cells, 119 met the declared identical-control criteria; 43 stable
+cells regressed more than three percent against heap sort, all at counts
+4, 10 or 16. The ten-key 256-byte target was also slower than ordered
+insertion (paired candidate/old time 1.348), so the motivating regression
+remained. The count-10, eight-byte, head, shuffled cell was inconclusive:
+control interquartile range 0.06026 exceeded 0.05. Every sample is retained.
+The control ratio is `identical_ns / candidate_ns`, equivalent to the
+predeclared candidate/control throughput ratio. As a sensitivity check,
+using direct candidate/control time instead would classify 118 cells as
+stable: count 17, length 32, head, sorted would also be inconclusive
+(interquartile range 0.052975). Both directions identify the same 43 losses;
+119 remains the primary count under the declared throughput criterion.
+This rejects this binary-insertion-plus-`memmove` implementation, not all
+binary insertion; production retains heap sort. No second trial was run.
+
+The [480 separate allocation/copy observations](../../experiments/io-completion-bench/prepared-small-sort-m1pro-observations.csv)
+show zero allocations and explicit key-byte copies for both prepared
+algorithms at count ten. Shuffled candidate input moved 160 metadata bytes
+with `memmove`; old warm insertion moved 480 and copied 160/2,560 key bytes
+for lengths 16/256. These counters omit scalar index moves. Source owner
+construction and compiler Result transfer remain outside the experiment.
+For these counts, the tail rank differs only in the final byte, so common
+prefixes are `key length - 1` bytes; this stresses longer prefixes than the
+Redis decimal-key distribution. Preparation timings do not establish the
+required end-to-end performance against the original revision.
+
+The candidate passed all three canonical native runtime variants and both
+fixture modes' generated-identity checks at counts 0, 1, 4, 10, 16, 17 and
+64. Removing its insertion shift compiled but failed the independent
+binary/prefix ordering oracle. The bounded trial exited zero. SHA-256
+identities for the scratch sources and binaries are:
+
+- runtime containing both measured algorithms: `fc937a11728289d358414f84908121f1882a2185d2e59855ee856339129d699b`;
+- candidate-only runtime used by correctness checks: `abc68a6215835d1e73293a0df048082fa029fa9d60c7bca5fa1face30942669f`;
+- runtime-count fixture: `12b851a385d52f713cf43fe73141587051a8e66e4e403ce86f8b29149eac3f02`;
+- timing executable: `4bc14ce8bd13c266fa791a0bfeca9de88e5ab86b10efd46534e914be1713b708`;
+- observation executable: `e34f2eece13e9f42a1bdb17310205dda4892b5427d1f5897de1c80eb431acd14`;
+- timing CSV: `0205404f082de1ff7c61c11cee3dff8ade73224845a5af68e4d63e25be3313ab`;
+- observation CSV: `8206b1418d784f93e3d05f6046fd2d98b9721da92a21328e132c147eb78b647a`;
+- metadata JSON: `9b8bbbddda7ac16f22ae8914ccb570f1d53c94c8955c5ff368fe45cb267c1a14`.
+
+The three linked raw files are evidence for this rejected candidate, kept
+while the comparison remains relevant and superseded if invalidated.
+Generated source copies, binaries and derived summaries are not retained
+as repository artifacts.
 
 Rejected forms are a public new/sort/finish protocol, because it exposes
 intermediate states solely to schedule an overlap not required by the

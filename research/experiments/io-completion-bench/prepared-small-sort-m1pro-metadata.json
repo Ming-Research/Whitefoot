@@ -1,0 +1,40 @@
+{
+  "scope": "scratch same-binary old ordered insertion vs heap vs binary insertion<=16; runtime argv counts; no source owner allocations or Result transfer",
+  "counts": [
+    4,
+    10,
+    16,
+    17,
+    64
+  ],
+  "passes": 6,
+  "placement": "unpinned",
+  "host": {
+    "system": "Darwin",
+    "node": "Minhuis-MacBook-Pro.local",
+    "release": "25.6.0",
+    "version": "Darwin Kernel Version 25.6.0: Fri Jul 31 19:18:49 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6000",
+    "machine": "arm64",
+    "processor": "arm"
+  },
+  "flags": [
+    "-std=c11",
+    "-O2",
+    "-g",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-Wpedantic",
+    "-pthread"
+  ],
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin\n",
+  "source_hashes": {
+    "/private/tmp/wf-pr208-prepared/research/experiments/io-completion-bench/key_prepare_bench.c": "3ec236fc1cce9b625c39145b22d2ce6a9616980f2a405b56dff0735f3d57d9f7",
+    "/private/tmp/wf-pr208-prepared/compiler/src/backend/concurrent_map.c": "44ceb962db6e9c1071816b7fa41a0856b2d28fddc6a71effc31d5c1046f102ca",
+    "/private/tmp/wf-pr208-prepared/compiler/src/backend/concurrent_map.h": "e48498b1e87ae3169e75278f64fe616c3952834b2c7e94555c3fbfb6c088aff7",
+    "/private/tmp/wf-small-sort/small_sort_bench.c": "12b851a385d52f713cf43fe73141587051a8e66e4e403ce86f8b29149eac3f02",
+    "/private/tmp/wf-small-sort/trial/concurrent_map.c": "fc937a11728289d358414f84908121f1882a2185d2e59855ee856339129d699b",
+    "/private/tmp/wf-small-sort/candidate/concurrent_map.c": "abc68a6215835d1e73293a0df048082fa029fa9d60c7bca5fa1face30942669f"
+  },
+  "binary_sha256": "4bc14ce8bd13c266fa791a0bfeca9de88e5ab86b10efd46534e914be1713b708"
+}

@@ -1,0 +1,152 @@
+{
+  "purpose": "Caller-attribution evidence; retain until superseded or invalidated. No production adoption or full acceptance claim.",
+  "host": {
+    "cpu": "Apple M1 Pro",
+    "model": "MacBookPro18,3",
+    "physical_cores": 8,
+    "logical_cpus": 8,
+    "memory_bytes": 34359738368,
+    "darwin": "25.6.0",
+    "macos": "26.6.2",
+    "macos_build": "25G83",
+    "architecture": "arm64",
+    "placement": "unpinned; server/client may share cores"
+  },
+  "workload": {
+    "test": "MSET (10 keys)",
+    "value_bytes": 3,
+    "random_key_domain": 100000,
+    "clients": 50,
+    "client_threads": 2,
+    "server_drivers": 1,
+    "pipeline": 16,
+    "warmup_requests": 100000,
+    "pilot_seconds": 2,
+    "measured_requests": 6395737,
+    "rounds": 10,
+    "target_measured_seconds": 12
+  },
+  "identities": {
+    "current_revision": "9f5dc61af74ac7e1767a6ccbecd71b36d3f4ad9b",
+    "current_image_sha256": "1dca252586e7ad36a6da45ae97b3ac369d131f8e267d9837f13ab4be28235ec4",
+    "identical": "same executable as current",
+    "original_revision": "cea9188d46ae531b3f6eb5ec7d9e1c340c240aaf",
+    "original_image_sha256": "5dc6afc4b33ea3a9784b0e786e4e29a04647d3a3fbef80bb3fa085e371b0fbdf",
+    "compiler_sha256": "5bc3b877c9ff5e41d9a835f756307cc32973b73e2304a2a958fd09a4bb64197b",
+    "redis_version": "7.0.15",
+    "redis_revision": "f35f36a265403c07b119830aa4bb3b7d71653ec9",
+    "redis_benchmark_sha256": "137149aac2046a25e3aa433fb41b5a47fb20df708fafc1ee71c573b720666185",
+    "redis_cli_sha256": "7b5c3e24270910ef622fd1adb6fa729b7c44665fed38093bbd9058e14fc978b4",
+    "variants": {
+      "inline16": {
+        "source_id": "source-sha256:e5eeade520f1ad829aeaf727febe09a91d52f3947bea4bcb2943c46681e0f2a5",
+        "baseline_revision": "5ddde4aadbb8a2fac6096b2b03da50bd53d4be9e",
+        "changed_app_files": {
+          "commands/keys.wf": "1270e9dc409ce75b88818c4c278504537050746f730596116253b716e98ebb36"
+        },
+        "image_sha256": "8e3252fc7a2c764c532b2879e2f45d1781c25427ca06c5a0588524f0194e5afd"
+      },
+      "reuse": {
+        "source_id": "source-sha256:6efe7aa7f642fc32dbf6af2b8710ea2c1260bea6f6d0010bb242a9339dacfdad",
+        "baseline_revision": "5ddde4aadbb8a2fac6096b2b03da50bd53d4be9e",
+        "changed_app_files": {
+          "commands/keys.wf": "756052364220ea09f398eed3cb16c5a66e78adcb64a1d0f150bbcdcac91cb6d6",
+          "commands/strings.wf": "400e2938130e59e3f429423eecdec073a200dc003a5e41cb7d2ca007c25cd630",
+          "protocol/module.wfm": "e95f5b5e41155ea53bb124151392ae67353732ff537e77c4f0891ab0ea6a3588",
+          "protocol/protocol.wf": "05121444a895c7175c680acac88229597a6622809b8d527258a0b6bab45e5cf0"
+        },
+        "image_sha256": "5262d94474afd7fae6e33ae98e7cb5dc51b3f54486b693beaeea07988c1702f8"
+      }
+    }
+  },
+  "schedule": [
+    [
+      "candidate",
+      "identical",
+      "inline16",
+      "reuse",
+      "pre208"
+    ],
+    [
+      "identical",
+      "inline16",
+      "reuse",
+      "pre208",
+      "candidate"
+    ],
+    [
+      "inline16",
+      "reuse",
+      "pre208",
+      "candidate",
+      "identical"
+    ],
+    [
+      "reuse",
+      "pre208",
+      "candidate",
+      "identical",
+      "inline16"
+    ],
+    [
+      "pre208",
+      "candidate",
+      "identical",
+      "inline16",
+      "reuse"
+    ],
+    [
+      "pre208",
+      "reuse",
+      "inline16",
+      "identical",
+      "candidate"
+    ],
+    [
+      "reuse",
+      "inline16",
+      "identical",
+      "candidate",
+      "pre208"
+    ],
+    [
+      "inline16",
+      "identical",
+      "candidate",
+      "pre208",
+      "reuse"
+    ],
+    [
+      "identical",
+      "candidate",
+      "pre208",
+      "reuse",
+      "inline16"
+    ],
+    [
+      "candidate",
+      "pre208",
+      "reuse",
+      "inline16",
+      "identical"
+    ]
+  ],
+  "files": {
+    "firn-caller-m1pro-mset.csv": {
+      "rows": 50,
+      "sha256": "698a758cf7bfcd4424ca95132a5319f8790fd533300a9c54410c232da17375de"
+    },
+    "firn-caller-m1pro-memory.csv": {
+      "rows": 50,
+      "sha256": "6b7e5df181fac0d490b0181afc66f2ecd4bf7d752f5ad895d6b1593eb353b542"
+    }
+  },
+  "control": {
+    "throughput_ratio": "current/identical",
+    "median": 0.9999344668358836,
+    "inclusive_iqr": 0.05668233019275759,
+    "valid": false,
+    "latency_all_rounds_within_0_90_to_1_10": true
+  },
+  "memory_scope": "ps RSS samples; no allocation counts or continuous peak"
+}
