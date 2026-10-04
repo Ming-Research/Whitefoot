@@ -1,4 +1,0 @@
-fn make(n: i32) -> v: Value pure {
-  doc "Builds the value.";
-  return Value(n: n);
-}

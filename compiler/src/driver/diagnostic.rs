@@ -807,7 +807,6 @@ impl Report for GraphIssue {
             DuplicateBindingName { name };
             DuplicatePackage { name };
             BindingCycle { name };
-            NameRebound { name };
             UnboundPackage { path };
             UnknownBoundModule { path };
         )

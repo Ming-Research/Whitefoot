@@ -1,0 +1,4 @@
+fn seven() -> result: i32 pure {
+  doc "Halo's json is the other directory, whatever the program calls json.";
+  return json::make(n: 7_i32);
+}

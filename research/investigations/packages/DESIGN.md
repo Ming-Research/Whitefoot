@@ -79,23 +79,28 @@ makes the two bindings one package with no version rule; a byte-identical
 copy in another directory is another package, whose types differ
 (`tests/conformance/cases/mod11-neg-distinct-directories-are-distinct-packages`).
 
-### One name, one package, per program (Q6, open)
+### Labels
 
 Each bound package's records need a logical path no other record has, and
-diagnostics and symbols need a name for the package. The implementation
-labels a package by the name of the binding that first reaches it in package
-order, and its records' logical paths are `package/<label>/...`: `package`
-is a keyword, so no module directory of a program's own package can have
-that name, and `std/` is the standard library's prefix.
+diagnostics and symbols need a name for the package. A binding name cannot
+serve directly: it is visible only in its own package, like an alias in its
+file, so halo may call one directory `json` while the program calls another
+directory `json` (`mod11-pos-one-name-two-packages`, where both packages
+declare `make` at their roots).
 
-The label is unique only if no two packages share a binding name, so the
-specification also requires that every binding of one name in one program
-binds one package (`mod11-neg-one-name-two-packages`). This is a rule the
-owner has not yet ruled on. The alternative is a label that disambiguates,
-such as `json.2`, which keeps the two independently written bindings legal
-but makes a reader of `json::Value` in two packages of one program look up
-which directory each means. Reopen when two independently developed libraries
-bound into one program need one name for different packages.
+The compiler labels a package by the name of the binding that first reaches
+it in package order and, when an earlier package already holds that label,
+appends `.2`, `.3` and on. Its records' logical paths are
+`package/<label>/...` and its symbols begin `package.<label>.`: `package` is a
+keyword, so no module directory of a program's own package can have that
+name, `std/` is the standard library's prefix, and a label holding `.` is no
+IDENT, so it never equals a module name. A label is never written in source.
+
+The first draft instead required one name to mean one package across the
+whole program, which made labels unique without a suffix. The owner ruled
+against it on 2026-10-04 (Q6): a binding name is the binder's private choice,
+as an alias is a file's, and two independently written libraries should not
+have to agree on what they call their dependencies.
 
 ## Order and diagnostics
 
@@ -129,7 +134,9 @@ modules, so a program record's ordinal never depends on what it binds.
 ## Validation
 
 - Conformance: `mod11-pos-diamond-shares-one-package` builds and runs a
-  three-package diamond; twelve negative cases cover each MOD-11 refusal, the
+  three-package diamond, and `mod11-pos-one-name-two-packages` runs a program
+  in which one name binds two packages in two graphs; eleven negative cases
+  cover each MOD-11 refusal, the
   MOD-1 row path, the MOD-4 alias name, non-transitive visibility (MOD-5),
   directory identity (TYPE-5) and the FORM-2 layout of bindings.
 - Input-envelope failures (a location reaching no directory, a package root

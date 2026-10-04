@@ -1,5 +1,0 @@
-public struct Value {
-  public n: i32;
-}
-
-public fn make(n: i32) -> v: Value pure doc "Wraps a number.";

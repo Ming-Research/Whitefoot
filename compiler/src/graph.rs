@@ -261,11 +261,6 @@ pub enum GraphIssueKind {
         /// The binding's name.
         name: String,
     },
-    /// A binding gives a name a second package of the program [MOD-11].
-    NameRebound {
-        /// The name.
-        name: String,
-    },
     /// A dependency is rooted at a name its graph binds to no package
     /// [MOD-11].
     UnboundPackage {
@@ -298,7 +293,6 @@ impl GraphIssue {
             | GraphIssueKind::DuplicateBindingName { .. }
             | GraphIssueKind::DuplicatePackage { .. }
             | GraphIssueKind::BindingCycle { .. }
-            | GraphIssueKind::NameRebound { .. }
             | GraphIssueKind::UnboundPackage { .. }
             | GraphIssueKind::UnknownBoundModule { .. } => "MOD-11",
             _ => "MOD-1",

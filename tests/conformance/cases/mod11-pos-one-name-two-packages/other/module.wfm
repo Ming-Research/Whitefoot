@@ -1,0 +1,1 @@
+public fn make(n: i32) -> result: i32 pure doc "Returns the number itself.";

@@ -47,8 +47,7 @@ struct LoadedPackage {
     root: PathBuf,
     /// The directory itself, which identifies the package [MOD-11].
     identity: PathBuf,
-    /// The name of the binding that first reached it; empty for the
-    /// program's own package.
+    /// Its label [MOD-11]; empty for the program's own package.
     label: String,
     bundle: SourceBundle,
     canonical: CanonicalSyntaxUnit,
@@ -83,9 +82,8 @@ pub fn form_module_program_graph(
         &bytes,
         limits,
     )?];
-    let mut names: Vec<(String, usize)> = Vec::new();
     let mut walking = vec![0];
-    walk(&mut packages, 0, &mut walking, &mut names, limits)?;
+    walk(&mut packages, 0, &mut walking, limits)?;
 
     let registered = packages
         .iter()
@@ -138,7 +136,6 @@ fn walk(
     packages: &mut Vec<LoadedPackage>,
     place: usize,
     walking: &mut Vec<usize>,
-    names: &mut Vec<(String, usize)>,
     limits: CompilerLimits,
 ) -> Result<(), ModuleProgramFailure> {
     let written = packages[place].written.clone();
@@ -186,17 +183,6 @@ fn walk(
             }));
         }
         let target = existing.unwrap_or(packages.len());
-        if names
-            .iter()
-            .any(|(name, bound)| *name == binding.name && *bound != target)
-        {
-            return Err(refused(GraphIssueKind::NameRebound {
-                name: binding.name.clone(),
-            }));
-        }
-        if !names.iter().any(|(name, _)| *name == binding.name) {
-            names.push((binding.name.clone(), target));
-        }
         packages[place].bound.push((binding.name.clone(), target));
         if existing.is_none() {
             let graph_path = reached.join(GRAPH_FILE_NAME);
@@ -206,21 +192,37 @@ fn walk(
                 }
                 _ => return Err(DiscoveryFailure::MissingPackage { path: graph_path }.into()),
             };
+            let label = label_for(packages, &binding.name);
             let loaded = load(
                 reached,
                 identity,
-                binding.name.clone(),
+                label,
                 &graph_path.display().to_string(),
                 &bytes,
                 limits,
             )?;
             packages.push(loaded);
             walking.push(target);
-            walk(packages, target, walking, names, limits)?;
+            walk(packages, target, walking, limits)?;
             walking.pop();
         }
     }
     Ok(())
+}
+
+/// A newly reached package's label [MOD-11]: the name of the binding that
+/// reached it, or, when an earlier package has that label, the name followed
+/// by `.` and the least integer from 2 that no earlier label uses. A label
+/// holding `.` is no IDENT, so it never equals a module directory's name.
+fn label_for(packages: &[LoadedPackage], name: &str) -> String {
+    let taken = |label: &str| packages.iter().any(|package| package.label == label);
+    if !taken(name) {
+        return name.to_owned();
+    }
+    (2_u64..)
+        .map(|suffix| format!("{name}.{suffix}"))
+        .find(|label| !taken(label))
+        .unwrap_or_default()
 }
 
 /// Reads one graph record through the syntax stages and its bindings'
