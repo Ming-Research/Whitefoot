@@ -1,0 +1,500 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias intern = pkg::heap::intern;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+alias new_table = pkg::heap::new_table;
+alias truthy = pkg::value::truthy;
+
+const library_base_lib_text_0: Array<u8, 6> = "number";
+
+const library_base_lib_text_1: Array<u8, 6> = "string";
+
+const library_base_lib_text_2: Array<u8, 5> = "table";
+
+const library_base_lib_text_3: Array<u8, 8> = "function";
+
+const library_base_lib_text_4: Array<u8, 14> = "value expected";
+
+const library_base_lib_text_5: Array<u8, 17> = "assertion failed!";
+
+const library_base_lib_text_6: Array<u8, 14> = "value expected";
+
+const library_base_lib_text_7: Array<u8, 14> = "value expected";
+
+const library_base_lib_text_8: Array<u8, 14> = "value expected";
+
+const library_base_lib_text_9: Array<u8, 10> = "__tostring";
+
+const library_base_lib_text_10: Array<u8, 5> = "false";
+
+const library_base_lib_text_11: Array<u8, 4> = "true";
+
+const library_base_lib_text_12: Array<u8, 4> = ": 0x";
+
+const library_base_lib_text_13: Array<u8, 14> = "value expected";
+
+const library_base_lib_text_14: Array<u8, 17> = "base out of range";
+
+const library_base_lib_text_15: Array<u8, 17> = "base out of range";
+
+const library_base_lib_text_16: Array<u8, 21> = "invalid key to 'next'";
+
+const library_base_lib_text_17: Array<u8, 26> = "too many results to unpack";
+
+fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, func: u64, argc: u64, id: u32, pc: u64) -> r: HostOutcome reads(code), reads(consts), writes(vm), writes(stack), writes(env) {
+  let local_length_1 = stack^.inner.len;
+  let local_a_2 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let local_b_3 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+  let local_c_4 = argument(stack: stack, func: func, argc: argc, index: 2_u64);
+  let local_nil_5 = Value::Nil();
+  if id == builtin_xpcall {
+    if argc < 2_u64 {
+      return lib_argtext(vm: vm, id: id, index: 2_u64, text: &library_base_lib_text_4[0_u64..14_u64]);
+    }
+    return xpcall_start::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, func: func, argc: argc);
+  }
+  if id == builtin_assert {
+    if argc == 0_u64 {
+      return lib_argtext(vm: vm, id: id, index: 1_u64, text: &library_base_lib_text_4[0_u64..14_u64]);
+    }
+    if truthy(v: local_a_2) {
+      let local_source_6 = func +sat 1_u64;
+      let local_n_7 = adjust_results(vm: vm, stack: stack, dest: func, src: local_source_6, count: argc, wanted: -1_i64);
+      return HostOutcome::Returned(count: local_n_7);
+    }
+    let local_message_8 = coerce_string(vm: vm, v: local_b_3);
+    if is_nil(v: local_message_8) {
+      set local_message_8 = intern(heap: &vm^.heap, bytes: &library_base_lib_text_5[0_u64..17_u64]);
+    }
+    match str_of(v: local_message_8) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_3, expected: &library_base_lib_text_1[0_u64..6_u64]);
+      }
+    }
+    set vm^.error = local_message_8;
+    return HostOutcome::Raised();
+  }
+  if id == builtin_rawequal {
+    if argc < 1_u64 {
+      return lib_argtext(vm: vm, id: id, index: 1_u64, text: &library_base_lib_text_6[0_u64..14_u64]);
+    }
+    if argc < 2_u64 {
+      return lib_argtext(vm: vm, id: id, index: 2_u64, text: &library_base_lib_text_7[0_u64..14_u64]);
+    }
+    let local_eq_9 = raw_equal(a: local_a_2, b: local_b_3);
+    let local_value_10 = boolean(v: local_eq_9);
+    return lib_result(stack: stack, func: func, value: local_value_10);
+  }
+  if id == builtin_tostring {
+    if argc < 1_u64 {
+      return lib_argtext(vm: vm, id: id, index: 1_u64, text: &library_base_lib_text_8[0_u64..14_u64]);
+    }
+    let local_tm_11 = metamethod(vm: vm, v: local_a_2, name: &library_base_lib_text_9[0_u64..10_u64]);
+    let local_absent_12 = is_nil(v: local_tm_11);
+    if bnot(local_absent_12) {
+      let local_ok_13 = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: func, f: local_tm_11, b: local_a_2, c: local_nil_5, third: local_nil_5, argc: 1_u64, wanted: 1_i64, mode: 0_u8);
+      resize_stack(stack: stack, size: local_length_1);
+      if local_ok_13 {
+        return HostOutcome::Returned(count: 1_u64);
+      }
+      return HostOutcome::Raised();
+    }
+    let local_value_14 = coerce_string(vm: vm, v: local_a_2);
+    let local_k_15 = kind(v: local_value_14);
+    if local_k_15 == 3_u8 {
+      return lib_result(stack: stack, func: func, value: local_value_14);
+    }
+    if local_k_15 <= 1_u8 {
+      if local_k_15 == 0_u8 {
+        let local_text_16 = kind_name(vm: vm, v: local_a_2);
+        return lib_result(stack: stack, func: func, value: local_text_16);
+      }
+      let local_text_17 = intern(heap: &vm^.heap, bytes: &library_base_lib_text_10[0_u64..5_u64]);
+      if truthy(v: local_a_2) {
+        set local_text_17 = intern(heap: &vm^.heap, bytes: &library_base_lib_text_11[0_u64..4_u64]);
+      }
+      return lib_result(stack: stack, func: func, value: local_text_17);
+    }
+    let local_bytes_18 = box_slots_new::<u8>(capacity: 64_u64);
+    let local_name_19 = kind_name(vm: vm, v: local_a_2);
+    bytes_string(vm: vm, bytes: &local_bytes_18, value: local_name_19);
+    bytes_append(bytes: &local_bytes_18, text: &library_base_lib_text_12[0_u64..4_u64]);
+    let local_handle_20 = 0_u32;
+    match local_a_2 {
+      Tab(h: th) => {
+        set local_handle_20 = th;
+      }
+      Fun(h: fh) => {
+        set local_handle_20 = fh;
+      }
+      Builtin(id: bid) => {
+        set local_handle_20 = bid;
+      }
+      Nil() => {
+      }
+      False() => {
+      }
+      True() => {
+      }
+      Num(..) => {
+      }
+      Str(..) => {
+      }
+    }
+    let local_out_21 = array_filled::<u8, 8>(value: 0_u8);
+    let local_count_22 = 0_u64;
+    loop {
+      let local_low_23 = local_handle_20 % 16_u32;
+      let local_byte_24 = cvt.wrap::<u32, u8>(local_low_23);
+      let local_glyph_25 = local_byte_24 +wrap 48_u8;
+      if local_low_23 >= 10_u32 {
+        set local_glyph_25 = local_byte_24 +wrap 87_u8;
+      }
+      if local_count_22 < 8_u64 {
+        set local_out_21[local_count_22] = local_glyph_25;
+        set local_count_22 = local_count_22 + 1_u64;
+      }
+      set local_handle_20 = local_handle_20 / 16_u32;
+      if local_handle_20 == 0_u32 {
+        break;
+      }
+    }
+    let local_ix_26 = local_count_22;
+    loop {
+      if local_ix_26 == 0_u64 {
+        break;
+      }
+      set local_ix_26 = local_ix_26 - 1_u64;
+      if local_ix_26 < 8_u64 {
+        let local_byte_27 = local_out_21[local_ix_26];
+        bytes_push(bytes: &local_bytes_18, byte: local_byte_27);
+      }
+    }
+    let local_text_28 = bytes_value(vm: vm, bytes: &local_bytes_18);
+    return lib_result(stack: stack, func: func, value: local_text_28);
+  }
+  if id == builtin_tonumber {
+    let local_base_29 = 10_i64;
+    if argc >= 2_u64 {
+      let local_absent_30 = is_nil(v: local_b_3);
+      if bnot(local_absent_30) {
+        match lib_int32(vm: vm, value: local_b_3) {
+          Some(value: i) => {
+            set local_base_29 = i;
+          }
+          None() => {
+            return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_3, expected: &library_base_lib_text_0[0_u64..6_u64]);
+          }
+        }
+      }
+    }
+    if local_base_29 == 10_i64 {
+      if argc == 0_u64 {
+        return lib_argtext(vm: vm, id: id, index: 1_u64, text: &library_base_lib_text_13[0_u64..14_u64]);
+      }
+      match coerce_number(vm: vm, v: local_a_2) {
+        Is(x: bound_x_1) => {
+          let local_value_31 = Value::Num(n: bound_x_1);
+          return lib_result(stack: stack, func: func, value: local_value_31);
+        }
+        Not() => {
+          return lib_result(stack: stack, func: func, value: local_nil_5);
+        }
+      }
+    }
+    let local_text_32 = coerce_string(vm: vm, v: local_a_2);
+    match str_of(v: local_text_32) {
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_2, expected: &library_base_lib_text_1[0_u64..6_u64]);
+      }
+      Handle(h: bound_h_2) => {
+        if local_base_29 < 2_i64 {
+          return lib_argtext(vm: vm, id: id, index: 2_u64, text: &library_base_lib_text_14[0_u64..17_u64]);
+        }
+        if local_base_29 > 36_i64 {
+          return lib_argtext(vm: vm, id: id, index: 2_u64, text: &library_base_lib_text_15[0_u64..17_u64]);
+        }
+        let local_i_33 = cvt::<u32, u64>(bound_h_2);
+        if local_i_33 < vm^.heap.strings.inner.len {
+          let local_length_34 = vm^.heap.strings.inner[local_i_33].payload.bytes.inner.len;
+          let local_bytes_35 = &vm^.heap.strings.inner[local_i_33].payload.bytes.inner[0_u64..local_length_34];
+          let local_radix_36 = cvt::<i64, u64>(local_base_29);
+          match base_number(bytes: local_bytes_35, radix: local_radix_36) {
+            Some(value: x) => {
+              let local_value_37 = Value::Num(n: x);
+              return lib_result(stack: stack, func: func, value: local_value_37);
+            }
+            None() => {
+            }
+          }
+        }
+        return lib_result(stack: stack, func: func, value: local_nil_5);
+      }
+    }
+  }
+  if id == builtin_ipairsaux {
+    let local_index_38 = 0_i64;
+    match lib_int32(vm: vm, value: local_b_3) {
+      Some(value: index) => {
+        set local_index_38 = index;
+      }
+      None() => {
+        return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_3, expected: &library_base_lib_text_0[0_u64..6_u64]);
+      }
+    }
+    match tab_of(v: local_a_2) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_2, expected: &library_base_lib_text_2[0_u64..5_u64]);
+      }
+    }
+    let narrowed = cvt.wrap::<i64, i32>(local_index_38);
+    let incremented = narrowed +wrap 1_i32;
+    let local_next_39 = cvt::<i32, i64>(incremented);
+    let local_key_40 = number_key(index: local_next_39);
+    let local_value_41 = table_get(heap: &vm^.heap, t: local_a_2, key: local_key_40);
+    if is_nil(v: local_value_41) {
+      return HostOutcome::Returned(count: 0_u64);
+    }
+    lib_put(stack: stack, at: func, value: local_key_40);
+    let local_out_42 = func +sat 1_u64;
+    lib_put(stack: stack, at: local_out_42, value: local_value_41);
+    return HostOutcome::Returned(count: 2_u64);
+  }
+  if id == builtin_pairs {
+    match tab_of(v: local_a_2) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_2, expected: &library_base_lib_text_2[0_u64..5_u64]);
+      }
+    }
+    let local_f_43 = Value::Builtin(id: builtin_next);
+    lib_put(stack: stack, at: func, value: local_f_43);
+    let local_second_44 = func +sat 1_u64;
+    let local_third_45 = func +sat 2_u64;
+    lib_put(stack: stack, at: local_second_44, value: local_a_2);
+    lib_put(stack: stack, at: local_third_45, value: local_nil_5);
+    return HostOutcome::Returned(count: 3_u64);
+  }
+  if id == builtin_ipairs {
+    match tab_of(v: local_a_2) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_2, expected: &library_base_lib_text_2[0_u64..5_u64]);
+      }
+    }
+    let local_f_46 = Value::Builtin(id: builtin_ipairsaux);
+    let local_zero_47 = Value::Num(n: 0.0_f64);
+    lib_put(stack: stack, at: func, value: local_f_46);
+    let local_second_48 = func +sat 1_u64;
+    let local_third_49 = func +sat 2_u64;
+    lib_put(stack: stack, at: local_second_48, value: local_a_2);
+    lib_put(stack: stack, at: local_third_49, value: local_zero_47);
+    return HostOutcome::Returned(count: 3_u64);
+  }
+  if id == builtin_next {
+    match tab_of(v: local_a_2) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_2, expected: &library_base_lib_text_2[0_u64..5_u64]);
+      }
+    }
+    match pkg::heap::table_next(heap: &vm^.heap, t: local_a_2, key: local_b_3) {
+      Ok(value: pair) => {
+        match pair {
+          Some(value: pair_entry) => {
+            lib_put(stack: stack, at: func, value: pair_entry.key);
+            let local_second_50 = func +sat 1_u64;
+            lib_put(stack: stack, at: local_second_50, value: pair_entry.val);
+            return HostOutcome::Returned(count: 2_u64);
+          }
+          None() => {
+            return lib_result(stack: stack, func: func, value: local_nil_5);
+          }
+        }
+      }
+      Err(..) => {
+        return lib_failure(vm: vm, text: &library_base_lib_text_16[0_u64..21_u64]);
+      }
+    }
+  }
+  if id == builtin_unpack {
+    match tab_of(v: local_a_2) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_2, expected: &library_base_lib_text_2[0_u64..5_u64]);
+      }
+    }
+    let b_absent = is_nil(v: local_b_3);
+    if bnot(b_absent) {
+      match lib_int32(vm: vm, value: local_b_3) {
+        Some(..) => {
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_3, expected: &library_base_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+    let c_absent = is_nil(v: local_c_4);
+    if bnot(c_absent) {
+      match lib_int32(vm: vm, value: local_c_4) {
+        Some(..) => {
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 3_u64, argc: argc, value: local_c_4, expected: &library_base_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+    let local_border_51 = pkg::heap::table_border(heap: &vm^.heap, t: local_a_2);
+    let local_last_52 = cvt.wrap::<u64, i64>(local_border_51);
+    let local_first_53 = lib_index(vm: vm, value: local_b_3, default_value: 1_i64);
+    let local_end_54 = lib_index(vm: vm, value: local_c_4, default_value: local_last_52);
+    if local_first_53 > local_end_54 {
+      return HostOutcome::Returned(count: 0_u64);
+    }
+    let local_count_55 = local_end_54 -wrap local_first_53;
+    let local_total_56 = cvt.wrap::<i64, u64>(local_count_55);
+    let result_limit = 8000_u64 -sat argc;
+    if local_total_56 >= result_limit {
+      return lib_failure(vm: vm, text: &library_base_lib_text_17[0_u64..26_u64]);
+    }
+    let local_n_57 = local_total_56 + 1_u64;
+    for (i in 0_u64..local_n_57) {
+      let local_delta_58 = cvt.wrap::<u64, i64>(i);
+      let local_index_59 = local_first_53 +wrap local_delta_58;
+      let local_key_60 = number_key(index: local_index_59);
+      let local_value_61 = table_get(heap: &vm^.heap, t: local_a_2, key: local_key_60);
+      let local_out_62 = func +sat i;
+      lib_put(stack: stack, at: local_out_62, value: local_value_61);
+    }
+    return HostOutcome::Returned(count: local_n_57);
+  }
+  return HostOutcome::Raised();
+}
+
+fn ascii_space(byte: u8) -> r: Bool pure {
+  let local_tab_63 = byte >= 9_u8;
+  let local_cr_64 = byte <= 13_u8;
+  let local_control_65 = band(local_tab_63, local_cr_64);
+  let local_space_66 = byte == 32_u8;
+  return bor(local_control_65, local_space_66);
+}
+
+fn base_number(bytes: &[u8], radix: u64) -> r: Option<f64> reads(bytes) {
+  let local_i_67 = 0_u64;
+  loop {
+    if local_i_67 >= bytes^.len {
+      return None<f64>();
+    }
+    let local_b_68 = bytes^[local_i_67];
+    if ascii_space(byte: local_b_68) {
+      set local_i_67 = local_i_67 + 1_u64;
+    } else {
+      break;
+    }
+  }
+  let local_negative_69 = False();
+  if local_i_67 < bytes^.len {
+    let local_byte_70 = bytes^[local_i_67];
+    if local_byte_70 == 45_u8 {
+      set local_negative_69 = True();
+      set local_i_67 = local_i_67 + 1_u64;
+    } else if local_byte_70 == 43_u8 {
+      set local_i_67 = local_i_67 + 1_u64;
+    }
+  }
+  if radix == 16_u64 {
+    let local_next_71 = local_i_67 +sat 1_u64;
+    if local_i_67 < bytes^.len {
+      if local_next_71 < bytes^.len {
+        let local_a_72 = bytes^[local_i_67];
+        let local_b_73 = bytes^[local_next_71];
+        let local_x_74 = local_b_73 == 120_u8;
+        let local_upper_x_75 = local_b_73 == 88_u8;
+        if local_a_72 == 48_u8 {
+          if bor(local_x_74, local_upper_x_75) {
+            set local_i_67 = local_next_71 + 1_u64;
+          }
+        }
+      }
+    }
+  }
+  let local_value_76 = 0_u64;
+  let local_overflow_77 = False();
+  let local_digits_78 = 0_u64;
+  loop {
+    if local_i_67 >= bytes^.len {
+      break;
+    }
+    let local_byte_79 = bytes^[local_i_67];
+    let local_digit_80 = 99_u64;
+    if local_byte_79 >= 48_u8 {
+      if local_byte_79 <= 57_u8 {
+        let local_d_81 = local_byte_79 - 48_u8;
+        set local_digit_80 = cvt::<u8, u64>(local_d_81);
+      }
+    }
+    if local_byte_79 >= 65_u8 {
+      if local_byte_79 <= 90_u8 {
+        let local_d_82 = local_byte_79 - 65_u8;
+        let local_w_83 = cvt::<u8, u64>(local_d_82);
+        set local_digit_80 = local_w_83 + 10_u64;
+      }
+    }
+    if local_byte_79 >= 97_u8 {
+      if local_byte_79 <= 122_u8 {
+        let local_d_84 = local_byte_79 - 97_u8;
+        let local_w_85 = cvt::<u8, u64>(local_d_84);
+        set local_digit_80 = local_w_85 + 10_u64;
+      }
+    }
+    if local_digit_80 >= radix {
+      break;
+    }
+    if radix > 0_u64 {
+      let local_limit_86 = 18446744073709551615_u64 -wrap local_digit_80;
+      let local_room_87 = local_limit_86 / radix;
+      if local_value_76 > local_room_87 {
+        set local_overflow_77 = True();
+      }
+    }
+    let local_product_88 = local_value_76 *wrap radix;
+    set local_value_76 = local_product_88 +wrap local_digit_80;
+    set local_digits_78 = local_digits_78 +sat 1_u64;
+    set local_i_67 = local_i_67 + 1_u64;
+  }
+  if local_digits_78 == 0_u64 {
+    return None<f64>();
+  }
+  loop {
+    if local_i_67 >= bytes^.len {
+      break;
+    }
+    let local_b_89 = bytes^[local_i_67];
+    if local_b_89 == 0_u8 {
+      break;
+    }
+    if ascii_space(byte: local_b_89) {
+      set local_i_67 = local_i_67 + 1_u64;
+    } else {
+      return None<f64>();
+    }
+  }
+  if local_overflow_77 {
+    set local_value_76 = 18446744073709551615_u64;
+  } else if local_negative_69 {
+    set local_value_76 = 0_u64 -wrap local_value_76;
+  }
+  let local_number_90 = cvt.nearest::<u64, f64>(local_value_76);
+  return Some<f64>(value: local_number_90);
+}

@@ -1,4 +1,5 @@
 alias no_handle = pkg::heap::no_handle;
+alias Cell = pkg::value::Cell;
 alias Value = pkg::value::Value;
 alias num_of = pkg::value::num_of;
 alias tab_of = pkg::value::tab_of;
@@ -60,6 +61,18 @@ const builtins_text_22: Array<u8, 35> = "cannot change a protected metatable";
 const builtins_text_23: Array<u8, 50> = "bad argument #1 to 'getmetatable' (value expected)";
 
 const builtins_text_24: Array<u8, 11> = "__metatable";
+
+const builtin_expected_2_number: Array<u8, 6> = "number";
+
+const builtin_expected_1_number: Array<u8, 6> = "number";
+
+const builtin_expected_1_value_expected: Array<u8, 14> = "value expected";
+
+const builtin_expected_1_table: Array<u8, 5> = "table";
+
+const builtin_expected_2_value_expected: Array<u8, 14> = "value expected";
+
+const builtin_expected_3_value_expected: Array<u8, 14> = "value expected";
 
 fn kind_name(vm: &Vm, v: Value) -> r: Value writes(vm) {
   let k = kind(v: v);
@@ -212,9 +225,24 @@ fn error_location(vm: &Vm, pc: u64, level: u64, message: Value) -> r: Value writ
   return message;
 }
 
-fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc: u64) -> r: HostOutcome writes(vm), writes(stack) contract {
+fn builtin<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, env: &E, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc: u64) -> r: HostOutcome reads(code), reads(consts), writes(env), writes(vm), writes(stack) contract {
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
+  let length = stack^.inner.len;
+  if id >= 8_u32 {
+    let outcome = library_dispatch::<Host<E>>(code: code, consts: consts, env: env, vm: vm, stack: stack, func: func, argc: argc, id: id, pc: pc);
+    resize_stack(stack: stack, size: length);
+    match outcome {
+      Raised() => {
+        library_error_location(vm: vm, pc: pc);
+      }
+      Returned(..) => {
+      }
+      Stop() => {
+      }
+    }
+    return outcome;
+  }
   let a = argument(stack: stack, func: func, argc: argc, index: 0_u64);
   let b = argument(stack: stack, func: func, argc: argc, index: 1_u64);
   let c = argument(stack: stack, func: func, argc: argc, index: 2_u64);
@@ -224,26 +252,30 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc
     if argc >= 2_u64 {
       let absent = is_nil(v: b);
       if bnot(absent) {
-        match num_of(v: b) {
+        match coerce_number(vm: vm, v: b) {
           Is(x: number) => {
             let integral = ftrunc(number);
             set level = 0_u64;
-            if cvt.defined::<f64, u64>(integral) {
-              set level = cvt::<f64, u64>(integral);
+            if cvt.defined::<f64, i64>(integral) {
+              let integer = cvt::<f64, i64>(integral);
+              let narrowed = cvt.wrap::<i64, i32>(integer);
+              if narrowed > 0_i32 {
+                set level = cvt::<i32, u64>(narrowed);
+              }
             }
           }
           Not() => {
-            let ignored = raise_text(vm: vm, text: &builtins_msg_1000[0_u64..44_u64]);
-            return HostOutcome::Raised();
+            return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: b, expected: &builtin_expected_2_number[0_u64..6_u64]);
           }
         }
       }
     }
     let message = a;
     if level > 0_u64 {
-      match str_of(v: a) {
+      set message = coerce_string(vm: vm, v: a);
+      match str_of(v: message) {
         Handle(..) => {
-          set message = error_location(vm: vm, pc: pc, level: level, message: a);
+          set message = error_location(vm: vm, pc: pc, level: level, message: message);
         }
         NoHandle() => {
         }
@@ -273,11 +305,13 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc
       None() => {
       }
     }
-    match num_of(v: a) {
+    match coerce_number(vm: vm, v: a) {
       Is(x: bound_x_14) => {
         let integral = ftrunc(bound_x_14);
         if cvt.defined::<f64, i64>(integral) {
-          let index = cvt::<f64, i64>(integral);
+          let integer = cvt::<f64, i64>(integral);
+          let narrowed = cvt.wrap::<i64, i32>(integer);
+          let index = cvt::<i32, i64>(narrowed);
           let total = argc -sat 1_u64;
           if total < 9223372036854775807_u64 {
             let nt = cvt::<u64, i64>(total);
@@ -306,15 +340,13 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc
         return HostOutcome::Raised();
       }
       Not() => {
-        let ignored = raise_text(vm: vm, text: &builtins_text_11[0_u64..45_u64]);
-        return HostOutcome::Raised();
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: a, expected: &builtin_expected_1_number[0_u64..6_u64]);
       }
     }
   }
   if id == builtin_type {
     if argc == 0_u64 {
-      let ignored = raise_text(vm: vm, text: &builtins_text_12[0_u64..42_u64]);
-      return HostOutcome::Raised();
+      return lib_argtext(vm: vm, id: id, index: 1_u64, text: &builtin_expected_1_value_expected[0_u64..14_u64]);
     }
     set out = kind_name(vm: vm, v: a);
   } else if id == builtin_rawget {
@@ -322,13 +354,11 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc
       Handle(..) => {
       }
       NoHandle() => {
-        let ignored = raise_text(vm: vm, text: &builtins_text_13[0_u64..44_u64]);
-        return HostOutcome::Raised();
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: a, expected: &builtin_expected_1_table[0_u64..5_u64]);
       }
     }
     if argc < 2_u64 {
-      let ignored = raise_text(vm: vm, text: &builtins_text_14[0_u64..44_u64]);
-      return HostOutcome::Raised();
+      return lib_argtext(vm: vm, id: id, index: 2_u64, text: &builtin_expected_2_value_expected[0_u64..14_u64]);
     }
     set out = table_get(heap: &vm^.heap, t: a, key: b);
   } else if id == builtin_rawset {
@@ -336,17 +366,14 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc
       Handle(..) => {
       }
       NoHandle() => {
-        let ignored = raise_text(vm: vm, text: &builtins_text_15[0_u64..44_u64]);
-        return HostOutcome::Raised();
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: a, expected: &builtin_expected_1_table[0_u64..5_u64]);
       }
     }
     if argc < 2_u64 {
-      let ignored = raise_text(vm: vm, text: &builtins_text_16[0_u64..44_u64]);
-      return HostOutcome::Raised();
+      return lib_argtext(vm: vm, id: id, index: 2_u64, text: &builtin_expected_2_value_expected[0_u64..14_u64]);
     }
     if argc < 3_u64 {
-      let ignored = raise_text(vm: vm, text: &builtins_text_17[0_u64..44_u64]);
-      return HostOutcome::Raised();
+      return lib_argtext(vm: vm, id: id, index: 3_u64, text: &builtin_expected_3_value_expected[0_u64..14_u64]);
     }
     if raw_assign(vm: vm, t: a, key: b, v: c) {
       set out = a;
@@ -360,8 +387,7 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc
         set h = th;
       }
       NoHandle() => {
-        let ignored = raise_text(vm: vm, text: &builtins_text_18[0_u64..50_u64]);
-        return HostOutcome::Raised();
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: a, expected: &builtin_expected_1_table[0_u64..5_u64]);
       }
     }
     let mh = no_handle;
@@ -398,8 +424,7 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc
     set out = a;
   } else if id == builtin_getmetatable {
     if argc == 0_u64 {
-      let ignored = raise_text(vm: vm, text: &builtins_text_23[0_u64..50_u64]);
-      return HostOutcome::Raised();
+      return lib_argtext(vm: vm, id: id, index: 1_u64, text: &builtin_expected_1_value_expected[0_u64..14_u64]);
     }
     set out = metamethod(vm: vm, v: a, name: &builtins_text_24[0_u64..11_u64]);
     if is_nil(v: out) {

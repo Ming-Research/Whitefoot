@@ -1,0 +1,88 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias intern = pkg::heap::intern;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+alias new_table = pkg::heap::new_table;
+alias truthy = pkg::value::truthy;
+
+const library_source_prefix: Array<u8, 12> = "user_script:";
+
+fn library_dispatch<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, env: &E, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc: u64) -> r: HostOutcome reads(code), reads(consts), writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let local_length_1 = stack^.inner.len;
+  if id >= 64_u32 {
+    let library_outcome = library_math(vm: vm, stack: stack, func: func, argc: argc, id: id);
+    resize_stack(stack: stack, size: local_length_1);
+    return library_outcome;
+  }
+  if id >= 48_u32 {
+    let library_outcome = library_table::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: func, argc: argc, id: id);
+    resize_stack(stack: stack, size: local_length_1);
+    return library_outcome;
+  }
+  if id >= 32_u32 {
+    let library_outcome = library_string(vm: vm, stack: stack, func: func, argc: argc, id: id);
+    resize_stack(stack: stack, size: local_length_1);
+    return library_outcome;
+  }
+  let local_outcome_2 = library_base::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: func, argc: argc, id: id, pc: pc);
+  resize_stack(stack: stack, size: local_length_1);
+  return local_outcome_2;
+}
+
+fn library_error_location(vm: &Vm, pc: u64) -> r: unit writes(vm) {
+  if vm^.library_contexts.inner.len > 0_u64 {
+    let last = vm^.library_contexts.inner.len - 1_u64;
+    let context = vm^.library_contexts.inner[last];
+    let string_callback = context.id == builtin_tostring;
+    let sort_callback = context.id == builtin_table_sort;
+    if bor(string_callback, sort_callback) {
+      if context.phase == 2_u8 {
+        return unit;
+      }
+    }
+  }
+  let value = vm^.error;
+  let already = False();
+  match str_of(v: value) {
+    Handle(h: handle) => {
+      let hi = cvt::<u32, u64>(handle);
+      if hi < vm^.heap.strings.inner.len {
+        let bytes = &vm^.heap.strings.inner[hi].payload.bytes.inner;
+        if bytes^.len >= 12_u64 {
+          set already = True();
+          for (i in 0_u64..12_u64) {
+            let byte = bytes^[i];
+            let expected = library_source_prefix[i];
+            if byte != expected {
+              set already = False();
+            }
+          }
+        }
+      }
+      if bnot(already) {
+        set vm^.error = error_location(vm: vm, pc: pc, level: 1_u64, message: value);
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return unit;
+}
+
+fn library_raw_error(vm: &Vm) -> r: unit writes(vm.library_contexts) {
+  if vm^.library_contexts.inner.len > 0_u64 {
+    let last = vm^.library_contexts.inner.len - 1_u64;
+    let context = vm^.library_contexts.inner[last];
+    let string_callback = context.id == builtin_tostring;
+    let sort_callback = context.id == builtin_table_sort;
+    if bor(string_callback, sort_callback) {
+      set vm^.library_contexts.inner[last].phase = 2_u8;
+    }
+  }
+  return unit;
+}

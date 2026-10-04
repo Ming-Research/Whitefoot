@@ -1,0 +1,5 @@
+print('coercion','12'+'3','12'-'3','12'*'3','12'/'3','12'%'5','2'^'5',-'12')
+print('concat',12 .. ':' .. (1/7) .. ':' .. (-0))
+local sum=0;for i='1','5','2' do sum=sum+i end;print('forcoercion',sum)
+local t=setmetatable({},{__add=function(a,b)return 73 end});print('metaarith',t+'nonnumber')
+local sum=0;for i='3','1','-1' do sum=sum+i end;print('fornegative',sum)

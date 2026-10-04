@@ -36,6 +36,7 @@ fn park_suspended_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit reads(sta
 }
 
 fn complete_callback(vm: &Vm, stack: &Box<Slots<Value>>, frame: CallbackFrame, count: u64) -> r: unit writes(vm), writes(stack) {
+  library_callback_count(vm: vm, plan: frame.plan, count: count);
   if frame.wanted != 0_i64 {
     let copied = adjust_results(vm: vm, stack: stack, dest: frame.dest, src: frame.scratch, count: count, wanted: frame.wanted);
     if frame.mode != 0_u8 {
@@ -58,6 +59,10 @@ fn complete_callback(vm: &Vm, stack: &Box<Slots<Value>>, frame: CallbackFrame, c
 }
 
 fn continue_callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, plan: CallbackPlan) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) {
+  if plan.kind == 4_u8 {
+    let failed = False();
+    return resume_library::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, plan: plan, failed: failed);
+  }
   let pc = plan.pc;
   if plan.kind == 1_u8 {
     let dest = plan.dest;

@@ -1,0 +1,256 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+alias Value = halo::value::Value;
+alias Vm = halo::vm::Vm;
+alias HostOutcome = halo::vm::HostOutcome;
+alias Host = halo::vm::Host;
+
+const run_print_name: Array<u8, 5> = "print";
+
+const run_source_name: Array<u8, 12> = "@user_script";
+
+const run_nil_text: Array<u8, 3> = "nil";
+
+const run_false_text: Array<u8, 5> = "false";
+
+const run_true_text: Array<u8, 4> = "true";
+
+const run_other_text: Array<u8, 6> = "object";
+
+const run_error_text: Array<u8, 6> = "ERROR\t";
+
+struct Env {
+  bytes: Box<Slots<u8>>;
+}
+
+fn put_byte(out: &Box<Slots<u8>>, byte: u8) -> r: unit writes(out) {
+  if out^.inner.len == out^.inner.cap {
+    let local_cap_1 = out^.inner.cap +sat 1024_u64;
+    grow(cell: out, capacity: local_cap_1);
+  }
+  if out^.inner.len < out^.inner.cap {
+    place_back(window: &out^.inner, value: byte);
+  }
+  return unit;
+}
+
+fn append_text(out: &Box<Slots<u8>>, text: &[u8]) -> r: unit reads(text), writes(out) {
+  for (i in 0_u64..text^.len) {
+    let local_byte_2 = text^[i];
+    put_byte(out: out, byte: local_byte_2);
+  }
+  return unit;
+}
+
+fn append_value(env: &Env, vm: &Vm, v: Value) -> r: unit reads(vm), writes(env) {
+  match v {
+    Nil() => {
+      append_text(out: &env^.bytes, text: &run_nil_text[0_u64..3_u64]);
+    }
+    False() => {
+      append_text(out: &env^.bytes, text: &run_false_text[0_u64..5_u64]);
+    }
+    True() => {
+      append_text(out: &env^.bytes, text: &run_true_text[0_u64..4_u64]);
+    }
+    Num(n: x) => {
+      let local_bytes_3 = array_filled::<u8, 32>(value: 0_u8);
+      let local_n_4 = halo::number::format_number(value: x, out: &local_bytes_3[0_u64..32_u64]);
+      append_text(out: &env^.bytes, text: &local_bytes_3[0_u64..local_n_4]);
+    }
+    Str(h: handle) => {
+      let local_hi_5 = cvt::<u32, u64>(handle);
+      if local_hi_5 < vm^.heap.strings.inner.len {
+        let local_n_6 = vm^.heap.strings.inner[local_hi_5].payload.bytes.inner.len;
+        for (i in 0_u64..local_n_6) {
+          if i < vm^.heap.strings.inner[local_hi_5].payload.bytes.inner.len {
+            let local_byte_7 = vm^.heap.strings.inner[local_hi_5].payload.bytes.inner[i];
+            if local_byte_7 == 0_u8 {
+              break;
+            }
+            put_byte(out: &env^.bytes, byte: local_byte_7);
+          }
+        }
+      }
+    }
+    Tab(..) => {
+      append_text(out: &env^.bytes, text: &run_other_text[0_u64..6_u64]);
+    }
+    Fun(..) => {
+      append_text(out: &env^.bytes, text: &run_other_text[0_u64..6_u64]);
+    }
+    Builtin(..) => {
+      append_text(out: &env^.bytes, text: &run_other_text[0_u64..6_u64]);
+    }
+  }
+  return unit;
+}
+
+fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  set vm^.error = Value::Nil();
+  for (i in 0_u64..argc) {
+    if i > 0_u64 {
+      put_byte(out: &env^.bytes, byte: 9_u8);
+    }
+    let local_first_8 = func +sat 1_u64;
+    let local_index_9 = local_first_8 +sat i;
+    if local_index_9 < stack^.inner.len {
+      let local_value_10 = stack^.inner[local_index_9];
+      append_value(env: env, vm: vm, v: local_value_10);
+    }
+  }
+  put_byte(out: &env^.bytes, byte: 10_u8);
+  if func < stack^.inner.len {
+    set stack^.inner[func] = Value::Nil();
+  }
+  return HostOutcome::Returned(count: 0_u64);
+}
+
+binding PrintHost : Host<Env> {
+  call = host_call;
+}
+
+fn read_exact(factory: &HandleFactory, input: &InputStream, bytes: &[u8], count: u64) -> complete: Bool writes(factory), writes(input), writes(bytes) waits contract {
+  requires count <= bytes^.len;
+} {
+  let local_position_11 = 0_u64;
+  loop @read {
+    if local_position_11 >= count {
+      return True();
+    }
+    let local_deadline_12 = None<std::time::Instant>();
+    match std::io::read_next(factory: factory, input: input, destination: bytes, start: local_position_11, end: count, deadline: local_deadline_12) {
+      Ok(value: next) => {
+        if next == local_position_11 {
+          return False();
+        }
+        set local_position_11 = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn emit(factory: &HandleFactory, output: &OutputStream, bytes: &[u8], count: u64) -> complete: Bool reads(bytes), writes(factory), writes(output) waits contract {
+  requires count <= bytes^.len;
+} {
+  let local_position_13 = 0_u64;
+  loop @write {
+    if local_position_13 >= count {
+      return True();
+    }
+    let local_deadline_14 = None<std::time::Instant>();
+    match std::io::write_once(factory: factory, output: output, source: bytes, start: local_position_13, end: count, deadline: local_deadline_14) {
+      Ok(value: next) => {
+        if next == local_position_13 {
+          return False();
+        }
+        set local_position_13 = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn main(inputs: Inputs) -> r: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: output, stderr: stderr, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd_read, write: cwd_write) = move cwd;
+  std::fs::close_directory(factory: &factory, directory: move cwd_read);
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
+  let local_header_17 = array_filled::<u8, 8>(value: 0_u8);
+  let local_complete_18 = read_exact(factory: &factory, input: &input, bytes: &local_header_17[0_u64..8_u64], count: 8_u64);
+  if bnot(local_complete_18) {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let local_budget_19 = 0_u64;
+  for (i in 0_u64..8_u64) {
+    let local_byte_20 = local_header_17[i];
+    let local_wide_21 = cvt::<u8, u64>(local_byte_20);
+    let local_distance_22 = i * 8_u64;
+    let local_shift_23 = cvt::<u64, u32>(local_distance_22);
+    let local_part_24 = ishl.wrap(local_wide_21, local_shift_23);
+    set local_budget_19 = ior(local_budget_19, local_part_24);
+  }
+  let local_source_25 = box_slots_new::<u8>(capacity: 0_u64);
+  let local_buffer_26 = array_filled::<u8, 4096>(value: 0_u8);
+  loop {
+    let local_deadline_27 = None<std::time::Instant>();
+    match std::io::read_next(factory: &factory, input: &input, destination: &local_buffer_26[0_u64..4096_u64], start: 0_u64, end: 4096_u64, deadline: local_deadline_27) {
+      Ok(value: n) => {
+        if n == 0_u64 {
+          break;
+        }
+        if n <= 4096_u64 {
+          append_text(out: &local_source_25, text: &local_buffer_26[0_u64..n]);
+        }
+      }
+      Err(error: stop) => {
+        match stop {
+          ReadEnd() => {
+            break;
+          }
+          ReadFailed(..) => {
+            return std::process::exit_status(code: 2_u8);
+          }
+        }
+      }
+    }
+  }
+  let local_vm_28 = halo::vm::vm_new(limit: 0_u64);
+  halo::vm::install_libraries(vm: &local_vm_28);
+  let local_name_29 = halo::heap::intern(heap: &local_vm_28.heap, bytes: &run_print_name[0_u64..5_u64]);
+  let local_globals_30 = Value::Tab(h: local_vm_28.globals);
+  let local_print_31 = Value::Builtin(id: 4096_u32);
+  let local_ignored_32 = halo::heap::table_set(heap: &local_vm_28.heap, t: local_globals_30, key: local_name_29, val: local_print_31);
+  let local_bytes_33 = box_slots_new::<u8>(capacity: 0_u64);
+  let local_env_34 = Env(bytes: move local_bytes_33);
+  let local_stack_35 = halo::vm::stack_new(size: 256_u64);
+  let local_length_36 = local_source_25.inner.len;
+  match halo::compile::compile(heap: &local_vm_28.heap, chunk_name: &run_source_name[0_u64..12_u64], source: &local_source_25.inner[0_u64..local_length_36]) {
+    Err(error: problem) => {
+      let local_n_37 = problem.message.inner.len;
+      let local_complete_38 = emit(factory: &factory, output: &stderr, bytes: &problem.message.inner[0_u64..local_n_37], count: local_n_37);
+      return std::process::exit_status(code: 3_u8);
+    }
+    Ok(value: script) => {
+      let local_outcome_39 = halo::vm::start::<PrintHost>(script: &script, stack: &local_stack_35, vm: &local_vm_28, env: &local_env_34, proto: 0_u32, argc: 0_u64, budget: local_budget_19);
+      loop {
+        match local_outcome_39 {
+          Budget() => {
+            set local_outcome_39 = halo::vm::resume::<PrintHost>(script: &script, stack: &local_stack_35, vm: &local_vm_28, env: &local_env_34, budget: local_budget_19);
+          }
+          Done(..) => {
+            break;
+          }
+          Error() => {
+            append_text(out: &local_env_34.bytes, text: &run_error_text[0_u64..6_u64]);
+            let local_error_40 = local_vm_28.error;
+            append_value(env: &local_env_34, vm: &local_vm_28, v: local_error_40);
+            put_byte(out: &local_env_34.bytes, byte: 10_u8);
+            break;
+          }
+          HostStopped() => {
+            return std::process::exit_status(code: 4_u8);
+          }
+        }
+      }
+    }
+  }
+  let local_n_41 = local_env_34.bytes.inner.len;
+  let local_sent_42 = emit(factory: &factory, output: &output, bytes: &local_env_34.bytes.inner[0_u64..local_n_41], count: local_n_41);
+  if bnot(local_sent_42) {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

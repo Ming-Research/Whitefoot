@@ -41,7 +41,33 @@ public struct CallbackFrame {
   public mode: u8;
 }
 
+public struct LibraryContext {
+  public frame: Frame;
+  public tail: Bool;
+  public id: u32;
+  public phase: u8;
+  public count: u64;
+  public table: Value;
+  public comparator: Value;
+  public saved_error: Value;
+}
+
+public struct SortFrame {
+  public context: u64;
+  public lower: i64;
+  public upper: i64;
+  public i: i64;
+  public j: i64;
+  public phase: u8;
+  public a: Value;
+  public b: Value;
+  public pivot: Value;
+}
+
 public struct Vm {
+  public library_contexts: Box<Slots<LibraryContext>>;
+  public sort_frames: Box<Slots<SortFrame>>;
+  public random_state: u64;
   public heap: Heap;
   public frames: Box<Slots<Frame>>;
   public open_upvalues: Box<Slots<u32>>;
@@ -121,3 +147,122 @@ public fn run<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Val
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
 } doc "Eight-parameter guaranteed self-tail dispatch.";
+
+public struct BuiltinBinding {
+  public library: u8;
+  public name: Array<u8, 16>;
+  public length: u64;
+  public id: u32;
+}
+
+public const builtin_assert: u32 = 8_u32;
+
+public const builtin_ipairs: u32 = 9_u32;
+
+public const builtin_pairs: u32 = 10_u32;
+
+public const builtin_next: u32 = 11_u32;
+
+public const builtin_xpcall: u32 = 12_u32;
+
+public const builtin_rawequal: u32 = 13_u32;
+
+public const builtin_tonumber: u32 = 14_u32;
+
+public const builtin_tostring: u32 = 15_u32;
+
+public const builtin_unpack: u32 = 16_u32;
+
+public const builtin_ipairsaux: u32 = 17_u32;
+
+public const builtin_string_len: u32 = 32_u32;
+
+public const builtin_string_sub: u32 = 33_u32;
+
+public const builtin_string_upper: u32 = 34_u32;
+
+public const builtin_string_lower: u32 = 35_u32;
+
+public const builtin_string_rep: u32 = 36_u32;
+
+public const builtin_string_reverse: u32 = 37_u32;
+
+public const builtin_string_byte: u32 = 38_u32;
+
+public const builtin_string_char: u32 = 39_u32;
+
+public const builtin_string_format: u32 = 40_u32;
+
+public const builtin_table_insert: u32 = 48_u32;
+
+public const builtin_table_remove: u32 = 49_u32;
+
+public const builtin_table_concat: u32 = 50_u32;
+
+public const builtin_table_getn: u32 = 51_u32;
+
+public const builtin_table_maxn: u32 = 52_u32;
+
+public const builtin_table_sort: u32 = 53_u32;
+
+public const builtin_math_abs: u32 = 64_u32;
+
+public const builtin_math_ceil: u32 = 65_u32;
+
+public const builtin_math_floor: u32 = 66_u32;
+
+public const builtin_math_fmod: u32 = 67_u32;
+
+public const builtin_math_modf: u32 = 68_u32;
+
+public const builtin_math_sqrt: u32 = 69_u32;
+
+public const builtin_math_pow: u32 = 70_u32;
+
+public const builtin_math_min: u32 = 71_u32;
+
+public const builtin_math_max: u32 = 72_u32;
+
+public const builtin_math_frexp: u32 = 73_u32;
+
+public const builtin_math_ldexp: u32 = 74_u32;
+
+public const builtin_math_log: u32 = 75_u32;
+
+public const builtin_math_log10: u32 = 76_u32;
+
+public const builtin_math_exp: u32 = 77_u32;
+
+public const builtin_math_sin: u32 = 78_u32;
+
+public const builtin_math_cos: u32 = 79_u32;
+
+public const builtin_math_tan: u32 = 80_u32;
+
+public const builtin_math_asin: u32 = 81_u32;
+
+public const builtin_math_acos: u32 = 82_u32;
+
+public const builtin_math_atan: u32 = 83_u32;
+
+public const builtin_math_atan2: u32 = 84_u32;
+
+public const builtin_math_sinh: u32 = 85_u32;
+
+public const builtin_math_cosh: u32 = 86_u32;
+
+public const builtin_math_tanh: u32 = 87_u32;
+
+public const builtin_math_deg: u32 = 88_u32;
+
+public const builtin_math_rad: u32 = 89_u32;
+
+public const builtin_math_random: u32 = 90_u32;
+
+public const builtin_math_randomseed: u32 = 91_u32;
+
+public const library_builtin_count: u64 = 61_u64;
+
+public fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure doc "Stable slice 1 builtin-id table. library 0 installs into globals; 1 string; 2 table; 3 math. Name bytes are [0..length); IDs 0..7 are retained, 8..17 base, 32..40 string, 48..53 table, 64..91 math. ipairsaux (17) is private to the iterator. math.huge and math.pi are numeric constants, installed separately.";
+
+public fn install_libraries(vm: &Vm) -> r: unit writes(vm) doc "Installs the builtin-id table into globals and creates string, table and math tables. Installs string.__index through the string type metatable; adds math.pi and math.huge. Host functions use IDs >=4096.";

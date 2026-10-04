@@ -1,0 +1,880 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias intern = pkg::heap::intern;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+alias new_table = pkg::heap::new_table;
+alias truthy = pkg::value::truthy;
+
+const library_lib_text_0: Array<u8, 14> = "bad argument #";
+
+const library_lib_text_1: Array<u8, 5> = " to '";
+
+const library_lib_text_2: Array<u8, 3> = "' (";
+
+const library_lib_text_3: Array<u8, 15> = " expected, got ";
+
+const library_lib_text_4: Array<u8, 8> = "no value";
+
+const library_lib_text_5: Array<u8, 14> = "bad argument #";
+
+const library_lib_text_6: Array<u8, 5> = " to '";
+
+const library_lib_text_7: Array<u8, 3> = "' (";
+
+const library_lib_text_8: Array<u8, 6> = "string";
+
+const library_lib_text_9: Array<u8, 5> = "table";
+
+const library_lib_text_10: Array<u8, 4> = "math";
+
+const library_lib_text_11: Array<u8, 2> = "pi";
+
+const library_lib_text_12: Array<u8, 4> = "huge";
+
+const library_lib_text_13: Array<u8, 7> = "__index";
+
+fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
+  if index == 0_u64 {
+    let local_name_1 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_1[0_u64] = 112_u8;
+    set local_name_1[1_u64] = 99_u8;
+    set local_name_1[2_u64] = 97_u8;
+    set local_name_1[3_u64] = 108_u8;
+    set local_name_1[4_u64] = 108_u8;
+    let local_row_2 = BuiltinBinding(library: 0_u8, name: local_name_1, length: 5_u64, id: 0_u32);
+    return Some<BuiltinBinding>(value: local_row_2);
+  }
+  if index == 1_u64 {
+    let local_name_3 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_3[0_u64] = 101_u8;
+    set local_name_3[1_u64] = 114_u8;
+    set local_name_3[2_u64] = 114_u8;
+    set local_name_3[3_u64] = 111_u8;
+    set local_name_3[4_u64] = 114_u8;
+    let local_row_4 = BuiltinBinding(library: 0_u8, name: local_name_3, length: 5_u64, id: 1_u32);
+    return Some<BuiltinBinding>(value: local_row_4);
+  }
+  if index == 2_u64 {
+    let local_name_5 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_5[0_u64] = 115_u8;
+    set local_name_5[1_u64] = 101_u8;
+    set local_name_5[2_u64] = 108_u8;
+    set local_name_5[3_u64] = 101_u8;
+    set local_name_5[4_u64] = 99_u8;
+    set local_name_5[5_u64] = 116_u8;
+    let local_row_6 = BuiltinBinding(library: 0_u8, name: local_name_5, length: 6_u64, id: 2_u32);
+    return Some<BuiltinBinding>(value: local_row_6);
+  }
+  if index == 3_u64 {
+    let local_name_7 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_7[0_u64] = 116_u8;
+    set local_name_7[1_u64] = 121_u8;
+    set local_name_7[2_u64] = 112_u8;
+    set local_name_7[3_u64] = 101_u8;
+    let local_row_8 = BuiltinBinding(library: 0_u8, name: local_name_7, length: 4_u64, id: 3_u32);
+    return Some<BuiltinBinding>(value: local_row_8);
+  }
+  if index == 4_u64 {
+    let local_name_9 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_9[0_u64] = 114_u8;
+    set local_name_9[1_u64] = 97_u8;
+    set local_name_9[2_u64] = 119_u8;
+    set local_name_9[3_u64] = 103_u8;
+    set local_name_9[4_u64] = 101_u8;
+    set local_name_9[5_u64] = 116_u8;
+    let local_row_10 = BuiltinBinding(library: 0_u8, name: local_name_9, length: 6_u64, id: 4_u32);
+    return Some<BuiltinBinding>(value: local_row_10);
+  }
+  if index == 5_u64 {
+    let local_name_11 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_11[0_u64] = 114_u8;
+    set local_name_11[1_u64] = 97_u8;
+    set local_name_11[2_u64] = 119_u8;
+    set local_name_11[3_u64] = 115_u8;
+    set local_name_11[4_u64] = 101_u8;
+    set local_name_11[5_u64] = 116_u8;
+    let local_row_12 = BuiltinBinding(library: 0_u8, name: local_name_11, length: 6_u64, id: 5_u32);
+    return Some<BuiltinBinding>(value: local_row_12);
+  }
+  if index == 6_u64 {
+    let local_name_13 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_13[0_u64] = 115_u8;
+    set local_name_13[1_u64] = 101_u8;
+    set local_name_13[2_u64] = 116_u8;
+    set local_name_13[3_u64] = 109_u8;
+    set local_name_13[4_u64] = 101_u8;
+    set local_name_13[5_u64] = 116_u8;
+    set local_name_13[6_u64] = 97_u8;
+    set local_name_13[7_u64] = 116_u8;
+    set local_name_13[8_u64] = 97_u8;
+    set local_name_13[9_u64] = 98_u8;
+    set local_name_13[10_u64] = 108_u8;
+    set local_name_13[11_u64] = 101_u8;
+    let local_row_14 = BuiltinBinding(library: 0_u8, name: local_name_13, length: 12_u64, id: 6_u32);
+    return Some<BuiltinBinding>(value: local_row_14);
+  }
+  if index == 7_u64 {
+    let local_name_15 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_15[0_u64] = 103_u8;
+    set local_name_15[1_u64] = 101_u8;
+    set local_name_15[2_u64] = 116_u8;
+    set local_name_15[3_u64] = 109_u8;
+    set local_name_15[4_u64] = 101_u8;
+    set local_name_15[5_u64] = 116_u8;
+    set local_name_15[6_u64] = 97_u8;
+    set local_name_15[7_u64] = 116_u8;
+    set local_name_15[8_u64] = 97_u8;
+    set local_name_15[9_u64] = 98_u8;
+    set local_name_15[10_u64] = 108_u8;
+    set local_name_15[11_u64] = 101_u8;
+    let local_row_16 = BuiltinBinding(library: 0_u8, name: local_name_15, length: 12_u64, id: 7_u32);
+    return Some<BuiltinBinding>(value: local_row_16);
+  }
+  if index == 8_u64 {
+    let local_name_17 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_17[0_u64] = 97_u8;
+    set local_name_17[1_u64] = 115_u8;
+    set local_name_17[2_u64] = 115_u8;
+    set local_name_17[3_u64] = 101_u8;
+    set local_name_17[4_u64] = 114_u8;
+    set local_name_17[5_u64] = 116_u8;
+    let local_row_18 = BuiltinBinding(library: 0_u8, name: local_name_17, length: 6_u64, id: 8_u32);
+    return Some<BuiltinBinding>(value: local_row_18);
+  }
+  if index == 9_u64 {
+    let local_name_19 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_19[0_u64] = 105_u8;
+    set local_name_19[1_u64] = 112_u8;
+    set local_name_19[2_u64] = 97_u8;
+    set local_name_19[3_u64] = 105_u8;
+    set local_name_19[4_u64] = 114_u8;
+    set local_name_19[5_u64] = 115_u8;
+    let local_row_20 = BuiltinBinding(library: 0_u8, name: local_name_19, length: 6_u64, id: 9_u32);
+    return Some<BuiltinBinding>(value: local_row_20);
+  }
+  if index == 10_u64 {
+    let local_name_21 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_21[0_u64] = 112_u8;
+    set local_name_21[1_u64] = 97_u8;
+    set local_name_21[2_u64] = 105_u8;
+    set local_name_21[3_u64] = 114_u8;
+    set local_name_21[4_u64] = 115_u8;
+    let local_row_22 = BuiltinBinding(library: 0_u8, name: local_name_21, length: 5_u64, id: 10_u32);
+    return Some<BuiltinBinding>(value: local_row_22);
+  }
+  if index == 11_u64 {
+    let local_name_23 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_23[0_u64] = 110_u8;
+    set local_name_23[1_u64] = 101_u8;
+    set local_name_23[2_u64] = 120_u8;
+    set local_name_23[3_u64] = 116_u8;
+    let local_row_24 = BuiltinBinding(library: 0_u8, name: local_name_23, length: 4_u64, id: 11_u32);
+    return Some<BuiltinBinding>(value: local_row_24);
+  }
+  if index == 12_u64 {
+    let local_name_25 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_25[0_u64] = 120_u8;
+    set local_name_25[1_u64] = 112_u8;
+    set local_name_25[2_u64] = 99_u8;
+    set local_name_25[3_u64] = 97_u8;
+    set local_name_25[4_u64] = 108_u8;
+    set local_name_25[5_u64] = 108_u8;
+    let local_row_26 = BuiltinBinding(library: 0_u8, name: local_name_25, length: 6_u64, id: 12_u32);
+    return Some<BuiltinBinding>(value: local_row_26);
+  }
+  if index == 13_u64 {
+    let local_name_27 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_27[0_u64] = 114_u8;
+    set local_name_27[1_u64] = 97_u8;
+    set local_name_27[2_u64] = 119_u8;
+    set local_name_27[3_u64] = 101_u8;
+    set local_name_27[4_u64] = 113_u8;
+    set local_name_27[5_u64] = 117_u8;
+    set local_name_27[6_u64] = 97_u8;
+    set local_name_27[7_u64] = 108_u8;
+    let local_row_28 = BuiltinBinding(library: 0_u8, name: local_name_27, length: 8_u64, id: 13_u32);
+    return Some<BuiltinBinding>(value: local_row_28);
+  }
+  if index == 14_u64 {
+    let local_name_29 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_29[0_u64] = 116_u8;
+    set local_name_29[1_u64] = 111_u8;
+    set local_name_29[2_u64] = 110_u8;
+    set local_name_29[3_u64] = 117_u8;
+    set local_name_29[4_u64] = 109_u8;
+    set local_name_29[5_u64] = 98_u8;
+    set local_name_29[6_u64] = 101_u8;
+    set local_name_29[7_u64] = 114_u8;
+    let local_row_30 = BuiltinBinding(library: 0_u8, name: local_name_29, length: 8_u64, id: 14_u32);
+    return Some<BuiltinBinding>(value: local_row_30);
+  }
+  if index == 15_u64 {
+    let local_name_31 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_31[0_u64] = 116_u8;
+    set local_name_31[1_u64] = 111_u8;
+    set local_name_31[2_u64] = 115_u8;
+    set local_name_31[3_u64] = 116_u8;
+    set local_name_31[4_u64] = 114_u8;
+    set local_name_31[5_u64] = 105_u8;
+    set local_name_31[6_u64] = 110_u8;
+    set local_name_31[7_u64] = 103_u8;
+    let local_row_32 = BuiltinBinding(library: 0_u8, name: local_name_31, length: 8_u64, id: 15_u32);
+    return Some<BuiltinBinding>(value: local_row_32);
+  }
+  if index == 16_u64 {
+    let local_name_33 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_33[0_u64] = 117_u8;
+    set local_name_33[1_u64] = 110_u8;
+    set local_name_33[2_u64] = 112_u8;
+    set local_name_33[3_u64] = 97_u8;
+    set local_name_33[4_u64] = 99_u8;
+    set local_name_33[5_u64] = 107_u8;
+    let local_row_34 = BuiltinBinding(library: 0_u8, name: local_name_33, length: 6_u64, id: 16_u32);
+    return Some<BuiltinBinding>(value: local_row_34);
+  }
+  if index == 17_u64 {
+    let local_name_35 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_35[0_u64] = 105_u8;
+    set local_name_35[1_u64] = 112_u8;
+    set local_name_35[2_u64] = 97_u8;
+    set local_name_35[3_u64] = 105_u8;
+    set local_name_35[4_u64] = 114_u8;
+    set local_name_35[5_u64] = 115_u8;
+    set local_name_35[6_u64] = 97_u8;
+    set local_name_35[7_u64] = 117_u8;
+    set local_name_35[8_u64] = 120_u8;
+    let local_row_36 = BuiltinBinding(library: 0_u8, name: local_name_35, length: 9_u64, id: 17_u32);
+    return Some<BuiltinBinding>(value: local_row_36);
+  }
+  if index == 18_u64 {
+    let local_name_37 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_37[0_u64] = 108_u8;
+    set local_name_37[1_u64] = 101_u8;
+    set local_name_37[2_u64] = 110_u8;
+    let local_row_38 = BuiltinBinding(library: 1_u8, name: local_name_37, length: 3_u64, id: 32_u32);
+    return Some<BuiltinBinding>(value: local_row_38);
+  }
+  if index == 19_u64 {
+    let local_name_39 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_39[0_u64] = 115_u8;
+    set local_name_39[1_u64] = 117_u8;
+    set local_name_39[2_u64] = 98_u8;
+    let local_row_40 = BuiltinBinding(library: 1_u8, name: local_name_39, length: 3_u64, id: 33_u32);
+    return Some<BuiltinBinding>(value: local_row_40);
+  }
+  if index == 20_u64 {
+    let local_name_41 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_41[0_u64] = 117_u8;
+    set local_name_41[1_u64] = 112_u8;
+    set local_name_41[2_u64] = 112_u8;
+    set local_name_41[3_u64] = 101_u8;
+    set local_name_41[4_u64] = 114_u8;
+    let local_row_42 = BuiltinBinding(library: 1_u8, name: local_name_41, length: 5_u64, id: 34_u32);
+    return Some<BuiltinBinding>(value: local_row_42);
+  }
+  if index == 21_u64 {
+    let local_name_43 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_43[0_u64] = 108_u8;
+    set local_name_43[1_u64] = 111_u8;
+    set local_name_43[2_u64] = 119_u8;
+    set local_name_43[3_u64] = 101_u8;
+    set local_name_43[4_u64] = 114_u8;
+    let local_row_44 = BuiltinBinding(library: 1_u8, name: local_name_43, length: 5_u64, id: 35_u32);
+    return Some<BuiltinBinding>(value: local_row_44);
+  }
+  if index == 22_u64 {
+    let local_name_45 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_45[0_u64] = 114_u8;
+    set local_name_45[1_u64] = 101_u8;
+    set local_name_45[2_u64] = 112_u8;
+    let local_row_46 = BuiltinBinding(library: 1_u8, name: local_name_45, length: 3_u64, id: 36_u32);
+    return Some<BuiltinBinding>(value: local_row_46);
+  }
+  if index == 23_u64 {
+    let local_name_47 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_47[0_u64] = 114_u8;
+    set local_name_47[1_u64] = 101_u8;
+    set local_name_47[2_u64] = 118_u8;
+    set local_name_47[3_u64] = 101_u8;
+    set local_name_47[4_u64] = 114_u8;
+    set local_name_47[5_u64] = 115_u8;
+    set local_name_47[6_u64] = 101_u8;
+    let local_row_48 = BuiltinBinding(library: 1_u8, name: local_name_47, length: 7_u64, id: 37_u32);
+    return Some<BuiltinBinding>(value: local_row_48);
+  }
+  if index == 24_u64 {
+    let local_name_49 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_49[0_u64] = 98_u8;
+    set local_name_49[1_u64] = 121_u8;
+    set local_name_49[2_u64] = 116_u8;
+    set local_name_49[3_u64] = 101_u8;
+    let local_row_50 = BuiltinBinding(library: 1_u8, name: local_name_49, length: 4_u64, id: 38_u32);
+    return Some<BuiltinBinding>(value: local_row_50);
+  }
+  if index == 25_u64 {
+    let local_name_51 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_51[0_u64] = 99_u8;
+    set local_name_51[1_u64] = 104_u8;
+    set local_name_51[2_u64] = 97_u8;
+    set local_name_51[3_u64] = 114_u8;
+    let local_row_52 = BuiltinBinding(library: 1_u8, name: local_name_51, length: 4_u64, id: 39_u32);
+    return Some<BuiltinBinding>(value: local_row_52);
+  }
+  if index == 26_u64 {
+    let local_name_53 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_53[0_u64] = 102_u8;
+    set local_name_53[1_u64] = 111_u8;
+    set local_name_53[2_u64] = 114_u8;
+    set local_name_53[3_u64] = 109_u8;
+    set local_name_53[4_u64] = 97_u8;
+    set local_name_53[5_u64] = 116_u8;
+    let local_row_54 = BuiltinBinding(library: 1_u8, name: local_name_53, length: 6_u64, id: 40_u32);
+    return Some<BuiltinBinding>(value: local_row_54);
+  }
+  if index == 27_u64 {
+    let local_name_55 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_55[0_u64] = 105_u8;
+    set local_name_55[1_u64] = 110_u8;
+    set local_name_55[2_u64] = 115_u8;
+    set local_name_55[3_u64] = 101_u8;
+    set local_name_55[4_u64] = 114_u8;
+    set local_name_55[5_u64] = 116_u8;
+    let local_row_56 = BuiltinBinding(library: 2_u8, name: local_name_55, length: 6_u64, id: 48_u32);
+    return Some<BuiltinBinding>(value: local_row_56);
+  }
+  if index == 28_u64 {
+    let local_name_57 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_57[0_u64] = 114_u8;
+    set local_name_57[1_u64] = 101_u8;
+    set local_name_57[2_u64] = 109_u8;
+    set local_name_57[3_u64] = 111_u8;
+    set local_name_57[4_u64] = 118_u8;
+    set local_name_57[5_u64] = 101_u8;
+    let local_row_58 = BuiltinBinding(library: 2_u8, name: local_name_57, length: 6_u64, id: 49_u32);
+    return Some<BuiltinBinding>(value: local_row_58);
+  }
+  if index == 29_u64 {
+    let local_name_59 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_59[0_u64] = 99_u8;
+    set local_name_59[1_u64] = 111_u8;
+    set local_name_59[2_u64] = 110_u8;
+    set local_name_59[3_u64] = 99_u8;
+    set local_name_59[4_u64] = 97_u8;
+    set local_name_59[5_u64] = 116_u8;
+    let local_row_60 = BuiltinBinding(library: 2_u8, name: local_name_59, length: 6_u64, id: 50_u32);
+    return Some<BuiltinBinding>(value: local_row_60);
+  }
+  if index == 30_u64 {
+    let local_name_61 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_61[0_u64] = 103_u8;
+    set local_name_61[1_u64] = 101_u8;
+    set local_name_61[2_u64] = 116_u8;
+    set local_name_61[3_u64] = 110_u8;
+    let local_row_62 = BuiltinBinding(library: 2_u8, name: local_name_61, length: 4_u64, id: 51_u32);
+    return Some<BuiltinBinding>(value: local_row_62);
+  }
+  if index == 31_u64 {
+    let local_name_63 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_63[0_u64] = 109_u8;
+    set local_name_63[1_u64] = 97_u8;
+    set local_name_63[2_u64] = 120_u8;
+    set local_name_63[3_u64] = 110_u8;
+    let local_row_64 = BuiltinBinding(library: 2_u8, name: local_name_63, length: 4_u64, id: 52_u32);
+    return Some<BuiltinBinding>(value: local_row_64);
+  }
+  if index == 32_u64 {
+    let local_name_65 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_65[0_u64] = 115_u8;
+    set local_name_65[1_u64] = 111_u8;
+    set local_name_65[2_u64] = 114_u8;
+    set local_name_65[3_u64] = 116_u8;
+    let local_row_66 = BuiltinBinding(library: 2_u8, name: local_name_65, length: 4_u64, id: 53_u32);
+    return Some<BuiltinBinding>(value: local_row_66);
+  }
+  if index == 33_u64 {
+    let local_name_67 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_67[0_u64] = 97_u8;
+    set local_name_67[1_u64] = 98_u8;
+    set local_name_67[2_u64] = 115_u8;
+    let local_row_68 = BuiltinBinding(library: 3_u8, name: local_name_67, length: 3_u64, id: 64_u32);
+    return Some<BuiltinBinding>(value: local_row_68);
+  }
+  if index == 34_u64 {
+    let local_name_69 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_69[0_u64] = 99_u8;
+    set local_name_69[1_u64] = 101_u8;
+    set local_name_69[2_u64] = 105_u8;
+    set local_name_69[3_u64] = 108_u8;
+    let local_row_70 = BuiltinBinding(library: 3_u8, name: local_name_69, length: 4_u64, id: 65_u32);
+    return Some<BuiltinBinding>(value: local_row_70);
+  }
+  if index == 35_u64 {
+    let local_name_71 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_71[0_u64] = 102_u8;
+    set local_name_71[1_u64] = 108_u8;
+    set local_name_71[2_u64] = 111_u8;
+    set local_name_71[3_u64] = 111_u8;
+    set local_name_71[4_u64] = 114_u8;
+    let local_row_72 = BuiltinBinding(library: 3_u8, name: local_name_71, length: 5_u64, id: 66_u32);
+    return Some<BuiltinBinding>(value: local_row_72);
+  }
+  if index == 36_u64 {
+    let local_name_73 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_73[0_u64] = 102_u8;
+    set local_name_73[1_u64] = 109_u8;
+    set local_name_73[2_u64] = 111_u8;
+    set local_name_73[3_u64] = 100_u8;
+    let local_row_74 = BuiltinBinding(library: 3_u8, name: local_name_73, length: 4_u64, id: 67_u32);
+    return Some<BuiltinBinding>(value: local_row_74);
+  }
+  if index == 37_u64 {
+    let local_name_75 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_75[0_u64] = 109_u8;
+    set local_name_75[1_u64] = 111_u8;
+    set local_name_75[2_u64] = 100_u8;
+    set local_name_75[3_u64] = 102_u8;
+    let local_row_76 = BuiltinBinding(library: 3_u8, name: local_name_75, length: 4_u64, id: 68_u32);
+    return Some<BuiltinBinding>(value: local_row_76);
+  }
+  if index == 38_u64 {
+    let local_name_77 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_77[0_u64] = 115_u8;
+    set local_name_77[1_u64] = 113_u8;
+    set local_name_77[2_u64] = 114_u8;
+    set local_name_77[3_u64] = 116_u8;
+    let local_row_78 = BuiltinBinding(library: 3_u8, name: local_name_77, length: 4_u64, id: 69_u32);
+    return Some<BuiltinBinding>(value: local_row_78);
+  }
+  if index == 39_u64 {
+    let local_name_79 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_79[0_u64] = 112_u8;
+    set local_name_79[1_u64] = 111_u8;
+    set local_name_79[2_u64] = 119_u8;
+    let local_row_80 = BuiltinBinding(library: 3_u8, name: local_name_79, length: 3_u64, id: 70_u32);
+    return Some<BuiltinBinding>(value: local_row_80);
+  }
+  if index == 40_u64 {
+    let local_name_81 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_81[0_u64] = 109_u8;
+    set local_name_81[1_u64] = 105_u8;
+    set local_name_81[2_u64] = 110_u8;
+    let local_row_82 = BuiltinBinding(library: 3_u8, name: local_name_81, length: 3_u64, id: 71_u32);
+    return Some<BuiltinBinding>(value: local_row_82);
+  }
+  if index == 41_u64 {
+    let local_name_83 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_83[0_u64] = 109_u8;
+    set local_name_83[1_u64] = 97_u8;
+    set local_name_83[2_u64] = 120_u8;
+    let local_row_84 = BuiltinBinding(library: 3_u8, name: local_name_83, length: 3_u64, id: 72_u32);
+    return Some<BuiltinBinding>(value: local_row_84);
+  }
+  if index == 42_u64 {
+    let local_name_85 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_85[0_u64] = 102_u8;
+    set local_name_85[1_u64] = 114_u8;
+    set local_name_85[2_u64] = 101_u8;
+    set local_name_85[3_u64] = 120_u8;
+    set local_name_85[4_u64] = 112_u8;
+    let local_row_86 = BuiltinBinding(library: 3_u8, name: local_name_85, length: 5_u64, id: 73_u32);
+    return Some<BuiltinBinding>(value: local_row_86);
+  }
+  if index == 43_u64 {
+    let local_name_87 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_87[0_u64] = 108_u8;
+    set local_name_87[1_u64] = 100_u8;
+    set local_name_87[2_u64] = 101_u8;
+    set local_name_87[3_u64] = 120_u8;
+    set local_name_87[4_u64] = 112_u8;
+    let local_row_88 = BuiltinBinding(library: 3_u8, name: local_name_87, length: 5_u64, id: 74_u32);
+    return Some<BuiltinBinding>(value: local_row_88);
+  }
+  if index == 44_u64 {
+    let local_name_89 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_89[0_u64] = 108_u8;
+    set local_name_89[1_u64] = 111_u8;
+    set local_name_89[2_u64] = 103_u8;
+    let local_row_90 = BuiltinBinding(library: 3_u8, name: local_name_89, length: 3_u64, id: 75_u32);
+    return Some<BuiltinBinding>(value: local_row_90);
+  }
+  if index == 45_u64 {
+    let local_name_91 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_91[0_u64] = 108_u8;
+    set local_name_91[1_u64] = 111_u8;
+    set local_name_91[2_u64] = 103_u8;
+    set local_name_91[3_u64] = 49_u8;
+    set local_name_91[4_u64] = 48_u8;
+    let local_row_92 = BuiltinBinding(library: 3_u8, name: local_name_91, length: 5_u64, id: 76_u32);
+    return Some<BuiltinBinding>(value: local_row_92);
+  }
+  if index == 46_u64 {
+    let local_name_93 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_93[0_u64] = 101_u8;
+    set local_name_93[1_u64] = 120_u8;
+    set local_name_93[2_u64] = 112_u8;
+    let local_row_94 = BuiltinBinding(library: 3_u8, name: local_name_93, length: 3_u64, id: 77_u32);
+    return Some<BuiltinBinding>(value: local_row_94);
+  }
+  if index == 47_u64 {
+    let local_name_95 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_95[0_u64] = 115_u8;
+    set local_name_95[1_u64] = 105_u8;
+    set local_name_95[2_u64] = 110_u8;
+    let local_row_96 = BuiltinBinding(library: 3_u8, name: local_name_95, length: 3_u64, id: 78_u32);
+    return Some<BuiltinBinding>(value: local_row_96);
+  }
+  if index == 48_u64 {
+    let local_name_97 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_97[0_u64] = 99_u8;
+    set local_name_97[1_u64] = 111_u8;
+    set local_name_97[2_u64] = 115_u8;
+    let local_row_98 = BuiltinBinding(library: 3_u8, name: local_name_97, length: 3_u64, id: 79_u32);
+    return Some<BuiltinBinding>(value: local_row_98);
+  }
+  if index == 49_u64 {
+    let local_name_99 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_99[0_u64] = 116_u8;
+    set local_name_99[1_u64] = 97_u8;
+    set local_name_99[2_u64] = 110_u8;
+    let local_row_100 = BuiltinBinding(library: 3_u8, name: local_name_99, length: 3_u64, id: 80_u32);
+    return Some<BuiltinBinding>(value: local_row_100);
+  }
+  if index == 50_u64 {
+    let local_name_101 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_101[0_u64] = 97_u8;
+    set local_name_101[1_u64] = 115_u8;
+    set local_name_101[2_u64] = 105_u8;
+    set local_name_101[3_u64] = 110_u8;
+    let local_row_102 = BuiltinBinding(library: 3_u8, name: local_name_101, length: 4_u64, id: 81_u32);
+    return Some<BuiltinBinding>(value: local_row_102);
+  }
+  if index == 51_u64 {
+    let local_name_103 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_103[0_u64] = 97_u8;
+    set local_name_103[1_u64] = 99_u8;
+    set local_name_103[2_u64] = 111_u8;
+    set local_name_103[3_u64] = 115_u8;
+    let local_row_104 = BuiltinBinding(library: 3_u8, name: local_name_103, length: 4_u64, id: 82_u32);
+    return Some<BuiltinBinding>(value: local_row_104);
+  }
+  if index == 52_u64 {
+    let local_name_105 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_105[0_u64] = 97_u8;
+    set local_name_105[1_u64] = 116_u8;
+    set local_name_105[2_u64] = 97_u8;
+    set local_name_105[3_u64] = 110_u8;
+    let local_row_106 = BuiltinBinding(library: 3_u8, name: local_name_105, length: 4_u64, id: 83_u32);
+    return Some<BuiltinBinding>(value: local_row_106);
+  }
+  if index == 53_u64 {
+    let local_name_107 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_107[0_u64] = 97_u8;
+    set local_name_107[1_u64] = 116_u8;
+    set local_name_107[2_u64] = 97_u8;
+    set local_name_107[3_u64] = 110_u8;
+    set local_name_107[4_u64] = 50_u8;
+    let local_row_108 = BuiltinBinding(library: 3_u8, name: local_name_107, length: 5_u64, id: 84_u32);
+    return Some<BuiltinBinding>(value: local_row_108);
+  }
+  if index == 54_u64 {
+    let local_name_109 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_109[0_u64] = 115_u8;
+    set local_name_109[1_u64] = 105_u8;
+    set local_name_109[2_u64] = 110_u8;
+    set local_name_109[3_u64] = 104_u8;
+    let local_row_110 = BuiltinBinding(library: 3_u8, name: local_name_109, length: 4_u64, id: 85_u32);
+    return Some<BuiltinBinding>(value: local_row_110);
+  }
+  if index == 55_u64 {
+    let local_name_111 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_111[0_u64] = 99_u8;
+    set local_name_111[1_u64] = 111_u8;
+    set local_name_111[2_u64] = 115_u8;
+    set local_name_111[3_u64] = 104_u8;
+    let local_row_112 = BuiltinBinding(library: 3_u8, name: local_name_111, length: 4_u64, id: 86_u32);
+    return Some<BuiltinBinding>(value: local_row_112);
+  }
+  if index == 56_u64 {
+    let local_name_113 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_113[0_u64] = 116_u8;
+    set local_name_113[1_u64] = 97_u8;
+    set local_name_113[2_u64] = 110_u8;
+    set local_name_113[3_u64] = 104_u8;
+    let local_row_114 = BuiltinBinding(library: 3_u8, name: local_name_113, length: 4_u64, id: 87_u32);
+    return Some<BuiltinBinding>(value: local_row_114);
+  }
+  if index == 57_u64 {
+    let local_name_115 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_115[0_u64] = 100_u8;
+    set local_name_115[1_u64] = 101_u8;
+    set local_name_115[2_u64] = 103_u8;
+    let local_row_116 = BuiltinBinding(library: 3_u8, name: local_name_115, length: 3_u64, id: 88_u32);
+    return Some<BuiltinBinding>(value: local_row_116);
+  }
+  if index == 58_u64 {
+    let local_name_117 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_117[0_u64] = 114_u8;
+    set local_name_117[1_u64] = 97_u8;
+    set local_name_117[2_u64] = 100_u8;
+    let local_row_118 = BuiltinBinding(library: 3_u8, name: local_name_117, length: 3_u64, id: 89_u32);
+    return Some<BuiltinBinding>(value: local_row_118);
+  }
+  if index == 59_u64 {
+    let local_name_119 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_119[0_u64] = 114_u8;
+    set local_name_119[1_u64] = 97_u8;
+    set local_name_119[2_u64] = 110_u8;
+    set local_name_119[3_u64] = 100_u8;
+    set local_name_119[4_u64] = 111_u8;
+    set local_name_119[5_u64] = 109_u8;
+    let local_row_120 = BuiltinBinding(library: 3_u8, name: local_name_119, length: 6_u64, id: 90_u32);
+    return Some<BuiltinBinding>(value: local_row_120);
+  }
+  if index == 60_u64 {
+    let local_name_121 = array_filled::<u8, 16>(value: 0_u8);
+    set local_name_121[0_u64] = 114_u8;
+    set local_name_121[1_u64] = 97_u8;
+    set local_name_121[2_u64] = 110_u8;
+    set local_name_121[3_u64] = 100_u8;
+    set local_name_121[4_u64] = 111_u8;
+    set local_name_121[5_u64] = 109_u8;
+    set local_name_121[6_u64] = 115_u8;
+    set local_name_121[7_u64] = 101_u8;
+    set local_name_121[8_u64] = 101_u8;
+    set local_name_121[9_u64] = 100_u8;
+    let local_row_122 = BuiltinBinding(library: 3_u8, name: local_name_121, length: 10_u64, id: 91_u32);
+    return Some<BuiltinBinding>(value: local_row_122);
+  }
+  return None<BuiltinBinding>();
+}
+
+fn bytes_push(bytes: &Box<Slots<u8>>, byte: u8) -> r: unit writes(bytes) {
+  let local_n_123 = bytes^.inner.len;
+  if local_n_123 == bytes^.inner.cap {
+    let local_cap_124 = local_n_123 +sat 64_u64;
+    grow(cell: bytes, capacity: local_cap_124);
+  }
+  if bytes^.inner.len < bytes^.inner.cap {
+    place_back(window: &bytes^.inner, value: byte);
+  }
+  return unit;
+}
+
+fn bytes_append(bytes: &Box<Slots<u8>>, text: &[u8]) -> r: unit reads(text), writes(bytes) {
+  for (i in 0_u64..text^.len) {
+    let local_b_125 = text^[i];
+    bytes_push(bytes: bytes, byte: local_b_125);
+  }
+  return unit;
+}
+
+fn bytes_value(vm: &Vm, bytes: &Box<Slots<u8>>) -> r: Value reads(bytes), writes(vm) {
+  let local_n_126 = bytes^.inner.len;
+  return intern(heap: &vm^.heap, bytes: &bytes^.inner[0_u64..local_n_126]);
+}
+
+fn bytes_string(vm: &Vm, bytes: &Box<Slots<u8>>, value: Value) -> r: unit reads(vm), writes(bytes) {
+  match str_of(v: value) {
+    Handle(h: bound_h_1) => {
+      let local_i_127 = cvt::<u32, u64>(bound_h_1);
+      if local_i_127 < vm^.heap.strings.inner.len {
+        let local_n_128 = vm^.heap.strings.inner[local_i_127].payload.bytes.inner.len;
+        bytes_append(bytes: bytes, text: &vm^.heap.strings.inner[local_i_127].payload.bytes.inner[0_u64..local_n_128]);
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return unit;
+}
+
+fn library_name(id: u32) -> r: BuiltinBinding pure {
+  for (i in 0_u64..library_builtin_count) {
+    match library_builtin(index: i) {
+      Some(value: row) => {
+        if row.id == id {
+          return row;
+        }
+      }
+      None() => {
+      }
+    }
+  }
+  let local_name_129 = array_filled::<u8, 16>(value: 0_u8);
+  return BuiltinBinding(library: 0_u8, name: local_name_129, length: 0_u64, id: id);
+}
+
+fn lib_failure(vm: &Vm, text: &[u8]) -> r: HostOutcome reads(text), writes(vm) {
+  let local_ignored_130 = raise_text(vm: vm, text: text);
+  return HostOutcome::Raised();
+}
+
+fn lib_result(stack: &Box<Slots<Value>>, func: u64, value: Value) -> r: HostOutcome writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  if func < stack^.inner.len {
+    set stack^.inner[func] = value;
+  }
+  return HostOutcome::Returned(count: 1_u64);
+}
+
+fn lib_put(stack: &Box<Slots<Value>>, at: u64, value: Value) -> r: unit writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  if at < stack^.inner.len {
+    set stack^.inner[at] = value;
+  }
+  return unit;
+}
+
+fn number_key(index: i64) -> r: Value pure {
+  let local_x_131 = cvt.nearest::<i64, f64>(index);
+  return Value::Num(n: local_x_131);
+}
+
+fn lib_integer(vm: &Vm, value: Value) -> r: Option<i64> reads(vm) {
+  match coerce_number(vm: vm, v: value) {
+    Is(x: bound_x_2) => {
+      let local_t_132 = ftrunc(bound_x_2);
+      if cvt.defined::<f64, i64>(local_t_132) {
+        let local_i_133 = cvt::<f64, i64>(local_t_132);
+        return Some<i64>(value: local_i_133);
+      }
+    }
+    Not() => {
+    }
+  }
+  return None<i64>();
+}
+
+fn lib_index(vm: &Vm, value: Value, default_value: i64) -> r: i64 reads(vm) {
+  match lib_int32(vm: vm, value: value) {
+    Some(value: i) => {
+      return i;
+    }
+    None() => {
+      return default_value;
+    }
+  }
+}
+
+fn lib_argerror(vm: &Vm, id: u32, index: u64, argc: u64, value: Value, expected: &[u8]) -> r: HostOutcome reads(expected), writes(vm) {
+  let local_bytes_134 = box_slots_new::<u8>(capacity: 128_u64);
+  bytes_append(bytes: &local_bytes_134, text: &library_lib_text_0[0_u64..14_u64]);
+  let local_num_135 = cvt.nearest::<u64, f64>(index);
+  let local_n_136 = Value::Num(n: local_num_135);
+  let local_text_137 = coerce_string(vm: vm, v: local_n_136);
+  bytes_string(vm: vm, bytes: &local_bytes_134, value: local_text_137);
+  bytes_append(bytes: &local_bytes_134, text: &library_lib_text_1[0_u64..5_u64]);
+  let local_row_138 = library_name(id: id);
+  let local_length_139 = local_row_138.length;
+  if local_length_139 <= 16_u64 {
+    bytes_append(bytes: &local_bytes_134, text: &local_row_138.name[0_u64..local_length_139]);
+  }
+  bytes_append(bytes: &local_bytes_134, text: &library_lib_text_2[0_u64..3_u64]);
+  bytes_append(bytes: &local_bytes_134, text: expected);
+  bytes_append(bytes: &local_bytes_134, text: &library_lib_text_3[0_u64..15_u64]);
+  if index > argc {
+    bytes_append(bytes: &local_bytes_134, text: &library_lib_text_4[0_u64..8_u64]);
+  } else {
+    let local_k_140 = kind_name(vm: vm, v: value);
+    bytes_string(vm: vm, bytes: &local_bytes_134, value: local_k_140);
+  }
+  bytes_push(bytes: &local_bytes_134, byte: 41_u8);
+  set vm^.error = bytes_value(vm: vm, bytes: &local_bytes_134);
+  return HostOutcome::Raised();
+}
+
+fn lib_argtext(vm: &Vm, id: u32, index: u64, text: &[u8]) -> r: HostOutcome reads(text), writes(vm) {
+  let local_bytes_141 = box_slots_new::<u8>(capacity: 128_u64);
+  bytes_append(bytes: &local_bytes_141, text: &library_lib_text_5[0_u64..14_u64]);
+  let local_x_142 = cvt.nearest::<u64, f64>(index);
+  let local_num_143 = Value::Num(n: local_x_142);
+  let local_n_144 = coerce_string(vm: vm, v: local_num_143);
+  bytes_string(vm: vm, bytes: &local_bytes_141, value: local_n_144);
+  bytes_append(bytes: &local_bytes_141, text: &library_lib_text_6[0_u64..5_u64]);
+  let local_row_145 = library_name(id: id);
+  let local_length_146 = local_row_145.length;
+  if local_length_146 <= 16_u64 {
+    bytes_append(bytes: &local_bytes_141, text: &local_row_145.name[0_u64..local_length_146]);
+  }
+  bytes_append(bytes: &local_bytes_141, text: &library_lib_text_7[0_u64..3_u64]);
+  bytes_append(bytes: &local_bytes_141, text: text);
+  bytes_push(bytes: &local_bytes_141, byte: 41_u8);
+  set vm^.error = bytes_value(vm: vm, bytes: &local_bytes_141);
+  return HostOutcome::Raised();
+}
+
+fn install_libraries(vm: &Vm) -> r: unit writes(vm) {
+  let local_string_147 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 16_u32);
+  let local_table_148 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 8_u32);
+  let local_math_149 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 32_u32);
+  let local_globals_150 = Value::Tab(h: vm^.globals);
+  let local_string_key_151 = intern(heap: &vm^.heap, bytes: &library_lib_text_8[0_u64..6_u64]);
+  let local_ignored_string_152 = table_set(heap: &vm^.heap, t: local_globals_150, key: local_string_key_151, val: local_string_147);
+  let local_table_key_153 = intern(heap: &vm^.heap, bytes: &library_lib_text_9[0_u64..5_u64]);
+  let local_ignored_table_154 = table_set(heap: &vm^.heap, t: local_globals_150, key: local_table_key_153, val: local_table_148);
+  let local_math_key_155 = intern(heap: &vm^.heap, bytes: &library_lib_text_10[0_u64..4_u64]);
+  let local_ignored_math_156 = table_set(heap: &vm^.heap, t: local_globals_150, key: local_math_key_155, val: local_math_149);
+  for (i in 0_u64..library_builtin_count) {
+    match library_builtin(index: i) {
+      Some(value: row) => {
+        if row.id != builtin_ipairsaux {
+          let local_length_157 = row.length;
+          if local_length_157 <= 16_u64 {
+            let local_key_158 = intern(heap: &vm^.heap, bytes: &row.name[0_u64..local_length_157]);
+            let local_target_159 = local_globals_150;
+            if row.library == 1_u8 {
+              set local_target_159 = local_string_147;
+            }
+            if row.library == 2_u8 {
+              set local_target_159 = local_table_148;
+            }
+            if row.library == 3_u8 {
+              set local_target_159 = local_math_149;
+            }
+            let local_value_160 = Value::Builtin(id: row.id);
+            let local_ignored_161 = table_set(heap: &vm^.heap, t: local_target_159, key: local_key_158, val: local_value_160);
+          }
+        }
+      }
+      None() => {
+      }
+    }
+  }
+  let local_pi_key_162 = intern(heap: &vm^.heap, bytes: &library_lib_text_11[0_u64..2_u64]);
+  let local_pi_number_163 = 3.141592653589793_f64;
+  let local_pi_value_164 = Value::Num(n: local_pi_number_163);
+  let local_ignored_pi_165 = table_set(heap: &vm^.heap, t: local_math_149, key: local_pi_key_162, val: local_pi_value_164);
+  let local_huge_key_166 = intern(heap: &vm^.heap, bytes: &library_lib_text_12[0_u64..4_u64]);
+  let local_huge_number_167 = finf::<f64>();
+  let local_huge_value_168 = Value::Num(n: local_huge_number_167);
+  let local_ignored_huge_169 = table_set(heap: &vm^.heap, t: local_math_149, key: local_huge_key_166, val: local_huge_value_168);
+  let local_meta_170 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 1_u32);
+  let local_key_171 = intern(heap: &vm^.heap, bytes: &library_lib_text_13[0_u64..7_u64]);
+  let local_ignored_172 = table_set(heap: &vm^.heap, t: local_meta_170, key: local_key_171, val: local_string_147);
+  match tab_of(v: local_meta_170) {
+    Handle(h: bound_h_3) => {
+      set vm^.type_metatables[3_u64] = bound_h_3;
+    }
+    NoHandle() => {
+    }
+  }
+  return unit;
+}
+
+fn lib_int32(vm: &Vm, value: Value) -> r: Option<i64> reads(vm) {
+  match lib_integer(vm: vm, value: value) {
+    Some(value: integer) => {
+      let narrowed = cvt.wrap::<i64, i32>(integer);
+      let widened = cvt::<i32, i64>(narrowed);
+      return Some<i64>(value: widened);
+    }
+    None() => {
+      return None<i64>();
+    }
+  }
+}

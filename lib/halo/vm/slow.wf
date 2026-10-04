@@ -229,6 +229,7 @@ fn callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value
   let ok = False();
   match out {
     Done(count: n) => {
+      library_callback_count(vm: vm, plan: plan, count: n);
       set ok = True();
       if wanted != 0_i64 {
         let copied = adjust_results(vm: vm, stack: stack, dest: dest, src: scratch, count: n, wanted: wanted);
@@ -236,6 +237,9 @@ fn callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value
     }
     Error() => {
       let ignored = unwind(vm: vm, stack: stack);
+      if plan.kind == 4_u8 {
+        library_raw_error(vm: vm);
+      }
     }
     Budget() => {
       park_suspended_stack(vm: vm, stack: stack);
@@ -327,7 +331,6 @@ fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
   requires dest < stack^.inner.len;
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
-  doc "TODO(number): number-to-string conversion for concatenation is pending.";
   let length = stack^.inner.len;
   let nil = Value::Nil();
   let name = 0_u8;
@@ -468,9 +471,11 @@ fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
       set name = 8_u8;
     }
     Concat() => {
-      match str_of(v: b) {
+      let left = coerce_string(vm: vm, v: b);
+      let right = coerce_string(vm: vm, v: c);
+      match str_of(v: left) {
         Handle(h: bh) => {
-          match str_of(v: c) {
+          match str_of(v: right) {
             Handle(h: ch) => {
               let joined = concat_strings(vm: vm, b: bh, c: ch);
               if is_nil(v: joined) {
@@ -510,6 +515,46 @@ fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
     }
     Le() => {
       set name = 11_u8;
+    }
+  }
+  if name <= 6_u8 {
+    match coerce_number(vm: vm, v: b) {
+      Is(x: bound_x_1) => {
+        if name == 6_u8 {
+          let z = fneg(bound_x_1);
+          set stack^.inner[dest] = Value::Num(n: z);
+          return True();
+        }
+        match coerce_number(vm: vm, v: c) {
+          Is(x: y) => {
+            let z = fadd.strict(bound_x_1, y);
+            if name == 1_u8 {
+              set z = fsub.strict(bound_x_1, y);
+            }
+            if name == 2_u8 {
+              set z = fmul.strict(bound_x_1, y);
+            }
+            if name == 3_u8 {
+              set z = fdiv.strict(bound_x_1, y);
+            }
+            if name == 4_u8 {
+              let q = fdiv.strict(bound_x_1, y);
+              let f = ffloor(q);
+              let product = fmul.strict(f, y);
+              set z = fsub.strict(bound_x_1, product);
+            }
+            if name == 5_u8 {
+              set z = pkg::number::pow(a: bound_x_1, b: y);
+            }
+            set stack^.inner[dest] = Value::Num(n: z);
+            return True();
+          }
+          Not() => {
+          }
+        }
+      }
+      Not() => {
+      }
     }
   }
   let tm = Value::Nil();
@@ -658,21 +703,23 @@ fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
   if name == 7_u8 {
     let kb = kind(v: b);
     let bad = b;
-    if kb == 3_u8 {
+    let string_left = kb == 3_u8;
+    let number_left = kb == 2_u8;
+    if bor(string_left, number_left) {
       set bad = c;
     }
-    return concat_coercion_pending(vm: vm, value: bad);
+    return type_error(vm: vm, v: bad, op: 3_u8);
   }
   if name == 8_u8 {
     return type_error(vm: vm, v: b, op: 4_u8);
   }
   let bad = b;
-  match num_of(v: b) {
+  match coerce_number(vm: vm, v: b) {
     Is(..) => {
       set bad = c;
     }
     Not() => {
     }
   }
-  return number_coercion_pending(vm: vm, v: bad);
+  return type_error(vm: vm, v: bad, op: 0_u8);
 }
