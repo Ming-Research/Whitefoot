@@ -1272,7 +1272,9 @@ impl FunctionEmitter<'_, '_> {
             .collect();
         let mut rooted: HashSet<IrValueId> = HashSet::new();
         for (position, parameter) in parameters.iter().enumerate() {
-            if !passed_through[position] {
+            // A parameter held in a frame slot is no SSA value the enclosing
+            // function could name for the hoisted work.
+            if !passed_through[position] || self.storage.slot(*parameter).is_some() {
                 continue;
             }
             let Some(argument) = entry.get(position) else {
@@ -1441,6 +1443,23 @@ impl FunctionEmitter<'_, '_> {
                 continue;
             }
             if hoisted_already > 0 {
+                // The header's hoisted projection stands for the arms' ones.
+                let Some(canonical) = projections
+                    .iter()
+                    .map(|(_, _, projected)| *projected)
+                    .find(|projected| result.hoisted_values.contains(projected))
+                else {
+                    continue;
+                };
+                for (_, _, projected) in &projections {
+                    if !result.hoisted_values.contains(projected) {
+                        result.replaced.insert(*projected, canonical);
+                    }
+                }
+                result.unread.insert(*parameter);
+                if !result.passed.contains(&canonical) {
+                    result.passed.push(canonical);
+                }
                 continue;
             }
             result.unread.insert(*parameter);

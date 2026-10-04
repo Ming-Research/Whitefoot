@@ -2333,7 +2333,27 @@ rarely insert at the same place.
   use of a carried index addresses one array and the index changes only by
   offsets and stores of checked values, the parts could carry the derived
   address beside the index. Needs its own design and a falsifier; reopen
-  after the invariant-header work.
+  as the next dispatch-lowering change, the invariant-header work having
+  landed.
+
+- **An arm reloads a read-only box reached through a value from before the
+  loop.** The dispatch lowering hoists box-referent projections of a
+  read-only reference that is a header parameter passed through unchanged,
+  but not of one an arm reads as a value defined before the loop, as when
+  an arm reads `code^.inner.len` through the function's own binding: that
+  arm still loads the box pointer on every execution. The read-only rule
+  needs no use scan, so such projections could name one value the
+  enclosing function computes. Low priority: the WF interpreter's arms do
+  not read `code`; reopen if a consumer's hot arm does.
+
+- **Values kept in the frame past the registers are unmeasured.** A split
+  dispatch loop whose parts need more argument registers than the
+  convention has keeps the values it cannot change in frame slots, which
+  each part loads (compiler/match-dispatch-lowering); its cost against
+  whole-function emission has not been measured. Validate with a loop past
+  twelve parameters on x86-64 or past eight under the C convention on
+  arm64, comparing cycles with whole emission, and Halo's VM under the C
+  convention. Reopen with the first consumer whose loop needs the frame.
 
 - **A `match` on a place copies the scrutinee into a frame slot.** The
   emitter copies the matched value into a slot to read its tag while the

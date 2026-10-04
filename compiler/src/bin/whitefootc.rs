@@ -10,7 +10,8 @@ use whitefoot::{
     COMPLETION_FILE_POSIX_HEADER, COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE,
     COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER,
     CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
-    CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat, FLOOR_STACK_BYTES, FragmentGranularity,
+    CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat,
+    FLOOR_STACK_BYTES, FragmentGranularity,
     HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry, ORDINARY_VALUES_HEADER,
     ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, OverlapLowering, RecursionBudget,
     SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
@@ -1383,7 +1384,9 @@ struct Options {
     /// Print, for every loop around a `match`, whether the dispatch lowering
     /// split it into one function per arm and, when it did not, the first
     /// condition the loop failed (compiler/match-dispatch-lowering).
-    /// Developer output on stdout; it changes nothing about the build.
+    /// Developer output on stdout, read from the emitted module, so a
+    /// `--check` that emits nothing reports nothing; it changes nothing
+    /// about the build.
     dispatch_ledger: bool,
     /// Check the sources through complete source acceptance and stop.
     check: bool,
@@ -1955,11 +1958,11 @@ mod tests {
         assert_eq!(logical, "programs/wc.wf");
     }
 
-    /// The permission ledger is an opt-in developer channel: off unless the
-    /// invocation asks for it, and never a second source argument.
+    /// The dispatch ledger shares stdout with nothing else.
     #[test]
     fn the_dispatch_ledger_keeps_stdout_apart_from_an_emitted_module() {
-        let options = parse(&["--dispatch-ledger", "value.wf"]).expect("the option is accepted");
+        let options =
+            parse(&["--dispatch-ledger", "value.wf"]).expect("the option is accepted");
         assert!(options.dispatch_ledger);
         assert!(parse(&["--dispatch-ledger", "--emit-llvm", "value.wf"]).is_err());
         let options = parse(&["--dispatch-ledger", "--emit-llvm", "-o", "out.ll", "value.wf"])
@@ -1967,6 +1970,8 @@ mod tests {
         assert!(options.dispatch_ledger && options.emit_llvm);
     }
 
+    /// The permission ledger is an opt-in developer channel: off unless the
+    /// invocation asks for it, and never a second source argument.
     #[test]
     fn the_permission_ledger_is_requested_by_its_own_option() {
         let options = parse(&["value.wf"]).expect("one source is a complete invocation");
