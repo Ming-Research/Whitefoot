@@ -265,7 +265,8 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
           if bound_id_1 >= 4096_u32 {
             set out = Host::call(env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
           } else {
-            set out = builtin(vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
+            let call_pc = return_pc -sat 1_u64;
+            set out = builtin(vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1, pc: call_pc);
           }
           match out {
             Raised() => {
@@ -341,6 +342,14 @@ fn start<interface Host<E>>(script: &Script, stack: &Box<Slots<Value>>, vm: &Vm,
     }
   }
   set vm^.protos = move ps;
+  let lines = box_slots_new::<u32>(capacity: script^.lineinfo.inner.len);
+  for (i in 0_u64..script^.lineinfo.inner.len) {
+    if lines.inner.len < lines.inner.cap {
+      let line = script^.lineinfo.inner[i];
+      place_back(window: &lines.inner, value: line);
+    }
+  }
+  set vm^.lineinfo = move lines;
   set vm^.budget = budget;
   let empty = array_filled::<u32, 0>(value: 0_u32);
   let cl = pkg::heap::new_closure(heap: &vm^.heap, proto: proto, upvals: &empty[0_u64..0_u64]);

@@ -131,7 +131,83 @@ fn argument(stack: &Box<Slots<Value>>, func: u64, argc: u64, index: u64) -> r: V
   return Value::Nil();
 }
 
-fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) contract {
+const error_source: Array<u8, 12> = "user_script:";
+
+fn error_location(vm: &Vm, pc: u64, level: u64, message: Value) -> r: Value writes(vm) {
+  doc "Script has no source-name field; Halo's embedding names its chunk @user_script. Missing line information leaves the original value intact.";
+  let remaining = level;
+  let index = vm^.frames.inner.len;
+  let location = pc;
+  loop {
+    if index == 0_u64 {
+      return message;
+    }
+    set index = index - 1_u64;
+    if index < vm^.frames.inner.len {
+      let frame = vm^.frames.inner[index];
+      if frame.flags != protected_flag {
+        if remaining == 1_u64 {
+          break;
+        }
+        set remaining = remaining -sat 1_u64;
+        set location = frame.return_pc -sat 1_u64;
+      }
+    }
+  }
+  if location < vm^.lineinfo.inner.len {
+    let line = vm^.lineinfo.inner[location];
+    if line > 0_u32 {
+      let digits = array_filled::<u8, 10>(value: 0_u8);
+      let count = 0_u64;
+      let n = line;
+      loop {
+        if count < 10_u64 {
+          let digit = n % 10_u32;
+          let digit_byte = cvt::<u32, u8>(digit);
+          let byte = digit_byte + 48_u8;
+          set digits[count] = byte;
+          set count = count + 1_u64;
+        }
+        set n = n / 10_u32;
+        if n == 0_u32 {
+          break;
+        }
+      }
+      let bytes = box_slots_new::<u8>(capacity: 24_u64);
+      for (i in 0_u64..12_u64) {
+        if bytes.inner.len < bytes.inner.cap {
+          let byte = error_source[i];
+          place_back(window: &bytes.inner, value: byte);
+        }
+      }
+      let i = count;
+      loop {
+        if i == 0_u64 {
+          break;
+        }
+        set i = i - 1_u64;
+        if i < 10_u64 {
+          if bytes.inner.len < bytes.inner.cap {
+            let byte = digits[i];
+            place_back(window: &bytes.inner, value: byte);
+          }
+        }
+      }
+      if bytes.inner.len < bytes.inner.cap {
+        place_back(window: &bytes.inner, value: 58_u8);
+      }
+      if bytes.inner.len < bytes.inner.cap {
+        place_back(window: &bytes.inner, value: 32_u8);
+      }
+      let length = bytes.inner.len;
+      let prefix = intern(heap: &vm^.heap, bytes: &bytes.inner[0_u64..length]);
+      return join(vm: vm, b: prefix, c: message);
+    }
+  }
+  return message;
+}
+
+fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc: u64) -> r: HostOutcome writes(vm), writes(stack) contract {
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
   let a = argument(stack: stack, func: func, argc: argc, index: 0_u64);
@@ -139,11 +215,17 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) ->
   let c = argument(stack: stack, func: func, argc: argc, index: 2_u64);
   let out = Value::Nil();
   if id == builtin_error {
+    let level = 1_u64;
     if argc >= 2_u64 {
       let absent = is_nil(v: b);
       if bnot(absent) {
         match num_of(v: b) {
-          Is(..) => {
+          Is(x: number) => {
+            let integral = ftrunc(number);
+            set level = 0_u64;
+            if cvt.defined::<f64, u64>(integral) {
+              set level = cvt::<f64, u64>(integral);
+            }
           }
           Not() => {
             let ignored = raise_text(vm: vm, text: &builtins_msg_1000[0_u64..44_u64]);
@@ -152,7 +234,17 @@ fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) ->
         }
       }
     }
-    set vm^.error = a;
+    let message = a;
+    if level > 0_u64 {
+      match str_of(v: a) {
+        Handle(..) => {
+          set message = error_location(vm: vm, pc: pc, level: level, message: a);
+        }
+        NoHandle() => {
+        }
+      }
+    }
+    set vm^.error = message;
     return HostOutcome::Raised();
   }
   if id == builtin_select {

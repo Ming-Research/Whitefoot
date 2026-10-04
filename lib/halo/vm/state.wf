@@ -301,13 +301,14 @@ fn vm_new(limit: u64) -> r: Vm pure {
   let frames = box_slots_new::<Frame>(capacity: 32_u64);
   let opens = box_slots_new::<u32>(capacity: 0_u64);
   let protos = box_slots_new::<Proto>(capacity: 0_u64);
+  let lineinfo = box_slots_new::<u32>(capacity: 0_u64);
   let nil = Value::Nil();
   let stopped_stack = box_slots_new::<Value>(capacity: 0_u64);
   let atom3 = False();
   let callbacks = box_slots_new::<CallbackFrame>(capacity: 0_u64);
   let callback_plan = CallbackPlan(pc: 0_u64, base: 0_u64, kbase: 0_u64, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: atom3);
   let type_metatables = array_filled::<u32, 6>(value: no_handle);
-  return Vm(heap: move heap, frames: move frames, open_upvalues: move opens, protos: move protos, top: 0_u64, budget: unlimited, saved_pc: 0_u64, saved_base: 0_u64, saved_kbase: 0_u64, error: nil, activation: 0_u32, globals: gh, type_metatables: type_metatables, host_stopped: atom3, stopped_stack: move stopped_stack, callback_plan: callback_plan, callbacks: move callbacks, suspended: atom3);
+  return Vm(heap: move heap, frames: move frames, open_upvalues: move opens, protos: move protos, lineinfo: move lineinfo, top: 0_u64, budget: unlimited, saved_pc: 0_u64, saved_base: 0_u64, saved_kbase: 0_u64, error: nil, activation: 0_u32, globals: gh, type_metatables: type_metatables, host_stopped: atom3, stopped_stack: move stopped_stack, callback_plan: callback_plan, callbacks: move callbacks, suspended: atom3);
 }
 
 fn raise_text(vm: &Vm, text: &[u8]) -> r: Bool reads(text), writes(vm) {

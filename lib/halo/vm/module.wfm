@@ -46,6 +46,7 @@ public struct Vm {
   public frames: Box<Slots<Frame>>;
   public open_upvalues: Box<Slots<u32>>;
   public protos: Box<Slots<Proto>>;
+  public lineinfo: Box<Slots<u32>>;
   public top: u64;
   public budget: u64;
   public saved_pc: u64;
