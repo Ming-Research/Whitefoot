@@ -4161,9 +4161,10 @@ fn firn_listens_again_on_its_port_after_a_restart() {
 
 /// firn requires the password --requirepass names as Redis does. A connection
 /// that has not authenticated is answered NOAUTH for every command but AUTH,
-/// HELLO and QUIT, after an unknown command or subcommand or a wrong count of
-/// arguments is answered as such; a wrong password, one of the right length
-/// among them, the user default with a wrong one and another user are answered
+/// HELLO and QUIT, after an unknown command or subcommand or a count outside
+/// the command table's arity is answered as such; MSET/MSETNX pair counts and
+/// LPOP/RPOP maximum counts are checked only after authentication; a wrong
+/// password, one of the right length among them, the user default with a wrong one and another user are answered
 /// WRONGPASS and leave it locked; the password
 /// unlocks it, and a wrong one afterwards leaves it unlocked. HELLO with AUTH
 /// unlocks a connection too and answers with its id. While locked, an array of
@@ -4186,6 +4187,34 @@ fn firn_requires_its_password_as_redis_does() {
     let text = port.to_string();
     let child = program.spawn_on_route(true, &[text.as_bytes(), b"7", b"--requirepass", b"secret"]);
     let mut client = connect_when_ready(port);
+    // Redis 7.0.15's src/commands/{mset,msetnx,lpop,rpop}.json admit
+    // minimum counts of 3, 3, 2 and 2 before processCommand checks auth.
+    // msetGenericCommand checks pairs and popGenericCommand the maximum
+    // only afterwards (src/t_string.c and src/t_list.c at that tag).
+    for command in ["MSET", "MSETNX", "LPOP", "RPOP"] {
+        let pairs = command.starts_with("MSET");
+        let minimum = if pairs {
+            vec![command, "arity:k"]
+        } else {
+            vec![command]
+        };
+        client
+            .write_all(&resp(&minimum))
+            .expect("send too few arguments while locked");
+        let arity = format!(
+            "-ERR wrong number of arguments for '{}' command\r\n",
+            command.to_ascii_lowercase()
+        );
+        expect_replies(&mut client, arity.as_bytes(), command);
+        client
+            .write_all(&resp(&[command, "arity:k", "1", "extra"]))
+            .expect("send a command-specific bad count while locked");
+        expect_replies(
+            &mut client,
+            b"-NOAUTH Authentication required.\r\n",
+            command,
+        );
+    }
     let mut batch = Vec::new();
     let mut eleven = vec!["DEL"];
     let keys = (0..10).map(|index| format!("k{index}")).collect::<Vec<_>>();
@@ -4224,6 +4253,20 @@ fn firn_requires_its_password_as_redis_does() {
         b"-NOAUTH Authentication required.\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' \r\n-ERR wrong number of arguments for 'get' command\r\n-ERR wrong number of arguments for 'config|get' command\r\n-NOAUTH Authentication required.\r\n-ERR unknown subcommand 'FOO'. Try CLIENT HELP.\r\n-ERR unknown subcommand 'NOPE'. Try FUNCTION HELP.\r\n-NOAUTH Authentication required.\r\n-ERR wrong number of arguments for 'debug' command\r\n-NOAUTH Authentication required.\r\n-NOAUTH Authentication required.\r\n-ERR wrong number of arguments for 'config|resetstat' command\r\n-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n-NOAUTH Authentication required.\r\n+OK\r\n+PONG\r\n-WRONGPASS invalid username-password pair or user is disabled.\r\n+PONG\r\n*2\r\n$11\r\nrequirepass\r\n$6\r\nsecret\r\n:0\r\n",
         "the locked batch",
     );
+    for command in ["MSET", "MSETNX", "LPOP", "RPOP"] {
+        client
+            .write_all(&resp(&[command, "arity:k", "1", "extra"]))
+            .expect("send a command-specific bad count after authentication");
+        let arity = format!(
+            "-ERR wrong number of arguments for '{}' command\r\n",
+            command.to_ascii_lowercase()
+        );
+        expect_replies(&mut client, arity.as_bytes(), command);
+    }
+    client
+        .write_all(&resp(&["EXISTS", "arity:k"]))
+        .expect("check rejected commands changed no key");
+    expect_replies(&mut client, b":0\r\n", "rejected command side effects");
     drop(client);
     let mut client = connect_when_ready(port);
     let mut batch = resp(&["HELLO", "2", "AUTH", "default", "secret"]);

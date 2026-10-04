@@ -186,7 +186,7 @@ const code_time: u64 = 1162692948_u64;
 const code_command: u64 = 19226340793077571_u64;
 
 fn admitted(client: &Client, input: &[u8], name: Span, fits: Bool) -> go: Bool reads(input), writes(client) {
-  doc "Whether a known command runs: one given the wrong number of arguments is answered as Redis answers it, and then one from a connection that must authenticate first is answered NOAUTH, Redis counting a command's arguments before it checks authentication.";
+  doc "Whether a known command runs: one outside the arity Redis's command table admits is answered as Redis answers it, and then one from a connection that must authenticate first is answered NOAUTH. Restrictions within that arity, such as MSET's pair count and LPOP's optional count, are checked after authentication.";
   if fits {
   } else {
     reply_arity(client: client, input: input, name: name);
@@ -200,7 +200,7 @@ fn admitted(client: &Client, input: &[u8], name: Span, fits: Bool) -> go: Bool r
 }
 
 fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "Answers one command, whose arguments are spans of the input, by appending its reply to the client's. A command that changes the keyspace does so in one atomic statement, which also appends the change to the append-only file's pending bytes when the keyspace keeps them. As in Redis, an unknown command or a known one given the wrong number of arguments is answered so whether or not the connection has authenticated, and every other command but AUTH, HELLO and QUIT from a connection that must authenticate first is answered NOAUTH.";
+  doc "Answers one command, whose arguments are spans of the input, by appending its reply to the client's. A command that changes the keyspace does so in one atomic statement, which also appends the change to the append-only file's pending bytes when the keyspace keeps them. As in Redis, an unknown command or a known one outside its command-table arity is answered so whether or not the connection has authenticated, and every other command but AUTH, HELLO and QUIT from a connection that must authenticate first is answered NOAUTH.";
   let count = args^.inner.len;
   let name = arg(args: args, index: 0_u64);
   let code = name_code(input: input, start: name.start, length: name.length);
@@ -210,13 +210,6 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let milliseconds = False();
   let head = True();
   let tail = False();
-  let pairs = count % 2_u64;
-  let odd = pairs == 1_u64;
-  let at_least_three = count >= 3_u64;
-  let mset_shape = band(odd, at_least_three);
-  let one_or_two = count >= 2_u64;
-  let at_most_three = count <= 3_u64;
-  let pop_shape = band(one_or_two, at_most_three);
   if code == code_ping {
     let fits = count <= 2_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
@@ -444,9 +437,14 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     }
   }
   if code == code_mset {
-    let fits = mset_shape;
+    let fits = count >= 3_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
+      let parity = count % 2_u64;
+      if parity == 0_u64 {
+        reply_arity(client: client, input: input, name: name);
+        return unit;
+      }
       run_mset(store: store, input: input, args: args, client: client, env: env, time: time);
     }
     return unit;
@@ -460,9 +458,14 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     return unit;
   }
   if code == code_msetnx {
-    let fits = mset_shape;
+    let fits = count >= 3_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
+      let parity = count % 2_u64;
+      if parity == 0_u64 {
+        reply_arity(client: client, input: input, name: name);
+        return unit;
+      }
       run_msetnx(store: store, input: input, args: args, client: client, env: env, time: time);
     }
     return unit;
@@ -618,17 +621,25 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     return unit;
   }
   if code == code_lpop {
-    let fits = pop_shape;
+    let fits = count >= 2_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
+      if count > 3_u64 {
+        reply_arity(client: client, input: input, name: name);
+        return unit;
+      }
       run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: head);
     }
     return unit;
   }
   if code == code_rpop {
-    let fits = pop_shape;
+    let fits = count >= 2_u64;
     let go = admitted(client: client, input: input, name: name, fits: fits);
     if go {
+      if count > 3_u64 {
+        reply_arity(client: client, input: input, name: name);
+        return unit;
+      }
       run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: tail);
     }
     return unit;

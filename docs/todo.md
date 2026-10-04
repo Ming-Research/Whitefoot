@@ -3630,13 +3630,3 @@ condition under which it is taken up.
   logarithmic; it changes the library's representation, a design decision.
   Reopen when a workload ranks or counts in large sorted sets, or with the
   library's next ordered map change.
-- **`MSET`, `LPOP`, `RPOP` and `SPOP` check their whole argument count before
-  authentication.** Redis checks only its command table's minimum before a
-  connection authenticates and the rest inside the command, so a connection
-  that must still authenticate is answered `NOAUTH` for `MSET a b c`,
-  `LPOP l 1 2`, `RPOP l 1 2` and `SPOP s 1 2`, where firn's `execute`
-  (`apps/firn/commands/dispatch.wf`) answers the wrong number of arguments;
-  after authentication Redis answers `SPOP s 1 2` with a syntax error, where
-  firn again answers the wrong number of arguments. The change: admit each by
-  the table's minimum, as `HSET` and `ZPOPMIN` are now admitted, and check
-  the rest in the command. Reopen when those commands next change.
