@@ -195,8 +195,15 @@ fn main(inputs: Inputs) -> r: ExitStatus pure waits {
           append_text(out: &local_source_25, text: &local_buffer_26[0_u64..n]);
         }
       }
-      Err(..) => {
-        return std::process::exit_status(code: 2_u8);
+      Err(error: stop) => {
+        match stop {
+          ReadEnd() => {
+            break;
+          }
+          ReadFailed(..) => {
+            return std::process::exit_status(code: 2_u8);
+          }
+        }
       }
     }
   }

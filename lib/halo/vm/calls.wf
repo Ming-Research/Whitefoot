@@ -297,6 +297,17 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
             if vm^.host_stopped {
               return Step::Stop();
             }
+            if bound_id_1 != builtin_error {
+              match out {
+                Raised() => {
+                  library_error_location(vm: vm, pc: call_pc);
+                }
+                Returned(..) => {
+                }
+                Stop() => {
+                }
+              }
+            }
             if library_callback {
               discard_library_context(vm: vm, index: context_index);
             }

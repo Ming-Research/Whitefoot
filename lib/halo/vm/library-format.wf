@@ -207,6 +207,9 @@ fn format_float(bytes: &Box<Slots<u8>>, x: f64, specifier: u8, precision: i64, a
   let local_sci_52 = bor(local_lower_e_50, local_upper_e_51);
   let local_upper_53 = bor(local_upper_g_48, local_upper_e_51);
   if local_general_49 {
+    if local_decimal_45.count == 0_u64 {
+      set local_decimal_45.point = 1_i64;
+    }
     if local_prec_46 == 0_u64 {
       set local_prec_46 = 1_u64;
     }
