@@ -1131,6 +1131,36 @@ impl<'unit> Checker<'_, 'unit> {
         };
         let (mut path, ty, mut carried) =
             self.resolve_storage_path(context, prefix, root_type, bindings, loop_depth, true)?;
+        // [OP-4] table entries are selected only through a reference's ^,
+        // including a table subscript followed by more borrowed-place steps.
+        if !written_deref {
+            for (suffix, step) in prefix.iter().zip(&path) {
+                if let CheckedPlaceStep::Subscript(index) = step
+                    && self.table_entry_type(index.base_type).is_some()
+                {
+                    return self.types.declarations.issue_node(
+                        SemanticRule::Op4, *suffix, SemanticIssueKind::TableNeedsReference {
+                            mechanical_fix: "form a reference first, `let t = &local.map;`, and index `t^[key]`",
+                        },
+                    );
+                }
+            }
+            if let Some(last) = last
+                && self
+                    .types
+                    .declarations
+                    .tree
+                    .subscript_offset(last)?
+                    .is_some()
+                && self.table_entry_type(ty).is_some()
+            {
+                return self.types.declarations.issue_node(
+                    SemanticRule::Op4, last, SemanticIssueKind::TableNeedsReference {
+                        mechanical_fix: "form a reference first, `let t = &local.map;`, and index `t^[key]`",
+                    },
+                );
+            }
+        }
         let ty = match (last, ty) {
             (Some(last), CheckedType::Segments { element })
                 if self.segment_selection(last)?.is_some() =>

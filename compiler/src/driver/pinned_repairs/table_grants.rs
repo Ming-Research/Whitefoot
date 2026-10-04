@@ -4,6 +4,33 @@ use super::RepairPair;
 
 pub(super) const TABLE_GRANTS: &[RepairPair] = &[
     RepairPair {
+        name: "table-owned-borrow-without-reference.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-table-owned-borrow-without-reference.wf"
+        ),
+        rule: "OP-4",
+        sentences: &[
+            "]: TableNeedsReference\n",
+            "\n  mechanical_fix: form a reference first, `let t = &local.map;`, and index `t^[key]`\n",
+        ],
+        repaired: &[br#"struct Store {
+  map: KeyedTable<u8>;
+}
+
+const bytes: Array<u8, 1> =[97_u8];
+
+fn main() -> status: std::process::ExitStatus pure {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let local = Store(map: move table);
+  let key = &bytes[0_u64..1_u64];
+  let t = &local.map;
+  let slot = &t^[key];
+  set slot^ = Some<u8>(value: 1_u8);
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "table-reached-through-a-box.wf",
         rejected: include_bytes!(
             "../../../../tests/conformance/cases/share-neg-table-reached-through-a-box.wf"
