@@ -87,7 +87,10 @@ def sensitivity():
     baseline = {'type': 'array', 'items': [{'type': 'bulk', 'bytes': '\x00\xff'},
                                        {'type': 'integer', 'value': 1}]}
     good = canonical(baseline)
-    for bad in ({'type': 'nil', 'kind': 'bulk'},
+    assert lua_string('é') == '"\\195\\169"'
+    for bad in ({'type': 'array', 'items': [{'type': 'bulk', 'bytes': '\x00\xfe'}, baseline['items'][1]]},
+                {'type': 'array', 'items': [baseline['items'][0], {'type': 'integer', 'value': 2}]},
+                {'type': 'nil', 'kind': 'bulk'},
                 {'type': 'array', 'items': list(reversed(baseline['items']))},
                 {'type': 'array', 'items': baseline['items'][:1]},
                 {'type': 'array', 'items': [{'type': 'status', 'bytes': '\x00\xff'},

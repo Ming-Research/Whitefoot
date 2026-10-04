@@ -77,10 +77,13 @@ ones delete immediately. Reopen with clock-valued expiry fixtures before using
 this host to test countdowns. ZSCORE uses Halo's Lua number formatting; general
 Redis double formatting and malformed score/expiry inputs are not verified.
 
-RESP2 conversion truncates numbers toward zero, maps true to one and false/nil
+RESP2 conversion truncates representable numbers toward zero, maps true to one and false/nil
 to nil bulk, recognizes err before ok fields, and traverses tables from index
 one until the first actual nil. False is an array element that converts to nil;
-it does not end traversal. Status/error payloads replace CR/LF with spaces and
+it does not end traversal. Numeric replies outside the signed 64-bit domain,
+including nonfinite values, currently use INT64_MIN; Redis's target-specific C
+conversion for those inputs has not been established by this corpus run.
+Status/error payloads replace CR/LF with spaces and
 use Redis's C-string boundary. A defensive reply nesting limit of 128 is a test
 host limitation, not Lua acceptance. Cyclic/deep replies are not corpus cases.
 
