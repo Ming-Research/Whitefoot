@@ -890,6 +890,14 @@ impl Checker<'_, '_> {
             {
                 break;
             }
+            // Measures and window members are not fields leading to a table.
+            // Leave their typing to the ordinary place judgment.
+            if !matches!(ty, CheckedType::Nominal(nominal)
+                if matches!(self.types.nominals[nominal.0 as usize].kind,
+                    CheckedNominalKind::Struct { .. } | CheckedNominalKind::Box { .. }))
+            {
+                break;
+            }
             let member = self
                 .types
                 .elaborate_place_member(context.check_context, *suffix, ty)?;

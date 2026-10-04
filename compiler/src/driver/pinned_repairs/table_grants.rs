@@ -140,27 +140,45 @@ fn main() -> status: std::process::ExitStatus pure waits {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-            br#"struct Store { map: KeyedTable<u8>; count: u8; }
-fn touch(env: &u8) -> result: unit writes(env) { set env^ = 1_u8; return unit; }
+            br#"struct Store {
+  map: KeyedTable<u8>;
+  count: u8;
+}
+
+fn touch(env: &u8) -> result: unit writes(env) {
+  set env^ = 1_u8;
+  return unit;
+}
+
 fn main() -> status: std::process::ExitStatus pure waits {
   let table = keyed_table_new::<u8>(capacity: 0_u64);
   let state = Store(map: move table, count: 0_u8);
   let store = shared_new::<Store>(value: move state);
-  atomic s = &store { touch(env: &s^.count); }
+  atomic s = &store {
+    touch(env: &s^.count);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#,
-            br#"struct Store { map: KeyedTable<u8>; }
-const names: Array<u8, 1> =[97_u8];
-fn touch(env: &Option<u8>) -> result: unit writes(env) {
-  set env^ = Some<u8>(value: 1_u8); return unit;
+            br#"struct Store {
+  map: KeyedTable<u8>;
 }
+
+const names: Array<u8, 1> =[97_u8];
+
+fn touch(env: &Option<u8>) -> result: unit writes(env) {
+  set env^ = Some<u8>(value: 1_u8);
+  return unit;
+}
+
 fn main() -> status: std::process::ExitStatus pure waits {
   let table = keyed_table_new::<u8>(capacity: 0_u64);
   let state = Store(map: move table);
   let store = shared_new::<Store>(value: move state);
   let name = &names[0_u64..1_u64];
-  atomic s = &store, slot = &s^.map[name] { touch(env: slot); }
+  atomic s = &store, slot = &s^.map[name] {
+    touch(env: slot);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#,
@@ -273,8 +291,12 @@ fn main() -> status: std::process::ExitStatus pure waits {
     },
     RepairPair {
         name: "table-subscript-needs-reference.wf",
-        rejected: br#"struct Store { map: KeyedTable<u8>; }
+        rejected: br#"struct Store {
+  map: KeyedTable<u8>;
+}
+
 const bytes: Array<u8, 1> =[97_u8];
+
 fn main() -> status: std::process::ExitStatus pure {
   let table = keyed_table_new::<u8>(capacity: 0_u64);
   let local = Store(map: move table);
@@ -288,8 +310,12 @@ fn main() -> status: std::process::ExitStatus pure {
             "]: TableNeedsReference\n",
             "\n  mechanical_fix: form a reference first, `let t = &local.map;`, and index `t^[key]`\n",
         ],
-        repaired: &[br#"struct Store { map: KeyedTable<u8>; }
+        repaired: &[br#"struct Store {
+  map: KeyedTable<u8>;
+}
+
 const bytes: Array<u8, 1> =[97_u8];
+
 fn main() -> status: std::process::ExitStatus pure {
   let table = keyed_table_new::<u8>(capacity: 0_u64);
   let local = Store(map: move table);

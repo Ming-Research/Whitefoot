@@ -99,8 +99,12 @@ fn plain_row_witness_is_distinguished_from_a_row_naming_the_table() {
 
 #[test]
 fn local_table_selections_settle_before_shared_publication() {
-    let source = br#"struct Store { map: KeyedTable<u8>; }
+    let source = br#"struct Store {
+  map: KeyedTable<u8>;
+}
+
 const names: Array<u8, 2> =[97_u8, 98_u8];
+
 fn main() -> status: std::process::ExitStatus pure waits {
   let table = keyed_table_new::<u8>(capacity: 0_u64);
   let local = Store(map: move table);
@@ -113,11 +117,19 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let count = 0_u64;
   atomic s = &store, slot = &s^.map[first] {
     match slot^ {
-      Some(value: held) => { if held^ != 9_u8 { return std::process::exit_status(code: 2_u8); } }
-      None() => { return std::process::exit_status(code: 3_u8); }
+      Some(value: held) => {
+        if held^ != 9_u8 {
+          return std::process::exit_status(code: 2_u8);
+        }
+      }
+      None() => {
+        return std::process::exit_status(code: 3_u8);
+      }
     }
   }
-  atomic s = &store, t = &s^.map { set count = keyed_table_count::<u8>(table: t); }
+  atomic s = &store, shared_table = &s^.map {
+    set count = keyed_table_count::<u8>(table: shared_table);
+  }
   let code = cvt.wrap::<u64, u8>(count);
   return std::process::exit_status(code: code);
 }
