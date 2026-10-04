@@ -25,6 +25,19 @@
 #                                 QUICK_CLIENTS client processes (default one
 #                                 per client CPU up to 16), each count with
 #                                 its own kept reference
+#   sh redis-bench.sh compare     prebuilt firn images against each other:
+#                                 IMAGES lists name=path pairs, one image may
+#                                 appear under two names as a noise control;
+#                                 each pass starts every image in turn, the
+#                                 order reversed on even passes, and runs
+#                                 COMPARE_TESTS (default mset set get) at each
+#                                 depth in COMPARE_DEPTHS (default 16 1) for
+#                                 COMPARE_SECONDS (default 10) each, on
+#                                 COMPARE_CPUS server CPUs (default 2), for
+#                                 COMPARE_PASSES passes (default 6); with PERF
+#                                 naming a perf executable it then records a
+#                                 flat profile of each image under
+#                                 COMPARE_PROFILE (default mset at depth 16)
 #
 # firn is built with the options FIRN_LINK names, --full-lto when it is unset;
 # the records before the quick mode built it with none.
@@ -66,7 +79,9 @@ MODE=${1:-bench}
 mkdir -p "$OUT"
 # firn is linked as a server would be, its module and the runtime's units
 # optimized together; FIRN_LINK names other link options, or none.
-"$WHITEFOOTC" ${FIRN_LINK---full-lto} --graph "$ROOT/apps/firn/modules.wfg" --entry firn -o "$OUT/firn"
+if [ "$MODE" != compare ]; then
+    "$WHITEFOOTC" ${FIRN_LINK---full-lto} --graph "$ROOT/apps/firn/modules.wfg" --entry firn -o "$OUT/firn"
+fi
 baselines=
 if [ -n "$BASELINE_ROOT" ]; then
     "$BASELINE_ROOT/compiler/target/gate/whitefootc" -o "$OUT/redis_baseline" \
@@ -144,6 +159,11 @@ start() {
         firn-*)
             WF_DRIVERS=${1#firn-} taskset -c "$SERVER_CPUS" \
                 "$OUT/firn" "$PORT" 0 - "${IDLE:-0}" \
+                >"$OUT/server.log" 2>&1 &
+            ;;
+        image-*)
+            WF_DRIVERS=$(cpu_count "$SERVER_CPUS") taskset -c "$SERVER_CPUS" \
+                "$(image_path "${1#image-}")" "$PORT" 0 - "${IDLE:-0}" \
                 >"$OUT/server.log" 2>&1 &
             ;;
         baseline-*)
@@ -446,6 +466,97 @@ quick_measure() {
                 END { print line "," t "," rate[int((NR + 1) / 2)] }' >>"$2"
     done
 }
+
+# The path IMAGES gives a compare line's name.
+image_path() {
+    for pair in $IMAGES; do
+        if [ "${pair%%=*}" = "$1" ]; then
+            echo "${pair#*=}"
+            return
+        fi
+    done
+    echo "no image named $1" >&2
+    exit 1
+}
+
+# One redis-benchmark run of <test> at depth <depth> for <requests> against
+# the started server, its client threads on CLIENT_CPUS; prints rps,p50,p99.
+compare_client() {
+    taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" --threads "$CLIENT_THREADS" \
+        -c 50 -n "$3" -r 100000 -d 3 -P "$2" -t "$1" --csv >"$OUT/compare-client.csv" 2>"$OUT/compare-client.err"
+    # The fields between the first and last quoted ones hold no quote.
+    awk -F'","' '$1 != "\"test" { print $2 "," $5 "," $7 }' "$OUT/compare-client.csv"
+}
+
+# The comparison of prebuilt images. A line whose replies fail verify stops
+# the run; every sample is kept as compare.csv's line,pass,cpus,test,depth,
+# requests,rps,p50_ms,p99_ms, and each test's request count is sized from the
+# fastest image's pilot so that every image runs the same count.
+if [ "$MODE" = compare ]; then
+    n=${COMPARE_CPUS:-2}
+    total=$(nproc)
+    SERVER_CPUS=$(seq -s, 0 $((n - 1)))
+    CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
+    CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))
+    tests=${COMPARE_TESTS:-mset set get}
+    depths=${COMPARE_DEPTHS:-16 1}
+    names=
+    for pair in $IMAGES; do
+        names="$names ${pair%%=*}"
+        sha256sum "${pair#*=}" | sed "s/^/image,${pair%%=*},/"
+    done
+    for name in $names; do
+        verify "image-$name"
+    done
+    : >"$OUT/compare-sizes.txt"
+    for test in $tests; do
+        for depth in $depths; do
+            fastest=0
+            for name in $names; do
+                start "image-$name"
+                rate=$(compare_client "$test" "$depth" 200000 | cut -d, -f1)
+                stop
+                fastest=$(awk -v a="$fastest" -v b="$rate" 'BEGIN { print (b > a ? b : a) }')
+            done
+            echo "$test $depth $(awk -v r="$fastest" -v s="${COMPARE_SECONDS:-10}" 'BEGIN { printf "%d", r * s }')" >>"$OUT/compare-sizes.txt"
+        done
+    done
+    echo 'line,pass,cpus,test,depth,requests,rps,p50_ms,p99_ms' >"$OUT/compare.csv"
+    reversed=$(echo $names | tr ' ' '\n' | awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) printf "%s ", a[i] }')
+    pass=1
+    while [ "$pass" -le "${COMPARE_PASSES:-6}" ]; do
+        order=$names
+        if [ $((pass % 2)) -eq 0 ]; then
+            order=$reversed
+        fi
+        for name in $order; do
+            start "image-$name"
+            while read -r test depth requests; do
+                echo "$name,$pass,$n,$test,$depth,$requests,$(compare_client "$test" "$depth" "$requests")" >>"$OUT/compare.csv"
+            done <"$OUT/compare-sizes.txt"
+            stop
+        done
+        pass=$((pass + 1))
+    done
+    cat "$OUT/compare.csv"
+    if [ -n "$PERF" ]; then
+        set -- ${COMPARE_PROFILE:-mset 16}
+        requests=$(awk -v t="$1" -v d="$2" '$1 == t && $2 == d { print $3 }' "$OUT/compare-sizes.txt")
+        for name in $names; do
+            start "image-$name"
+            "$PERF" record -F 4999 -p "$server" -o "$OUT/perf-$name.data" >/dev/null 2>&1 &
+            recorder=$!
+            sleep 1
+            compare_client "$1" "$2" "$requests" >/dev/null
+            kill -INT "$recorder"
+            wait "$recorder" || true
+            stop
+            "$PERF" report -i "$OUT/perf-$name.data" --stdio --no-children \
+                --sort symbol --percent-limit 0.3 >"$OUT/profile-$name.txt" 2>/dev/null
+        done
+    fi
+    exit 0
+fi
 
 # The quick comparison, for the loop of changing firn and measuring again:
 # firn on QUICK_CPUS server CPUs against the fastest of Garnet and Dragonfly,

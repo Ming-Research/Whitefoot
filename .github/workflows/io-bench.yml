@@ -20,6 +20,22 @@ on:
         description: Compare full worker count with the primary count on one Windows VM
         type: boolean
         default: false
+      compare_firn:
+        description: Compare firn images built from the revisions compare_revisions names on one Linux host
+        type: boolean
+        default: false
+      compare_revisions:
+        description: "name=revision pairs; a name ending in -twin measures the same image as its stem, a noise control"
+        type: string
+        default: "base=cea9188d4 main=HEAD main-twin=HEAD"
+      compare_cpus:
+        description: Server CPUs for the firn comparison
+        type: string
+        default: "2"
+      compare_profile:
+        description: Record a perf profile of each image under MSET at depth 16
+        type: boolean
+        default: true
 
 # Every shell step runs under `bash -eo pipefail`, so a protocol that fails
 # behind `| tee` fails the step. Before this, the compiler rejecting a bench
@@ -39,8 +55,87 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # firn images of several revisions, each built by its own compiler, measured
+  # interleaved on one runner by redis-bench.sh's compare mode, with a flat
+  # profile of each. An investigation names its revisions and copies the
+  # tables it relies on into its record.
+  compare-firn:
+    if: ${{ inputs.compare_firn }}
+    name: compare-firn (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain, redis-benchmark and perf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld redis-tools
+          sudo apt-get install -y --no-install-recommends linux-tools-common \
+            linux-tools-generic "linux-tools-$(uname -r)" || true
+          rustup default stable
+          redis-benchmark --version
+
+      - name: Build each revision's firn with its own compiler
+        env:
+          REVISIONS: ${{ inputs.compare_revisions }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/compare"
+          images=
+          for pair in $REVISIONS; do
+            name=${pair%%=*}
+            stem=${name%-twin}
+            if [ "$stem" != "$name" ]; then
+              images="$images $name=$RUNNER_TEMP/compare/$stem"
+              continue
+            fi
+            tree="$RUNNER_TEMP/tree-$name"
+            git worktree add --detach "$tree" "${pair#*=}"
+            echo "revision,$name,$(git -C "$tree" rev-parse HEAD)" | tee -a "$RUNNER_TEMP/compare/revisions.csv"
+            make -C "$tree/compiler" build
+            "$tree/compiler/target/gate/whitefootc" --full-lto \
+              --graph "$tree/apps/firn/modules.wfg" --entry firn -o "$RUNNER_TEMP/compare/$name"
+            images="$images $name=$RUNNER_TEMP/compare/$name"
+          done
+          echo "IMAGES=$images" >> "$GITHUB_ENV"
+
+      - name: Measure the images interleaved
+        env:
+          OUT: ${{ runner.temp }}/compare
+          COMPARE_CPUS: ${{ inputs.compare_cpus }}
+          PROFILE: ${{ inputs.compare_profile }}
+          WHITEFOOT_CHECK_TIMEOUT: "6000"
+        run: |
+          {
+            echo "kernel: $(uname -srvmo)"
+            echo "cpus: $(nproc)"
+            echo "model: $(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)"
+          } | tee "$OUT/host.txt"
+          if [ "$PROFILE" = true ]; then
+            PERF=$(ls /usr/lib/linux-tools/*/perf 2>/dev/null | head -1)
+            if [ -n "$PERF" ]; then
+              sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+              export PERF
+            else
+              echo "no perf for this kernel; profiles skipped" | tee -a "$OUT/host.txt"
+            fi
+          fi
+          perl .github/run-check.pl firn/compare \
+            sh research/experiments/io-completion-bench/redis-bench.sh compare \
+            2>&1 | tee "$OUT/bench.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compare-firn-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/compare/*.csv
+            ${{ runner.temp }}/compare/*.txt
+
   bench-linux:
-    if: ${{ !inputs.compare_windows_workers }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
     name: bench-linux (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -156,7 +251,7 @@ jobs:
   # not known in advance; a table whose probe refused the label says so on its
   # own label line.
   bench-linux-read:
-    if: ${{ !inputs.compare_windows_workers }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
     name: bench-linux-read (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -235,7 +330,7 @@ jobs:
             bench-read.txt
 
   bench-macos-read:
-    if: ${{ !inputs.compare_windows_workers }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
     name: bench-macos-read (macos-14)
     runs-on: macos-14
     timeout-minutes: 120

@@ -414,7 +414,46 @@ the design, above).
 - releasing a unit once its block no longer uses it, after the last taking;
 - wait lists per entry instead of per table;
 - a cheaper read of one entry than the reader count;
-- the names, the payload operations and the spelling of header bindings,
-  which v0.86 settles as `KeyedTable`, `KeySet` and `KeyedEntries`,
-  `key_set_put` and `key_set_add`, and `e = &s^.t[k]`, for the owner to
-  confirm.
+- `MSET`'s remaining cost (below).
+
+## MSET after the redesign
+
+The owner approved the names, the payload operations and the header spelling
+as v0.86 wrote them (Q25), and the design landed in main as specification
+v0.89. `MSET` stayed below `cea9188d4` on every measurement: 0.80, 0.84 and
+0.90 on 4, 8 and 16 CPUs of the 14900K (Measured, above), and in a later
+Linux runner comparison of the redesign's head 0.95 and 0.88 on one server
+CPU at depths 1 and 16 and 0.84 on two at depth 16, where `SET` and `GET`
+answered 0.97 to 1.00 (run 37178917372 of a withdrawn branch, whose
+`published` line is this design's head). A later key-preparation design
+measured worse, 0.69 in that last cell, and was withdrawn; it is not
+reconsidered here.
+
+**The question.** Which work makes `MSET` slower than `cea9188d4`, and does
+keeping the key set in byte order at every `key_set_put`, the binary search,
+the move of later items and the copy of the key's bytes, account for most of
+it? The redesign's statement (`run_mset`, `apps/firn/commands/strings.wf`)
+builds the set from the request's spans, takes the entries in the set's order,
+and then copies each value from the request; `cea9188d4`'s collected the keys'
+places in the request and sorted them when it took the hold. The candidates,
+not exclusive: H1, the ordered insertion; H2, the copy of the keys' bytes into
+the set's arena; H3, the hold over a key set and its release; H4, work in
+`run_mset` around the set.
+
+**Measurement 1, before any change.** On one Linux runner, firn images of
+`cea9188d4` (`base`) and of main at `263a9c564` (`main`), each built by its own
+compiler with `--full-lto`, and the `main` image again under a second name
+(`main-twin`), measured interleaved by `redis-bench.sh compare` on two server
+CPUs: `MSET`, `SET` and `GET` at depths 16 and 1, six passes of ten seconds,
+the order reversed on even passes; then a flat `perf` profile of each image
+under `MSET` at depth 16. The criteria, fixed before the run:
+
+- a cell is valid when the median over passes of `main-twin`'s rate to
+  `main`'s lies within 0.98 to 1.02, and inconclusive otherwise;
+- the loss is the median of `main`'s rate to `base`'s per pass, in each
+  valid `MSET` cell, with `SET` and `GET` as controls;
+- the profiles attribute the loss when the symbols of one hypothesis, as a
+  share of `main`'s samples per request, exceed their share in `base` by at
+  least half of the loss; otherwise they do not separate the hypotheses, and
+  the next measurement changes one hypothesis's work in a diagnostic image
+  instead.
