@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Value = json::Value;
+alias halo = pkg;
+
+fn number(v: Value) -> n: i32 pure {
+  doc "Reads the json package's own value type.";
+  return v.n;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A value made through halo is the json package's own type.";
+  let v = halo::vm::box_number(n: 7_i32);
+  let n = number(v: v);
+  if n == 7_i32 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

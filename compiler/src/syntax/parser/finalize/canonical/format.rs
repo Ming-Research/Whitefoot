@@ -41,9 +41,10 @@ fn is_line_bearing(topology: &FinalizedTopology, node: NodeId) -> Result<bool, S
             | Production::GiveStmt
             // [GRAM-2, FORM-2] `program no_heap;` is a simple item.
             | Production::HeapDecl
-            // [GRAM-2, FORM-2] a file alias header and a module graph row
-            // each render on one line.
+            // [GRAM-2, FORM-2] a file alias header, a graph's package
+            // binding and a module graph row each render on one line.
             | Production::AliasDecl
+            | Production::PackageDecl
             | Production::ModuleRow
     );
     // An invariant without a proof block and an entry without requirements
@@ -427,12 +428,16 @@ pub(super) fn build_gap_styles(
         else {
             return Err(CanonicalCompilerFailure::InvalidFinalizedTree.into());
         };
-        // [FORM-2] consecutive file alias headers, and consecutive graph
-        // rows, stand on consecutive lines; every other pair of neighbouring
-        // top-level nodes of one source is separated by one empty line.
+        // [FORM-2] consecutive file alias headers, consecutive package
+        // bindings and consecutive graph rows stand on consecutive lines;
+        // every other pair of neighbouring top-level nodes of one source is
+        // separated by one empty line.
         let consecutive = (is_alias_item(topology, pair[0])? && is_alias_item(topology, pair[1])?)
-            || (left.production == Production::ModuleRow
-                && right.production == Production::ModuleRow);
+            || (left.production == right.production
+                && matches!(
+                    left.production,
+                    Production::PackageDecl | Production::ModuleRow
+                ));
         if left_source == right_source && !consecutive {
             mark_before(&mut gaps, topology, right.first_terminal, GapStyle::Blank)?;
         }

@@ -694,16 +694,27 @@ fn classify_node(
                 complete_counts,
             )?;
         }
-        // [MOD-4] an alias declares its first name; the path after `pkg`
-        // names its target, whose segments are resolved when the alias is.
+        // [MOD-4] an alias declares its first name; the path after `pkg`,
+        // `std` or a bound package name [MOD-11] names its target, whose
+        // segments are resolved when the alias is.
         Production::AliasDecl => {
             let Some((first, rest)) = names.split_first() else {
                 return Err(ResolutionCompilerFailure::InvalidRoleShape);
             };
-            let segments = rest
+            let standard = has_fixed_terminal(classified, direct, FixedTerminal::Std);
+            let package_rooted =
+                !standard && !has_fixed_terminal(classified, direct, FixedTerminal::Pkg);
+            let (root, after_root) = match rest.split_first() {
+                Some((root, after_root)) if package_rooted => (Some(*root), after_root),
+                _ => (None, rest),
+            };
+            let segments = after_root
                 .iter()
                 .map(|terminal| path_segment(classified, *terminal))
                 .collect::<Result<Vec<_>, _>>()?;
+            let alias_root = root
+                .map(|terminal| path_segment(classified, terminal))
+                .transpose()?;
             add_complete(
                 classified,
                 owner,
@@ -714,8 +725,8 @@ fn classify_node(
             )?;
             if let Some(role) = roles.last_mut() {
                 role.qualifier = Some(Qualifier {
-                    alias_root: None,
-                    standard: has_fixed_terminal(classified, direct, FixedTerminal::Std),
+                    alias_root,
+                    standard,
                     segments,
                 });
             }

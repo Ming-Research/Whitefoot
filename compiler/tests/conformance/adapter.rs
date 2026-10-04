@@ -43,7 +43,8 @@ use whitefoot::{
     BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
     HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, SourceInput, check,
     check_module_entry, check_module_program, check_with_cache, compile, compile_module_program,
-    discover_module_sources, entry_verdict, form_module_graph, module_verdict,
+    ModuleProgramFailure, discover_module_sources, entry_verdict, form_module_program_graph,
+    module_verdict,
 };
 
 use crate::support::{PROGRAM_DEADLINE, ProgramChild, append_runtime_objects};
@@ -70,11 +71,12 @@ fn reach_module_program(
     case: &Case,
     root: &Path,
 ) -> Result<Option<whitefoot::LlvmModule>, CompilationFailure> {
-    let graph_bytes = std::fs::read(root.join("modules.wfg")).expect("read the case's graph");
-    let graph = form_module_graph(
-        SourceInput::new("modules.wfg", &graph_bytes),
-        CompilerLimits::default(),
-    )?;
+    let graph = match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
+    {
+        Ok(graph) => graph,
+        Err(ModuleProgramFailure::Compilation(failure)) => return Err(failure),
+        Err(ModuleProgramFailure::Discovery(failure)) => panic!("{}: {failure}", case.id),
+    };
     let sources = discover_module_sources(root, &graph)
         .unwrap_or_else(|failure| panic!("{}: {failure}", case.id));
     let inputs: Vec<_> = sources
@@ -393,10 +395,10 @@ fn reach_with_receipts(case: &Case, cache: &BuildCache) -> Verdict {
             Err(failure) => failure_verdict(&failure),
         };
     };
-    let graph_bytes = std::fs::read(root.join("modules.wfg")).expect("read the case's graph");
-    let graph = match form_module_graph(SourceInput::new("modules.wfg", &graph_bytes), limits) {
+    let graph = match form_module_program_graph(&root.join("modules.wfg"), limits) {
         Ok(graph) => graph,
-        Err(failure) => return failure_verdict(&failure),
+        Err(ModuleProgramFailure::Compilation(failure)) => return failure_verdict(&failure),
+        Err(ModuleProgramFailure::Discovery(failure)) => panic!("{}: {failure}", case.id),
     };
     let sources = discover_module_sources(&root, &graph)
         .unwrap_or_else(|failure| panic!("{}: {failure}", case.id));

@@ -379,14 +379,18 @@ impl<'parsed> Finalizer<'parsed> {
         Ok(())
     }
 
-    /// A graph root holds module rows and then entries, all from its one source.
+    /// A graph root holds package bindings, module rows and then entries, all
+    /// from its one source.
     fn check_graph_shape(children: &[Completed]) -> Result<(), Stop> {
         let mut graph_source = None;
         for child in children {
             let CompletedKind::Production { production, .. } = child.kind else {
                 return Err(FinalizeCompilerFailure::InvalidProductionShape.into());
             };
-            if !matches!(production, Production::ModuleRow | Production::EntryDecl) {
+            if !matches!(
+                production,
+                Production::PackageDecl | Production::ModuleRow | Production::EntryDecl
+            ) {
                 return Err(FinalizeCompilerFailure::InvalidProductionShape.into());
             }
             let FinalizedExtent::Source { source, .. } = child.extent else {

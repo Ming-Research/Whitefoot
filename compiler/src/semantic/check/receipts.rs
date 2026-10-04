@@ -420,7 +420,7 @@ fn receipt_item(key: &crate::ItemKey) -> crate::ItemKey {
             spelling,
         } => crate::ItemKey::Declared {
             home: crate::ItemHome::Module {
-                package: *package,
+                package: package.clone(),
                 path: path.clone(),
                 record: crate::SourceRole::Implementation,
             },

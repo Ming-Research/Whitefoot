@@ -1,0 +1,6 @@
+alias Value = json::Value;
+
+fn box_number(n: i32) -> v: Value pure {
+  doc "Calls into the codec package under its own name for it.";
+  return json::make(n: n);
+}

@@ -1,0 +1,3 @@
+package codec = "../json2";
+
+pkg::vm: [codec];

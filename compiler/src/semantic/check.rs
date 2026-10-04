@@ -848,7 +848,18 @@ impl<'unit> DeclarationInventory<'unit> {
         name: &str,
     ) -> String {
         match self.declaration_home(declaration) {
-            Some((crate::Package::Standard, path)) => format!("std.{}.{name}", path.join(".")),
+            Some((crate::PackageKey::Standard, path)) => format!("std.{}.{name}", path.join(".")),
+            // [MOD-11] `package` is reserved, so no program module path
+            // begins with it and a bound package's symbols stay apart.
+            Some((crate::PackageKey::Bound(label), path)) => {
+                let mut base = format!("package.{label}.");
+                for component in path {
+                    base.push_str(component);
+                    base.push('.');
+                }
+                base.push_str(name);
+                base
+            }
             Some((_, path)) if !path.is_empty() => format!("{}.{name}", path.join(".")),
             _ => name.to_owned(),
         }
@@ -859,12 +870,12 @@ impl<'unit> DeclarationInventory<'unit> {
     pub(in crate::semantic::check) fn declaration_home(
         &self,
         declaration: DeclarationId,
-    ) -> Option<(crate::Package, &[String])> {
+    ) -> Option<(&crate::PackageKey, &[String])> {
         match self.resolved.declaration(declaration)?.key().item() {
             crate::ItemKey::Declared {
                 home: crate::ItemHome::Module { package, path, .. },
                 ..
-            } => Some((*package, path)),
+            } => Some((package, path)),
             _ => None,
         }
     }

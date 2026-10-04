@@ -1,0 +1,3 @@
+alias Value = json::Value;
+
+public fn box_number(n: i32) -> v: Value pure doc "Makes a codec value.";

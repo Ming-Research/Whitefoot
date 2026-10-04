@@ -345,27 +345,32 @@ pub enum SourceRole {
     Implementation,
 }
 
-/// The package a registered module belongs to [MOD-10]: the program's own,
-/// which its records name `pkg`, or the standard library the toolchain
-/// supplies, which every other package names `std`.
+/// The package a registered module belongs to [MOD-10, MOD-11]: the
+/// program's own, which its records name `pkg`, a package a graph binds, or
+/// the standard library the toolchain supplies, which every other package
+/// names `std`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Package {
     /// The program's own package.
     Program,
+    /// A bound package, by its place among the bound packages in package
+    /// order [MOD-11].
+    Bound(u16),
     /// The standard library.
     Standard,
 }
 
-impl Package {
-    /// The qualifier other packages write for this package: `pkg` for the
-    /// program's own, `std` for the standard library.
-    #[must_use]
-    pub const fn qualifier(self) -> &'static str {
-        match self {
-            Self::Program => "pkg",
-            Self::Standard => "std",
-        }
-    }
+/// A package as a stable identity names it [MOD-11]: by role, and a bound
+/// package by its label rather than its place in package order, so binding
+/// another package moves no other package's items.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PackageKey {
+    /// The program's own package.
+    Program,
+    /// A bound package, by its label.
+    Bound(String),
+    /// The standard library.
+    Standard,
 }
 
 /// One registered module: its package, its path components after the
@@ -374,8 +379,13 @@ impl Package {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModuleRecord {
     package: Package,
+    /// The package's qualifier in diagnostics and symbols: `pkg`, `std` or a
+    /// bound package's label [MOD-11].
+    qualifier: String,
     path: Vec<String>,
     dependencies: Vec<ModuleId>,
+    /// The names its package's graph binds, each with its package [MOD-11].
+    bindings: Vec<(String, Package)>,
 }
 
 impl ModuleRecord {
@@ -384,12 +394,15 @@ impl ModuleRecord {
     pub const fn new(path: Vec<String>, dependencies: Vec<ModuleId>) -> Self {
         Self {
             package: Package::Program,
+            qualifier: String::new(),
             path,
             dependencies,
+            bindings: Vec::new(),
         }
     }
 
-    /// Creates one module record of the given package.
+    /// Creates one module record of the program's own package or of the
+    /// standard library.
     #[must_use]
     pub const fn in_package(
         package: Package,
@@ -398,8 +411,83 @@ impl ModuleRecord {
     ) -> Self {
         Self {
             package,
+            qualifier: String::new(),
             path,
             dependencies,
+            bindings: Vec::new(),
+        }
+    }
+
+    /// Creates one module record of a bound package, whose label names it in
+    /// diagnostics, symbols and logical paths [MOD-11].
+    #[must_use]
+    pub const fn in_bound_package(
+        package: Package,
+        label: String,
+        path: Vec<String>,
+        dependencies: Vec<ModuleId>,
+    ) -> Self {
+        Self {
+            package,
+            qualifier: label,
+            path,
+            dependencies,
+            bindings: Vec::new(),
+        }
+    }
+
+    /// This record with its package's bindings [MOD-11].
+    #[must_use]
+    pub fn with_bindings(mut self, bindings: Vec<(String, Package)>) -> Self {
+        self.bindings = bindings;
+        self
+    }
+
+    /// The package a name of its package's graph binds [MOD-11].
+    #[must_use]
+    pub fn bound_package(&self, name: &str) -> Option<Package> {
+        self.bindings
+            .iter()
+            .find(|(bound, _)| bound == name)
+            .map(|(_, package)| *package)
+    }
+
+    /// The names its package's graph binds, each with its package [MOD-11].
+    #[must_use]
+    pub fn bindings(&self) -> &[(String, Package)] {
+        &self.bindings
+    }
+
+    /// The package's stable key [MOD-11].
+    #[must_use]
+    pub fn package_key(&self) -> PackageKey {
+        match self.package {
+            Package::Program => PackageKey::Program,
+            Package::Standard => PackageKey::Standard,
+            Package::Bound(_) => PackageKey::Bound(self.qualifier.clone()),
+        }
+    }
+
+    /// The package's qualifier: `pkg` for the program's own, `std` for the
+    /// standard library and its label for a bound package [MOD-11].
+    #[must_use]
+    pub fn qualifier(&self) -> &str {
+        match self.package {
+            Package::Program => "pkg",
+            Package::Standard => "std",
+            Package::Bound(_) => &self.qualifier,
+        }
+    }
+
+    /// The logical path prefix of the package's records: none for the
+    /// program's own, `std/` for the standard library and `package/<label>/`
+    /// for a bound package [MOD-2, MOD-10, MOD-11].
+    #[must_use]
+    pub fn record_prefix(&self) -> String {
+        match self.package {
+            Package::Program => String::new(),
+            Package::Standard => "std/".to_owned(),
+            Package::Bound(_) => format!("package/{}/", self.qualifier),
         }
     }
 
@@ -433,12 +521,12 @@ impl ModuleRecord {
         self.dependencies.contains(&target)
     }
 
-    /// Renders the module's qualified name as another package writes it:
-    /// `pkg` or `pkg::a::b` for the program's own modules, `std::a` for the
-    /// standard library's.
+    /// Renders the module's qualified name: `pkg` or `pkg::a::b` for the
+    /// program's own modules, `std::a` for the standard library's and
+    /// `label::a` for a bound package's [MOD-11].
     #[must_use]
     pub fn qualified_name(&self) -> String {
-        let mut name = String::from(self.package.qualifier());
+        let mut name = String::from(self.qualifier());
         for component in &self.path {
             name.push_str("::");
             name.push_str(component);
