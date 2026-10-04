@@ -12,7 +12,7 @@ struct Store {
 fn prefixes() -> keys: KeySet pure {
   let keys = key_set_new(capacity: 8_u64);
   for @key (at in 1_u64..9_u64) {
-    key_set_put(keys: &keys, key: &names[0_u64..at], payload: at);
+    key_set_insert(keys: &keys, key: &names[0_u64..at]);
   }
   return move keys;
 }
