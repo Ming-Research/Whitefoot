@@ -708,10 +708,7 @@ fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
     if bor(string_left, number_left) {
       set bad = c;
     }
-    let rejected = type_error(vm: vm, v: bad, op: 3_u8);
-    let pc = vm^.callback_plan.pc;
-    library_error_location(vm: vm, pc: pc);
-    return rejected;
+    return type_error(vm: vm, v: bad, op: 3_u8);
   }
   if name == 8_u8 {
     return type_error(vm: vm, v: b, op: 4_u8);

@@ -14,3 +14,4 @@ print('bytecapacity',pcall(function()return string.byte(string.rep('x',7999),1,7
 local t={};for i=1,7999 do t[i]=i end;print('unpackcapacity',pcall(function()return unpack(t,1,7999)end))
 print('nearcapacity',select('#',string.byte(string.rep('x',7997),1,7997)),select('#',unpack(t,1,7997)))
 print('concaterror',pcall(function()return 1 .. {} end))
+print('badmetacall',pcall(function()return tostring(setmetatable({},{__tostring=false}))end))

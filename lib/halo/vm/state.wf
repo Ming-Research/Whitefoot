@@ -319,7 +319,7 @@ fn raise_text(vm: &Vm, text: &[u8]) -> r: Bool reads(text), writes(vm) {
   return False();
 }
 
-fn type_error(vm: &Vm, v: Value, op: u8) -> r: Bool writes(vm) {
+fn raw_type_error(vm: &Vm, v: Value, op: u8) -> r: Bool writes(vm) {
   let k = kind(v: v);
   if op == 0_u8 {
     if k == 0_u8 {
@@ -681,4 +681,16 @@ fn restore_stopped_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit reads(vm
     set stack^.inner[i] = vm^.stopped_stack.inner[i];
   }
   return unit;
+}
+
+fn type_error(vm: &Vm, v: Value, op: u8) -> r: Bool writes(vm) {
+  let rejected = raw_type_error(vm: vm, v: v, op: op);
+  let plan = vm^.callback_plan;
+  let pc = plan.pc;
+  if plan.kind != 2_u8 {
+    set pc = pc -sat 1_u64;
+  }
+  let message = vm^.error;
+  set vm^.error = error_location(vm: vm, pc: pc, level: 1_u64, message: message);
+  return rejected;
 }
