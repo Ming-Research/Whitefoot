@@ -2,3 +2,4 @@ pkg::value: [];
 pkg::number: [pkg::value];
 pkg::lex: [pkg::value, pkg::number];
 pkg::heap: [pkg::value];
+pkg::compile: [pkg::value, pkg::number, pkg::lex, pkg::heap];
