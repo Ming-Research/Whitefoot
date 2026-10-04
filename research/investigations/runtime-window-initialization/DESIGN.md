@@ -110,3 +110,10 @@ of this proposal. No Snowghost pin change follows from this record.
 ## Results
 
 Not implemented or executed. The recommended interface remains unapproved.
+
+## Found along the way
+
+The compiler prelude design named twenty owned operations, while the base
+COMPILER_OWNED_PRELUDE_ROWS inventory declares twenty-six. Remove the stale
+count from the decision; the source inventory continues to own enumeration.
+This wording repair changes no dispatch or implementation decision.
