@@ -2166,6 +2166,25 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **Halo codec error names need Lua debug metadata.** The library comparison
+  in `research/experiments/halo-luacodecs/RESULTS.md` includes
+  `local f=bit.tobit; return f(false)` and operations on `cjson.null`.
+  Halo reports the builtin's static name or a generic userdata error;
+  Redis reports the local or field name. `pkg::value::Script` carries lines
+  but no local-name ranges. Change: preserve the compiler's local names and
+  Lua's register-origin information, then use them in argument and type
+  errors. Validate alias, field, upvalue and unnamed calls against Redis.
+  Reopen before claiming byte-exact Lua library error compatibility.
+- **Halo retains cjson instance configurations after collection.**
+  `Vm.cjson_configs` owns settings and reusable encoding buffers; native
+  closures select an instance, but collecting its last closure does not
+  release that configuration. Impact: repeated `cjson.new()` retains
+  configuration slots and buffers for the VM's lifetime. Change: connect
+  instance lifetime to reachable native closures and reclaim unreachable
+  buffers and slots. Validate retained extracted methods, discarded tables
+  and repeated new/encode/collect cycles. Reopen before long-lived Halo VMs
+  use independent cjson instances.
+
 - **Halo's dispatch arms join before the tail call, and its hot paths are
   not yet fast.** `lib/halo/vm/dispatch.wf` matches the cell, each arm calls
   a handler function returning a `Step`, and one shared epilogue makes the

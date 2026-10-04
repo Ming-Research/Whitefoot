@@ -162,10 +162,26 @@ fn mp_frame_push(frames: &Box<Slots<MpFrame>>, frame: MpFrame) -> r: unit writes
   return unit;
 }
 
-fn mp_read(vm: &Vm, source: &[u8], cursor: &MpCursor) -> r: Value reads(source), writes(vm), writes(cursor) {
+fn mp_read(vm: &Vm, source: &[u8], cursor: &MpCursor, top: u64) -> r: Value reads(source), writes(vm), writes(cursor) {
   let frames_v42 = box_slots_new::<MpFrame>(capacity: 16_u64);
   let nil_v43 = Value::Nil();
   loop {
+    let virtual_top = top;
+    for (j in 0_u64..frames_v42.inner.len) {
+      let frame = frames_v42.inner[j];
+      let slots = 1_u64;
+      let array_frame = bnot(frame.map);
+      let has_key = bnot(frame.needs_key);
+      if bor(array_frame, has_key) {
+        set slots = 2_u64;
+      }
+      set virtual_top = virtual_top +sat slots;
+    }
+    if virtual_top >= 8000_u64 {
+      let ignored_stack = raise_text(vm: vm, text: &mp_stack_values[0_u64..88_u64]);
+      set cursor^.error = 3_u8;
+      return nil_v43;
+    }
     let value_v44 = nil_v43;
     let count_v45 = 0_u64;
     let container_v46 = False();
@@ -274,6 +290,13 @@ fn mp_read(vm: &Vm, source: &[u8], cursor: &MpCursor) -> r: Value reads(source),
     }
     let descend_v70 = False();
     if container_v46 {
+      if bnot(map_v47) {
+        if virtual_top >= 7999_u64 {
+          let ignored_array_stack = raise_text(vm: vm, text: &mp_stack_array[0_u64..51_u64]);
+          set cursor^.error = 3_u8;
+          return nil_v43;
+        }
+      }
       set value_v44 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
       if count_v45 > 0_u64 {
         let left_v71 = count_v45;
@@ -416,7 +439,8 @@ fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id
     if i_v105 >= count_v101 {
       break;
     }
-    let value_v106 = mp_read(vm: vm, source: &source_v83.inner[0_u64..n_v93], cursor: &cursor_v102);
+    let decode_top = argc +sat i_v105;
+    let value_v106 = mp_read(vm: vm, source: &source_v83.inner[0_u64..n_v93], cursor: &cursor_v102, top: decode_top);
     if cursor_v102.error == 1_u8 {
       return lib_failure(vm: vm, text: &mp_missing[0_u64..23_u64]);
     }
@@ -430,6 +454,10 @@ fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id
     set i_v105 = i_v105 +sat 1_u64;
   }
   if bnot(all_v99) {
+    let offset_top = argc +sat i_v105;
+    if offset_top >= 8000_u64 {
+      return lib_failure(vm: vm, text: &mp_stack_full[0_u64..43_u64]);
+    }
     let next_v107 = -1.0_f64;
     if cursor_v102.offset < n_v93 {
       set next_v107 = cvt.nearest::<u64, f64>(cursor_v102.offset);
@@ -500,3 +528,9 @@ fn cmsgpack_raw_error(vm: &Vm) -> r: Bool reads(vm) {
   }
   return bor(nil_error, nan_error);
 }
+
+const mp_stack_values: Array<u8, 88> = "stack overflow (too many return values at once; use unpack_one or unpack_limit instead.)";
+
+const mp_stack_array: Array<u8, 51> = "stack overflow (in function mp_decode_to_lua_array)";
+
+const mp_stack_full: Array<u8, 43> = "stack overflow (in function mp_unpack_full)";

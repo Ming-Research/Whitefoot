@@ -286,6 +286,10 @@ fn library_struct(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: 
       if end_v48 > data_v32.inner.len {
         return lib_argtext(vm: vm, id: id, index: 2_u64, text: &struct_short[0_u64..21_u64]);
       }
+      let result_top = argc +sat results_v43.inner.len;
+      if result_top > 7998_u64 {
+        return lib_failure(vm: vm, text: &struct_stack_results[0_u64..33_u64]);
+      }
     }
     let integer_v49 = struct_integer(option: opt_v44);
     let float_v50 = opt_v44 == 102_u8;
@@ -543,3 +547,5 @@ const struct_string_short: Array<u8, 16> = "string too short";
 const struct_previous: Array<u8, 33> = "format 'c0' needs a previous size";
 
 const struct_unfinished: Array<u8, 25> = "unfinished string in data";
+
+const struct_stack_results: Array<u8, 33> = "stack overflow (too many results)";
