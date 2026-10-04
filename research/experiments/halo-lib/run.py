@@ -51,6 +51,9 @@ def main():
     timings = []
     mismatches = []
     rows = []
+    revision = run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True).stdout.decode().strip()
+    sources = {str(path.relative_to(ROOT)): digest(path) for path in sorted((ROOT / 'lib/halo/vm').glob('*')) if path.is_file()}
+    sources.update({str(path.relative_to(ROOT)): digest(path) for path in sorted(HERE.glob('*.lua'))})
     with tempfile.TemporaryDirectory(prefix='build-', dir=HERE) as scratch:
         adapter = a.adapter or Path(scratch) / 'run'
         if not a.adapter:
@@ -75,7 +78,7 @@ def main():
                     text = ''.join(difflib.unified_diff(expected.decode('utf8', 'backslashreplace').splitlines(True), result.stdout.decode('utf8', 'backslashreplace').splitlines(True), fromfile='PUC', tofile='Halo'))
                     print(text, flush=True)
                     mismatches.append({'script': name, 'budget': budget, 'diff': text})
-        record = {'compiler_sha256': digest(a.compiler), 'lua_sha256': digest(a.lua), 'rows': rows, 'mismatches': mismatches}
+        record = {'source_revision': revision, 'source_sha256': sources, 'adapter_sha256': digest(adapter), 'compiler_sha256': digest(a.compiler), 'lua_sha256': digest(a.lua), 'rows': rows, 'mismatches': mismatches}
         if a.results:
             a.results.write_text('# Halo library comparison results\n\n' + f'{len(rows)} script/budget comparisons; {sum(x["equal"] for x in rows)} equal; {len(mismatches)} mismatched.\n\n' + 'Reference-only bootstrap replaces the standalone Lua executable\'s libc random with Redis 7.0.15 rand.c/script_lua.c semantics. Each corpus source is otherwise identical.\n\n' + '```json\n' + json.dumps(record, indent=2) + '\n```\n')
     return bool(mismatches)
