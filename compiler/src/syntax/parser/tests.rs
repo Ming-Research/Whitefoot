@@ -734,7 +734,7 @@ fn main() -> result: unit pure {}
     let ParseOutcome::Complete(parsed) = outcome else {
         panic!("full fixture must parse: {outcome:?}");
     };
-    let graph = b"pkg::library: [];\npkg: [pkg::library, std::process, std::text];\n\nentry kernel = pkg::start {\n  no_heap;\n}\n\nentry tool = pkg::library::run;\n";
+    let graph = b"package shared = \"../shared\";\n\npkg::library: [];\npkg: [pkg::library, shared::core, std::process, std::text];\n\nentry kernel = pkg::start {\n  no_heap;\n}\n\nentry tool = pkg::library::run;\n";
     let graph_inputs = [SourceInput::new("modules.wfg", graph)];
     let Ok(graph_bundle) = SourceBundle::with_limits(&graph_inputs, SOURCE_LIMITS) else {
         panic!("the graph fixture forms one source record");
@@ -767,7 +767,7 @@ fn main() -> result: unit pure {}
             });
         assert!(present, "fixture omitted {production:?}");
     }
-    assert_eq!(productions().len(), 98);
+    assert_eq!(productions().len(), 99);
     assert_eq!(
         parsed
             .tree

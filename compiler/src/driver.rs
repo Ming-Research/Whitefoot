@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod cache;
 mod diagnostic;
+mod packages;
 mod reads;
 
 pub(crate) mod launcher;
@@ -24,6 +25,7 @@ pub use cache::{BuildCache, content_digest, running_compiler_identity};
 pub(crate) use diagnostic::Place;
 use diagnostic::{Anchor, Head, Record};
 pub use diagnostic::{DiagnosticFormat, render_driver_failure};
+pub use packages::{ModuleProgramFailure, form_module_program_graph};
 
 use crate::backend::emitter::{LlvmModule, emit_llvm_with_layout};
 use crate::target::TargetLayout;
@@ -564,7 +566,10 @@ pub enum ModuleEntry<'a> {
 /// Forms the module graph one `modules.wfg` record writes [MOD-1].
 ///
 /// The record passes the ordinary syntax stages under the `graph_file` start
-/// and then graph formation; any rejection cites its rule at the record.
+/// and then graph formation; any rejection cites its rule at the record. A
+/// record that binds packages needs their directories, so it is an
+/// invocation failure here: [`form_module_program_graph`] reads them
+/// [MOD-11].
 pub fn form_module_graph(
     graph: SourceInput<'_>,
     limits: CompilerLimits,
@@ -588,6 +593,22 @@ fn form_graph_record(
     let bundle = SourceBundle::with_limits(&[graph], limits.source)
         .map_err(CompilationFailure::source_envelope)?;
     let canonical = canonical_syntax(&bundle, limits, true)?;
+    let binds = crate::graph::graph_bindings(&canonical)
+        .map_err(|failure| {
+            CompilationFailure::new(
+                CompilationStage::ModuleGraph,
+                CompilationFailureKind::Compiler,
+                failure,
+            )
+        })?
+        .map_or(true, |bindings| !bindings.is_empty());
+    if binds {
+        return Err(CompilationFailure::new(
+            CompilationStage::ModuleGraph,
+            CompilationFailureKind::Invocation,
+            "a graph that binds packages is formed from its directory, which this call does not read",
+        ));
+    }
     match crate::graph::form_graph(&canonical, package, library) {
         Ok(Ok(mut graph)) => {
             graph.locate_entries(|coordinate| Place::resolve(&bundle, coordinate, Anchor::Start));
@@ -631,9 +652,11 @@ fn with_library_records<'input>(
     all
 }
 
-/// Checks every registered module of a module program against its
-/// dependencies' interfaces, in row order, without selecting an entry, and
-/// returns the first rejected module's failure [MOD-8].
+/// Checks every module of a module program's own package and of the
+/// packages it binds against its dependencies' interfaces, in package and
+/// row order, without selecting an entry, and returns the first rejected
+/// module's failure [MOD-8, MOD-11]. Standard library modules are checked
+/// with the library.
 ///
 /// `inputs` are the modules' interface and implementation records, each
 /// placed with [`SourceInput::in_module`].
@@ -1878,8 +1901,9 @@ fn push_module_line(
 /// independent of row and edge order [MOD-1]: each of those modules' direct
 /// dependencies, which name permission compares with [MOD-5], and every
 /// registered module one path component below one of them, whose last
-/// component a top-level declaration of that module may not take [MOD-3].
-/// An accepted check names only modules among these; which other modules
+/// component a top-level declaration of that module may not take [MOD-3],
+/// and the bindings of their packages, through which their records name
+/// other packages [MOD-11]. An accepted check names only modules among these; which other modules
 /// are registered changes only which rejection a check reports, and a
 /// rejection's reading covers it. Entries, comments and spacing of the graph
 /// file are not among them.
@@ -1939,6 +1963,32 @@ fn push_graph_facts(
         material.extend_from_slice(child.as_bytes());
     }
     material.push(b'\n');
+    // [MOD-11] a module's records name packages through its package's
+    // bindings, so a renamed or retargeted binding changes what they mean
+    // even when no edge or record byte changes.
+    let qualifier = |package: crate::Package| {
+        records
+            .iter()
+            .find(|record| record.package() == package)
+            .map_or_else(String::new, |record| record.qualifier().to_owned())
+    };
+    let mut bindings = modules
+        .iter()
+        .filter_map(|module| records.get(module.index()))
+        .filter(|record| !record.bindings().is_empty())
+        .map(|record| {
+            let mut line = format!("bindings {}:", record.qualified_name());
+            for (name, package) in record.bindings() {
+                line.push_str(&format!(" {name}={}", qualifier(*package)));
+            }
+            line
+        })
+        .collect::<Vec<_>>();
+    bindings.sort();
+    for line in &bindings {
+        material.extend_from_slice(line.as_bytes());
+        material.push(b'\n');
+    }
 }
 
 /// What a rejection depends on beyond the key material: every registered

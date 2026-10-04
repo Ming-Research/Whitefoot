@@ -1892,7 +1892,7 @@ impl<'unit> TypeContext<'unit> {
         if self
             .declarations
             .declaration_home(declaration)
-            .is_none_or(|(package, _)| package != crate::Package::Standard)
+            .is_none_or(|(package, _)| *package != crate::PackageKey::Standard)
         {
             return Ok(super::repairs::OpaqueStruct::Program);
         }

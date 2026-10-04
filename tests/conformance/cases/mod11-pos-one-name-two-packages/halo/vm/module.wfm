@@ -1,0 +1,1 @@
+public fn seven() -> result: i32 pure doc "Supplies seven through halo's own json.";

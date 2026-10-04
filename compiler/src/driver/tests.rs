@@ -3406,3 +3406,154 @@ fn main() -> status: std::process::ExitStatus pure {
     .expect_err("a binder beside a module alias of its spelling is refused");
     assert_eq!(failure.rule_id(), Some("GRAM-10"), "{failure}");
 }
+
+/// Writes each `(path, bytes)` file below `root`, creating directories.
+fn write_tree(root: &std::path::Path, files: &[(&str, &str)]) {
+    for (path, text) in files {
+        let path = root.join(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create the directory");
+        }
+        std::fs::write(&path, text).expect("write the file");
+    }
+}
+
+/// The verdict of one module of the program whose graph is `graph_path`,
+/// read through its packages [MOD-11].
+fn package_module_verdict(
+    graph_path: &std::path::Path,
+    module: &str,
+    cache: Option<&super::BuildCache>,
+) -> super::CheckVerdict {
+    let graph = crate::form_module_program_graph(graph_path, CompilerLimits::default())
+        .unwrap_or_else(|failure| panic!("the graph forms: {failure:?}"));
+    let root = graph_path.parent().expect("the graph has a directory");
+    let sources = crate::discover_module_sources(root, &graph).expect("the records read");
+    let inputs = sources
+        .iter()
+        .map(|source| {
+            SourceInput::new(&source.logical_path, &source.bytes)
+                .in_module(source.module, source.role)
+        })
+        .collect::<Vec<_>>();
+    super::module_verdict(
+        &graph,
+        &inputs,
+        module,
+        false,
+        CompilerLimits::default(),
+        cache,
+    )
+    .expect("a module verdict")
+}
+
+/// [MOD-8, MOD-11] a bound package's records name other packages through
+/// its graph's bindings, whose names need not be the packages' labels: a
+/// graph that swaps two binding names keeps every edge, label and record
+/// byte, yet its records now name the other package, so the cached verdict
+/// is not reused and the cached run reports the cold run's rejection.
+#[test]
+fn swapping_binding_names_recomputes_a_bound_packages_verdict() {
+    let root = std::env::temp_dir().join(format!(
+        "whitefoot-driver-packages-{}-swap",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let directory = CacheDirectory::new("package-swap");
+    let cache = directory.open();
+    let halo_graph = |first: &str, second: &str| {
+        format!("package x = \"../{first}\";\npackage y = \"../{second}\";\n\npkg: [x, y];\n")
+    };
+    write_tree(
+        &root,
+        &[
+            ("one/modules.wfg", "pkg: [];\n"),
+            (
+                "one/module.wfm",
+                "public fn first() -> result: u8 pure doc \"Supplies one.\";\n",
+            ),
+            (
+                "one/one.wf",
+                "fn first() -> result: u8 pure {\n  return 1_u8;\n}\n",
+            ),
+            ("two/modules.wfg", "pkg: [];\n"),
+            (
+                "two/module.wfm",
+                "public fn second() -> result: u8 pure doc \"Supplies two.\";\n",
+            ),
+            (
+                "two/two.wf",
+                "fn second() -> result: u8 pure {\n  return 2_u8;\n}\n",
+            ),
+            ("halo/modules.wfg", &halo_graph("one", "two")),
+            (
+                "halo/module.wfm",
+                "public fn total() -> result: u8 pure doc \"Adds the two.\";\n",
+            ),
+            (
+                "halo/total.wf",
+                "fn total() -> result: u8 pure {\n  let a = x::first();\n  let b = y::second();\n  let result = a +wrap b;\n  return result;\n}\n",
+            ),
+            (
+                "app/modules.wfg",
+                "package a = \"../one\";\npackage b = \"../two\";\npackage h = \"../halo\";\n\npkg: [h];\n",
+            ),
+            ("app/module.wfm", "\n"),
+        ],
+    );
+    let graph = root.join("app/modules.wfg");
+    let accepted = |verdict: &super::CheckVerdict| {
+        matches!(verdict.outcome(), super::CheckOutcome::Accepted { .. })
+    };
+    let first = package_module_verdict(&graph, "h", Some(&cache));
+    assert!(accepted(&first), "{:?}", first.outcome());
+    assert!(package_module_verdict(&graph, "h", Some(&cache)).reused());
+    write_tree(&root, &[("halo/modules.wfg", &halo_graph("two", "one"))]);
+    let cold = package_module_verdict(&graph, "h", None);
+    assert!(!accepted(&cold), "x now names the package without first");
+    let cached = package_module_verdict(&graph, "h", Some(&cache));
+    assert!(!cached.reused(), "the swapped bindings change the key");
+    assert_eq!(cached.outcome(), cold.outcome());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// [MOD-11] a symbolic link at a bound package root is an input-envelope
+/// failure; replacing it with a real directory lets the same graph form.
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_at_a_bound_package_root_is_an_envelope_failure() {
+    let root = std::env::temp_dir().join(format!(
+        "whitefoot-driver-packages-{}-symlink",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    write_tree(
+        &root,
+        &[
+            ("real/modules.wfg", "pkg: [];\n"),
+            ("real/module.wfm", "\n"),
+            ("app/modules.wfg", "package lib = \"link\";\n\npkg: [lib];\n"),
+            ("app/module.wfm", "\n"),
+        ],
+    );
+    let link = root.join("app/link");
+    std::os::unix::fs::symlink("../real", &link).expect("create the package root link");
+    let graph = root.join("app/modules.wfg");
+    assert!(matches!(
+        crate::form_module_program_graph(&graph, CompilerLimits::default()),
+        Err(crate::ModuleProgramFailure::Discovery(
+            crate::DiscoveryFailure::SymbolicLink { .. }
+        ))
+    ));
+
+    std::fs::remove_file(&link).expect("remove the package root link");
+    write_tree(
+        &root,
+        &[
+            ("app/link/modules.wfg", "pkg: [];\n"),
+            ("app/link/module.wfm", "\n"),
+        ],
+    );
+    assert!(crate::form_module_program_graph(&graph, CompilerLimits::default()).is_ok());
+    let _ = std::fs::remove_dir_all(&root);
+}

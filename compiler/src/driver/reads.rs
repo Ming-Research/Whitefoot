@@ -177,7 +177,7 @@ pub(super) fn read_declarations(
         } => bundle
             .modules()
             .iter()
-            .position(|module| module.is_at(*package, path)),
+            .position(|module| module.package_key() == *package && module.path() == path),
         _ => None,
     };
     let item_of = |node: &crate::NodePath| resolved.item_key(*node.components().first()?);

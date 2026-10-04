@@ -1,0 +1,1 @@
+public fn spare() -> result: i32 pure doc "A function no entry of the program selects.";

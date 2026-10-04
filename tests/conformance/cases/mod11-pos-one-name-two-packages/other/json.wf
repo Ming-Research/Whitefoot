@@ -1,0 +1,4 @@
+fn make(n: i32) -> result: i32 pure {
+  doc "A function of the same name as the json package's own.";
+  return n;
+}

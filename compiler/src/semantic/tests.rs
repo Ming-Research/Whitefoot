@@ -357,11 +357,14 @@ fn check_case_directory(case: &str) -> Result<(), crate::CompilationFailure> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../tests/conformance/cases")
         .join(case);
-    let graph_bytes = std::fs::read(root.join("modules.wfg")).expect("read the case's graph");
-    let graph = crate::form_module_graph(
-        SourceInput::new("modules.wfg", &graph_bytes),
+    let graph = match crate::form_module_program_graph(
+        &root.join("modules.wfg"),
         crate::CompilerLimits::default(),
-    )?;
+    ) {
+        Ok(graph) => graph,
+        Err(crate::ModuleProgramFailure::Compilation(failure)) => return Err(failure),
+        Err(crate::ModuleProgramFailure::Discovery(failure)) => panic!("{case}: {failure}"),
+    };
     let sources = crate::discover_module_sources(&root, &graph).expect("read the case's records");
     let inputs = sources
         .iter()

@@ -672,6 +672,7 @@ pub(crate) enum PlaceSuffix {
 }
 
 pub(crate) struct GraphForm {
+    pub(crate) packages: Vec<NodeId>,
     pub(crate) rows: Vec<NodeId>,
     pub(crate) entries: Vec<NodeId>,
 }
@@ -687,8 +688,26 @@ pub(crate) struct EntryForm {
     pub(crate) no_heap: bool,
 }
 
+/// A graph's package binding [MOD-11]: the bound name and the STRING
+/// terminal holding its location.
+pub(crate) struct PackageDeclForm {
+    pub(crate) name: usize,
+    pub(crate) location: usize,
+}
+
+/// The root of a written module path: `pkg`, `std` or a bound package name
+/// [MOD-1, MOD-10, MOD-11].
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum ModulePathRoot {
+    Pkg,
+    Std,
+    /// The terminal of the IDENT root.
+    Name(usize),
+}
+
 pub(crate) struct ModulePathForm {
-    pub(crate) standard: bool,
+    pub(crate) root: ModulePathRoot,
+    /// The components after the root.
     pub(crate) components: Vec<usize>,
 }
 
@@ -778,6 +797,7 @@ impl SyntaxView<'_> {
             return Err(SyntaxViewFailure::InvalidCanonicalTree);
         }
         Ok(GraphForm {
+            packages: self.children_with(self.root(), Production::PackageDecl)?,
             rows: self.children_with(self.root(), Production::ModuleRow)?,
             entries: self.children_with(self.root(), Production::EntryDecl)?,
         })
@@ -808,11 +828,29 @@ impl SyntaxView<'_> {
         })
     }
 
-    pub(crate) fn module_path(&self, node: NodeId) -> Result<ModulePathForm, SyntaxViewFailure> {
-        Ok(ModulePathForm {
-            standard: self.has_fixed(node, crate::FixedTerminal::Std)?,
-            components: self.direct_identifiers(node)?,
+    pub(crate) fn package_decl(&self, node: NodeId) -> Result<PackageDeclForm, SyntaxViewFailure> {
+        Ok(PackageDeclForm {
+            name: self
+                .direct_token_with(node, TerminalPredicate::Identifier)?
+                .ok_or(SyntaxViewFailure::InvalidCanonicalTree)?,
+            location: self
+                .direct_token_with(node, TerminalPredicate::String)?
+                .ok_or(SyntaxViewFailure::InvalidCanonicalTree)?,
         })
+    }
+
+    pub(crate) fn module_path(&self, node: NodeId) -> Result<ModulePathForm, SyntaxViewFailure> {
+        let mut components = self.direct_identifiers(node)?;
+        let root = if self.has_fixed(node, crate::FixedTerminal::Pkg)? {
+            ModulePathRoot::Pkg
+        } else if self.has_fixed(node, crate::FixedTerminal::Std)? {
+            ModulePathRoot::Std
+        } else if components.is_empty() {
+            return Err(SyntaxViewFailure::InvalidCanonicalTree);
+        } else {
+            ModulePathRoot::Name(components.remove(0))
+        };
+        Ok(ModulePathForm { root, components })
     }
 
     pub(crate) fn items(&self) -> Result<Vec<ItemForm>, SyntaxViewFailure> {

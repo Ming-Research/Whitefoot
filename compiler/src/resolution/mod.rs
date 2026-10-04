@@ -479,8 +479,8 @@ pub enum ItemHome {
     /// declare the item: its interface declaration and its definition are
     /// two declarations of one function.
     Module {
-        /// The package the module belongs to [MOD-10].
-        package: crate::Package,
+        /// The package the module belongs to [MOD-10, MOD-11].
+        package: crate::PackageKey,
         /// The module's path within its package.
         path: Vec<String>,
         /// The records that declare the item.
@@ -498,7 +498,7 @@ impl ItemHome {
         }
         let module = bundle.module(file.module())?;
         Some(Self::Module {
-            package: module.package(),
+            package: module.package_key(),
             path: module.path().to_vec(),
             record: file.role(),
         })
@@ -513,7 +513,11 @@ impl core::fmt::Display for ItemHome {
                 path,
                 record,
             } => {
-                formatter.write_str(package.qualifier())?;
+                formatter.write_str(match package {
+                    crate::PackageKey::Program => "pkg",
+                    crate::PackageKey::Standard => "std",
+                    crate::PackageKey::Bound(label) => label,
+                })?;
                 for component in path {
                     write!(formatter, "::{component}")?;
                 }
@@ -1169,6 +1173,12 @@ pub enum ResolutionIssueKind {
         target: String,
         /// Why the target is refused.
         reason: &'static str,
+    },
+    /// A lowercase alias takes a name its package's graph binds, which
+    /// roots qualified paths in that package already [MOD-4, MOD-11].
+    AliasNamesPackage {
+        /// The alias spelling.
+        spelling: String,
     },
     /// A standard library record writes `std`, where the library names
     /// itself `pkg` [MOD-10].
