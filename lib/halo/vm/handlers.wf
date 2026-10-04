@@ -1959,7 +1959,7 @@ fn instruction_pow_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<S
     Is(x: bound_x_70) => {
       match num_of(v: vc) {
         Is(x: y) => {
-          set ok = power_pending(vm: vm, stack: stack, dest: ra, x: bound_x_70, y: y);
+          set ok = numeric_power(vm: vm, stack: stack, dest: ra, x: bound_x_70, y: y);
         }
         Not() => {
           let operation = SlowOp::Pow();
@@ -2017,7 +2017,7 @@ fn instruction_pow_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<S
     Is(x: bound_x_68) => {
       match num_of(v: vc) {
         Is(x: y) => {
-          set ok = power_pending(vm: vm, stack: stack, dest: ra, x: bound_x_68, y: y);
+          set ok = numeric_power(vm: vm, stack: stack, dest: ra, x: bound_x_68, y: y);
         }
         Not() => {
           let operation = SlowOp::Pow();
@@ -2075,7 +2075,7 @@ fn instruction_pow_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<S
     Is(x: bound_x_66) => {
       match num_of(v: vc) {
         Is(x: y) => {
-          set ok = power_pending(vm: vm, stack: stack, dest: ra, x: bound_x_66, y: y);
+          set ok = numeric_power(vm: vm, stack: stack, dest: ra, x: bound_x_66, y: y);
         }
         Not() => {
           let operation = SlowOp::Pow();
@@ -2133,7 +2133,7 @@ fn instruction_pow_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<S
     Is(x: bound_x_64) => {
       match num_of(v: vc) {
         Is(x: y) => {
-          set ok = power_pending(vm: vm, stack: stack, dest: ra, x: bound_x_64, y: y);
+          set ok = numeric_power(vm: vm, stack: stack, dest: ra, x: bound_x_64, y: y);
         }
         Not() => {
           let operation = SlowOp::Pow();
@@ -3409,13 +3409,15 @@ fn instruction_for_prep<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box
     let init = register_value(stack: stack, base: base, operand: av);
     let limit = stack^.inner[rlimit];
     let step = stack^.inner[rstep];
-    match num_of(v: init) {
+    match coerce_number(vm: vm, v: init) {
       Is(x: bound_x_25) => {
-        match num_of(v: limit) {
+        match coerce_number(vm: vm, v: limit) {
           Is(x: y) => {
-            match num_of(v: step) {
+            match coerce_number(vm: vm, v: step) {
               Is(x: s) => {
                 let z = fsub.strict(bound_x_25, s);
+                set stack^.inner[rlimit] = Value::Num(n: y);
+                set stack^.inner[rstep] = Value::Num(n: s);
                 set stack^.inner[ra] = Value::Num(n: z);
                 set next = target;
               }

@@ -1,0 +1,21 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias intern = pkg::heap::intern;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+alias new_table = pkg::heap::new_table;
+alias truthy = pkg::value::truthy;
+
+fn library_dispatch<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, env: &E, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32, pc: u64) -> r: HostOutcome reads(code), reads(consts), writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let local_length_1 = stack^.inner.len;
+  if id >= 32_u32 {
+    return library_string(vm: vm, stack: stack, func: func, argc: argc, id: id);
+  }
+  let local_outcome_2 = library_base::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: func, argc: argc, id: id, pc: pc);
+  resize_stack(stack: stack, size: local_length_1);
+  return local_outcome_2;
+}

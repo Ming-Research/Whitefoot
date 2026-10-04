@@ -1,0 +1,259 @@
+const library_trig_libm_two_over_pi: Array<u64, 66> =[12618859_u64, 6349435_u64, 7579849_u64, 1398474_u64, 3212806_u64, 5075751_u64, 16767104_u64, 6832269_u64, 6231200_u64, 6658437_u64, 15080200_u64, 9527646_u64, 1944035_u64, 10155062_u64, 13614112_u64, 7056368_u64, 4652155_u64, 5636912_u64, 9264392_u64, 6271263_u64, 15363067_u64, 9065106_u64, 473591_u64, 15825725_u64, 13102053_u64, 7677882_u64, 6285869_u64, 4155038_u64, 12013382_u64, 2607881_u64, 3571407_u64, 7151469_u64, 9132554_u64, 15675153_u64, 366607_u64, 9961438_u64, 3874808_u64, 12450088_u64, 8675211_u64, 3798172_u64, 3769171_u64, 3772886_u64, 6258241_u64, 7349940_u64, 8710556_u64, 3062596_u64, 8533493_u64, 10960616_u64, 1880361_u64, 16653803_u64, 13734428_u64, 3074569_u64, 14681673_u64, 4345298_u64, 2387514_u64, 12935607_u64, 11263675_u64, 16666979_u64, 4427841_u64, 9804092_u64, 12639074_u64, 16069853_u64, 2578385_u64, 1387004_u64, 7228996_u64, 10680707_u64];
+
+struct TrigReduction {
+  quadrant: u64;
+  hi: f64;
+  lo: f64;
+}
+
+fn reduction_bit(product: &Array<u64, 70>, index: i64) -> r: u64 reads(product) {
+  if index < 0_i64 {
+    return 0_u64;
+  }
+  let local_bit_1 = cvt::<i64, u64>(index);
+  let local_limb_2 = local_bit_1 / 24_u64;
+  let local_distance_3 = local_bit_1 % 24_u64;
+  let local_shift_4 = cvt::<u64, u32>(local_distance_3);
+  if local_limb_2 < 70_u64 {
+    let local_value_5 = product^[local_limb_2];
+    let local_shifted_6 = ishr.wrap(local_value_5, local_shift_4);
+    return iand(local_shifted_6, 1_u64);
+  }
+  return 0_u64;
+}
+
+fn trig_reduce(x: f64) -> r: TrigReduction pure {
+  let local_abs_7 = fabs(x);
+  if fle(local_abs_7, 0.7853981633974483_f64) {
+    return TrigReduction(quadrant: 0_u64, hi: x, lo: 0.0_f64);
+  }
+  let local_bits_8 = reinterpret::<f64, u64>(local_abs_7);
+  let local_field_9 = ishr.wrap(local_bits_8, 52_u32);
+  let local_fraction_10 = iand(local_bits_8, 4503599627370495_u64);
+  let local_mantissa_11 = ior(local_fraction_10, 4503599627370496_u64);
+  let local_product_12 = array_filled::<u64, 70>(value: 0_u64);
+  for (j in 0_u64..3_u64) {
+    let local_distance_13 = j * 24_u64;
+    let local_shift_14 = cvt::<u64, u32>(local_distance_13);
+    let local_part_15 = ishr.wrap(local_mantissa_11, local_shift_14);
+    let local_limb_16 = iand(local_part_15, 16777215_u64);
+    let local_carry_17 = 0_u64;
+    for (i in 0_u64..66_u64) {
+      let local_index_18 = i + j;
+      let local_digit_19 = library_trig_libm_two_over_pi[i];
+      let local_multiple_20 = local_digit_19 *wrap local_limb_16;
+      let local_add_21 = local_multiple_20 +wrap local_product_12[local_index_18];
+      let local_total_22 = local_add_21 +wrap local_carry_17;
+      set local_product_12[local_index_18] = iand(local_total_22, 16777215_u64);
+      set local_carry_17 = ishr.wrap(local_total_22, 24_u32);
+    }
+    let local_index_23 = j + 66_u64;
+    set local_product_12[local_index_23] = local_carry_17;
+  }
+  let local_exp_24 = cvt.wrap::<u64, i64>(local_field_9);
+  let local_shift_25 = 2659_i64 -wrap local_exp_24;
+  let local_q0_26 = reduction_bit(product: &local_product_12, index: local_shift_25);
+  let local_next_27 = local_shift_25 +wrap 1_i64;
+  let local_q1_28 = reduction_bit(product: &local_product_12, index: local_next_27);
+  let local_upper_29 = local_q1_28 * 2_u64;
+  let local_q_30 = local_upper_29 + local_q0_26;
+  let local_half_31 = local_shift_25 -wrap 1_i64;
+  let local_up_32 = reduction_bit(product: &local_product_12, index: local_half_31);
+  let local_quadrant_33 = local_q_30 + local_up_32;
+  let local_high_34 = 0_u64;
+  let local_low_35 = 0_u64;
+  for (i in 0_u64..53_u64) {
+    let local_offset_36 = cvt::<u64, i64>(i);
+    let local_index_37 = local_half_31 -wrap local_offset_36;
+    let local_bit_38 = reduction_bit(product: &local_product_12, index: local_index_37);
+    let local_twice_39 = local_high_34 *wrap 2_u64;
+    set local_high_34 = local_twice_39 +wrap local_bit_38;
+    let local_next_40 = local_index_37 -wrap 53_i64;
+    let local_lower_41 = reduction_bit(product: &local_product_12, index: local_next_40);
+    let local_doubled_42 = local_low_35 *wrap 2_u64;
+    set local_low_35 = local_doubled_42 +wrap local_lower_41;
+  }
+  let local_hf_43 = cvt.nearest::<u64, f64>(local_high_34);
+  let local_lf_44 = cvt.nearest::<u64, f64>(local_low_35);
+  let local_fraction_hi_45 = fmul.strict(local_hf_43, 1.1102230246251565e-16_f64);
+  let local_rounded_up_46 = cvt.nearest::<u64, f64>(local_up_32);
+  set local_fraction_hi_45 = fsub.strict(local_fraction_hi_45, local_rounded_up_46);
+  let local_fraction_lo_47 = fmul.strict(local_lf_44, 1.232595164407831e-32_f64);
+  let local_high_part_48 = fmul.strict(local_fraction_hi_45, 1.5707963267948965_f64);
+  let local_neg_49 = fneg(local_high_part_48);
+  let local_residual_50 = ffma.strict(local_fraction_hi_45, 1.5707963267948965_f64, local_neg_49);
+  let local_correction_51 = fmul.strict(local_fraction_hi_45, 6.123233995736766e-17_f64);
+  let local_tail_52 = fmul.strict(local_fraction_lo_47, 1.5707963267948965_f64);
+  let local_add_53 = fadd.strict(local_residual_50, local_correction_51);
+  let local_low_part_54 = fadd.strict(local_add_53, local_tail_52);
+  let local_hi_55 = fadd.strict(local_high_part_48, local_low_part_54);
+  let local_remainder_56 = fsub.strict(local_high_part_48, local_hi_55);
+  let local_lo_57 = fadd.strict(local_remainder_56, local_low_part_54);
+  let local_qfinal_58 = local_quadrant_33 % 4_u64;
+  if flt(x, 0.0_f64) {
+    let local_reverse_59 = 4_u64 - local_qfinal_58;
+    set local_qfinal_58 = local_reverse_59 % 4_u64;
+    set local_hi_55 = fneg(local_hi_55);
+    set local_lo_57 = fneg(local_lo_57);
+  }
+  return TrigReduction(quadrant: local_qfinal_58, hi: local_hi_55, lo: local_lo_57);
+}
+
+fn math_sin(x: f64) -> r: f64 pure {
+  let local_abs_60 = fabs(x);
+  if flt(local_abs_60, 7.450580596923828e-9_f64) {
+    return x;
+  }
+  let local_inf_61 = finf::<f64>();
+  if fge(local_abs_60, local_inf_61) {
+    return fnan::<f64>();
+  }
+  let local_reduced_62 = trig_reduce(x: x);
+  let local_q_63 = local_reduced_62.quadrant;
+  if local_q_63 == 0_u64 {
+    return math_sin_kernel(x: local_reduced_62.hi, y: local_reduced_62.lo);
+  }
+  if local_q_63 == 1_u64 {
+    return math_cos_kernel(x: local_reduced_62.hi, y: local_reduced_62.lo);
+  }
+  if local_q_63 == 2_u64 {
+    let local_y_64 = math_sin_kernel(x: local_reduced_62.hi, y: local_reduced_62.lo);
+    return fneg(local_y_64);
+  }
+  let local_y_65 = math_cos_kernel(x: local_reduced_62.hi, y: local_reduced_62.lo);
+  return fneg(local_y_65);
+}
+
+fn math_cos(x: f64) -> r: f64 pure {
+  let local_abs_66 = fabs(x);
+  if flt(local_abs_66, 7.450580596923828e-9_f64) {
+    return 1.0_f64;
+  }
+  let local_inf_67 = finf::<f64>();
+  if fge(local_abs_66, local_inf_67) {
+    return fnan::<f64>();
+  }
+  let local_reduced_68 = trig_reduce(x: x);
+  let local_q_69 = local_reduced_68.quadrant;
+  if local_q_69 == 0_u64 {
+    return math_cos_kernel(x: local_reduced_68.hi, y: local_reduced_68.lo);
+  }
+  if local_q_69 == 1_u64 {
+    let local_y_70 = math_sin_kernel(x: local_reduced_68.hi, y: local_reduced_68.lo);
+    return fneg(local_y_70);
+  }
+  if local_q_69 == 2_u64 {
+    let local_y_71 = math_cos_kernel(x: local_reduced_68.hi, y: local_reduced_68.lo);
+    return fneg(local_y_71);
+  }
+  return math_sin_kernel(x: local_reduced_68.hi, y: local_reduced_68.lo);
+}
+
+fn math_tan(x: f64) -> r: f64 pure {
+  let local_abs_72 = fabs(x);
+  if flt(local_abs_72, 7.450580596923828e-9_f64) {
+    return x;
+  }
+  let local_inf_73 = finf::<f64>();
+  if fge(local_abs_72, local_inf_73) {
+    return fnan::<f64>();
+  }
+  let local_reduced_74 = trig_reduce(x: x);
+  let local_odd_75 = local_reduced_74.quadrant % 2_u64;
+  return math_tan_kernel(x: local_reduced_74.hi, y: local_reduced_74.lo, odd: local_odd_75);
+}
+
+fn math_tan_kernel(x: f64, y: f64, odd: u64) -> r: f64 pure {
+  let local_abs_76 = fabs(x);
+  let local_big_77 = fge(local_abs_76, 0.6743316650390625_f64);
+  let local_bits_78 = reinterpret::<f64, u64>(x);
+  let local_sign_79 = local_bits_78 >= 9223372036854775808_u64;
+  let local_xx_80 = x;
+  let local_yy_81 = y;
+  if local_big_77 {
+    if local_sign_79 {
+      set local_xx_80 = fneg(local_xx_80);
+      set local_yy_81 = fneg(local_yy_81);
+    }
+    let local_fp_161_82 = fsub.strict(0.7853981633974483_f64, local_xx_80);
+    let local_fp_162_83 = fsub.strict(3.061616997868383e-17_f64, local_yy_81);
+    let local_fp_163_84 = fadd.strict(local_fp_161_82, local_fp_162_83);
+    let local_newx_85 = local_fp_163_84;
+    set local_xx_80 = local_newx_85;
+    set local_yy_81 = 0.0_f64;
+  }
+  let local_fp_164_86 = fmul.strict(local_xx_80, local_xx_80);
+  let local_z_87 = local_fp_164_86;
+  let local_fp_165_88 = fmul.strict(local_z_87, local_z_87);
+  let local_w_89 = local_fp_165_88;
+  let local_fp_166_90 = fmul.strict(local_w_89, -1.8558637485527544e-5_f64);
+  let local_fp_167_91 = fadd.strict(7.817944429395571e-5_f64, local_fp_166_90);
+  let local_fp_168_92 = fmul.strict(local_w_89, local_fp_167_91);
+  let local_fp_169_93 = fadd.strict(5.880412408202641e-4_f64, local_fp_168_92);
+  let local_fp_170_94 = fmul.strict(local_w_89, local_fp_169_93);
+  let local_fp_171_95 = fadd.strict(0.0035920791075913122_f64, local_fp_170_94);
+  let local_fp_172_96 = fmul.strict(local_w_89, local_fp_171_95);
+  let local_fp_173_97 = fadd.strict(0.021869488294859541_f64, local_fp_172_96);
+  let local_fp_174_98 = fmul.strict(local_w_89, local_fp_173_97);
+  let local_fp_175_99 = fadd.strict(0.13333333333320123_f64, local_fp_174_98);
+  let local_rr_100 = local_fp_175_99;
+  let local_fp_176_101 = fmul.strict(local_w_89, 2.590730518636337e-5_f64);
+  let local_fp_177_102 = fadd.strict(7.140724913826082e-5_f64, local_fp_176_101);
+  let local_fp_178_103 = fmul.strict(local_w_89, local_fp_177_102);
+  let local_fp_179_104 = fadd.strict(2.464631348184699e-4_f64, local_fp_178_103);
+  let local_fp_180_105 = fmul.strict(local_w_89, local_fp_179_104);
+  let local_fp_181_106 = fadd.strict(0.0014562094543252902_f64, local_fp_180_105);
+  let local_fp_182_107 = fmul.strict(local_w_89, local_fp_181_106);
+  let local_fp_183_108 = fadd.strict(0.0088632398235993_f64, local_fp_182_107);
+  let local_fp_184_109 = fmul.strict(local_w_89, local_fp_183_108);
+  let local_fp_185_110 = fadd.strict(0.05396825397622605_f64, local_fp_184_109);
+  let local_fp_186_111 = fmul.strict(local_z_87, local_fp_185_110);
+  let local_v_112 = local_fp_186_111;
+  let local_fp_187_113 = fmul.strict(local_z_87, local_xx_80);
+  let local_s_114 = local_fp_187_113;
+  let local_fp_188_115 = fadd.strict(local_rr_100, local_v_112);
+  let local_fp_189_116 = fmul.strict(local_s_114, local_fp_188_115);
+  let local_fp_190_117 = fadd.strict(local_fp_189_116, local_yy_81);
+  let local_fp_191_118 = fmul.strict(local_z_87, local_fp_190_117);
+  let local_fp_192_119 = fadd.strict(local_yy_81, local_fp_191_118);
+  let local_fp_193_120 = fmul.strict(local_s_114, 0.3333333333333341_f64);
+  let local_fp_194_121 = fadd.strict(local_fp_192_119, local_fp_193_120);
+  let local_r_122 = local_fp_194_121;
+  let local_fp_195_123 = fadd.strict(local_xx_80, local_r_122);
+  let local_answer_124 = local_fp_195_123;
+  if local_big_77 {
+    let local_signone_125 = 1.0_f64;
+    if odd != 0_u64 {
+      set local_signone_125 = -1.0_f64;
+    }
+    let local_fp_196_126 = fmul.strict(local_answer_124, local_answer_124);
+    let local_fp_197_127 = fadd.strict(local_answer_124, local_signone_125);
+    let local_fp_198_128 = fdiv.strict(local_fp_196_126, local_fp_197_127);
+    let local_fp_199_129 = fsub.strict(local_r_122, local_fp_198_128);
+    let local_fp_200_130 = fadd.strict(local_xx_80, local_fp_199_129);
+    let local_fp_201_131 = fmul.strict(2.0_f64, local_fp_200_130);
+    let local_fp_202_132 = fsub.strict(local_signone_125, local_fp_201_131);
+    let local_v2_133 = local_fp_202_132;
+    if local_sign_79 {
+      return fneg(local_v2_133);
+    }
+    return local_v2_133;
+  }
+  if odd == 0_u64 {
+    return local_answer_124;
+  }
+  let local_w0_134 = math_high(x: local_answer_124);
+  let local_fp_203_135 = fsub.strict(local_w0_134, local_xx_80);
+  let local_fp_204_136 = fsub.strict(local_r_122, local_fp_203_135);
+  let local_v2_137 = local_fp_204_136;
+  let local_fp_205_138 = fdiv.strict(-1.0_f64, local_answer_124);
+  let local_a_139 = local_fp_205_138;
+  let local_a0_140 = math_high(x: local_a_139);
+  let local_fp_206_141 = fmul.strict(local_a0_140, local_w0_134);
+  let local_fp_207_142 = fadd.strict(1.0_f64, local_fp_206_141);
+  let local_fp_208_143 = fmul.strict(local_a0_140, local_v2_137);
+  let local_fp_209_144 = fadd.strict(local_fp_207_142, local_fp_208_143);
+  let local_fp_210_145 = fmul.strict(local_a_139, local_fp_209_144);
+  let local_fp_211_146 = fadd.strict(local_a0_140, local_fp_210_145);
+  return local_fp_211_146;
+}

@@ -1,0 +1,625 @@
+const library_libm_libm_sign_bit: u64 = 9223372036854775808_u64;
+
+struct LibmLogPair {
+  doc "A logarithm as a rounded high part and a residual low part.";
+  hi: f64;
+  lo: f64;
+}
+
+fn libm_pow_log(ix: u64) -> value: LibmLogPair pure {
+  doc "musl log_inline: exact range reduction into 128 table intervals followed by a compensated FMA polynomial.";
+  let local_tmp_1 = ix -wrap 4604531861337669632_u64;
+  let local_interval_2 = ishr.wrap(local_tmp_1, 45_u32);
+  let local_index_3 = local_interval_2 % 128_u64;
+  let local_signed_4 = reinterpret::<u64, i64>(local_tmp_1);
+  let local_k_5 = ishr.wrap(local_signed_4, 52_u32);
+  let local_exponent_6 = iand(local_tmp_1, 18442240474082181120_u64);
+  let local_iz_7 = ix -wrap local_exponent_6;
+  let local_z_8 = reinterpret::<u64, f64>(local_iz_7);
+  let local_kd_9 = cvt.nearest::<i64, f64>(local_k_5);
+  let local_invc_10 = library_libm_libm_log_inverse[local_index_3];
+  let local_logc_11 = library_libm_libm_log_center[local_index_3];
+  let local_logctail_12 = library_libm_libm_log_tail[local_index_3];
+  let local_part_1_13 = ffma.strict(local_z_8, local_invc_10, -1.0_f64);
+  let local_r_14 = local_part_1_13;
+  let local_part_2_15 = fmul.strict(local_kd_9, 0.6931471805598903_f64);
+  let local_part_3_16 = fadd.strict(local_part_2_15, local_logc_11);
+  let local_t1_17 = local_part_3_16;
+  let local_part_4_18 = fadd.strict(local_t1_17, local_r_14);
+  let local_t2_19 = local_part_4_18;
+  let local_part_5_20 = fmul.strict(local_kd_9, 5.497923018708371e-14_f64);
+  let local_part_6_21 = fadd.strict(local_part_5_20, local_logctail_12);
+  let local_lo1_22 = local_part_6_21;
+  let local_part_7_23 = fsub.strict(local_t1_17, local_t2_19);
+  let local_part_8_24 = fadd.strict(local_part_7_23, local_r_14);
+  let local_lo2_25 = local_part_8_24;
+  let local_part_9_26 = fmul.strict(-0.5_f64, local_r_14);
+  let local_ar_27 = local_part_9_26;
+  let local_part_10_28 = fmul.strict(local_r_14, local_ar_27);
+  let local_ar2_29 = local_part_10_28;
+  let local_part_11_30 = fmul.strict(local_r_14, local_ar2_29);
+  let local_ar3_31 = local_part_11_30;
+  let local_part_12_32 = fadd.strict(local_t2_19, local_ar2_29);
+  let local_hi_33 = local_part_12_32;
+  let local_part_13_34 = fneg(local_ar2_29);
+  let local_part_14_35 = ffma.strict(local_ar_27, local_r_14, local_part_13_34);
+  let local_lo3_36 = local_part_14_35;
+  let local_part_15_37 = fsub.strict(local_t2_19, local_hi_33);
+  let local_part_16_38 = fadd.strict(local_part_15_37, local_ar2_29);
+  let local_lo4_39 = local_part_16_38;
+  let local_part_17_40 = fmul.strict(local_r_14, 0.5000000000000007_f64);
+  let local_part_18_41 = fadd.strict(-0.6666666666666678_f64, local_part_17_40);
+  let local_part_19_42 = fmul.strict(local_r_14, -0.6666666663487739_f64);
+  let local_part_20_43 = fadd.strict(0.7999999995323976_f64, local_part_19_42);
+  let local_part_21_44 = fmul.strict(local_r_14, 1.0000415263675541_f64);
+  let local_part_22_45 = fadd.strict(-1.142909628459501_f64, local_part_21_44);
+  let local_part_23_46 = fmul.strict(local_ar2_29, local_part_22_45);
+  let local_part_24_47 = fadd.strict(local_part_20_43, local_part_23_46);
+  let local_part_25_48 = fmul.strict(local_ar2_29, local_part_24_47);
+  let local_part_26_49 = fadd.strict(local_part_18_41, local_part_25_48);
+  let local_part_27_50 = fmul.strict(local_ar3_31, local_part_26_49);
+  let local_p_51 = local_part_27_50;
+  let local_part_28_52 = fadd.strict(local_lo1_22, local_lo2_25);
+  let local_part_29_53 = fadd.strict(local_part_28_52, local_lo3_36);
+  let local_part_30_54 = fadd.strict(local_part_29_53, local_lo4_39);
+  let local_part_31_55 = fadd.strict(local_part_30_54, local_p_51);
+  let local_lo_56 = local_part_31_55;
+  let local_part_32_57 = fadd.strict(local_hi_33, local_lo_56);
+  let local_y_58 = local_part_32_57;
+  let local_part_33_59 = fsub.strict(local_hi_33, local_y_58);
+  let local_part_34_60 = fadd.strict(local_part_33_59, local_lo_56);
+  let local_tail_61 = local_part_34_60;
+  return LibmLogPair(hi: local_y_58, lo: local_tail_61);
+}
+
+fn libm_pow_special(tmp: f64, bits: u64, ki: u64) -> value: f64 pure {
+  doc "musl exp specialcase: exponent repair for overflow and compensated rounding before subnormal scaling.";
+  let local_negative_k_62 = iand(ki, 2147483648_u64);
+  if local_negative_k_62 == 0_u64 {
+    let local_fixed_63 = bits -wrap 4544132024016830464_u64;
+    let local_scale_64 = reinterpret::<u64, f64>(local_fixed_63);
+    let local_part_35_65 = fmul.strict(local_scale_64, tmp);
+    let local_part_36_66 = fadd.strict(local_scale_64, local_part_35_65);
+    let local_y_67 = local_part_36_66;
+    let local_part_37_68 = fmul.strict(5.486124068793689e303_f64, local_y_67);
+    let local_result_69 = local_part_37_68;
+    return local_result_69;
+  }
+  let local_fixed_70 = bits +wrap 4602678819172646912_u64;
+  let local_scale_71 = reinterpret::<u64, f64>(local_fixed_70);
+  let local_part_38_72 = fmul.strict(local_scale_71, tmp);
+  let local_part_39_73 = fadd.strict(local_scale_71, local_part_38_72);
+  let local_rounded_74 = local_part_39_73;
+  let local_y_75 = local_rounded_74;
+  let local_magnitude_76 = fabs(local_y_75);
+  if flt(local_magnitude_76, 1.0_f64) {
+    let local_one_77 = fcopysign(1.0_f64, local_y_75);
+    let local_part_40_78 = fsub.strict(local_scale_71, local_y_75);
+    let local_part_41_79 = fmul.strict(local_scale_71, tmp);
+    let local_part_42_80 = fadd.strict(local_part_40_78, local_part_41_79);
+    let local_low_81 = local_part_42_80;
+    let local_part_43_82 = fadd.strict(local_one_77, local_y_75);
+    let local_high_83 = local_part_43_82;
+    let local_part_44_84 = fsub.strict(local_one_77, local_high_83);
+    let local_part_45_85 = fadd.strict(local_part_44_84, local_y_75);
+    let local_part_46_86 = fadd.strict(local_part_45_85, local_low_81);
+    let local_residual_87 = local_part_46_86;
+    let local_part_47_88 = fadd.strict(local_high_83, local_residual_87);
+    let local_part_48_89 = fsub.strict(local_part_47_88, local_one_77);
+    let local_adjusted_90 = local_part_48_89;
+    set local_y_75 = local_adjusted_90;
+    if feq(local_y_75, 0.0_f64) {
+      let local_sign_91 = iand(local_fixed_70, library_libm_libm_sign_bit);
+      set local_y_75 = reinterpret::<u64, f64>(local_sign_91);
+    }
+  }
+  let local_part_49_92 = fmul.strict(2.2250738585072012e-308_f64, local_y_75);
+  let local_result_93 = local_part_49_92;
+  return local_result_93;
+}
+
+fn libm_pow_exp(x: f64, xtail: f64, sign_bias: u64) -> value: f64 pure {
+  doc "musl exp_inline with 128 table entries and a fifth-order polynomial; binary64 round-to-nearest evaluation.";
+  let local_magnitude_94 = fabs(x);
+  if flt(local_magnitude_94, 5.551115123125783e-17_f64) {
+    if sign_bias != 0_u64 {
+      return -1.0_f64;
+    }
+    return 1.0_f64;
+  }
+  if fge(local_magnitude_94, 1024.0_f64) {
+    let local_value_95 = finf::<f64>();
+    if flt(x, 0.0_f64) {
+      set local_value_95 = 0.0_f64;
+    }
+    if sign_bias != 0_u64 {
+      return fneg(local_value_95);
+    }
+    return local_value_95;
+  }
+  let local_part_50_96 = fmul.strict(184.6649652337873_f64, x);
+  let local_z_97 = local_part_50_96;
+  let local_part_51_98 = fadd.strict(local_z_97, 6755399441055743.5_f64);
+  let local_encoded_99 = local_part_51_98;
+  let local_ki_100 = reinterpret::<f64, u64>(local_encoded_99);
+  let local_part_52_101 = fsub.strict(local_encoded_99, 6755399441055743.5_f64);
+  let local_kd_102 = local_part_52_101;
+  let local_part_53_103 = fmul.strict(local_kd_102, -0.005415212348111709_f64);
+  let local_part_54_104 = fadd.strict(x, local_part_53_103);
+  let local_part_55_105 = fmul.strict(local_kd_102, -1.2864023111638345e-14_f64);
+  let local_part_56_106 = fadd.strict(local_part_54_104, local_part_55_105);
+  let local_part_57_107 = fadd.strict(local_part_56_106, xtail);
+  let local_r_108 = local_part_57_107;
+  let local_interval_109 = local_ki_100 % 128_u64;
+  let local_index_110 = 2_u64 * local_interval_109;
+  let local_biased_111 = local_ki_100 +wrap sign_bias;
+  let local_top_112 = ishl.wrap(local_biased_111, 45_u32);
+  let local_tail_bits_113 = library_libm_libm_exp_table[local_index_110];
+  let local_tail_114 = reinterpret::<u64, f64>(local_tail_bits_113);
+  let local_next_115 = local_index_110 + 1_u64;
+  let local_base_bits_116 = library_libm_libm_exp_table[local_next_115];
+  let local_bits_117 = local_base_bits_116 +wrap local_top_112;
+  let local_part_58_118 = fmul.strict(local_r_108, local_r_108);
+  let local_r2_119 = local_part_58_118;
+  let local_part_59_120 = fadd.strict(local_tail_114, local_r_108);
+  let local_part_60_121 = fmul.strict(local_r_108, 0.16666666666665885_f64);
+  let local_part_61_122 = fadd.strict(0.49999999999996784_f64, local_part_60_121);
+  let local_part_62_123 = fmul.strict(local_r2_119, local_part_61_122);
+  let local_part_63_124 = fadd.strict(local_part_59_120, local_part_62_123);
+  let local_part_64_125 = fmul.strict(local_r2_119, local_r2_119);
+  let local_part_65_126 = fmul.strict(local_r_108, 0.008333335853059549_f64);
+  let local_part_66_127 = fadd.strict(0.0416666808410674_f64, local_part_65_126);
+  let local_part_67_128 = fmul.strict(local_part_64_125, local_part_66_127);
+  let local_part_68_129 = fadd.strict(local_part_63_124, local_part_67_128);
+  let local_tmp_130 = local_part_68_129;
+  if fge(local_magnitude_94, 512.0_f64) {
+    return libm_pow_special(tmp: local_tmp_130, bits: local_bits_117, ki: local_ki_100);
+  }
+  let local_scale_131 = reinterpret::<u64, f64>(local_bits_117);
+  let local_part_69_132 = fmul.strict(local_scale_131, local_tmp_130);
+  let local_part_70_133 = fadd.strict(local_scale_131, local_part_69_132);
+  let local_result_134 = local_part_70_133;
+  return local_result_134;
+}
+
+const library_libm_libm_log_inverse: Array<f64, 128> =[1.4140625_f64, 1.40625_f64, 1.3984375_f64, 1.390625_f64, 1.3828125_f64, 1.375_f64, 1.3671875_f64, 1.359375_f64, 1.3515625_f64, 1.34375_f64, 1.3359375_f64, 1.3359375_f64, 1.328125_f64, 1.3203125_f64, 1.3125_f64, 1.3046875_f64, 1.296875_f64, 1.2890625_f64, 1.2890625_f64, 1.28125_f64, 1.2734375_f64, 1.265625_f64, 1.2578125_f64, 1.25_f64, 1.25_f64, 1.2421875_f64, 1.234375_f64, 1.2265625_f64, 1.2265625_f64, 1.21875_f64, 1.2109375_f64, 1.203125_f64, 1.203125_f64, 1.1953125_f64, 1.1875_f64, 1.1875_f64, 1.1796875_f64, 1.171875_f64, 1.171875_f64, 1.1640625_f64, 1.15625_f64, 1.1484375_f64, 1.1484375_f64, 1.140625_f64, 1.140625_f64, 1.1328125_f64, 1.125_f64, 1.125_f64, 1.1171875_f64, 1.109375_f64, 1.109375_f64, 1.1015625_f64, 1.1015625_f64, 1.09375_f64, 1.0859375_f64, 1.0859375_f64, 1.078125_f64, 1.078125_f64, 1.0703125_f64, 1.0625_f64, 1.0625_f64, 1.0546875_f64, 1.0546875_f64, 1.046875_f64, 1.046875_f64, 1.0390625_f64, 1.0390625_f64, 1.03125_f64, 1.03125_f64, 1.0234375_f64, 1.015625_f64, 1.015625_f64, 1.0078125_f64, 1.0078125_f64, 1.0_f64, 1.0_f64, 0.9921875_f64, 0.984375_f64, 0.9765625_f64, 0.96875_f64, 0.9609375_f64, 0.953125_f64, 0.9453125_f64, 0.94140625_f64, 0.93359375_f64, 0.92578125_f64, 0.91796875_f64, 0.9140625_f64, 0.90625_f64, 0.8984375_f64, 0.89453125_f64, 0.88671875_f64, 0.8828125_f64, 0.875_f64, 0.87109375_f64, 0.86328125_f64, 0.859375_f64, 0.8515625_f64, 0.84765625_f64, 0.83984375_f64, 0.8359375_f64, 0.83203125_f64, 0.82421875_f64, 0.8203125_f64, 0.8125_f64, 0.80859375_f64, 0.8046875_f64, 0.80078125_f64, 0.79296875_f64, 0.7890625_f64, 0.78515625_f64, 0.78125_f64, 0.7734375_f64, 0.76953125_f64, 0.765625_f64, 0.76171875_f64, 0.7578125_f64, 0.75390625_f64, 0.74609375_f64, 0.7421875_f64, 0.73828125_f64, 0.734375_f64, 0.73046875_f64, 0.7265625_f64, 0.72265625_f64, 0.71875_f64, 0.71484375_f64, 0.7109375_f64];
+
+const library_libm_libm_log_center: Array<f64, 128> =[-0.3464667673462145_f64, -0.34092658697056775_f64, -0.3353555419211034_f64, -0.3297532863724655_f64, -0.32411946865420302_f64, -0.31845373111855222_f64, -0.31275571000389843_f64, -0.3070250352949415_f64, -0.3012613305781997_f64, -0.2954642128938758_f64, -0.28963329258306201_f64, -0.28963329258306201_f64, -0.28376817313062472_f64, -0.27786845100342814_f64, -0.2719337154836694_f64, -0.2659635484970977_f64, -0.25995752443691342_f64, -0.25391520998095982_f64, -0.25391520998095982_f64, -0.2478361639045943_f64, -0.2417199368871934_f64, -0.23556607131274631_f64, -0.22937410106487731_f64, -0.22314355131425144_f64, -0.22314355131425144_f64, -0.21687393830063683_f64, -0.21056476910735_f64, -0.2042155414286526_f64, -0.2042155414286526_f64, -0.19782574332987223_f64, -0.19139485299967872_f64, -0.18492233849406147_f64, -0.18492233849406147_f64, -0.1784076574728033_f64, -0.17185025692663202_f64, -0.17185025692663202_f64, -0.1652495728952772_f64, -0.15860503017665905_f64, -0.15860503017665905_f64, -0.15191604202584585_f64, -0.1451820098444614_f64, -0.13840232285906494_f64, -0.13840232285906494_f64, -0.131576357788731_f64, -0.131576357788731_f64, -0.12470347850091912_f64, -0.11778303565643_f64, -0.11778303565643_f64, -0.11081436634026431_f64, -0.10379679368168126_f64, -0.10379679368168126_f64, -0.09672962645856842_f64, -0.09672962645856842_f64, -0.089612158689647_f64, -0.08244366921110213_f64, -0.08244366921110213_f64, -0.07522342123763792_f64, -0.07522342123763792_f64, -0.06795066190852594_f64, -0.06062462181648698_f64, -0.06062462181648698_f64, -0.053244514518837602_f64, -0.053244514518837602_f64, -0.045809536031242712_f64, -0.045809536031242712_f64, -0.038318864302141262_f64, -0.038318864302141262_f64, -0.03077165866670839_f64, -0.03077165866670839_f64, -0.023167059281490764_f64, -0.015504186535963526_f64, -0.015504186535963526_f64, -0.0077821404420319592_f64, -0.0077821404420319592_f64, 0.0_f64, 0.0_f64, 0.007843177461040795_f64, 0.01574835696817445_f64, 0.023716526617363341_f64, 0.03174869831457272_f64, 0.039845908547249561_f64, 0.048009219186383231_f64, 0.056239718322899532_f64, 0.06038051098892083_f64, 0.06871389254808946_f64, 0.07711730334438016_f64, 0.08559193033545398_f64, 0.08985632912185792_f64, 0.09844007281321865_f64, 0.10709813555638448_f64, 0.11145544092528325_f64, 0.12022742699821265_f64, 0.12464244520731427_f64, 0.13353139262449075_f64, 0.13800567301939281_f64, 0.14701474296180094_f64, 0.15154989812720031_f64, 0.16068238169043524_f64, 0.16528009093906348_f64, 0.17453941635187674_f64, 0.17920142945774841_f64, 0.18388527877016258_f64, 0.1933193110035063_f64, 0.19806991376208315_f64, 0.20763936477828792_f64, 0.21245865121420592_f64, 0.21730127569003343_f64, 0.22216746534115827_f64, 0.2319714654378231_f64, 0.2369097470783572_f64, 0.24187253642048744_f64, 0.2468600779315011_f64, 0.2569104137850218_f64, 0.26197371574153292_f64, 0.2670627852490952_f64, 0.27217788591576661_f64, 0.27731928541618342_f64, 0.28248725557466512_f64, 0.29290401643288531_f64, 0.29815337231912051_f64, 0.3034304294199046_f64, 0.30873548164959172_f64, 0.3140688276249648_f64, 0.31943077076641655_f64, 0.3248216194012912_f64, 0.33024168687052222_f64, 0.3356912916381134_f64, 0.3411707574027787_f64];
+
+const library_libm_libm_log_tail: Array<f64, 128> =[5.929407345889625e-15_f64, -2.544157440035963e-14_f64, -3.443525940775045e-14_f64, -2.500123826022799e-15_f64, -8.929337133850617e-15_f64, 1.7625431312172661e-14_f64, 1.5688303180062087e-15_f64, 2.9655274673691782e-14_f64, 3.7923164802093144e-14_f64, 3.993416384387844e-14_f64, 1.9352855826489122e-14_f64, 1.9352855826489122e-14_f64, -1.9852665484979035e-14_f64, -2.814323765595281e-14_f64, 2.7643769993528701e-14_f64, -4.025092402293806e-14_f64, -1.2621729398885316e-14_f64, -3.600176732637335e-15_f64, -3.600176732637335e-15_f64, 1.3029797173308663e-14_f64, 4.8230289429940883e-14_f64, -2.0592242769647134e-14_f64, 3.149265065191484e-14_f64, 4.169796584527195e-14_f64, 4.169796584527195e-14_f64, 2.2477465222466184e-14_f64, 3.6507188831790575e-16_f64, -3.827767260205414e-14_f64, -3.827767260205414e-14_f64, -4.7641388950792194e-14_f64, 4.9278276214647113e-14_f64, 4.9485167661250993e-14_f64, 4.9485167661250993e-14_f64, -1.5003333854266541e-14_f64, -2.7194441649495323e-14_f64, -2.7194441649495323e-14_f64, -2.99659267292569e-14_f64, 2.0472357800461954e-14_f64, 2.0472357800461954e-14_f64, 3.879296723063646e-15_f64, -3.6506824353335042e-14_f64, -5.4183331379008991e-14_f64, -5.4183331379008991e-14_f64, 1.1729485484531301e-14_f64, 1.1729485484531301e-14_f64, -3.811763084710266e-14_f64, 4.654729747598445e-14_f64, 4.654729747598445e-14_f64, -2.5799991283069901e-14_f64, 3.7700471749674613e-14_f64, 3.7700471749674613e-14_f64, 1.7306161136093255e-14_f64, 1.7306161136093255e-14_f64, -4.012913552726574e-14_f64, 2.7541708360737881e-14_f64, 2.7541708360737881e-14_f64, 5.0396178134370581e-14_f64, 5.0396178134370581e-14_f64, 1.8195060030168814e-14_f64, 5.213620639136504e-14_f64, 5.213620639136504e-14_f64, 2.532168943117445e-14_f64, 2.532168943117445e-14_f64, -5.148849572685811e-14_f64, -5.148849572685811e-14_f64, 4.6652946995830082e-15_f64, 4.6652946995830082e-15_f64, -4.529814257790929e-14_f64, -4.529814257790929e-14_f64, -4.361324067851568e-14_f64, -1.7274567499706106e-15_f64, -1.7274567499706106e-15_f64, -2.298941004620351e-14_f64, -2.298941004620351e-14_f64, 0.0_f64, 0.0_f64, -1.4902732911301336e-14_f64, -3.527980389655325e-14_f64, -4.730054772033249e-14_f64, 7.580310369375161e-15_f64, -4.9893776716773283e-14_f64, -2.262629393030674e-14_f64, -2.345674491018699e-14_f64, -1.3352588834854847e-14_f64, -3.765296820388875e-14_f64, 5.1128335719851984e-14_f64, -5.046674438470119e-14_f64, 3.1218748807418836e-15_f64, 3.3871241029241414e-14_f64, -1.7376727386423857e-14_f64, 3.957125899799804e-14_f64, -5.2849453521890292e-14_f64, -3.767012502308738e-14_f64, 3.1859736349078331e-14_f64, 5.0900642926060463e-14_f64, 8.710783796122478e-15_f64, 6.157896229122976e-16_f64, 3.821577743916796e-14_f64, 3.9440046718453494e-14_f64, 2.2924522154618073e-14_f64, -3.742530094732263e-14_f64, -2.5223102140407337e-14_f64, -1.0320443688698849e-14_f64, 1.0634128304268335e-14_f64, -4.3425422595242562e-14_f64, -1.2527395755711364e-14_f64, -5.204008743405884e-14_f64, -3.979844515951702e-15_f64, -4.7955860343296283e-14_f64, 5.015686013791602e-16_f64, -7.252318953240293e-16_f64, 2.4688324156011586e-14_f64, 5.465121253624792e-15_f64, 4.102651071698446e-14_f64, -4.996736502345936e-14_f64, 4.903580708156347e-14_f64, 5.089628039500759e-14_f64, 1.1782016386565151e-14_f64, 4.727452940514406e-14_f64, -4.4204083338755683e-14_f64, 1.548345993498083e-14_f64, 2.1522127491642887e-14_f64, 1.1054030169005386e-14_f64, -5.534326352070679e-14_f64, -5.351646604259541e-14_f64, 5.4612144489920213e-14_f64, 2.8136969901227337e-14_f64, -1.156568624616423e-14_f64];
+
+const library_libm_libm_exp_table: Array<u64, 256> =[0_u64, 4607182418800017408_u64, 4367149474599452526_u64, 4607171688528556853_u64, 13578739988850859101_u64, 4607161091040444513_u64, 13587463954133116625_u64, 4607150627056680837_u64, 4363093389540324883_u64, 4607140297302181236_u64, 13586179750647926522_u64, 4607130102505797342_u64, 4350749156061923425_u64, 4607120043400338376_u64, 4364168240100004761_u64, 4607110120722592643_u64, 4366128403083131757_u64, 4607100335213349135_u64, 4363624214708482044_u64, 4607090687617419255_u64, 4341116261916187857_u64, 4607081178683658658_u64, 13576667550842908171_u64, 4607071809164989211_u64, 13588862361555418382_u64, 4607062579818421073_u64, 13569487443606825557_u64, 4607053491405074892_u64, 13587862706032342038_u64, 4607044544690204128_u64, 4359717415120819631_u64, 4607035740443217489_u64, 13582886257094398792_u64, 4607027079437701499_u64, 13587113717893313085_u64, 4607018562451443178_u64, 4362731899485115327_u64, 4607010190266452853_u64, 13589288191656061734_u64, 4607001963668987092_u64, 4367063335334195040_u64, 4606993883449571754_u64, 13587333149746411677_u64, 4606985950403025181_u64, 4362421515177083789_u64, 4606978165328481494_u64, 4359618604155798653_u64, 4606970529029414038_u64, 4365834109879625876_u64, 4606963042313658936_u64, 4361558225371547773_u64, 4606955705993438783_u64, 4359562691856033778_u64, 4606948520885386461_u64, 13589251765121910878_u64, 4606941487810569089_u64, 4360319936817113905_u64, 4606934607594512097_u64, 13564034602756980730_u64, 4606927881067223440_u64, 4362641697437125300_u64, 4606921309063217931_u64, 4354440509323660175_u64, 4606914892421541718_u64, 4360414030434708406_u64, 4606908631985796885_u64, 4361245865020257356_u64, 4606902528604166193_u64, 4363949802402347082_u64, 4606896583129437951_u64, 13584725097160006404_u64, 4606890796419031025_u64, 13588005410925400168_u64, 4606885169335019979_u64, 13589902112758771086_u64, 4606879702744160358_u64, 13578865146911274706_u64, 4606874397517914103_u64, 13589920948748688149_u64, 4606869254532475109_u64, 4361066948569222253_u64, 4606864274668794914_u64, 13588224706282547594_u64, 4606859458812608540_u64, 13571781710912653659_u64, 4606854807854460458_u64, 13581779622207003163_u64, 4606850322689730711_u64, 4342424336897059857_u64, 4606846004218661165_u64, 4365789078613288175_u64, 4606841853346381911_u64, 4354643160121541497_u64, 4606837870982937808_u64, 4365113450260533808_u64, 4606834058043315166_u64, 4356828907110576048_u64, 4606830415447468583_u64, 4364865165386375287_u64, 4606826944120347917_u64, 13587241551866733454_u64, 4606823644991925415_u64, 13585071772441748297_u64, 4606820518997222978_u64, 13580849621492512863_u64, 4606817567076339586_u64, 13584565421834198262_u64, 4606814790174478863_u64, 4364890759862540174_u64, 4606812189241976794_u64, 4358244976955136773_u64, 4606809765234329597_u64, 4364097860734309385_u64, 4606807519112221737_u64, 4338311716453074666_u64, 4606805451841554103_u64, 4365169902980743221_u64, 4606803564393472328_u64, 13586485183986103967_u64, 4606801857744395273_u64, 13586291098077056424_u64, 4606800332876043653_u64, 13584074153218795950_u64, 4606798990775468832_u64, 13588431951308937304_u64, 4606797832435081765_u64, 4347962289735735652_u64, 4606796858852682099_u64, 13588402342996091432_u64, 4606796071031487437_u64, 13576684563168803202_u64, 4606795469980162751_u64, 13574807981113846254_u64, 4606795056712849967_u64, 13583098632124532817_u64, 4606794832249197700_u64, 13580639192812764879_u64, 4606794797614391156_u64, 13584807330835037616_u64, 4606794953839182196_u64, 13584573029057685130_u64, 4606795301959919561_u64, 4364160436192007379_u64, 4606795843018579263_u64, 13581505024848930077_u64, 4606796578062795143_u64, 4365374511615819883_u64, 4606797508145889586_u64, 4352143969406577749_u64, 4606798634326904418_u64, 13585286144244043586_u64, 4606799957670631954_u64, 13588320735159072564_u64, 4606801479247646227_u64, 13582960398152892190_u64, 4606803200134334381_u64, 13588719419377473390_u64, 4606805121412928237_u64, 4364178698342926848_u64, 4606807244171536025_u64, 4363345029737015988_u64, 4606809569504174299_u64, 13575457177841559551_u64, 4606812098510800012_u64, 4358348108421357380_u64, 4606814832297342774_u64, 13588214532259331459_u64, 4606817771975737286_u64, 13573191462042738217_u64, 4606820918663955941_u64, 13577266531058891097_u64, 4606824273486041615_u64, 13587996981358557610_u64, 4606827837572140624_u64, 13584486419852070475_u64, 4606831612058535866_u64, 4355455812241575463_u64, 4606835598087680144_u64, 4354367543587795899_u64, 4606839796808229667_u64, 13585043422533788259_u64, 4606844209375077733_u64, 4362612029712904661_u64, 4606848836949388595_u64, 13587848060628417301_u64, 4606853680698631517_u64, 4364212552380330450_u64, 4606858741796615000_u64, 4360726356711135923_u64, 4606864021423521215_u64, 13583665500206833076_u64, 4606869520765940602_u64, 4362891239881388935_u64, 4606875241016906669_u64, 13587495931142593018_u64, 4606881183375930982_u64, 13570968390383480506_u64, 4606887349049038331_u64, 13587540456847636032_u64, 4606893739248802106_u64, 13576337421119623988_u64, 4606900355194379847_u64, 13587904206984481333_u64, 4606907198111549002_u64, 4356388038631218637_u64, 4606914269232742866_u64, 13587850440691849388_u64, 4606921569797086729_u64, 4355946959017544883_u64, 4606929101050434204_u64, 4363674894410448276_u64, 4606936864245403770_u64, 4360857247493478828_u64, 4606944860641415499_u64, 4351547817417644647_u64, 4606953091504727989_u64, 4352565403421120872_u64, 4606961558108475497_u64, 13583008314044495314_u64, 4606970261732705274_u64, 13587269216817379951_u64, 4606979203664415100_u64, 13587375117699492169_u64, 4606988385197591026_u64, 4356286533989107623_u64, 4606997807633245319_u64, 13583579534434771471_u64, 4607007472279454616_u64, 4363524392198705836_u64, 4607017380451398277_u64, 4360674496013757259_u64, 4607027533471396960_u64, 13583653763942727199_u64, 4607037932668951391_u64, 13585436725991640521_u64, 4607048579380781353_u64, 4356306869484685523_u64, 4607059474950864886_u64, 4360546482996998769_u64, 4607070620730477699_u64, 13587350259894555120_u64, 4607082018078232794_u64, 13586707622498890877_u64, 4607093668360120305_u64, 4363640302291525640_u64, 4607105572949547559_u64, 4360658257139329842_u64, 4607117733227379351_u64, 4362409866909812206_u64, 4607130150581978432_u64, 13586858401655940077_u64, 4607142826409246228_u64, 4357102052301720989_u64, 4607155762112663768_u64, 4346824392926350473_u64, 4607168959103332849_u64];
+
+fn math_log(x: f64) -> r: f64 pure {
+  if fne(x, x) {
+    return x;
+  }
+  if feq(x, 0.0_f64) {
+    let local_inf_135 = finf::<f64>();
+    return fneg(local_inf_135);
+  }
+  if flt(x, 0.0_f64) {
+    return fnan::<f64>();
+  }
+  let local_inf_136 = finf::<f64>();
+  if feq(x, local_inf_136) {
+    return x;
+  }
+  let local_ix_137 = reinterpret::<f64, u64>(x);
+  let local_correction_138 = 0.0_f64;
+  if local_ix_137 < 4503599627370496_u64 {
+    let local_n_139 = fmul.strict(x, 4503599627370495.8_f64);
+    set local_ix_137 = reinterpret::<f64, u64>(local_n_139);
+    set local_correction_138 = -36.04365338911715_f64;
+  }
+  let local_pair_140 = libm_pow_log(ix: local_ix_137);
+  let local_low_141 = fadd.strict(local_pair_140.lo, local_correction_138);
+  return fadd.strict(local_pair_140.hi, local_low_141);
+}
+
+fn math_exp(x: f64) -> r: f64 pure {
+  if fne(x, x) {
+    return x;
+  }
+  let local_inf_142 = finf::<f64>();
+  if feq(x, local_inf_142) {
+    return x;
+  }
+  let local_neginf_143 = fneg(local_inf_142);
+  if feq(x, local_neginf_143) {
+    return 0.0_f64;
+  }
+  return libm_pow_exp(x: x, xtail: 0.0_f64, sign_bias: 0_u64);
+}
+
+fn math_ldexp(x: f64, n: i64) -> r: f64 pure {
+  let local_y_144 = x;
+  let local_exponent_145 = n;
+  if local_exponent_145 > 1023_i64 {
+    set local_y_144 = fmul.strict(local_y_144, 8.988465674311579e307_f64);
+    set local_exponent_145 = local_exponent_145 -wrap 1023_i64;
+    if local_exponent_145 > 1023_i64 {
+      set local_y_144 = fmul.strict(local_y_144, 8.988465674311579e307_f64);
+      set local_exponent_145 = local_exponent_145 -wrap 1023_i64;
+      if local_exponent_145 > 1023_i64 {
+        set local_exponent_145 = 1023_i64;
+      }
+    }
+  } else if local_exponent_145 < -1022_i64 {
+    set local_y_144 = fmul.strict(local_y_144, 2.004168360008973e-292_f64);
+    set local_exponent_145 = local_exponent_145 +wrap 969_i64;
+    if local_exponent_145 < -1022_i64 {
+      set local_y_144 = fmul.strict(local_y_144, 2.004168360008973e-292_f64);
+      set local_exponent_145 = local_exponent_145 +wrap 969_i64;
+      if local_exponent_145 < -1022_i64 {
+        set local_exponent_145 = -1022_i64;
+      }
+    }
+  }
+  let local_biased_146 = local_exponent_145 +wrap 1023_i64;
+  let local_wide_147 = cvt.wrap::<i64, u64>(local_biased_146);
+  let local_bits_148 = ishl.wrap(local_wide_147, 52_u32);
+  let local_scale_149 = reinterpret::<u64, f64>(local_bits_148);
+  return fmul.strict(local_y_144, local_scale_149);
+}
+
+fn math_high(x: f64) -> r: f64 pure {
+  let local_bits_150 = reinterpret::<f64, u64>(x);
+  let local_high_151 = iand(local_bits_150, 18446744069414584320_u64);
+  return reinterpret::<u64, f64>(local_high_151);
+}
+
+fn math_sin_kernel(x: f64, y: f64) -> r: f64 pure {
+  let local_fp_1_152 = fmul.strict(x, x);
+  let local_z_153 = local_fp_1_152;
+  let local_fp_2_154 = fmul.strict(local_z_153, local_z_153);
+  let local_w_155 = local_fp_2_154;
+  let local_fp_3_156 = fmul.strict(local_z_153, 2.7557313707070066e-6_f64);
+  let local_fp_4_157 = fadd.strict(-1.984126982985795e-4_f64, local_fp_3_156);
+  let local_fp_5_158 = fmul.strict(local_z_153, local_fp_4_157);
+  let local_fp_6_159 = fadd.strict(0.00833333333332249_f64, local_fp_5_158);
+  let local_fp_7_160 = fmul.strict(local_z_153, local_w_155);
+  let local_fp_8_161 = fmul.strict(local_z_153, 1.58969099521155e-10_f64);
+  let local_fp_9_162 = fadd.strict(-2.5050760253406862e-8_f64, local_fp_8_161);
+  let local_fp_10_163 = fmul.strict(local_fp_7_160, local_fp_9_162);
+  let local_fp_11_164 = fadd.strict(local_fp_6_159, local_fp_10_163);
+  let local_r_165 = local_fp_11_164;
+  let local_fp_12_166 = fmul.strict(local_z_153, x);
+  let local_v_167 = local_fp_12_166;
+  let local_fp_13_168 = fmul.strict(0.5_f64, y);
+  let local_fp_14_169 = fmul.strict(local_v_167, local_r_165);
+  let local_fp_15_170 = fsub.strict(local_fp_13_168, local_fp_14_169);
+  let local_fp_16_171 = fmul.strict(local_z_153, local_fp_15_170);
+  let local_fp_17_172 = fsub.strict(local_fp_16_171, y);
+  let local_fp_18_173 = fmul.strict(local_v_167, -0.16666666666666632_f64);
+  let local_fp_19_174 = fsub.strict(local_fp_17_172, local_fp_18_173);
+  let local_fp_20_175 = fsub.strict(x, local_fp_19_174);
+  return local_fp_20_175;
+}
+
+fn math_cos_kernel(x: f64, y: f64) -> r: f64 pure {
+  let local_fp_21_176 = fmul.strict(x, x);
+  let local_z_177 = local_fp_21_176;
+  let local_fp_22_178 = fmul.strict(local_z_177, local_z_177);
+  let local_w_179 = local_fp_22_178;
+  let local_fp_23_180 = fmul.strict(local_z_177, 2.480158728947673e-5_f64);
+  let local_fp_24_181 = fadd.strict(-0.001388888888887411_f64, local_fp_23_180);
+  let local_fp_25_182 = fmul.strict(local_z_177, local_fp_24_181);
+  let local_fp_26_183 = fadd.strict(0.0416666666666666_f64, local_fp_25_182);
+  let local_fp_27_184 = fmul.strict(local_z_177, local_fp_26_183);
+  let local_fp_28_185 = fmul.strict(local_w_179, local_w_179);
+  let local_fp_29_186 = fmul.strict(local_z_177, -1.1359647557788195e-11_f64);
+  let local_fp_30_187 = fadd.strict(2.087572321298175e-9_f64, local_fp_29_186);
+  let local_fp_31_188 = fmul.strict(local_z_177, local_fp_30_187);
+  let local_fp_32_189 = fadd.strict(-2.7557314351390661e-7_f64, local_fp_31_188);
+  let local_fp_33_190 = fmul.strict(local_fp_28_185, local_fp_32_189);
+  let local_fp_34_191 = fadd.strict(local_fp_27_184, local_fp_33_190);
+  let local_r_192 = local_fp_34_191;
+  let local_fp_35_193 = fmul.strict(0.5_f64, local_z_177);
+  let local_hz_194 = local_fp_35_193;
+  let local_fp_36_195 = fsub.strict(1.0_f64, local_hz_194);
+  let local_w2_196 = local_fp_36_195;
+  let local_fp_37_197 = fsub.strict(1.0_f64, local_w2_196);
+  let local_fp_38_198 = fsub.strict(local_fp_37_197, local_hz_194);
+  let local_fp_39_199 = fmul.strict(local_z_177, local_r_192);
+  let local_fp_40_200 = fmul.strict(x, y);
+  let local_fp_41_201 = fsub.strict(local_fp_39_199, local_fp_40_200);
+  let local_fp_42_202 = fadd.strict(local_fp_38_198, local_fp_41_201);
+  let local_fp_43_203 = fadd.strict(local_w2_196, local_fp_42_202);
+  return local_fp_43_203;
+}
+
+fn math_atan(x: f64) -> r: f64 pure {
+  if fne(x, x) {
+    return x;
+  }
+  let local_bits_204 = reinterpret::<f64, u64>(x);
+  let local_abs_205 = fabs(x);
+  let local_sign_206 = local_bits_204 >= 9223372036854775808_u64;
+  let local_t_207 = x;
+  let local_id_208 = -1_i64;
+  if fge(local_abs_205, 73786976294.83821e9_f64) {
+    let local_z_209 = 1.5707963267948965_f64;
+    if local_sign_206 {
+      return fneg(local_z_209);
+    }
+    return local_z_209;
+  }
+  if flt(local_abs_205, 0.4375_f64) {
+    if flt(local_abs_205, 7.450580596923828e-9_f64) {
+      return x;
+    }
+  } else {
+    if flt(local_abs_205, 1.1875_f64) {
+      if flt(local_abs_205, 0.6875_f64) {
+        let local_fp_44_210 = fmul.strict(2.0_f64, local_abs_205);
+        let local_fp_45_211 = fsub.strict(local_fp_44_210, 1.0_f64);
+        let local_fp_46_212 = fadd.strict(2.0_f64, local_abs_205);
+        let local_fp_47_213 = fdiv.strict(local_fp_45_211, local_fp_46_212);
+        let local_t0_214 = local_fp_47_213;
+        set local_t_207 = local_t0_214;
+        set local_id_208 = 0_i64;
+      } else {
+        let local_fp_48_215 = fsub.strict(local_abs_205, 1.0_f64);
+        let local_fp_49_216 = fadd.strict(local_abs_205, 1.0_f64);
+        let local_fp_50_217 = fdiv.strict(local_fp_48_215, local_fp_49_216);
+        let local_t1_218 = local_fp_50_217;
+        set local_t_207 = local_t1_218;
+        set local_id_208 = 1_i64;
+      }
+    } else {
+      if flt(local_abs_205, 2.4375_f64) {
+        let local_fp_51_219 = fsub.strict(local_abs_205, 1.5_f64);
+        let local_fp_52_220 = fmul.strict(1.5_f64, local_abs_205);
+        let local_fp_53_221 = fadd.strict(1.0_f64, local_fp_52_220);
+        let local_fp_54_222 = fdiv.strict(local_fp_51_219, local_fp_53_221);
+        let local_t2_223 = local_fp_54_222;
+        set local_t_207 = local_t2_223;
+        set local_id_208 = 2_i64;
+      } else {
+        let local_fp_55_224 = fdiv.strict(-1.0_f64, local_abs_205);
+        let local_t3_225 = local_fp_55_224;
+        set local_t_207 = local_t3_225;
+        set local_id_208 = 3_i64;
+      }
+    }
+  }
+  let local_fp_56_226 = fmul.strict(local_t_207, local_t_207);
+  let local_z_227 = local_fp_56_226;
+  let local_fp_57_228 = fmul.strict(local_z_227, local_z_227);
+  let local_w_229 = local_fp_57_228;
+  let local_fp_58_230 = fmul.strict(local_w_229, 0.016285820115365781_f64);
+  let local_fp_59_231 = fadd.strict(0.049768779946159321_f64, local_fp_58_230);
+  let local_fp_60_232 = fmul.strict(local_w_229, local_fp_59_231);
+  let local_fp_61_233 = fadd.strict(0.06661073137387531_f64, local_fp_60_232);
+  let local_fp_62_234 = fmul.strict(local_w_229, local_fp_61_233);
+  let local_fp_63_235 = fadd.strict(0.09090887133436506_f64, local_fp_62_234);
+  let local_fp_64_236 = fmul.strict(local_w_229, local_fp_63_235);
+  let local_fp_65_237 = fadd.strict(0.14285714272503465_f64, local_fp_64_236);
+  let local_fp_66_238 = fmul.strict(local_w_229, local_fp_65_237);
+  let local_fp_67_239 = fadd.strict(0.3333333333333293_f64, local_fp_66_238);
+  let local_fp_68_240 = fmul.strict(local_z_227, local_fp_67_239);
+  let local_s1_241 = local_fp_68_240;
+  let local_fp_69_242 = fmul.strict(local_w_229, -0.036531572744216913_f64);
+  let local_fp_70_243 = fadd.strict(-0.058335701337905732_f64, local_fp_69_242);
+  let local_fp_71_244 = fmul.strict(local_w_229, local_fp_70_243);
+  let local_fp_72_245 = fadd.strict(-0.0769187620504483_f64, local_fp_71_244);
+  let local_fp_73_246 = fmul.strict(local_w_229, local_fp_72_245);
+  let local_fp_74_247 = fadd.strict(-0.11111110405462356_f64, local_fp_73_246);
+  let local_fp_75_248 = fmul.strict(local_w_229, local_fp_74_247);
+  let local_fp_76_249 = fadd.strict(-0.19999999999876482_f64, local_fp_75_248);
+  let local_fp_77_250 = fmul.strict(local_w_229, local_fp_76_249);
+  let local_s2_251 = local_fp_77_250;
+  if local_id_208 < 0_i64 {
+    let local_fp_78_252 = fadd.strict(local_s1_241, local_s2_251);
+    let local_fp_79_253 = fmul.strict(local_t_207, local_fp_78_252);
+    let local_fp_80_254 = fsub.strict(local_t_207, local_fp_79_253);
+    return local_fp_80_254;
+  }
+  let local_high_255 = 1.5707963267948965_f64;
+  let local_low_256 = 6.123233995736766e-17_f64;
+  if local_id_208 == 0_i64 {
+    set local_high_255 = 0.4636476090008061_f64;
+    set local_low_256 = 2.2698777452961686e-17_f64;
+  }
+  if local_id_208 == 1_i64 {
+    set local_high_255 = 0.7853981633974483_f64;
+    set local_low_256 = 3.061616997868383e-17_f64;
+  }
+  if local_id_208 == 2_i64 {
+    set local_high_255 = 0.982793723247329_f64;
+    set local_low_256 = 1.3903311031230997e-17_f64;
+  }
+  let local_fp_81_257 = fadd.strict(local_s1_241, local_s2_251);
+  let local_fp_82_258 = fmul.strict(local_t_207, local_fp_81_257);
+  let local_fp_83_259 = fsub.strict(local_fp_82_258, local_low_256);
+  let local_fp_84_260 = fsub.strict(local_fp_83_259, local_t_207);
+  let local_fp_85_261 = fsub.strict(local_high_255, local_fp_84_260);
+  let local_result_262 = local_fp_85_261;
+  if local_sign_206 {
+    return fneg(local_result_262);
+  }
+  return local_result_262;
+}
+
+fn math_asin_r(z: f64) -> r: f64 pure {
+  let local_fp_86_263 = fmul.strict(z, 3.479331075960212e-5_f64);
+  let local_fp_87_264 = fadd.strict(7.915349942898145e-4_f64, local_fp_86_263);
+  let local_fp_88_265 = fmul.strict(z, local_fp_87_264);
+  let local_fp_89_266 = fadd.strict(-0.04005553450067941_f64, local_fp_88_265);
+  let local_fp_90_267 = fmul.strict(z, local_fp_89_266);
+  let local_fp_91_268 = fadd.strict(0.20121253213486292_f64, local_fp_90_267);
+  let local_fp_92_269 = fmul.strict(z, local_fp_91_268);
+  let local_fp_93_270 = fadd.strict(-0.3255658186224009_f64, local_fp_92_269);
+  let local_fp_94_271 = fmul.strict(z, local_fp_93_270);
+  let local_fp_95_272 = fadd.strict(0.16666666666666665_f64, local_fp_94_271);
+  let local_fp_96_273 = fmul.strict(z, local_fp_95_272);
+  let local_p_274 = local_fp_96_273;
+  let local_fp_97_275 = fmul.strict(z, 0.07703815055590193_f64);
+  let local_fp_98_276 = fadd.strict(-0.6882839716054533_f64, local_fp_97_275);
+  let local_fp_99_277 = fmul.strict(z, local_fp_98_276);
+  let local_fp_100_278 = fadd.strict(2.0209457602335055_f64, local_fp_99_277);
+  let local_fp_101_279 = fmul.strict(z, local_fp_100_278);
+  let local_fp_102_280 = fadd.strict(-2.403394911734414_f64, local_fp_101_279);
+  let local_fp_103_281 = fmul.strict(z, local_fp_102_280);
+  let local_fp_104_282 = fadd.strict(1.0_f64, local_fp_103_281);
+  let local_q_283 = local_fp_104_282;
+  let local_fp_105_284 = fdiv.strict(local_p_274, local_q_283);
+  return local_fp_105_284;
+}
+
+fn math_asin(x: f64) -> r: f64 pure {
+  let local_abs_285 = fabs(x);
+  if fge(local_abs_285, 1.0_f64) {
+    if feq(local_abs_285, 1.0_f64) {
+      return fmul.strict(x, 1.5707963267948965_f64);
+    }
+    return fnan::<f64>();
+  }
+  if flt(local_abs_285, 0.5_f64) {
+    if flt(local_abs_285, 1.4901161193847656e-8_f64) {
+      return x;
+    }
+    let local_fp_106_286 = fmul.strict(x, x);
+    let local_fp_107_287 = math_asin_r(z: local_fp_106_286);
+    let local_fp_108_288 = fmul.strict(x, local_fp_107_287);
+    let local_fp_109_289 = fadd.strict(x, local_fp_108_288);
+    return local_fp_109_289;
+  }
+  let local_fp_110_290 = fsub.strict(1.0_f64, local_abs_285);
+  let local_fp_111_291 = fmul.strict(local_fp_110_290, 0.5_f64);
+  let local_z_292 = local_fp_111_291;
+  let local_fp_112_293 = fsqrt.strict(local_z_292);
+  let local_s_294 = local_fp_112_293;
+  let local_fp_113_295 = math_asin_r(z: local_z_292);
+  let local_rr_296 = local_fp_113_295;
+  let local_result_297 = 0.0_f64;
+  if fge(local_abs_285, 0.975_f64) {
+    let local_fp_114_298 = fmul.strict(local_s_294, local_rr_296);
+    let local_fp_115_299 = fadd.strict(local_s_294, local_fp_114_298);
+    let local_fp_116_300 = fmul.strict(2.0_f64, local_fp_115_299);
+    let local_fp_117_301 = fsub.strict(local_fp_116_300, 6.123233995736766e-17_f64);
+    let local_fp_118_302 = fsub.strict(1.5707963267948965_f64, local_fp_117_301);
+    let local_a_303 = local_fp_118_302;
+    set local_result_297 = local_a_303;
+  } else {
+    let local_f_304 = math_high(x: local_s_294);
+    let local_fp_119_305 = fmul.strict(local_f_304, local_f_304);
+    let local_fp_120_306 = fsub.strict(local_z_292, local_fp_119_305);
+    let local_fp_121_307 = fadd.strict(local_s_294, local_f_304);
+    let local_fp_122_308 = fdiv.strict(local_fp_120_306, local_fp_121_307);
+    let local_c_309 = local_fp_122_308;
+    let local_fp_123_310 = fmul.strict(0.5_f64, 1.5707963267948965_f64);
+    let local_fp_124_311 = fmul.strict(2.0_f64, local_s_294);
+    let local_fp_125_312 = fmul.strict(local_fp_124_311, local_rr_296);
+    let local_fp_126_313 = fmul.strict(2.0_f64, local_c_309);
+    let local_fp_127_314 = fsub.strict(6.123233995736766e-17_f64, local_fp_126_313);
+    let local_fp_128_315 = fsub.strict(local_fp_125_312, local_fp_127_314);
+    let local_fp_129_316 = fmul.strict(0.5_f64, 1.5707963267948965_f64);
+    let local_fp_130_317 = fmul.strict(2.0_f64, local_f_304);
+    let local_fp_131_318 = fsub.strict(local_fp_129_316, local_fp_130_317);
+    let local_fp_132_319 = fsub.strict(local_fp_128_315, local_fp_131_318);
+    let local_fp_133_320 = fsub.strict(local_fp_123_310, local_fp_132_319);
+    let local_a_321 = local_fp_133_320;
+    set local_result_297 = local_a_321;
+  }
+  return fcopysign(local_result_297, x);
+}
+
+fn math_acos(x: f64) -> r: f64 pure {
+  let local_abs_322 = fabs(x);
+  if fge(local_abs_322, 1.0_f64) {
+    if feq(x, 1.0_f64) {
+      return 0.0_f64;
+    }
+    if feq(x, -1.0_f64) {
+      return 3.141592653589793_f64;
+    }
+    return fnan::<f64>();
+  }
+  if flt(local_abs_322, 0.5_f64) {
+    let local_fp_134_323 = fmul.strict(x, x);
+    let local_fp_135_324 = math_asin_r(z: local_fp_134_323);
+    let local_fp_136_325 = fmul.strict(x, local_fp_135_324);
+    let local_fp_137_326 = fsub.strict(6.123233995736766e-17_f64, local_fp_136_325);
+    let local_fp_138_327 = fsub.strict(x, local_fp_137_326);
+    let local_fp_139_328 = fsub.strict(1.5707963267948965_f64, local_fp_138_327);
+    return local_fp_139_328;
+  }
+  if flt(x, 0.0_f64) {
+    let local_fp_140_329 = fadd.strict(1.0_f64, x);
+    let local_fp_141_330 = fmul.strict(local_fp_140_329, 0.5_f64);
+    let local_z_331 = local_fp_141_330;
+    let local_fp_142_332 = fsqrt.strict(local_z_331);
+    let local_s_333 = local_fp_142_332;
+    let local_fp_143_334 = math_asin_r(z: local_z_331);
+    let local_rr_335 = local_fp_143_334;
+    let local_fp_144_336 = fmul.strict(local_rr_335, local_s_333);
+    let local_fp_145_337 = fsub.strict(local_fp_144_336, 6.123233995736766e-17_f64);
+    let local_fp_146_338 = fadd.strict(local_s_333, local_fp_145_337);
+    let local_fp_147_339 = fsub.strict(1.5707963267948965_f64, local_fp_146_338);
+    let local_fp_148_340 = fmul.strict(2.0_f64, local_fp_147_339);
+    return local_fp_148_340;
+  }
+  let local_fp_149_341 = fsub.strict(1.0_f64, x);
+  let local_fp_150_342 = fmul.strict(local_fp_149_341, 0.5_f64);
+  let local_z_343 = local_fp_150_342;
+  let local_fp_151_344 = fsqrt.strict(local_z_343);
+  let local_s_345 = local_fp_151_344;
+  let local_f_346 = math_high(x: local_s_345);
+  let local_fp_152_347 = fmul.strict(local_f_346, local_f_346);
+  let local_fp_153_348 = fsub.strict(local_z_343, local_fp_152_347);
+  let local_fp_154_349 = fadd.strict(local_s_345, local_f_346);
+  let local_fp_155_350 = fdiv.strict(local_fp_153_348, local_fp_154_349);
+  let local_c_351 = local_fp_155_350;
+  let local_fp_156_352 = math_asin_r(z: local_z_343);
+  let local_rr_353 = local_fp_156_352;
+  let local_fp_157_354 = fmul.strict(local_rr_353, local_s_345);
+  let local_fp_158_355 = fadd.strict(local_fp_157_354, local_c_351);
+  let local_fp_159_356 = fadd.strict(local_f_346, local_fp_158_355);
+  let local_fp_160_357 = fmul.strict(2.0_f64, local_fp_159_356);
+  return local_fp_160_357;
+}
+
+fn math_atan2(y: f64, x: f64) -> r: f64 pure {
+  let local_nx_358 = fne(x, x);
+  let local_ny_359 = fne(y, y);
+  if bor(local_nx_358, local_ny_359) {
+    return fadd.strict(x, y);
+  }
+  let local_xb_360 = reinterpret::<f64, u64>(x);
+  let local_xs_361 = local_xb_360 >= 9223372036854775808_u64;
+  let local_ax_362 = fabs(x);
+  let local_ay_363 = fabs(y);
+  if feq(y, 0.0_f64) {
+    if local_xs_361 {
+      return fcopysign(3.141592653589793_f64, y);
+    }
+    return y;
+  }
+  if feq(x, 0.0_f64) {
+    return fcopysign(1.5707963267948965_f64, y);
+  }
+  let local_inf_364 = finf::<f64>();
+  if feq(local_ax_362, local_inf_364) {
+    if feq(local_ay_363, local_inf_364) {
+      let local_angle_365 = 0.7853981633974483_f64;
+      if local_xs_361 {
+        set local_angle_365 = 2.356194490192345_f64;
+      }
+      return fcopysign(local_angle_365, y);
+    }
+    let local_angle_366 = 0.0_f64;
+    if local_xs_361 {
+      set local_angle_366 = 3.141592653589793_f64;
+    }
+    return fcopysign(local_angle_366, y);
+  }
+  let local_ratio_367 = fdiv.strict(local_ay_363, local_ax_362);
+  let local_angle_368 = math_atan(x: local_ratio_367);
+  if local_xs_361 {
+    let local_t_369 = fsub.strict(local_angle_368, 1.2246467991473531e-16_f64);
+    set local_angle_368 = fsub.strict(3.141592653589793_f64, local_t_369);
+  }
+  return fcopysign(local_angle_368, y);
+}

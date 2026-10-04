@@ -230,7 +230,7 @@ fn enter_lua(vm: &Vm, stack: &Box<Slots<Value>>, h: u32, func: u64, argc: u64, w
   return Step::Error();
 }
 
-fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, func: u64, argc: u64, wanted: i64, return_pc: u64, base: u64, kbase: u64, tail: Bool) -> r: Step writes(vm), writes(stack), writes(env) {
+fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, func: u64, argc: u64, wanted: i64, return_pc: u64, base: u64, kbase: u64, tail: Bool) -> r: Step reads(code), reads(consts), writes(vm), writes(stack), writes(env) {
   let fslot = func;
   let nargs = argc;
   let nr = wanted;
@@ -266,7 +266,7 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
             set out = Host::call(env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
           } else {
             let call_pc = return_pc -sat 1_u64;
-            set out = builtin(vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1, pc: call_pc);
+            set out = builtin::<Host<E>>(code: code, consts: consts, env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1, pc: call_pc);
           }
           match out {
             Raised() => {

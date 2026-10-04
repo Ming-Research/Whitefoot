@@ -391,9 +391,45 @@ fn type_error(vm: &Vm, v: Value, op: u8) -> r: Bool writes(vm) {
   return raise_text(vm: vm, text: &state_text_23[0_u64..41_u64]);
 }
 
-fn number_coercion_pending(vm: &Vm, v: Value) -> r: Bool writes(vm) {
-  doc "TODO(number): replace with pkg::number string-to-number coercion. Until then raise the non-number operand error.";
-  return type_error(vm: vm, v: v, op: 0_u8);
+fn coerce_number(vm: &Vm, v: Value) -> r: pkg::value::NumView reads(vm) {
+  match num_of(v: v) {
+    Is(x: bound_x_1) => {
+      return pkg::value::NumView::Is(x: bound_x_1);
+    }
+    Not() => {
+    }
+  }
+  match str_of(v: v) {
+    Handle(h: bound_h_2) => {
+      let i = cvt::<u32, u64>(bound_h_2);
+      if i < vm^.heap.strings.inner.len {
+        let n = vm^.heap.strings.inner[i].payload.bytes.inner.len;
+        match pkg::number::str2number(bytes: &vm^.heap.strings.inner[i].payload.bytes.inner[0_u64..n]) {
+          Some(value: x) => {
+            return pkg::value::NumView::Is(x: x);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return pkg::value::NumView::Not();
+}
+
+fn coerce_string(vm: &Vm, v: Value) -> r: Value writes(vm) {
+  match num_of(v: v) {
+    Is(x: bound_x_3) => {
+      let bytes = array_filled::<u8, 32>(value: 0_u8);
+      let n = pkg::number::format_number(value: bound_x_3, out: &bytes[0_u64..32_u64]);
+      return intern(heap: &vm^.heap, bytes: &bytes[0_u64..n]);
+    }
+    Not() => {
+      return v;
+    }
+  }
 }
 
 fn upvalue_handle(vm: &Vm, u: u8) -> r: Option<u32> reads(vm) {
@@ -631,9 +667,4 @@ fn restore_stopped_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit reads(vm
     set stack^.inner[i] = vm^.stopped_stack.inner[i];
   }
   return unit;
-}
-
-fn concat_coercion_pending(vm: &Vm, value: Value) -> r: Bool writes(vm) {
-  doc "TODO(number): Lua number-to-string concatenation conversion; unavailable conversions raise the Lua operand error.";
-  return type_error(vm: vm, v: value, op: 3_u8);
 }

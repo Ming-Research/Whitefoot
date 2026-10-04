@@ -17,8 +17,6 @@ const instructions_text_5: Array<u8, 20> = "invalid vararg frame";
 
 const instructions_text_6: Array<u8, 14> = "stack overflow";
 
-const instructions_text_7: Array<u8, 40> = "numeric power unavailable (TODO(number))";
-
 enum Created {
   Ready(pc: u64);
   Failed();
@@ -160,9 +158,14 @@ fn fb2int(x: u64) -> r: u32 pure {
   return 4294967295_u32;
 }
 
-fn power_pending(vm: &Vm, stack: &Box<Slots<Value>>, dest: u64, x: f64, y: f64) -> r: Bool writes(vm) {
-  doc "TODO(number): numeric power awaits pkg::number; do not approximate Lua pow.";
-  return raise_text(vm: vm, text: &instructions_text_7[0_u64..40_u64]);
+fn numeric_power(vm: &Vm, stack: &Box<Slots<Value>>, dest: u64, x: f64, y: f64) -> r: Bool writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let z = pkg::number::pow(a: x, b: y);
+  if dest < stack^.inner.len {
+    set stack^.inner[dest] = Value::Num(n: z);
+  }
+  return True();
 }
 
 fn capture_descriptor(cell: Cell) -> r: Capture pure {
