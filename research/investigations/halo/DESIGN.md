@@ -141,8 +141,10 @@ fn run(code: &Code, regs: &Box<Slots<Value>>, base: u64)
   (`witnesses/w3e_elem_inv.wf`: `OP-4 UndischargedBoundsObligation`). A
   range fact can be written but no ordinary obligation consumes it (RANGE-2;
   `witnesses/w3b.wf`: `OP-2 UndischargedIntegerDomainObligation`).
-- What works: register operands typed `u8` with 256 slots of headroom per
-  frame, so the type bounds the index (`witnesses/w3d_u8.wf`, accepted); a
+- What works: register operands typed `u8` with 256 slots of headroom
+  above the current frame's base (one `requires base + 256 <= regs.len`,
+  kept at calls by growing the stack, as Lua's `EXTRA_STACK` does), so the
+  type bounds the index (`witnesses/w3d_u8.wf`, accepted); a
   dispatch loop whose fetch is proved by `invariant inside: pc < n`, at one
   comparison per jump or fall-through (`witnesses/w3g_jumps.wf`, accepted).
 - Need: the bytecode verifier's facts (operands within the frame, jump
@@ -151,6 +153,12 @@ fn run(code: &Code, regs: &Box<Slots<Value>>, base: u64)
   against a length already in a register as free and one that loads the
   length as not free, so the cost of the workaround is to be measured
   before this gap is ranked.
+- Measured (match-dispatch E0, C register-machine interpreter, M1 Pro,
+  geomean of six kernels, [RESULTS.md on PR #217 at `c6c16a9cd`](https://github.com/Ming-Research/Whitefoot/blob/c6c16a9cd/research/experiments/match-dispatch/RESULTS.md)):
+  checked frame indexes cost 4.0% over `u8` operands, and the remaining
+  fetch comparison 2.3%; what this gap could buy beyond the workaround is
+  that 2.3%. The further 9.0% between `u8` without checks and raw pointers
+  is the index representation, a lowering matter rather than a proof one.
 
 ### G5. Exhausting the heap
 
