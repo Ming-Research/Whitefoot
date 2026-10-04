@@ -622,3 +622,21 @@ instruction profile agrees with a different cache state of the key bytes it
 compares, now in the key set's store rather than in the request, and
 separating that needs the processor's counters, which this virtual machine
 does not expose.
+
+**Measurement 7: three ways to build a key set.** The owner chose direction E
+on 2026-10-04: a key set keeps its distinct keys in first-insertion order,
+inserting returns the key's stable index, payloads leave the language, and
+the order the hold locks entries in is the implementation's. Before writing
+its rules, [keyset-order-bench.c](keyset-order-bench.c) builds a set from
+ten keys of redis-benchmark's shape (`key:` and twelve digits from 100,000)
+and yields them in lock order, three ways: v0.89's ordered insertion; E,
+a 64-bit hash per key, a 32-slot index table for repeats, the key appended
+and copied, and an insertion sort of the indices by hash, length and bytes
+at the hold; and `cea9188d4`'s collection, places and hashes with no copy
+and a heap sort. A probe on the owner's Apple M1 Pro (`clang -O2`, best of
+five runs of a million sets each, run while the host was otherwise lightly
+loaded): ordered 399.8 ns per set, E 140.2, `cea9188d4` 156.5. E's
+checksum equals the ordered one's, so the two produce the same keys and the
+same last-wins values. This is a single-threaded fixture with its own
+storage; E's cost in firn is measured on the 14900K once it is implemented.
+Remove the fixture when that measurement supersedes it.
