@@ -1410,7 +1410,7 @@ impl<'unit> Checker<'_, 'unit> {
                             bindings,
                             LexicalUseRole::PlaceBase,
                         )?;
-                        if selected.ty == CheckedType::KeySet {
+                        if selected.ty == CheckedType::KeySet && selected.mode == CheckedMode::Own {
                             if self
                                 .types
                                 .declarations

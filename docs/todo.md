@@ -427,6 +427,16 @@ rarely insert at the same place.
   opaque-struct repair; reopen with the next diagnostics change or when an
   agent follows an unpinned repair that fails.
 
+- **A table-grant repair needs a state-layout change for hidden tables.**
+  SHARE-2's pinned place repair says to add a whole header binding, but
+  tables behind Box content or enum payloads are not tables of that state
+  and cannot receive one. The rejection is required; the prescribed repair
+  alone cannot be carried out for `share-neg-table-reached-through-a-box`
+  or `share-neg-table-state-payload-alias`. Add a repair that moves the table
+  to a field reached without Box or payload steps, and pin that transformed
+  state and all its accesses. Keep amendment A's requested repair text for
+  now; reopen when the owner selects the repair wording for these paths.
+
 - **A cell taken apart with no binder is repaired by removing the
   statement, even when its content is linear.** TYPE-2's repair for
   `let Box(..) = move cell;` is "remove this statement", and so is the
@@ -2516,6 +2526,17 @@ rarely insert at the same place.
   amendment A; validate an unshared write, an absent read and publication
   into a shared state against the selected rule. No broader acceptance
   policy is selected here.
+
+- **Resolve the amendment's entry-reference invalidation example.**
+  Amendment A's compiler point 4.3 says a write to `t^[k2]` invalidates
+  a live `&t^[k1]`, while REF-2 preserves writes at the reference's path
+  and invalidates writes at proper prefixes. The two entry paths have equal
+  depth; unknown byte-key offsets do not prove separation, but do not make
+  either path a proper prefix. The checker preserves the entry reference
+  and invalidates a payload reference below that entry. Select whether the
+  compiler point meant the payload case or proposes an additional REF-2
+  rule before approving amendment A. Validate the two minimal witnesses
+  separately; keep the normative proper-prefix rule until then.
 
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
