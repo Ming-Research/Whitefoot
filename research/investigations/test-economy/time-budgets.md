@@ -373,6 +373,15 @@ run, rounded up
 to 5 s, is 145 s, which the owner approved on 2026-10-03 and confirmed on
 2026-10-04 as a slight raise; macOS stays at 125 s.
 
+**`check/corpus` on ubuntu, raised to 265 s.** With firn's second batch of
+commands (PR #212) the corpus group took 207.5 s and 209.4 s of its 200 s
+on ubuntu at `c8168dc18` and `825244c60`, every test passing (136 at the
+second), against 193.3 s at the redesign's head `cb05ed6ae`; the batch adds
+firn's string, key, list, set, hash and sorted-set network cases and their
+replay suites, and `compiler/test-corpus` inside the group stayed within its
+145 s (125.1 s). 1.25 times the slower run, rounded up to 5 s, is 265 s,
+which the owner approved on 2026-10-04 (Q37, "37 agreed", translated from Chinese); macOS stays at 255 s.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases

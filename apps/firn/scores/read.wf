@@ -22,6 +22,17 @@ struct Exponent {
   valid: Bool;
 }
 
+fn space(byte: u8) -> result: Bool pure {
+  doc "Whether a byte is white space as C's isspace reads it in the C locale: space, tab, line feed, vertical tab, form feed or carriage return.";
+  if byte == 32_u8 {
+    return True();
+  }
+  let low = byte >= 9_u8;
+  let high = byte <= 13_u8;
+  let within = band(low, high);
+  return within;
+}
+
 fn refused() -> result: ScoreBits pure {
   doc "Text Redis does not accept as a score.";
   let invalid = False();
@@ -188,8 +199,8 @@ fn read_whole(input: &[u8], start: u64, length: u64) -> read: ScoreBits reads(in
   return accepted(bits: bits);
 }
 
-fn read_decimal(input: &[u8], start: u64, end: u64) -> read: ScoreBits reads(input) {
-  doc "Reads a decimal number, digits with an optional point and then an optional exponent, e or E with an optional sign and at least one digit, filling every byte up to end. The double nearest it comes from quick_decimal when that applies and from Simple Decimal Conversion otherwise; one that rounds past the largest double, or a nonzero one that rounds to zero, is refused, as strtod's range error makes Redis refuse it.";
+fn read_decimal(input: &[u8], start: u64, end: u64, in_range: Bool) -> read: ScoreBits reads(input) {
+  doc "Reads a decimal number, digits with an optional point and then an optional exponent, e or E with an optional sign and at least one digit, filling every byte up to end. The double nearest it comes from quick_decimal when that applies and from Simple Decimal Conversion otherwise; when in_range, one that rounds past the largest double, or a nonzero one that rounds to zero, is refused, as strtod's range error makes Redis refuse a score, and otherwise it is read as infinity or zero, as strtod returns it.";
   let digits = array_filled::<u8, 800>(value: 0_u8);
   let exact = False();
   let decimal = Decimal(digits: digits, count: 0_u64, point: 0_i64, truncated: exact);
@@ -273,11 +284,13 @@ fn read_decimal(input: &[u8], start: u64, end: u64) -> read: ScoreBits reads(inp
     return quick;
   }
   let converted = decimal_bits(decimal: &decimal);
-  if converted == infinity_bits {
-    return refused();
-  }
-  if converted == 0_u64 {
-    return refused();
+  if in_range {
+    if converted == infinity_bits {
+      return refused();
+    }
+    if converted == 0_u64 {
+      return refused();
+    }
   }
   return accepted(bits: converted);
 }
@@ -322,8 +335,8 @@ fn round_bits(value: u64, shift: u64, sticky: Bool) -> rounded: u64 pure {
   return quotient;
 }
 
-fn read_hex(input: &[u8], start: u64, end: u64) -> read: ScoreBits reads(input) {
-  doc "Reads the rest of a hexadecimal number after its 0x, digits with an optional point and then an optional binary exponent, p or P with an optional sign and at least one decimal digit, filling every byte up to end. Its first digits, at least 61 bits, are kept and a later nonzero digit only noted, which is all rounding to the nearest double, ties to even, needs; one that rounds past the largest double, or a nonzero one that rounds to zero, is refused.";
+fn read_hex(input: &[u8], start: u64, end: u64, in_range: Bool) -> read: ScoreBits reads(input) {
+  doc "Reads the rest of a hexadecimal number after its 0x, digits with an optional point and then an optional binary exponent, p or P with an optional sign and at least one decimal digit, filling every byte up to end. Its first digits, at least 61 bits, are kept and a later nonzero digit only noted, which is all rounding to the nearest double, ties to even, needs; when in_range, one that rounds past the largest double, or a nonzero one that rounds to zero, is refused, and otherwise it is read as infinity or zero.";
   let mantissa = 0_u64;
   let sticky = False();
   let exponent = 0_i64;
@@ -416,7 +429,10 @@ fn read_hex(input: &[u8], start: u64, end: u64) -> read: ScoreBits reads(input) 
       set normal_top = top_bit +sat 1_i64;
     }
     if normal_top > 1023_i64 {
-      return refused();
+      if in_range {
+        return refused();
+      }
+      return accepted(bits: infinity_bits);
     }
     let biased = normal_top +wrap 1023_i64;
     let field = cvt.wrap::<i64, u64>(biased);
@@ -432,7 +448,9 @@ fn read_hex(input: &[u8], start: u64, end: u64) -> read: ScoreBits reads(input) 
   }
   let subnormal = round_bits(value: mantissa, shift: shift, sticky: sticky);
   if subnormal == 0_u64 {
-    return refused();
+    if in_range {
+      return refused();
+    }
   }
   return accepted(bits: subnormal);
 }
@@ -445,8 +463,8 @@ fn is_infinity(input: &[u8], start: u64, length: u64) -> infinite: Bool reads(in
   return either;
 }
 
-fn read_magnitude(input: &[u8], start: u64, length: u64) -> read: ScoreBits reads(input) {
-  doc "Reads a score after its sign: an infinity, a hexadecimal number after 0x or 0X, or a decimal number, a plain integer of at most 19 digits read at once.";
+fn read_magnitude(input: &[u8], start: u64, length: u64, in_range: Bool) -> read: ScoreBits reads(input) {
+  doc "Reads a score after its sign: an infinity, a hexadecimal number after 0x or 0X, or a decimal number, a plain integer of at most 19 digits read at once; in_range refuses a number past the range of a double, as read_decimal and read_hex say.";
   let infinite = is_infinity(input: input, start: start, length: length);
   if infinite {
     return accepted(bits: infinity_bits);
@@ -464,20 +482,19 @@ fn read_magnitude(input: &[u8], start: u64, length: u64) -> read: ScoreBits read
   let hexadecimal = band(prefixed, marker_inside);
   if hexadecimal {
     let digits_start = second +wrap 1_u64;
-    let hex = read_hex(input: input, start: digits_start, end: end);
+    let hex = read_hex(input: input, start: digits_start, end: end, in_range: in_range);
     return hex;
   }
   let whole = read_whole(input: input, start: start, length: length);
   if whole.valid {
     return whole;
   }
-  let decimal = read_decimal(input: input, start: start, end: end);
+  let decimal = read_decimal(input: input, start: start, end: end, in_range: in_range);
   return decimal;
 }
 
-fn read_score(input: &[u8], start: u64, length: u64) -> score: Score reads(input) {
-  doc "Reads bytes of the input as a sorted-set score as Redis 7.0.15 reads one, with C's strtod and nothing after it: an optional sign, then a decimal number with an optional exponent, a C99 hexadecimal one with an optional binary exponent, or inf or infinity in either case, rounded to the nearest double with ties to even. Leading spaces, trailing bytes, NaN, a number that overflows to infinity and a nonzero number that rounds to zero are refused.";
-  let end = start +sat length;
+fn read_signed(input: &[u8], start: u64, end: u64, in_range: Bool) -> score: Score reads(input) {
+  doc "Reads an optional sign and a magnitude filling every byte from start up to end, as read_magnitude reads one.";
   let first = byte_at(input: input, index: start);
   let negative = first == 45_u8;
   let positive = first == 43_u8;
@@ -489,7 +506,7 @@ fn read_score(input: &[u8], start: u64, length: u64) -> score: Score reads(input
   let read = refused();
   if body < end {
     let body_length = end -wrap body;
-    set read = read_magnitude(input: input, start: body, length: body_length);
+    set read = read_magnitude(input: input, start: body, length: body_length, in_range: in_range);
   }
   if read.valid {
     let bits = read.bits;
@@ -500,6 +517,51 @@ fn read_score(input: &[u8], start: u64, length: u64) -> score: Score reads(input
     return Score(value: value, valid: read.valid);
   }
   return Score(value: 0.0_f64, valid: read.valid);
+}
+
+fn read_score(input: &[u8], start: u64, length: u64) -> score: Score reads(input) {
+  doc "Reads bytes of the input as a sorted-set score as Redis 7.0.15 reads one, with C's strtod and nothing after it: an optional sign, then a decimal number with an optional exponent, a C99 hexadecimal one with an optional binary exponent, or inf or infinity in either case, rounded to the nearest double with ties to even. Leading spaces, trailing bytes, NaN, a number that overflows to infinity and a nonzero number that rounds to zero are refused.";
+  let end = start +sat length;
+  let in_range = True();
+  let score = read_signed(input: input, start: start, end: end, in_range: in_range);
+  return score;
+}
+
+fn read_bound(input: &[u8], start: u64, length: u64) -> score: Score reads(input) {
+  doc "Reads bytes of the input as Redis 7.0.15 reads one end of a score range, with C's strtod over the argument as a C string, up to its first zero byte, accepting only a read that reaches that end: white space before the number, a number past the range of a double, read as infinity, and one that rounds to zero are accepted, and so is an empty string, read as 0, where strtod converts nothing and stops at the end; NaN is refused, and so is text of white space alone, where strtod stops before the white space.";
+  let end = start +sat length;
+  for @text (offset in 0_u64..length) {
+    let position = start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      set end = position;
+      break @text;
+    }
+  }
+  let valid = True();
+  if end <= start {
+    return Score(value: 0.0_f64, valid: valid);
+  }
+  let body = start;
+  loop @blank {
+    if body >= end {
+      break @blank;
+    }
+    let byte = byte_at(input: input, index: body);
+    let blank = space(byte: byte);
+    if blank {
+      set body = body +wrap 1_u64;
+    } else {
+      break @blank;
+    }
+  }
+  if body >= end {
+    let invalid = False();
+    return Score(value: 0.0_f64, valid: invalid);
+  }
+  let lenient = False();
+  let score = read_signed(input: input, start: body, end: end, in_range: lenient);
+  return score;
 }
 
 fn kept_score(score: f64) -> kept: f64 pure {

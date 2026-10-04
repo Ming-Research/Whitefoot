@@ -161,8 +161,8 @@ here.
 
 ## Design of the program
 
-`apps/firn` is a module program of seven modules and about 7,700 lines;
-[its README](../../../apps/firn/README.md) lists them. Each choice below keeps
+`apps/firn` is a module program;
+[its README](../../../apps/firn/README.md) lists its modules. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 
 - **Keys and values are byte strings of their own length**, where the
@@ -212,9 +212,13 @@ Redis's observable behavior on the suite's commands and says what it refused.
   letters**, compared once per known command, rather than by comparing names
   letter by letter.
 - **The append-only file records each change as Redis 7 records it**: a
-  command as it was sent, an expiry as `PEXPIREAT`, a `SET` with an expiry as
-  `SET` then `PEXPIREAT`, and an `SPOP` as the `SREM` of the members it chose,
-  so that a replay removes the same members. `SPOP` draws from a generator
+  command as it was sent or in the form Redis 7.0.15 propagates it, an expiry
+  as `PEXPIREAT`, a `SET` with an expiry as `SET` with `PXAT`, `INCRBYFLOAT`
+  as `SET` with `KEEPTTL`; the removal of a key found expired as `DEL`,
+  except on the write paths [docs/todo.md](../../../docs/todo.md) lists under
+  firn;
+  and an `SPOP` as the `SREM` of the members it chose, so that a replay
+  removes the same members. `SPOP` draws from a generator
   seeded by the clock when the server starts, as Redis seeds its own.
 - **Sorted-set scores are read and written as Redis 7.0.15 reads and writes
   them** (the `scores` module): read as `strtod` reads them, decimal or
@@ -244,6 +248,55 @@ Redis's observable behavior on the suite's commands and says what it refused.
 - **A malformed request is answered with Redis's protocol error and the
   connection is closed**, as Redis closes it, where the subset closed it
   without an answer.
+- **What `CONFIG SET` changes is a second shared state beside the
+  keyspace**, `ServerState` in the `store` module: the password, the idle
+  limit, the encoding parameters' values and the count of accepted
+  connections. `CONFIG SET` applies all of its pairs in one atomic statement
+  on it, and a connection reads it in a statement of its own when it is
+  accepted, before each request while it has not authenticated, and when it
+  decides on its idle limit. Fields in the keyspace's `Meta` were refused:
+  `Meta` is one lock unit with the expiry queue and the append-only file's
+  pending bytes
+  ([state locks](../../../design/compiler/waiting-contexts/state-locks.md)),
+  so each of those reads would wait on every statement that logs a change or
+  queues an expiry.
+- **Each connection keeps its own idle deadline**: while a limit is set, a
+  receive waits no longer than the limit leaves and no longer than a second,
+  and the connection reads the limit again when that wait ends and at most
+  once a second while it sends, so that a limit `CONFIG SET` lowers reaches
+  it within a second. Redis's `clientsCron` visits every client about once a
+  second instead; a context that visits every connection was refused, since
+  it needs a registry of connections that every accept and close changes in a
+  shared statement, and a way for one context to close a connection another
+  context owns, which firn's contexts, each owning its `TcpConnection`, do
+  not have. A connection that waits with no limit has no deadline, and so
+  misses a limit set while it waits ([docs/todo.md](../../../docs/todo.md)).
+- **`CONFIG SET` refuses what firn cannot apply while it runs**: an
+  `appendonly`, `port` or `bind` other than its own and a nonempty `save`
+  schedule, after Redis's checks of every value, in Redis's form for a
+  refused value with firn's reason. Applying them was refused for this
+  stage: turning the file on with keys present needs a rewrite that visits
+  every key, a new port or address needs the accepting context to listen
+  again, and firn has no snapshot. The parameters whose only effect in Redis
+  is on its encodings are kept and reported and change nothing, since the
+  suite's blocks set them.
+- **`FLUSHALL` and `FLUSHDB` exchange the table whole for an empty one**, and
+  the expiry queue for an empty one, with `swap` in one atomic statement,
+  which exchanges the tables' entries
+  ([state locks](../../../design/compiler/waiting-contexts/state-locks.md)),
+  rather than removing each key inside the statement. The old table is
+  released by the command's own context when the command returns, where
+  Redis's `ASYNC` frees it in another thread; no statement waits on that
+  release.
+- **`INFO` reports firn's own values where firn has them**: the port, the
+  calendar time, the uptime, the clients connected, the connections
+  accepted, whether the file is kept and the keys held, which it counts
+  holding the table whole as `DBSIZE` does; constants true of firn for the
+  other fields the suite reads, Redis's version 7.0.15 among them, the
+  version whose replies firn follows; and nothing for what firn does not
+  measure, memory, processor time and per-command counts, rather than a zero
+  that would read as a measurement, but for the keyspace line's `expires`
+  and `avg_ttl`, which the line's form requires.
 
 Building firn found four things outside the program, recorded under
 [docs/todo.md](../../../docs/todo.md) unless fixed:

@@ -34,6 +34,8 @@ public fn bytes_same(left: &Bytes, right: &Bytes) -> equal: Bool reads(left), re
 
 public fn bytes_order(left: &Bytes, right: &Bytes) -> order: i32 reads(left), reads(right) doc "Orders two strings byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
 
+public fn windows_order(left: &[u8], right: &[u8]) -> order: i32 reads(left), reads(right) doc "Orders two ranges byte by byte as unsigned values, a proper prefix first: -1, 0 or 1.";
+
 public fn bytes_boxed(bytes: Bytes) -> made: Box<Slots<u8>> pure doc "A string in an allocation of its own, for a container of such strings.";
 
 public fn bytes_integer(bytes: &Bytes) -> number: Integer reads(bytes) doc "Reads a string as read_integer reads bytes of the input.";

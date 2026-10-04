@@ -32,10 +32,63 @@ alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
 alias reply_nil = pkg::protocol::reply_nil;
 alias reply_nil_array = pkg::protocol::reply_nil_array;
+alias reply_ok = pkg::protocol::reply_ok;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
 alias key_boxed = pkg::bytes::key_boxed;
+alias byte_at = pkg::bytes::byte_at;
+alias bytes_boxed = pkg::bytes::bytes_boxed;
+alias bytes_new = pkg::bytes::bytes_new;
+alias log_removal = pkg::store::log_removal;
+alias name_is = pkg::bytes::name_is;
 
 const text_positive: Array<u8, 43> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8, 44_u8, 32_u8, 109_u8, 117_u8, 115_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 112_u8, 111_u8, 115_u8, 105_u8, 116_u8, 105_u8, 118_u8, 101_u8];
+
+const text_lset_no_key: Array<u8, 15> =[69_u8, 82_u8, 82_u8, 32_u8, 110_u8, 111_u8, 32_u8, 115_u8, 117_u8, 99_u8, 104_u8, 32_u8, 107_u8, 101_u8, 121_u8];
+
+const text_lset_range: Array<u8, 22> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 100_u8, 101_u8, 120_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8];
+
+const text_lpos_rank: Array<u8, 132> =[69_u8, 82_u8, 82_u8, 32_u8, 82_u8, 65_u8, 78_u8, 75_u8, 32_u8, 99_u8, 97_u8, 110_u8, 39_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 122_u8, 101_u8, 114_u8, 111_u8, 58_u8, 32_u8, 117_u8, 115_u8, 101_u8, 32_u8, 49_u8, 32_u8, 116_u8, 111_u8, 32_u8, 115_u8, 116_u8, 97_u8, 114_u8, 116_u8, 32_u8, 102_u8, 114_u8, 111_u8, 109_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 102_u8, 105_u8, 114_u8, 115_u8, 116_u8, 32_u8, 109_u8, 97_u8, 116_u8, 99_u8, 104_u8, 44_u8, 32_u8, 50_u8, 32_u8, 102_u8, 114_u8, 111_u8, 109_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 115_u8, 101_u8, 99_u8, 111_u8, 110_u8, 100_u8, 32_u8, 46_u8, 46_u8, 46_u8, 32_u8, 111_u8, 114_u8, 32_u8, 117_u8, 115_u8, 101_u8, 32_u8, 110_u8, 101_u8, 103_u8, 97_u8, 116_u8, 105_u8, 118_u8, 101_u8, 32_u8, 116_u8, 111_u8, 32_u8, 115_u8, 116_u8, 97_u8, 114_u8, 116_u8, 32_u8, 102_u8, 114_u8, 111_u8, 109_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 101_u8, 110_u8, 100_u8, 32_u8, 111_u8, 102_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 108_u8, 105_u8, 115_u8, 116_u8];
+
+const text_lpos_count: Array<u8, 27> =[69_u8, 82_u8, 82_u8, 32_u8, 67_u8, 79_u8, 85_u8, 78_u8, 84_u8, 32_u8, 99_u8, 97_u8, 110_u8, 39_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 110_u8, 101_u8, 103_u8, 97_u8, 116_u8, 105_u8, 118_u8, 101_u8];
+
+const text_lpos_maxlen: Array<u8, 28> =[69_u8, 82_u8, 82_u8, 32_u8, 77_u8, 65_u8, 88_u8, 76_u8, 69_u8, 78_u8, 32_u8, 99_u8, 97_u8, 110_u8, 39_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 110_u8, 101_u8, 103_u8, 97_u8, 116_u8, 105_u8, 118_u8, 101_u8];
+
+const word_lpos_rank: Array<u8, 4> =[82_u8, 65_u8, 78_u8, 75_u8];
+
+const word_lpos_maxlen: Array<u8, 6> =[77_u8, 65_u8, 88_u8, 76_u8, 69_u8, 78_u8];
+
+const word_linsert_before: Array<u8, 6> =[66_u8, 69_u8, 70_u8, 79_u8, 82_u8, 69_u8];
+
+const word_linsert_after: Array<u8, 5> =[65_u8, 70_u8, 84_u8, 69_u8, 82_u8];
+
+const word_lmove_left: Array<u8, 4> =[76_u8, 69_u8, 70_u8, 84_u8];
+
+const word_lmove_right: Array<u8, 5> =[82_u8, 73_u8, 71_u8, 72_u8, 84_u8];
+
+const word_rpoplpush: Array<u8, 9> =[82_u8, 80_u8, 79_u8, 80_u8, 76_u8, 80_u8, 85_u8, 83_u8, 72_u8];
+
+const state_list_invalid: u64 = 5_u64;
+
+const state_list_range: u64 = 6_u64;
+
+const state_list_missing: u64 = 7_u64;
+
+const entry_none: u64 = 0_u64;
+
+const entry_lapsed: u64 = 1_u64;
+
+const entry_wanted: u64 = 2_u64;
+
+const entry_other: u64 = 3_u64;
+
+struct Seek {
+  rank: i64;
+  count: i64;
+  counted: Bool;
+  maxlen: u64;
+  now: u64;
+  state: u64;
+}
 
 fn element_out(env: &Client, value: &Box<Slots<u8>>) -> result: unit reads(value), writes(env) {
   doc "Writes one list element as a bulk string.";
@@ -74,22 +127,28 @@ fn list_room(list: &Box<Ring<Box<Slots<u8>>>>) -> result: unit writes(list) {
   return unit;
 }
 
+fn push_element(list: &Box<Ring<Box<Slots<u8>>>>, element: Box<Slots<u8>>, front: Bool) -> result: unit writes(list) {
+  doc "Pushes one element onto the list at its head (front) or its tail, first moving a full list to a larger backing; one pushed onto a list at the ceiling of 2^32 elements is dropped.";
+  list_room(list: list);
+  if list^.inner.len < list^.inner.cap {
+    if front {
+      let length = deque_push_front::<Box<Slots<u8>>>(values: list, value: move element);
+    } else {
+      let length = deque_push_back::<Box<Slots<u8>>>(values: list, value: move element);
+    }
+  } else {
+    let dropped = move element;
+  }
+  return unit;
+}
+
 fn push_all(list: &Box<Ring<Box<Slots<u8>>>>, client: &Client, front: Bool) -> result: unit writes(list), writes(client) {
   doc "Pushes the string of every prepared key onto the list, in the order the command named them, at its head or its tail.";
   loop @elements {
     if client^.items.inner.len > 0_u64 {
       let prepared = take_back(window: &client^.items.inner);
       let element = key_boxed(key: move prepared);
-      list_room(list: list);
-      if list^.inner.len < list^.inner.cap {
-        if front {
-          let length = deque_push_front::<Box<Slots<u8>>>(values: list, value: move element);
-        } else {
-          let length = deque_push_back::<Box<Slots<u8>>>(values: list, value: move element);
-        }
-      } else {
-        let dropped = move element;
-      }
+      push_element(list: list, element: move element, front: front);
     } else {
       break @elements;
     }
@@ -131,8 +190,8 @@ fn push_items(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(valu
   }
 }
 
-fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, front: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "LPUSH key element [element ...] and RPUSH: pushes each element in turn at the list's head (front) or tail, creating the list for an absent key, and answers its length.";
+fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, front: Bool, existing: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LPUSH key element [element ...] and RPUSH: pushes each element in turn at the list's head (front) or tail, creating the list for an absent key, and answers its length; LPUSHX and RPUSHX (existing) push only onto a list that exists and answer 0 for an absent key. A key whose expiry has been reached is removed first, the removal recorded before the push.";
   prepare_keys(input: input, args: args, client: client, first: 2_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
@@ -150,10 +209,16 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       None() => {
       }
     }
-    let create = client^.state == state_absent;
     if client^.state == state_expired {
       set slot^ = None<Entry>();
-      set create = True();
+      set client^.state = state_absent;
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    let create = client^.state == state_absent;
+    if existing {
+      set create = False();
     }
     if create {
       let wanted = client^.items.inner.len;
@@ -180,7 +245,11 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     reply_integer(client: client, value: length);
     return unit;
   }
-  reply_wrong_type(client: client);
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_integer(client: client, value: 0_i64);
   return unit;
 }
 
@@ -198,7 +267,7 @@ fn pop_one(list: &Box<Ring<Box<Slots<u8>>>>, from_head: Bool) -> popped: Option<
 }
 
 fn pop_items(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
-  doc "Pops up to number elements from a live list, from its head when low is 0 and its tail otherwise, writing them as the reply: an array when high is 1, else the one bulk string. Records done, or emptied when the list is left empty; wrong for another kind and expired for an expired entry.";
+  doc "Pops up to number elements from a live list, from its head when low is 0 and its tail otherwise, writing them as the reply: an array when high is 1, else the one bulk string, and leaves how many it popped in number. Records done, or emptied when the list is left empty; wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
     set env^.state = state_expired;
@@ -222,6 +291,7 @@ fn pop_items(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value
           }
         }
       }
+      set env^.number = taken;
       set env^.state = state_done;
       if list^.inner.len == 0_u64 {
         set env^.state = state_emptied;
@@ -248,7 +318,7 @@ fn pop_items(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value
 }
 
 fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, front: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "LPOP key [count] and RPOP: removes and answers the element at the list's head (front) or tail, or an array of up to count of them, removing the key when the list is left empty; an absent key answers the null bulk string, or the null array when a count is given.";
+  doc "LPOP key [count] and RPOP: removes and answers the element at the list's head (front) or tail, or an array of up to count of them, removing the key when the list is left empty; an absent key answers the null bulk string, or the null array when a count is given. A pop that removes nothing, of a count of 0, is not recorded, as Redis does not propagate it, and a key whose expiry has been reached is removed with its removal recorded.";
   let counted = args^.inner.len == 3_u64;
   let wanted = 1_u64;
   if counted {
@@ -290,9 +360,16 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     if removing {
       set slot^ = None<Entry>();
     }
+    if lapsed {
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
     let done = client^.state == state_done;
     let changed = bor(done, emptied);
-    if changed {
+    let popped = client^.number > 0_u64;
+    let recorded = band(changed, popped);
+    if recorded {
       if store^.logging {
         log_command(log: &s^.meta.log, input: input, args: args);
       }
@@ -482,5 +559,1055 @@ fn run_llen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   let length = cvt.wrap::<u64, i64>(client^.number);
   reply_integer(client: client, value: length);
+  return unit;
+}
+
+fn word_at(input: &[u8], span: Span, word: &[u8]) -> matched: Bool reads(input), reads(word) {
+  doc "Whether an argument spells an upper-case word, letters in either case, compared as Redis compares one with strcasecmp, up to a zero byte.";
+  let held = before_zero(input: input, span: span);
+  let matched = name_is(input: input, start: span.start, length: held, word: word);
+  return matched;
+}
+
+fn list_position(index: i64, length: u64) -> position: u64 pure {
+  doc "The position a list index names in a list of length elements, counted from the tail when negative, or length when it names none.";
+  let raw = cvt.wrap::<i64, u64>(index);
+  if index >= 0_i64 {
+    if raw < length {
+      return raw;
+    }
+    return length;
+  }
+  let back = 0_u64 -wrap raw;
+  if back <= length {
+    let position = length -wrap back;
+    return position;
+  }
+  return length;
+}
+
+fn element_is(element: &Box<Slots<u8>>, input: &[u8], span: Span) -> same: Bool reads(element), reads(input) {
+  doc "Whether a list element holds the bytes of an argument.";
+  let length = element^.inner.len;
+  if length != span.length {
+    return False();
+  }
+  for @bytes (offset in 0_u64..length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if element^.inner[offset] != byte {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn argument_element(input: &[u8], span: Span) -> element: Box<Slots<u8>> reads(input) {
+  doc "A list element holding the bytes of an argument, copied before the statement that stores it.";
+  let text = bytes_new(input: input, start: span.start, length: span.length);
+  let element = bytes_boxed(bytes: move text);
+  return move element;
+}
+
+fn index_item(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes the element at the list index low of a live list, counted from the tail when negative, as a bulk string, recording done, and leaves absent for an index past either end; records invalid when number marks the index as no integer, wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      if env^.number != 1_u64 {
+        set env^.state = state_list_invalid;
+        return 2_u64;
+      }
+      let length = list^.inner.len;
+      let position = list_position(index: env^.low, length: length);
+      if position < list^.inner.len {
+        reply_bulk(client: env, stored: &list^.inner[position]);
+        set env^.state = state_done;
+      }
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_lindex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LINDEX key index: answers the element at the index, counted from the tail when negative, written into the reply inside the statement that finds the list, or the null bulk string for an index past either end or an absent key. An index that is no integer is refused only for a key holding a list, since Redis looks the key up first.";
+  let written = arg(args: args, index: 2_u64);
+  let index = read_integer(input: input, start: written.start, length: written.length);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.low = index.value;
+  set client^.number = index.state;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = index_item(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if client^.state == state_list_invalid {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  reply_nil(client: client);
+  return unit;
+}
+
+fn set_item(env: &Client, value: &Entry, element: Box<Slots<u8>>) -> kind: u64 writes(env), writes(value) {
+  doc "Replaces the element at the list index low of a live list, counted from the tail when negative, with element, recording done, or records range for an index past either end and invalid when number marks the index as no integer; records wrong for another kind and expired for an expired entry. The element is dropped wherever it is not stored.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    let dropped = move element;
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      if env^.number != 1_u64 {
+        let dropped = move element;
+        set env^.state = state_list_invalid;
+        return 2_u64;
+      }
+      let length = list^.inner.len;
+      let position = list_position(index: env^.low, length: length);
+      if position < list^.inner.len {
+        set list^.inner[position] = move element;
+        set env^.state = state_done;
+        return 2_u64;
+      }
+      let dropped = move element;
+      set env^.state = state_list_range;
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      let dropped = move element;
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      let dropped = move element;
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      let dropped = move element;
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      let dropped = move element;
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_lset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LSET key index element: replaces the element at the index, counted from the tail when negative, and answers OK; an absent key is refused as no such key and an index past either end as out of range. An index that is no integer is refused only for a key holding a list, since Redis looks the key up first.";
+  let written = arg(args: args, index: 2_u64);
+  let index = read_integer(input: input, start: written.start, length: written.length);
+  let value_span = arg(args: args, index: 3_u64);
+  let element = argument_element(input: input, span: value_span);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.low = index.value;
+  set client^.number = index.state;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = set_item(env: client, value: held, element: move element);
+      }
+      None() => {
+        let dropped = move element;
+      }
+    }
+    if client^.state == state_expired {
+      set slot^ = None<Entry>();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    if client^.state == state_done {
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  if client^.state == state_done {
+    reply_ok(client: client);
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if client^.state == state_list_invalid {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  if client^.state == state_list_range {
+    reply_error(client: client, word: &text_lset_range[0_u64..22_u64]);
+    return unit;
+  }
+  reply_error(client: client, word: &text_lset_no_key[0_u64..15_u64]);
+  return unit;
+}
+
+fn remove_matches(list: &Box<Ring<Box<Slots<u8>>>>, input: &[u8], span: Span, limit: u64, from_tail: Bool) -> removed: u64 reads(input), writes(list) {
+  doc "Removes up to limit elements equal to the argument, every one when limit is 0: the first ones from the head, or the last ones when from_tail is true. One pass moves each kept element over the removed ones before it, so that the kept ones keep their order, and the removed ones, gathered at the far end, are then dropped; returns how many it removed.";
+  let length = list^.inner.len;
+  let removed = 0_u64;
+  let kept = 0_u64;
+  for @scan (step in 0_u64..length) {
+    let index = step;
+    if from_tail {
+      let back = length -wrap step;
+      set index = back -wrap 1_u64;
+    }
+    let unlimited = limit == 0_u64;
+    let under = removed < limit;
+    let wanted = bor(unlimited, under);
+    let matched = False();
+    if wanted {
+      if index < list^.inner.len {
+        set matched = element_is(element: &list^.inner[index], input: input, span: span);
+      }
+    }
+    if matched {
+      set removed = removed +wrap 1_u64;
+    } else {
+      let target = kept;
+      if from_tail {
+        let back = length -wrap kept;
+        set target = back -wrap 1_u64;
+      }
+      if target != index {
+        if target < list^.inner.len {
+          if index < list^.inner.len {
+            swap(first: &list^.inner[target], second: &list^.inner[index]);
+          }
+        }
+      }
+      set kept = kept +wrap 1_u64;
+    }
+  }
+  for @dropping (step in 0_u64..removed) {
+    if list^.inner.len > 0_u64 {
+      if from_tail {
+        let dropped = deque_pop_front::<Box<Slots<u8>>>(values: list);
+      } else {
+        let dropped = deque_pop_back::<Box<Slots<u8>>>(values: list);
+      }
+    }
+  }
+  return removed;
+}
+
+fn remove_items(env: &Client, value: &Entry, input: &[u8], element: Span) -> kind: u64 reads(input), writes(env), writes(value) {
+  doc "Removes from a live list the elements equal to the argument as LREM counts them, low being its count: the first low of them from the head for a positive low, the last of them from the tail for a negative one, its magnitude taken as Redis's 64-bit arithmetic takes it, and every one for 0. Records how many it removed in number, and done, or emptied when the list is left empty; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      let count = env^.low;
+      let from_tail = count < 0_i64;
+      let limit = cvt.wrap::<i64, u64>(count);
+      if from_tail {
+        set limit = 0_u64 -wrap limit;
+      }
+      set env^.number = remove_matches(list: list, input: input, span: element, limit: limit, from_tail: from_tail);
+      set env^.state = state_done;
+      if list^.inner.len == 0_u64 {
+        set env^.state = state_emptied;
+      }
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_lrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LREM key count element: removes the elements equal to element, the first count of them for a positive count, the last ones for a negative count and every one for 0, removing the key when the list is left empty, and answers how many it removed; a count that is no integer is refused before the key is looked up, as Redis refuses it.";
+  let written = arg(args: args, index: 2_u64);
+  let count = read_integer(input: input, start: written.start, length: written.length);
+  if count.state != 1_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  let element = arg(args: args, index: 3_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  set client^.low = count.value;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = remove_items(env: client, value: held, input: input, element: element);
+      }
+      None() => {
+      }
+    }
+    let emptied = client^.state == state_emptied;
+    let lapsed = client^.state == state_expired;
+    let removing = bor(emptied, lapsed);
+    if removing {
+      set slot^ = None<Entry>();
+    }
+    if lapsed {
+      set client^.number = 0_u64;
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    let done = client^.state == state_done;
+    let changed = bor(done, emptied);
+    let removed = client^.number > 0_u64;
+    let recorded = band(changed, removed);
+    if recorded {
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let answer = cvt.wrap::<u64, i64>(client^.number);
+  reply_integer(client: client, value: answer);
+  return unit;
+}
+
+fn trim_ends(list: &Box<Ring<Box<Slots<u8>>>>, front: u64, back: u64) -> result: unit writes(list) {
+  doc "Drops front elements from the list's head and back elements from its tail. It takes the list as a reference parameter because a guard spelled through the match binder that finds the list does not discharge the pop's requirement after a write through it [ENT-2, FN-8].";
+  for @heads (step in 0_u64..front) {
+    if list^.inner.len > 0_u64 {
+      let dropped = deque_pop_front::<Box<Slots<u8>>>(values: list);
+    }
+  }
+  for @tails (step in 0_u64..back) {
+    if list^.inner.len > 0_u64 {
+      let dropped = deque_pop_back::<Box<Slots<u8>>>(values: list);
+    }
+  }
+  return unit;
+}
+
+fn trim_items(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Keeps the elements of a live list from index low to index high, both inclusive and counted from the tail when negative, removing the others as LTRIM does, every one for a range past the end or crossed; records how many it removed in number, and done, or emptied when the list is left empty; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      let length = list^.inner.len;
+      let signed_length = cvt.wrap::<u64, i64>(length);
+      let first = env^.low;
+      let last = env^.high;
+      if first < 0_i64 {
+        set first = signed_length +wrap first;
+      }
+      if last < 0_i64 {
+        set last = signed_length +wrap last;
+      }
+      if first < 0_i64 {
+        set first = 0_i64;
+      }
+      let front = length;
+      let back = 0_u64;
+      let past_end = first >= signed_length;
+      let crossed = first > last;
+      let empty = bor(past_end, crossed);
+      if empty {
+      } else {
+        if last >= signed_length {
+          set last = signed_length -wrap 1_i64;
+        }
+        set front = cvt.wrap::<i64, u64>(first);
+        let stop = cvt.wrap::<i64, u64>(last);
+        let kept_end = stop +wrap 1_u64;
+        set back = length -wrap kept_end;
+      }
+      trim_ends(list: list, front: front, back: back);
+      set env^.number = front +wrap back;
+      set env^.state = state_done;
+      if list^.inner.len == 0_u64 {
+        set env^.state = state_emptied;
+      }
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_ltrim(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LTRIM key start stop: keeps the list's elements from start to stop, both inclusive and counted from the tail when negative, removing the key when none is kept, and answers OK, for an absent key too. A trim that removes nothing is not recorded, as Redis does not propagate it.";
+  let first = arg(args: args, index: 2_u64);
+  let last = arg(args: args, index: 3_u64);
+  let start = read_integer(input: input, start: first.start, length: first.length);
+  let stop = read_integer(input: input, start: last.start, length: last.length);
+  let bad_start = start.state != 1_u64;
+  let bad_stop = stop.state != 1_u64;
+  let bad = bor(bad_start, bad_stop);
+  if bad {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  set client^.low = start.value;
+  set client^.high = stop.value;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = trim_items(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+    let emptied = client^.state == state_emptied;
+    let lapsed = client^.state == state_expired;
+    let removing = bor(emptied, lapsed);
+    if removing {
+      set slot^ = None<Entry>();
+    }
+    if lapsed {
+      set client^.number = 0_u64;
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    if client^.number > 0_u64 {
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_ok(client: client);
+  return unit;
+}
+
+fn insert_element(list: &Box<Ring<Box<Slots<u8>>>>, position: u64, element: Box<Slots<u8>>) -> inserted: Bool writes(list) {
+  doc "Inserts an element at a position of the list, at most its length, first moving a full list to a larger backing, and returns whether it did; the element is dropped for a position past the end or a list at the ceiling of 2^32 elements. It takes the list as a reference parameter because a guard spelled through the match binder that finds the list does not discharge insert_at's requirement after list_room writes through it [ENT-2, FN-8].";
+  list_room(list: list);
+  let room = list^.inner.len < list^.inner.cap;
+  let inside = position <= list^.inner.len;
+  let possible = band(room, inside);
+  if possible {
+    insert_at(window: &list^.inner, index: position, value: move element);
+    return True();
+  }
+  let dropped = move element;
+  return False();
+}
+
+fn insert_item(env: &Client, value: &Entry, input: &[u8], pivot: Span, element: Box<Slots<u8>>, after: Bool) -> kind: u64 reads(input), writes(env), writes(value) {
+  doc "Inserts element just before, or with after just after, the first element of a live list equal to the pivot, recording done and the list's new length in number, or records missing when no element equals the pivot; records wrong for another kind and expired for an expired entry. The element is dropped wherever it is not stored, a list at the ceiling of 2^32 elements included.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    let dropped = move element;
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      let length = list^.inner.len;
+      let found = length;
+      for @seek (index in 0_u64..length) {
+        if index < list^.inner.len {
+          let same = element_is(element: &list^.inner[index], input: input, span: pivot);
+          if same {
+            set found = index;
+            break @seek;
+          }
+        }
+      }
+      if found >= length {
+        let dropped = move element;
+        set env^.state = state_list_missing;
+        return 2_u64;
+      }
+      let position = found;
+      if after {
+        set position = found +wrap 1_u64;
+      }
+      let inserted = insert_element(list: list, position: position, element: move element);
+      if inserted {
+        set env^.number = list^.inner.len;
+        set env^.state = state_done;
+        return 2_u64;
+      }
+      set env^.state = state_list_missing;
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      let dropped = move element;
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      let dropped = move element;
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      let dropped = move element;
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      let dropped = move element;
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_linsert(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LINSERT key BEFORE|AFTER pivot element: inserts the element just before or after the first element equal to the pivot and answers the list's new length, -1 when no element equals the pivot and 0 for an absent key. BEFORE and AFTER are read in either case up to a zero byte, as Redis's strcasecmp reads them, and anything else is a syntax error before the key is looked up.";
+  let where_span = arg(args: args, index: 2_u64);
+  let before = word_at(input: input, span: where_span, word: &word_linsert_before[0_u64..6_u64]);
+  let after = word_at(input: input, span: where_span, word: &word_linsert_after[0_u64..5_u64]);
+  let known = bor(before, after);
+  if known {
+  } else {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  let pivot = arg(args: args, index: 3_u64);
+  let value_span = arg(args: args, index: 4_u64);
+  let element = argument_element(input: input, span: value_span);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = insert_item(env: client, value: held, input: input, pivot: pivot, element: move element, after: after);
+      }
+      None() => {
+        let dropped = move element;
+      }
+    }
+    if client^.state == state_expired {
+      set slot^ = None<Entry>();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    if client^.state == state_done {
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  if client^.state == state_done {
+    let length = cvt.wrap::<u64, i64>(client^.number);
+    reply_integer(client: client, value: length);
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if client^.state == state_list_missing {
+    reply_integer(client: client, value: -1_i64);
+    return unit;
+  }
+  reply_integer(client: client, value: 0_i64);
+  return unit;
+}
+
+fn note_position(positions: &Box<Slots<u64>>, position: u64) -> result: unit writes(positions) {
+  doc "Adds a matched position, growing the space for them when it is full.";
+  let capacity = positions^.inner.cap;
+  if positions^.inner.len >= capacity {
+    let doubled = capacity +wrap capacity;
+    let target = imax(doubled, 16_u64);
+    let fits = target <= ceiling;
+    if fits {
+      if target >= positions^.inner.cap {
+        grow(cell: positions, capacity: target);
+      }
+    }
+  }
+  if positions^.inner.len < positions^.inner.cap {
+    place_back(window: &positions^.inner, value: position);
+  }
+  return unit;
+}
+
+fn seek_items(env: &Seek, value: &Entry, input: &[u8], element: Span, positions: &Box<Slots<u64>>) -> kind: u64 reads(value), reads(input), writes(env), writes(positions) {
+  doc "Records where a live list holds the element as LPOS finds it: scanning from the head, or from the tail for a negative rank, at most maxlen elements when it is not 0, it passes the matches before the rank's and then records one, or with counted up to count of them, every one for a count of 0. The rank's magnitude and the count reached are computed as Redis's 64-bit arithmetic computes them, so that the rank -2^63 is met from the first match on and with a count never reaches it. Records done; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Items(items: list) => {
+      let length = list^.inner.len;
+      let backward = env^.rank < 0_i64;
+      let rank = env^.rank;
+      if backward {
+        set rank = 0_i64 -wrap rank;
+      }
+      let matches = 0_i64;
+      for @scan (index in 0_u64..length) {
+        if env^.maxlen != 0_u64 {
+          if index >= env^.maxlen {
+            break @scan;
+          }
+        }
+        let position = index;
+        if backward {
+          let back = length -wrap index;
+          set position = back -wrap 1_u64;
+        }
+        if position < list^.inner.len {
+          let same = element_is(element: &list^.inner[position], input: input, span: element);
+          if same {
+            set matches = matches +wrap 1_i64;
+            if matches >= rank {
+              note_position(positions: positions, position: position);
+              if env^.counted {
+                let past = matches -wrap rank;
+                let met = past +wrap 1_i64;
+                if env^.count != 0_i64 {
+                  if met >= env^.count {
+                    break @scan;
+                  }
+                }
+              } else {
+                break @scan;
+              }
+            }
+          }
+        }
+      }
+      set env^.state = state_done;
+      return 2_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_lpos(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LPOS key element [RANK rank] [COUNT num-matches] [MAXLEN len]: answers the position of the element's match the rank names, counted from the tail for a negative rank, or with COUNT an array of up to that many positions from that match on, every one for 0, scanning at most MAXLEN elements when it is not 0. Options come in any order, a later one replacing an earlier, each read in either case up to a zero byte and refused, as Redis refuses it, before the key is looked up: a rank that is no integer or is 0, a count or length that is no integer or negative, and an option without its value or unknown. No match, or an absent key, answers the null bulk string, or an empty array with COUNT.";
+  let count = args^.inner.len;
+  let rank = 1_i64;
+  let wanted = 0_i64;
+  let counted = False();
+  let maxlen = 0_u64;
+  let index = 3_u64;
+  loop @options {
+    if index >= count {
+      break @options;
+    }
+    let option = arg(args: args, index: index);
+    let value_index = index +wrap 1_u64;
+    let more = value_index < count;
+    let value = arg(args: args, index: value_index);
+    let number = read_integer(input: input, start: value.start, length: value.length);
+    let invalid = number.state != 1_u64;
+    let negative = number.value < 0_i64;
+    let refused = bor(invalid, negative);
+    let named_rank = word_at(input: input, span: option, word: &word_lpos_rank[0_u64..4_u64]);
+    let named_count = word_at(input: input, span: option, word: &word_count[0_u64..5_u64]);
+    let named_maxlen = word_at(input: input, span: option, word: &word_lpos_maxlen[0_u64..6_u64]);
+    let ranking = band(named_rank, more);
+    let counting = band(named_count, more);
+    let bounding = band(named_maxlen, more);
+    if ranking {
+      if invalid {
+        reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+        return unit;
+      }
+      if number.value == 0_i64 {
+        reply_error(client: client, word: &text_lpos_rank[0_u64..132_u64]);
+        return unit;
+      }
+      set rank = number.value;
+    } else if counting {
+      if refused {
+        reply_error(client: client, word: &text_lpos_count[0_u64..27_u64]);
+        return unit;
+      }
+      set wanted = number.value;
+      set counted = True();
+    } else if bounding {
+      if refused {
+        reply_error(client: client, word: &text_lpos_maxlen[0_u64..28_u64]);
+        return unit;
+      }
+      set maxlen = cvt.wrap::<i64, u64>(number.value);
+    } else {
+      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+      return unit;
+    }
+    set index = index +wrap 2_u64;
+  }
+  let element = arg(args: args, index: 2_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let seek = Seek(rank: rank, count: wanted, counted: counted, maxlen: maxlen, now: time^.check, state: state_absent);
+  let positions = box_slots_new::<u64>(capacity: 0_u64);
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = seek_items(env: &seek, value: held, input: input, element: element, positions: &positions);
+      }
+      None() => {
+      }
+    }
+  }
+  if seek.state == state_expired {
+    remove_expired(store: store, key: key, now: seek.now);
+  }
+  if seek.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let found = positions.inner.len;
+  if counted {
+    reply_array(client: client, count: found);
+    for @answers (at in 0_u64..found) {
+      if at < positions.inner.len {
+        let position = positions.inner[at];
+        let signed = cvt.wrap::<u64, i64>(position);
+        reply_integer(client: client, value: signed);
+      }
+    }
+    return unit;
+  }
+  if positions.inner.len > 0_u64 {
+    let position = positions.inner[0_u64];
+    let signed = cvt.wrap::<u64, i64>(position);
+    reply_integer(client: client, value: signed);
+    return unit;
+  }
+  reply_nil(client: client);
+  return unit;
+}
+
+fn list_kind(slot: &Option<Entry>, now: u64) -> kind: u64 reads(slot) {
+  doc "What an entry holds for a list command naming several keys: entry_none for no value, entry_lapsed for one whose expiry has been reached at now, entry_wanted for a live list and entry_other for a live value of another kind.";
+  match slot^ {
+    Some(value: held) => {
+      let reached = expired(expires: held^.expires, now: now);
+      if reached {
+        return entry_lapsed;
+      }
+      match held^.value {
+        Items(items: list) => {
+          return entry_wanted;
+        }
+        Text(bytes: stored) => {
+          return entry_other;
+        }
+        Members(members: set_of) => {
+          return entry_other;
+        }
+        Fields(fields: hash_of) => {
+          return entry_other;
+        }
+        Ranked(ranked: sorted) => {
+          return entry_other;
+        }
+      }
+    }
+    None() => {
+      return entry_none;
+    }
+  }
+}
+
+fn take_element(slot: &Option<Entry>, from_head: Bool, client: &Client) -> popped: Option<Box<Slots<u8>>> writes(slot), writes(client) {
+  doc "Removes and returns the element at the head (from_head) or tail of the list an entry holds, leaving how many elements the list keeps in the client's number; none for an entry holding no list.";
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Items(items: list) => {
+          let popped = pop_one(list: list, from_head: from_head);
+          set client^.number = list^.inner.len;
+          return move popped;
+        }
+        Text(bytes: stored) => {
+          return None<Box<Slots<u8>>>();
+        }
+        Members(members: set_of) => {
+          return None<Box<Slots<u8>>>();
+        }
+        Fields(fields: hash_of) => {
+          return None<Box<Slots<u8>>>();
+        }
+        Ranked(ranked: sorted) => {
+          return None<Box<Slots<u8>>>();
+        }
+      }
+    }
+    None() => {
+      return None<Box<Slots<u8>>>();
+    }
+  }
+}
+
+fn place_element(slot: &Option<Entry>, element: Box<Slots<u8>>, to_head: Bool) -> result: unit writes(slot) {
+  doc "Pushes an element onto the head (to_head) or tail of the list an entry holds, creating the list, without an expiry, for an entry holding none; an entry holding another kind, which the caller has refused, drops it.";
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Items(items: list) => {
+          push_element(list: list, element: move element, front: to_head);
+          return unit;
+        }
+        Text(bytes: stored) => {
+          let dropped = move element;
+          return unit;
+        }
+        Members(members: set_of) => {
+          let dropped = move element;
+          return unit;
+        }
+        Fields(fields: hash_of) => {
+          let dropped = move element;
+          return unit;
+        }
+        Ranked(ranked: sorted) => {
+          let dropped = move element;
+          return unit;
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let list = deque_new::<Box<Slots<u8>>, ceiling>(capacity: 8_u64);
+  push_element(list: &list, element: move element, front: to_head);
+  let made = Value::Items(items: move list);
+  let fresh = Entry(value: move made, expires: 0_u64);
+  set slot^ = Some<Entry>(value: move fresh);
+  return unit;
+}
+
+fn end_named(input: &[u8], span: Span) -> end: u64 reads(input) {
+  doc "Which end of a list an argument names, read in either case up to a zero byte as Redis's strcasecmp reads it: 1 for LEFT, 2 for RIGHT and 0 for neither.";
+  let left = word_at(input: input, span: span, word: &word_lmove_left[0_u64..4_u64]);
+  if left {
+    return 1_u64;
+  }
+  let right = word_at(input: input, span: span, word: &word_lmove_right[0_u64..5_u64]);
+  if right {
+    return 2_u64;
+  }
+  return 0_u64;
+}
+
+fn run_lmove_named(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LMOVE source destination LEFT|RIGHT LEFT|RIGHT: reads the two ends, the source's first, refusing anything but LEFT or RIGHT as a syntax error before any key is looked up, and moves the element as run_lmove does.";
+  let from_span = arg(args: args, index: 3_u64);
+  let from = end_named(input: input, span: from_span);
+  if from == 0_u64 {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  let to_span = arg(args: args, index: 4_u64);
+  let to = end_named(input: input, span: to_span);
+  if to == 0_u64 {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  let from_head = from == 1_u64;
+  let to_head = to == 1_u64;
+  run_lmove(store: store, input: input, args: args, client: client, env: env, time: time, from_head: from_head, to_head: to_head);
+  return unit;
+}
+
+fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, from_head: Bool, to_head: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "LMOVE source destination LEFT|RIGHT LEFT|RIGHT and RPOPLPUSH source destination, which moves from the tail to the head: removes the element at the source list's head (from_head) or tail, pushes it onto the destination list's head (to_head) or tail, creating the destination for an absent key and removing the source when it is left empty, and answers the element; a source equal to the destination rotates the list. One statement holds both keys' entries through a key set whose payloads mark the source with 1 and the destination with 2, so that the move takes effect at one point. As in Redis, an absent source answers the null bulk string without the destination being looked at, a key holding another kind is refused, and a key found expired is removed, its removal recorded before the move.";
+  let source_place = key_bounds(input: input, args: args, index: 1_u64);
+  let source_key = &input^[source_place.start..source_place.end];
+  let destination_place = key_bounds(input: input, args: args, index: 2_u64);
+  let destination_key = &input^[destination_place.start..destination_place.end];
+  let keys = key_set_new(capacity: 2_u64);
+  key_set_add(keys: &keys, key: source_key, amount: 1_u64);
+  key_set_add(keys: &keys, key: destination_key, amount: 2_u64);
+  let now = time^.check;
+  set client^.state = state_absent;
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let source = keys.len;
+    let destination = keys.len;
+    for @roles (at in 0_u64..keys.len) {
+      let role = key_set_payload(keys: &keys, index: at);
+      let from = iand(role, 1_u64);
+      if from != 0_u64 {
+        set source = at;
+      }
+      let to = iand(role, 2_u64);
+      if to != 0_u64 {
+        set destination = at;
+      }
+    }
+    let found = entry_none;
+    if source < keys.len {
+      set found = list_kind(slot: &slots^[source], now: now);
+    }
+    if found == entry_lapsed {
+      if source < keys.len {
+        set slots^[source] = None<Entry>();
+      }
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: source_key);
+      }
+    }
+    if found == entry_other {
+      set client^.state = state_wrong;
+    }
+    if found == entry_wanted {
+      let target = entry_none;
+      if destination < keys.len {
+        set target = list_kind(slot: &slots^[destination], now: now);
+      }
+      if target == entry_lapsed {
+        if destination < keys.len {
+          set slots^[destination] = None<Entry>();
+        }
+        if store^.logging {
+          log_removal(log: &s^.meta.log, key: destination_key);
+        }
+      }
+      if target == entry_other {
+        set client^.state = state_wrong;
+      } else if source < keys.len {
+        let popped = take_element(slot: &slots^[source], from_head: from_head, client: client);
+        let left = client^.number;
+        match move popped {
+          Some(value: element) => {
+            reply_bulk(client: client, stored: &element);
+            if destination < keys.len {
+              place_element(slot: &slots^[destination], element: move element, to_head: to_head);
+            } else {
+              let dropped = move element;
+            }
+            if left == 0_u64 {
+              if source != destination {
+                set slots^[source] = None<Entry>();
+              }
+            }
+            set client^.state = state_done;
+            if store^.logging {
+              log_command(log: &s^.meta.log, input: input, args: args);
+            }
+          }
+          None() => {
+          }
+        }
+      }
+    }
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_nil(client: client);
   return unit;
 }
