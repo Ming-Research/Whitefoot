@@ -24,11 +24,6 @@
 //! whether the consumed place owns its value and, for a cell, on its content,
 //! since those decide which source change can be carried out.
 //!
-//! So do the words of the fix a [STOR-6] target-layout stop carries when the
-//! selected target cannot hold an allocation's proved count bound. That stop
-//! is no rejection [DIAG-1], but it sends the writer to the same count as
-//! [OP-9]'s repair, whose words stand next to it.
-//!
 //! Selector admission and invariant-name scope repairs also live here. The
 //! resolver calls the scope formatter with the name it has already classified;
 //! that formatter performs no semantic checking.
@@ -1029,6 +1024,97 @@ pub(super) fn bounds(case: &GoalCase<'_>, constant_offset: bool) -> String {
     }
 }
 
+/// One call on a path to a failed subscript whose row reached its measure
+/// and removed the facts that, put back, prove the bound [ENT-5].
+pub(super) struct KillingCall {
+    pub(super) callee: String,
+    pub(super) line: u64,
+    pub(super) written: String,
+    /// The row the callee's body exhibits, as a writer declares it [EFF-2],
+    /// where that row would leave the measure alone; `None` where it would
+    /// not, so that no narrowing is offered.
+    pub(super) exhibited_row: Option<String>,
+}
+
+/// [OP-4] a subscript's bound that the facts some calls' rows removed would
+/// prove: the calls are named, and where each leaves the length unchanged, a
+/// postcondition stating so keeps those facts, and so does declaring the row
+/// its body exhibits where that row no longer reaches the length; the guard
+/// stays the alternative where the length may change [DIAG-1].
+pub(super) fn bounds_after_kill(
+    case: &GoalCase<'_>,
+    measure: &str,
+    calls: &[KillingCall],
+) -> String {
+    let sites = calls
+        .iter()
+        .map(|call| format!("to `{}` at line {}", call.callee, call.line))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let mut written: Vec<String> = Vec::new();
+    for call in calls {
+        let place = format!("`{}`", call.written);
+        if !written.contains(&place) {
+            written.push(place);
+        }
+    }
+    let written = written.join(" and ");
+    // Each callee once, with its exhibited row, in first-call order.
+    let mut callees: Vec<(&str, Option<&str>)> = Vec::new();
+    for call in calls {
+        if !callees.iter().any(|(callee, _)| *callee == call.callee) {
+            callees.push((&call.callee, call.exhibited_row.as_deref()));
+        }
+    }
+    let who = callees
+        .iter()
+        .map(|(callee, _)| format!("`{callee}`"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let (call, rows) = if calls.len() == 1 {
+        ("call", "its row, which writes")
+    } else {
+        ("calls", "their rows, which write")
+    };
+    let rows_exhibited: Option<Vec<(&str, &str)>> = calls
+        .iter()
+        .all(|call| call.exhibited_row.is_some())
+        .then(|| {
+            callees
+                .iter()
+                .filter_map(|(callee, row)| row.map(|row| (*callee, row)))
+                .collect()
+        });
+    let (leaves, narrowing, its) = match (callees.len(), rows_exhibited) {
+        (1, Some(rows)) => (
+            "leaves",
+            format!(
+                "declare its row as `{}`, the paths its body accesses, or ",
+                rows.first().map_or("", |(_, row)| row)
+            ),
+            "its",
+        ),
+        (1, None) => ("leaves", String::new(), "its"),
+        (_, Some(rows)) => (
+            "leave",
+            format!(
+                "declare each one's row as the paths its body accesses ({}), or ",
+                rows.iter()
+                    .map(|(callee, row)| format!("`{callee}`: `{row}`"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+            "each one's",
+        ),
+        (_, None) => ("leave", String::new(), "each one's"),
+    };
+    format!(
+        "`{}` is not proved here, but facts about `{measure}` that held before the {call} {sites} would prove it, and {rows} {written}, removed them: where {who} {leaves} `{measure}` unchanged, {narrowing}state `{measure}` unchanged in {its} `ensures`; or {}",
+        case.text,
+        case.guard("access", SKIP)
+    )
+}
+
 /// [OP-4] a subscript of a place a contract clause forms [ENT-2, FN-8]. The
 /// place is formed at body entry in the state the requirements written before
 /// it build, so an earlier requirement establishes the bound; a clause
@@ -1062,65 +1148,6 @@ fn refuted_index(constant_offset: bool, clause: bool) -> &'static str {
             "index within the storage, or change the requirements before this one that fix the index"
         }
     }
-}
-
-/// [OP-9] an allocation's size. The residual's bound is the language's
-/// ceiling for the element type, which the selected target's layout then
-/// qualifies again with the retained proved bound [STOR-6]: every supported
-/// target admits a smaller count, so a program that states the ceiling passes
-/// OP-9 and stops at target layout. No route offers it as the bound to write;
-/// each asks for the largest count the program needs.
-pub(super) fn allocation_fit(case: &GoalCase<'_>) -> String {
-    const REFUSE: &str = "where refusing a larger count is the intended behavior";
-    // The residual is `count <= ceiling`, the count as its source spells it.
-    let (count, ceiling) = case
-        .text
-        .rsplit_once(" <= ")
-        .unwrap_or((case.text, case.text));
-    let limit = format!(
-        "`{ceiling}` is the language's limit for this element type, not a bound to write: the selected target admits a smaller count, so a bound at or near that limit stops at target layout [STOR-6]"
-    );
-    let guard = case.guard_with("allocation", &format!("`if {count} <= N`"), REFUSE);
-    match (case.disposition, case.terms) {
-        (Disposition::Refuted, _) => format!(
-            "`{}` is false, so this allocation cannot be formed: request the count the program needs. {limit}",
-            case.text
-        ),
-        (Disposition::Unproved, GoalTerms::Parameters) => format!(
-            "with N the largest count the program needs, add `requires {count} <= N;` to the `contract` of `{}`, which each caller then establishes; or {guard}. {limit}",
-            case.function
-        ),
-        (
-            Disposition::Unproved,
-            GoalTerms::Unnamed | GoalTerms::RangeLength | GoalTerms::CallArgument(_),
-        ) => format!(
-            "`{count}` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the allocation, and bound the binding by the largest count the program needs. {limit}"
-        ),
-        (Disposition::Unproved, GoalTerms::Computed) => {
-            let callee = if case.called {
-                "; when the callee whose result it reads can prove that bound, state it in the callee's `ensures`"
-            } else {
-                ""
-            };
-            format!(
-                "`{count}` is not bounded here: with N the largest count the program needs, when facts that reach the allocation imply `{count} <= N`, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes){callee}; or {guard}. {limit}"
-            )
-        }
-    }
-}
-
-/// [STOR-6] the fix a target-layout stop carries when an allocating call's
-/// retained count bound exceeds the largest count the selected target
-/// admits. The stop is no rejection and cites no rule [DIAG-1], but its words
-/// live beside [OP-9]'s because both send the writer to the same count: the
-/// target qualifies the bound the checked program proves, so the fix is a
-/// tighter proof where the count is computed. Target qualification does not
-/// know what the count reads, so the sentence offers each form that bounds
-/// it; `limit` is the largest count the target admits.
-pub(crate) fn target_allocation_count(count: &str, limit: u64) -> String {
-    format!(
-        "with N the largest count the program needs, at most {limit}, bound `{count}` by N before this call: add `requires {count} <= N;` to the `contract` of the function whose parameter it is, which each caller then establishes; state the bound in the `ensures` of the function whose result it is; or guard the allocation with `if {count} <= N` where refusing a larger count is the intended behavior"
-    )
 }
 
 /// [REF-4] one range-formation conjunct.

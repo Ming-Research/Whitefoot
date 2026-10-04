@@ -176,7 +176,7 @@ impl GoalDatum {
 /// Structural identity for an already-evaluated, occurrence-local value.
 ///
 /// Call actuals remain distinguishable from proof-obligation operands so
-/// FN-8's bind-first diagnostic cannot be selected for OP-2 or OP-9.
+/// FN-8's bind-first diagnostic cannot be selected for an [ENT-6] obligation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum EvaluatedValueOccurrence {
     CallArgument { call: NodePath, argument: u32 },
@@ -301,13 +301,6 @@ pub(crate) enum GoalOperation {
     /// discharged before this expression is used as a proof operand.
     BufferIndex {
         element: CheckedElement,
-    },
-    /// Canonical total allocation-domain predicate [OP-9]. The ceiling is
-    /// part of the row identity so a proof cannot be reused across a layout
-    /// rule change or across distinct element representations.
-    BufferFits {
-        element: CheckedType,
-        maximum_length: u64,
     },
     /// One [MSR-1] measure of a storage shape [TYPE-9]. The measured kind is
     /// part of the row identity because the measure table gives each its own

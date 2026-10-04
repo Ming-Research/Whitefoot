@@ -35,8 +35,8 @@
 //!   the language, and allocation carries no effect entry, so there is no
 //!   refusal arm to schedule and nothing left of the ordering this case
 //!   observed. The successors are [STOR-8] for the one heap and the absent
-//!   effect category, [OP-9] for the allocation-size obligation now checked at
-//!   the source, [OP-11] `swap(first: &a, second: &b)` for the two-place
+//!   effect category, [OP-9] for an allocation size the target cannot serve,
+//!   [OP-11] `swap(first: &a, second: &b)` for the two-place
 //!   exchange the helper spelled `set (a, b) = move b, move a;` [SET-2], and
 //!   [WIN-3] for the release of a displaced affine owner. Per-element release
 //!   ordering of a boxed affine run is kept by `heap_programs` and
@@ -1756,7 +1756,7 @@ fn main() -> status: std::process::ExitStatus pure {
 // per-allocation refusal schedule over a `Heap<'heap>` store provider, and
 // [STOR-8] makes allocation total over one heap with no effect entry and no
 // refusal arm to schedule. Its successors are [STOR-8], [OP-9]'s
-// allocation-size obligation, [OP-11] `swap` for the exchange it spelled
+// allocation size, [OP-11] `swap` for the exchange it spelled
 // `set (a, b) = move b, move a;` [SET-2], and [WIN-3]'s disposition of a
 // displaced affine owner. See this module's header for the full account.
 

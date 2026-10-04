@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn make(count: u64) -> result: Box<Slots<u64>> pure {
-  doc "OP-13: each runtime-capacity construction carries the static allocation-size obligation on its own count, and an unbounded runtime count leaves it unproved.";
+  doc "OP-13: each runtime-capacity construction computes its size from its own count as OP-9 states, and an unbounded runtime count carries no obligation.";
   return box_slots_new::<u64>(capacity: count);
 }
 

@@ -933,9 +933,22 @@ impl Judging<'_, '_, '_> {
                 .iter()
                 .flat_map(|state| state.written.iter().copied())
                 .collect(),
+            measure_kills: join_measure_kills(&contributing),
             continuing,
         }
     }
+}
+
+/// [DIAG-1] the writes that reached a measure on any joined path, each
+/// statement once, in the order the paths list them.
+fn join_measure_kills(contributing: &[ProofFlowState]) -> Vec<MeasureKill> {
+    let mut joined = ProofFlowState::default();
+    for state in contributing {
+        for kill in &state.measure_kills {
+            joined.record_measure_kill(kill.clone());
+        }
+    }
+    joined.measure_kills
 }
 
 /// Returns the one deterministic premise traversal used by every affine

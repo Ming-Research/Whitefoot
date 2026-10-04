@@ -1,0 +1,17 @@
+struct Mark {
+  at: u64;
+  kind: u8;
+}
+
+fn marks_for(count: u64) -> result: Box<Slots<Mark>> pure contract {
+  requires count <= 1152921504606846975_u64;
+} {
+  doc "Room for count marks, bounded at the language's limit for Mark: floor((2^64 - 1) / 16).";
+  let marks = box_slots_new::<Mark>(capacity: count);
+  return move marks;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let marks = marks_for(count: 4_u64);
+  return std::process::exit_status(code: 0_u8);
+}

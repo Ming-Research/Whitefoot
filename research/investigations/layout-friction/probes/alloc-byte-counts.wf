@@ -1,0 +1,21 @@
+fn from_a_length(source: &[u64]) -> result: Box<Array<u8>> reads(source) {
+  doc "A flag per element of source: a one-byte element fits any u64 count.";
+  let count = source^.len;
+  let flags = box_array_filled::<u8>(count: count, value: 0_u8);
+  return move flags;
+}
+
+fn from_a_product(rows: u64, columns: u64) -> result: Box<Array<u8>> pure {
+  doc "A flag per row and column.";
+  let cells = rows *sat columns;
+  let occupied = box_array_filled::<u8>(count: cells, value: 0_u8);
+  return move occupied;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let rows = from_a_product(rows: 2_u64, columns: 3_u64);
+  if rows.inner.len != 6_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

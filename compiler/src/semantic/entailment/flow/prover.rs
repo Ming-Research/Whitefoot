@@ -95,7 +95,6 @@ impl Vocabulary {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Contradiction),
                 derivation: Some(derivation),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -113,7 +112,6 @@ impl Vocabulary {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::FiniteGoal),
                     derivation: Some(derivation),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -122,7 +120,6 @@ impl Vocabulary {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::FiniteGoal),
                     derivation: None,
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -176,7 +173,6 @@ impl Vocabulary {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::L0),
                 derivation: Some(derivation),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -200,7 +196,6 @@ impl Vocabulary {
                 disposition: ProofDisposition::Refuted,
                 route: Some(ProofRoute::L0),
                 derivation: None,
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -209,7 +204,6 @@ impl Vocabulary {
             disposition: ProofDisposition::Unknown,
             route: None,
             derivation: None,
-            numeric_upper_bound: None,
             product_interval: None,
         }
     }
@@ -581,16 +575,6 @@ impl Reasoning<'_, '_, '_> {
                 image,
             } => self.prove_conversion_domain(context, canonical, operand, image),
             ProofGoal::BoundedRelation(goal) => self.prove_bounded_relation(context, goal),
-            ProofGoal::NormalizedOrdering {
-                goal,
-                relation,
-                affine,
-                right,
-                upper_bound,
-            } => {
-                let proof = self.prove_normalized_ordering(&context, goal, relation, affine, right);
-                self.project_numeric_upper_bound(&context, proof, upper_bound)
-            }
         }
     }
 
@@ -610,7 +594,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Contradiction),
                 derivation: closed.contradiction_proof(),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -619,7 +602,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Unknown,
                 route: None,
                 derivation: None,
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         };
@@ -635,7 +617,6 @@ impl Reasoning<'_, '_, '_> {
             disposition: ProofDisposition::Proved,
             route: Some(ProofRoute::Affine),
             derivation: Some(derivation),
-            numeric_upper_bound: None,
             product_interval: None,
         }
     }
@@ -658,7 +639,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Contradiction),
                 derivation: closed.contradiction_proof(),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -686,7 +666,6 @@ impl Reasoning<'_, '_, '_> {
                     introduction: false,
                 }),
                 derivation: None,
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -719,7 +698,6 @@ impl Reasoning<'_, '_, '_> {
                     &self.vocabulary.goals,
                     &mut self.vocabulary.derivations,
                 ),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -747,7 +725,6 @@ impl Reasoning<'_, '_, '_> {
                     introduction: negative_introduction,
                 }),
                 derivation: None,
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -793,7 +770,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::Affine),
                     derivation: Some(derivation),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -909,7 +885,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::Affine),
                     derivation: Some(derivation),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -930,7 +905,6 @@ impl Reasoning<'_, '_, '_> {
             },
             route: derivation.map(|_| ProofRoute::Affine),
             derivation,
-            numeric_upper_bound: None,
             product_interval: None,
         }
     }
@@ -1100,7 +1074,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Contradiction),
                 derivation: closed.contradiction_proof(),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -1113,7 +1086,6 @@ impl Reasoning<'_, '_, '_> {
                         .relation_proof(relation, &mut self.vocabulary.derivations)
                         .expect("a proved L0 relation must retain its local derivation"),
                 ),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -1122,7 +1094,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Refuted,
                 route: Some(ProofRoute::L0),
                 derivation: None,
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -1132,7 +1103,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Unknown,
                 route: None,
                 derivation: None,
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         };
@@ -1153,7 +1123,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Unknown,
                     route: None,
                     derivation: None,
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             };
@@ -1172,7 +1141,6 @@ impl Reasoning<'_, '_, '_> {
             disposition: ProofDisposition::Proved,
             route: Some(ProofRoute::Affine),
             derivation: Some(derivation),
-            numeric_upper_bound: None,
             product_interval: None,
         }
     }
@@ -1196,7 +1164,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Contradiction),
                 derivation: closed.contradiction_proof(),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -1206,7 +1173,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::FiniteGoal),
                     derivation: closed.opaque_proof(canonical, GoalSign::Positive),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -1215,7 +1181,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::FiniteGoal),
                     derivation: None,
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -1234,7 +1199,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::L0),
                     derivation: Some(derivation),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -1243,7 +1207,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Refuted,
                     route: Some(ProofRoute::L0),
                     derivation: None,
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -1267,7 +1230,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::Affine),
                     derivation: Some(derivation),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -1295,7 +1257,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::Affine),
                     derivation: Some(derivation),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -1319,7 +1280,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::Affine),
                     derivation: Some(derivation),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -1329,210 +1289,8 @@ impl Reasoning<'_, '_, '_> {
             disposition: ProofDisposition::Unknown,
             route: None,
             derivation: None,
-            numeric_upper_bound: None,
             product_interval: None,
         }
-    }
-
-    /// Proves one canonical ordering that may also be represented by a finite
-    /// normalized goal. The goal identity has ordinary priority when present;
-    /// the bare L0 relation is the fallback only for source operands outside
-    /// that goal fragment. The affine route proves the same written relation
-    /// and, when needed, concludes the exact goal normalization in the same
-    /// call.
-    pub(super) fn prove_normalized_ordering(
-        &mut self,
-        context: &ProofContext<'_>,
-        goal: Option<GoalId>,
-        relation: Option<&Relation>,
-        affine_target: Option<&AffineInequality>,
-        right: Option<TermId>,
-    ) -> ProofResult {
-        let closed = close(
-            context.facts,
-            &self.vocabulary.terms,
-            &self.vocabulary.goals,
-            &mut self.vocabulary.derivations,
-        );
-        if closed.contradictory() {
-            return ProofResult {
-                disposition: ProofDisposition::Proved,
-                route: Some(ProofRoute::Contradiction),
-                derivation: closed.contradiction_proof(),
-                numeric_upper_bound: None,
-                product_interval: None,
-            };
-        }
-        if let Some(goal) = goal {
-            if closed.holds_opaque(goal, GoalSign::Positive) {
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::FiniteGoal),
-                    derivation: closed.opaque_proof(goal, GoalSign::Positive),
-                    numeric_upper_bound: None,
-                    product_interval: None,
-                };
-            }
-            if closed.holds_opaque(goal, GoalSign::Negative) {
-                return ProofResult {
-                    disposition: ProofDisposition::Refuted,
-                    route: Some(ProofRoute::FiniteGoal),
-                    derivation: None,
-                    numeric_upper_bound: None,
-                    product_interval: None,
-                };
-            }
-        }
-        if let Some(relation) = relation {
-            if closed.derives(relation) {
-                let parent = closed
-                    .relation_proof(relation, &mut self.vocabulary.derivations)
-                    .expect("a proved L0 relation must retain its local derivation");
-                let derivation =
-                    self.vocabulary
-                        .goal_numeric_derivation(goal, Some(relation), parent);
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::L0),
-                    derivation: Some(derivation),
-                    numeric_upper_bound: None,
-                    product_interval: None,
-                };
-            }
-            if closed.derives(&relation.negated()) {
-                return ProofResult {
-                    disposition: ProofDisposition::Refuted,
-                    route: Some(ProofRoute::L0),
-                    derivation: None,
-                    numeric_upper_bound: None,
-                    product_interval: None,
-                };
-            }
-        }
-
-        let Some(target) = affine_target else {
-            return ProofResult {
-                disposition: ProofDisposition::Unknown,
-                route: None,
-                derivation: None,
-                numeric_upper_bound: None,
-                product_interval: None,
-            };
-        };
-        let Some(proof) = self.numeric_affine_proof(target, right, *context) else {
-            return ProofResult {
-                disposition: ProofDisposition::Unknown,
-                route: None,
-                derivation: None,
-                numeric_upper_bound: None,
-                product_interval: None,
-            };
-        };
-        let consequence = self
-            .vocabulary
-            .derivations
-            .intern(DerivationNode::AffineConsequence {
-                relation: relation.cloned().map(Box::new),
-                premises: proof.premises.into_boxed_slice(),
-                parents: proof.parents,
-            });
-        let derivation = self
-            .vocabulary
-            .goal_numeric_derivation(goal, relation, consequence);
-        ProofResult {
-            disposition: ProofDisposition::Proved,
-            route: Some(ProofRoute::Affine),
-            derivation: Some(derivation),
-            numeric_upper_bound: None,
-            product_interval: None,
-        }
-    }
-
-    /// Projects the tightest numeric ceiling available from the same proof
-    /// context after, and only after, the normalized ordering was proved.
-    /// This is not another admission query: the selected `ProofResult` remains
-    /// the sole acceptance authority. The projection merely chooses between
-    /// the ordering's own admitted ceiling, the ordinary closure, and the
-    /// fixed affine interval rule, retaining the derivation for the chosen
-    /// number.
-    pub(super) fn project_numeric_upper_bound(
-        &mut self,
-        context: &ProofContext<'_>,
-        mut proof: ProofResult,
-        request: Option<NumericUpperBoundRequest<'_>>,
-    ) -> ProofResult {
-        let Some(request) = request else {
-            return proof;
-        };
-        if proof.disposition != ProofDisposition::Proved {
-            return proof;
-        }
-        let Some(admission_derivation) = proof.derivation else {
-            return proof;
-        };
-        if proof.route == Some(ProofRoute::Contradiction) {
-            proof.numeric_upper_bound = Some(ProvedNumericUpperBound {
-                value: 0,
-                derivation: admission_derivation,
-            });
-            return proof;
-        }
-
-        let mut selected = ProvedNumericUpperBound {
-            value: request.admitted,
-            derivation: admission_derivation,
-        };
-
-        if let Some(term) = request.term {
-            let closed = close(
-                context.facts,
-                &self.vocabulary.terms,
-                &self.vocabulary.goals,
-                &mut self.vocabulary.derivations,
-            );
-            if let Some(candidate) = closed.tight_bound(term, ZERO)
-                && candidate < selected.value
-                && let Some(derivation) =
-                    closed.bound_proof(term, ZERO, candidate, &mut self.vocabulary.derivations)
-            {
-                selected = ProvedNumericUpperBound {
-                    value: candidate,
-                    derivation,
-                };
-            }
-        }
-
-        if let Some(form) = request.affine {
-            let assumptions = affine_facts(context.affine);
-            if let Some(endpoint) = self
-                .affine_closed_interval_proof(form, &assumptions, context.affine, context.facts)
-                .map(|interval| interval.maximum)
-                && endpoint.value < selected.value
-            {
-                let relation = request.term.map(|left| {
-                    Box::new(Relation::Bound {
-                        left,
-                        right: ZERO,
-                        bound: endpoint.value,
-                    })
-                });
-                let derivation =
-                    self.vocabulary
-                        .derivations
-                        .intern(DerivationNode::AffineConsequence {
-                            relation,
-                            premises: endpoint.consequence.premises.into_boxed_slice(),
-                            parents: endpoint.consequence.parents,
-                        });
-                selected = ProvedNumericUpperBound {
-                    value: endpoint.value,
-                    derivation,
-                };
-            }
-        }
-
-        proof.numeric_upper_bound = Some(selected);
-        proof
     }
 
     /// Interns one measure term over a place spelled in the compact
@@ -1946,7 +1704,6 @@ impl Reasoning<'_, '_, '_> {
                     disposition: ProofDisposition::Proved,
                     route: Some(ProofRoute::L0),
                     derivation: Some(parent),
-                    numeric_upper_bound: None,
                     product_interval: None,
                 };
             }
@@ -2228,7 +1985,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Affine),
                 derivation: Some(derivation),
-                numeric_upper_bound: None,
                 product_interval: None,
             };
         }
@@ -2245,7 +2001,6 @@ impl Reasoning<'_, '_, '_> {
                 disposition: ProofDisposition::Proved,
                 route: Some(ProofRoute::Affine),
                 derivation: Some(derivation),
-                numeric_upper_bound: None,
                 // [ENT-3.S7]'s multiplication row establishes this interval on
                 // whatever value the multiplication binds. It travels with the
                 // judgment because only this route proved it: a domain
@@ -2259,7 +2014,6 @@ impl Reasoning<'_, '_, '_> {
             disposition: ProofDisposition::Unknown,
             route: None,
             derivation: None,
-            numeric_upper_bound: None,
             product_interval: None,
         }
     }

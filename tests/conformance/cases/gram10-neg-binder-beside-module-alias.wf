@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias process = std::process;
+
+fn first(found: Option<u8>) -> result: u8 pure {
+  doc "A match binder spelled like a module alias: a module alias is in both use classes, so the binder competes with it and GRAM-10, which owns binder freshness, refuses it [GRAM-10, TYPE-6].";
+  match found {
+    Some(value: process) => {
+      return process;
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

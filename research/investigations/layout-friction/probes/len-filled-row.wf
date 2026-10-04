@@ -1,0 +1,22 @@
+struct Block {
+  y: i32;
+  height: i32;
+}
+
+struct Ctx {
+  blocks: Box<Slots<Block>>;
+  width: i32;
+}
+
+fn lift_all(context: &Ctx) -> result: unit writes(context.blocks.inner.filled) {
+  doc "Raises every element and declares only the filled slots, which do not cover the length.";
+  let count = context^.blocks.inner.len;
+  for (k in 0_u64..count) {
+    set context^.blocks.inner[k].y = context^.blocks.inner[k].y +sat 1_i32;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

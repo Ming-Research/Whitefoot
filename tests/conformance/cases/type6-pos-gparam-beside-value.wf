@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn double(value: u8) -> result: u8 pure {
+  return value +wrap value;
+}
+
+fn apply<fn step(value: u8) -> result: u8 pure>(seed: u8) -> result: u8 pure {
+  doc "A local value takes the spelling of the function-kind parameter it is computed by: a callable and a value do not compete [TYPE-6].";
+  let step = step(value: seed);
+  return step;
+}
+
+fn main() -> status: ExitStatus pure {
+  let got = apply::<fn double>(seed: 3_u8);
+  if got != 6_u8 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

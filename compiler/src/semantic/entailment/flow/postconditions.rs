@@ -1500,6 +1500,7 @@ impl Reasoning<'_, '_, '_> {
                 place,
                 element,
                 source,
+                narrowed,
             } => self.event_kills_term(
                 separations,
                 substitution.term,
@@ -1507,6 +1508,7 @@ impl Reasoning<'_, '_, '_> {
                     place: place.clone(),
                     element: *element,
                     source: source.clone(),
+                    narrowed: narrowed.clone(),
                 },
             ),
             _ => self.event_kills_term(separations, substitution.term, event),
@@ -1554,6 +1556,7 @@ impl Reasoning<'_, '_, '_> {
                 place,
                 element,
                 source,
+                narrowed,
             } => self.event_kills_term(
                 separations,
                 term,
@@ -1561,6 +1564,7 @@ impl Reasoning<'_, '_, '_> {
                     place: place.clone(),
                     element: *element,
                     source: source.clone(),
+                    narrowed: narrowed.clone(),
                 },
             ),
             _ => self.event_kills_term(separations, term, event),
