@@ -369,6 +369,8 @@ fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, form
         let local_prefix_98 = box_slots_new::<u8>(capacity: 4_u64);
         let local_integer_99 = False();
         let local_special_100 = False();
+        let null_char = False();
+        let octal_prefix = False();
         let local_q_101 = local_specifier_94 == 113_u8;
         let local_ss_102 = local_specifier_94 == 115_u8;
         if bor(local_q_101, local_ss_102) {
@@ -489,8 +491,9 @@ fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, form
             let local_byte_139 = cvt.wrap::<i64, u8>(local_code_138);
             if local_byte_139 != 0_u8 {
               bytes_push(bytes: &local_item_97, byte: local_byte_139);
+            } else {
+              set null_char = True();
             }
-            set local_zero_80 = False();
           } else if local_numeric_int_124 {
             set local_integer_99 = True();
             let local_truncated_140 = ftrunc(local_x_136);
@@ -553,6 +556,7 @@ fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, form
                 }
                 if local_first_150 != 48_u8 {
                   bytes_push(bytes: &local_prefix_98, byte: 48_u8);
+                  set octal_prefix = True();
                 }
               }
             }
@@ -609,10 +613,17 @@ fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, form
           if local_precision_88 >= 0_i64 {
             let local_p_163 = cvt::<i64, u64>(local_precision_88);
             set local_zeros_162 = local_p_163 -sat local_item_97.inner.len;
+            if octal_prefix {
+              set local_zeros_162 = local_zeros_162 -sat 1_u64;
+            }
             set local_zero_80 = False();
           }
         }
-        let local_subtotal_164 = local_prefix_98.inner.len +sat local_item_97.inner.len;
+        let logical_length = local_item_97.inner.len;
+        if null_char {
+          set logical_length = 1_u64;
+        }
+        let local_subtotal_164 = local_prefix_98.inner.len +sat logical_length;
         let local_total_165 = local_subtotal_164 +sat local_zeros_162;
         let local_padding_166 = local_width_83 -sat local_total_165;
         if local_minus_76 {
@@ -640,7 +651,8 @@ fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, form
         }
         let local_item_len_168 = local_item_97.inner.len;
         bytes_append(bytes: &local_out_71, text: &local_item_97.inner[0_u64..local_item_len_168]);
-        if local_minus_76 {
+        let trailing_padding = bnot(null_char);
+        if band(local_minus_76, trailing_padding) {
           for (i in 0_u64..local_padding_166) {
             bytes_push(bytes: &local_out_71, byte: 32_u8);
           }

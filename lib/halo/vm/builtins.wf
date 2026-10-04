@@ -256,8 +256,12 @@ fn builtin<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
           Is(x: number) => {
             let integral = ftrunc(number);
             set level = 0_u64;
-            if cvt.defined::<f64, u64>(integral) {
-              set level = cvt::<f64, u64>(integral);
+            if cvt.defined::<f64, i64>(integral) {
+              let integer = cvt::<f64, i64>(integral);
+              let narrowed = cvt.wrap::<i64, i32>(integer);
+              if narrowed > 0_i32 {
+                set level = cvt::<i32, u64>(narrowed);
+              }
             }
           }
           Not() => {
@@ -305,7 +309,9 @@ fn builtin<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
       Is(x: bound_x_14) => {
         let integral = ftrunc(bound_x_14);
         if cvt.defined::<f64, i64>(integral) {
-          let index = cvt::<f64, i64>(integral);
+          let integer = cvt::<f64, i64>(integral);
+          let narrowed = cvt.wrap::<i64, i32>(integer);
+          let index = cvt::<i32, i64>(narrowed);
           let total = argc -sat 1_u64;
           if total < 9223372036854775807_u64 {
             let nt = cvt::<u64, i64>(total);

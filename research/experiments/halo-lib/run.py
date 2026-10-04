@@ -12,7 +12,7 @@ import time
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-CORPUS = ('numeric', 'base', 'strings', 'tables', 'math', 'random', 'errors')
+CORPUS = ('numeric', 'base', 'strings', 'tables', 'math', 'random', 'errors', 'boundaries')
 
 
 def run(command, **kwargs):

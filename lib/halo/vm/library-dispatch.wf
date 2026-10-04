@@ -35,6 +35,17 @@ fn library_dispatch<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slo
 }
 
 fn library_error_location(vm: &Vm, pc: u64) -> r: unit writes(vm) {
+  if vm^.library_contexts.inner.len > 0_u64 {
+    let last = vm^.library_contexts.inner.len - 1_u64;
+    let context = vm^.library_contexts.inner[last];
+    let string_callback = context.id == builtin_tostring;
+    let sort_callback = context.id == builtin_table_sort;
+    if bor(string_callback, sort_callback) {
+      if context.phase == 2_u8 {
+        return unit;
+      }
+    }
+  }
   let value = vm^.error;
   let already = False();
   match str_of(v: value) {
@@ -58,6 +69,19 @@ fn library_error_location(vm: &Vm, pc: u64) -> r: unit writes(vm) {
       }
     }
     NoHandle() => {
+    }
+  }
+  return unit;
+}
+
+fn library_raw_error(vm: &Vm) -> r: unit writes(vm.library_contexts) {
+  if vm^.library_contexts.inner.len > 0_u64 {
+    let last = vm^.library_contexts.inner.len - 1_u64;
+    let context = vm^.library_contexts.inner[last];
+    let string_callback = context.id == builtin_tostring;
+    let sort_callback = context.id == builtin_table_sort;
+    if bor(string_callback, sort_callback) {
+      set vm^.library_contexts.inner[last].phase = 2_u8;
     }
   }
   return unit;

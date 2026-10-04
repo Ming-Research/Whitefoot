@@ -183,7 +183,7 @@ fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
     if argc >= 2_u64 {
       let local_absent_30 = is_nil(v: local_b_3);
       if bnot(local_absent_30) {
-        match lib_integer(vm: vm, value: local_b_3) {
+        match lib_int32(vm: vm, value: local_b_3) {
           Some(value: i) => {
             set local_base_29 = i;
           }
@@ -327,7 +327,7 @@ fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
     }
     let b_absent = is_nil(v: local_b_3);
     if bnot(b_absent) {
-      match lib_integer(vm: vm, value: local_b_3) {
+      match lib_int32(vm: vm, value: local_b_3) {
         Some(..) => {
         }
         None() => {
@@ -337,7 +337,7 @@ fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
     }
     let c_absent = is_nil(v: local_c_4);
     if bnot(c_absent) {
-      match lib_integer(vm: vm, value: local_c_4) {
+      match lib_int32(vm: vm, value: local_c_4) {
         Some(..) => {
         }
         None() => {
@@ -354,7 +354,8 @@ fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
     }
     let local_count_55 = local_end_54 -wrap local_first_53;
     let local_total_56 = cvt.wrap::<i64, u64>(local_count_55);
-    if local_total_56 >= 7999_u64 {
+    let result_limit = 8000_u64 -sat argc;
+    if local_total_56 >= result_limit {
       return lib_failure(vm: vm, text: &library_base_lib_text_17[0_u64..26_u64]);
     }
     let local_n_57 = local_total_56 + 1_u64;

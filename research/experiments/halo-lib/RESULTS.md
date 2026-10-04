@@ -6,9 +6,9 @@ Reference-only C bootstrap installs callbacks from Redis 7.0.15 script_lua.c and
 
 ```json
 {
-  "source_revision": "2e29abb566e24f4aa416fc8043bb00ddec1504ae",
+  "source_revision": "7775cd8206b63e933318fad4e25ed4354a268afd",
   "source_sha256": {
-    "lib/halo/vm/LICENSE.md": "9115638da9ecfb50dc428140913d782c803c957f6952152829b8a542fe61e4a1",
+    "lib/halo/vm/LICENSE.md": "d4f4b70cb6c589fa99130eaeb6c27daf5c52b634f4bf95dcd114d71a1dea44d1",
     "lib/halo/vm/builtins.wf": "3ad248a13b2fe02d84d1e5e4c91d7884d9449336109fd073d9d3a42607eba538",
     "lib/halo/vm/calls.wf": "d863461dbba0f1e9f39b6151bfc1cbf8db3055f01de0de1dffbe32f498a3d264",
     "lib/halo/vm/collect.wf": "2875232dbf0186415be8e521c0a2d14614638be8173ba2fcc79eb85df6915e63",
@@ -37,7 +37,7 @@ Reference-only C bootstrap installs callbacks from Redis 7.0.15 script_lua.c and
     "research/experiments/halo-lib/math.lua": "94fa8a2a02d1e2bdfc6a179a36c5cce0a691c610e404d7451040982b27a0e6e0",
     "research/experiments/halo-lib/numeric.lua": "464e90d62ec5d76ba8e9a10b27f5520eb5cd40327db5459030ef56c405a28360",
     "research/experiments/halo-lib/random.lua": "8bf555f9849c7a660d559a005953a11f075e09effdf83ddc917604b25b50f399",
-    "research/experiments/halo-lib/reference.c": "d72eb1173bae2f9fbc562314b2077d99691203d2f5248225fdc3ee38276b262e",
+    "research/experiments/halo-lib/reference.c": "6cb2ae2e3bce6592098340bc83617711701888f9cd0087963bb8b4ab97afa3d7",
     "research/experiments/halo-lib/reference.lua": "95ae4a1334f2924ad3f57e14240a4ba99a994b0955cc2c8351fffa85d1f592f4",
     "research/experiments/halo-lib/run.py": "5d06a811053554604f0fe93cb0ef2bd208540b9655a213ca40ef25b608804740",
     "research/experiments/halo-lib/strings.lua": "287a3124aa459d324e8c39d33d68dc1d47ba2a9fff09997fb03f33f7010028e7",
@@ -57,149 +57,202 @@ Reference-only C bootstrap installs callbacks from Redis 7.0.15 script_lua.c and
       "budget": 18446744073709551615,
       "lines": 5,
       "equal": true,
-      "seconds": 0.0033874576911330223
+      "seconds": 0.005251625087112188
     },
     {
       "script": "numeric",
       "budget": 7,
       "lines": 5,
       "equal": true,
-      "seconds": 0.0031401249580085278
+      "seconds": 0.005322250071913004
     },
     {
       "script": "numeric",
       "budget": 1,
       "lines": 5,
       "equal": true,
-      "seconds": 0.00301929097622633
+      "seconds": 0.006027417257428169
     },
     {
       "script": "base",
       "budget": 18446744073709551615,
       "lines": 22,
       "equal": true,
-      "seconds": 0.0031859995797276497
+      "seconds": 0.0045373328030109406
     },
     {
       "script": "base",
       "budget": 7,
       "lines": 22,
       "equal": true,
-      "seconds": 0.0032167499884963036
+      "seconds": 0.004201625008136034
     },
     {
       "script": "base",
       "budget": 1,
       "lines": 22,
       "equal": true,
-      "seconds": 0.003355917055159807
+      "seconds": 0.00445404089987278
     },
     {
       "script": "strings",
       "budget": 18446744073709551615,
       "lines": 17,
       "equal": true,
-      "seconds": 0.0034930002875626087
+      "seconds": 0.0038302079774439335
     },
     {
       "script": "strings",
       "budget": 7,
       "lines": 17,
       "equal": true,
-      "seconds": 0.0035865409299731255
+      "seconds": 0.0036780829541385174
     },
     {
       "script": "strings",
       "budget": 1,
       "lines": 17,
       "equal": true,
-      "seconds": 0.0035211672075092793
+      "seconds": 0.003535791765898466
     },
     {
       "script": "tables",
       "budget": 18446744073709551615,
       "lines": 13,
       "equal": true,
-      "seconds": 0.0033069592900574207
+      "seconds": 0.0032432912848889828
     },
     {
       "script": "tables",
       "budget": 7,
       "lines": 13,
       "equal": true,
-      "seconds": 0.003219250123947859
+      "seconds": 0.0033507919870316982
     },
     {
       "script": "tables",
       "budget": 1,
       "lines": 13,
       "equal": true,
-      "seconds": 0.003178166691213846
+      "seconds": 0.003191041760146618
     },
     {
       "script": "math",
       "budget": 18446744073709551615,
       "lines": 11,
       "equal": true,
-      "seconds": 0.003043999895453453
+      "seconds": 0.0030587497167289257
     },
     {
       "script": "math",
       "budget": 7,
       "lines": 11,
       "equal": true,
-      "seconds": 0.0032162917777895927
+      "seconds": 0.0030904579907655716
     },
     {
       "script": "math",
       "budget": 1,
       "lines": 11,
       "equal": true,
-      "seconds": 0.0030139172449707985
+      "seconds": 0.0030025001615285873
     },
     {
       "script": "random",
       "budget": 18446744073709551615,
       "lines": 16,
       "equal": true,
-      "seconds": 0.002927834168076515
+      "seconds": 0.0030922922305762768
     },
     {
       "script": "random",
       "budget": 7,
       "lines": 16,
       "equal": true,
-      "seconds": 0.0029442082159221172
+      "seconds": 0.003059291746467352
     },
     {
       "script": "random",
       "budget": 1,
       "lines": 16,
       "equal": true,
-      "seconds": 0.00294141611084342
+      "seconds": 0.003156291786581278
     },
     {
       "script": "errors",
       "budget": 18446744073709551615,
       "lines": 13,
       "equal": true,
-      "seconds": 0.0029831253923475742
+      "seconds": 0.0032879579812288284
     },
     {
       "script": "errors",
       "budget": 7,
       "lines": 13,
       "equal": true,
-      "seconds": 0.002983999904245138
+      "seconds": 0.0031219585798680782
     },
     {
       "script": "errors",
       "budget": 1,
       "lines": 13,
       "equal": true,
-      "seconds": 0.0030028331093490124
+      "seconds": 0.0031111659482121468
     }
   ],
   "mismatches": []
 }
 ```
+
+Additional validation:
+
+- Direct `whitefootc --graph lib/halo/modules.wfg --check-modules`: exit 0,
+  no diagnostics, on the VM source committed in `07e35a5ff`; later commits
+  change experiment code and license prose, not WF module bodies.
+- Native adapter compilation through `modules.wfg`, entry `run`: exit 0.
+  The adapter compiles Lua sources with `pkg::compile::compile` and executes
+  them through `pkg::vm::start`, resuming every budget exit.
+- Comparator controls detected changed bytes, removed lines and reordered
+  lines. The adapter's initial EOF handling failed with exit 2 and was fixed
+  to distinguish `ReadEnd` from `ReadFailed`.
+- The initial Lua-only Redis bootstrap lost error locations through tail
+  calls, giving three mismatched comparisons. The native reference shim
+  fixes that oracle defect; the VM random implementation was unchanged.
+- `git diff --check` and Python syntax compilation passed. No Cargo, full
+  repository gate, network operation, push or pull request was run.
+
+Coverage is seven scripts, 97 unique output lines and 291 compared lines.
+The corpus calls all 60 installed functions, the private ipairs iterator,
+and both math constants. Sort includes a full comparator side-effect trace,
+a reversed comparator and the invalid-order error; callbacks also run with
+budgets 7 and 1. Format covers every requested conversion, flags, widths,
+precisions, binary strings and scanner errors. The numeric script covers
+arithmetic and numeric-for string coercion, concatenation and exponentiation.
+
+Remaining uncertainty and findings:
+
+- The numerical ports have selected normal, small and very large argument
+  observations. This is not an exhaustive error bound or correctly rounded
+  claim for all binary64 inputs. The reduction adaptation and port lineage
+  are documented in `lib/halo/vm/LICENSE.md`.
+- PUC object address text necessarily differs from Halo handle text. The
+  corpus compares scalar and explicit `__tostring` results. Host print is
+  only a scalar oracle adapter.
+- `Script` lacks a chunk source-name field, so VM error locations retain the
+  existing `user_script` naming convention. General chunk-name propagation
+  requires changes to the value/compiler owners outside this task's scope.
+- C conversions outside their representable range and enormous intervals
+  that overflow PUC's signed C arithmetic remain platform-dependent and are
+  not covered by these scripts.
+- Decimal and log/exp internal helpers duplicate the existing number package
+  because changing that package's exports was outside the allowed files.
+  Share those helpers when that interface is next in scope.
+- Native generic-template checking grew substantially for this adapter. A
+  process sample showed entailment flow walking and flow joins; no isolated
+  cause or compiler change is claimed. Reopen with a reduced checker witness
+  if this build cost blocks the next Halo experiment.
+- These deferred cross-owner findings are recorded here because the task
+  permits edits only under the VM and this experiment; `docs/todo.md` and
+  design-tree updates were outside the authorized file boundary.
+
+No specification rule or conformance evidence changed.

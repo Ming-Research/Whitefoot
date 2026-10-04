@@ -16,7 +16,7 @@ const library_string_lib_text_2: Array<u8, 13> = "invalid value";
 
 const library_string_lib_text_3: Array<u8, 13> = "invalid value";
 
-const library_string_lib_text_4: Array<u8, 21> = "string slice too long";
+const library_string_lib_text_4: Array<u8, 38> = "stack overflow (string slice too long)";
 
 const library_string_lib_text_5: Array<u8, 17> = "not enough memory";
 
@@ -44,7 +44,7 @@ fn library_string(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: 
     for (i in 0_u64..argc) {
       let local_value_8 = argument(stack: stack, func: func, argc: argc, index: i);
       let local_argindex_9 = i +sat 1_u64;
-      match lib_integer(vm: vm, value: local_value_8) {
+      match lib_int32(vm: vm, value: local_value_8) {
         Some(value: code) => {
           if code < 0_i64 {
             return lib_argtext(vm: vm, id: id, index: local_argindex_9, text: &library_string_lib_text_2[0_u64..13_u64]);
@@ -172,8 +172,9 @@ fn library_string(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: 
     }
     let local_count_30 = local_end_24 -wrap local_start_23;
     let local_n_31 = cvt.wrap::<i64, u64>(local_count_30);
-    if local_n_31 >= 7999_u64 {
-      return lib_failure(vm: vm, text: &library_string_lib_text_4[0_u64..21_u64]);
+    let result_limit = 8000_u64 -sat argc;
+    if local_n_31 >= result_limit {
+      return lib_failure(vm: vm, text: &library_string_lib_text_4[0_u64..38_u64]);
     }
     let local_count_32 = local_n_31 + 1_u64;
     let local_begin_33 = cvt.wrap::<i64, u64>(local_start_23);
@@ -194,7 +195,7 @@ fn library_string(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: 
   }
   let local_repeats_40 = 1_i64;
   if id == builtin_string_rep {
-    match lib_integer(vm: vm, value: local_b_5) {
+    match lib_int32(vm: vm, value: local_b_5) {
       Some(value: n) => {
         set local_repeats_40 = n;
       }

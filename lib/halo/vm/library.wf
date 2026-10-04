@@ -751,7 +751,7 @@ fn lib_integer(vm: &Vm, value: Value) -> r: Option<i64> reads(vm) {
 }
 
 fn lib_index(vm: &Vm, value: Value, default_value: i64) -> r: i64 reads(vm) {
-  match lib_integer(vm: vm, value: value) {
+  match lib_int32(vm: vm, value: value) {
     Some(value: i) => {
       return i;
     }
@@ -864,4 +864,17 @@ fn install_libraries(vm: &Vm) -> r: unit writes(vm) {
     }
   }
   return unit;
+}
+
+fn lib_int32(vm: &Vm, value: Value) -> r: Option<i64> reads(vm) {
+  match lib_integer(vm: vm, value: value) {
+    Some(value: integer) => {
+      let narrowed = cvt.wrap::<i64, i32>(integer);
+      let widened = cvt::<i32, i64>(narrowed);
+      return Some<i64>(value: widened);
+    }
+    None() => {
+      return None<i64>();
+    }
+  }
 }

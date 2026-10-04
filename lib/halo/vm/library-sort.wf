@@ -69,11 +69,13 @@ fn sort_compare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
       }
       let local_op_13 = SlowOp::Lt();
       if local_dest_6 < stack^.inner.len {
-        return slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: local_op_13, dest: local_dest_6, b: a, c: b, v: local_nil_7);
+        let compared = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: local_op_13, dest: local_dest_6, b: a, c: b, v: local_nil_7);
+        return compared;
       }
       return False();
     }
-    return callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: local_dest_6, f: local_call_5.comparator, b: a, c: b, third: local_nil_7, argc: 2_u64, wanted: 1_i64, mode: 0_u8);
+    let compared = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: local_dest_6, f: local_call_5.comparator, b: a, c: b, third: local_nil_7, argc: 2_u64, wanted: 1_i64, mode: 0_u8);
+    return compared;
   }
   return False();
 }
@@ -98,6 +100,7 @@ fn sort_run<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value
     if local_frame_16.context != context {
       return True();
     }
+    set vm^.library_contexts.inner[context].phase = 0_u8;
     let local_call_17 = vm^.library_contexts.inner[context];
     let local_table_18 = local_call_17.table;
     let local_result_19 = argument(stack: stack, func: local_call_17.frame.func, argc: 1_u64, index: 18446744073709551615_u64);

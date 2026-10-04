@@ -237,6 +237,9 @@ fn callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value
     }
     Error() => {
       let ignored = unwind(vm: vm, stack: stack);
+      if plan.kind == 4_u8 {
+        library_raw_error(vm: vm);
+      }
     }
     Budget() => {
       park_suspended_stack(vm: vm, stack: stack);
@@ -700,10 +703,15 @@ fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
   if name == 7_u8 {
     let kb = kind(v: b);
     let bad = b;
-    if kb == 3_u8 {
+    let string_left = kb == 3_u8;
+    let number_left = kb == 2_u8;
+    if bor(string_left, number_left) {
       set bad = c;
     }
-    return type_error(vm: vm, v: bad, op: 3_u8);
+    let rejected = type_error(vm: vm, v: bad, op: 3_u8);
+    let pc = vm^.callback_plan.pc;
+    library_error_location(vm: vm, pc: pc);
+    return rejected;
   }
   if name == 8_u8 {
     return type_error(vm: vm, v: b, op: 4_u8);

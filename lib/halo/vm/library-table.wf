@@ -108,7 +108,7 @@ fn library_table<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<
     let local_end_18 = local_pos_17;
     let local_value_19 = local_b_4;
     if argc == 3_u64 {
-      match lib_integer(vm: vm, value: local_b_4) {
+      match lib_int32(vm: vm, value: local_b_4) {
         Some(value: i) => {
           let local_narrow_20 = cvt.wrap::<i64, i32>(i);
           set local_pos_17 = cvt::<i32, i64>(local_narrow_20);
@@ -147,7 +147,7 @@ fn library_table<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<
     let local_pos_26 = local_n_11;
     let local_absent_27 = is_nil(v: local_b_4);
     if bnot(local_absent_27) {
-      match lib_integer(vm: vm, value: local_b_4) {
+      match lib_int32(vm: vm, value: local_b_4) {
         Some(value: i) => {
           let local_narrow_28 = cvt.wrap::<i64, i32>(i);
           set local_pos_26 = cvt::<i32, i64>(local_narrow_28);
@@ -188,7 +188,7 @@ fn library_table<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<
     let local_last_36 = local_n_11;
     let local_absent_c_37 = is_nil(v: local_c_5);
     if bnot(local_absent_c_37) {
-      match lib_integer(vm: vm, value: local_c_5) {
+      match lib_int32(vm: vm, value: local_c_5) {
         Some(value: i) => {
           set local_first_35 = i;
         }
@@ -199,7 +199,7 @@ fn library_table<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<
     }
     let local_absent_d_38 = is_nil(v: local_d_6);
     if bnot(local_absent_d_38) {
-      match lib_integer(vm: vm, value: local_d_6) {
+      match lib_int32(vm: vm, value: local_d_6) {
         Some(value: i) => {
           set local_last_36 = i;
         }
