@@ -1,3 +1,7 @@
 package halo = "../../../lib/halo";
-pkg::test: [halo::embed, halo::value, halo::heap, halo::vm, halo::number, std::io, std::process, std::fs, std::time, std::text];
+
+pkg::test: [halo::embed, halo::value, halo::heap, halo::vm, halo::number, halo::compile, std::io, std::process, std::fs, std::time, std::text];
+
 entry test = pkg::test::main;
+
+entry smoke = pkg::test::smoke;

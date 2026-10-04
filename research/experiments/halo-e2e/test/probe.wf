@@ -1,0 +1,290 @@
+alias Engine = halo::embed::Engine;
+alias Value = halo::value::Value;
+alias Outcome = halo::vm::Outcome;
+alias HostOutcome = halo::vm::HostOutcome;
+alias Host = halo::vm::Host;
+alias Vm = halo::vm::Vm;
+alias ExitStatus = std::process::ExitStatus;
+
+struct Probe {
+  mode: u8;
+  calls: u64;
+}
+
+fn probe_call(env: &Probe, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  set env^.calls = env^.calls +sat 1_u64;
+  if env^.mode == 2_u8 {
+    return HostOutcome::Stop();
+  }
+  if env^.mode == 1_u8 {
+    set vm^.error = Value::Num(n: 99.0_f64);
+    return HostOutcome::Raised();
+  }
+  if func < stack^.inner.len {
+    set stack^.inner[func] = Value::Num(n: 73.0_f64);
+  }
+  return HostOutcome::Returned(count: 1_u64);
+}
+
+binding ProbeHost : Host<Probe> {
+  call = probe_call;
+}
+
+fn probe_run(engine: &Engine, env: &Probe, script: halo::embed::ScriptId) -> r: Outcome writes(engine), writes(env) {
+  let out = halo::embed::start::<ProbeHost>(engine: engine, env: env, script: script, budget: 1_u64);
+  let steps = 0_u64;
+  loop {
+    match out {
+      Done(..) => {
+        return out;
+      }
+      Error() => {
+        return out;
+      }
+      HostStopped() => {
+        return out;
+      }
+      Budget() => {
+        if steps > 100_u64 {
+          return out;
+        }
+        set steps = steps + 1_u64;
+        set out = halo::embed::resume::<ProbeHost>(engine: engine, env: env, budget: 1_u64);
+      }
+    }
+  }
+  return out;
+}
+
+fn returned(engine: &Engine, expected: f64) -> r: Bool reads(engine) {
+  match halo::embed::result(engine: engine, index: 0_u64) {
+    None() => {
+    }
+    Some(value: v) => {
+      match halo::embed::number_of(value: v) {
+        Is(x: x) => {
+          return feq(x, expected);
+        }
+        Not() => {
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn embed_probe() -> r: u8 pure {
+  let engine = halo::embed::new_engine(limit: 67108864_u64);
+  let env = Probe(mode: 0_u8, calls: 0_u64);
+  let host = Value::Builtin(id: 4096_u32);
+  let put = halo::embed::set_global(engine: &engine, name: &probe_text_0[0_u64..4_u64], value: host);
+  let held = halo::embed::intern(engine: &engine, bytes: &probe_text_1[0_u64..24_u64]);
+  let pinned = halo::embed::pin(engine: &engine, value: held);
+  let token = 0_u64;
+  match pinned {
+    None() => {
+      return 1_u8;
+    }
+    Some(value: t) => {
+      set token = t;
+    }
+  }
+  let inactive = halo::embed::compile(engine: &engine, chunk_name: &probe_text_2[0_u64..12_u64], source: &probe_text_3[0_u64..36_u64]);
+  let cached = halo::embed::ScriptId(slot: 0_u64, generation: 0_u64);
+  match move inactive {
+    Err(..) => {
+      return 2_u8;
+    }
+    Ok(value: id) => {
+      set cached = id;
+    }
+  }
+  let compiled = halo::embed::compile(engine: &engine, chunk_name: &probe_text_4[0_u64..12_u64], source: &probe_text_5[0_u64..51_u64]);
+  let active = cached;
+  match move compiled {
+    Err(..) => {
+      return 3_u8;
+    }
+    Ok(value: id) => {
+      set active = id;
+    }
+  }
+  set engine.vm.heap.threshold = 0_u64;
+  set engine.vm.heap.bytes_since_gc = 1_u64;
+  let ran = probe_run(engine: &engine, env: &env, script: active);
+  match ran {
+    Done(count: n) => {
+      if n != 1_u64 {
+        return 4_u8;
+      }
+    }
+    Error() => {
+      return 5_u8;
+    }
+    Budget() => {
+      return 6_u8;
+    }
+    HostStopped() => {
+      return 7_u8;
+    }
+  }
+  let ok = returned(engine: &engine, expected: 283.0_f64);
+  if bnot(ok) {
+    return 8_u8;
+  }
+  if env.calls != 1_u64 {
+    return 9_u8;
+  }
+  match halo::embed::string_of(engine: &engine, value: held) {
+    None() => {
+      return 10_u8;
+    }
+    Some(value: v) => {
+      if v.length != 24_u64 {
+        return 11_u8;
+      }
+    }
+  }
+  let cached_run = probe_run(engine: &engine, env: &env, script: cached);
+  match cached_run {
+    Done(..) => {
+    }
+    Error() => {
+      return 12_u8;
+    }
+    Budget() => {
+      return 13_u8;
+    }
+    HostStopped() => {
+      return 14_u8;
+    }
+  }
+  match halo::embed::result(engine: &engine, index: 0_u64) {
+    None() => {
+      return 15_u8;
+    }
+    Some(value: v) => {
+      match halo::embed::string_of(engine: &engine, value: v) {
+        None() => {
+          return 16_u8;
+        }
+        Some(value: view) => {
+          if view.length != 27_u64 {
+            return 17_u8;
+          }
+        }
+      }
+    }
+  }
+  set env.mode = 1_u8;
+  let raised = probe_run(engine: &engine, env: &env, script: active);
+  match raised {
+    Error() => {
+    }
+    Done(..) => {
+      return 18_u8;
+    }
+    Budget() => {
+      return 19_u8;
+    }
+    HostStopped() => {
+      return 20_u8;
+    }
+  }
+  let error = halo::embed::error_value(engine: &engine);
+  match halo::embed::number_of(value: error) {
+    Is(x: x) => {
+      let same = feq(x, 99.0_f64);
+      if bnot(same) {
+        return 21_u8;
+      }
+    }
+    Not() => {
+      return 22_u8;
+    }
+  }
+  set env.mode = 2_u8;
+  let stopped = probe_run(engine: &engine, env: &env, script: active);
+  match stopped {
+    HostStopped() => {
+    }
+    Error() => {
+      return 23_u8;
+    }
+    Done(..) => {
+      return 24_u8;
+    }
+    Budget() => {
+      return 25_u8;
+    }
+  }
+  halo::embed::reset(engine: &engine);
+  match halo::embed::result(engine: &engine, index: 0_u64) {
+    None() => {
+    }
+    Some(..) => {
+      return 26_u8;
+    }
+  }
+  halo::embed::unpin(engine: &engine, token: token);
+  set env.mode = 0_u8;
+  set engine.vm.heap.threshold = 0_u64;
+  set engine.vm.heap.bytes_since_gc = 1_u64;
+  let again = probe_run(engine: &engine, env: &env, script: active);
+  match halo::embed::string_of(engine: &engine, value: held) {
+    None() => {
+    }
+    Some(..) => {
+      return 27_u8;
+    }
+  }
+  halo::embed::forget_all(engine: &engine);
+  let stale = halo::embed::start::<ProbeHost>(engine: &engine, env: &env, script: active, budget: 1_u64);
+  match stale {
+    Error() => {
+    }
+    Done(..) => {
+      return 28_u8;
+    }
+    Budget() => {
+      return 29_u8;
+    }
+    HostStopped() => {
+      return 30_u8;
+    }
+  }
+  let invalid_resume = halo::embed::resume::<ProbeHost>(engine: &engine, env: &env, budget: 1_u64);
+  match invalid_resume {
+    Error() => {
+    }
+    Done(..) => {
+      return 31_u8;
+    }
+    Budget() => {
+      return 32_u8;
+    }
+    HostStopped() => {
+      return 33_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn smoke() -> status: ExitStatus pure {
+  let code = embed_probe();
+  return std::process::exit_status(code: code);
+}
+
+const probe_text_0: Array<u8, 4> = "host";
+
+const probe_text_1: Array<u8, 24> = "pinned-not-in-any-script";
+
+const probe_text_2: Array<u8, 12> = "@user_script";
+
+const probe_text_3: Array<u8, 36> = "return 'cached-not-in-active-script'";
+
+const probe_text_4: Array<u8, 12> = "@user_script";
+
+const probe_text_5: Array<u8, 51> = "local n=0; for i=1,20 do n=n+i end; return host()+n";

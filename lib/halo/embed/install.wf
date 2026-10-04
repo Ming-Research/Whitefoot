@@ -1,28 +1,31 @@
 alias Value = pkg::value::Value;
 
-const core: Array<BuiltinName, 8> =[
-  BuiltinName(name: "pcall           ", length: 5_u64, id: 0_u32),
-  BuiltinName(name: "error           ", length: 5_u64, id: 1_u32),
-  BuiltinName(name: "select          ", length: 6_u64, id: 2_u32),
-  BuiltinName(name: "type            ", length: 4_u64, id: 3_u32),
-  BuiltinName(name: "rawget          ", length: 6_u64, id: 4_u32),
-  BuiltinName(name: "rawset          ", length: 6_u64, id: 5_u32),
-  BuiltinName(name: "setmetatable    ", length: 12_u64, id: 6_u32),
-  BuiltinName(name: "getmetatable    ", length: 12_u64, id: 7_u32)
-];
+const core: Array<BuiltinName, 8> =[BuiltinName(name: "pcall           ", length: 5_u64, id: 0_u32), BuiltinName(name: "error           ", length: 5_u64, id: 1_u32), BuiltinName(name: "select          ", length: 6_u64, id: 2_u32), BuiltinName(name: "type            ", length: 4_u64, id: 3_u32), BuiltinName(name: "rawget          ", length: 6_u64, id: 4_u32), BuiltinName(name: "rawset          ", length: 6_u64, id: 5_u32), BuiltinName(name: "setmetatable    ", length: 12_u64, id: 6_u32), BuiltinName(name: "getmetatable    ", length: 12_u64, id: 7_u32)];
+
 const global_name: Array<u8, 2> = "_G";
+
 fn install(engine: &Engine, names: &[BuiltinName]) -> r: Bool reads(names), writes(engine) {
   let ok = True();
   for (i in 0_u64..names^.len) {
-    let row = names^[i]; let n = row.length;
+    let row = names^[i];
+    let n = row.length;
     if n <= 16_u64 {
       let v = Value::Builtin(id: row.id);
       let result = set_global(engine: engine, name: &row.name[0_u64..n], value: v);
-      match result { Ok(..) => {} Err(..) => {set ok = False();} }
-    } else {set ok = False();}
+      match result {
+        Ok(..) => {
+        }
+        Err(..) => {
+          set ok = False();
+        }
+      }
+    } else {
+      set ok = False();
+    }
   }
   return ok;
 }
+
 fn install_core(engine: &Engine) -> r: unit writes(engine) {
   let ok = install(engine: engine, names: &core[0_u64..8_u64]);
   let g = Value::Tab(h: engine^.vm.globals);

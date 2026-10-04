@@ -32,50 +32,50 @@ public struct BuiltinName {
   public id: u32;
 }
 
-public fn new_engine(limit: u64) -> r: Engine pure;
+public fn new_engine(limit: u64) -> r: Engine pure doc "Constructs an engine with core globals and a logical heap byte limit.";
 
-public fn compile(engine: &Engine, chunk_name: &[u8], source: &[u8]) -> r: Result<ScriptId, CompileError> reads(chunk_name), reads(source), writes(engine);
+public fn compile(engine: &Engine, chunk_name: &[u8], source: &[u8]) -> r: Result<ScriptId, CompileError> reads(chunk_name), reads(source), writes(engine) doc "Caches a compiled chunk; compiler error text is preserved.";
 
-public fn forget_all(engine: &Engine) -> r: unit writes(engine);
+public fn forget_all(engine: &Engine) -> r: unit writes(engine) doc "Resets and flushes compiled scripts, invalidating every ScriptId.";
 
-public fn reset(engine: &Engine) -> r: unit writes(engine);
+public fn reset(engine: &Engine) -> r: unit writes(engine) doc "Closes active upvalues and clears results and suspended execution.";
 
-public fn start<interface Host<E>>(engine: &Engine, env: &E, script: ScriptId, budget: u64) -> r: Outcome writes(engine), writes(env);
+public fn start<interface Host<E>>(engine: &Engine, env: &E, script: ScriptId, budget: u64) -> r: Outcome writes(engine), writes(env) doc "Starts a cached script with zero arguments and returns the VM outcome.";
 
-public fn resume<interface Host<E>>(engine: &Engine, env: &E, budget: u64) -> r: Outcome writes(engine), writes(env);
+public fn resume<interface Host<E>>(engine: &Engine, env: &E, budget: u64) -> r: Outcome writes(engine), writes(env) doc "Resumes a suspended script with a fresh safepoint budget.";
 
-public fn result(engine: &Engine, index: u64) -> r: Option<Value> reads(engine);
+public fn result(engine: &Engine, index: u64) -> r: Option<Value> reads(engine) doc "Returns a completed result in stack[0..result_count), or None.";
 
 public fn pin(engine: &Engine, value: Value) -> r: Option<u64> writes(engine) doc "Call while the engine is idle or suspended; the returned token is never reused. Roots are mirrored before dispatch.";
 
-public fn unpin(engine: &Engine, token: u64) -> r: unit writes(engine);
+public fn unpin(engine: &Engine, token: u64) -> r: unit writes(engine) doc "Releases an idle or suspended host root; unknown tokens do nothing.";
 
 public fn install(engine: &Engine, names: &[BuiltinName]) -> r: Bool reads(names), writes(engine) doc "Installs name/id rows in globals; may extend the current builtin table.";
 
-public fn intern(engine: &Engine, bytes: &[u8]) -> r: Value reads(bytes), writes(engine);
+public fn intern(engine: &Engine, bytes: &[u8]) -> r: Value reads(bytes), writes(engine) doc "Interns a byte string in the engine heap.";
 
-public fn string_of(engine: &Engine, value: Value) -> r: Option<StringView> reads(engine);
+public fn string_of(engine: &Engine, value: Value) -> r: Option<StringView> reads(engine) doc "Returns a live string handle and byte length for readonly byte access.";
 
-public fn number_of(value: Value) -> r: NumView pure;
+public fn number_of(value: Value) -> r: NumView pure doc "Views a numeric value without coercion.";
 
-public fn truthy(value: Value) -> r: Bool pure;
+public fn truthy(value: Value) -> r: Bool pure doc "Lua truth, false only for nil and false.";
 
 public fn kind(value: Value) -> r: u8 pure doc "0 nil, 1 boolean, 2 number, 3 string, 4 table, 5 function.";
 
-public fn new_table(engine: &Engine, asize: u32, hsize: u32) -> r: Value writes(engine);
+public fn new_table(engine: &Engine, asize: u32, hsize: u32) -> r: Value writes(engine) doc "Allocates a raw table with requested array and hash sizes.";
 
-public fn table_append(engine: &Engine, table: Value, value: Value) -> r: Result<unit, TableError> writes(engine);
+public fn table_append(engine: &Engine, table: Value, value: Value) -> r: Result<unit, TableError> writes(engine) doc "Appends at Lua border plus one; refuses an inexact numeric index.";
 
 public fn table_set(engine: &Engine, table: Value, key: Value, value: Value) -> r: Result<unit, TableError> writes(engine) doc "Raw host assignment, bypassing read_only and metamethods.";
 
-public fn table_get(engine: &Engine, table: Value, key: Value) -> r: Value reads(engine);
+public fn table_get(engine: &Engine, table: Value, key: Value) -> r: Value reads(engine) doc "Raw table lookup, returning nil when absent.";
 
-public fn table_border(engine: &Engine, table: Value) -> r: u64 reads(engine);
+public fn table_border(engine: &Engine, table: Value) -> r: u64 reads(engine) doc "Returns the Lua 5.1 table border.";
 
-public fn table_next(engine: &Engine, table: Value, key: Value) -> r: Result<Option<Pair>, TableError> reads(engine);
+public fn table_next(engine: &Engine, table: Value, key: Value) -> r: Result<Option<Pair>, TableError> reads(engine) doc "Traverses a raw table, reporting an invalid previous key.";
 
-public fn set_global(engine: &Engine, name: &[u8], value: Value) -> r: Result<unit, TableError> reads(name), writes(engine);
+public fn set_global(engine: &Engine, name: &[u8], value: Value) -> r: Result<unit, TableError> reads(name), writes(engine) doc "Host assignment to globals, bypassing readonly protection.";
 
-public fn error_value(engine: &Engine) -> r: Value reads(engine);
+public fn error_value(engine: &Engine) -> r: Value reads(engine) doc "Returns the original Lua error object.";
 
 public fn format_error(engine: &Engine, line: u64) -> r: Box<Slots<u8>> reads(engine) doc "Formats @user_script:LINE: msg using a host-supplied source line. Existing user_script locations are preserved. Zero means no known location.";

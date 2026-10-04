@@ -98,8 +98,8 @@ fn compile(engine: &Engine, chunk_name: &[u8], source: &[u8]) -> r: Result<Scrip
   }
   let compiled = pkg::compile::compile(heap: &engine^.vm.heap, chunk_name: chunk_name, source: source);
   match move compiled {
-    Err(error: error) => {
-      return Err<ScriptId, CompileError>(error: move error);
+    Err(error: problem) => {
+      return Err<ScriptId, CompileError>(error: move problem);
     }
     Ok(value: script) => {
       let n = engine^.scripts.inner.len;
@@ -119,6 +119,7 @@ fn compile(engine: &Engine, chunk_name: &[u8], source: &[u8]) -> r: Result<Scrip
             let id = ScriptId(slot: n, generation: engine^.generation);
             return Ok<ScriptId, CompileError>(value: id);
           }
+          return cache_failure();
         }
       }
     }

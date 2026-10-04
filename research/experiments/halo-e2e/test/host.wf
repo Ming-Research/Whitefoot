@@ -6,48 +6,120 @@ alias num_of = halo::value::num_of;
 alias str_of = halo::value::str_of;
 alias tab_of = halo::value::tab_of;
 
-struct Env { db: Value; types: Value; expiry: Value; error: Bool; line: u64; }
+struct Env {
+  db: Value;
+  types: Value;
+  expiry: Value;
+  error: Bool;
+  line: u64;
+}
 
 fn raw(vm: &Vm, table: Value, key: Value, value: Value) -> r: unit writes(vm) {
-  let written = halo::heap::table_set(heap: &vm^.heap, t: table, key: key, val: value); return unit;
+  let written_v0 = halo::heap::table_set(heap: &vm^.heap, t: table, key: key, val: value);
+  return unit;
 }
-fn get(vm: &Vm, table: Value, key: Value) -> r: Value reads(vm) { return halo::heap::table_get(heap: &vm^.heap, t: table, key: key); }
-fn literal(vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(vm) { return halo::heap::intern(heap: &vm^.heap, bytes: text); }
-fn num(x: f64) -> r: Value pure { return Value::Num(n: x); }
-fn kind(v: Value) -> r: u8 pure { return halo::embed::kind(value: v); }
-fn is_nil(v: Value) -> r: Bool pure { let k = kind(v: v); return k == 0_u8; }
-fn is_string(v: Value) -> r: Bool pure { let k = kind(v: v); return k == 3_u8; }
+
+fn get(vm: &Vm, table: Value, key: Value) -> r: Value reads(vm) {
+  return halo::heap::table_get(heap: &vm^.heap, t: table, key: key);
+}
+
+fn literal(vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(vm) {
+  return halo::heap::intern(heap: &vm^.heap, bytes: text);
+}
+
+fn num(x: f64) -> r: Value pure {
+  return Value::Num(n: x);
+}
+
+fn kind(v: Value) -> r: u8 pure {
+  return halo::embed::kind(value: v);
+}
+
+fn is_nil(v: Value) -> r: Bool pure {
+  let k_v1 = kind(v: v);
+  return k_v1 == 0_u8;
+}
+
+fn is_string(v: Value) -> r: Bool pure {
+  let k_v2 = kind(v: v);
+  return k_v2 == 3_u8;
+}
+
 fn arg(stack: &Box<Slots<Value>>, func: u64, argc: u64, index: u64) -> r: Value reads(stack) {
-  if index < argc { let at = func +sat 1_u64 +sat index; if at < stack^.inner.len { return stack^.inner[at]; } }
+  if index < argc {
+    let first_v3 = func +sat 1_u64;
+    let at_v4 = first_v3 +sat index;
+    if at_v4 < stack^.inner.len {
+      return stack^.inner[at_v4];
+    }
+  }
   return Value::Nil();
 }
+
 fn string_arg(vm: &Vm, v: Value) -> r: Value writes(vm) {
   match num_of(v: v) {
-    Is(x: n) => { let bytes = array_filled::<u8,32>(value: 0_u8); let count = halo::number::format_number(value: n, out: &bytes[0_u64..32_u64]); return literal(vm: vm, text: &bytes[0_u64..count]); }
-    Not() => { return v; }
+    Is(x: n_v5) => {
+      let bytes_v6 = array_filled::<u8, 32>(value: 0_u8);
+      let count_v7 = halo::number::format_number(value: n_v5, out: &bytes_v6[0_u64..32_u64]);
+      return literal(vm: vm, text: &bytes_v6[0_u64..count_v7]);
+    }
+    Not() => {
+      return v;
+    }
   }
 }
+
 fn number(vm: &Vm, v: Value) -> r: f64 reads(vm) {
-  match num_of(v: v) { Is(x: n) => {return n;} Not() => {} }
+  match num_of(v: v) {
+    Is(x: n_v8) => {
+      return n_v8;
+    }
+    Not() => {
+    }
+  }
   match halo::heap::string_of(heap: &vm^.heap, value: v) {
-    None() => {}
-    Some(value: view) => { let h = cvt::<u32,u64>(view.handle); if h < vm^.heap.strings.inner.len { let n = vm^.heap.strings.inner[h].payload.bytes.inner.len; match halo::number::str2number(bytes: &vm^.heap.strings.inner[h].payload.bytes.inner[0_u64..n]) { Some(value: x) => {return x;} None() => {} } } }
+    None() => {
+    }
+    Some(value: view_v9) => {
+      let h_v10 = cvt::<u32, u64>(view_v9.handle);
+      if h_v10 < vm^.heap.strings.inner.len {
+        let n_v11 = vm^.heap.strings.inner[h_v10].payload.bytes.inner.len;
+        match halo::number::str2number(bytes: &vm^.heap.strings.inner[h_v10].payload.bytes.inner[0_u64..n_v11]) {
+          Some(value: x_v12) => {
+            return x_v12;
+          }
+          None() => {
+          }
+        }
+      }
+    }
   }
   return 0.0_f64;
 }
+
 fn equals_text(vm: &Vm, value: Value, text: &[u8]) -> r: Bool reads(vm), reads(text) {
   match halo::heap::string_of(heap: &vm^.heap, value: value) {
-    None() => {return False();}
-    Some(value: view) => {
-      let h = cvt::<u32,u64>(view.handle);
-      if h < vm^.heap.strings.inner.len {
-        if vm^.heap.strings.inner[h].payload.bytes.inner.len == text^.len {
-          for (i in 0_u64..text^.len) {
-            if i < vm^.heap.strings.inner[h].payload.bytes.inner.len {
-              let b = vm^.heap.strings.inner[h].payload.bytes.inner[i];
-              if b >= 97_u8 { if b <= 122_u8 { set b = b - 32_u8; } }
-              if b != text^[i] { return False(); }
-            } else {return False();}
+    None() => {
+      return False();
+    }
+    Some(value: view_v13) => {
+      let h_v14 = cvt::<u32, u64>(view_v13.handle);
+      if h_v14 < vm^.heap.strings.inner.len {
+        if vm^.heap.strings.inner[h_v14].payload.bytes.inner.len == text^.len {
+          for (i_v15 in 0_u64..text^.len) {
+            if i_v15 < vm^.heap.strings.inner[h_v14].payload.bytes.inner.len {
+              let b_v16 = vm^.heap.strings.inner[h_v14].payload.bytes.inner[i_v15];
+              if b_v16 >= 97_u8 {
+                if b_v16 <= 122_u8 {
+                  set b_v16 = b_v16 - 32_u8;
+                }
+              }
+              if b_v16 != text^[i_v15] {
+                return False();
+              }
+            } else {
+              return False();
+            }
           }
           return True();
         }
@@ -56,67 +128,156 @@ fn equals_text(vm: &Vm, value: Value, text: &[u8]) -> r: Bool reads(vm), reads(t
   }
   return False();
 }
+
 fn reply_table(vm: &Vm, field: &[u8], v: Value) -> r: Value reads(field), writes(vm) {
-  let t = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 1_u32);
-  let key = literal(vm: vm, text: field); raw(vm: vm, table: t, key: key, value: v); return t;
+  let t_v17 = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 1_u32);
+  let key_v18 = literal(vm: vm, text: field);
+  raw(vm: vm, table: t_v17, key: key_v18, value: v);
+  return t_v17;
 }
+
 fn fail(env: &Env, vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(env), writes(vm) {
-  set env^.error = True(); return literal(vm: vm, text: text);
+  set env^.error = True();
+  return literal(vm: vm, text: text);
 }
+
 fn wrong_args(env: &Env, vm: &Vm) -> r: Value writes(env), writes(vm) {
   return fail(env: env, vm: vm, text: &s_0[0_u64..58_u64]);
 }
+
 fn wrong_type(env: &Env, vm: &Vm) -> r: Value writes(env), writes(vm) {
   return fail(env: env, vm: vm, text: &s_1[0_u64..65_u64]);
 }
+
 fn type_is(vm: &Vm, types: Value, key: Value, expected: f64) -> r: Bool reads(vm) {
-  let t = get(vm: vm, table: types, key: key);
-  match num_of(v: t) { Is(x: x) => {return feq(x,expected);} Not() => {return True();} }
+  let t_v19 = get(vm: vm, table: types, key: key);
+  match num_of(v: t_v19) {
+    Is(x: x_v20) => {
+      return feq(x_v20, expected);
+    }
+    Not() => {
+      return True();
+    }
+  }
 }
-fn set_kind(env: &Env, vm: &Vm, key: Value, k: f64) -> r: unit writes(vm), reads(env) {
-  let v = num(x: k); raw(vm: vm, table: env^.types, key: key, value: v); return unit;
+
+fn set_kind(env: &Env, vm: &Vm, key: Value, k: f64) -> r: unit reads(env), writes(vm) {
+  let v_v21 = num(x: k);
+  raw(vm: vm, table: env^.types, key: key, value: v_v21);
+  return unit;
 }
+
 fn erase(env: &Env, vm: &Vm, key: Value) -> r: unit reads(env), writes(vm) {
-  let nil = Value::Nil(); raw(vm: vm, table: env^.db, key: key, value: nil); raw(vm: vm, table: env^.types, key: key, value: nil); raw(vm: vm, table: env^.expiry, key: key, value: nil); return unit;
+  let nil_v22 = Value::Nil();
+  raw(vm: vm, table: env^.db, key: key, value: nil_v22);
+  raw(vm: vm, table: env^.types, key: key, value: nil_v22);
+  raw(vm: vm, table: env^.expiry, key: key, value: nil_v22);
+  return unit;
 }
+
 fn table_count(vm: &Vm, table: Value) -> r: u64 reads(vm) {
-  let key = Value::Nil(); let count = 0_u64;
-  loop { match halo::heap::table_next(heap: &vm^.heap, t: table, key: key) { Err(..) => {break;} Ok(value: opt) => { match opt { None() => {break;} Some(value: pair) => { set key = pair.key; set count = count +sat 1_u64; } } } } }
-  return count;
+  let key_v23 = Value::Nil();
+  let count_v24 = 0_u64;
+  loop {
+    match halo::heap::table_next(heap: &vm^.heap, t: table, key: key_v23) {
+      Err(..) => {
+        break;
+      }
+      Ok(value: opt_v25) => {
+        match opt_v25 {
+          None() => {
+            break;
+          }
+          Some(value: pair_v26) => {
+            set key_v23 = pair_v26.key;
+            set count_v24 = count_v24 +sat 1_u64;
+          }
+        }
+      }
+    }
+  }
+  return count_v24;
 }
+
 fn integer_string(vm: &Vm, value: i64) -> r: Value writes(vm) {
-  let bytes = box_slots_new::<u8>(capacity: 0_u64);
-  if value < 0_i64 { push(out: &bytes, byte: 45_u8); }
-  let mag = 0_u64;
-  if value < 0_i64 { let next = value + 1_i64; let neg = -next; let unsigned = cvt::<i64,u64>(neg); set mag = unsigned + 1_u64; } else {set mag = cvt::<i64,u64>(value);}
-  decimal(out: &bytes, n: mag);
-  let n = bytes.inner.len; return literal(vm: vm, text: &bytes.inner[0_u64..n]);
+  let bytes_v27 = box_slots_new::<u8>(capacity: 0_u64);
+  if value < 0_i64 {
+    push(out: &bytes_v27, byte: 45_u8);
+  }
+  let mag_v28 = 0_u64;
+  if value < 0_i64 {
+    let next_v29 = value + 1_i64;
+    let neg_v30 = 0_i64 - next_v29;
+    let unsigned_v31 = cvt::<i64, u64>(neg_v30);
+    set mag_v28 = unsigned_v31 + 1_u64;
+  } else {
+    set mag_v28 = cvt::<i64, u64>(value);
+  }
+  decimal(out: &bytes_v27, n: mag_v28);
+  let n_v32 = bytes_v27.inner.len;
+  return literal(vm: vm, text: &bytes_v27.inner[0_u64..n_v32]);
 }
+
 fn parse_integer(vm: &Vm, value: Value) -> r: Option<i64> reads(vm) {
   match halo::heap::string_of(heap: &vm^.heap, value: value) {
-    None() => {}
-    Some(value: view) => {
-      let h = cvt::<u32,u64>(view.handle);
-      if h < vm^.heap.strings.inner.len {
-        let len = vm^.heap.strings.inner[h].payload.bytes.inner.len;
-        if len > 0_u64 {
-          let neg = False(); let start = 0_u64;
-          if vm^.heap.strings.inner[h].payload.bytes.inner[0_u64] == 45_u8 { set neg = True(); set start = 1_u64; }
-          if start == len {return None<i64>();}
-          let n = 0_u64;
-          for (i in start..len) {
-            if i < vm^.heap.strings.inner[h].payload.bytes.inner.len {
-              let b = vm^.heap.strings.inner[h].payload.bytes.inner[i];
-              if b < 48_u8 {return None<i64>();} if b > 57_u8 {return None<i64>();}
-              let digit = b - 48_u8; let d = cvt::<u8,u64>(digit);
-              if n > 922337203685477580_u64 {return None<i64>();}
-              let next = n * 10_u64 + d;
-              let max = 9223372036854775807_u64; if neg {set max = 9223372036854775808_u64;}
-              if next > max {return None<i64>();} set n = next;
-            } else {return None<i64>();}
+    None() => {
+    }
+    Some(value: view_v33) => {
+      let h_v34 = cvt::<u32, u64>(view_v33.handle);
+      if h_v34 < vm^.heap.strings.inner.len {
+        let len_v35 = vm^.heap.strings.inner[h_v34].payload.bytes.inner.len;
+        if len_v35 > 0_u64 {
+          let neg_v36 = False();
+          let start_v37 = 0_u64;
+          if vm^.heap.strings.inner[h_v34].payload.bytes.inner[0_u64] == 45_u8 {
+            set neg_v36 = True();
+            set start_v37 = 1_u64;
           }
-          if neg { if n == 9223372036854775808_u64 {return Some<i64>(value: -9223372036854775808_i64);} if n <= 9223372036854775807_u64 {let v = cvt::<u64,i64>(n); let r = -v; return Some<i64>(value: r);} }
-          else {if n <= 9223372036854775807_u64 {let v = cvt::<u64,i64>(n); return Some<i64>(value: v);}}
+          if start_v37 == len_v35 {
+            return None<i64>();
+          }
+          let n_v38 = 0_u64;
+          for (i_v39 in start_v37..len_v35) {
+            if i_v39 < vm^.heap.strings.inner[h_v34].payload.bytes.inner.len {
+              let b_v40 = vm^.heap.strings.inner[h_v34].payload.bytes.inner[i_v39];
+              if b_v40 < 48_u8 {
+                return None<i64>();
+              }
+              if b_v40 > 57_u8 {
+                return None<i64>();
+              }
+              let digit_v41 = b_v40 - 48_u8;
+              let d_v42 = cvt::<u8, u64>(digit_v41);
+              if n_v38 > 922337203685477580_u64 {
+                return None<i64>();
+              }
+              let tens_v43 = n_v38 * 10_u64;
+              let next_v44 = tens_v43 + d_v42;
+              let max_v45 = 9223372036854775807_u64;
+              if neg_v36 {
+                set max_v45 = 9223372036854775808_u64;
+              }
+              if next_v44 > max_v45 {
+                return None<i64>();
+              }
+              set n_v38 = next_v44;
+            } else {
+              return None<i64>();
+            }
+          }
+          if neg_v36 {
+            if n_v38 == 9223372036854775808_u64 {
+              return Some<i64>(value: -9223372036854775808_i64);
+            }
+            if n_v38 <= 9223372036854775807_u64 {
+              let v_v46 = cvt::<u64, i64>(n_v38);
+              let r_v47 = 0_i64 - v_v46;
+              return Some<i64>(value: r_v47);
+            }
+          } else if n_v38 <= 9223372036854775807_u64 {
+            let v_v48 = cvt::<u64, i64>(n_v38);
+            return Some<i64>(value: v_v48);
+          }
         }
       }
     }
@@ -126,74 +287,481 @@ fn parse_integer(vm: &Vm, value: Value) -> r: Option<i64> reads(vm) {
 
 fn command(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64) -> r: Value reads(stack), writes(env), writes(vm) {
   set env^.error = False();
-  let cmd = arg(stack: stack, func: func, argc: argc, index: 0_u64);
-  for (i in 0_u64..argc) {let a = arg(stack: stack, func: func, argc: argc, index: i); let k = kind(v: a); if k != 2_u8 {if k != 3_u8 {return fail(env: env, vm: vm, text: &s_2[0_u64..63_u64]);}}}
-  let key_arg = arg(stack: stack, func: func, argc: argc, index: 1_u64); let key = string_arg(vm: vm, v: key_arg);
-  let a = arg(stack: stack, func: func, argc: argc, index: 2_u64); let a = string_arg(vm: vm, v: a);
-  let b = arg(stack: stack, func: func, argc: argc, index: 3_u64); let b = string_arg(vm: vm, v: b);
-  let old = get(vm: vm, table: env^.db, key: key); let absent = is_nil(v: old);
-  if equals_text(vm: vm, value: cmd, text: &s_3[0_u64..4_u64]) {if argc != 1_u64 {return wrong_args(env: env, vm: vm);} let ok = literal(vm: vm, text: &s_4[0_u64..4_u64]); return reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: ok);}
-  if equals_text(vm: vm, value: cmd, text: &s_6[0_u64..3_u64]) { if argc != 2_u64 {return wrong_args(env: env, vm: vm);} let valid = type_is(vm: vm, types: env^.types, key: key, expected: 1.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);} if absent {return Value::False();} return old; }
-  if equals_text(vm: vm, value: cmd, text: &s_7[0_u64..3_u64]) { if argc != 3_u64 {return wrong_args(env: env, vm: vm);} raw(vm: vm, table: env^.db, key: key, value: a); set_kind(env: env, vm: vm, key: key, k: 1.0_f64); let nil = Value::Nil(); raw(vm: vm, table: env^.expiry, key: key, value: nil); let ok = literal(vm: vm, text: &s_8[0_u64..2_u64]); return reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: ok); }
-  if equals_text(vm: vm, value: cmd, text: &s_9[0_u64..4_u64]) {
-    if argc != 2_u64 {return wrong_args(env: env, vm: vm);} let valid = type_is(vm: vm, types: env^.types, key: key, expected: 1.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);}
-    let n = 0_i64;
-    if bnot(absent) {match parse_integer(vm: vm, value: old) {None() => {return fail(env: env, vm: vm, text: &s_10[0_u64..43_u64]);} Some(value: x) => {set n = x;}}}
-    if n == 9223372036854775807_i64 {return fail(env: env, vm: vm, text: &s_11[0_u64..41_u64]);}
-    let next = n + 1_i64; let val = integer_string(vm: vm, value: next); raw(vm: vm, table: env^.db, key: key, value: val); set_kind(env: env, vm: vm, key: key, k: 1.0_f64); let x = cvt::<i64,f64>(next); return num(x: x);
-  }
-  let del = equals_text(vm: vm, value: cmd, text: &s_12[0_u64..3_u64]); let exists = equals_text(vm: vm, value: cmd, text: &s_13[0_u64..6_u64]);
-  if del or exists {if argc < 2_u64 {return wrong_args(env: env, vm: vm);} let count = 0_u64; for (i in 1_u64..argc) {let v = arg(stack: stack, func: func, argc: argc, index: i); let k = string_arg(vm: vm, v: v); let v = get(vm: vm, table: env^.db, key: k); let missing = is_nil(v: v); if bnot(missing) {set count = count +sat 1_u64; if del {erase(env: env, vm: vm, key: k);}}} let x = cvt::<u64,f64>(count); return num(x: x);}
-  let ex = equals_text(vm: vm, value: cmd, text: &s_14[0_u64..6_u64]); let pex = equals_text(vm: vm, value: cmd, text: &s_15[0_u64..7_u64]);
-  if ex or pex {if argc != 3_u64 {return wrong_args(env: env, vm: vm);} if absent {return num(x: 0.0_f64);} let duration = number(vm: vm, v: a); if ex {set duration = fmul(duration,1000.0_f64);} if fle(duration,0.0_f64) {erase(env: env, vm: vm, key: key);} else {let v = num(x: duration); raw(vm: vm, table: env^.expiry, key: key, value: v);} return num(x: 1.0_f64);}
-  if equals_text(vm: vm, value: cmd, text: &s_16[0_u64..3_u64]) {if argc != 2_u64 {return wrong_args(env: env, vm: vm);} if absent {return num(x: -2.0_f64);} let v = get(vm: vm, table: env^.expiry, key: key); let missing = is_nil(v: v); if missing {return num(x: -1.0_f64);} let x = number(vm: vm, v: v); let quotient = fdiv(x,1000.0_f64); let seconds = ffloor(quotient); return num(x: seconds);}
-  let hs = equals_text(vm: vm, value: cmd, text: &s_17[0_u64..4_u64]); let hg = equals_text(vm: vm, value: cmd, text: &s_18[0_u64..4_u64]); let ha = equals_text(vm: vm, value: cmd, text: &s_19[0_u64..7_u64]);
-  if hs or hg or ha {
-    if hs {if argc < 4_u64 {return wrong_args(env: env, vm: vm);} if argc % 2_u64 != 0_u64 {return wrong_args(env: env, vm: vm);}}
-    if hg {if argc != 3_u64 {return wrong_args(env: env, vm: vm);}}
-    if ha {if argc != 2_u64 {return wrong_args(env: env, vm: vm);}}
-    let valid = type_is(vm: vm, types: env^.types, key: key, expected: 2.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);}
-    let t = old;
-    if absent {set t = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32); if hs {raw(vm: vm, table: env^.db, key: key, value: t); set_kind(env: env, vm: vm, key: key, k: 2.0_f64);}}
-    if hg {let v = get(vm: vm, table: t, key: a); let missing = is_nil(v: v); if missing {return Value::False();} return v;}
-    if hs {let count = 0_u64; let i = 2_u64; loop {if i >= argc {break;} let f = arg(stack: stack, func: func, argc: argc, index: i); let f = string_arg(vm: vm, v: f); let next = i +sat 1_u64; let v = arg(stack: stack, func: func, argc: argc, index: next); let v = string_arg(vm: vm, v: v); let prior = get(vm: vm, table: t, key: f); let missing = is_nil(v: prior); if missing {set count = count +sat 1_u64;} raw(vm: vm, table: t, key: f, value: v); set i = i +sat 2_u64;} let x = cvt::<u64,f64>(count); return num(x: x);}
-    let out = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32); let k = Value::Nil(); let index = 1_u64;
-    loop {match halo::heap::table_next(heap: &vm^.heap, t: t, key: k) {Err(..) => {break;} Ok(value: opt) => {match opt {None() => {break;} Some(value: pair) => {set k = pair.key; let x = cvt::<u64,f64>(index); let ix = num(x: x); raw(vm: vm, table: out, key: ix, value: pair.key); set index = index +sat 1_u64; let x = cvt::<u64,f64>(index); let ix = num(x: x); raw(vm: vm, table: out, key: ix, value: pair.val); set index = index +sat 1_u64;}}}}}
-    return out;
-  }
-  let lp = equals_text(vm: vm, value: cmd, text: &s_20[0_u64..5_u64]); let rp = equals_text(vm: vm, value: cmd, text: &s_21[0_u64..5_u64]); let pop = equals_text(vm: vm, value: cmd, text: &s_22[0_u64..4_u64]); let range = equals_text(vm: vm, value: cmd, text: &s_23[0_u64..6_u64]);
-  if lp or rp or pop or range {
-    if lp or rp {if argc < 3_u64 {return wrong_args(env: env, vm: vm);}}
-    if pop {if argc != 2_u64 {return wrong_args(env: env, vm: vm);}}
-    if range {if argc != 4_u64 {return wrong_args(env: env, vm: vm);}}
-    let valid = type_is(vm: vm, types: env^.types, key: key, expected: 3.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);}
-    let t = old; if absent {set t = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);}
-    let len = halo::heap::table_border(heap: &vm^.heap, t: t);
-    if lp or rp {
-      for (i in 2_u64..argc) {let v = arg(stack: stack, func: func, argc: argc, index: i); let v = string_arg(vm: vm, v: v); let pos = len +sat 1_u64;
-        if lp {let j = len; loop {if j == 0_u64 {break;} let x = cvt::<u64,f64>(j); let oldkey = num(x: x); let prev = get(vm: vm, table: t, key: oldkey); let next = j +sat 1_u64; let x = cvt::<u64,f64>(next); let nk = num(x: x); raw(vm: vm, table: t, key: nk, value: prev); set j = j - 1_u64;} set pos = 1_u64;}
-        let x = cvt::<u64,f64>(pos); let k = num(x: x); raw(vm: vm, table: t, key: k, value: v); set len = len +sat 1_u64;
+  let cmd_v49 = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+  for (i_v50 in 0_u64..argc) {
+    let a_v51 = arg(stack: stack, func: func, argc: argc, index: i_v50);
+    let k_v52 = kind(v: a_v51);
+    if k_v52 != 2_u8 {
+      if k_v52 != 3_u8 {
+        return fail(env: env, vm: vm, text: &s_2[0_u64..63_u64]);
       }
-      raw(vm: vm, table: env^.db, key: key, value: t); set_kind(env: env, vm: vm, key: key, k: 3.0_f64); let x = cvt::<u64,f64>(len); return num(x: x);
     }
-    if pop {if len == 0_u64 {return Value::False();} let one = num(x: 1.0_f64); let first = get(vm: vm, table: t, key: one); for (i in 1_u64..len) {let next = i +sat 1_u64; let x = cvt::<u64,f64>(next); let k = num(x: x); let v = get(vm: vm, table: t, key: k); let x = cvt::<u64,f64>(i); let k = num(x: x); raw(vm: vm, table: t, key: k, value: v);} let x = cvt::<u64,f64>(len); let k = num(x: x); let nil = Value::Nil(); raw(vm: vm, table: t, key: k, value: nil); if len == 1_u64 {erase(env: env, vm: vm, key: key);} return first;}
-    let out = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32); let av = number(vm: vm, v: a); let bv = number(vm: vm, v: b); let start = ftrunc(av); let end = ftrunc(bv); let size = cvt::<u64,f64>(len);
-    if flt(start,0.0_f64) {set start = fadd(size,start);} if flt(end,0.0_f64) {set end = fadd(size,end);} if flt(start,0.0_f64) {set start = 0.0_f64;}
-    let index = 1_u64; for (i in 0_u64..len) {let x = cvt::<u64,f64>(i); if fle(start,x) and fle(x,end) {let next = i +sat 1_u64; let x = cvt::<u64,f64>(next); let k = num(x: x); let v = get(vm: vm, table: t, key: k); let x = cvt::<u64,f64>(index); let k = num(x: x); raw(vm: vm, table: out, key: k, value: v); set index = index +sat 1_u64;}}
-    return out;
   }
-  let za = equals_text(vm: vm, value: cmd, text: &s_24[0_u64..4_u64]); let zc = equals_text(vm: vm, value: cmd, text: &s_25[0_u64..5_u64]); let zs = equals_text(vm: vm, value: cmd, text: &s_26[0_u64..6_u64]); let zr = equals_text(vm: vm, value: cmd, text: &s_27[0_u64..16_u64]);
-  if za or zc or zs or zr {
-    if za {if argc < 4_u64 {return wrong_args(env: env, vm: vm);} if argc % 2_u64 != 0_u64 {return wrong_args(env: env, vm: vm);}}
-    if zc {if argc != 2_u64 {return wrong_args(env: env, vm: vm);}} if zs {if argc != 3_u64 {return wrong_args(env: env, vm: vm);}} if zr {if argc != 4_u64 {return wrong_args(env: env, vm: vm);}}
-    let valid = type_is(vm: vm, types: env^.types, key: key, expected: 4.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);}
-    let t = old; if absent {set t = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);}
-    if za {let count = 0_u64; let i = 2_u64; loop {if i >= argc {break;} let score = arg(stack: stack, func: func, argc: argc, index: i); let score = number(vm: vm, v: score); let score = num(x: score); let next = i +sat 1_u64; let member = arg(stack: stack, func: func, argc: argc, index: next); let member = string_arg(vm: vm, v: member); let old = get(vm: vm, table: t, key: member); let missing = is_nil(v: old); if missing {set count = count +sat 1_u64;} raw(vm: vm, table: t, key: member, value: score); set i = i +sat 2_u64;} raw(vm: vm, table: env^.db, key: key, value: t); set_kind(env: env, vm: vm, key: key, k: 4.0_f64); let x = cvt::<u64,f64>(count); return num(x: x);}
-    if zc {let count = table_count(vm: vm, table: t); let x = cvt::<u64,f64>(count); return num(x: x);}
-    if zs {let v = get(vm: vm, table: t, key: a); let missing = is_nil(v: v); if missing {return Value::False();} return string_arg(vm: vm, v: v);}
-    let lo = number(vm: vm, v: a); let hi = number(vm: vm, v: b); let k = Value::Nil(); let count = 0_u64;
-    loop {match halo::heap::table_next(heap: &vm^.heap, t: t, key: k) {Err(..) => {break;} Ok(value: opt) => {match opt {None() => {break;} Some(value: pair) => {set k = pair.key; let x = number(vm: vm, v: pair.val); if fle(lo,x) and fle(x,hi) {let nil = Value::Nil(); raw(vm: vm, table: t, key: k, value: nil); set count = count +sat 1_u64;}}}}}}
-    let remaining = table_count(vm: vm, table: t); if remaining == 0_u64 {erase(env: env, vm: vm, key: key);} let x = cvt::<u64,f64>(count); return num(x: x);
+  let key_arg_v53 = arg(stack: stack, func: func, argc: argc, index: 1_u64);
+  let key_v54 = string_arg(vm: vm, v: key_arg_v53);
+  let a_v55 = arg(stack: stack, func: func, argc: argc, index: 2_u64);
+  let a_v56 = string_arg(vm: vm, v: a_v55);
+  let b_v57 = arg(stack: stack, func: func, argc: argc, index: 3_u64);
+  let b_v58 = string_arg(vm: vm, v: b_v57);
+  let old_v59 = get(vm: vm, table: env^.db, key: key_v54);
+  let absent_v60 = is_nil(v: old_v59);
+  if equals_text(vm: vm, value: cmd_v49, text: &s_3[0_u64..4_u64]) {
+    if argc != 1_u64 {
+      return wrong_args(env: env, vm: vm);
+    }
+    let ok_v61 = literal(vm: vm, text: &s_4[0_u64..4_u64]);
+    return reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: ok_v61);
+  }
+  if equals_text(vm: vm, value: cmd_v49, text: &s_6[0_u64..3_u64]) {
+    if argc != 2_u64 {
+      return wrong_args(env: env, vm: vm);
+    }
+    let valid_v62 = type_is(vm: vm, types: env^.types, key: key_v54, expected: 1.0_f64);
+    if bnot(valid_v62) {
+      return wrong_type(env: env, vm: vm);
+    }
+    if absent_v60 {
+      return Value::False();
+    }
+    return old_v59;
+  }
+  if equals_text(vm: vm, value: cmd_v49, text: &s_7[0_u64..3_u64]) {
+    if argc != 3_u64 {
+      return wrong_args(env: env, vm: vm);
+    }
+    raw(vm: vm, table: env^.db, key: key_v54, value: a_v56);
+    set_kind(env: env, vm: vm, key: key_v54, k: 1.0_f64);
+    let nil_v63 = Value::Nil();
+    raw(vm: vm, table: env^.expiry, key: key_v54, value: nil_v63);
+    let ok_v64 = literal(vm: vm, text: &s_8[0_u64..2_u64]);
+    return reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: ok_v64);
+  }
+  if equals_text(vm: vm, value: cmd_v49, text: &s_9[0_u64..4_u64]) {
+    if argc != 2_u64 {
+      return wrong_args(env: env, vm: vm);
+    }
+    let valid_v65 = type_is(vm: vm, types: env^.types, key: key_v54, expected: 1.0_f64);
+    if bnot(valid_v65) {
+      return wrong_type(env: env, vm: vm);
+    }
+    let n_v66 = 0_i64;
+    if bnot(absent_v60) {
+      match parse_integer(vm: vm, value: old_v59) {
+        None() => {
+          return fail(env: env, vm: vm, text: &s_10[0_u64..43_u64]);
+        }
+        Some(value: x_v67) => {
+          set n_v66 = x_v67;
+        }
+      }
+    }
+    if n_v66 == 9223372036854775807_i64 {
+      return fail(env: env, vm: vm, text: &s_11[0_u64..41_u64]);
+    }
+    let next_v68 = n_v66 + 1_i64;
+    let val_v69 = integer_string(vm: vm, value: next_v68);
+    raw(vm: vm, table: env^.db, key: key_v54, value: val_v69);
+    set_kind(env: env, vm: vm, key: key_v54, k: 1.0_f64);
+    let x_v70 = cvt.nearest::<i64, f64>(next_v68);
+    return num(x: x_v70);
+  }
+  let del_v71 = equals_text(vm: vm, value: cmd_v49, text: &s_12[0_u64..3_u64]);
+  let exists_v72 = equals_text(vm: vm, value: cmd_v49, text: &s_13[0_u64..6_u64]);
+  let either_0_v73 = bor(del_v71, exists_v72);
+  if either_0_v73 {
+    if argc < 2_u64 {
+      return wrong_args(env: env, vm: vm);
+    }
+    let count_v74 = 0_u64;
+    for (i_v75 in 1_u64..argc) {
+      let v_v76 = arg(stack: stack, func: func, argc: argc, index: i_v75);
+      let k_v77 = string_arg(vm: vm, v: v_v76);
+      let v_v78 = get(vm: vm, table: env^.db, key: k_v77);
+      let missing_v79 = is_nil(v: v_v78);
+      if bnot(missing_v79) {
+        set count_v74 = count_v74 +sat 1_u64;
+        if del_v71 {
+          erase(env: env, vm: vm, key: k_v77);
+        }
+      }
+    }
+    let x_v80 = cvt.nearest::<u64, f64>(count_v74);
+    return num(x: x_v80);
+  }
+  let ex_v81 = equals_text(vm: vm, value: cmd_v49, text: &s_14[0_u64..6_u64]);
+  let pex_v82 = equals_text(vm: vm, value: cmd_v49, text: &s_15[0_u64..7_u64]);
+  let either_0_v83 = bor(ex_v81, pex_v82);
+  if either_0_v83 {
+    if argc != 3_u64 {
+      return wrong_args(env: env, vm: vm);
+    }
+    if absent_v60 {
+      return num(x: 0.0_f64);
+    }
+    let duration_v84 = number(vm: vm, v: a_v56);
+    if ex_v81 {
+      set duration_v84 = fmul.strict(duration_v84, 1.0e3_f64);
+    }
+    if fle(duration_v84, 0.0_f64) {
+      erase(env: env, vm: vm, key: key_v54);
+    } else {
+      let v_v85 = num(x: duration_v84);
+      raw(vm: vm, table: env^.expiry, key: key_v54, value: v_v85);
+    }
+    return num(x: 1.0_f64);
+  }
+  if equals_text(vm: vm, value: cmd_v49, text: &s_16[0_u64..3_u64]) {
+    if argc != 2_u64 {
+      return wrong_args(env: env, vm: vm);
+    }
+    if absent_v60 {
+      return num(x: -2.0_f64);
+    }
+    let v_v86 = get(vm: vm, table: env^.expiry, key: key_v54);
+    let missing_v87 = is_nil(v: v_v86);
+    if missing_v87 {
+      return num(x: -1.0_f64);
+    }
+    let x_v88 = number(vm: vm, v: v_v86);
+    let quotient_v89 = fdiv.strict(x_v88, 1.0e3_f64);
+    let seconds_v90 = ffloor(quotient_v89);
+    return num(x: seconds_v90);
+  }
+  let hs_v91 = equals_text(vm: vm, value: cmd_v49, text: &s_17[0_u64..4_u64]);
+  let hg_v92 = equals_text(vm: vm, value: cmd_v49, text: &s_18[0_u64..4_u64]);
+  let ha_v93 = equals_text(vm: vm, value: cmd_v49, text: &s_19[0_u64..7_u64]);
+  let either_0_v94 = bor(hs_v91, hg_v92);
+  let either_1_v95 = bor(either_0_v94, ha_v93);
+  if either_1_v95 {
+    if hs_v91 {
+      if argc < 4_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+      let rem_v96 = argc % 2_u64;
+      if rem_v96 != 0_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    if hg_v92 {
+      if argc != 3_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    if ha_v93 {
+      if argc != 2_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    let valid_v97 = type_is(vm: vm, types: env^.types, key: key_v54, expected: 2.0_f64);
+    if bnot(valid_v97) {
+      return wrong_type(env: env, vm: vm);
+    }
+    let t_v98 = old_v59;
+    if absent_v60 {
+      set t_v98 = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
+      if hs_v91 {
+        raw(vm: vm, table: env^.db, key: key_v54, value: t_v98);
+        set_kind(env: env, vm: vm, key: key_v54, k: 2.0_f64);
+      }
+    }
+    if hg_v92 {
+      let v_v99 = get(vm: vm, table: t_v98, key: a_v56);
+      let missing_v100 = is_nil(v: v_v99);
+      if missing_v100 {
+        return Value::False();
+      }
+      return v_v99;
+    }
+    if hs_v91 {
+      let count_v101 = 0_u64;
+      let i_v102 = 2_u64;
+      loop {
+        if i_v102 >= argc {
+          break;
+        }
+        let f_v103 = arg(stack: stack, func: func, argc: argc, index: i_v102);
+        let f_v104 = string_arg(vm: vm, v: f_v103);
+        let next_v105 = i_v102 +sat 1_u64;
+        let v_v106 = arg(stack: stack, func: func, argc: argc, index: next_v105);
+        let v_v107 = string_arg(vm: vm, v: v_v106);
+        let prior_v108 = get(vm: vm, table: t_v98, key: f_v104);
+        let missing_v109 = is_nil(v: prior_v108);
+        if missing_v109 {
+          set count_v101 = count_v101 +sat 1_u64;
+        }
+        raw(vm: vm, table: t_v98, key: f_v104, value: v_v107);
+        set i_v102 = i_v102 +sat 2_u64;
+      }
+      let x_v110 = cvt.nearest::<u64, f64>(count_v101);
+      return num(x: x_v110);
+    }
+    let out_v111 = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
+    let k_v112 = Value::Nil();
+    let index_v113 = 1_u64;
+    loop {
+      match halo::heap::table_next(heap: &vm^.heap, t: t_v98, key: k_v112) {
+        Err(..) => {
+          break;
+        }
+        Ok(value: opt_v114) => {
+          match opt_v114 {
+            None() => {
+              break;
+            }
+            Some(value: pair_v115) => {
+              set k_v112 = pair_v115.key;
+              let x_v116 = cvt.nearest::<u64, f64>(index_v113);
+              let ix_v117 = num(x: x_v116);
+              raw(vm: vm, table: out_v111, key: ix_v117, value: pair_v115.key);
+              set index_v113 = index_v113 +sat 1_u64;
+              let x_v118 = cvt.nearest::<u64, f64>(index_v113);
+              let ix_v119 = num(x: x_v118);
+              raw(vm: vm, table: out_v111, key: ix_v119, value: pair_v115.val);
+              set index_v113 = index_v113 +sat 1_u64;
+            }
+          }
+        }
+      }
+    }
+    return out_v111;
+  }
+  let lp_v120 = equals_text(vm: vm, value: cmd_v49, text: &s_20[0_u64..5_u64]);
+  let rp_v121 = equals_text(vm: vm, value: cmd_v49, text: &s_21[0_u64..5_u64]);
+  let pop_v122 = equals_text(vm: vm, value: cmd_v49, text: &s_22[0_u64..4_u64]);
+  let range_v123 = equals_text(vm: vm, value: cmd_v49, text: &s_23[0_u64..6_u64]);
+  let either_0_v124 = bor(lp_v120, rp_v121);
+  let either_1_v125 = bor(either_0_v124, pop_v122);
+  let either_2_v126 = bor(either_1_v125, range_v123);
+  if either_2_v126 {
+    let either_0_v127 = bor(lp_v120, rp_v121);
+    if either_0_v127 {
+      if argc < 3_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    if pop_v122 {
+      if argc != 2_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    if range_v123 {
+      if argc != 4_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    let valid_v128 = type_is(vm: vm, types: env^.types, key: key_v54, expected: 3.0_f64);
+    if bnot(valid_v128) {
+      return wrong_type(env: env, vm: vm);
+    }
+    let t_v129 = old_v59;
+    if absent_v60 {
+      set t_v129 = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
+    }
+    let len_v130 = halo::heap::table_border(heap: &vm^.heap, t: t_v129);
+    let either_0_v131 = bor(lp_v120, rp_v121);
+    if either_0_v131 {
+      for (i_v132 in 2_u64..argc) {
+        let v_v133 = arg(stack: stack, func: func, argc: argc, index: i_v132);
+        let v_v134 = string_arg(vm: vm, v: v_v133);
+        let pos_v135 = len_v130 +sat 1_u64;
+        if lp_v120 {
+          let j_v136 = len_v130;
+          loop {
+            if j_v136 == 0_u64 {
+              break;
+            }
+            let x_v137 = cvt.nearest::<u64, f64>(j_v136);
+            let oldkey_v138 = num(x: x_v137);
+            let prev_v139 = get(vm: vm, table: t_v129, key: oldkey_v138);
+            let next_v140 = j_v136 +sat 1_u64;
+            let x_v141 = cvt.nearest::<u64, f64>(next_v140);
+            let nk_v142 = num(x: x_v141);
+            raw(vm: vm, table: t_v129, key: nk_v142, value: prev_v139);
+            set j_v136 = j_v136 - 1_u64;
+          }
+          set pos_v135 = 1_u64;
+        }
+        let x_v143 = cvt.nearest::<u64, f64>(pos_v135);
+        let k_v144 = num(x: x_v143);
+        raw(vm: vm, table: t_v129, key: k_v144, value: v_v134);
+        set len_v130 = len_v130 +sat 1_u64;
+      }
+      raw(vm: vm, table: env^.db, key: key_v54, value: t_v129);
+      set_kind(env: env, vm: vm, key: key_v54, k: 3.0_f64);
+      let x_v145 = cvt.nearest::<u64, f64>(len_v130);
+      return num(x: x_v145);
+    }
+    if pop_v122 {
+      if len_v130 == 0_u64 {
+        return Value::False();
+      }
+      let one_v146 = num(x: 1.0_f64);
+      let first_v147 = get(vm: vm, table: t_v129, key: one_v146);
+      for (i_v148 in 1_u64..len_v130) {
+        let next_v149 = i_v148 +sat 1_u64;
+        let x_v150 = cvt.nearest::<u64, f64>(next_v149);
+        let k_v151 = num(x: x_v150);
+        let v_v152 = get(vm: vm, table: t_v129, key: k_v151);
+        let x_v153 = cvt.nearest::<u64, f64>(i_v148);
+        let k_v154 = num(x: x_v153);
+        raw(vm: vm, table: t_v129, key: k_v154, value: v_v152);
+      }
+      let x_v155 = cvt.nearest::<u64, f64>(len_v130);
+      let k_v156 = num(x: x_v155);
+      let nil_v157 = Value::Nil();
+      raw(vm: vm, table: t_v129, key: k_v156, value: nil_v157);
+      if len_v130 == 1_u64 {
+        erase(env: env, vm: vm, key: key_v54);
+      }
+      return first_v147;
+    }
+    let out_v158 = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
+    let av_v159 = number(vm: vm, v: a_v56);
+    let bv_v160 = number(vm: vm, v: b_v58);
+    let start_v161 = ftrunc(av_v159);
+    let end_v162 = ftrunc(bv_v160);
+    let size_v163 = cvt.nearest::<u64, f64>(len_v130);
+    if flt(start_v161, 0.0_f64) {
+      set start_v161 = fadd.strict(size_v163, start_v161);
+    }
+    if flt(end_v162, 0.0_f64) {
+      set end_v162 = fadd.strict(size_v163, end_v162);
+    }
+    if flt(start_v161, 0.0_f64) {
+      set start_v161 = 0.0_f64;
+    }
+    let index_v164 = 1_u64;
+    for (i_v165 in 0_u64..len_v130) {
+      let x_v166 = cvt.nearest::<u64, f64>(i_v165);
+      let lower_v167 = fle(start_v161, x_v166);
+      let upper_v168 = fle(x_v166, end_v162);
+      if band(lower_v167, upper_v168) {
+        let next_v169 = i_v165 +sat 1_u64;
+        let x_v170 = cvt.nearest::<u64, f64>(next_v169);
+        let k_v171 = num(x: x_v170);
+        let v_v172 = get(vm: vm, table: t_v129, key: k_v171);
+        let x_v173 = cvt.nearest::<u64, f64>(index_v164);
+        let k_v174 = num(x: x_v173);
+        raw(vm: vm, table: out_v158, key: k_v174, value: v_v172);
+        set index_v164 = index_v164 +sat 1_u64;
+      }
+    }
+    return out_v158;
+  }
+  let za_v175 = equals_text(vm: vm, value: cmd_v49, text: &s_24[0_u64..4_u64]);
+  let zc_v176 = equals_text(vm: vm, value: cmd_v49, text: &s_25[0_u64..5_u64]);
+  let zs_v177 = equals_text(vm: vm, value: cmd_v49, text: &s_26[0_u64..6_u64]);
+  let zr_v178 = equals_text(vm: vm, value: cmd_v49, text: &s_27[0_u64..16_u64]);
+  let either_0_v179 = bor(za_v175, zc_v176);
+  let either_1_v180 = bor(either_0_v179, zs_v177);
+  let either_2_v181 = bor(either_1_v180, zr_v178);
+  if either_2_v181 {
+    if za_v175 {
+      if argc < 4_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+      let rem_v182 = argc % 2_u64;
+      if rem_v182 != 0_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    if zc_v176 {
+      if argc != 2_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    if zs_v177 {
+      if argc != 3_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    if zr_v178 {
+      if argc != 4_u64 {
+        return wrong_args(env: env, vm: vm);
+      }
+    }
+    let valid_v183 = type_is(vm: vm, types: env^.types, key: key_v54, expected: 4.0_f64);
+    if bnot(valid_v183) {
+      return wrong_type(env: env, vm: vm);
+    }
+    let t_v184 = old_v59;
+    if absent_v60 {
+      set t_v184 = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
+    }
+    if za_v175 {
+      let count_v185 = 0_u64;
+      let i_v186 = 2_u64;
+      loop {
+        if i_v186 >= argc {
+          break;
+        }
+        let score_v187 = arg(stack: stack, func: func, argc: argc, index: i_v186);
+        let score_v188 = number(vm: vm, v: score_v187);
+        let score_v189 = num(x: score_v188);
+        let next_v190 = i_v186 +sat 1_u64;
+        let member_v191 = arg(stack: stack, func: func, argc: argc, index: next_v190);
+        let member_v192 = string_arg(vm: vm, v: member_v191);
+        let old_v193 = get(vm: vm, table: t_v184, key: member_v192);
+        let missing_v194 = is_nil(v: old_v193);
+        if missing_v194 {
+          set count_v185 = count_v185 +sat 1_u64;
+        }
+        raw(vm: vm, table: t_v184, key: member_v192, value: score_v189);
+        set i_v186 = i_v186 +sat 2_u64;
+      }
+      raw(vm: vm, table: env^.db, key: key_v54, value: t_v184);
+      set_kind(env: env, vm: vm, key: key_v54, k: 4.0_f64);
+      let x_v195 = cvt.nearest::<u64, f64>(count_v185);
+      return num(x: x_v195);
+    }
+    if zc_v176 {
+      let count_v196 = table_count(vm: vm, table: t_v184);
+      let x_v197 = cvt.nearest::<u64, f64>(count_v196);
+      return num(x: x_v197);
+    }
+    if zs_v177 {
+      let v_v198 = get(vm: vm, table: t_v184, key: a_v56);
+      let missing_v199 = is_nil(v: v_v198);
+      if missing_v199 {
+        return Value::False();
+      }
+      return string_arg(vm: vm, v: v_v198);
+    }
+    let lo_v200 = number(vm: vm, v: a_v56);
+    let hi_v201 = number(vm: vm, v: b_v58);
+    let k_v202 = Value::Nil();
+    let count_v203 = 0_u64;
+    loop {
+      match halo::heap::table_next(heap: &vm^.heap, t: t_v184, key: k_v202) {
+        Err(..) => {
+          break;
+        }
+        Ok(value: opt_v204) => {
+          match opt_v204 {
+            None() => {
+              break;
+            }
+            Some(value: pair_v205) => {
+              set k_v202 = pair_v205.key;
+              let x_v206 = number(vm: vm, v: pair_v205.val);
+              let lower_v207 = fle(lo_v200, x_v206);
+              let upper_v208 = fle(x_v206, hi_v201);
+              if band(lower_v207, upper_v208) {
+                let nil_v209 = Value::Nil();
+                raw(vm: vm, table: t_v184, key: k_v202, value: nil_v209);
+                set count_v203 = count_v203 +sat 1_u64;
+              }
+            }
+          }
+        }
+      }
+    }
+    let remaining_v210 = table_count(vm: vm, table: t_v184);
+    if remaining_v210 == 0_u64 {
+      erase(env: env, vm: vm, key: key_v54);
+    }
+    let x_v211 = cvt.nearest::<u64, f64>(count_v203);
+    return num(x: x_v211);
   }
   return fail(env: env, vm: vm, text: &s_28[0_u64..41_u64]);
 }
@@ -201,24 +769,54 @@ fn command(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64) 
 fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
-  if id == 4100_u32 { return HostOutcome::Returned(count: 0_u64); }
+  if id == 4100_u32 {
+    return HostOutcome::Returned(count: 0_u64);
+  }
   if id == 4101_u32 {
-    let name = arg(stack: stack, func: func, argc: argc, index: 1_u64);
-    let text = box_slots_new::<u8>(capacity: 0_u64);
-    append(out: &text, bytes: &s_29[0_u64..56_u64]);
-    value_bytes(vm: vm, v: name, out: &text); push(out: &text, byte: 39_u8);
-    let len = text.inner.len; let e = literal(vm: vm, text: &text.inner[0_u64..len]); set vm^.error = e;
+    let name_v212 = arg(stack: stack, func: func, argc: argc, index: 1_u64);
+    let text_v213 = box_slots_new::<u8>(capacity: 0_u64);
+    text_bytes(out: &text_v213, bytes: &s_29[0_u64..56_u64]);
+    value_bytes(vm: vm, v: name_v212, out: &text_v213);
+    push(out: &text_v213, byte: 39_u8);
+    let len_v214 = text_v213.inner.len;
+    let e_v215 = literal(vm: vm, text: &text_v213.inner[0_u64..len_v214]);
+    set vm^.error = e_v215;
     return HostOutcome::Raised();
   }
-  let value = Value::Nil();
-  if id == 4096_u32 or id == 4097_u32 {
-    set value = command(env: env, vm: vm, stack: stack, func: func, argc: argc);
-    if env^.error {if id == 4096_u32 {set vm^.error = value; let pc = vm^.saved_pc; if pc < vm^.lineinfo.inner.len {set env^.line = cvt::<u32,u64>(vm^.lineinfo.inner[pc]);} return HostOutcome::Raised();} set value = reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: value);}
+  let value_v216 = Value::Nil();
+  let call_v217 = id == 4096_u32;
+  let protected_v218 = id == 4097_u32;
+  if bor(call_v217, protected_v218) {
+    set value_v216 = command(env: env, vm: vm, stack: stack, func: func, argc: argc);
+    if env^.error {
+      if id == 4096_u32 {
+        set vm^.error = value_v216;
+        let pc_v219 = vm^.saved_pc;
+        if pc_v219 < vm^.lineinfo.inner.len {
+          set env^.line = cvt::<u32, u64>(vm^.lineinfo.inner[pc_v219]);
+        }
+        return HostOutcome::Raised();
+      }
+      set value_v216 = reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: value_v216);
+    }
   } else {
-    let v = arg(stack: stack, func: func, argc: argc, index: 0_u64);
-    if id == 4098_u32 {set value = reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: v);} else {if id == 4099_u32 {set value = reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: v);} else {let e = literal(vm: vm, text: &s_31[0_u64..25_u64]); set vm^.error = e; return HostOutcome::Raised();}}
+    let v_v220 = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+    if id == 4098_u32 {
+      set value_v216 = reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: v_v220);
+    } else if id == 4099_u32 {
+      set value_v216 = reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: v_v220);
+    } else {
+      let e_v221 = literal(vm: vm, text: &s_31[0_u64..25_u64]);
+      set vm^.error = e_v221;
+      return HostOutcome::Raised();
+    }
   }
-  if func < stack^.inner.len {set stack^.inner[func] = value;}
+  if func < stack^.inner.len {
+    set stack^.inner[func] = value_v216;
+  }
   return HostOutcome::Returned(count: 1_u64);
 }
-binding TestHost : Host<Env> { call = host_call; }
+
+binding TestHost : Host<Env> {
+  call = host_call;
+}

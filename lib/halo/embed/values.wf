@@ -3,62 +3,191 @@ alias TableError = pkg::heap::TableError;
 alias Pair = pkg::heap::Pair;
 alias StringView = pkg::heap::StringView;
 alias NumView = pkg::value::NumView;
-fn intern(engine: &Engine, bytes: &[u8]) -> r: Value reads(bytes), writes(engine) { return pkg::heap::intern(heap: &engine^.vm.heap, bytes: bytes); }
-fn string_of(engine: &Engine, value: Value) -> r: Option<StringView> reads(engine) { return pkg::heap::string_of(heap: &engine^.vm.heap, value: value); }
-fn number_of(value: Value) -> r: NumView pure { return pkg::value::num_of(v: value); }
-fn truthy(value: Value) -> r: Bool pure { return pkg::value::truthy(v: value); }
-fn kind(value: Value) -> r: u8 pure {
-  match value { Nil() => {return 0_u8;} False() => {return 1_u8;} True() => {return 1_u8;} Num(..) => {return 2_u8;} Str(..) => {return 3_u8;} Tab(..) => {return 4_u8;} Fun(..) => {return 5_u8;} Builtin(..) => {return 5_u8;} }
+
+fn intern(engine: &Engine, bytes: &[u8]) -> r: Value reads(bytes), writes(engine) {
+  return pkg::heap::intern(heap: &engine^.vm.heap, bytes: bytes);
 }
-fn new_table(engine: &Engine, asize: u32, hsize: u32) -> r: Value writes(engine) { return pkg::heap::new_table(heap: &engine^.vm.heap, asize: asize, hsize: hsize); }
+
+fn string_of(engine: &Engine, value: Value) -> r: Option<StringView> reads(engine) {
+  return pkg::heap::string_of(heap: &engine^.vm.heap, value: value);
+}
+
+fn number_of(value: Value) -> r: NumView pure {
+  return pkg::value::num_of(v: value);
+}
+
+fn truthy(value: Value) -> r: Bool pure {
+  return pkg::value::truthy(v: value);
+}
+
+fn kind(value: Value) -> r: u8 pure {
+  match value {
+    Nil() => {
+      return 0_u8;
+    }
+    False() => {
+      return 1_u8;
+    }
+    True() => {
+      return 1_u8;
+    }
+    Num(..) => {
+      return 2_u8;
+    }
+    Str(..) => {
+      return 3_u8;
+    }
+    Tab(..) => {
+      return 4_u8;
+    }
+    Fun(..) => {
+      return 5_u8;
+    }
+    Builtin(..) => {
+      return 5_u8;
+    }
+  }
+}
+
+fn new_table(engine: &Engine, asize: u32, hsize: u32) -> r: Value writes(engine) {
+  return pkg::heap::new_table(heap: &engine^.vm.heap, asize: asize, hsize: hsize);
+}
+
 fn table_append(engine: &Engine, table: Value, value: Value) -> r: Result<unit, TableError> writes(engine) {
   let n = pkg::heap::table_border(heap: &engine^.vm.heap, t: table);
-  if n < 9007199254740992_u64 { let next = n + 1_u64; let x = cvt::<u64, f64>(next); let key = Value::Num(n: x); return pkg::heap::table_set(heap: &engine^.vm.heap, t: table, key: key, val: value); }
-  let error = TableError::Overflow(); return Err<unit, TableError>(error: error);
+  if n < 9007199254740992_u64 {
+    let next = n + 1_u64;
+    let x = cvt::<u64, f64>(next);
+    let key = Value::Num(n: x);
+    return pkg::heap::table_set(heap: &engine^.vm.heap, t: table, key: key, val: value);
+  }
+  let error = TableError::Overflow();
+  return Err<unit, TableError>(error: error);
 }
-fn table_set(engine: &Engine, table: Value, key: Value, value: Value) -> r: Result<unit, TableError> writes(engine) { return pkg::heap::table_set(heap: &engine^.vm.heap, t: table, key: key, val: value); }
-fn table_get(engine: &Engine, table: Value, key: Value) -> r: Value reads(engine) { return pkg::heap::table_get(heap: &engine^.vm.heap, t: table, key: key); }
-fn table_border(engine: &Engine, table: Value) -> r: u64 reads(engine) { return pkg::heap::table_border(heap: &engine^.vm.heap, t: table); }
-fn table_next(engine: &Engine, table: Value, key: Value) -> r: Result<Option<Pair>, TableError> reads(engine) { return pkg::heap::table_next(heap: &engine^.vm.heap, t: table, key: key); }
-fn set_global(engine: &Engine, name: &[u8], value: Value) -> r: Result<unit, TableError> reads(name), writes(engine) { let key = intern(engine: engine, bytes: name); let g = Value::Tab(h: engine^.vm.globals); return table_set(engine: engine, table: g, key: key, value: value); }
-fn error_value(engine: &Engine) -> r: Value reads(engine) { return engine^.vm.error; }
+
+fn table_set(engine: &Engine, table: Value, key: Value, value: Value) -> r: Result<unit, TableError> writes(engine) {
+  return pkg::heap::table_set(heap: &engine^.vm.heap, t: table, key: key, val: value);
+}
+
+fn table_get(engine: &Engine, table: Value, key: Value) -> r: Value reads(engine) {
+  return pkg::heap::table_get(heap: &engine^.vm.heap, t: table, key: key);
+}
+
+fn table_border(engine: &Engine, table: Value) -> r: u64 reads(engine) {
+  return pkg::heap::table_border(heap: &engine^.vm.heap, t: table);
+}
+
+fn table_next(engine: &Engine, table: Value, key: Value) -> r: Result<Option<Pair>, TableError> reads(engine) {
+  return pkg::heap::table_next(heap: &engine^.vm.heap, t: table, key: key);
+}
+
+fn set_global(engine: &Engine, name: &[u8], value: Value) -> r: Result<unit, TableError> reads(name), writes(engine) {
+  let key = intern(engine: engine, bytes: name);
+  let g = Value::Tab(h: engine^.vm.globals);
+  return table_set(engine: engine, table: g, key: key, value: value);
+}
+
+fn error_value(engine: &Engine) -> r: Value reads(engine) {
+  return engine^.vm.error;
+}
 
 fn byte(out: &Box<Slots<u8>>, b: u8) -> r: unit writes(out) {
   let n = out^.inner.len;
-  if n < 18446744073709551615_u64 { if n == out^.inner.cap { let twice = n +sat n; let cap = imax(64_u64, twice); if cap > n { grow(cell: out, capacity: cap); } } if out^.inner.len < out^.inner.cap { place_back(window: &out^.inner, value: b); } }
+  if n < 18446744073709551615_u64 {
+    if n == out^.inner.cap {
+      let twice = n +sat n;
+      let cap = imax(64_u64, twice);
+      if cap > n {
+        grow(cell: out, capacity: cap);
+      }
+    }
+    if out^.inner.len < out^.inner.cap {
+      place_back(window: &out^.inner, value: b);
+    }
+  }
   return unit;
 }
-fn text(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) { for (i in 0_u64..bytes^.len) { let b = bytes^[i]; byte(out: out, b: b); } return unit; }
+
+fn text(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) {
+  for (i in 0_u64..bytes^.len) {
+    let b = bytes^[i];
+    byte(out: out, b: b);
+  }
+  return unit;
+}
+
 fn decimal(out: &Box<Slots<u8>>, number: u64) -> r: unit writes(out) {
-  let digits = slots_new::<u8, 20>(); let n = number;
-  loop { let d = n % 10_u64; let digit = cvt.wrap::<u64,u8>(d); let b = digit +wrap 48_u8; if digits.len < digits.cap { place_back(window: &digits, value: b); } set n = n / 10_u64; if n == 0_u64 { break; } }
-  loop { if digits.len == 0_u64 { break; } let b = take_back(window: &digits); byte(out: out, b: b); }
+  let digits = slots_new::<u8, 20>();
+  let n = number;
+  loop {
+    let d = n % 10_u64;
+    let digit = cvt.wrap::<u64, u8>(d);
+    let b = digit +wrap 48_u8;
+    if digits.len < digits.cap {
+      place_back(window: &digits, value: b);
+    }
+    set n = n / 10_u64;
+    if n == 0_u64 {
+      break;
+    }
+  }
+  loop {
+    if digits.len == 0_u64 {
+      break;
+    }
+    let b = take_back(window: &digits);
+    byte(out: out, b: b);
+  }
   return unit;
 }
+
 const location: Array<u8, 13> = "@user_script:";
+
 const nonstring: Array<u8, 30> = "(error object is not a string)";
+
 fn format_error(engine: &Engine, line: u64) -> r: Box<Slots<u8>> reads(engine) {
   let out = box_slots_new::<u8>(capacity: 0_u64);
   let value = engine^.vm.error;
   let located = False();
   match string_of(engine: engine, value: value) {
-    None() => {}
+    None() => {
+    }
     Some(value: view) => {
-      let h = cvt::<u32,u64>(view.handle);
+      let h = cvt::<u32, u64>(view.handle);
       if h < engine^.vm.heap.strings.inner.len {
         let n = engine^.vm.heap.strings.inner[h].payload.bytes.inner.len;
         if n >= 12_u64 {
           set located = True();
-          for (i in 0_u64..12_u64) { let b = engine^.vm.heap.strings.inner[h].payload.bytes.inner[i]; let j = i + 1_u64; if b != location[j] { set located = False(); } }
+          for (i in 0_u64..12_u64) {
+            let b = engine^.vm.heap.strings.inner[h].payload.bytes.inner[i];
+            let j = i + 1_u64;
+            if b != location[j] {
+              set located = False();
+            }
+          }
         }
       }
     }
   }
-  if located { byte(out: &out, b: 64_u8); }
-  else { if line > 0_u64 { text(out: &out, bytes: &location[0_u64..13_u64]); decimal(out: &out, number: line); byte(out: &out, b: 58_u8); byte(out: &out, b: 32_u8); } }
+  if located {
+    byte(out: &out, b: 64_u8);
+  } else if line > 0_u64 {
+    text(out: &out, bytes: &location[0_u64..13_u64]);
+    decimal(out: &out, number: line);
+    byte(out: &out, b: 58_u8);
+    byte(out: &out, b: 32_u8);
+  }
   match string_of(engine: engine, value: value) {
-    None() => { text(out: &out, bytes: &nonstring[0_u64..30_u64]); }
-    Some(value: view) => { let h = cvt::<u32,u64>(view.handle); if h < engine^.vm.heap.strings.inner.len { let n = engine^.vm.heap.strings.inner[h].payload.bytes.inner.len; text(out: &out, bytes: &engine^.vm.heap.strings.inner[h].payload.bytes.inner[0_u64..n]); } }
+    None() => {
+      text(out: &out, bytes: &nonstring[0_u64..30_u64]);
+    }
+    Some(value: view) => {
+      let h = cvt::<u32, u64>(view.handle);
+      if h < engine^.vm.heap.strings.inner.len {
+        let n = engine^.vm.heap.strings.inner[h].payload.bytes.inner.len;
+        text(out: &out, bytes: &engine^.vm.heap.strings.inner[h].payload.bytes.inner[0_u64..n]);
+      }
+    }
   }
   return move out;
 }
