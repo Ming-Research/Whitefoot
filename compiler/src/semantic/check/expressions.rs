@@ -17,8 +17,7 @@ use crate::{
 
 use super::super::model::{
     CheckedConst, CheckedExpression, CheckedIntegerOperation, CheckedMode, CheckedNominalKind,
-    CheckedProjectedDrop, CheckedSetTarget, CheckedType, CheckedValue, CheckedWritablePlace,
-    FloatType, IntegerType,
+    CheckedSetTarget, CheckedType, CheckedValue, CheckedWritablePlace, FloatType, IntegerType,
 };
 use super::super::places::ResolvedPlace;
 use super::{
@@ -1031,13 +1030,8 @@ impl<'unit> Checker<'_, 'unit> {
                 let residual_drops = if copy || read_out || fields.is_empty() {
                     Vec::new()
                 } else {
-                    let paths = self
-                        .types
-                        .residual_drop_paths(check_context, local.ty, &fields)?;
-                    paths
-                        .into_iter()
-                        .map(|(fields, ty)| CheckedProjectedDrop { fields, ty })
-                        .collect()
+                    self.types
+                        .residual_drop_paths(check_context, local.ty, &fields)?
                 };
                 // [SET-1] after its read-out the target is dead for the
                 // remainder of the right-hand side, and the commit reinitializes
@@ -1731,7 +1725,8 @@ impl<'unit> Checker<'_, 'unit> {
         };
         let declared_fields = match constructor {
             Constructor::Struct(nominal) => match &self.types.nominal(nominal)?.kind {
-                CheckedNominalKind::Struct { fields } => fields.clone(),
+                CheckedNominalKind::Struct { fields }
+                | CheckedNominalKind::PreparedKeys { fields } => fields.clone(),
                 _ => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             },
             Constructor::Enum { nominal, variant } => match &self.types.nominal(nominal)?.kind {

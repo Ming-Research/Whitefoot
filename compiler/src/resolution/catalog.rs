@@ -385,6 +385,16 @@ mod tests {
                 let name_end = header
                     .find(['<', ' '])
                     .expect("PRE-1 enum header terminator");
+                // Ordinary prelude enums use the source-record path and are
+                // covered by the complete record/specification lock. This
+                // catalog contains only the six compiler-owned enum types.
+                if !matches!(
+                    &header[..name_end],
+                    "Bool" | "Option" | "Result" | "Overflow" | "DivError" | "NarrowError"
+                ) {
+                    in_enum = false;
+                    continue;
+                }
                 records.push((
                     header[..name_end].to_owned(),
                     Some(DeclarationClass::NominalType),

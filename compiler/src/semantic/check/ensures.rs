@@ -2107,7 +2107,9 @@ impl<'unit> TypeContext<'unit> {
                     let CheckedType::Nominal(nominal) = ty else {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
-                    let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                    let (CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(nominal)?.kind
+                    else {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     fields
@@ -2153,7 +2155,9 @@ impl<'unit> TypeContext<'unit> {
             let CheckedType::Nominal(nominal) = ty else {
                 return Ok(None);
             };
-            let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+            let (CheckedNominalKind::Struct { fields }
+            | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(nominal)?.kind
+            else {
                 return Ok(None);
             };
             let Some(selected) = fields.get(*field as usize) else {
@@ -2184,7 +2188,8 @@ impl<'unit> TypeContext<'unit> {
             }
             let children = match &self.nominal(nominal)?.kind {
                 CheckedNominalKind::Box { referent, .. } => vec![*referent],
-                CheckedNominalKind::Struct { fields } => {
+                CheckedNominalKind::Struct { fields }
+                | CheckedNominalKind::PreparedKeys { fields } => {
                     fields.iter().map(|field| field.ty).collect()
                 }
                 _ => Vec::new(),

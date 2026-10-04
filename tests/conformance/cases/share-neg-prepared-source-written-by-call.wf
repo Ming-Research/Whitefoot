@@ -1,0 +1,9 @@
+fn mutate(keys: &PreparedKeys) -> result: unit writes(keys) {
+  let replacement = box_slots_new::<u8>(capacity: 0_u64);
+  swap(first: &keys^.source.bytes, second: &replacement);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

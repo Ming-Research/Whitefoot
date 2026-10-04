@@ -295,7 +295,15 @@ impl IrBuilder<'_> {
                 }
                 CheckedEntryIndex::Set(set) => {
                     let set = self.expression(set)?;
-                    if self.value_type(set)? != IrType::Address(IrAddressed::KeySet) {
+                    let valid = match self.value_type(set)? {
+                        IrType::Address(IrAddressed::KeySet) => true,
+                        IrType::Address(IrAddressed::Nominal(id)) => matches!(
+                            self.nominals.get(id.index()).map(|nominal| &nominal.kind),
+                            Some(IrNominalKind::PreparedKeys { .. })
+                        ),
+                        _ => false,
+                    };
+                    if !valid {
                         return Err(LoweringFailure::InvalidCheckedProgram);
                     }
                     HeaderIndex::Set(set)
@@ -700,6 +708,20 @@ impl IrBuilder<'_> {
                     self.define(U64, IrOperation::TableHoldKey { record, key: *key })?;
                 }
                 for (set, entries) in sets {
+                    if matches!(
+                        self.value_type(*set)?,
+                        IrType::Address(IrAddressed::Nominal(_))
+                    ) {
+                        self.define(
+                            IrType::Unit,
+                            IrOperation::TableHoldPrepared {
+                                record,
+                                prepared: *set,
+                                entries: *entries,
+                            },
+                        )?;
+                        continue;
+                    }
                     let position =
                         self.define(U64, IrOperation::TableHoldKeys { record, set: *set })?;
                     self.define(

@@ -256,9 +256,14 @@ fn with_resolved_semantics_inputs<ResultValue>(
     let CanonicalOutcome::Complete(canonical) = canonical else {
         panic!("semantic test source must be canonical: {canonical:?}");
     };
-    let outcome = resolve(canonical);
-    let ResolutionOutcome::Complete(resolved) = outcome else {
-        panic!("semantic test source must resolve: {outcome:?}");
+    let resolved = match resolve(canonical) {
+        ResolutionOutcome::Complete(resolved) => resolved,
+        ResolutionOutcome::SourceIssue { issue, .. } => {
+            panic!("semantic test source must resolve: {issue:?}");
+        }
+        ResolutionOutcome::CompilerFailure { failure, .. } => {
+            panic!("semantic test resolution failed internally: {failure:?}");
+        }
     };
     let checked =
         crate::native_test_support::timed("semantic-check", || check_semantics(&resolved));

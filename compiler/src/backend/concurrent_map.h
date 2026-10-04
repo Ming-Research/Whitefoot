@@ -106,6 +106,35 @@ void wf_cmap_key_set_release(wf_key_set *set);
 void wf_cmap_key_set_free_store(void *store);
 void wf_cmap_key_set_drop_spare(void);
 
+/* A source key is a half-open range in an independently owned byte buffer.
+ * Preparation never changes or copies that buffer or these spans. */
+typedef struct wf_key_span {
+    uint64_t start;
+    uint64_t end;
+} wf_key_span;
+
+#define WF_KEY_ORDER_INLINE 16
+typedef struct wf_key_order {
+    uint64_t count;
+    /* NULL selects inline_indices, never a pointer into this object: the
+     * language may relocate the complete prepared value by copying it. */
+    uint64_t *heap_indices;
+    uint64_t inline_indices[WF_KEY_ORDER_INLINE];
+} wf_key_order;
+
+enum { WF_KEY_PREPARED, WF_KEY_INVALID_SPAN, WF_KEY_DUPLICATE };
+/* Produces original source indices in strictly increasing byte order.
+ * InvalidSpan reports the first invalid span at first; Duplicate reports
+ * the lexicographically smallest original-index pair first < second among
+ * equal keys, after every span has passed bounds validation. Every failure leaves
+ * out empty and leaves both source arrays unchanged. Resource exhaustion
+ * is the host's ordinary exhaustion, not a validation result. */
+uint32_t wf_cmap_key_prepare(wf_key_order *out, const unsigned char *bytes,
+                             uint64_t byte_count, const wf_key_span *spans,
+                             uint64_t count, uint64_t *first, uint64_t *second);
+/* Releases only the permutation, never its caller-owned source. */
+void wf_cmap_key_order_release(wf_key_order *order);
+
 /* A hold of several entries of one map, which a statement keeps in its own
  * frame from wf_cmap_hold_begin to wf_cmap_hold_release, so that one
  * statement may hold entries of several maps, and of several header
@@ -143,7 +172,8 @@ typedef struct wf_cmap_holding {
     void *table;
     /* The map's generation when it was taken (wf_cmap_swap). */
     uint32_t generation;
-    /* How the added keys stand: increasing, nondecreasing, or neither. */
+    /* Source order increasing, nondecreasing or shuffled, or an already
+     * merged rank stream with or without repeats. */
     uint8_t order;
     /* It was asked to hold the whole map. */
     uint8_t wants;
@@ -167,6 +197,12 @@ void wf_cmap_hold_whole(wf_cmap_holding *hold);
  * that position plus i. The set stays as it is until the hold is taken. */
 uint64_t wf_cmap_hold_key(wf_cmap_holding *hold, const unsigned char *key, uint64_t length);
 uint64_t wf_cmap_hold_keys(wf_cmap_holding *hold, const wf_key_set *set);
+/* Adds a prepared source in its ORIGINAL span order, using its private
+ * permutation for acquisition. Source bytes, spans and order remain live
+ * and unchanged until the hold is taken. Sorted streams from several
+ * preparations are merged, including repeats between the streams. */
+uint64_t wf_cmap_hold_prepared(wf_cmap_holding *hold, const unsigned char *bytes,
+                              const wf_key_span *spans, const wf_key_order *order);
 /* Holds the entries of the added keys together, creating the absent ones,
  * for a statement that reaches no other entry of the map: their cells are
  * locked in increasing byte order of the keys, without repeats, the order

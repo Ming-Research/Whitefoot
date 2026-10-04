@@ -1715,3 +1715,101 @@ fn third_of(outer: &Outer) -> result: u64 reads(outer) {{
         assert_eq!(field_loads, 1, "one load, of the field itself");
     });
 }
+
+#[test]
+fn prepared_keys_preserve_the_source_and_separate_order_cleanup() {
+    let source = br#"fn restore(prepared: PreparedKeys) -> source: KeySource pure {
+  return move prepared.source;
+}
+
+fn discard(prepared: PreparedKeys) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let bytes = box_slots_new::<u8>(capacity: 0_u64);
+  let spans = box_slots_new::<KeySpan>(capacity: 0_u64);
+  let source = KeySource(bytes: move bytes, spans: move spans);
+  let outcome = key_prepare(source: move source);
+  match move outcome {
+    Ok(value: prepared) => {
+      let recovered = restore(prepared: move prepared);
+    }
+    Err(error: failure) => {
+      match move failure {
+        InvalidSpan(source: recovered, index: bad) => {
+        }
+        Duplicate(source: recovered, first: first_index, second: second_index) => {
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let restore = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "restore")
+            .expect("restore emitted");
+        let definitions = restore
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions());
+        assert_eq!(
+            definitions
+                .filter(|instruction| matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::PreparedOrderRelease { .. },
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert!(restore.blocks().iter().all(|block| matches!(block.terminator(), IrTerminator::Return { drops, .. } if drops.is_empty())));
+        let discard = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "discard")
+            .expect("discard emitted");
+        assert_eq!(
+            discard
+                .blocks()
+                .iter()
+                .filter_map(|block| match block.terminator() {
+                    IrTerminator::Return { drops, .. } => Some(drops.len()),
+                    _ => None,
+                })
+                .sum::<usize>(),
+            1
+        );
+        let prepared = restore.parameters()[0].1;
+        assert!(
+            crate::target::is_memory_only(program.nominals(), program.elements(), prepared)
+                .expect("prepared representation")
+        );
+        assert!(
+            !crate::target::fits_return_registers(program.nominals(), program.elements(), prepared)
+                .expect("prepared call ABI")
+        );
+        assert_eq!(
+            program
+                .functions()
+                .iter()
+                .flat_map(|function| function.blocks())
+                .flat_map(|block| block.instructions())
+                .filter(|instruction| matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::KeyPrepare { .. },
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+    });
+}

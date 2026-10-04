@@ -1166,17 +1166,14 @@ impl Analyzer<'_, '_> {
                 // for each of the set's keys, so `e^.len == k.len` holds
                 // where the block begins.
                 for entry in entries {
-                    let (
-                        crate::semantic::CheckedEntryIndex::Set(set),
-                        CheckedType::KeyedEntries { .. },
-                    ) = (&entry.index, entry.referent)
-                    else {
+                    let crate::semantic::CheckedEntryIndex::Set(set) = &entry.index else {
                         continue;
                     };
                     let CheckedExpression::BorrowAddressed { root: set_root, .. } = set.as_ref()
                     else {
                         continue;
                     };
+                    let prepared = matches!(set_root.ty, CheckedType::Nominal(_));
                     let entries_root = CheckedContainerRoot {
                         root: PlaceRoot::Binding(entry.binding),
                         path: Vec::new(),
@@ -1188,10 +1185,21 @@ impl Analyzer<'_, '_> {
                         MeasuredKind::KeyedEntries,
                         None,
                     );
+                    let mut source = container_root_path(set_root);
+                    let measured = if prepared {
+                        source.path.extend([
+                            PlaceStep::Field(0),
+                            PlaceStep::Field(1),
+                            PlaceStep::Deref,
+                        ]);
+                        MeasuredKind::RuntimeSlots
+                    } else {
+                        MeasuredKind::KeySet
+                    };
                     let right = self.reasoning().place_measure_term(
                         CheckedMeasure::Length,
-                        container_root_path(set_root),
-                        MeasuredKind::KeySet,
+                        source,
+                        measured,
                         None,
                     );
                     let event = self

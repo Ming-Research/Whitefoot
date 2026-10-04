@@ -963,6 +963,11 @@ pub(crate) enum CheckedConstructor {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedNominalKind {
+    /// An owned prepared key source and private runtime sort order. Only
+    /// the declared readonly source field is visible to source programs.
+    PreparedKeys {
+        fields: Vec<CheckedField>,
+    },
     Struct {
         fields: Vec<CheckedField>,
     },
@@ -1149,7 +1154,8 @@ pub(crate) fn type_has_copy_capability(
                     return Some(false);
                 }
                 match &nominal.kind {
-                    CheckedNominalKind::Struct { fields } => {
+                    CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields } => {
                         pending.extend(fields.iter().map(|field| field.ty));
                     }
                     CheckedNominalKind::Enum { variants } => pending.extend(
@@ -2049,7 +2055,9 @@ fn selects_readonly_fragment_field(
         let CheckedType::Nominal(nominal) = ty else {
             return None;
         };
-        let CheckedNominalKind::Struct { fields } = &nominals.get(nominal.0 as usize)?.kind else {
+        let (CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields }) =
+            &nominals.get(nominal.0 as usize)?.kind
+        else {
             return None;
         };
         fields.get(field as usize)
@@ -2543,6 +2551,8 @@ pub(crate) struct CheckedDrop {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedProjectedDrop {
+    /// A consumed prepared source leaves only its private sort order.
+    pub(crate) prepared_order: bool,
     pub(crate) fields: Vec<u32>,
     pub(crate) ty: CheckedType,
 }

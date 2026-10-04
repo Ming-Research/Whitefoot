@@ -1,0 +1,360 @@
+enum Batch {
+  Leaf(expected: u64, prepared: Result<PreparedKeys, KeyPrepareError>);
+  Branch(left: Box<Batch>, right: Box<Batch>);
+}
+
+struct Summary {
+  total: u64;
+  valid: Bool;
+}
+
+fn build_keys(i: u64) -> result: Result<PreparedKeys, KeyPrepareError> pure {
+  doc "Three distinct keys consisting of a letter and i in eight little-endian bytes. Source order rotates c, a, b by i modulo three, while byte order is a, b, c.";
+  let bytes = box_slots_new::<u8>(capacity: 27_u64);
+  for @key (letter in 0_u64..3_u64) {
+    let code = letter + 97_u64;
+    let label = cvt::<u64, u8>(code);
+    if bytes.inner.len < bytes.inner.cap {
+      place_back(window: &bytes.inner, value: label);
+    }
+    let value = i;
+    for @octet (offset in 0_u64..8_u64) {
+      let low = iand(value, 255_u64);
+      let byte = cvt::<u64, u8>(low);
+      if bytes.inner.len < bytes.inner.cap {
+        place_back(window: &bytes.inner, value: byte);
+      }
+      set value = irotr(value, 8_u32);
+    }
+  }
+  let spans = box_slots_new::<KeySpan>(capacity: 3_u64);
+  let rotation = i % 3_u64;
+  for @span (position in 0_u64..3_u64) {
+    let rotated = position + rotation;
+    let rank = rotated % 3_u64;
+    let displaced = rank + 2_u64;
+    let block = displaced % 3_u64;
+    let start = block * 9_u64;
+    let end = start + 9_u64;
+    let span = KeySpan(start: start, end: end);
+    if spans.inner.len < spans.inner.cap {
+      place_back(window: &spans.inner, value: span);
+    }
+  }
+  let source = KeySource(bytes: move bytes, spans: move spans);
+  return key_prepare(source: move source);
+}
+
+fn build_batch(first: u64, count: u64) -> result: Box<Batch> pure {
+  doc "Independent sibling calls prepare distinct sources on compute workers; batches bound how many owners remain live together.";
+  if count <= 1_u64 {
+    let prepared = build_keys(i: first);
+    let leaf = Batch::Leaf(expected: first, prepared: move prepared);
+    return box_new::<Batch>(value: move leaf);
+  }
+  let half = count / 2_u64;
+  let next = first +wrap half;
+  let rest = count -wrap half;
+  let left = build_batch(first: first, count: half);
+  let right = build_batch(first: next, count: rest);
+  let branch = Batch::Branch(left: move left, right: move right);
+  return box_new::<Batch>(value: move branch);
+}
+
+fn sum_sources(batch: &Box<Batch>) -> result: Summary reads(batch) {
+  doc "Checks every preparation result and every returned byte against its input ordinal, and sums the ordinals independently of the hidden acquisition order.";
+  let invalid = False();
+  let valid = True();
+  match batch^.inner {
+    Leaf(expected: ordinal, prepared: outcome) => {
+      match outcome^ {
+        Err(error: failure) => {
+          return Summary(total: 0_u64, valid: invalid);
+        }
+        Ok(value: keys) => {
+          if keys^.source.bytes.inner.len != 27_u64 {
+            return Summary(total: 0_u64, valid: invalid);
+          }
+          if keys^.source.spans.inner.len != 3_u64 {
+            return Summary(total: 0_u64, valid: invalid);
+          }
+          let spans = &keys^.source.spans.inner;
+          if spans^.len == 3_u64 {
+            let rotation = ordinal^ % 3_u64;
+            for @span (position in 0_u64..3_u64) {
+              let rotated = position + rotation;
+              let rank = rotated % 3_u64;
+              let displaced = rank + 2_u64;
+              let block = displaced % 3_u64;
+              let start = block * 9_u64;
+              let end = start + 9_u64;
+              let span = spans^[position];
+              if span.start != start {
+                return Summary(total: 0_u64, valid: invalid);
+              }
+              if span.end != end {
+                return Summary(total: 0_u64, valid: invalid);
+              }
+            }
+          } else {
+            return Summary(total: 0_u64, valid: invalid);
+          }
+          let bytes = &keys^.source.bytes.inner;
+          if bytes^.len == 27_u64 {
+            if bytes^[0_u64] != 97_u8 {
+              return Summary(total: 0_u64, valid: invalid);
+            }
+            if bytes^[9_u64] != 98_u8 {
+              return Summary(total: 0_u64, valid: invalid);
+            }
+            if bytes^[18_u64] != 99_u8 {
+              return Summary(total: 0_u64, valid: invalid);
+            }
+            let decoded = 0_u64;
+            for @octet (offset in 0_u64..8_u64) {
+              let first = offset + 1_u64;
+              let second = offset + 10_u64;
+              let third = offset + 19_u64;
+              let byte = bytes^[first];
+              if byte != bytes^[second] {
+                return Summary(total: 0_u64, valid: invalid);
+              }
+              if byte != bytes^[third] {
+                return Summary(total: 0_u64, valid: invalid);
+              }
+              let wide = cvt::<u8, u64>(byte);
+              let bits = offset * 8_u64;
+              let shift = cvt::<u64, u32>(bits);
+              let part = ishl(wide, shift);
+              set decoded = ior(decoded, part);
+            }
+            if decoded != ordinal^ {
+              return Summary(total: 0_u64, valid: invalid);
+            }
+            return Summary(total: decoded, valid: valid);
+          }
+          return Summary(total: 0_u64, valid: invalid);
+        }
+      }
+    }
+    Branch(left: left_batch, right: right_batch) => {
+      let first = sum_sources(batch: left_batch);
+      let second = sum_sources(batch: right_batch);
+      let total = first.total +wrap second.total;
+      let complete = band(first.valid, second.valid);
+      return Summary(total: total, valid: complete);
+    }
+  }
+}
+
+fn observe(batch: &Box<Batch>, store: &Shared<KeyedTable<u64>>, all: Bool, last: Bool) -> inserted: u64 reads(batch), reads(store) waits {
+  doc "Inserts label-specific values through all three entries of selected owners and probes their raw source-byte keys independently. All owners of one batch are observed once; the first and last owner of every other batch check that concurrently prepared acquisition data remains attached to its own source.";
+  match batch^.inner {
+    Leaf(expected: ordinal, prepared: outcome) => {
+      match outcome^ {
+        Err(error: failure) => {
+          return 0_u64;
+        }
+        Ok(value: keys) => {
+          let count = 0_u64;
+          atomic state = &store^, entries = &state^[keys^] {
+            if entries^.len == 3_u64 {
+              let rotation = ordinal^ % 3_u64;
+              for @key (at in 0_u64..entries^.len) {
+                let rotated = at +wrap rotation;
+                let rank = rotated % 3_u64;
+                let displaced = rank + 2_u64;
+                let block = displaced % 3_u64;
+                let base = ordinal^ *wrap 3_u64;
+                let marker = base +wrap block;
+                set entries^[at] = Some<u64>(value: marker);
+              }
+              set count = entries^.len;
+            }
+          }
+          if keys^.source.bytes.inner.len == 27_u64 {
+            for @probe (block in 0_u64..3_u64) {
+              let start = block * 9_u64;
+              let end = start + 9_u64;
+              let key = &keys^.source.bytes.inner[start..end];
+              let base = ordinal^ *wrap 3_u64;
+              let expected = base +wrap block;
+              let matched = False();
+              atomic state = &store^, slot = &state^[key] {
+                match slot^ {
+                  Some(value: seen) => {
+                    set matched = seen^ == expected;
+                  }
+                  None() => {
+                  }
+                }
+              }
+              if matched {
+              } else {
+                return 0_u64;
+              }
+            }
+          } else {
+            return 0_u64;
+          }
+          return count;
+        }
+      }
+    }
+    Branch(left: left_batch, right: right_batch) => {
+      if all {
+        let first = observe(batch: left_batch, store: store, all: all, last: last);
+        let second = observe(batch: right_batch, store: store, all: all, last: last);
+        return first +wrap second;
+      }
+      if last {
+        return observe(batch: right_batch, store: store, all: all, last: last);
+      }
+      return observe(batch: left_batch, store: store, all: all, last: last);
+    }
+  }
+}
+
+fn consume_source(source: KeySource) -> valid: Bool pure {
+  doc "Checks the independently known zero-ordinal source, then drops both source allocations before returning a scalar.";
+  if source.bytes.inner.len != 27_u64 {
+    return False();
+  }
+  if source.bytes.inner.cap != 27_u64 {
+    return False();
+  }
+  if source.spans.inner.len != 3_u64 {
+    return False();
+  }
+  if source.spans.inner.cap != 3_u64 {
+    return False();
+  }
+  for @byte (at in 0_u64..27_u64) {
+    let expected = 0_u8;
+    let remainder = at % 9_u64;
+    if remainder == 0_u64 {
+      let block = at / 9_u64;
+      let code = block + 97_u64;
+      set expected = cvt::<u64, u8>(code);
+    }
+    if source.bytes.inner[at] != expected {
+      return False();
+    }
+  }
+  for @span (at in 0_u64..3_u64) {
+    let displaced = at + 2_u64;
+    let block = displaced % 3_u64;
+    let start = block * 9_u64;
+    let end = start + 9_u64;
+    if source.spans.inner[at].start != start {
+      return False();
+    }
+    if source.spans.inner[at].end != end {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn consume_in_atomic(keys: PreparedKeys, store: &Shared<KeyedTable<u64>>) -> valid: Bool reads(store) waits {
+  doc "Inserts previously absent keys, then consumes their source after the last entry use and before unlocking.";
+  atomic state = &store^, entries = &state^[keys] {
+    if entries^.len != 3_u64 {
+      return False();
+    }
+    for @entry (at in 0_u64..entries^.len) {
+      let displaced = at +wrap 2_u64;
+      let block = displaced % 3_u64;
+      set entries^[at] = Some<u64>(value: block);
+    }
+    let original = move keys.source;
+    return consume_source(source: move original);
+  }
+}
+
+fn check_consumed_source() -> valid: Bool pure waits {
+  let table = keyed_table_new::<u64>(capacity: 3_u64);
+  let store = shared_new::<KeyedTable<u64>>(value: move table);
+  let prepared = build_keys(i: 0_u64);
+  let keys = match move prepared {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(error: failure) => {
+      return False();
+    }
+  }
+  let valid = consume_in_atomic(keys: move keys, store: &store);
+  if valid {
+  } else {
+    return False();
+  }
+  for @probe (block in 0_u64..3_u64) {
+    let raw = array_filled::<u8, 9>(value: 0_u8);
+    let code = block + 97_u64;
+    set raw[0_u64] = cvt::<u64, u8>(code);
+    let key = &raw[0_u64..9_u64];
+    let matched = False();
+    atomic state = &store, slot = &state^[key] {
+      match slot^ {
+        Some(value: held) => {
+          set matched = held^ == block;
+        }
+        None() => {
+        }
+      }
+    }
+    if matched {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "Prepares 4,096 independently owned sources, verifies each unchanged source, and keeps a bounded set alive across each native entry observation. Distinct letter/ordinal keys require 192 table entries for all 64 owners of the first batch and six for the first/last representatives thereafter; aliased acquisition data would instead merge distinct owners' keys.";
+  let total = 0_u64;
+  for @each (i in 0_u64..64_u64) {
+    let first = i *wrap 64_u64;
+    let batch = build_batch(first: first, count: 64_u64);
+    let summary = sum_sources(batch: &batch);
+    if summary.valid {
+    } else {
+      return std::process::exit_status(code: 2_u8);
+    }
+    set total = total +wrap summary.total;
+    let table = keyed_table_new::<u64>(capacity: 192_u64);
+    let store = shared_new::<KeyedTable<u64>>(value: move table);
+    let all = i == 0_u64;
+    let first_only = False();
+    let inserted = observe(batch: &batch, store: &store, all: all, last: first_only);
+    let expected = 192_u64;
+    if all {
+    } else {
+      let last_only = True();
+      let last = observe(batch: &batch, store: &store, all: all, last: last_only);
+      set inserted = inserted +wrap last;
+      set expected = 6_u64;
+    }
+    let counted = 0_u64;
+    atomic state = &store {
+      set counted = keyed_table_count::<u64>(table: &state^);
+    }
+    if inserted != expected {
+      return std::process::exit_status(code: 3_u8);
+    }
+    if counted != expected {
+      return std::process::exit_status(code: 4_u8);
+    }
+  }
+  let consumed = check_consumed_source();
+  if consumed {
+  } else {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if total == 8386560_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

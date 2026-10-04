@@ -366,6 +366,16 @@ fn lower_nominals(
                         })
                         .collect::<Result<Vec<_>, LoweringFailure>>()?,
                 },
+                CheckedNominalKind::PreparedKeys { fields } => IrNominalKind::PreparedKeys {
+                    fields: fields
+                        .iter()
+                        .map(|field| {
+                            Ok(IrField {
+                                ty: lower_type(erasure, field.ty)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, LoweringFailure>>()?,
+                },
                 CheckedNominalKind::Enum { variants } => IrNominalKind::Enum {
                     variants: variants
                         .iter()
@@ -627,6 +637,7 @@ fn lower_borrow_mode_type(
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?
                 .kind,
             IrNominalKind::Struct { .. }
+                | IrNominalKind::PreparedKeys { .. }
                 | IrNominalKind::Enum { .. }
                 | IrNominalKind::Box { .. }
                 | IrNominalKind::Opaque
@@ -1133,7 +1144,9 @@ impl<'program> IrBuilder<'program> {
                     // the point at which the owner ceases to exist.
                     let mut lowered = Vec::with_capacity(covered.len());
                     for drop in covered {
-                        lowered.push(self.lower_projected_drop(aggregate, drop)?);
+                        if let Some(drop) = self.lower_projected_drop(aggregate, drop)? {
+                            lowered.push(drop);
+                        }
                     }
                     self.append_drops(lowered)?;
                     for (binding, ty, field) in bindings {
@@ -1189,7 +1202,9 @@ impl<'program> IrBuilder<'program> {
                     let value = self.expression(expression)?;
                     let mut lowered = Vec::with_capacity(drops.len());
                     for drop in drops {
-                        lowered.push(self.lower_projected_drop(value, drop)?);
+                        if let Some(drop) = self.lower_projected_drop(value, drop)? {
+                            lowered.push(drop);
+                        }
                     }
                     self.append_drops(lowered)?;
                 }
@@ -2061,7 +2076,9 @@ impl<'program> IrBuilder<'program> {
                 let root = self.binding_value(*binding)?;
                 let mut lowered_drops = Vec::with_capacity(residual_drops.len());
                 for drop in residual_drops {
-                    lowered_drops.push(self.lower_projected_drop(root, drop)?);
+                    if let Some(drop) = self.lower_projected_drop(root, drop)? {
+                        lowered_drops.push(drop);
+                    }
                 }
                 let value = self.project_struct_path(root, fields, *consume_root)?;
                 if self.value_type(value)? != lower_type(self.erasure, *ty)? {
@@ -2226,7 +2243,7 @@ impl<'program> IrBuilder<'program> {
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?
                 .kind
             {
-                IrNominalKind::Struct { fields } => {
+                IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields } => {
                     fields
                         .get(*field as usize)
                         .ok_or(LoweringFailure::InvalidCheckedProgram)?
@@ -2272,7 +2289,7 @@ impl<'program> IrBuilder<'program> {
             .ok_or(LoweringFailure::InvalidCheckedProgram)?
             .kind
         {
-            IrNominalKind::Struct { fields } => {
+            IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields } => {
                 fields
                     .get(*field as usize)
                     .ok_or(LoweringFailure::InvalidCheckedProgram)?
@@ -2328,8 +2345,27 @@ impl<'program> IrBuilder<'program> {
         &mut self,
         root: IrValueId,
         drop: &CheckedProjectedDrop,
-    ) -> Result<IrDrop, LoweringFailure> {
-        self.lower_drop_subject(root, &drop.fields, lower_type(self.erasure, drop.ty)?)
+    ) -> Result<Option<IrDrop>, LoweringFailure> {
+        if drop.prepared_order {
+            let prepared = if matches!(self.value_type(root)?, IrType::Address(_)) {
+                let path = drop
+                    .fields
+                    .iter()
+                    .copied()
+                    .map(crate::semantic::CheckedPlaceStep::Field)
+                    .collect::<Vec<_>>();
+                self.project_address_path(root, &path)?
+            } else if drop.fields.is_empty() {
+                root
+            } else {
+                self.project_struct_path(root, &drop.fields, false)?
+            };
+            self.define(IrType::Unit, IrOperation::PreparedOrderRelease { prepared })?;
+            Ok(None)
+        } else {
+            self.lower_drop_subject(root, &drop.fields, lower_type(self.erasure, drop.ty)?)
+                .map(Some)
+        }
     }
 
     fn lower_drop_subject(

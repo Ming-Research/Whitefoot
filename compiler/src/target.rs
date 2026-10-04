@@ -513,7 +513,7 @@ pub(crate) fn is_union_enum(
 
 /// Whether a value of `ty` holds a union-laid-out enum inline: the enum
 /// itself, or a struct, enum payload, inline array or inline window that
-/// contains one. Such a value is memory-only in the backend
+/// contains one, or is the opaque prepared-key storage. Such a value is memory-only in the backend
 /// (compiler/payload-enum-layout): it lives in storage, moves by memmove, and
 /// is never loaded, stored or passed as one LLVM first-class value, because
 /// LLVM has no union type to carry it. A `Box` and a runtime-capacity block
@@ -567,9 +567,15 @@ fn holds_union_enum(
             let nominal = nominals
                 .get(id.index())
                 .ok_or(TargetLayoutFailure::InvalidIr)?;
+            if matches!(nominal.kind(), IrNominalKind::PreparedKeys { .. }) {
+                visiting.remove(&id);
+                return Ok(true);
+            }
             let mut holds = false;
             let fields: Vec<IrType> = match nominal.kind() {
-                IrNominalKind::Struct { fields } => fields.iter().map(|field| field.ty()).collect(),
+                IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields } => {
+                    fields.iter().map(|field| field.ty()).collect()
+                }
                 IrNominalKind::Enum { variants } => variants
                     .iter()
                     .flat_map(|variant| variant.fields())
@@ -722,6 +728,7 @@ impl<'types> ReturnLeaves<'types> {
                     }
                     // `{ i128, i128 }`: each `i128` takes two words.
                     IrNominalKind::Opaque => self.integer(copies, 4),
+                    IrNominalKind::PreparedKeys { .. } => self.integer(copies, 20),
                     // `i1` or `i32`.
                     IrNominalKind::Enum { .. } if nominal.is_tag_only_enum() => {
                         self.integer(copies, 1);
@@ -1483,6 +1490,15 @@ impl<'types> LayoutComputer<'types> {
             .nominals
             .get(id.index())
             .ok_or(TargetLayoutFailure::InvalidIr)?;
+        if matches!(nominal.kind(), IrNominalKind::PreparedKeys { .. }) {
+            let layout = Layout {
+                size: 160,
+                align: 8,
+            };
+            self.visiting.remove(&id);
+            self.nominal.insert(id, layout);
+            return Ok(layout);
+        }
         if matches!(nominal.kind(), IrNominalKind::Opaque) {
             let layout = Layout {
                 size: 32,
@@ -1533,6 +1549,7 @@ impl<'types> LayoutComputer<'types> {
                 // nominal returned with its uniform representation
                 // before this match; none reaches the field walk.
                 IrNominalKind::Box { .. }
+                | IrNominalKind::PreparedKeys { .. }
                 | IrNominalKind::Opaque
                 | IrNominalKind::Shared { .. } => {
                     return Err(TargetLayoutFailure::InvalidIr);

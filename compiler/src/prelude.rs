@@ -115,6 +115,41 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/KeySpan.wf",
+        PreludeSource::Struct,
+        r#"struct KeySpan {
+  start: u64;
+  end: u64;
+}
+"#,
+    ),
+    (
+        "prelude/KeySource.wf",
+        PreludeSource::Struct,
+        r#"struct KeySource {
+  bytes: Box<Slots<u8>>;
+  spans: Box<Slots<KeySpan>>;
+}
+"#,
+    ),
+    (
+        "prelude/PreparedKeys.wf",
+        PreludeSource::Opaque,
+        r#"opaque nocopy struct PreparedKeys {
+  readonly source: KeySource;
+}
+"#,
+    ),
+    (
+        "prelude/KeyPrepareError.wf",
+        PreludeSource::Enum,
+        r#"enum KeyPrepareError {
+  InvalidSpan(source: KeySource, index: u64);
+  Duplicate(source: KeySource, first: u64, second: u64);
+}
+"#,
+    ),
+    (
         "prelude/box_new.wf",
         PreludeSource::Function,
         r#"fn box_new<T>(value: T) -> result: Box<T> pure;
@@ -361,6 +396,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/key_prepare.wf",
+        PreludeSource::Function,
+        r#"fn key_prepare(source: KeySource) -> result: Result<PreparedKeys, KeyPrepareError> pure;
+"#,
+    ),
+    (
         "prelude/free_empty.wf",
         PreludeSource::Function,
         r#"fn free_empty<W>(window: W) -> result: unit pure contract {
@@ -427,12 +468,13 @@ mod tests {
         signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
-        // compiler-owned rows only the key set's four functions [SHARE-1]
-        // take no type parameter, so each is one ordinary checked function;
+        // compiler-owned rows the key set's four functions [SHARE-1] and
+        // key preparation take no type parameter, so each is one ordinary checked function;
         // every other row is generic, and [FN-2] gives it a checked function
         // only per concrete instance, of which this unit, calling none of
         // them, has none.
         let ungeneric = [
+            "key_prepare",
             "key_set_add",
             "key_set_new",
             "key_set_payload",
@@ -463,8 +505,8 @@ mod tests {
         assert!(transferred.body.is_some());
     }
 
-    /// [PRE-1] the records are the specification's text: the opaque struct
-    /// fence and the function fence, record for record and in order. The
+    /// [PRE-1] the supplied records are the specification's struct, ordinary
+    /// enum, and function text, record for record and in order. The
     /// fences write the capacity parameter as `const n: u64`, the spelling a
     /// record parses with.
     #[test]
@@ -475,13 +517,20 @@ mod tests {
             .and_then(|rest| rest.split("\n[PRE-2] ").next())
             .expect("the specification states PRE-1");
         let fences: Vec<&str> = section.split("```\n").skip(1).step_by(2).collect();
-        let [structs, _enums, functions] = fences.as_slice() else {
+        let [structs, enums, functions] = fences.as_slice() else {
             panic!("PRE-1 states its structs, enums and functions in three fences");
         };
         let mut stated: Vec<String> = structs
             .split("\n\n")
             .map(|record| format!("{}\n", record.trim_end()))
             .collect();
+        // The catalog owns the numeric enums; source records add ordinary
+        // enums in the same written enum fence.
+        for record in enums.split("\n\n") {
+            if record.starts_with("enum KeyPrepareError ") {
+                stated.push(format!("{}\n", record.trim_end()));
+            }
+        }
         let mut function = String::new();
         for line in functions.lines() {
             if line.starts_with("fn ") && !function.is_empty() {

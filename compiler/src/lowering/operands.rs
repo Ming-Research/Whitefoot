@@ -140,9 +140,14 @@ macro_rules! operation_operands {
             | IrOperation::TableHoldSlot {
                 position: value, ..
             }
+            | IrOperation::KeyPrepare { source: value }
+            | IrOperation::PreparedOrderRelease { prepared: value }
             | IrOperation::KeySetNew { capacity: value }
             | IrOperation::WatchObject { object: value, .. }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
+            IrOperation::TableHoldPrepared {
+                prepared, entries, ..
+            } => vec![$value(prepared), $value(entries)],
             IrOperation::KeyedTableSwap { first, second } => vec![$value(first), $value(second)],
             IrOperation::TableLockEntry { table, key, .. } => vec![$value(table), $value(key)],
             IrOperation::KeyedEntriesFill {

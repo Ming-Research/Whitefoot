@@ -951,6 +951,15 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **Verify KeyedEntries automatic-map admission against PAR-2.** The generic
+  affine-bound route in `semantic/loop_permission.rs` excludes Ring but may
+  admit KeyedEntries, while PAR-2 names Array, Slots, ranges and Segments.
+  This is an unverified acceptance/emission lead, not evidence that an old
+  MSET loop ran in parallel. Obtain a minimal loop's retained permission and
+  emitted worker path; if it exceeds the specified family, restore that
+  family and retain a negative witness. Reopen before changing entry-loop
+  parallelism or making a performance claim that depends on its old schedule.
+
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
@@ -2413,6 +2422,35 @@ rarely insert at the same place.
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
 
+- **Settle source-storage capabilities before retiring KeySet.** The draft
+  prepared-key source owns boxed byte and span buffers, while the existing
+  runtime-backed KeySet can collect keys without source heap allocations.
+  Do not remove that capability merely because Firn already owns a buffer.
+  Compare an ordinary fixed-capacity or generic source representation with
+  retaining distinct collection and preparation operations. Reopen before
+  removing KeySet; require a minimal no_heap caller and explicit allocation
+  accounting. Preparing an already-owned boxed source is not itself a source
+  heap allocation.
+
+- **Transport prepared span bounds only if a caller needs them.** Successful
+  preparation validates every span, but RANGE-1 does not state field facts
+  below struct-valued array elements and TYPE-11 supplies no invariant for
+  an opaque type. A caller that slices bytes through an arbitrary inspected
+  span may therefore need ordinary bounds guards. Firn currently uses its
+  existing guarded span helpers. Reopen when those repeated checks obstruct
+  a real consumer or have measured cost; require an explicit proof rule and
+  invalidation witnesses rather than treating the native validation as an
+  unchecked source assumption.
+
+- **Complete runtime allocation facts for EFF-3.** The existing allocation
+  seed is also used to reject source-heap calls in no_heap programs, while
+  shared objects and key collections allocate from the separate runtime
+  pool. New preparation keeps these judgments separate. Audit the older
+  runtime operations for missing allocation facts before transformations
+  deduplicate or reorder their calls; add a minimal retained-effect witness
+  and preserve their source-heap capability. No unsafe transformation has
+  yet been demonstrated by this lead.
+
 - **A proof counter has no type without an overflow obligation.** Minimal
   witness: a monitor invariant `produced - consumed == count` over a bounded
   buffer, whose `produced` and `consumed` exist only for the proof and grow
@@ -3086,6 +3124,18 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **The host-wide check lock has no waiting order.** `run-check.pl` exits 75
+  when another command owns the host; a caller retrying between checks can
+  repeatedly miss the gap while another task immediately starts its next
+  check. This delayed the prepared-key native and performance comparisons
+  while unrelated Snowghost checks continued on the same host. Consider an
+  optional bounded waiting mode that preserves exclusion, owner inspection,
+  cancellation and nested-command ownership, and provides an explicit queue
+  order rather than relying on polling races. Validate with two competing
+  callers, cancellation of a waiter and an exiting owner; never remove a
+  live owner's lock. Reopen when concurrent local tasks again need shared
+  test time. No runner change is part of the prepared-key implementation.
 
 - **firn's network cases now and then lose their first connection when the
   whole corpus runs at once on a 32-CPU host.** `cargo test --test corpus` on

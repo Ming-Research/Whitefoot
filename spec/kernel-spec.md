@@ -411,7 +411,7 @@ The five are ordinary nominals of the nominal-type TYPEID domain [TYPE-6], writt
 In this specification's prose `N` stands for a written const argument; source writes a `const` IDENT, lowercase under [FORM-3], as the [PRE-1] rows do.
 `Slots`, `Ring`, `Segments`, and `Box` are declared `nocopy`, so their values are affine unless an element or content type makes them linear, and an `Array` has exactly the capabilities of its element type [OWN-1, PROV-6].
 A `struct` or `enum` declaration may carry one capability modifier [GRAM-2]: `nodrop`, which states a logical must-consume obligation on values of that nominal in every scope, or `nocopy`, which makes its values non-duplicable although every part could be copied; neither changes a component, layout, or construction route [OWN-1, PROV-6].
-A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of one of its fields is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: a construction row [OP-13] forms the four storage shapes and `Box<T>`, which the prelude declares [PRE-1], and a host function forms the opaque structs the host modules declare, their host handles among them [PRE-2], so no other opaque struct ever has a value.
+A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of one of its fields is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: the prelude operations form its storage and shared-state values [OP-13, SHARE-1, PRE-1], an atomic entry binding forms its entry view [SHARE-2], and a host function forms the opaque structs the host modules declare, their host handles among them [PRE-2]. No other opaque struct ever has a value.
 A `field` may carry the `readonly` modifier [GRAM-2]; a source field carries it only together with `public` [MOD-6]. Inside the module that declares a source struct its readonly field is an ordinary field. Outside that module — and everywhere, for a PRE-1 struct's field — a path that ends at or passes through a readonly field is never a write target: a `set` whose target is such a path [SET-1], and an argument naming such a path at a reference parameter whose callee row writes that parameter [EFF-5], are each a hard error citing TYPE-2 at the complete target `place` or argument `atom`, with a repair [DIAG-1]. Construction gives a readonly field its value like any other field [GRAM-8], and a construction outside the declaring module supplies none [MOD-5]; a whole-value assignment replaces it together with its owner. Its value otherwise changes only through a compiler-owned [PRE-1] operation whose row declares `writes` of it [OP-10]; a declared row may name a readonly field in `writes`, because a row reports every change its callees make [EFF-2]. `readonly` states that the field is not assignable, not that its value is constant.
 
 [TYPE-11] Type invariants.
@@ -847,7 +847,7 @@ A `Slots` or `Ring` release is each element's compiler-derived release over its 
 A `const` item [CONST-2] is never released.
 Every other frame-resident owned value [STOR-1] has no release action.
 
-A host handle [PRE-2] has no fields, so its release is empty; every other opaque struct [TYPE-2] takes the release its fields give it under this rule, `Box` the cell case above.
+A host handle [PRE-2] has no fields, so its release is empty. The shared-state prelude types additionally release their owned runtime resources as [SHARE-1] specifies; extracting the source of `PreparedKeys` releases only its private ordering. Every other opaque struct [TYPE-2] takes the release its fields give it under this rule, `Box` the cell case above.
 An opaque struct's `nodrop` modifier, and only the ordinary ownership closure of [PROV-6], requires explicit consumption.
 No source declaration, annotation, attribute, contract, or binding attaches a finalizer or any other user-defined action to a value's release.
 
@@ -1140,7 +1140,7 @@ All layout-ceiling arithmetic is over unbounded mathematical integers.
 Let `round_up(x,a) = ceil(x/a) * a`.
 For a sequence of `(size, alignment)` pairs, start at offset zero, round each current offset up to the next field's alignment, add that field's size, take aggregate alignment as the maximum of one and the field alignments, and round the final offset to that aggregate alignment.
 The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; and every fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
-Every other struct applies the sequence rule to fields in declaration order.
+`PreparedKeys` has ceilings `(160,8)`, including its visible source and private ordering storage [SHARE-1]. Every other struct applies the sequence rule to fields in declaration order.
 A constant-capacity `Array<T, N>` repeats T's pair N times.
 A constant-capacity `Slots<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by one `(8,8)` word, its length.
 A constant-capacity `Ring<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by two `(8,8)` words, its length and its window origin.
@@ -2201,18 +2201,25 @@ A value of the prelude type `KeySet` is a key set: its `len` distinct keys, in i
 `key_set_put` adds its key with its payload when the set lacks that key, and otherwise replaces that key's payload; `key_set_add` adds its key with payload `amount` when the set lacks that key, and otherwise adds `amount` to that key's payload modulo 2^64.
 `key_set_payload` returns the payload of the key at its index.
 
+A value of the ordinary prelude struct `KeySource` owns a byte buffer and a sequence of `KeySpan` records. A span selects the bytes from its `start`, included, to its `end`, excluded, in that buffer.
+`key_prepare` consumes a source and returns an ordinary `Result`. It first checks every span's `start <= end` and `end <= source.bytes.inner.len`. If a span fails, the result is `Err(InvalidSpan(...))` carrying the unchanged source and the smallest failing span index. With valid spans, if two selected byte strings are equal, the result is `Err(Duplicate(...))` carrying the unchanged source and the lexicographically smallest pair of original indices `(first, second)` with `first < second` that selects equal strings. Empty spans select the empty key.
+Otherwise the result is `Ok` with a `PreparedKeys` owning the unchanged source and a private ordering of its distinct keys for taking their entries together. The source's bytes, spans, lengths, capacities and span order are unchanged. The ordering is not a source field or a sequence the writer can read or change; `key_prepare` is the only operation that prepares it. Duplicate selection and value combination belong to ordinary application code before this call.
+The prepared value's `source` field is readonly under [TYPE-2]. Reading it is ordinary field access; consuming it is [OWN-1]'s ordinary field consume, which releases the rest of the prepared owner and prevents any further use of that owner. Releasing a complete prepared value releases its source and its private ordering.
+
 [SHARE-2] Atomic statements.
 An `atomic_stmt` [GRAM-4] has a target, the `place` after its first `&`; a binding, its first `IDENT`; entry bindings, each a later `IDENT` with the `place` after its `&`; a block; and optionally a guard, the `expr` after `when`.
 The target has type `Shared<T>`, and the binding is a reference variable of kind `&T` whose path is the state of the object the target names.
-An entry binding's place is the binding, then `^`, then field selections through no `Box` [TYPE-9] that end at a field of type `KeyedTable<V>`, or none when the state itself has that type, then one index step whose atom has type `&[u8]` or is a place of type `KeySet`. The atom is no `move`, and it reads no path through the binding or an entry binding, since the statement reads it when it begins, before it holds the state. The entry binding is a reference variable of the kind this table gives:
+An entry binding's place is the binding, then `^`, then field selections through no `Box` [TYPE-9] that end at a field of type `KeyedTable<V>`, or none when the state itself has that type, then one index step whose atom has type `&[u8]` or is a place of type `KeySet` or `PreparedKeys`. The atom is no `move`, and it reads no path through the binding or an entry binding, since the statement reads it when it begins, before it holds the state. The entry binding is a reference variable of the kind this table gives:
 
 | index atom | entry binding |
 |---|---|
 | of type `&[u8]` | `&Option<V>`, whose path is the table's entry under the bytes the atom names |
 | a place of type `KeySet` | `&KeyedEntries<V>`, whose element at each index is the table's entry under the set's key at that index, and whose `len` is the set's |
+| a place `p` of type `PreparedKeys` | `&KeyedEntries<V>`, whose element at index `i` is the table's entry under the bytes selected by `p.source.spans.inner[i]` in `p.source.bytes.inner`, and whose `len` is `p.source.spans.inner.len` |
 
 The statement reads its target place and each index atom when it begins. The object stays live until the statement completes, whatever its block does with the target place [SHARE-1].
 The binding and the entry bindings are in scope in the guard and the block, and their roots leave scope when the block ends by any edge [REF-2]. An entry binding `e` whose atom is a key set `k` establishes `e^.len == k.len` at the block's entry, as a guard's comparison is established there [ENT-3.S1], and a write to `k` while `e` is valid invalidates `e` [REF-2].
+An entry binding `e` whose atom is a prepared value `p` establishes `e^.len == p.source.spans.inner.len` at the block's entry in the same way. Replacing or consuming `p` or any of its owned parts while `e` is valid invalidates `e` under [REF-2]. The private acquisition order does not change the source-index correspondence of its entries.
 Every atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`.
 The guard and the block contain no call to a waiting function [WAIT-1] and no atomic statement. The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
 The guard and the block together form a path through the binding or an entry binding, and use every entry binding.
@@ -2231,7 +2238,7 @@ An implementation may hold less than a statement's state, or hold it together wi
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, numeric-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handle `Shared`, the keyed table `KeyedTable` and the key set `KeySet` [SHARE-1], and the `KeyedEntries` an entry binding names [SHARE-2]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handle `Shared`, the keyed table `KeyedTable`, the key set `KeySet` and the prepared source `PreparedKeys` [SHARE-1], and the `KeyedEntries` an entry binding names [SHARE-2]. `KeySpan` and `KeySource` are ordinary non-opaque structs with ordinary constructors. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. The complete struct declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2270,6 +2277,20 @@ opaque nocopy struct KeySet {
 opaque nocopy struct KeyedEntries<V: drop> {
   readonly len: u64;
 }
+
+struct KeySpan {
+  start: u64;
+  end: u64;
+}
+
+struct KeySource {
+  bytes: Box<Slots<u8>>;
+  spans: Box<Slots<KeySpan>>;
+}
+
+opaque nocopy struct PreparedKeys {
+  readonly source: KeySource;
+}
 ```
 
 The complete enum declarations are:
@@ -2301,6 +2322,11 @@ enum DivError {
 
 enum NarrowError {
   NarrowError();
+}
+
+enum KeyPrepareError {
+  InvalidSpan(source: KeySource, index: u64);
+  Duplicate(source: KeySource, first: u64, second: u64);
 }
 ```
 
@@ -2415,6 +2441,7 @@ fn key_set_add(keys: &KeySet, key: &[u8], amount: u64) -> result: unit reads(key
 fn key_set_payload(keys: &KeySet, index: u64) -> payload: u64 reads(keys) contract {
   requires index < keys^.len;
 };
+fn key_prepare(source: KeySource) -> result: Result<PreparedKeys, KeyPrepareError> pure;
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
@@ -2422,7 +2449,7 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `keyed_table_new`, `keyed_table_count`, `key_set_new`, `key_set_put`, `key_set_add`, `key_set_payload` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each struct above in written order with its constructor, refused exactly when it is opaque, and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `keyed_table_new`, `keyed_table_count`, `key_set_new`, `key_set_put`, `key_set_add`, `key_set_payload`, `key_prepare` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 

@@ -213,32 +213,56 @@ fn run_set(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   return unit;
 }
 
-fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
-  doc "MSET key value [key value ...]: stores every pair, removing any expiry the keys had, in one statement on the keys' entries; a key named twice keeps its last value.";
-  let count = args^.inner.len;
-  let pairs = count / 2_u64;
-  let keys = key_set_new(capacity: pairs);
-  for @pairs (pair in 0_u64..pairs) {
-    let doubled = pair *wrap 2_u64;
-    let index = doubled +wrap 1_u64;
-    let place = key_bounds(input: input, args: args, index: index);
-    let key = &input^[place.start..place.end];
-    let next = index +wrap 1_u64;
-    key_set_put(keys: &keys, key: key, payload: next);
+fn run_mset(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv) -> restored: Box<Slots<u8>> reads(store), reads(args), writes(client) waits {
+  doc "MSET key value [key value ...]: stores every pair, removing any expiry the keys had, in one statement on distinct entries; application deduplication gives a repeated key its last value.";
+  let pairs = True();
+  let planned = named_keys(input: &input, args: args, pairs: pairs);
+  let NamedKeys(spans: key_spans, marks: key_marks, valid: ready) = move planned;
+  if ready {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
   }
-  atomic s = &store^.state, slots = &s^.map[keys] {
-    for @stored (at in 0_u64..keys.len) {
-      let position = key_set_payload(keys: &keys, index: at);
-      let value_span = arg(args: args, index: position);
-      let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
-      put_text(slot: &slots^[at], value: move value, expires: 0_u64);
+  let source = KeySource(bytes: move input, spans: move key_spans);
+  match key_prepare(source: move source) {
+    Err(error: failure) => {
+      key_prepare_failed(client: client);
+      match move failure {
+        InvalidSpan(source: returned, index: invalid_index) => {
+          return move returned.bytes;
+        }
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+          return move returned.bytes;
+        }
+      }
     }
-    if store^.logging {
-      log_command(log: &s^.meta.log, input: input, args: args);
+    Ok(value: keys) => {
+      let length = keys.source.bytes.inner.len;
+      let bytes = &keys.source.bytes.inner[0_u64..length];
+      let complete = False();
+      atomic s = &store^.state, slots = &s^.map[keys] {
+        if key_marks.inner.len == slots^.len {
+          set complete = True();
+          for @stored (at in 0_u64..slots^.len) {
+            let position = key_marks.inner[at];
+            let value_span = arg(args: args, index: position);
+            let value = bytes_new(input: bytes, start: value_span.start, length: value_span.length);
+            put_text(slot: &slots^[at], value: move value, expires: 0_u64);
+          }
+          if store^.logging {
+            log_command(log: &s^.meta.log, input: bytes, args: args);
+          }
+        }
+      }
+      if complete {
+        reply_ok(client: client);
+      } else {
+        key_prepare_failed(client: client);
+      }
+      let returned = move keys.source;
+      return move returned.bytes;
     }
   }
-  reply_ok(client: client);
-  return unit;
 }
 
 fn bump_value(env: &Counted, value: &Entry) -> result: u64 writes(env), writes(value) {

@@ -1,0 +1,60 @@
+fn main() -> status: std::process::ExitStatus pure {
+  let bytes = box_slots_new::<u8>(capacity: 4_u64);
+  place_back(window: &bytes.inner, value: 97_u8);
+  place_back(window: &bytes.inner, value: 98_u8);
+  let spans = box_slots_new::<KeySpan>(capacity: 4_u64);
+  let span0 = KeySpan(start: 0_u64, end: 3_u64);
+  place_back(window: &spans.inner, value: span0);
+  let span1 = KeySpan(start: 2_u64, end: 1_u64);
+  place_back(window: &spans.inner, value: span1);
+  let source = KeySource(bytes: move bytes, spans: move spans);
+  let prepared = key_prepare(source: move source);
+  match move prepared {
+    Ok(value: keys) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+    Err(error: failure) => {
+      match move failure {
+        InvalidSpan(source: original, index: bad) => {
+          if bad != 0_u64 {
+            return std::process::exit_status(code: 2_u8);
+          }
+          if original.bytes.inner.cap != 4_u64 {
+            return std::process::exit_status(code: 10_u8);
+          }
+          if original.bytes.inner.len != 2_u64 {
+            return std::process::exit_status(code: 5_u8);
+          }
+          if original.spans.inner.cap != 4_u64 {
+            return std::process::exit_status(code: 10_u8);
+          }
+          if original.spans.inner.len != 2_u64 {
+            return std::process::exit_status(code: 6_u8);
+          }
+          if original.bytes.inner[0_u64] != 97_u8 {
+            return std::process::exit_status(code: 7_u8);
+          }
+          if original.bytes.inner[1_u64] != 98_u8 {
+            return std::process::exit_status(code: 7_u8);
+          }
+          if original.spans.inner[0_u64].start != 0_u64 {
+            return std::process::exit_status(code: 8_u8);
+          }
+          if original.spans.inner[0_u64].end != 3_u64 {
+            return std::process::exit_status(code: 8_u8);
+          }
+          if original.spans.inner[1_u64].start != 2_u64 {
+            return std::process::exit_status(code: 8_u8);
+          }
+          if original.spans.inner[1_u64].end != 1_u64 {
+            return std::process::exit_status(code: 8_u8);
+          }
+          return std::process::exit_status(code: 9_u8);
+        }
+        Duplicate(source: original, first: left, second: right) => {
+          return std::process::exit_status(code: 3_u8);
+        }
+      }
+    }
+  }
+}

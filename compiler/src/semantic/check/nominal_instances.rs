@@ -756,6 +756,21 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
+                    if template.name == "PreparedKeys"
+                        && self
+                            .types
+                            .declarations
+                            .is_prelude_opaque_declaration(template.node)? =>
+                {
+                    CheckedNominalKind::PreparedKeys {
+                        fields: self.parse_struct_fields(
+                            check_context,
+                            template.node,
+                            &substitution,
+                        )?,
+                    }
+                }
+                DeclarationRole::Struct
                     if matches!(template.name.as_str(), "Shared" | "KeyedTable")
                         && self
                             .types
@@ -1162,6 +1177,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .map(CheckedType::Nominal)
             }
             CheckedNominalKind::Struct { .. }
+            | CheckedNominalKind::PreparedKeys { .. }
             | CheckedNominalKind::Enum { .. }
             | CheckedNominalKind::Opaque
             | CheckedNominalKind::Shared { .. } => Ok(CheckedType::Nominal(id)),
@@ -1506,6 +1522,10 @@ impl<'unit> TypeContext<'unit> {
             (
                 CheckedNominalKind::Struct { fields: left },
                 CheckedNominalKind::Struct { fields: right },
+            )
+            | (
+                CheckedNominalKind::PreparedKeys { fields: left },
+                CheckedNominalKind::PreparedKeys { fields: right },
             ) => Ok(Checker::queue_region_blind_fields(left, right, pending)),
             (
                 CheckedNominalKind::Enum { variants: left },
@@ -1830,7 +1850,9 @@ impl<'unit> TypeContext<'unit> {
         region_parameters: &[crate::DeclarationId],
     ) -> Result<Vec<super::ConstructorShape>, CheckStop> {
         let variants: Vec<&[super::super::model::CheckedField]> = match &self.nominal(id)?.kind {
-            CheckedNominalKind::Struct { fields } => vec![fields.as_slice()],
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
+                vec![fields.as_slice()]
+            }
             CheckedNominalKind::Enum { variants } => variants
                 .iter()
                 .map(|variant| variant.fields.as_slice())

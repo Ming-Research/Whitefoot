@@ -19,6 +19,7 @@ mod integer;
 mod operations;
 mod parallel;
 pub(super) mod places;
+mod prepared;
 mod reinterpret;
 mod runs;
 mod segments;
@@ -932,6 +933,17 @@ fn emit_nominal_declarations(
                         &mut references.types,
                     )?);
                 }
+            }
+            IrNominalKind::PreparedKeys { fields } => {
+                let [source] = fields.as_slice() else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                output.push_str(&llvm_type_with_references(
+                    program,
+                    source.ty(),
+                    &mut references.types,
+                )?);
+                output.push_str(", { i64, ptr, [16 x i64] }");
             }
             IrNominalKind::Enum { variants } => {
                 output.push_str("i32");
@@ -2425,6 +2437,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::TableHoldKey { record, key } => {
                 self.emit_table_hold_key(result, *record, *key)
             }
+            IrOperation::TableHoldPrepared {
+                record,
+                prepared,
+                entries,
+            } => self.emit_table_hold_prepared(result, *record, *prepared, *entries),
+            IrOperation::PreparedOrderRelease { prepared } => {
+                self.emit_prepared_order_release(result, *prepared)
+            }
+            IrOperation::KeyPrepare { .. } => Err(BackendFailure::InvalidIr),
             IrOperation::TableHoldKeys { record, set } => {
                 self.emit_table_hold_keys(result, *record, *set)
             }
@@ -2768,6 +2789,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     // The checker supplied separate component records. The
                     // struct node must not recursively release them again.
                     IrNominalKind::Struct { .. } => false,
+                    IrNominalKind::PreparedKeys { .. } => true,
                     IrNominalKind::Opaque => false,
                     IrNominalKind::Shared { .. } => true,
                     IrNominalKind::Enum { .. } | IrNominalKind::Box { .. } => {

@@ -1142,7 +1142,8 @@ impl Checker<'_, '_> {
                                 "select a field of a struct",
                             );
                         };
-                        let CheckedNominalKind::Struct { fields } =
+                        let (CheckedNominalKind::Struct { fields }
+                        | CheckedNominalKind::PreparedKeys { fields }) =
                             &self.types.nominal(nominal)?.kind
                         else {
                             return self.invalid_range(

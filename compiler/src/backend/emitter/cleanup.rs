@@ -182,9 +182,12 @@ fn emit_shared_drop_helper(
 pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFailure> {
     Ok(program_types(program)?.into_iter().any(|ty| match ty {
         IrType::KeySet | IrType::KeyedEntries { .. } => true,
-        IrType::Nominal(id) => program
-            .nominal(id)
-            .is_some_and(|nominal| matches!(nominal.kind(), IrNominalKind::Shared { .. })),
+        IrType::Nominal(id) => program.nominal(id).is_some_and(|nominal| {
+            matches!(
+                nominal.kind(),
+                IrNominalKind::Shared { .. } | IrNominalKind::PreparedKeys { .. }
+            )
+        }),
         _ => false,
     }))
 }
@@ -192,7 +195,7 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 31] = [
+    let declarations: [(&str, &str, &[&str]); 34] = [
         ("wf__shared_new", "ptr", &["i64"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
@@ -230,6 +233,17 @@ pub(super) fn shared_runtime_declarations() -> Module {
             "wf__table_hold_release",
             "void",
             &["ptr", "i64", "i32", "i64"],
+        ),
+        (
+            "wf__key_prepare",
+            "i32",
+            &["ptr", "ptr", "i64", "ptr", "i64", "ptr", "ptr"],
+        ),
+        ("wf__key_order_free", "void", &["ptr"]),
+        (
+            "wf__table_hold_prepared",
+            "void",
+            &["ptr", "ptr", "ptr", "ptr", "ptr"],
         ),
         ("wf__key_set_new", "void", &["ptr", "i64"]),
         ("wf__key_set_put", "void", &["ptr", "ptr", "i64", "i64"]),
@@ -576,7 +590,7 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
             IrType::Nominal(id) => {
                 let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
                 match nominal.kind() {
-                    IrNominalKind::Struct { fields } => {
+                    IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields } => {
                         pending.extend(fields.iter().map(|field| field.ty()));
                     }
                     IrNominalKind::Enum { variants } => {
@@ -669,6 +683,7 @@ enum CleanupJob {
         field_ty: IrType,
     },
     FreePointer(String),
+    KeyOrder(String),
 }
 
 pub(super) fn emit_cleanup(
@@ -693,6 +708,11 @@ fn emit_cleanup_jobs(
 ) -> Result<(), BackendFailure> {
     while let Some(job) = jobs.pop() {
         match job {
+            CleanupJob::KeyOrder(address) => {
+                output.symbol("wf__key_order_free");
+                writeln!(output, "  call void @wf__key_order_free(ptr {address})")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
             CleanupJob::FreePointer(pointer) => {
                 output.symbol("free");
                 {
@@ -786,6 +806,26 @@ fn emit_cleanup_jobs(
                         match nominal.kind() {
                             // Jobs are popped: enqueue in reverse to preserve
                             // PROV-6's declaration-order traversal.
+                            IrNominalKind::PreparedKeys { fields } => {
+                                let [source] = fields.as_slice() else {
+                                    return Err(BackendFailure::InvalidIr);
+                                };
+                                let order = next_temporary(temporary)?;
+                                writeln!(
+                                    output,
+                                    "  %{order} = getelementptr inbounds i8, ptr {address}, i64 16"
+                                )
+                                .map_err(|_| BackendFailure::TextEmission)?;
+                                // Source fields release first, then the
+                                // prepared owner's private ordering.
+                                jobs.push(CleanupJob::KeyOrder(format!("%{order}")));
+                                jobs.push(CleanupJob::StructFieldPlace {
+                                    aggregate_ty: ty,
+                                    address,
+                                    index: 0,
+                                    field_ty: source.ty(),
+                                });
+                            }
                             IrNominalKind::Struct { fields } => {
                                 for (index, field) in fields.iter().enumerate().rev() {
                                     if type_requires_cleanup(program, field.ty())? {
@@ -856,7 +896,8 @@ fn emit_cleanup_jobs(
                 IrType::Nominal(id) => {
                     let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
                     match nominal.kind() {
-                        IrNominalKind::Struct { fields } => {
+                        IrNominalKind::Struct { fields }
+                        | IrNominalKind::PreparedKeys { fields } => {
                             // Jobs are popped: enqueue in reverse to preserve
                             // PROV-6's declaration-order traversal.
                             for (index, field) in fields.iter().enumerate().rev() {

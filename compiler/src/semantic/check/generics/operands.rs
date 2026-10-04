@@ -640,7 +640,9 @@ impl<'unit> TypeContext<'unit> {
             let CheckedType::Nominal(nominal) = value_ty else {
                 return Ok(None);
             };
-            let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+            let (CheckedNominalKind::Struct { fields }
+            | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(nominal)?.kind
+            else {
                 return Ok(None);
             };
             let Some(field) = fields.iter().find(|field| field.name == name) else {

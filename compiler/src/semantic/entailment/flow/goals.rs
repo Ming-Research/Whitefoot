@@ -508,7 +508,8 @@ impl Input<'_, '_> {
             let CheckedType::Nominal(nominal) = ty else {
                 return None;
             };
-            let CheckedNominalKind::Struct { fields } =
+            let (CheckedNominalKind::Struct { fields }
+            | CheckedNominalKind::PreparedKeys { fields }) =
                 &self.context.nominals.get(nominal.0 as usize)?.kind
             else {
                 return None;
@@ -538,7 +539,8 @@ impl Input<'_, '_> {
                 let CheckedType::Nominal(nominal) = input else {
                     return None;
                 };
-                let CheckedNominalKind::Struct { fields } =
+                let (CheckedNominalKind::Struct { fields }
+                | CheckedNominalKind::PreparedKeys { fields }) =
                     &self.context.nominals.get(nominal.0 as usize)?.kind
                 else {
                     return None;

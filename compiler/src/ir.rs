@@ -334,6 +334,7 @@ pub(crate) fn type_derives_release(
                 pending.push(*referent);
             }
             IrType::Nominal(id) => match nominal_kind(id)? {
+                IrNominalKind::PreparedKeys { .. } => return Some(true),
                 IrNominalKind::Struct { fields } => {
                     pending.extend(fields.iter().map(IrField::ty));
                 }
@@ -402,6 +403,11 @@ impl IrVariant {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrNominalKind {
     Struct {
+        fields: Vec<IrField>,
+    },
+    /// Opaque prepared keys: source field 0, followed by private relocatable
+    /// permutation storage. Whole values are memory-only.
+    PreparedKeys {
         fields: Vec<IrField>,
     },
     Enum {
@@ -1162,6 +1168,22 @@ pub enum IrOperation {
     /// Defines `Unit`.
     SharedTake {
         object: IrValueId,
+    },
+    /// Validates and sorts the source's spans, returning the ordinary
+    /// Result with its original owners in every branch.
+    KeyPrepare {
+        source: IrValueId,
+    },
+    /// Releases only the hidden permutation after moving the exposed source.
+    PreparedOrderRelease {
+        prepared: IrValueId,
+    },
+    /// Takes prepared keys in sorted lock order while filling the descriptor
+    /// for entries in original input order. Defines Unit.
+    TableHoldPrepared {
+        record: IrRecord,
+        prepared: IrValueId,
+        entries: IrValueId,
     },
     /// [SHARE-3] a guard read false: gives up the hold and waits until a
     /// statement that writes the object ends. Defines `Unit`.

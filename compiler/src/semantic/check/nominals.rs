@@ -72,7 +72,9 @@ impl<'unit> TypeContext<'unit> {
             .get(index)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let fields: Vec<&CheckedField> = match &nominal.kind {
-            CheckedNominalKind::Struct { fields } => fields.iter().collect(),
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
+                fields.iter().collect()
+            }
             CheckedNominalKind::Enum { variants } => variants
                 .iter()
                 .flat_map(|variant| variant.fields.iter())

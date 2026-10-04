@@ -56,6 +56,16 @@ _Static_assert(_Alignof(wf_table_entry) == WF_TABLE_ENTRY_ALIGN, "WF_TABLE_ENTRY
 _Static_assert(sizeof(wf_cmap_holding) == WF_TABLE_HOLD_SIZE, "WF_TABLE_HOLD_SIZE is a hold's size");
 _Static_assert(_Alignof(wf_cmap_holding) == WF_TABLE_HOLD_ALIGN, "WF_TABLE_HOLD_ALIGN is a hold's alignment");
 _Static_assert(sizeof(wf_key_set) == 16 && _Alignof(wf_key_set) == 8, "a key set is its count and its memory");
+_Static_assert(sizeof(wf_key_span) == 16 && _Alignof(wf_key_span) == 8, "a key span is two endpoints");
+_Static_assert(sizeof(wf_key_order) == WF_KEY_ORDER_SIZE, "WF_KEY_ORDER_SIZE is the private order's size");
+_Static_assert(_Alignof(wf_key_order) == WF_KEY_ORDER_ALIGN, "WF_KEY_ORDER_ALIGN is its alignment");
+typedef struct {
+    void *bytes_owner;
+    void *spans_owner;
+    wf_key_order order;
+} wf_prepared_layout;
+_Static_assert(sizeof(wf_prepared_layout) == WF_PREPARED_KEYS_SIZE, "the prepared source precedes its order");
+_Static_assert(_Alignof(wf_prepared_layout) == WF_PREPARED_KEYS_ALIGN, "the prepared value's alignment");
 
 /* A statement that may have written the table ends: the table's watches are
  * woken when it has any, which costs a statement that finds none one load of
@@ -78,6 +88,13 @@ void wf__key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length,
 uint64_t wf__key_set_payload(const wf_key_set *set, uint64_t index) { return wf_cmap_key_set_payload(set, index); }
 
 void wf__key_set_free(void *store) { wf_cmap_key_set_free_store(store); }
+
+uint32_t wf__key_prepare(wf_key_order *out, const unsigned char *bytes, uint64_t byte_count,
+                         const wf_key_span *spans, uint64_t count, uint64_t *first, uint64_t *second) {
+    return wf_cmap_key_prepare(out, bytes, byte_count, spans, count, first, second);
+}
+
+void wf__key_order_free(wf_key_order *order) { wf_cmap_key_order_release(order); }
 
 void *wf__keyed_table_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
     return wf_cmap_create_entries(slot_size, slot_align, capacity);
@@ -138,6 +155,19 @@ uint64_t wf__table_hold_key(void *hold, const unsigned char *key, uint64_t lengt
 
 uint64_t wf__table_hold_keys(void *hold, const wf_key_set *set) {
     return wf_cmap_hold_keys((wf_cmap_holding *)hold, set);
+}
+
+void wf__table_hold_prepared(void *hold, const unsigned char *bytes,
+                             const wf_key_span *spans, const wf_key_order *order, void *entries) {
+    typedef struct {
+        void *hold;
+        uint64_t first;
+        uint64_t count;
+    } wf_prepared_entries;
+    wf_prepared_entries *out = entries;
+    out->hold = hold;
+    out->first = wf_cmap_hold_prepared(hold, bytes, spans, order);
+    out->count = order->count;
 }
 
 /* The user is the taking driver's, since a statement may suspend between

@@ -63,6 +63,7 @@ impl IrBuilder<'_> {
             "shared_share" => self.row_shared_share(),
             "keyed_table_new" => self.row_keyed_table_new(),
             "keyed_table_count" => self.row_keyed_table_count(),
+            "key_prepare" => self.row_key_prepare(),
             "key_set_new" => self.row_key_set_new(),
             "key_set_put" => self.row_key_set_put(false),
             "key_set_add" => self.row_key_set_put(true),
@@ -188,6 +189,12 @@ impl IrBuilder<'_> {
         )?;
         let count = self.define(self.result, IrOperation::KeyedTableCount { table })?;
         self.return_value(count)
+    }
+
+    fn row_key_prepare(&mut self) -> Result<(), LoweringFailure> {
+        let [source] = self.row_parameters()?;
+        let value = self.define(self.result, IrOperation::KeyPrepare { source })?;
+        self.return_value(value)
     }
 
     /// `key_set_new(capacity: u64) -> KeySet`: a set holding no key, with
@@ -806,6 +813,7 @@ fn ceiling_pair(
                 // Every fieldless opaque struct carries the host handles'
                 // host-supplied representation.
                 IrNominalKind::Opaque => (Finite(32), 16),
+                IrNominalKind::PreparedKeys { .. } => (Finite(160), 8),
                 IrNominalKind::Struct { fields } => {
                     sequence(nominals, elements, fields.iter().map(IrField::ty), visiting)?
                 }

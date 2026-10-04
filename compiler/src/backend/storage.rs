@@ -32,7 +32,9 @@ pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<boo
         IrType::Nominal(nominal) => {
             let nominal = program.nominal(nominal).ok_or(BackendFailure::InvalidIr)?;
             match nominal.kind() {
-                IrNominalKind::Struct { .. } | IrNominalKind::Opaque => true,
+                IrNominalKind::Struct { .. }
+                | IrNominalKind::PreparedKeys { .. }
+                | IrNominalKind::Opaque => true,
                 IrNominalKind::Enum { .. } => !nominal.is_tag_only_enum(),
                 IrNominalKind::Box { .. } | IrNominalKind::Shared { .. } => false,
             }

@@ -77,7 +77,8 @@ impl<'unit> TypeContext<'unit> {
             pending.extend(arguments);
             if let CheckedType::Nominal(id) = ty {
                 match &self.nominal(id)?.kind {
-                    CheckedNominalKind::Struct { fields } => {
+                    CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields } => {
                         pending.extend(fields.iter().map(|field| field.ty));
                     }
                     CheckedNominalKind::Enum { variants } => {

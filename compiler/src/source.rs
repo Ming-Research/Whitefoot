@@ -474,6 +474,8 @@ impl fmt::Debug for SourceFile {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PreludeSource {
     Opaque,
+    Struct,
+    Enum,
     Function,
 }
 

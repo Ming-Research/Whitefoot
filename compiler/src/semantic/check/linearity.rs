@@ -105,7 +105,9 @@ impl<'unit> TypeContext<'unit> {
     /// variant payloads and its `box` referent.
     fn owned_components(&self, id: NominalId) -> Result<Vec<CheckedType>, CheckStop> {
         Ok(match &self.nominal(id)?.kind {
-            CheckedNominalKind::Struct { fields } => fields.iter().map(|field| field.ty).collect(),
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
+                fields.iter().map(|field| field.ty).collect()
+            }
             CheckedNominalKind::Enum { variants } => variants
                 .iter()
                 .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
@@ -336,7 +338,11 @@ impl<'unit> TypeContext<'unit> {
         selected: &[u32],
         node: NodeId,
     ) -> Result<(), CheckStop> {
-        for (_, residual) in self.residual_drop_paths(check_context, root, selected)? {
+        for residual in self.residual_drop_paths(check_context, root, selected)? {
+            if residual.prepared_order {
+                continue;
+            }
+            let residual = residual.ty;
             let Some(obligation) = self.linear_release_obligation(check_context, residual)? else {
                 continue;
             };

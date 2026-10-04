@@ -1,0 +1,11 @@
+fn consume(store: &Shared<KeyedTable<u8>>, keys: PreparedKeys) -> result: unit reads(store) waits {
+  atomic table = &store^, entries = &table^[keys] {
+    let source = move keys.source;
+    let count = entries^.len;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

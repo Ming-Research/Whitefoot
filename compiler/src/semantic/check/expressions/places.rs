@@ -681,19 +681,21 @@ impl<'unit> TypeContext<'unit> {
                 nominal,
                 ty: *referent,
             }),
-            CheckedNominalKind::Struct { fields } => fields
-                .iter()
-                .enumerate()
-                .find(|(_, field)| field.name == name)
-                .map(|(index, field)| {
-                    Ok::<_, CheckStop>(PlaceMember::Field {
-                        nominal,
-                        index: u32::try_from(index)
-                            .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                        ty: field.ty,
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
+                fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == name)
+                    .map(|(index, field)| {
+                        Ok::<_, CheckStop>(PlaceMember::Field {
+                            nominal,
+                            index: u32::try_from(index)
+                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
+                            ty: field.ty,
+                        })
                     })
-                })
-                .transpose()?,
+                    .transpose()?
+            }
             _ => None,
         })
     }
@@ -791,7 +793,9 @@ impl<'unit> TypeContext<'unit> {
         for step in path {
             match (*step, ty) {
                 (PlaceStep::Field(field), CheckedType::Nominal(id)) => {
-                    let CheckedNominalKind::Struct { fields } = &self.nominal(id)?.kind else {
+                    let (CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(id)?.kind
+                    else {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     ty = fields
@@ -861,7 +865,9 @@ impl<'unit> TypeContext<'unit> {
                     let CheckedType::Nominal(id) = ty else {
                         return Ok(None);
                     };
-                    let CheckedNominalKind::Struct { fields } = &self.nominal(id)?.kind else {
+                    let (CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(id)?.kind
+                    else {
                         return Ok(None);
                     };
                     fields
@@ -1051,7 +1057,9 @@ impl<'unit> TypeContext<'unit> {
             };
             match (ty, step) {
                 (CheckedType::Nominal(id), CheckedPlaceStep::Field(selected_field)) => {
-                    let CheckedNominalKind::Struct { fields } = &checker.nominal(id)?.kind else {
+                    let (CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields }) = &checker.nominal(id)?.kind
+                    else {
                         return Err(SemanticCompilerFailure::InvalidResolution.into());
                     };
                     for (index, field) in fields.iter().enumerate() {
@@ -1258,7 +1266,9 @@ impl<'unit> TypeContext<'unit> {
                     let CheckedType::Nominal(nominal) = current else {
                         return Ok(None);
                     };
-                    let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                    let (CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(nominal)?.kind
+                    else {
                         return Ok(None);
                     };
                     let field = fields
@@ -1392,7 +1402,8 @@ impl<'unit> TypeContext<'unit> {
                 PlaceStep::Field(field) => {
                     let selected = match ty {
                         Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Struct { fields } => fields
+                            CheckedNominalKind::Struct { fields }
+                            | CheckedNominalKind::PreparedKeys { fields } => fields
                                 .get(field as usize)
                                 .map(|declared| (declared.name.clone(), declared.ty)),
                             _ => None,
@@ -1542,7 +1553,9 @@ impl<'unit> TypeContext<'unit> {
                 return Ok(());
             };
             if let PlaceMember::Field { nominal, index, .. } = member {
-                let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                let (CheckedNominalKind::Struct { fields }
+                | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(nominal)?.kind
+                else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };
                 if self.field_withholds_writes(check_context, nominal, &fields[index as usize]) {

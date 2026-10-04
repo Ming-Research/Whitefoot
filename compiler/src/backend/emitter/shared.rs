@@ -69,6 +69,7 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::TableHoldBegin { record, .. }
             | IrOperation::TableHoldKey { record, .. }
             | IrOperation::TableHoldKeys { record, .. }
+            | IrOperation::TableHoldPrepared { record, .. }
             | IrOperation::TableHoldWhole { record }
             | IrOperation::TableHoldTake { record }
             | IrOperation::TableHoldSlot { record, .. }
@@ -78,8 +79,12 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::WatchObject { record, .. }
             | IrOperation::WatchTable { record, .. }
             | IrOperation::WatchPark { record } => *record,
+            IrOperation::KeyPrepare { .. } => {
+                scratch.push((*result, true));
+                continue;
+            }
             IrOperation::KeySetNew { .. } => {
-                scratch.push(*result);
+                scratch.push((*result, false));
                 continue;
             }
             _ => continue,
@@ -100,7 +105,11 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             ));
         }
     }
-    for result in scratch {
+    for (result, prepare) in scratch {
+        if prepare {
+            prelude.push_str(&format!("  %wf.prepare.v{}.order = alloca {{ i64, ptr, [16 x i64] }}, align 8\n  %wf.prepare.v{}.first = alloca i64, align 8\n  %wf.prepare.v{}.second = alloca i64, align 8\n", result.ordinal(), result.ordinal(), result.ordinal()));
+            continue;
+        }
         prelude.push_str(&format!(
             "  {} = alloca {{ i64, ptr }}, align 8\n",
             key_set_scratch_name(result)
@@ -191,7 +200,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// One call that answers nothing, then the unit value the operation
     /// defines.
-    fn emit_unit_call(
+    pub(super) fn emit_unit_call(
         &mut self,
         result: IrValueId,
         entry: &'static str,

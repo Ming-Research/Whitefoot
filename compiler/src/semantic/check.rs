@@ -3431,7 +3431,8 @@ impl<'unit> TypeContext<'unit> {
                 super::model::CheckedEffectStep::Field(field) => {
                     let selected = match ty {
                         Some(CheckedType::Nominal(nominal)) => match &self.nominal(nominal)?.kind {
-                            CheckedNominalKind::Struct { fields } => fields
+                            CheckedNominalKind::Struct { fields }
+                            | CheckedNominalKind::PreparedKeys { fields } => fields
                                 .get(*field as usize)
                                 .map(|declared| (declared.name.clone(), declared.ty)),
                             _ => None,

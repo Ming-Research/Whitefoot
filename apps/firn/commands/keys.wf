@@ -21,6 +21,12 @@ alias read_integer = pkg::bytes::read_integer;
 alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
 alias reply_word = pkg::protocol::reply_word;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
+alias byte_at = pkg::bytes::byte_at;
+alias ceiling = pkg::store::ceiling;
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
 
 const state_absent: u64 = 0_u64;
 
@@ -186,57 +192,255 @@ fn prepare_keys(input: &[u8], args: &Box<Slots<Span>>, client: &Client, first: u
   return unit;
 }
 
-fn named_keys(input: &[u8], args: &Box<Slots<Span>>) -> keys: KeySet reads(input), reads(args) {
-  doc "The keys the arguments from the second on name, each carrying how many times it is named.";
+const text_key_prepare: Array<u8, 26> =[69_u8, 82_u8, 82_u8, 32_u8, 99_u8, 111_u8, 117_u8, 108_u8, 100_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 112_u8, 114_u8, 101_u8, 112_u8, 97_u8, 114_u8, 101_u8, 32_u8, 107_u8, 101_u8, 121_u8, 115_u8];
+
+struct SpanKey {
+  hash: u64;
+  start: u64;
+  end: u64;
+}
+
+struct NamedKeys {
+  spans: Box<Slots<KeySpan>>;
+  marks: Box<Slots<u64>>;
+  valid: Bool;
+}
+
+fn span_hash(env: &Box<Slots<u8>>, key: &SpanKey) -> hash: u64 reads(key) {
+  return key^.hash;
+}
+
+fn span_equal(env: &Box<Slots<u8>>, left: &SpanKey, right: &SpanKey) -> same: Bool reads(env), reads(left), reads(right) {
+  doc "Compares two cached-hash spans against the unchanged caller's buffer, without owning copies of their bytes.";
+  if left^.hash != right^.hash {
+    return False();
+  }
+  let left_length = left^.end -sat left^.start;
+  let right_length = right^.end -sat right^.start;
+  if left_length != right_length {
+    return False();
+  }
+  for @compare (offset in 0_u64..left_length) {
+    let first = left^.start +wrap offset;
+    let second = right^.start +wrap offset;
+    if first < env^.inner.len {
+      if second < env^.inner.len {
+        if env^.inner[first] != env^.inner[second] {
+          return False();
+        }
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+binding SpanHash : HashMapKey<SpanKey, Box<Slots<u8>>> {
+  hash = span_hash;
+  equal = span_equal;
+}
+
+fn span_index(env: &unit, key: &SpanKey, value: &u64) -> index: u64 reads(value) {
+  return value^;
+}
+
+fn named_span(input: &[u8], args: &Box<Slots<Span>>, position: u64, pairs: Bool) -> key: SpanKey reads(input), reads(args) {
+  doc "Hashes one argument's span independently of all other arguments.";
+  let index = position +wrap 1_u64;
+  if pairs {
+    let doubled = position *wrap 2_u64;
+    set index = doubled +wrap 1_u64;
+  }
+  let place = key_bounds(input: input, args: args, index: index);
+  let hash = 14695981039346656037_u64;
+  for @hash (at in place.start..place.end) {
+    let byte = byte_at(input: input, index: at);
+    let wide = cvt::<u8, u64>(byte);
+    let folded = ixor(hash, wide);
+    set hash = folded *wrap 1099511628211_u64;
+  }
+  return SpanKey(hash: hash, start: place.start, end: place.end);
+}
+
+fn named_keys(input: &Box<Slots<u8>>, args: &Box<Slots<Span>>, pairs: Bool) -> planned: NamedKeys reads(input), reads(args) {
+  doc "Deduplicates argument spans with a hash map, appending each first occurrence in request order. A mark is its occurrence count, or its last value argument's position for key-value pairs. Argument hashes are independent indexed results; the map's probes depend on earlier occurrences, and byte comparison keeps offsets into the original buffer.";
+  let invalid = False();
+  let valid = True();
   let count = args^.inner.len;
-  let keys = key_set_new(capacity: count);
-  for @named (index in 1_u64..count) {
-    let place = key_bounds(input: input, args: args, index: index);
-    let key = &input^[place.start..place.end];
-    key_set_add(keys: &keys, key: key, amount: 1_u64);
+  let many = count -sat 1_u64;
+  if pairs {
+    set many = count / 2_u64;
   }
-  return move keys;
+  let length = input^.inner.len;
+  let bytes = &input^.inner[0_u64..length];
+  let empty_key = SpanKey(hash: 0_u64, start: 0_u64, end: 0_u64);
+  let candidates = box_array_filled::<SpanKey>(count: many, value: empty_key);
+  for @candidate (position in 0_u64..many) {
+    let key = named_span(input: bytes, args: args, position: position, pairs: pairs);
+    set candidates.inner[position] = key;
+  }
+  let spans = box_slots_new::<KeySpan>(capacity: many);
+  let marks = box_slots_new::<u64>(capacity: many);
+  let reserve = many *sat 2_u64;
+  if reserve > ceiling {
+    set reserve = ceiling;
+  }
+  let indices = hash_map_new::<SpanKey, u64, ceiling>(capacity: reserve);
+  let nothing = unit;
+  for @named (position in 0_u64..many) {
+    let index = position +wrap 1_u64;
+    let mark = 1_u64;
+    if pairs {
+      let doubled = position *wrap 2_u64;
+      set index = doubled +wrap 1_u64;
+      set mark = index +wrap 1_u64;
+    }
+    let key = candidates.inner[position];
+    match hash_map_lookup::<SpanHash, u64, unit, u64, fn span_index, ceiling>(map: &indices, key: &key, key_env: input, visit_env: &nothing) {
+      Ok(value: at) => {
+        if at < marks.inner.len {
+          if pairs {
+            set marks.inner[at] = mark;
+          } else {
+            let current = marks.inner[at];
+            set marks.inner[at] = current +wrap 1_u64;
+          }
+        } else {
+          return NamedKeys(spans: move spans, marks: move marks, valid: invalid);
+        }
+      }
+      Err(error: absent) => {
+        let at = spans.inner.len;
+        match hash_map_put::<SpanHash, u64, ceiling>(map: &indices, key: key, value: at, env: input) {
+          HashMapInserted() => {
+            if spans.inner.len < spans.inner.cap {
+              if marks.inner.len < marks.inner.cap {
+                let span = KeySpan(start: key.start, end: key.end);
+                place_back(window: &spans.inner, value: span);
+                place_back(window: &marks.inner, value: mark);
+              } else {
+                return NamedKeys(spans: move spans, marks: move marks, valid: invalid);
+              }
+            } else {
+              return NamedKeys(spans: move spans, marks: move marks, valid: invalid);
+            }
+          }
+          HashMapReturned(reason: returned_reason, pair: returned) => {
+            return NamedKeys(spans: move spans, marks: move marks, valid: invalid);
+          }
+        }
+      }
+    }
+  }
+  return NamedKeys(spans: move spans, marks: move marks, valid: valid);
 }
 
-fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+fn key_prepare_failed(client: &Client) -> result: unit writes(client) {
+  doc "Reports failed key preparation without applying a partial multi-key command.";
+  reply_error(client: client, word: &text_key_prepare[0_u64..26_u64]);
+  return unit;
+}
+
+fn run_del(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(time), writes(client) waits {
   doc "DEL key [key ...]: removes every key named, in one statement on their entries, and answers how many were live; a key named twice is removed and counted once.";
-  let keys = named_keys(input: input, args: args);
-  let removed = 0_u64;
-  atomic s = &store^.state, slots = &s^.map[keys] {
-    for @named (at in 0_u64..keys.len) {
-      let live = remove_live(slot: &slots^[at], now: time^.check);
-      if live {
-        set removed = removed +wrap 1_u64;
+  let pairs = False();
+  let planned = named_keys(input: &input, args: args, pairs: pairs);
+  let NamedKeys(spans: key_spans, marks: unused_marks, valid: ready) = move planned;
+  if ready {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  let source = KeySource(bytes: move input, spans: move key_spans);
+  match key_prepare(source: move source) {
+    Err(error: failure) => {
+      key_prepare_failed(client: client);
+      match move failure {
+        InvalidSpan(source: returned, index: invalid_index) => {
+          return move returned.bytes;
+        }
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+          return move returned.bytes;
+        }
       }
     }
-    if removed > 0_u64 {
-      if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+    Ok(value: keys) => {
+      let length = keys.source.bytes.inner.len;
+      let bytes = &keys.source.bytes.inner[0_u64..length];
+      let removed = 0_u64;
+      atomic s = &store^.state, slots = &s^.map[keys] {
+        for @named (at in 0_u64..slots^.len) {
+          let live = remove_live(slot: &slots^[at], now: time^.check);
+          if live {
+            set removed = removed +wrap 1_u64;
+          }
+        }
+        if removed > 0_u64 {
+          if store^.logging {
+            log_command(log: &s^.meta.log, input: bytes, args: args);
+          }
+        }
       }
+      let answer = cvt.wrap::<u64, i64>(removed);
+      reply_integer(client: client, value: answer);
+      let returned = move keys.source;
+      return move returned.bytes;
     }
   }
-  let answer = cvt.wrap::<u64, i64>(removed);
-  reply_integer(client: client, value: answer);
-  return unit;
 }
 
-fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+fn run_exists(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(time), writes(client) waits {
   doc "EXISTS key [key ...]: answers how many of the keys named are live, a key named twice counted twice, in one statement on their entries.";
-  let keys = named_keys(input: input, args: args);
-  set client^.now = time^.check;
-  let live = 0_u64;
-  atomic s = &store^.state, slots = &s^.map[keys] {
-    for @named (at in 0_u64..keys.len) {
-      let kind = entry_kind(slot: &slots^[at], client: client);
-      if kind != 0_u64 {
-        let occurrences = key_set_payload(keys: &keys, index: at);
-        set live = live +wrap occurrences;
+  let pairs = False();
+  let planned = named_keys(input: &input, args: args, pairs: pairs);
+  let NamedKeys(spans: key_spans, marks: key_marks, valid: ready) = move planned;
+  if ready {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  let source = KeySource(bytes: move input, spans: move key_spans);
+  match key_prepare(source: move source) {
+    Err(error: failure) => {
+      key_prepare_failed(client: client);
+      match move failure {
+        InvalidSpan(source: returned, index: invalid_index) => {
+          return move returned.bytes;
+        }
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+          return move returned.bytes;
+        }
       }
     }
+    Ok(value: keys) => {
+      set client^.now = time^.check;
+      let live = 0_u64;
+      let complete = False();
+      atomic s = &store^.state, slots = &s^.map[keys] {
+        if key_marks.inner.len == slots^.len {
+          set complete = True();
+          for @named (at in 0_u64..slots^.len) {
+            let kind = entry_kind(slot: &slots^[at], client: client);
+            if kind != 0_u64 {
+              let occurrences = key_marks.inner[at];
+              set live = live +wrap occurrences;
+            }
+          }
+        }
+      }
+      if complete {
+        let answer = cvt.wrap::<u64, i64>(live);
+        reply_integer(client: client, value: answer);
+      } else {
+        key_prepare_failed(client: client);
+      }
+      let returned = move keys.source;
+      return move returned.bytes;
+    }
   }
-  let answer = cvt.wrap::<u64, i64>(live);
-  reply_integer(client: client, value: answer);
-  return unit;
 }
 
 fn run_type(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {

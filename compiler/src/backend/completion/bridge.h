@@ -347,6 +347,21 @@ uint64_t wf__key_set_payload(const struct wf_key_set *set, uint64_t index);
  * as the emitted code holds a set in two registers. */
 void wf__key_set_free(void *store);
 
+/* PreparedKeys is its ordinary KeySource (two boxed-owner pointers), then
+ * the private order. Source boxes are released by ordinary emitted cleanup;
+ * these functions allocate and release only the order's compact indices.
+ * The fixed ABI sizes are implementation details, not source capacities. */
+#define WF_KEY_ORDER_SIZE 144u
+#define WF_KEY_ORDER_ALIGN 8u
+#define WF_PREPARED_KEYS_SIZE 160u
+#define WF_PREPARED_KEYS_ALIGN 8u
+struct wf_key_span;
+struct wf_key_order;
+uint32_t wf__key_prepare(struct wf_key_order *out, const unsigned char *bytes,
+                         uint64_t byte_count, const struct wf_key_span *spans,
+                         uint64_t count, uint64_t *first, uint64_t *second);
+void wf__key_order_free(struct wf_key_order *order);
+
 /* A table of `Option<V>` slots of `slot_size` bytes aligned to `slot_align`,
  * at most 16, sized for `capacity` entries; its count of `Some` entries,
  * exact while the caller holds it whole or no one else reaches it, a hold's
@@ -391,6 +406,11 @@ void wf__table_hold_begin(void *hold, void *table);
 void wf__table_hold_whole(void *hold);
 uint64_t wf__table_hold_key(void *hold, const unsigned char *key, uint64_t length);
 uint64_t wf__table_hold_keys(void *hold, const struct wf_key_set *set);
+/* Fills the entry descriptor {hold pointer, first position, count}; entry i
+ * is the original source span i, independent of private acquisition order. */
+void wf__table_hold_prepared(void *hold, const unsigned char *bytes,
+                             const struct wf_key_span *spans,
+                             const struct wf_key_order *order, void *entries);
 void wf__table_hold_take(void *hold);
 void *wf__table_hold_slot(void *hold, uint64_t position);
 void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);

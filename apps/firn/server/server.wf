@@ -181,7 +181,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
         break @commands;
       }
       if parsed.state == 1_u64 {
-        execute(store: &store, input: bytes, args: &args, client: &client, env: &env, time: &time);
+        set input = execute(input: move input, store: &store, args: &args, client: &client, env: &env, time: &time);
         if client.closing {
           set closing = True();
           break @commands;

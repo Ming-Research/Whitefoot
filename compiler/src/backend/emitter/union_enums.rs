@@ -26,8 +26,8 @@ pub(super) fn is_union_enum(program: &IrProgram, id: IrNominalId) -> Result<bool
         .map_err(|_| BackendFailure::InvalidIr)
 }
 
-/// Whether a value of `ty` holds a union-laid-out enum inline, and so is
-/// never an LLVM first-class value.
+/// Whether a value of `ty` holds a union-laid-out enum or opaque prepared-key
+/// storage inline, and so is never an LLVM first-class value.
 pub(super) fn is_memory_only(program: &IrProgram, ty: IrType) -> Result<bool, BackendFailure> {
     crate::target::is_memory_only(program.nominals(), program.elements(), ty)
         .map_err(|_| BackendFailure::InvalidIr)
