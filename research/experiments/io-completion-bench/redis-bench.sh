@@ -553,7 +553,8 @@ if [ "$MODE" = compare ]; then
             for name in $order; do
                 start "image-$name"
                 while read -r test depth requests; do
-                    echo "$name,$pass,$n,$test,$depth,$requests,$(compare_client "$test" "$depth" "$requests")" >>"$OUT/compare.csv"
+                    echo "$name,$pass,$n,$test,$depth,$requests,$(compare_client "$test" "$depth" "$requests")" |
+                        tee -a "$OUT/compare.csv"
                 done <"$sizes"
                 stop
             done
