@@ -179,6 +179,7 @@ struct Header {
 
 #[derive(Clone, Copy)]
 enum HeaderIndex {
+    Whole,
     Key(IrValueId),
     Set(IrValueId),
 }
@@ -258,9 +259,8 @@ impl IrBuilder<'_> {
         let mut whole = BTreeSet::new();
         for root in roots.iter().filter(|root| root.binding == binding) {
             for unit in self.units_at(&shapes, state_type, root.fields.as_deref())? {
-                if matches!(shapes[unit], UnitShape::Table { .. }) {
-                    whole.insert(unit);
-                }
+                // Rows may reach tables through the state argument; their
+                // grants are supplied by whole bindings below.
                 reached.insert(unit);
             }
         }
@@ -286,6 +286,11 @@ impl IrBuilder<'_> {
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?;
             let field = self.expression(&entry.table)?;
             let index = match &entry.index {
+                CheckedEntryIndex::Whole => {
+                    whole.insert(unit);
+                    self.bind_reference(entry.binding, field)?;
+                    HeaderIndex::Whole
+                }
                 CheckedEntryIndex::Key(key) => {
                     let key = self.expression(key)?;
                     if !matches!(self.value_type(key)?, IrType::Range { .. }) {
@@ -433,6 +438,9 @@ impl IrBuilder<'_> {
         let mut keys = Vec::new();
         let mut sets = Vec::new();
         for header in mine {
+            if matches!(header.index, HeaderIndex::Whole) {
+                slots.insert(header.binding, (index, EntrySlot::Set));
+            }
             if let HeaderIndex::Key(key) = header.index {
                 let position =
                     u64::try_from(keys.len()).map_err(|_| LoweringFailure::CounterOverflow)?;
@@ -962,28 +970,26 @@ impl IrBuilder<'_> {
     /// The paths of fields at which `ty` holds a table, the empty path when
     /// `ty` is one, in declaration order.
     pub(super) fn table_paths(&self, ty: IrType) -> Result<Vec<Vec<u32>>, LoweringFailure> {
-        fn collect(
-            builder: &IrBuilder<'_>,
-            ty: IrType,
-            path: &mut Vec<u32>,
-            paths: &mut Vec<Vec<u32>>,
-        ) -> Result<(), LoweringFailure> {
-            if builder.table_nominal(ty).is_some() {
-                paths.push(path.clone());
-                return Ok(());
+        Ok(self
+            .state_parts(ty)
+            .into_iter()
+            .filter_map(|(path, table)| table.map(|_| path))
+            .collect())
+    }
+
+    fn state_parts(&self, ty: IrType) -> Vec<(Vec<u32>, Option<IrNominalId>)> {
+        crate::semantic::model::state_parts(ty, |ty| {
+            use crate::semantic::model::StateShape;
+            if let Some(table) = self.table_nominal(ty) {
+                return StateShape::Table(table);
             }
-            if let Some(fields) = builder.fields_with_tables(ty) {
-                for (index, field) in fields.into_iter().enumerate() {
-                    path.push(u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?);
-                    collect(builder, field, path, paths)?;
-                    path.pop();
-                }
+            if let IrType::Nominal(nominal) = ty
+                && let IrNominalKind::Struct { fields } = &self.nominals[nominal.index()].kind
+            {
+                return StateShape::Fields(fields.iter().map(|field| field.ty).collect());
             }
-            Ok(())
-        }
-        let mut paths = Vec::new();
-        collect(self, ty, &mut Vec::new(), &mut paths)?;
-        Ok(paths)
+            StateShape::Plain
+        })
     }
 
     /// The table at `path` in the value `value`, or `value` itself for the
@@ -1031,34 +1037,16 @@ impl IrBuilder<'_> {
     /// holds at a path of fields, and the rest of it, each placed at its
     /// first field in declaration order (compiler/waiting-contexts/state-locks).
     fn state_units(&self, state: IrType) -> Result<Vec<UnitShape>, LoweringFailure> {
-        fn collect(
-            builder: &IrBuilder<'_>,
-            ty: IrType,
-            path: &mut Vec<u32>,
-            units: &mut Vec<UnitShape>,
-        ) -> Result<(), LoweringFailure> {
-            if let Some(nominal) = builder.table_nominal(ty) {
-                units.push(UnitShape::Table {
-                    fields: path.clone(),
-                    nominal,
-                });
-                return Ok(());
-            }
-            if let Some(fields) = builder.fields_with_tables(ty) {
-                for (index, field) in fields.into_iter().enumerate() {
-                    path.push(u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?);
-                    collect(builder, field, path, units)?;
-                    path.pop();
-                }
-                return Ok(());
-            }
-            if !units.iter().any(|unit| matches!(unit, UnitShape::Object)) {
-                units.push(UnitShape::Object);
-            }
-            Ok(())
-        }
         let mut units = Vec::new();
-        collect(self, state, &mut Vec::new(), &mut units)?;
+        for (fields, table) in self.state_parts(state) {
+            match table {
+                Some(nominal) => units.push(UnitShape::Table { fields, nominal }),
+                None if !units.iter().any(|u| matches!(u, UnitShape::Object)) => {
+                    units.push(UnitShape::Object)
+                }
+                None => {}
+            }
+        }
         if units.is_empty() {
             units.push(UnitShape::Object);
         }
@@ -1110,7 +1098,7 @@ impl IrBuilder<'_> {
     }
 
     /// A new record of `kind` in this function's frame.
-    fn record(&mut self, kind: IrRecordKind) -> Result<IrRecord, LoweringFailure> {
+    pub(super) fn record(&mut self, kind: IrRecordKind) -> Result<IrRecord, LoweringFailure> {
         let index = self.records;
         self.records = index
             .checked_add(1)

@@ -32,7 +32,7 @@ use super::{PlaceUseContext, PlaceUseOptions, ResolvedPlaceSet};
 /// their different storage steps. The measure judgment handles descriptor
 /// observations before asking for a storage member.
 #[derive(Clone, Copy)]
-pub(super) enum PlaceMember {
+pub(in crate::semantic::check) enum PlaceMember {
     Field {
         nominal: super::super::super::model::NominalId,
         index: u32,
@@ -45,13 +45,13 @@ pub(super) enum PlaceMember {
 }
 
 impl PlaceMember {
-    pub(super) fn ty(self) -> CheckedType {
+    pub(in crate::semantic::check) fn ty(self) -> CheckedType {
         match self {
             Self::Field { ty, .. } | Self::BoxContent { ty, .. } => ty,
         }
     }
 
-    pub(super) fn storage_step(self) -> CheckedPlaceStep {
+    pub(in crate::semantic::check) fn storage_step(self) -> CheckedPlaceStep {
         match self {
             Self::Field { index, .. } => CheckedPlaceStep::Field(index),
             Self::BoxContent { nominal, .. } => CheckedPlaceStep::BoxReferent(nominal),
@@ -700,7 +700,7 @@ impl<'unit> TypeContext<'unit> {
 
     /// Form one storage member. Access, move and write judgments consume this
     /// result; none of them resolves a field or a Box member independently.
-    pub(super) fn elaborate_place_member(
+    pub(in crate::semantic::check) fn elaborate_place_member(
         &self,
         check_context: &CheckContext<'_>,
         suffix: NodeId,

@@ -515,6 +515,40 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
+        if let Some(grant) = self.body.atomic_grant.as_mut() {
+            for effect in &substituted {
+                if effect.place.root != PlaceRoot::Binding(grant.state) {
+                    continue;
+                }
+                let actual = &actual_paths[effect.argument];
+                for table in &grant.tables {
+                    let table_path = table
+                        .iter()
+                        .copied()
+                        .map(PlaceStep::Field)
+                        .collect::<Vec<_>>();
+                    let supplied_prefix = actual.iter().any(|p| {
+                        p.root == PlaceRoot::Binding(grant.state) && table_path.starts_with(&p.path)
+                    });
+                    if supplied_prefix
+                        && (effect.place.path.starts_with(&table_path)
+                            || table_path.starts_with(&effect.place.path))
+                    {
+                        if let Some((_, binding)) =
+                            grant.whole.iter().find(|(path, _)| *path == table_path)
+                        {
+                            grant.touched.push(*binding);
+                        } else {
+                            grant.refusals.push((node, SemanticIssueKind::AtomicRowReachesTable {
+                                callee: signature.name.clone(), path: format!("{:?}", effect.place.path), table: format!("{table:?}"),
+                                mechanical_fix: "add a whole binding for each table the callee's row reaches through this argument, or pass the parts the callee needs: `&s^.field` for a field, an entry binding for an entry",
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
         let result = signature.result;
         let result_mode = signature.result_mode;
         let (formal_effects, formal_contract) = match formal {

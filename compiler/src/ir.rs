@@ -1221,6 +1221,20 @@ pub enum IrOperation {
     },
     /// Begins the hold `record` of entries of the table `table`. Defines
     /// `Unit`.
+    /// Select an entry under a whole hold, materializing only for a write.
+    TableHeldEntry {
+        nominal: IrNominalId,
+        table: IrValueId,
+        key: IrValueId,
+        write: bool,
+    },
+    /// Build the entries reference for a set computed under a whole hold.
+    TableHeldEntries {
+        table: IrValueId,
+        set: IrValueId,
+        record: IrRecord,
+        element: IrElement,
+    },
     TableHoldBegin {
         record: IrRecord,
         table: IrValueId,

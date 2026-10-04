@@ -118,9 +118,9 @@ fn main() -> status: ExitStatus pure waits {
   exchange(mail: &mail, waited: &waited);
   let total = 0_u64;
   let left = 1_u64;
-  atomic m = &mail {
+  atomic m = &mail, t = &m^.boxes {
     set total = m^.received;
-    set left = keyed_table_count::<u64>(table: &m^.boxes);
+    set left = keyed_table_count::<u64>(table: t);
   }
   if total != 501000_u64 {
     return exit_status(code: 1_u8);

@@ -144,7 +144,11 @@ macro_rules! operation_operands {
             | IrOperation::WatchObject { object: value, .. }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
             IrOperation::KeyedTableSwap { first, second } => vec![$value(first), $value(second)],
-            IrOperation::TableLockEntry { table, key, .. } => vec![$value(table), $value(key)],
+            IrOperation::TableHeldEntries {
+                table, set: key, ..
+            }
+            | IrOperation::TableHeldEntry { table, key, .. }
+            | IrOperation::TableLockEntry { table, key, .. } => vec![$value(table), $value(key)],
             IrOperation::KeyedEntriesFill {
                 entries,
                 position,

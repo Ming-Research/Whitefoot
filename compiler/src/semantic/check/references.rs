@@ -825,6 +825,7 @@ impl<'unit> Checker<'_, 'unit> {
         loop_depth: usize,
         without_last: bool,
     ) -> Result<TypedExpression, CheckStop> {
+        self.note_atomic_place(context, place_node, bindings)?;
         let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types
@@ -1100,8 +1101,11 @@ impl<'unit> Checker<'_, 'unit> {
                 );
             }
             (Some(last), ty) => {
-                let (rest, ty, more) =
-                    self.resolve_storage_path(context, &[last], ty, bindings, loop_depth, true)?;
+                let previous = self.body.table_set_borrow.replace(last);
+                let resolved =
+                    self.resolve_storage_path(context, &[last], ty, bindings, loop_depth, true);
+                self.body.table_set_borrow = previous;
+                let (rest, ty, more) = resolved?;
                 path.extend(rest);
                 carried.effects = carried.effects.union(more.effects);
                 carried.accesses.extend(more.accesses);
@@ -1132,6 +1136,20 @@ impl<'unit> Checker<'_, 'unit> {
         } else {
             vec![place]
         };
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Single, places.clone());
+        if let Some(CheckedPlaceStep::Subscript(index)) = path.last()
+            && matches!(ty, CheckedType::KeyedEntries { .. })
+            && let CheckedExpression::BorrowAddressed { root: keys, .. } = &index.offset
+        {
+            let key_place = ResolvedPlace {
+                root: keys.root,
+                path: keys.path.iter().map(CheckedPlaceStep::place_step).collect(),
+            };
+            let anchors = match root_binding.as_ref() {
+                _ => self.replace_reference_roots_for_entries(key_place, bindings),
+            };
+            reference.anchors.extend(anchors);
+        }
         let kind = ReferenceKind::Single;
         let expression = CheckedExpression::BorrowAddressed {
             carrier: self.types.declarations.tree.path(carrier)?.clone(),
@@ -1152,11 +1170,35 @@ impl<'unit> Checker<'_, 'unit> {
                 ReferenceKind::Single => CheckedMode::Reference,
                 ReferenceKind::Range => CheckedMode::Range,
             },
-            reference: Some(ReferenceInfo::formed_paths(kind, places)),
+            reference: Some(reference),
             reference_value: true,
             effects: carried.effects,
             accesses,
         })
+    }
+
+    fn replace_reference_roots_for_entries(
+        &self,
+        place: ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Vec<ResolvedPlace> {
+        if let PlaceRoot::Binding(root) = place.root
+            && let Some(reference) = bindings
+                .values()
+                .find(|local| local.binding == root)
+                .and_then(|local| local.reference.as_ref())
+        {
+            return reference
+                .paths
+                .iter()
+                .cloned()
+                .map(|mut p| {
+                    p.path.extend(place.path.iter().copied());
+                    p
+                })
+                .collect();
+        }
+        vec![place]
     }
 
     /// Which selection of a `Segments<T>` place one suffix writes: `Some(true)`

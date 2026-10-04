@@ -798,8 +798,8 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
 fn run_dbsize(store: &Keyspace, client: &Client) -> result: unit reads(store), writes(client) waits {
   doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does, in one statement that holds the keyspace's table whole.";
   let size = 0_u64;
-  atomic s = &store^.state {
-    set size = keyed_table_count::<Entry>(table: &s^.map);
+  atomic s = &store^.state, t = &s^.map {
+    set size = keyed_table_count::<Entry>(table: t);
   }
   let answer = cvt.wrap::<u64, i64>(size);
   reply_integer(client: client, value: answer);

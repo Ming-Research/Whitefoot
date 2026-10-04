@@ -76,8 +76,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
   }
   let sum = 0_u64;
   let counted = 0_u64;
-  atomic s = &store, entries = &s^.map[keys] {
-    set counted = keyed_table_count::<u64>(table: &s^.map);
+  atomic s = &store, t = &s^.map {
+    let entries = &t^[keys];
+    set counted = keyed_table_count::<u64>(table: t);
     for @read (at in 0_u64..entries^.len) {
       match entries^[at] {
         Some(value: held) => {

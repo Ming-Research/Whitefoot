@@ -77,16 +77,45 @@ void *wf__keyed_table_new(uint64_t slot_size, uint64_t slot_align, uint64_t capa
     return wf_cmap_create_entries(slot_size, slot_align, capacity);
 }
 
+static void table_finish_local(wf_cmap *map) {
+    if (map->local_hold != NULL) {
+        wf_cmap_holding *hold = map->local_hold;
+        map->local_hold = NULL;
+        wf_cmap_hold_release(hold, 0, 4, 0);
+        WF_CMAP_GIVE(hold, sizeof *hold);
+    }
+}
+
+void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write) {
+    wf_cmap *map = table;
+    void *slot = wf_cmap_held_entry(map, key, length, write != 0);
+    return slot != NULL ? slot : map->none;
+}
+
+void wf__table_held_entries(void *table, const wf_key_set *set, uint64_t *entries) {
+    wf_cmap *map = table;
+    if (map->whole_hold == NULL) {
+        /* An empty read initializes a local table's sole-user hold. */
+        (void)wf_cmap_held_entry(map, NULL, 0, 0);
+    }
+    wf_cmap_holding *hold = map->whole_hold;
+    uint64_t first = wf_cmap_hold_keys(hold, set);
+    entries[0] = (uint64_t)(uintptr_t)hold;
+    entries[1] = first;
+    entries[2] = set->len;
+}
+
 uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
     return wf_cmap_count_held((wf_cmap *)table, tag_offset, tag_width, none_tag);
 }
 
-uint64_t *wf__keyed_table_drain(void *table) { return (uint64_t *)wf_cmap_drain((wf_cmap *)table); }
+uint64_t *wf__keyed_table_drain(void *table) { table_finish_local(table); return (uint64_t *)wf_cmap_drain((wf_cmap *)table); }
 
 /* No statement reaches a table that is freed, so no guard's watch is
  * registered on it; one still registered would be left on a freed list. */
 void wf__keyed_table_free(void *table) {
     wf_cmap *map = (wf_cmap *)table;
+    table_finish_local(map);
     if (__atomic_load_n(&map->watch.count, __ATOMIC_RELAXED) != 0u)
         abort();
     wf_cmap_destroy(map);
@@ -95,12 +124,15 @@ void wf__keyed_table_free(void *table) {
 /* The table's watches stay with it: a statement that holds a whole and
  * swaps writes it, which its hold's release reports (wf_cmap_hold_release). */
 void wf__keyed_table_swap(void *a, void *b, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
+    table_finish_local(a);
+    table_finish_local(b);
     wf_cmap_swap((wf_cmap *)a, (wf_cmap *)b, tag_offset, tag_width, none_tag);
 }
 
 void *wf__table_lock_entry(void *table, const unsigned char *key, uint64_t length, uint32_t read,
                            wf_table_entry *entry) {
     wf_cmap *map = (wf_cmap *)table;
+    table_finish_local(map);
     wf_cmap_user *u = wf_cmap_user_at(map, wf__driver_index());
     int held = wf_cmap_holds_whole(u);
     entry->user = u;
@@ -122,7 +154,7 @@ void wf__table_unlock_entry(wf_table_entry *entry, uint32_t present) {
     table_written(u->map);
 }
 
-void wf__table_hold_begin(void *hold, void *table) { wf_cmap_hold_begin((wf_cmap_holding *)hold, (wf_cmap *)table); }
+void wf__table_hold_begin(void *hold, void *table) { table_finish_local(table); wf_cmap_hold_begin((wf_cmap_holding *)hold, (wf_cmap *)table); }
 
 void wf__table_hold_whole(void *hold) { wf_cmap_hold_whole((wf_cmap_holding *)hold); }
 

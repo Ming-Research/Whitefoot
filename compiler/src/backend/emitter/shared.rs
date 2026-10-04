@@ -73,6 +73,7 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::TableHoldTake { record }
             | IrOperation::TableHoldSlot { record, .. }
             | IrOperation::TableHoldRelease { record, .. }
+            | IrOperation::TableHeldEntries { record, .. }
             | IrOperation::KeyedEntriesRecord { record, .. }
             | IrOperation::WatchBegin { record }
             | IrOperation::WatchObject { record, .. }
@@ -271,6 +272,32 @@ impl FunctionEmitter<'_, '_> {
             self.value_name(second)
         );
         self.emit_unit_call(result, "wf__keyed_table_swap", &arguments)
+    }
+
+    pub(super) fn emit_table_held_entry(
+        &mut self,
+        result: IrValueId,
+        nominal: IrNominalId,
+        table: IrValueId,
+        key: IrValueId,
+        write: bool,
+    ) -> Result<(), BackendFailure> {
+        self.checked_entry(nominal)?;
+        let bare = self.bare(result);
+        self.key_parts(&bare, key)?;
+        self.names(&["wf__table_held_entry"]);
+        writeln!(self.output, "  {} = call ptr @wf__table_held_entry(ptr {}, ptr %{bare}.key, i64 %{bare}.length, i32 {})", self.value_name(result), self.value_name(table), u32::from(write)).map_err(|_| BackendFailure::TextEmission)
+    }
+
+    pub(super) fn emit_table_held_entries(
+        &mut self,
+        result: IrValueId,
+        table: IrValueId,
+        set: IrValueId,
+        record: IrRecord,
+    ) -> Result<(), BackendFailure> {
+        self.names(&["wf__table_held_entries"]);
+        writeln!(self.output, "  call void @wf__table_held_entries(ptr {}, ptr {}, ptr {})\n  {} = getelementptr i8, ptr {}, i64 0", self.value_name(table), self.value_name(set), record_name(record), self.value_name(result), record_name(record)).map_err(|_| BackendFailure::TextEmission)
     }
 
     /// Locks one key's entry, keeping the lock in its record and the slot's

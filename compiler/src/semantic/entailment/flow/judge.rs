@@ -1182,6 +1182,15 @@ impl Analyzer<'_, '_> {
                     projections.push(PlaceStep::Deref);
                 }
                 CheckedPlaceStep::Subscript(subscript) => {
+                    if matches!(subscript.base_type, CheckedType::Nominal(_)) {
+                        reached = reached
+                            && self.judge_children_reach_parent(
+                                std::iter::once(&subscript.offset),
+                                states,
+                            );
+                        projections.push(PlaceStep::Index(subscript.captured));
+                        continue;
+                    }
                     let Some(measured) = measured_kind(subscript.base_type) else {
                         return false;
                     };
@@ -1261,6 +1270,15 @@ impl Analyzer<'_, '_> {
                 CheckedPlaceStep::Field(field) => base.path.push(PlaceStep::Field(*field)),
                 CheckedPlaceStep::BoxReferent(_) => base.path.push(PlaceStep::Deref),
                 CheckedPlaceStep::Subscript(subscript) => {
+                    if matches!(subscript.base_type, CheckedType::Nominal(_)) {
+                        reached = reached
+                            && self.judge_children_reach_parent(
+                                std::iter::once(&subscript.offset),
+                                states,
+                            );
+                        base.path.push(PlaceStep::Index(subscript.captured));
+                        continue;
+                    }
                     let Some(measured) = measured_kind(subscript.base_type) else {
                         return false;
                     };

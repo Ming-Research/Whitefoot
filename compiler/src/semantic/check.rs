@@ -625,12 +625,22 @@ struct BodyChecker {
     /// checked: inside one, a waiting call or another atomic statement is
     /// refused.
     atomic_depth: u32,
+    atomic_grant: Option<AtomicGrant>,
+    table_set_borrow: Option<NodeId>,
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
     range_facts: super::range_facts::CheckedRangeFacts,
     /// [RANGE-1, RANGE-4] the range facts that state nothing at this
     /// concrete instance, which a certificate's `use` of them skips.
     unformed_range_facts: HashSet<DeclarationId>,
+}
+
+struct AtomicGrant {
+    state: BindingId,
+    tables: Vec<Vec<u32>>,
+    whole: Vec<(Vec<super::places::PlaceStep>, BindingId)>,
+    touched: Vec<BindingId>,
+    refusals: Vec<(NodeId, SemanticIssueKind)>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.

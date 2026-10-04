@@ -225,6 +225,7 @@ struct wf_cmap {
     /* The hold that holds the map whole, from its take to its release, whose
      * entries a swap settles before it exchanges the map's (wf_cmap_swap). */
     wf_cmap_holding *whole_hold;
+    wf_cmap_holding *local_hold;
     void *raw;
     wf_cmap_user users[WF_CMAP_MAX_USERS];
 };
@@ -1696,8 +1697,26 @@ uint64_t wf_cmap_hold_key(wf_cmap_holding *hold, const unsigned char *key, uint6
     return position;
 }
 
+void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length, int write);
+
 uint64_t wf_cmap_hold_keys(wf_cmap_holding *hold, const wf_key_set *set) {
     uint64_t first = hold->count;
+    if (hold->whole && hold->user != NULL) {
+        const key_store *s = set->store;
+        /* Reserve all positions before selecting slots: repeated keys still
+         * occupy the set's own index order in the entries reference. */
+        wf_cmap_held *aliases = reserve_keys(hold, set->len);
+        for (uint64_t i = 0; i < set->len; i++)
+            set_held(&aliases[first + i], NULL, 0, 0);
+        hold->count += set->len;
+        for (uint64_t i = 0; i < set->len; i++) {
+            const key_item *item = &s->items[i];
+            void *slot = wf_cmap_held_entry(hold->map, item_bytes(s, item), item->length, 1);
+            wf_cmap_held *keys = held_keys(hold);
+            keys[first + i].slot = slot;
+        }
+        return first;
+    }
     if (set->len == 0)
         return first;
     wf_cmap_held *keys = reserve_keys(hold, set->len);
@@ -2102,6 +2121,93 @@ static int settle_entries(wf_cmap_user *u, wf_cmap_holding *hold, uint64_t tag_o
         e->cell = NULL;
     }
     return fresh;
+}
+
+/* Select under exclusive whole-table ownership. Only writes claim cells;
+ * held descriptors retain nodes' copied keys rather than caller storage. */
+void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length, int write) {
+    wf_cmap_holding *hold = map->whole_hold;
+    if (hold == NULL) {
+        if (map->local_hold == NULL) {
+            map->local_hold = take(sizeof(wf_cmap_holding));
+            wf_cmap_hold_begin(map->local_hold, map);
+            wf_cmap_hold_whole(map->local_hold);
+            wf_cmap_hold_take(WF_CMAP_CURRENT_USER(map), map->local_hold);
+        }
+        hold = map->local_hold;
+    }
+    wf_cmap_user *u = hold->user;
+    uint64_t tag = tag_of(key, length);
+    table *t = use_current(u);
+    wf_cmap_held *keys = held_keys(hold);
+    for (uint64_t i = 0; i < hold->count; i++) {
+        wf_cmap_held *e = &keys[i];
+        if (e->cell != NULL && e->tag == tag && same_key(node_at(e->cell), key, length))
+            return e->slot;
+    }
+    uint64_t at = start_of(t, tag), left = t->capacity;
+    while (left-- != 0) {
+        cell *c = &t->cells[at];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed);
+        uint64_t bare = k & ~(LOCKED | PENDING);
+        if (bare == EMPTY) break;
+        if (bare == tag && same_key(node_at(c), key, length)) {
+            if (!write) return slot_of(map, node_at(c));
+            break;
+        }
+        at = (at + 1) & t->mask;
+    }
+    if (!write) return NULL;
+    cell *c;
+    int r;
+    for (;;) {
+        r = acquire_whole(hold, t, tag, key, length, &c);
+        if (r != FULL && r != MOVED) break;
+        /* Keep every held node, including None slots, stable while the
+         * index moves. Count each physical node before unlocking it; the
+         * hold's logical count still subtracts its None slots. */
+        keys = held_keys(hold);
+        uint64_t saved = hold->count;
+        for (uint64_t i = 0; i < saved; i++) {
+            wf_cmap_held *e = &keys[i];
+            if (e->cell == NULL) continue;
+            if (e->fresh != 0) count(u, 0, 1);
+            e->fresh = 0;
+            unlock(e->cell, atomic_load_explicit(&e->cell->key, memory_order_relaxed) & ~LOCKED);
+            e->cell = NULL;
+        }
+        start_move_for(map, t, 1);
+        finish_move(map, t);
+        t = use_current(u);
+        for (uint64_t i = 0; i < saved; i++) {
+            wf_cmap_held *e = &keys[i];
+            if (!e->leads) continue;
+            cell *previous;
+            int found = acquire_whole(hold, t, e->tag, e->key, e->length, &previous);
+            if (found != FOUND) abort();
+            e->cell = previous;
+        }
+    }
+    node *n;
+    if (r == FOUND) n = node_at(c);
+    else {
+        n = new_node(u, node_bytes(map, length));
+        n->length = length;
+        if (length != 0) memcpy(n->bytes, key, (size_t)length);
+        memset(slot_of(map, n), 0, (size_t)map->slot_size);
+        name_node(c, n);
+        if (r == CLAIMED) count(u, 1, 0);
+    }
+    keys = reserve_keys(hold, 1);
+    wf_cmap_held *e = &keys[hold->count++];
+    set_held(e, n->bytes, length, tag);
+    e->cell = c;
+    e->slot = slot_of(map, n);
+    e->fresh = r == FOUND ? 0 : (uint32_t)r;
+    e->leads = 1;
+    hold->table = t;
+    hold->generation = map->generation;
+    return e->slot;
 }
 
 int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {

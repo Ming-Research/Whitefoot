@@ -1079,6 +1079,7 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<MutationTarget, CheckStop> {
+        self.note_atomic_place(context, node, bindings)?;
         let FunctionContext { check_context, .. } = context;
         let suffix = suffixes[subscript];
         let indexed = self
@@ -1314,6 +1315,22 @@ impl<'unit> Checker<'_, 'unit> {
         )
     }
 
+    pub(in crate::semantic::check) fn table_entry_type(
+        &self,
+        ty: CheckedType,
+    ) -> Option<CheckedType> {
+        let CheckedType::Nominal(nominal) = ty else {
+            return None;
+        };
+        match self.types.nominals.get(nominal.0 as usize).map(|n| &n.kind) {
+            Some(crate::semantic::CheckedNominalKind::Shared {
+                shape: crate::semantic::CheckedShared::Table { entry },
+                ..
+            }) => Some(*entry),
+            _ => None,
+        }
+    }
+
     /// Resolves a storage place's suffixes into typed field selections and
     /// subscripts, in written order [MSR-1, OWN-7]. Measures and addressed
     /// borrows use the same path and owe the same subscript obligations.
@@ -1353,11 +1370,13 @@ impl<'unit> Checker<'_, 'unit> {
             };
             // [OP-4] each suffix selects the complete element type of its
             // already-typed base. Array storage can be nested in a run slot.
-            let element_type = match ty {
+            let table_entry = self.table_entry_type(ty);
+            let mut element_type = match ty {
                 CheckedType::Array { element, .. }
                 | CheckedType::Window { element, .. }
                 | CheckedType::KeyedEntries { element } => self.types.element_type(element)?,
                 CheckedType::Buffer { element } => self.types.element_type(element)?,
+                _ if table_entry.is_some() => table_entry.unwrap(),
                 _ => {
                     return self.types.declarations.issue_node(
                         SemanticRule::Op4,
@@ -1370,15 +1389,58 @@ impl<'unit> Checker<'_, 'unit> {
                 }
             };
             let mut probe = bindings.clone();
-            let offset = self.check_atom(context, offset_node, &mut probe, loop_depth)?;
-            self.check_place_offset(offset_node, &offset)?;
-            let captured = Checker::captured_of(offset_node, &offset.expression);
-            if require_named_offsets && captured.is_none() {
-                return self
+            let set = if table_entry.is_some() {
+                match self
                     .types
                     .declarations
-                    .unsupported(UnsupportedSemanticFeature::CompositeValues, offset_node);
-            }
+                    .tree
+                    .first_child_with(offset_node, Production::Place)?
+                {
+                    Some(place) => {
+                        let borrowed = self.check_place_borrow(
+                            context,
+                            offset_node,
+                            offset_node,
+                            place,
+                            bindings,
+                            loop_depth,
+                        )?;
+                        (borrowed.expression.ty() == CheckedType::KeySet).then_some(borrowed)
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let offset = match set {
+                Some(set) => set,
+                None => self.check_atom(context, offset_node, &mut probe, loop_depth)?,
+            };
+            let captured = if table_entry.is_some() {
+                if offset.expression.ty() == CheckedType::KeySet {
+                    if self.body.table_set_borrow != Some(suffix) {
+                        return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableEntriesNotBorrowed { mechanical_fix: "write `&t^[keys]`: the entries under a key set are reached only as a reference of kind `&KeyedEntries<V>`" });
+                    }
+                    element_type = CheckedType::KeyedEntries {
+                        element: self.types.intern_element(element_type)?,
+                    };
+                } else if offset.mode != CheckedMode::Range
+                    || offset.expression.ty() != CheckedType::Integer(IntegerType::U8)
+                {
+                    return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a table by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
+                }
+                Some(CapturedValue::unknown())
+            } else {
+                self.check_place_offset(offset_node, &offset)?;
+                let captured = Checker::captured_of(offset_node, &offset.expression);
+                if require_named_offsets && captured.is_none() {
+                    return self
+                        .types
+                        .declarations
+                        .unsupported(UnsupportedSemanticFeature::CompositeValues, offset_node);
+                }
+                captured
+            };
             let captured = self
                 .body
                 .note_capture(captured.unwrap_or(CapturedValue::unknown()), bindings);
@@ -1608,9 +1670,13 @@ impl<'unit> Checker<'_, 'unit> {
             // an inline one is: a run is one measured place wherever it is
             // reached from [MSR-1]. The `KeyedEntries` an entry binding names
             // is reached only so [SHARE-2].
-            CheckedType::Array { .. }
-            | CheckedType::Window { .. }
-            | CheckedType::KeyedEntries { .. } => {
+            _ if matches!(
+                ty,
+                CheckedType::Array { .. }
+                    | CheckedType::Window { .. }
+                    | CheckedType::KeyedEntries { .. }
+            ) || self.table_entry_type(ty).is_some() =>
+            {
                 Ok(CheckedIndexedPlace::Container(CheckedContainerPlace {
                     root: CheckedContainerRoot {
                         root: PlaceRoot::Binding(binding),

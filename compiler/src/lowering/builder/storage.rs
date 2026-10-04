@@ -292,6 +292,14 @@ impl IrBuilder<'_> {
         &mut self,
         root: &crate::semantic::CheckedContainerRoot,
     ) -> Result<IrValueId, LoweringFailure> {
+        self.lower_place_address_access(root, true)
+    }
+
+    pub(super) fn lower_place_address_access(
+        &mut self,
+        root: &crate::semantic::CheckedContainerRoot,
+        write: bool,
+    ) -> Result<IrValueId, LoweringFailure> {
         let address = match root.root {
             crate::semantic::CheckedPlaceRoot::Binding(binding) => self
                 .bindings
@@ -313,7 +321,7 @@ impl IrBuilder<'_> {
                 )?
             }
         };
-        let address = self.project_address_path(address, &root.path)?;
+        let address = self.project_address_path_access(address, &root.path, write)?;
         let referent = IrAddressed::of(lower_type(self.erasure, root.ty)?)
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
         if self.value_type(address)? != IrType::Address(referent) {
@@ -345,7 +353,9 @@ impl IrBuilder<'_> {
                 &place.path,
                 place.target_domain,
             )?,
-            CheckedExpression::ReadStorage { root, .. } => self.lower_place_address(root)?,
+            CheckedExpression::ReadStorage { root, .. } => {
+                self.lower_place_address_access(root, false)?
+            }
             CheckedExpression::BoxDeref {
                 nominal,
                 referent,
@@ -425,8 +435,17 @@ impl IrBuilder<'_> {
 
     pub(super) fn project_address_path(
         &mut self,
+        address: IrValueId,
+        path: &[crate::semantic::CheckedPlaceStep],
+    ) -> Result<IrValueId, LoweringFailure> {
+        self.project_address_path_access(address, path, true)
+    }
+
+    fn project_address_path_access(
+        &mut self,
         mut address: IrValueId,
         path: &[crate::semantic::CheckedPlaceStep],
+        write: bool,
     ) -> Result<IrValueId, LoweringFailure> {
         for step in path {
             let IrType::Address(base) = self.value_type(address)? else {
@@ -466,7 +485,43 @@ impl IrBuilder<'_> {
                 }
                 crate::semantic::CheckedPlaceStep::Subscript(subscript) => {
                     let offset = self.expression(&subscript.offset)?;
-                    let projection = match lower_type(self.erasure, subscript.base_type)? {
+                    let base_type = lower_type(self.erasure, subscript.base_type)?;
+                    if let IrType::Nominal(nominal) = base_type {
+                        let table = self.define(
+                            base_type,
+                            IrOperation::Load {
+                                address,
+                                referent: base,
+                            },
+                        )?;
+                        let ty = lower_type(self.erasure, subscript.element_type)?;
+                        let referent =
+                            IrAddressed::of(ty).ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                        if let IrType::KeyedEntries { element } = ty {
+                            let record = self.record(IrRecordKind::KeyedEntries)?;
+                            address = self.define(
+                                IrType::Address(referent),
+                                IrOperation::TableHeldEntries {
+                                    table,
+                                    set: offset,
+                                    record,
+                                    element,
+                                },
+                            )?;
+                        } else {
+                            address = self.define(
+                                IrType::Address(referent),
+                                IrOperation::TableHeldEntry {
+                                    nominal,
+                                    table,
+                                    key: offset,
+                                    write,
+                                },
+                            )?;
+                        }
+                        continue;
+                    }
+                    let projection = match base_type {
                         IrType::Array { .. } => IrPlaceStep::ArrayElement {
                             offset,
                             target_domain: subscript.target_domain.into(),

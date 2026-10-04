@@ -1,0 +1,29 @@
+struct Store {
+  map: KeyedTable<u8>;
+  count: u8;
+}
+
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+fn deliver(store: Shared<Store>) -> result: unit pure waits {
+  atomic s = &store, t = &s^.map {
+    let key = &names[0_u64..1_u64];
+    set t^[key] = Some<u8>(value: 1_u8);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let state = Store(map: move table, count: 0_u8);
+  let store = shared_new::<Store>(value: move state);
+  let name = &names[0_u64..1_u64];
+  let second = &names[1_u64..2_u64];
+  let n = 0_u64;
+  let handle = shared_share::<Store>(shared: &store);
+  spawn deliver(store: move handle);
+  atomic s = &store, t = &s^.map when keyed_table_count::<u8>(table: t) == 1_u64 {
+    set n = keyed_table_count::<u8>(table: t);
+  }
+  return std::process::exit_status(code: cvt.wrap::<u64, u8>(n));
+}

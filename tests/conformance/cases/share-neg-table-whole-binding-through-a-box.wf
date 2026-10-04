@@ -1,0 +1,24 @@
+struct Part {
+  map: KeyedTable<u8>;
+}
+
+struct Store {
+  boxed: Box<Part>;
+}
+
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let part = Part(map: move table);
+  let boxed = box_new::<Part>(value: move part);
+  let state = Store(boxed: move boxed);
+  let store = shared_new::<Store>(value: move state);
+  let name = &names[0_u64..1_u64];
+  let second = &names[1_u64..2_u64];
+  let n = 0_u64;
+  atomic s = &store, t = &s^.boxed.inner.map {
+    set n = keyed_table_count::<u8>(table: t);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

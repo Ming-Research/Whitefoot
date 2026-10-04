@@ -16,15 +16,15 @@ fn main() -> status: std::process::ExitStatus pure waits {
   }
   let seen = 0_u8;
   let counted = 0_u64;
-  atomic s = &store, slot = &s^.map[first] {
-    match slot^ {
+  atomic s = &store, t = &s^.map {
+    match t^[first] {
       Some(value: held) => {
         set seen = held^;
       }
       None() => {
       }
     }
-    set counted = keyed_table_count::<u8>(table: &s^.map);
+    set counted = keyed_table_count::<u8>(table: t);
   }
   if counted != 1_u64 {
     return std::process::exit_status(code: 1_u8);

@@ -8,8 +8,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set b^ = Some<u8>(value: 2_u8);
   }
   let count = 0_u64;
-  atomic s = &store {
-    set count = keyed_table_count::<u8>(table: s);
+  atomic s = &store, t = &s^ {
+    set count = keyed_table_count::<u8>(table: t);
   }
   if count == 2_u64 {
     return std::process::exit_status(code: 6_u8);

@@ -2441,6 +2441,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::TableUnlockEntry {
                 nominal, record, ..
             } => self.emit_table_unlock_entry(result, *nominal, *record),
+            IrOperation::TableHeldEntry {
+                nominal,
+                table,
+                key,
+                write,
+            } => self.emit_table_held_entry(result, *nominal, *table, *key, *write),
+            IrOperation::TableHeldEntries {
+                table, set, record, ..
+            } => self.emit_table_held_entries(result, *table, *set, *record),
             IrOperation::TableHoldBegin { record, table } => {
                 self.emit_table_hold_begin(result, *record, *table)
             }

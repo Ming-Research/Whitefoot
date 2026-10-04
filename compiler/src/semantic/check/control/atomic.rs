@@ -12,8 +12,9 @@ use crate::{
 
 use super::super::super::model::{
     BindingId, CheckedArrayRoot, CheckedEntryBinding, CheckedEntryIndex, CheckedExpression,
-    CheckedMode, CheckedNominalKind, CheckedRangeSource, CheckedSetTarget, CheckedShared,
-    CheckedStatePath, CheckedStatement, CheckedType, IntegerType, expression_children,
+    CheckedMode, CheckedNominalKind, CheckedPlaceStep, CheckedRangeSource, CheckedSetTarget,
+    CheckedShared, CheckedStatePath, CheckedStatement, CheckedType, IntegerType,
+    expression_children,
 };
 use super::super::super::places::{CapturedValue, PlaceRoot, PlaceStep, ResolvedPlace};
 use super::super::expressions::calls::user::WAIT1_DECLARE_THE_CALLER_WAITING;
@@ -25,7 +26,7 @@ use super::{ControlCounters, ControlScope, StatementResult};
 pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>`: create the object with `shared_new`, and give each context its own handle made with `shared_share`";
 /// The repair for an entry binding whose place is not an entry of a keyed
 /// table reached through the statement's binding [SHARE-2].
-pub(in crate::semantic::check) const SHARE2_NAME_A_TABLE_ENTRY: &str = "write the entry binding as `name = &s^.table[key]`, where `s` is the statement's binding and `table` a field of type `KeyedTable<V>` in its state";
+pub(in crate::semantic::check) const SHARE2_NAME_A_TABLE_ENTRY: &str = "write a table binding as `name = &s^.table[key]` for one entry, `name = &s^.table[keys]` for the entries under a key set, or `name = &s^.table` for the table whole, where `s` is the statement's binding and `table` a field of type `KeyedTable<V>` reached through no `Box`";
 /// The repair for an index atom that is neither a byte range nor a key set
 /// [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`";
@@ -39,13 +40,13 @@ pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "end
 pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block";
 /// The repair for an entry binding the guard and block never use, and for a
 /// statement whose guard and block reach nothing of the state [SHARE-2].
-pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the entry binding, or the whole statement when nothing in it reaches the state; an atomic statement holds what it names, so a binding nothing uses holds an entry for nothing";
+pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the table binding, or the whole statement when nothing in it reaches the state; an atomic statement holds what its header names, so a binding nothing uses holds a table or an entry for nothing";
 /// One entry binding as the header writes it: its declaration, its place
 /// and the index atom of the place's last step.
 struct EntryHeader<'unit> {
     declaration: &'unit crate::DeclarationRecord,
     place: NodeId,
-    atom: NodeId,
+    atom: Option<NodeId>,
 }
 
 impl Checker<'_, '_> {
@@ -205,28 +206,18 @@ impl Checker<'_, '_> {
                     Some(last) => self.types.declarations.tree.subscript_offset(*last)?,
                     None => None,
                 };
-                Ok(atom.map(|atom| EntryHeader {
+                Ok(EntryHeader {
                     declaration,
                     place: *place,
                     atom,
-                }))
+                })
             })
             .collect::<Result<Vec<_>, CheckStop>>()?;
         let mut entries = Vec::with_capacity(headers.len());
         // The declarations an index atom may not read through: the binding's
         // and each earlier entry binding's.
         let mut statement_roots = vec![declaration.id()];
-        for (header, place) in headers.into_iter().zip(entry_places) {
-            let Some(header) = header else {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Share2,
-                    *place,
-                    SemanticIssueKind::AtomicTargetNotShared {
-                        found: "a place whose last step is no index".to_owned(),
-                        mechanical_fix: SHARE2_NAME_A_TABLE_ENTRY,
-                    },
-                );
-            };
+        for header in headers {
             let earlier = entries
                 .iter()
                 .map(|entry: &CheckedEntryBinding| entry.binding)
@@ -247,10 +238,76 @@ impl Checker<'_, '_> {
             entries.push(entry);
         }
 
+        let tables = super::super::super::model::state_parts(state, |ty| {
+            use super::super::super::model::StateShape;
+            let CheckedType::Nominal(nominal) = ty else {
+                return StateShape::Plain;
+            };
+            match &self.types.nominals[nominal.0 as usize].kind {
+                CheckedNominalKind::Shared {
+                    shape: CheckedShared::Table { .. },
+                    ..
+                } => StateShape::Table(()),
+                CheckedNominalKind::Struct { fields } => {
+                    StateShape::Fields(fields.iter().map(|field| field.ty).collect())
+                }
+                _ => StateShape::Plain,
+            }
+        })
+        .into_iter()
+        .filter_map(|(path, table)| table.map(|_| path))
+        .collect::<Vec<_>>();
+        let mut whole = Vec::new();
+        let mut named: Vec<(Vec<PlaceStep>, bool)> = Vec::new();
+        for entry in &entries {
+            let CheckedExpression::BorrowAddressed { root, .. } = entry.table.as_ref() else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            let path = root
+                .path
+                .iter()
+                .map(|step| step.place_step())
+                .collect::<Vec<_>>();
+            let is_whole = matches!(entry.index, CheckedEntryIndex::Whole);
+            if named
+                .iter()
+                .any(|(prior, w)| *prior == path && (*w || is_whole))
+            {
+                let place = entry_places[entries
+                    .iter()
+                    .position(|e| e.binding == entry.binding)
+                    .unwrap()];
+                return self.types.declarations.issue_node(SemanticRule::Share2, place, SemanticIssueKind::AtomicTableBoundTwice {
+                    table: format!("{path:?}"), mechanical_fix: "name each table once: a whole binding `t = &s^.table` when the block computes its keys, reaching entries as `t^[key]` and `&t^[keys]`, or entry bindings for keys known before the statement",
+                });
+            }
+            named.push((path.clone(), is_whole));
+            if is_whole {
+                whole.push((path, entry.binding));
+            }
+        }
+        self.body.atomic_grant = Some(super::super::AtomicGrant {
+            state: binding,
+            tables,
+            whole,
+            touched: Vec::new(),
+            refusals: Vec::new(),
+        });
         self.body.atomic_depth += 1;
         let checked = self.check_atomic_parts(context, node, &mut block_bindings, counters, scope);
         self.body.atomic_depth -= 1;
+        let grant = self
+            .body
+            .atomic_grant
+            .take()
+            .ok_or(SemanticCompilerFailure::InvalidResolution)?;
         let (mut guard, mut checked) = checked?;
+        if let Some((site, kind)) = grant.refusals.into_iter().next() {
+            return self
+                .types
+                .declarations
+                .issue_node(SemanticRule::Share2, site, kind);
+        }
         let state_root = declaration.id();
         let entry_roots = entry_declarations
             .iter()
@@ -259,9 +316,10 @@ impl Checker<'_, '_> {
         // A binder is used where the guard or the block names it: a place
         // through it, a reference formed through it, or the reference itself.
         let touched = |binding: BindingId| {
-            guard
-                .as_ref()
-                .is_some_and(|guard| expression_mentions(&guard.0, binding))
+            grant.touched.contains(&binding)
+                || guard
+                    .as_ref()
+                    .is_some_and(|guard| expression_mentions(&guard.0, binding))
                 || checked
                     .statements
                     .iter()
@@ -428,7 +486,13 @@ impl Checker<'_, '_> {
             found: found.to_owned(),
             mechanical_fix: SHARE2_NAME_A_TABLE_ENTRY,
         };
-        let table = self.check_place_borrow_prefix(
+        let borrow = if header.atom.is_some() {
+            Self::check_place_borrow_prefix
+        } else {
+            Self::check_place_borrow
+        };
+        let table = borrow(
+            self,
             context,
             header.place,
             header.place,
@@ -488,17 +552,49 @@ impl Checker<'_, '_> {
                 shape("a keyed table reached through a `Box` or an index"),
             );
         }
+        let Some(atom) = header.atom else {
+            let referent = table.expression.ty();
+            let binding = self.bind_atomic_reference(
+                counters,
+                block_bindings,
+                header.declaration,
+                referent,
+                loop_depth,
+            )?;
+            let selected = table
+                .reference
+                .as_ref()
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?
+                .paths
+                .clone();
+            if let Some(reference) = block_bindings
+                .get_mut(&header.declaration.id())
+                .and_then(|local| local.reference.as_mut())
+            {
+                reference.paths.extend(selected.iter().cloned());
+            }
+            self.body.record_reference_origins(binding, &selected);
+            return Ok(CheckedEntryBinding {
+                node_path: self.types.declarations.tree.path(header.place)?.clone(),
+                binding,
+                table: Box::new(table.expression),
+                entry: entry_type,
+                index: CheckedEntryIndex::Whole,
+                referent,
+                reads: false,
+            });
+        };
         // An index atom is a place or a range the statement reads when it
         // begins; a `move` is neither.
         if self
             .types
             .declarations
             .tree
-            .has_fixed(header.atom, crate::syntax::terminal::FixedTerminal::Move)?
+            .has_fixed(atom, crate::syntax::terminal::FixedTerminal::Move)?
         {
             return self.types.declarations.issue_node(
                 SemanticRule::Share2,
-                header.atom,
+                atom,
                 SemanticIssueKind::AtomicKeyNotBytes {
                     found: "a value `move` takes".to_owned(),
                     mechanical_fix: SHARE2_KEY_A_BYTE_RANGE,
@@ -526,7 +622,7 @@ impl Checker<'_, '_> {
             .types
             .declarations
             .tree
-            .first_child_with(header.atom, Production::Place)?;
+            .first_child_with(atom, Production::Place)?;
         let set_place = match atom_place {
             Some(place) => {
                 let suffixes = self
@@ -559,18 +655,12 @@ impl Checker<'_, '_> {
             None => None,
         };
         let (index, referent, set_places) = if let Some(place) = set_place {
-            let set = self.check_place_borrow(
-                context,
-                header.atom,
-                header.atom,
-                place,
-                block_bindings,
-                loop_depth,
-            )?;
+            let set =
+                self.check_place_borrow(context, atom, atom, place, block_bindings, loop_depth)?;
             if set.expression.ty() != CheckedType::KeySet {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
-                    header.atom,
+                    atom,
                     SemanticIssueKind::AtomicKeyNotBytes {
                         found: self
                             .types
@@ -587,7 +677,7 @@ impl Checker<'_, '_> {
             if reads_the_state(&places) || touches_the_state(&set.effects) {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
-                    header.atom,
+                    atom,
                     SemanticIssueKind::AtomicKeyReadsTheState {
                         mechanical_fix: SHARE2_KEY_BEFORE_THE_STATEMENT,
                     },
@@ -609,13 +699,13 @@ impl Checker<'_, '_> {
             )
         } else {
             let mut probe = block_bindings.clone();
-            let key = self.check_atom(context, header.atom, &mut probe, loop_depth)?;
+            let key = self.check_atom(context, atom, &mut probe, loop_depth)?;
             let bytes = key.mode == CheckedMode::Range
                 && key.expression.ty() == CheckedType::Integer(IntegerType::U8);
             if !bytes {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
-                    header.atom,
+                    atom,
                     SemanticIssueKind::AtomicKeyNotBytes {
                         found: self
                             .types
@@ -633,7 +723,7 @@ impl Checker<'_, '_> {
             {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
-                    header.atom,
+                    atom,
                     SemanticIssueKind::AtomicKeyReadsTheState {
                         mechanical_fix: SHARE2_KEY_BEFORE_THE_STATEMENT,
                     },
@@ -704,6 +794,83 @@ impl Checker<'_, '_> {
             referent,
             reads: false,
         })
+    }
+
+    /// Record a formed place through the state binder for the grant judgment.
+    /// Refusals are reported after ordinary reference and operation checks.
+    pub(in crate::semantic::check) fn note_atomic_place(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<(), CheckStop> {
+        let Some(grant) = &self.body.atomic_grant else {
+            return Ok(());
+        };
+        let state = grant.state;
+        let Some(pbase) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(node, Production::Pbase)?
+        else {
+            return Ok(());
+        };
+        let use_ = self.types.declarations.use_at(
+            context.check_context,
+            pbase,
+            LexicalUseRole::PlaceBase,
+        )?;
+        let ResolvedTarget::Source {
+            declaration,
+            class: DeclarationClass::Value,
+        } = use_.target()
+        else {
+            return Ok(());
+        };
+        let Some(local) = bindings.get(&declaration) else {
+            return Ok(());
+        };
+        if local.binding != state {
+            return Ok(());
+        }
+        let suffixes = self
+            .types
+            .declarations
+            .tree
+            .children_with(node, Production::Psuffix)?;
+        if self.types.declarations.tree.reference_step(&suffixes)? != Some(0) {
+            return Ok(());
+        }
+        let mut ty = local.ty;
+        let mut fields = Vec::new();
+        for suffix in &suffixes[1..] {
+            if self
+                .types
+                .declarations
+                .tree
+                .subscript_offset(*suffix)?
+                .is_some()
+            {
+                break;
+            }
+            let member = self
+                .types
+                .elaborate_place_member(context.check_context, *suffix, ty)?;
+            let step = member.storage_step();
+            let CheckedPlaceStep::Field(field) = step else {
+                break;
+            };
+            fields.push(field);
+            ty = member.ty();
+        }
+        let grant = self.body.atomic_grant.as_mut().unwrap();
+        if let Some(table) = grant.tables.iter().find(|table| fields.starts_with(table)) {
+            grant.refusals.push((node, SemanticIssueKind::AtomicTableNotGranted {
+                table: format!("{table:?}"), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
+            }));
+        }
+        Ok(())
     }
 
     /// The guard and the block, checked with the binders in scope and inside

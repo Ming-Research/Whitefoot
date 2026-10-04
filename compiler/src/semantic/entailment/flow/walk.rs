@@ -588,6 +588,37 @@ impl Analyzer<'_, '_> {
                             &mut state.affine,
                         );
                     }
+                    if let CheckedExpression::BorrowAddressed { root, .. } = value
+                        && matches!(root.ty, CheckedType::KeyedEntries { .. })
+                        && let Some(crate::semantic::CheckedPlaceStep::Subscript(index)) =
+                            root.path.last()
+                        && let CheckedExpression::BorrowAddressed { root: keys, .. } = &index.offset
+                    {
+                        let left = self.reasoning().place_measure_term(
+                            CheckedMeasure::Length,
+                            bound_place(*binding),
+                            MeasuredKind::KeyedEntries,
+                            None,
+                        );
+                        let right = self.reasoning().place_measure_term(
+                            CheckedMeasure::Length,
+                            container_root_path(keys),
+                            MeasuredKind::KeySet,
+                            None,
+                        );
+                        let event = self
+                            .vocabulary
+                            .proof_event(FlowEventKind::S1, Some(node_path));
+                        state.facts.establish(
+                            &Relation::Equal {
+                                left,
+                                right,
+                                difference: 0,
+                            },
+                            &mut self.vocabulary.derivations,
+                            event,
+                        );
+                    }
                     // [REF-4, MSR-1] a range reference's one measure is
                     // `len`, equal to the immutable endpoint images the
                     // formation recorded while evaluating this initializer.

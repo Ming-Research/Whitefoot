@@ -1,0 +1,27 @@
+struct Store {
+  map: KeyedTable<u8>;
+  count: u8;
+}
+
+const names: Array<u8, 1> =[97_u8];
+
+fn fill(env: &Store, key: &[u8]) -> result: unit reads(key), writes(env) {
+  let table = &env^.map;
+  set table^[key] = Some<u8>(value: 9_u8);
+  set env^.count = 1_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 1_u64);
+  let state = Store(map: move table, count: 0_u8);
+  let store = shared_new::<Store>(value: move state);
+  let counted = 0_u64;
+  atomic s = &store, t = &s^.map {
+    fill(env: s, key: &names[0_u64..1_u64]);
+  }
+  atomic s = &store, t = &s^.map {
+    set counted = keyed_table_count::<u8>(table: t);
+  }
+  return std::process::exit_status(code: cvt.wrap::<u64, u8>(counted));
+}

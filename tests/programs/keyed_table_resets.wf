@@ -43,8 +43,8 @@ fn reset(store: Shared<Store>) -> result: unit pure waits {
   doc "Replaces the table with an empty one and zeroes the total, in one statement, two hundred times.";
   for @again (index in 0_u64..200_u64) {
     let fresh = keyed_table_new::<u64>(capacity: 0_u64);
-    atomic s = &store {
-      set s^.map = move fresh;
+    atomic s = &store, t = &s^.map {
+      set t^ = move fresh;
       set s^.total = 0_u64;
       set s^.resets = s^.resets +wrap 1_u64;
     }
@@ -58,7 +58,8 @@ fn trade(store: Shared<Store>) -> result: unit pure waits {
   let held = 0_u64;
   let keys = prefixes();
   for @again (index in 0_u64..100_u64) {
-    atomic s = &store, all = &s^.map[keys] {
+    atomic s = &store, t = &s^.map {
+    let all = &t^[keys];
       let sum = 0_u64;
       for @key (at in 0_u64..all^.len) {
         match all^[at] {
@@ -69,7 +70,7 @@ fn trade(store: Shared<Store>) -> result: unit pure waits {
           }
         }
       }
-      swap(first: &s^.map, second: &mine);
+      swap(first: t, second: &mine);
       let lowered = s^.total -wrap sum;
       set s^.total = lowered +wrap held;
       set held = sum;

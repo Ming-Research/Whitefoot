@@ -16,16 +16,16 @@ fn main() -> status: std::process::ExitStatus pure waits {
   }
   let grown = 0_u64;
   let shrunk = 0_u64;
-  atomic s = &store, a = &s^.map[first], b = &s^.map[second], c = &s^.map[third] {
-    set b^ = Some<u8>(value: 2_u8);
-    set c^ = Some<u8>(value: 3_u8);
-    set grown = keyed_table_count::<u8>(table: &s^.map);
-    set a^ = None<u8>();
-    set shrunk = keyed_table_count::<u8>(table: &s^.map);
+  atomic s = &store, t = &s^.map {
+    set t^[second] = Some<u8>(value: 2_u8);
+    set t^[third] = Some<u8>(value: 3_u8);
+    set grown = keyed_table_count::<u8>(table: t);
+    set t^[first] = None<u8>();
+    set shrunk = keyed_table_count::<u8>(table: t);
   }
   let after = 0_u64;
-  atomic s = &store {
-    set after = keyed_table_count::<u8>(table: &s^.map);
+  atomic s = &store, t = &s^.map {
+    set after = keyed_table_count::<u8>(table: t);
   }
   if grown != 3_u64 {
     return std::process::exit_status(code: 1_u8);

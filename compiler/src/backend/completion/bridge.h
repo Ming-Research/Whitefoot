@@ -386,6 +386,8 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * waits out every statement holding its entries and keeps new ones out
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
+void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write);
+void wf__table_held_entries(void *table, const struct wf_key_set *set, uint64_t *entries);
 void wf__table_hold_begin(void *hold, void *table);
 void wf__table_hold_whole(void *hold);
 uint64_t wf__table_hold_key(void *hold, const unsigned char *key, uint64_t length);

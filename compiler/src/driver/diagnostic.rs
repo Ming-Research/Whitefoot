@@ -900,6 +900,11 @@ impl Report for SemanticIssueKind {
             WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
+            AtomicTableBoundTwice { table, mechanical_fix };
+            AtomicTableNotGranted { table, mechanical_fix };
+            AtomicRowReachesTable { callee, path, table, mechanical_fix };
+            TableOffsetNotKey { mechanical_fix };
+            TableEntriesNotBorrowed { mechanical_fix };
             AtomicKeyNotBytes { found, mechanical_fix };
             AtomicKeyReadsTheState { mechanical_fix };
             AtomicBindingUnused { binding, mechanical_fix };

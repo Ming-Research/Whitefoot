@@ -16,14 +16,14 @@ fn main() -> status: std::process::ExitStatus pure waits {
   }
   let before = 0_u64;
   let fresh = keyed_table_new::<u8>(capacity: 0_u64);
-  atomic s = &store {
-    set before = keyed_table_count::<u8>(table: &s^.map);
-    set s^.map = move fresh;
+  atomic s = &store, t = &s^.map {
+    set before = keyed_table_count::<u8>(table: t);
+    set t^ = move fresh;
   }
   let after = 9_u64;
-  atomic s = &store, slot = &s^.map[first] {
-    set after = keyed_table_count::<u8>(table: &s^.map);
-    set slot^ = Some<u8>(value: 4_u8);
+  atomic s = &store, t = &s^.map {
+    set after = keyed_table_count::<u8>(table: t);
+    set t^[first] = Some<u8>(value: 4_u8);
   }
   let code = cvt.checked::<u64, u8>(before);
   match code {

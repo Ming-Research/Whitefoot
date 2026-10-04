@@ -1021,6 +1021,8 @@ pub(crate) struct CheckedEntryBinding {
 /// [SHARE-2] what an entry binding's index atom names.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedEntryIndex {
+    /// The complete table granted by the header.
+    Whole,
     /// One key: the `&[u8]` the statement reads when it begins.
     Key(Box<CheckedExpression>),
     /// Every key of a key set: the `&KeySet` reference the statement forms
@@ -1028,31 +1030,58 @@ pub(crate) enum CheckedEntryIndex {
     Set(Box<CheckedExpression>),
 }
 
-impl CheckedEntryIndex {
-    /// The expression the statement evaluates for the index when it begins.
-    pub(crate) fn expression(&self) -> &CheckedExpression {
-        match self {
-            Self::Key(expression) | Self::Set(expression) => expression,
+impl CheckedEntryBinding {
+    pub(crate) fn expressions(&self) -> Vec<&CheckedExpression> {
+        let mut result = vec![self.table.as_ref()];
+        if let CheckedEntryIndex::Key(index) | CheckedEntryIndex::Set(index) = &self.index {
+            result.push(index);
         }
+        result
+    }
+
+    pub(crate) fn expressions_mut(&mut self) -> Vec<&mut CheckedExpression> {
+        let mut result = vec![self.table.as_mut()];
+        if let CheckedEntryIndex::Key(index) | CheckedEntryIndex::Set(index) = &mut self.index {
+            result.push(index.as_mut());
+        }
+        result
     }
 }
 
-impl CheckedEntryBinding {
-    /// The expressions the statement evaluates for this binding when it
-    /// begins, in order: the table reference, then the index.
-    pub(crate) fn expressions(&self) -> [&CheckedExpression; 2] {
-        [&self.table, self.index.expression()]
-    }
+/// A declaration-only view of the parts traversed by a shared-state layout.
+pub(crate) enum StateShape<T, N> {
+    Table(N),
+    Fields(Vec<T>),
+    Plain,
+}
 
-    /// The same expressions, for a walk that rewrites them in place.
-    pub(crate) fn expressions_mut(&mut self) -> [&mut CheckedExpression; 2] {
-        let index = match &mut self.index {
-            CheckedEntryIndex::Key(expression) | CheckedEntryIndex::Set(expression) => {
-                expression.as_mut()
+/// The tables and plain leaves of a state, by non-Box field paths in
+/// declaration order. Check and lowering share this traversal.
+pub(crate) fn state_parts<T: Copy, N>(
+    state: T,
+    shape: impl Fn(T) -> StateShape<T, N>,
+) -> Vec<(Vec<u32>, Option<N>)> {
+    fn walk<T: Copy, N>(
+        ty: T,
+        shape: &impl Fn(T) -> StateShape<T, N>,
+        path: &mut Vec<u32>,
+        out: &mut Vec<(Vec<u32>, Option<N>)>,
+    ) {
+        match shape(ty) {
+            StateShape::Table(table) => out.push((path.clone(), Some(table))),
+            StateShape::Fields(fields) => {
+                for (index, field) in fields.into_iter().enumerate() {
+                    path.push(u32::try_from(index).expect("field count fits u32"));
+                    walk(field, shape, path, out);
+                    path.pop();
+                }
             }
-        };
-        [self.table.as_mut(), index]
+            StateShape::Plain => out.push((path.clone(), None)),
+        }
     }
+    let mut out = Vec::new();
+    walk(state, &shape, &mut Vec::new(), &mut out);
+    out
 }
 
 /// [SHARE-1] which shared nominal a `Shared` kind is.

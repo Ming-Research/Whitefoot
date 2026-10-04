@@ -215,8 +215,8 @@ fn run_info(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   let keys = 0_u64;
   if chosen[12_u64] == 1_u64 {
-    atomic s = &store^.state {
-      set keys = keyed_table_count::<Entry>(table: &s^.map);
+    atomic s = &store^.state, t = &s^.map {
+      set keys = keyed_table_count::<Entry>(table: t);
     }
   }
   let text = box_slots_new::<u8>(capacity: 2048_u64);

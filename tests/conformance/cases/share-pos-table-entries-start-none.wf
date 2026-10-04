@@ -26,8 +26,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set slot^ = None<u8>();
   }
   let counted = 0_u64;
-  atomic s = &store {
-    set counted = keyed_table_count::<u8>(table: &s^.map);
+  atomic s = &store, t = &s^.map {
+    set counted = keyed_table_count::<u8>(table: t);
   }
   let code = 10_u8 +wrap before;
   if counted == 1_u64 {

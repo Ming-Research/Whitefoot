@@ -153,8 +153,8 @@ fn run_flush(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   }
   let fresh = keyspace_table();
   let none_due = priority_queue_new::<Due, ceiling>();
-  atomic s = &store^.state {
-    swap(first: &s^.map, second: &fresh);
+  atomic s = &store^.state, t = &s^.map {
+    swap(first: t, second: &fresh);
     swap(first: &s^.meta.due, second: &none_due);
     if store^.logging {
       log_command(log: &s^.meta.log, input: input, args: args);

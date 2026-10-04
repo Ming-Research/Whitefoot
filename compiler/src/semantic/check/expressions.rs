@@ -178,6 +178,7 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<MutationTarget, CheckStop> {
+        self.note_atomic_place(context, node, bindings)?;
         let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types
@@ -801,6 +802,7 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
+        self.note_atomic_place(context, node, bindings)?;
         let FunctionContext {
             check_context,
             function,

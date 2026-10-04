@@ -542,6 +542,12 @@ impl Records<'_> {
             match step {
                 CheckedPlaceStep::Subscript(subscript) => {
                     self.expression(&subscript.offset);
+                    if matches!(
+                        subscript.base_type,
+                        crate::semantic::CheckedType::Nominal(_)
+                    ) {
+                        continue;
+                    }
                     self.source(
                         SemanticRule::Op4,
                         &subscript.obligation,

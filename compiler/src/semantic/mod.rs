@@ -10,7 +10,7 @@ mod entailment;
 mod entry;
 mod goal;
 mod loop_permission;
-mod model;
+pub(crate) mod model;
 mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
@@ -1137,6 +1137,26 @@ pub enum SemanticIssueKind {
     },
     /// An entry binding whose index atom is neither a `&[u8]` range nor a
     /// place of type `KeySet` [SHARE-2].
+    AtomicTableBoundTwice {
+        table: String,
+        mechanical_fix: &'static str,
+    },
+    AtomicTableNotGranted {
+        table: String,
+        mechanical_fix: &'static str,
+    },
+    AtomicRowReachesTable {
+        callee: String,
+        path: String,
+        table: String,
+        mechanical_fix: &'static str,
+    },
+    TableOffsetNotKey {
+        mechanical_fix: &'static str,
+    },
+    TableEntriesNotBorrowed {
+        mechanical_fix: &'static str,
+    },
     AtomicKeyNotBytes {
         /// The key's value.
         found: String,
