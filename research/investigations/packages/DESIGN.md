@@ -102,7 +102,7 @@ against it on 2026-10-04 (Q6): a binding name is the binder's private choice,
 as an alias is a file's, and two independently written libraries should not
 have to agree on what they call their dependencies.
 
-### Bound names and local names (Q7, open)
+### Bound names and local names (Q7)
 
 A bound name roots qualified paths and is never a value, like `pkg` and
 `std`, so the grammar tells `json::make` from a local `json`:
@@ -117,7 +117,7 @@ local that shadows it is refused. Placing bound names in that domain would
 make every record of a library avoid its dependencies' names. The
 implementation keeps bound names out of every declaration domain and refuses
 only a lowercase alias of a bound name, since both would root qualified
-paths in one file; the owner has not yet ruled on this.
+paths in one file. The owner approved this on 2026-10-04 (Q7).
 
 ## Order and diagnostics
 
