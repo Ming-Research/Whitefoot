@@ -3,7 +3,9 @@ alias exit_status = std::process::exit_status;
 
 fn equal_list(first: &[u64], second: &[u64]) -> same: Bool reads(first), reads(second) {
   let count = first^.len;
-  if count != second^.len { return False(); }
+  if count != second^.len {
+    return False();
+  }
   let same = True();
   for (i in 0_u64..count) {
     let item = first^[i] == second^[i];
@@ -12,10 +14,9 @@ fn equal_list(first: &[u64], second: &[u64]) -> same: Bool reads(first), reads(s
   return same;
 }
 
-fn compare_rows(first: &[u64], second: &[u64], changed: &[u64], output: &[u8], width: u64) -> result: Unit reads(first), reads(second), reads(changed), writes(output) contract {
+fn compare_rows(first: &[u64], second: &[u64], changed: &[u64], output: &[u8], width: u64) -> result: u64 reads(first), reads(second), reads(changed), writes(output) contract {
   requires width <= 4096_u64;
   requires output^.len <= 100000_u64;
-  requires output^.len * width <= first^.len;
   requires first^.len == second^.len;
   requires first^.len == changed^.len;
 } {
@@ -23,23 +24,32 @@ fn compare_rows(first: &[u64], second: &[u64], changed: &[u64], output: &[u8], w
   for (row in 0_u64..count) {
     let start = row * width;
     let end = start + width;
-    invariant covered: end <= count * width {
-      use width times (row + 1_u64 <= count);
+    if end <= first^.len {
+      let a = &first^[start..end];
+      let b = &second^[start..end];
+      let c = &changed^[start..end];
+      let equal = equal_list(first: a, second: b);
+      let unequal = equal_list(first: a, second: c);
+      let flag = if equal {
+        give 1_u8;
+      } else {
+        give 0_u8;
+      }
+      let other = if unequal {
+        give 2_u8;
+      } else {
+        give 0_u8;
+      }
+      set output^[row] = flag +wrap other;
     }
-    let a = &first^[start..end];
-    let b = &second^[start..end];
-    let c = &changed^[start..end];
-    let equal = equal_list(first: a, second: b);
-    let unequal = equal_list(first: a, second: c);
-    let flag = if equal { give 1_u8; } else { give 0_u8; };
-    let other = if unequal { give 2_u8; } else { give 0_u8; };
-    set output^[row] = flag +wrap other;
   }
-  return Unit();
+  return 0_u64;
 }
 
 fn tree(depth: u64) -> result: u64 pure {
-  if depth == 0_u64 { return 1_u64; }
+  if depth == 0_u64 {
+    return 1_u64;
+  }
   let next = depth - 1_u64;
   let left = tree(depth: next);
   let right = tree(depth: next);
@@ -66,17 +76,23 @@ fn check_case(width: u64, count: u64) -> valid: Bool pure contract {
   let changed = box_array_filled::<u64>(count: size, value: 7_u64);
   if width > 0_u64 {
     for (row in 0_u64..count) {
-      let end = (row + 1_u64) * width;
-      invariant covered: end <= size {
-        use width times (row + 1_u64 <= count);
+      let next = row + 1_u64;
+      let end = next * width;
+      if end > 0_u64 {
+        if end <= size {
+          let last = end - 1_u64;
+          set changed.inner[last] = 9_u64;
+        }
       }
-      let last = end - 1_u64;
-      set changed.inner[last] = 9_u64;
     }
   }
   let output = box_array_filled::<u8>(count: count, value: 0_u8);
   let done = compare_rows(first: &first.inner[0_u64..size], second: &second.inner[0_u64..size], changed: &changed.inner[0_u64..size], output: &output.inner[0_u64..count], width: width);
-  let expected = if width == 0_u64 { give 3_u8; } else { give 1_u8; };
+  let expected = if width == 0_u64 {
+    give 3_u8;
+  } else {
+    give 1_u8;
+  }
   let valid = True();
   for (i in 0_u64..count) {
     let flag = output.inner[i] == expected;
@@ -93,8 +109,15 @@ fn main() -> status: ExitStatus pure {
   let depths = array_filled::<u64, 2>(value: 3_u64);
   let first = recursive_loop(input: &depths[0_u64..2_u64]);
   let second = recursive_loop(input: &depths[0_u64..2_u64]);
-  if band(band(empty, singleton), band(small, large)) {
-    if first == 16_u64 { if second == 16_u64 { return exit_status(code: 0_u8); } }
+  let short_valid = band(empty, singleton);
+  let long_valid = band(small, large);
+  let valid = band(short_valid, long_valid);
+  if valid {
+    if first == 16_u64 {
+      if second == 16_u64 {
+        return exit_status(code: 0_u8);
+      }
+    }
   }
   return exit_status(code: 1_u8);
 }
