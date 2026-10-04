@@ -103,3 +103,11 @@ const s_50: Array<u8, 7> = "__index";
 const s_51: Array<u8, 6> = "=setup";
 
 const s_52: Array<u8, 12> = "@user_script";
+
+const sha_name: Array<u8, 7> = "sha1hex";
+
+const sha_arity: Array<u8, 29> = "ERR wrong number of arguments";
+
+const lua_source: Array<u8, 12> = "user_script:";
+
+const readonly_error: Array<u8, 34> = "Attempt to modify a readonly table";

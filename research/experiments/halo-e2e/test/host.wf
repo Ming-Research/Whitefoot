@@ -5,13 +5,13 @@ alias Host = halo::vm::Host;
 alias num_of = halo::value::num_of;
 alias str_of = halo::value::str_of;
 alias tab_of = halo::value::tab_of;
+alias protected_flag = halo::vm::protected_flag;
 
 struct Env {
   db: Value;
   types: Value;
   expiry: Value;
   error: Bool;
-  line: u64;
 }
 
 fn raw(vm: &Vm, table: Value, key: Value, value: Value) -> r: unit writes(vm) {
@@ -766,15 +766,62 @@ fn command(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64) 
   return fail(env: env, vm: vm, text: &s_28[0_u64..41_u64]);
 }
 
+fn redis_raised(vm: &Vm, message: Value) -> r: Value writes(vm) {
+  doc "Redis's replacement pcall unwraps an error table to its err string. Apply that conversion when the nearest active protection will catch this host error.";
+  let i = vm^.frames.inner.len;
+  loop {
+    if i == 0_u64 {
+      break;
+    }
+    set i = i - 1_u64;
+    if i < vm^.frames.inner.len {
+      let frame = vm^.frames.inner[i];
+      if frame.activation != vm^.activation {
+        break;
+      }
+      if frame.flags == protected_flag {
+        return message;
+      }
+    }
+  }
+  return reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: message);
+}
+
 fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
+  if id == 4102_u32 {
+    if argc != 1_u64 {
+      let message = literal(vm: vm, text: &sha_arity[0_u64..29_u64]);
+      let error = redis_raised(vm: vm, message: message);
+      set vm^.error = error;
+      return HostOutcome::Raised();
+    }
+    let input = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+    let coerced = string_arg(vm: vm, v: input);
+    let bytes = box_slots_new::<u8>(capacity: 0_u64);
+    value_bytes(vm: vm, v: coerced, out: &bytes);
+    let n = bytes.inner.len;
+    let digest = halo::embed::sha1hex(bytes: &bytes.inner[0_u64..n]);
+    let value = literal(vm: vm, text: &digest[0_u64..40_u64]);
+    if func < stack^.inner.len {
+      set stack^.inner[func] = value;
+    }
+    return HostOutcome::Returned(count: 1_u64);
+  }
   if id == 4100_u32 {
     return HostOutcome::Returned(count: 0_u64);
   }
   if id == 4101_u32 {
     let name_v212 = arg(stack: stack, func: func, argc: argc, index: 1_u64);
     let text_v213 = box_slots_new::<u8>(capacity: 0_u64);
+    let line = callback_line(vm: vm);
+    if line > 0_u64 {
+      text_bytes(out: &text_v213, bytes: &lua_source[0_u64..12_u64]);
+      decimal(out: &text_v213, n: line);
+      push(out: &text_v213, byte: 58_u8);
+      push(out: &text_v213, byte: 32_u8);
+    }
     text_bytes(out: &text_v213, bytes: &s_29[0_u64..56_u64]);
     value_bytes(vm: vm, v: name_v212, out: &text_v213);
     push(out: &text_v213, byte: 39_u8);
@@ -790,11 +837,8 @@ fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64
     set value_v216 = command(env: env, vm: vm, stack: stack, func: func, argc: argc);
     if env^.error {
       if id == 4096_u32 {
-        set vm^.error = value_v216;
-        let pc_v219 = vm^.saved_pc;
-        if pc_v219 < vm^.lineinfo.inner.len {
-          set env^.line = cvt::<u32, u64>(vm^.lineinfo.inner[pc_v219]);
-        }
+        let error = redis_raised(vm: vm, message: value_v216);
+        set vm^.error = error;
         return HostOutcome::Raised();
       }
       set value_v216 = reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: value_v216);

@@ -1,0 +1,137 @@
+fn sha1_block(state: &Array<u32, 5>, block: &Array<u8, 64>) -> r: unit reads(block), writes(state) {
+  let words = array_filled::<u32, 80>(value: 0_u32);
+  for (i in 0_u64..16_u64) {
+    let at = i * 4_u64;
+    let a = cvt::<u8, u32>(block^[at]);
+    let at1 = at + 1_u64;
+    let b = cvt::<u8, u32>(block^[at1]);
+    let at2 = at + 2_u64;
+    let c = cvt::<u8, u32>(block^[at2]);
+    let at3 = at + 3_u64;
+    let d = cvt::<u8, u32>(block^[at3]);
+    let ash = ishl.wrap(a, 24_u32);
+    let bsh = ishl.wrap(b, 16_u32);
+    let ab = ior(ash, bsh);
+    let csh = ishl.wrap(c, 8_u32);
+    let cd = ior(csh, d);
+    set words[i] = ior(ab, cd);
+  }
+  for (i in 16_u64..80_u64) {
+    let i3 = i - 3_u64;
+    let back8 = i - 8_u64;
+    let ab = ixor(words[i3], words[back8]);
+    let i14 = i - 14_u64;
+    let back16 = i - 16_u64;
+    let cd = ixor(words[i14], words[back16]);
+    let x = ixor(ab, cd);
+    set words[i] = irotl(x, 1_u32);
+  }
+  let a = state^[0_u64];
+  let b = state^[1_u64];
+  let c = state^[2_u64];
+  let d = state^[3_u64];
+  let e = state^[4_u64];
+  for (i in 0_u64..80_u64) {
+    let f = 0_u32;
+    let k = 0_u32;
+    if i < 20_u64 {
+      let bc = iand(b, c);
+      let nb = ixor(b, 4294967295_u32);
+      let nd = iand(nb, d);
+      set f = ior(bc, nd);
+      set k = 1518500249_u32;
+    } else if i < 40_u64 {
+      let bc = ixor(b, c);
+      set f = ixor(bc, d);
+      set k = 1859775393_u32;
+    } else if i < 60_u64 {
+      let bc = iand(b, c);
+      let bd = iand(b, d);
+      let cd = iand(c, d);
+      let x = ior(bc, bd);
+      set f = ior(x, cd);
+      set k = 2400959708_u32;
+    } else {
+      let bc = ixor(b, c);
+      set f = ixor(bc, d);
+      set k = 3395469782_u32;
+    }
+    let rotated = irotl(a, 5_u32);
+    let t = rotated +wrap f;
+    set t = t +wrap e;
+    set t = t +wrap k;
+    set t = t +wrap words[i];
+    set e = d;
+    set d = c;
+    set c = irotl(b, 30_u32);
+    set b = a;
+    set a = t;
+  }
+  set state^[0_u64] = state^[0_u64] +wrap a;
+  set state^[1_u64] = state^[1_u64] +wrap b;
+  set state^[2_u64] = state^[2_u64] +wrap c;
+  set state^[3_u64] = state^[3_u64] +wrap d;
+  set state^[4_u64] = state^[4_u64] +wrap e;
+  return unit;
+}
+
+const sha1_digits: Array<u8, 16> = "0123456789abcdef";
+
+fn sha1hex(bytes: &[u8]) -> r: Array<u8, 40> reads(bytes) {
+  let state = array_filled::<u32, 5>(value: 0_u32);
+  set state[0_u64] = 1732584193_u32;
+  set state[1_u64] = 4023233417_u32;
+  set state[2_u64] = 2562383102_u32;
+  set state[3_u64] = 271733878_u32;
+  set state[4_u64] = 3285377520_u32;
+  let block = array_filled::<u8, 64>(value: 0_u8);
+  let used = 0_u64;
+  for (i in 0_u64..bytes^.len) {
+    if used < 64_u64 {
+      let b = bytes^[i];
+      set block[used] = b;
+      set used = used + 1_u64;
+      if used == 64_u64 {
+        sha1_block(state: &state, block: &block);
+        set used = 0_u64;
+      }
+    }
+  }
+  if used < 64_u64 {
+    set block[used] = 128_u8;
+    set used = used + 1_u64;
+  }
+  for (i in used..64_u64) {
+    set block[i] = 0_u8;
+  }
+  if used > 56_u64 {
+    sha1_block(state: &state, block: &block);
+    set block = array_filled::<u8, 64>(value: 0_u8);
+  }
+  let bits = bytes^.len *wrap 8_u64;
+  for (i in 0_u64..8_u64) {
+    let remaining = 7_u64 - i;
+    let shift64 = remaining * 8_u64;
+    let shift = cvt::<u64, u32>(shift64);
+    let part = ishr.wrap(bits, shift);
+    let b = cvt.wrap::<u64, u8>(part);
+    let at = 56_u64 + i;
+    set block[at] = b;
+  }
+  sha1_block(state: &state, block: &block);
+  let out = array_filled::<u8, 40>(value: 0_u8);
+  for (i in 0_u64..40_u64) {
+    let word = i / 8_u64;
+    let nibble = i % 8_u64;
+    let remaining = 7_u64 - nibble;
+    let shift64 = remaining * 4_u64;
+    let shift = cvt::<u64, u32>(shift64);
+    let part = ishr.wrap(state[word], shift);
+    let index32 = iand(part, 15_u32);
+    let index = cvt::<u32, u64>(index32);
+    if index < 16_u64 {
+      set out[i] = sha1_digits[index];
+    }
+  }
+  return out;
+}

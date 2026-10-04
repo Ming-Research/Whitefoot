@@ -35,10 +35,27 @@ The preparation chunk installs KEYS/ARGV from the JSON header and executes setup
 commands through the same test host. A NUL separates it from the unchanged script
 bytes on stdin. Global protection is applied afterward: raw host assignment
 bypasses readonly, while script writes raise and absent reads call a rejecting
-`__index`. The initial library functions are installed by name/id rows.
+`__index`. The VM installs its slice-1 library; this host adds Redis members.
 
 The `smoke` entry and `test` executable with three arguments run the embedding
 probe (stdin is unused): cache, flush, reset, budget resumption, host outcomes,
 and forced collection of pins and cached constants. A nonzero exit is the
 probe's numbered failed observation. [GAPS.md](GAPS.md) names limits and concrete
 reopening conditions. None of these research commands is a compiler gate.
+
+The Redis error/SHA-1 comparison uses Redis 7.0.15's local `script_lua.c`
+and `eval.c` as the formatting reference: command errors are tables, Lua
+errors are strings, and the EVAL wrapper adds source/line and the SHA-1 of
+the unchanged script body. SHA-1 is checked independently against Python's
+`hashlib` on binary inputs, including block and padding boundaries. These
+checks belong to this explicitly invoked experiment and leave oracle files
+unchanged.
+
+Add `--verify-sha1` to check three fixed and 1,000 seeded random binary
+inputs against `hashlib` before the selected corpus. Add `--verify-errors`
+to check command/global error locations, SHA-1 arity errors and protected
+error values against Redis-source-grounded expectations. It exercises the same
+Whitefoot `redis.sha1hex` used by scripts. `lib/halo/embed/sha1.wf` and
+`redis-error.wf` serve digest generation and the EVAL reply formatter in
+this embedding; they are superseded with the embedding if Halo is retired
+or its production binding replaces these responsibilities.

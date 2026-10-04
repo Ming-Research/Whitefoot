@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 import hashlib
 import json
+import random
 from pathlib import Path
 import subprocess
 import tempfile
@@ -112,9 +113,73 @@ def run(command, **kwargs):
     return result, time.monotonic() - start
 
 
+def verify_errors(binary):
+    """Redis 7 source-grounded replies, independent script identities/locations."""
+    wrong = 'ERR Wrong number of args calling Redis command from script'
+    missing = "Script attempted to access nonexistent global variable 'missing_global'"
+    readonly = 'Attempt to modify a readonly table'
+    probes = [
+        (b'local n=0\nfor i=1,3 do n=n+i end\nreturn redis.call("GET","key","extra")\n', wrong, 3),
+        (b'local function fail()\n  return missing_global\nend\nreturn fail()\n', 'ERR user_script:2: ' + missing, 2),
+        (b'local function fail()\n  missing_global=17\nend\nreturn fail()\n', 'ERR user_script:2: ' + readonly, 2),
+        (b'return redis.sha1hex()\n', 'ERR wrong number of arguments', 1),
+        (b'return redis.sha1hex("a","b")\n', 'ERR wrong number of arguments', 1),
+        (b'error(nil,0)\n', 'ERR nil', 1),
+        (b'error(true,0)\n', 'ERR true', 1),
+        (b'error(false,0)\n', 'ERR false', 1),
+        (b'error(17,0)\n', 'ERR 17', 1),
+        (b'error("unlocated",0)\n', 'ERR unlocated', 1),
+    ]
+    for source, message, line in probes:
+        expected = {'type': 'error', 'bytes': message + ' script: ' + hashlib.sha1(source).hexdigest()
+                    + f', on @user_script:{line}.'}
+        for extra in (['one'], ['seven', 'seven'], []):
+            result, _ = run([str(binary)] + extra, input=fixture(source))
+            if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
+                raise AssertionError(f'error probe {source!r}, args {extra}: {result.stdout!r}, expected {expected}')
+    protected = b'return {pcall(function() return redis.call("GET","key","extra") end)}'
+    expected = {'type': 'array', 'items': [{'type': 'nil', 'kind': 'bulk'},
+                                         {'type': 'bulk', 'bytes': wrong}]}
+    result, _ = run([str(binary)], input=fixture(protected))
+    if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
+        raise AssertionError(f'protected command error: {result.stdout!r}')
+    protected = b'return {pcall(function() return missing_global end)}'
+    expected['items'][1]['bytes'] = 'user_script:1: ' + missing
+    result, _ = run([str(binary)], input=fixture(protected))
+    if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
+        raise AssertionError(f'protected global error: {result.stdout!r}')
+    print('Redis errors: 10 source/location/value probes at each budget + 2 protected-error probes pass', flush=True)
+
+
+def verify_sha1(binary):
+    """Independent binary vectors; no expected digest comes from Halo."""
+    rng = random.Random(0x51A115)
+    samples = [b'', b'abc', b'a\0b']
+    for i in range(1000):
+        # Force every padding boundary, then multiple blocks and longer inputs.
+        length = i if i < 130 else rng.randrange(0, 4097)
+        samples.append(rng.randbytes(length))
+    times = []
+    for index, data in enumerate(samples):
+        escaped = ''.join('\\%03d' % b for b in data).encode('ascii')
+        source = b'return redis.sha1hex("' + escaped + b'")'
+        result, seconds = run([str(binary)], input=fixture(source))
+        times.append(seconds)
+        if result.returncode:
+            raise AssertionError(f'SHA-1 vector {index}: native exit {result.returncode}')
+        actual = canonical(json.loads(result.stdout))
+        expected = canonical({'type': 'bulk', 'bytes': hashlib.sha1(data).hexdigest()})
+        if actual != expected:
+            raise AssertionError(f'SHA-1 vector {index}, length {len(data)}: {actual} != {expected}')
+    print(f'SHA-1: 3 fixed + 1000 seeded random binary vectors match hashlib; '
+          f'total {sum(times):.3f}s, range {min(times):.4f}..{max(times):.4f}s', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--compiler', required=True)
+    parser.add_argument('--verify-errors', action='store_true', help='check source-grounded Redis error/location probes')
+    parser.add_argument('--verify-sha1', action='store_true', help='compare 1000 random binary inputs with hashlib')
     parser.add_argument('--binary', type=Path, help='reuse an already built test executable')
     parser.add_argument('--filter', default='')
     parser.add_argument('--report', type=Path)
@@ -155,6 +220,10 @@ def main():
                 return 2
         report += [f'Executable SHA-256: `{hashlib.sha256(binary.read_bytes()).hexdigest()}`.',
                    f'Compiler SHA-256: `{hashlib.sha256(Path(args.compiler).read_bytes()).hexdigest()}`.', '']
+        if args.verify_sha1:
+            verify_sha1(binary)
+        if args.verify_errors:
+            verify_errors(binary)
         rows = []
         summary = defaultdict(Counter)
         observed = {}

@@ -79,3 +79,7 @@ public fn set_global(engine: &Engine, name: &[u8], value: Value) -> r: Result<un
 public fn error_value(engine: &Engine) -> r: Value reads(engine) doc "Returns the original Lua error object.";
 
 public fn format_error(engine: &Engine, line: u64) -> r: Box<Slots<u8>> reads(engine) doc "Formats @user_script:LINE: msg using a host-supplied source line. Existing user_script locations are preserved. Zero means no known location.";
+
+public fn sha1hex(bytes: &[u8]) -> r: Array<u8, 40> reads(bytes) doc "Returns the lowercase SHA-1 digest of arbitrary binary bytes, shared by redis.sha1hex and script identity.";
+
+public fn format_redis_error(engine: &Engine, source: &[u8], line: u64, locate: Bool) -> r: Box<Slots<u8>> reads(engine), reads(source) doc "Formats Redis 7 EVAL errors, hashing the exact script body and preserving an error table's err field. The caller supplies the failing source line, or zero if unknown; locate adds Lua's user_script prefix to a raw VM message.";

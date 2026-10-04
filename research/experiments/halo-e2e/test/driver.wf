@@ -253,6 +253,41 @@ fn reply(vm: &Vm, value: Value, out: &Box<Slots<u8>>, depth: u64) -> r: unit wri
   return unit;
 }
 
+fn readonly_message(vm: &Vm, value: Value) -> r: Bool reads(vm) {
+  match halo::heap::string_of(heap: &vm^.heap, value: value) {
+    None() => {
+      return False();
+    }
+    Some(value: view) => {
+      let h = cvt::<u32, u64>(view.handle);
+      if h < vm^.heap.strings.inner.len {
+        if vm^.heap.strings.inner[h].payload.bytes.inner.len == 34_u64 {
+          for (i in 0_u64..34_u64) {
+            let b = vm^.heap.strings.inner[h].payload.bytes.inner[i];
+            if b != readonly_error[i] {
+              return False();
+            }
+          }
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn callback_line(vm: &Vm) -> r: u64 reads(vm) {
+  doc "Global slow paths keep their continuation PC. Direct redis.member calls in this experiment use the member lookup's line; this is not a general failing-PC API.";
+  let pc = vm^.callback_plan.pc;
+  if pc > 0_u64 {
+    let previous = pc - 1_u64;
+    if previous < vm^.lineinfo.inner.len {
+      return cvt::<u32, u64>(vm^.lineinfo.inner[previous]);
+    }
+  }
+  return 0_u64;
+}
+
 fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64) -> r: Outcome writes(engine), writes(env) {
   let out_v62 = halo::embed::start::<TestHost>(engine: engine, env: env, script: id, budget: budget);
   let steps_v63 = 0_u64;
@@ -297,6 +332,9 @@ fn install_host(engine: &Engine, env: &Env) -> r: unit writes(engine), writes(en
   let k_v74 = literal(vm: vm_v64, text: &s_47[0_u64..3_u64]);
   let v_v75 = Value::Builtin(id: 4100_u32);
   raw(vm: vm_v64, table: redis_v65, key: k_v74, value: v_v75);
+  let sha_key = literal(vm: vm_v64, text: &sha_name[0_u64..7_u64]);
+  let sha_builtin = Value::Builtin(id: 4102_u32);
+  raw(vm: vm_v64, table: redis_v65, key: sha_key, value: sha_builtin);
   let k_v76 = literal(vm: vm_v64, text: &s_48[0_u64..10_u64]);
   let v_v77 = num(x: 2.0_f64);
   raw(vm: vm_v64, table: redis_v65, key: k_v76, value: v_v77);
@@ -391,7 +429,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let engine_v114 = halo::embed::new_engine(limit: 67108864_u64);
   let nil_v115 = Value::Nil();
   let no_v116 = False();
-  let env_v117 = Env(db: nil_v115, types: nil_v115, expiry: nil_v115, error: no_v116, line: 0_u64);
+  let env_v117 = Env(db: nil_v115, types: nil_v115, expiry: nil_v115, error: no_v116);
   install_host(engine: &engine_v114, env: &env_v117);
   let out_v118 = box_slots_new::<u8>(capacity: 0_u64);
   let budget_v119 = 1000_u64;
@@ -451,10 +489,16 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
           reply(vm: &engine_v114.vm, value: v_v131, out: &out_v118, depth: 0_u64);
         }
         Error() => {
+          let line = callback_line(vm: &engine_v114.vm);
           let error_v133 = halo::embed::error_value(engine: &engine_v114);
+          let locate = readonly_message(vm: &engine_v114.vm, value: error_v133);
+          let formatted = halo::embed::format_redis_error(engine: &engine_v114, source: &source_v109.inner[start_v124..n_v111], line: line, locate: locate);
+          let formatted_len = formatted.inner.len;
+          let error_reply = literal(vm: &engine_v114.vm, text: &formatted.inner[0_u64..formatted_len]);
           text_bytes(out: &out_v118, bytes: &s_39[0_u64..24_u64]);
           let yes_v134 = True();
-          json_bytes(vm: &engine_v114.vm, value: error_v133, out: &out_v118, sanitize: yes_v134, error: yes_v134);
+          let no_prefix = False();
+          json_bytes(vm: &engine_v114.vm, value: error_reply, out: &out_v118, sanitize: yes_v134, error: no_prefix);
           push(out: &out_v118, byte: 125_u8);
         }
         Budget() => {

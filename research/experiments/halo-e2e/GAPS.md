@@ -49,14 +49,44 @@ supporting that use. Corpus cases run independent engines and do not verify it.
 `format_error(engine, line)` formats the requested `@user_script:LINE: msg` and
 preserves a location already present in a string error. `error_value` keeps the
 original object. The caller supplies a known source line; zero means unknown.
-The dispatch loop does not retain the failing PC for all error paths. After
-unwinding, neither frames nor a prior budget checkpoint necessarily identifies
-the failure. Exact Redis EVAL errors additionally carry the script SHA1 and the
-`on @user_script:LINE` suffix. The test host reports real error messages, leaving
-these location/wrapper differences visible in comparison rather than deriving a
-location from the expected file or normalizing it away. Reopen when the VM
-exports the failing PC/source information, including protected and callback
-errors. Command errors caught by pcall retain their plain command message.
+The Redis formatter `format_redis_error(engine, source, line, locate)` composes
+the Redis 7 EVAL table/string distinction and script-body SHA-1 suffix. It
+uses an explicit caller-supplied line rather than treating a budget checkpoint
+as a failure location. `locate` requests the Lua prefix for a raw VM error;
+already located strings should pass false.
+
+Global read/write slow paths retain a continuation PC in `callback_plan`;
+the test host uses its previous instruction's line. A missing global's host
+callback adds Lua's prefix before raising, so a protected call sees it too.
+The current VM readonly refusal is an unlocated string; the terminal test
+host recognizes that message and requests a prefix from the formatter. This
+does not fix readonly errors caught inside Lua, and an explicit `error` with
+that identical message and level zero cannot be distinguished by this host.
+
+Ordinary redis.member calls in this experiment use the member lookup's line
+from the continuation. A native Call/TailCall does not retain its PC in the
+Host interface. A member saved in a local and invoked later, or a multiline
+call whose lookup and call have different lines, therefore needs the VM to
+export the actual failing PC; nested protected/callback errors also need
+that information. Reopen with those witnesses before claiming general EVAL
+location parity. The formatter can accept their correct line once exported.
+
+The saved-member witness `local call=redis.call` on line 1, followed by
+`local x=1` on line 2 and `return call("GET","key","extra")` on line 3,
+currently reports `on @user_script:1` instead of the call's line 3.
+`return {pcall(function() missing_global=17 end)}` returns the raw readonly
+message without Lua's `user_script:1:` prefix. Conversely,
+`error("Attempt to modify a readonly table",0)` receives that prefix from
+the test host even though Lua level zero suppresses it. These observed
+witnesses distinguish corpus parity from general failure-location parity;
+they require failure kind/PC information from the VM, outside the permitted
+file boundary of this change.
+The existing corpus's direct command/global errors exercise known locations;
+its pass count alone does not settle this boundary. Command errors caught by
+`pcall` remain plain strings, matching Redis's replacement `pcall`, while
+unhandled command errors reach the EVAL formatter as tables. General user
+error tables still follow the VM's ordinary pcall behavior and are outside
+this Redis-host conversion.
 
 Ordinary host Stop returns the untouched call stack. VM `resume` uses a saved
 budget checkpoint; the ordinary `HostOutcome::Stop` path in `calls.wf` does not
@@ -87,8 +117,8 @@ Status/error payloads replace CR/LF with spaces and
 use Redis's C-string boundary. A defensive reply nesting limit of 128 is a test
 host limitation, not Lua acceptance. Cyclic/deep replies are not corpus cases.
 
-The installed VM library is the eight current IDs in `vm/module.wfm`. Redis
-call/pcall, status/error reply and log are supplied by this host. SHA1hex and the
-additional Lua/codec libraries are absent and reported. Once the parallel
-library's name/id table lands, feed its global and `library.member` rows to
-`embed::install`; no VM or library files are modified here.
+`new_engine` installs the VM's slice-1 library. Redis call/pcall, status/error
+reply, log and sha1hex are supplied by this host; sha1hex uses the embedding's
+Whitefoot digest implementation. The additional pattern/codec/bit/struct
+libraries remain outside this change. No VM or library files outside the
+embedding are modified here.

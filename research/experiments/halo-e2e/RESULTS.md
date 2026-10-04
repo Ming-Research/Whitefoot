@@ -316,3 +316,77 @@ redis-api 12/16, libs 0/10, equal across budgets 1, 7 and 1000. The
 remaining failures: Lua patterns (string.find, match, gmatch, gsub; five
 scripts), Redis's error text with script SHA and location (three), and
 `redis.sha1hex` (one); the libs group awaits cjson, cmsgpack, bit and struct.
+
+## Redis error replies and SHA-1 (2026-10-04)
+
+Source revision: `4f647756e36d8e1bb0e0cb8f588ce31d19a11590`. Source digest: `27ab1daa5e9a31e9474a715c6252fca67e2be2f289e14be715727077ec245e3c`.
+Executable SHA-256: `414c1caa20edf9f1394e720329cc866a9949f2e40219a8c7a7e3cae496b982f1`.
+Compiler SHA-256: `58b92b43013a5e6da17cb92fd6bf5124a0b80d7475d3b5dac1683ad8dc8e9a11`. The digest identifies the complete
+Halo graph, host and runner used by this run; later documentation-only changes
+do not change these tested source bytes.
+
+The Whitefoot embedding supplies SHA-1 and Redis 7 EVAL error composition.
+The host raises unhandled command errors as tables and preserves Redis's
+string error result under `pcall`. Global reads acquire their Lua prefix
+when raised; the terminal host adds it to raw readonly refusals. Script
+identity hashes the unchanged body, including comments and final newline.
+The reference formatting is Redis 7.0.15's `src/eval.c` error handler,
+`src/script_lua.c` EVAL reply composition, global protection and SHA-1
+member; the stored oracle replies were not regenerated or changed.
+
+| Group | Budget | Passed | Failed |
+| --- | --- | ---: | ---: |
+| apps | 1 | 6 | 0 |
+| apps | 7 | 6 | 0 |
+| apps | 1000 | 6 | 0 |
+| libs | 1 | 0 | 10 |
+| libs | 7 | 0 | 10 |
+| libs | 1000 | 0 | 10 |
+| lua-core | 1 | 43 | 5 |
+| lua-core | 7 | 43 | 5 |
+| lua-core | 1000 | 43 | 5 |
+| redis-api | 1 | 16 | 0 |
+| redis-api | 7 | 16 | 0 |
+| redis-api | 1000 | 16 | 0 |
+
+195/240 comparisons pass, with identical replies across budgets 1, 7 and
+1000. Every redis-api case now passes, including call-error, global-read,
+global-write and sha1hex. The remaining 45 comparisons are the same missing
+libraries: five Lua pattern scripts per budget (find, gmatch, both gsub
+forms and match), plus ten codec/bit/struct scripts per budget.
+
+Validation actually run (the final runner uses the source revision above):
+
+- `python3 -B research/experiments/halo-e2e/run.py --compiler /private/tmp/wf-halo/compiler/target/gate/whitefootc --budgets 1,7,1000 --verify-sha1 --verify-errors --report /private/tmp/halo-errtext-full-results.md --actual /private/tmp/halo-errtext-replies`: native build exit 0 in 405.023 seconds; runner exit 1 for the 45 library mismatches above. No script was skipped.
+- `SHA-1: 3 fixed + 1000 seeded random binary vectors match hashlib; total 3.777s, range 0.0031..0.3899s`
+- `Redis errors: 10 source/location/value probes at each budget + 2 protected-error probes pass` These expectations come from the local Redis sources and `hashlib`, with nil/boolean/number/level-zero strings also checked using Redis's bundled Lua 5.1.5 executable. The nil probe failed on the preceding binary with `(error object is not a string)`, then passed after the tostring conversion repair.
+- Injected all-zero digests and incorrect error text/location were rejected by the added probe harness; the existing schema and reply sensitivity checks also ran.
+- Direct `whitefootc --graph lib/halo/modules.wfg --check-module pkg::embed` and `whitefootc --graph research/experiments/halo-e2e/modules.wfg --check-module pkg::test`: accepted.
+- The embedding lifecycle probe on the preceding native build (`test one two three`): exit 0. Lifecycle code did not change afterward; the final runner exercises the changed formatter through the value/location probes.
+- `make static` and `git diff --check`: passed. No Cargo, full `make check`, network, push or PR operation was run. No specification, conformance expectation or other Halo module changed.
+
+The first useful SHA-1 sample passed under all three budgets; subsequent
+scalar invocations took roughly 3–5 ms, supporting the 1,000-vector and
+80-script batches. Native build samples took 336.30 and 410.15 seconds.
+These timings size correctness runs, not a Halo-versus-Redis performance
+comparison; concurrently active local compiler work was observed.
+
+Found along the way: repaired nonstring scalar error conversion and avoided
+using the budget checkpoint as a failure PC. [GAPS.md](GAPS.md#error-locations-and-stop)
+records observed remaining location boundaries: a saved redis.call member
+reports its lookup line instead of its later call line; protected readonly
+errors lack a Lua prefix; an explicit level-zero error equal to the readonly
+message receives an unwanted prefix. Those require VM failure kind/PC
+information outside this task's file boundary. Corpus parity is established;
+general Redis EVAL location parity remains incomplete.
+
+Independent read-only review used gpt-6-sol, base
+`7d6e73ea5ab7ae2996792d695b28d7df8f96dbc0` through
+`4f647756e36d8e1bb0e0cb8f588ce31d19a11590` plus the documentation diff,
+checking groups A, D, C, M and V. T and R did not trigger: no specification,
+formal-test, gate or material design choice changed. It read the complete
+diff, affected callers, design context, Redis formatting sources, validation
+and failure witnesses without rerunning green suites. Findings: none within
+scope. The last static check's first attempt was blocked by another worktree's
+active shared lock; no lock was removed or other worktree changed.
+Publication is intentionally absent under the user's local-only instruction.
