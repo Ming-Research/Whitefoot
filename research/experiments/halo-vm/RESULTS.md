@@ -26,7 +26,7 @@ an equivalent maintained Halo program suite takes ownership of these observation
 | same tail recursion, budget 7 | 100000 | pending |
 
 The Lua reference run completed successfully; its exact output is
-`oracle.expected`. All package modules accept; native execution is pending.
+`oracle.expected`. All package modules accept; the native smoke entry passes; the combined suite is pending.
 
 ## Reproduction
 
@@ -95,3 +95,11 @@ and `pkg::vm`. The wrapper reported 57.43 seconds, exit 0 (compiler: 57.36 real,
 The same opcode split that first exposed the callback-bound failure now accepts
 after the length restoration was moved before both comparison result reads.
 This establishes acceptance, not native performance or complete Lua parity.
+
+## Native smoke milestone
+
+The smoke entry built successfully in 120.06 seconds (exit 0) and ran in
+0.42 seconds (exit 0). Fixture repairs changed only canonical graph spacing,
+`Env` construction field order, and float literal spellings; the Lua-derived
+expected values are unchanged. The combined suite build follows this smallest
+useful successful sample.

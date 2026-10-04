@@ -1,4 +1,5 @@
 package halo = "../../../lib/halo";
+
 pkg::test: [halo::value, halo::heap, halo::vm, std::process];
 
 entry smoke = pkg::test::smoke;

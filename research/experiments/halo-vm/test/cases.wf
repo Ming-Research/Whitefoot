@@ -134,7 +134,7 @@ fn fixture_smoke(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom0 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom0);
+  let env = Env(stopped: atom0, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -182,7 +182,7 @@ fn fixture_fib(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom2 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom2);
+  let env = Env(stopped: atom2, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -267,7 +267,7 @@ fn fixture_numeric_for(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom5 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom5);
+  let env = Env(stopped: atom5, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -292,7 +292,7 @@ fn fixture_numeric_for(budget: u64) -> r: Bool pure {
   put_const(consts: &consts, value: k0);
   let k1 = Value::Num(n: 1.0_f64);
   put_const(consts: &consts, value: k1);
-  let k2 = Value::Num(n: 100.0_f64);
+  let k2 = Value::Num(n: 1.0e2_f64);
   put_const(consts: &consts, value: k2);
   pad(consts: &consts);
   let atom6 = False();
@@ -306,7 +306,7 @@ fn fixture_numeric_for(budget: u64) -> r: Bool pure {
         if got != 1_u64 {
           return False();
         }
-        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 5050.0_f64);
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 5.05e3_f64);
         if bnot(matches0) {
           return False();
         }
@@ -331,7 +331,7 @@ fn fixture_counter(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom7 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom7);
+  let env = Env(stopped: atom7, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -413,7 +413,7 @@ fn fixture_tables(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom10 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom10);
+  let env = Env(stopped: atom10, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -478,7 +478,7 @@ fn fixture_meta(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom12 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom12);
+  let env = Env(stopped: atom12, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -593,7 +593,7 @@ fn fixture_protected_error(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom18 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom18);
+  let env = Env(stopped: atom18, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -733,7 +733,7 @@ fn fixture_vararg(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom25 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom25);
+  let env = Env(stopped: atom25, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -796,7 +796,7 @@ fn fixture_tail(budget: u64) -> r: Bool pure {
   let vm = halo::vm::vm_new(limit: 67108864_u64);
   let stack = halo::vm::stack_new(size: 1024_u64);
   let atom27 = False();
-  let env = Env(mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64, stopped: atom27);
+  let env = Env(stopped: atom27, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
   let code = box_slots_new::<Cell>(capacity: 128_u64);
   let consts = box_slots_new::<Value>(capacity: 512_u64);
   let protos = box_slots_new::<Proto>(capacity: 8_u64);
@@ -828,7 +828,7 @@ fn fixture_tail(budget: u64) -> r: Bool pure {
   let atom28 = False();
   put_proto(protos: &protos, start: 0_u32, params: 2_u8, vararg: atom28, ups: 0_u8, maxstack: 5_u8);
   if stack.inner.len >= 3_u64 {
-    set stack.inner[1_u64] = Value::Num(n: 100000.0_f64);
+    set stack.inner[1_u64] = Value::Num(n: 1.0e5_f64);
     set stack.inner[2_u64] = Value::Num(n: 0.0_f64);
   }
   let ups = array_filled::<u32, 0>(value: 0_u32);
@@ -844,7 +844,7 @@ fn fixture_tail(budget: u64) -> r: Bool pure {
         if got != 1_u64 {
           return False();
         }
-        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 100000.0_f64);
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 1.0e5_f64);
         if bnot(matches0) {
           return False();
         }
