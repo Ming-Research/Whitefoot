@@ -179,6 +179,60 @@ fn run(code: &Code, regs: &Box<Slots<Value>>, base: u64)
 - Need: Lua's `^` and `math.*`. These are library or host functions; matching
   the C library's results bit for bit is the hard part.
 
+## Selected direction (owner, 2026-10-04)
+
+Two outside consultations analysed the gaps independently: GPT-6 Astra and,
+without Astra's answer, Fable. Fable's analysis was taken further; the owner
+approved its direction:
+
+- **The header grants, the block reaches at most the grant, the
+  implementation holds anything in between.** An atomic statement's header
+  names every part its block may form a path to; meaning stays SHARE-3's
+  (exclusive access to the whole state at one point); what is actually
+  locked lies between the block's footprint and the whole state, which is
+  where lazy taking, escalation after patience and SHARE-3's liberty to hold
+  less already live.
+- **A, an explicit whole-table binding** answers G1:
+
+  ```wf
+  atomic s = &store^.state, t = &s^.map {     // the table, whole
+    let e = t^[key];                           // a key computed in the block
+    let es = &t^[keys];                        // entries of a KeySet formed in the block
+  }
+  ```
+
+  A bare `s` grants the state's non-table fields, which are its one
+  non-table lock unit; a table is reachable only through its header binding,
+  by entry, by key set or whole; one binding per table, so entries and the
+  whole of one table in one header are refused. Passing `s` to a callee is
+  admitted when the callee's row lies within the grant, so a script host's
+  `writes(env)` requires the table granted whole and the hold that
+  serializes the server is visible in the header. Today's implicit whole
+  hold (any path to a table outside an entry binding) is retired; firn's
+  DBSIZE gains `t = &s^.map`.
+- **B, a deadline on the statement** answers G3:
+  `atomic ... until d { ... } else { ... }` takes effect before the clock
+  reaches `d`, or runs the else block having executed nothing of its guard
+  or block, as a host operation's `DeadlinePassed` transfers nothing. Only a
+  statement with a deadline takes every unit its block can reach before the
+  block; all others keep the lazy rule.
+- **C, no change for G2**: a block that ends having written nothing of its
+  state has no effect, which is Redis's own condition for `SCRIPT KILL`.
+  Firn runs a script in budgeted slices; a slice that ends before the
+  script's first write returns, firn checks for a kill between statements
+  and runs the script again from the start with a doubled budget; a script
+  that has written runs to its end. Keys a script did not declare are found
+  the same way: before the first write, the key joins the `KeySet` and the
+  script reruns.
+- **G4, G5, G6: no language change.** G4's measured price is 2.3% (above);
+  G5 is the engine's own byte accounting and a heap call stack; G6 is a
+  numeric library (fdlibm or musl lineage) with specified results, not a
+  host binding to the platform's libm.
+
+A and B are one amendment of GRAM-4, SHARE-1, SHARE-2, SHARE-3, WAIT-2 and
+OP-4, designed with firn's KeySet redesign (insertion-order keys, lock order
+private to the runtime), which lands first.
+
 ## Settled without a language change
 
 - Recursive values (`witnesses/x_value.wf`, accepted). Lua tables need
