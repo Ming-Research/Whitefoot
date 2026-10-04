@@ -343,29 +343,52 @@ fn main() -> status: ExitStatus pure {
     assert!(output.status.success(), "{output:?}");
 }
 
-#[test]
-fn a_loop_whose_parts_exceed_the_argument_registers_is_emitted_whole() {
-    // Thirty carried values exceed every convention's integer argument
-    // registers, so the loop keeps one function.
+/// A two-arm loop over thirty `u64` values. With `changing`, every arm adds
+/// one to each of them, so all thirty change on every dispatch; otherwise
+/// only the counter `p0` changes and the rest pass through. Starting from
+/// p0 = 7 and the others at 1, it returns p29: 8 when they change, 1 when
+/// they pass through.
+fn thirty_values(changing: bool) -> String {
     let names: Vec<String> = (0..30).map(|index| format!("p{index}")).collect();
     let parameters = names
         .iter()
         .map(|name| format!("{name}: u64"))
         .collect::<Vec<_>>()
         .join(", ");
+    let steps = if changing {
+        names[1..]
+            .iter()
+            .map(|name| format!("      let n{name} = {name} +wrap 1_u64;\n"))
+            .collect::<String>()
+    } else {
+        String::new()
+    };
     let forwarded = names
         .iter()
-        .map(|name| format!("{name}: {name}"))
+        .map(|name| {
+            if name == "p0" {
+                "p0: left".to_owned()
+            } else if changing {
+                format!("{name}: n{name}")
+            } else {
+                format!("{name}: {name}")
+            }
+        })
         .collect::<Vec<_>>()
-        .join(", ")
-        .replacen("p0: p0", "p0: left", 1);
+        .join(", ");
     let initial = names
         .iter()
-        .map(|name| format!("{name}: 1_u64"))
+        .map(|name| {
+            if name == "p0" {
+                "p0: 7_u64".to_owned()
+            } else {
+                format!("{name}: 1_u64")
+            }
+        })
         .collect::<Vec<_>>()
-        .join(", ")
-        .replacen("p0: 1_u64", "p0: 7_u64", 1);
-    let source = format!(
+        .join(", ");
+    let expected = if changing { 8 } else { 1 };
+    format!(
         r#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -381,7 +404,7 @@ fn run({parameters}, step: Parity) -> r: u64 pure {{
         return p29;
       }}
       let left = p0 -wrap 1_u64;
-      let next = Parity::Odd();
+{steps}      let next = Parity::Odd();
       return musttail run({forwarded}, step: next);
     }}
     Odd() => {{
@@ -389,7 +412,7 @@ fn run({parameters}, step: Parity) -> r: u64 pure {{
         return p29;
       }}
       let left = p0 -wrap 1_u64;
-      let next = Parity::Even();
+{steps}      let next = Parity::Even();
       return musttail run({forwarded}, step: next);
     }}
   }}
@@ -398,15 +421,40 @@ fn run({parameters}, step: Parity) -> r: u64 pure {{
 fn main() -> status: ExitStatus pure {{
   let first = Parity::Even();
   let r = run({initial}, step: first);
-  if r == 1_u64 {{
+  if r == {expected}_u64 {{
     return exit_status(code: 0_u8);
   }}
   return exit_status(code: 1_u8);
 }}
 "#
-    );
-    let module = emit(source.as_bytes());
+    )
+}
+
+#[test]
+fn a_loop_whose_changing_values_exceed_the_argument_registers_is_emitted_whole() {
+    // Thirty values that change on every dispatch exceed every convention's
+    // integer argument registers and none can go to the frame.
+    let module = emit(thirty_values(true).as_bytes());
     assert!(!module.contains("@wf_run.dispatch"), "{module}");
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn values_the_loop_cannot_change_go_to_the_frame_past_the_registers() {
+    // Twenty-nine of the thirty values pass through unchanged, so they can
+    // wait in the frame and the loop still splits.
+    let module = emit(thirty_values(false).as_bytes());
+    assert_split(&module, "wf_run", 2);
+    assert!(
+        module.contains(&format!("{}wf_run: keeps ", crate::DISPATCH_LEDGER_PREFIX)),
+        "the ledger reports the values kept in the frame: {module}"
+    );
+    let enclosing = emitted_body(&module, "run");
+    assert!(
+        enclosing.contains("store i64 "),
+        "the enclosing function stores them before the loop: {enclosing}"
+    );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }

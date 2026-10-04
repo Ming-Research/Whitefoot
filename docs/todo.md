@@ -2317,21 +2317,6 @@ rarely insert at the same place.
 
 ## Interpreter dispatch lowering
 
-- **A dispatch loop past the argument registers is emitted whole.**
-  compiler/match-dispatch-lowering gives every part one parameter per
-  carried value, header value and value from before the loop, and emits a
-  loop whose parts would need more than the convention's argument registers
-  (measured in `research/experiments/match-dispatch/RESULTS.md`, "Argument
-  registers": without callee-saved registers 24 integer on arm64 and 12 on
-  x86-64) as one function, since the C experiment measured a stack-passed
-  parameter at 8% and two at 43%. The owner's direction is a spill block in
-  the enclosing function's frame: keep the values the loop's carried
-  dependency chains need in registers and store the coldest values from
-  before the loop in frame slots the parts read, so such loops split too.
-  Validate with a loop past twelve parameters on x86-64, comparing cycles
-  against whole emission. Reopen when a consumer's dispatch loop exceeds a
-  target's register parameters.
-
 - **Build-time toolchain probes are not rerun when the toolchain changes.**
   `compiler/build.rs` probes the assembler for the no-capture spelling and
   for `preserve_none`, but declares no `rerun-if` dependency on the
@@ -2349,11 +2334,6 @@ rarely insert at the same place.
   offsets and stores of checked values, the parts could carry the derived
   address beside the index. Needs its own design and a falsifier; reopen
   after the invariant-header work.
-
-- **The handler table's address is rematerialised in every arm.** Two
-  instructions per dispatch on arm64 (`adrp`, `add`); E1 passing it as a
-  parameter matched Silverfir-nano's instruction count on its loop kernel.
-  Pass it as a hidden parameter once the register budget above exists.
 
 - **A `match` on a place copies the scrutinee into a frame slot.** The
   emitter copies the matched value into a slot to read its tag while the

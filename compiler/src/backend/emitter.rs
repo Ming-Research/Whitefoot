@@ -1019,6 +1019,9 @@ enum FunctionSlot {
     /// the start, which its await reads [WAIT-2]. It is the starting frame's
     /// own, so it outlives the context that writes it.
     ContextResult(IrValueId),
+    /// Where a split dispatch loop keeps a value it cannot change and has no
+    /// argument register for (compiler/match-dispatch-lowering).
+    Spill(IrValueId),
 }
 
 /// Where a body constructs its stored result: its destination parameter,
@@ -1063,6 +1066,8 @@ struct FunctionFramePlan {
 struct FunctionFrameContents<'plan> {
     storage: &'plan FunctionStoragePlan,
     result_slot: Option<usize>,
+    /// The values a split dispatch loop keeps in the frame.
+    spills: &'plan [(IrValueId, IrType)],
 }
 
 impl FunctionFramePlan {
@@ -1075,6 +1080,7 @@ impl FunctionFramePlan {
         let FunctionFrameContents {
             storage,
             result_slot,
+            spills,
         } = contents;
         let mut specifications = Vec::new();
         let mut ordered = Vec::new();
@@ -1185,6 +1191,15 @@ impl FunctionFramePlan {
                     _ => {}
                 }
             }
+        }
+        for (value, ty) in spills {
+            push_function_slot(
+                &mut specifications,
+                &mut ordered,
+                FunctionSlot::Spill(*value),
+                TargetStorageType::source(*ty),
+                None,
+            )?;
         }
         let target_plan = plan_target_frame(target, program, &specifications)
             .map_err(BackendFailure::TargetLayout)?;
@@ -1488,6 +1503,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             FunctionFrameContents {
                 storage: &storage,
                 result_slot,
+                spills: &[],
             },
         )?;
         let mut output = FunctionBody::default();

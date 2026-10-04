@@ -350,6 +350,8 @@ struct LoopInvariants {
     /// References whose every projection is hoisted, which the loop then
     /// only hands on to itself through joins and its own back-edge place.
     unread: HashSet<IrValueId>,
+    /// Header parameters every back edge passes through unchanged.
+    passed_through: HashSet<IrValueId>,
 }
 
 /// Which part of a split function is being emitted.
@@ -394,6 +396,11 @@ pub(super) struct DispatchEmission {
     /// computed once by the enclosing function (see [`LoopInvariants`]).
     pinned: Vec<(IrValueId, usize, usize)>,
     replaced: HashMap<IrValueId, IrValueId>,
+    /// Whether the parts receive the handler table's address.
+    table_base: bool,
+    /// Values the loop cannot change that the parts read from the frame,
+    /// stored there by the enclosing function before the loop.
+    spilled: Vec<(IrValueId, IrType)>,
     /// Header parameters no part receives. A join inside the loop may still
     /// name one only to hand it back to itself, a value nothing reads, so
     /// each part defines it as a frozen poison value.
@@ -540,20 +547,65 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         let (convention, registers) = convention(self.target.triple());
-        let mut types = Vec::new();
         let mut scratch = References::default();
-        if destination {
-            types.push("ptr".to_owned());
+        let mut typed: Vec<(IrValueId, String)> = Vec::new();
+        for (value, ty, _) in &parameters {
+            typed.push((
+                *value,
+                llvm_type_with_references(self.program, *ty, &mut scratch.types)?,
+            ));
         }
-        for (_, ty, _) in &parameters {
-            types.push(llvm_type_with_references(
-                self.program,
-                *ty,
-                &mut scratch.types,
-            )?);
+        let frame_before = !self.frame.target.is_empty();
+        let types_without = |spilled: &HashSet<IrValueId>| {
+            let mut types = Vec::new();
+            if destination {
+                types.push("ptr".to_owned());
+            }
+            types.extend(
+                typed
+                    .iter()
+                    .filter(|(value, _)| !spilled.contains(value))
+                    .map(|(_, ty)| ty.clone()),
+            );
+            if frame_before || !spilled.is_empty() {
+                types.push("ptr".to_owned());
+            }
+            types
+        };
+        // Past the registers, the values the loop cannot change go to the
+        // frame, the one the fewest arms read first; carried values and header
+        // values, which change on every dispatch, never do.
+        let mut spilled: HashSet<IrValueId> = HashSet::new();
+        if ArgumentRegisters::demand(&types_without(&spilled))
+            .is_ok_and(|demand| !registers.fits(demand))
+        {
+            let mut candidates: Vec<(usize, IrValueId)> = parameters
+                .iter()
+                .filter(|(value, _, role)| {
+                    matches!(role, Role::Invariant | Role::Hoisted)
+                        || (*role == Role::Carried && invariant.passed_through.contains(value))
+                })
+                .map(|(value, _, _)| (self.arms_reading(&plan, &header, *value), *value))
+                .collect();
+            candidates.sort();
+            for (_, value) in candidates {
+                spilled.insert(value);
+                if ArgumentRegisters::demand(&types_without(&spilled))
+                    .is_ok_and(|demand| registers.fits(demand))
+                {
+                    break;
+                }
+            }
         }
-        if !self.frame.target.is_empty() {
-            types.push("ptr".to_owned());
+        let mut types = types_without(&spilled);
+        // The handler table's address travels as a parameter where a register
+        // is left for it, instead of being formed again in every arm.
+        let mut with_base = types.clone();
+        with_base.push("ptr".to_owned());
+        let table_base = spilled.is_empty()
+            && ArgumentRegisters::demand(&with_base).is_ok_and(|demand| registers.fits(demand));
+        if table_base {
+            types = with_base;
         }
         let triple = self.target.triple();
         let name = if convention.is_empty() {
@@ -583,10 +635,38 @@ impl FunctionEmitter<'_, '_> {
             self.dispatch_ledger.extend(ledger);
             return Ok(None);
         }
+        let spills: Vec<(IrValueId, IrType)> = parameters
+            .iter()
+            .filter(|(value, _, _)| spilled.contains(value))
+            .map(|(value, ty, _)| (*value, *ty))
+            .collect();
+        if !spills.is_empty() {
+            self.frame = FunctionFramePlan::build(
+                self.target,
+                self.program,
+                self.function,
+                super::FunctionFrameContents {
+                    storage: &self.storage,
+                    result_slot: self.result_slot,
+                    spills: &spills,
+                },
+            )?;
+            parameters.retain(|(value, _, _)| !spilled.contains(value));
+        }
         let matched = self
             .program
             .nominal(plan.matched)
             .map_or("an enum", |nominal| nominal.name.as_str());
+        if !spills.is_empty() {
+            ledger.insert(
+                0,
+                format!(
+                    "{body_symbol}: keeps {} value{} the loop cannot change in the frame",
+                    spills.len(),
+                    if spills.len() == 1 { "" } else { "s" }
+                ),
+            );
+        }
         ledger.insert(
             0,
             format!(
@@ -621,6 +701,8 @@ impl FunctionEmitter<'_, '_> {
             facts: invariant.facts,
             pinned: invariant.pinned,
             replaced: invariant.replaced,
+            spilled: spills,
+            table_base,
             dropped: header
                 .parameters()
                 .iter()
@@ -658,6 +740,17 @@ impl FunctionEmitter<'_, '_> {
         let dispatch = self.dispatch.as_ref().ok_or(BackendFailure::InvalidIr)?;
         let parameters = dispatch.parameters.clone();
         let (destination, frame) = (dispatch.destination, dispatch.frame);
+        let base = dispatch.table_base.then(|| {
+            if dispatch.part == Part::Enclosing {
+                format!("ptr @{}", dispatch.table_symbol)
+            } else {
+                "ptr %wf.dispatch.base".to_owned()
+            }
+        });
+        if dispatch.table_base && dispatch.part == Part::Enclosing {
+            let table = dispatch.table_symbol.clone();
+            self.output.symbol(table);
+        }
         let mut arguments = Vec::new();
         if destination {
             arguments.push(format!("ptr {RESULT_POINTER}"));
@@ -678,6 +771,7 @@ impl FunctionEmitter<'_, '_> {
             };
             arguments.push(format!("{ty_name} {operand}"));
         }
+        arguments.extend(base);
         if frame {
             arguments.push("ptr %wf.frame".to_owned());
         }
@@ -799,6 +893,25 @@ impl FunctionEmitter<'_, '_> {
                 self.emit_instruction(block_id, index, &instruction)?;
             }
         }
+        if !tail {
+            let spilled = self
+                .dispatch
+                .as_ref()
+                .map(|dispatch| dispatch.spilled.clone())
+                .unwrap_or_default();
+            for (value, ty) in spilled {
+                // A passed-through header parameter is this edge's argument.
+                let source = carried
+                    .iter()
+                    .find(|(parameter, _)| *parameter == value)
+                    .map_or(value, |(_, argument)| *argument);
+                let slot = self.entry_slot(FunctionSlot::Spill(value))?;
+                let ty = self.output.type_name(self.program, ty)?;
+                let operand = self.value_name(source);
+                writeln!(self.output, "  store {ty} {operand}, ptr {slot}")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
+        }
         self.emit_place_edge(target, arguments, drops)?;
         let list = self.dispatch_arguments(&carried, false)?;
         self.output.symbol(symbol.clone());
@@ -830,7 +943,12 @@ impl FunctionEmitter<'_, '_> {
         if dispatch.part != Part::Header || block != dispatch.plan.header {
             return Ok(false);
         }
-        let table = dispatch.table_symbol.clone();
+        let table = if dispatch.table_base {
+            "%wf.dispatch.base".to_owned()
+        } else {
+            format!("@{}", dispatch.table_symbol)
+        };
+        let table_symbol = dispatch.table_symbol.clone();
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
@@ -845,7 +963,7 @@ impl FunctionEmitter<'_, '_> {
         let list = self.dispatch_arguments(&carried, true)?;
         let slot = self.next_temporary()?;
         let handler = self.next_temporary()?;
-        self.output.symbol(table.clone());
+        self.output.symbol(table_symbol);
         // A tag narrower than the index is zero-extended: a two-variant
         // tag-only enum's `i1` tag would otherwise index as -1.
         let index = self.next_temporary()?;
@@ -856,7 +974,7 @@ impl FunctionEmitter<'_, '_> {
         };
         write!(
             text,
-            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr @{table}, i64 0, i64 %{index}\n  %{handler} = load ptr, ptr %{slot}\n"
+            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr {table}, i64 0, i64 %{index}\n  %{handler} = load ptr, ptr %{slot}\n"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         if result == "void" {
@@ -898,6 +1016,9 @@ impl FunctionEmitter<'_, '_> {
             };
             parameters.push(Parameter::named(format!("{ty}{facts}"), name));
         }
+        if dispatch.table_base {
+            parameters.push(Parameter::named("ptr", "%wf.dispatch.base"));
+        }
         if dispatch.frame {
             parameters.push(Parameter::named("ptr", "%wf.frame"));
         }
@@ -929,6 +1050,7 @@ impl FunctionEmitter<'_, '_> {
         let table = dispatch.plan.table.clone();
         let table_symbol = dispatch.table_symbol.clone();
         let dropped = dispatch.dropped.clone();
+        let spilled = dispatch.spilled.clone();
         let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
 
         self.set_part(Part::Header);
@@ -1005,6 +1127,12 @@ impl FunctionEmitter<'_, '_> {
             let mut prelude =
                 self.frame
                     .render_split(self.program, &mut body.references, false, &locals)?;
+            for (value, ty) in &spilled {
+                let slot = self.frame.slot(FunctionSlot::Spill(*value))?;
+                let ty = llvm_type_with_references(self.program, *ty, &mut body.references.types)?;
+                writeln!(prelude, "  {} = load {ty}, ptr {slot}", value_name(*value))
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
             for (value, ty) in &dropped {
                 let ty = llvm_type_with_references(self.program, *ty, &mut body.references.types)?;
                 writeln!(prelude, "  {} = freeze {ty} poison", value_name(*value))
@@ -1123,6 +1251,12 @@ impl FunctionEmitter<'_, '_> {
                     arguments.get(position).map(root) == Some(parameters[position])
                 })
             })
+            .collect();
+        result.passed_through = parameters
+            .iter()
+            .zip(&passed_through)
+            .filter(|(_, through)| **through)
+            .map(|(parameter, _)| *parameter)
             .collect();
         let function_parameters: Vec<IrValueId> = self
             .function
@@ -1367,6 +1501,30 @@ impl FunctionEmitter<'_, '_> {
             return Ok(());
         }
         self.emit_instruction(block, index, instruction)
+    }
+
+    /// How many arms read a value: every arm when the header reads it.
+    fn arms_reading(&self, plan: &DispatchLoop, header: &IrBlock, value: IrValueId) -> usize {
+        let reads = |block: &IrBlock| {
+            block
+                .instructions()
+                .iter()
+                .any(|instruction| instruction.operands().contains(&value))
+                || block.terminator().operands().contains(&value)
+        };
+        if reads(header) {
+            return plan.arms.len();
+        }
+        plan.arms
+            .iter()
+            .filter(|(_, blocks)| {
+                self.function
+                    .blocks()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, block)| blocks[index] && reads(block))
+            })
+            .count()
     }
 
     fn set_part(&mut self, part: Part) {
