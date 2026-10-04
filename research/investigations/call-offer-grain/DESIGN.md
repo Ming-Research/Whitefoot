@@ -710,7 +710,7 @@ controls. The research workload `split-reachability.wf` belongs beside this
 record, is called explicitly by this probe, and is removed if it ceases to
 reproduce this question and its retained evidence no longer needs it. Raw
 commands, failed trials, compiler/source hashes and outputs live in ignored
-`build/call-grain-probe/`; retained results will identify their surviving bundle.
+`compiler/target/call-grain-probe/`; retained results will identify their surviving bundle.
 
 Before builds or timings, the discriminating criteria are:
 
@@ -737,3 +737,18 @@ rules, specification edits, or proof changes are part of the A/B comparison.
 The test host is Darwin 25.6.0 arm64; further machine, compiler and environment
 details are recorded with the run. Every build and run uses the host-wide
 check lock, after the separately coordinated renderer measurements finish.
+
+Initial probe qualification passed with identical sequential LLVM and identical
+permission/split ledger, but its runtime harness mistakenly labelled an unset
+`WF_WORKERS` as sequential. The runtime defaults that setting to online CPUs;
+those observations are auto-worker observations, not sequential evidence. The
+raw first batch is retained unchanged. Its four-worker short-list differences
+were below the prespecified 10 ms allowance. Before a second batch, enlarge
+only the number of independent rows from 100000 to 1000000 for lengths 0, 1
+and 8, retain 512 rows for length 4096, and explicitly set `WF_WORKERS=1` or
+`4`. Keep the same three-block, three-interleaved-samples-per-cell median
+summary and the original allowance. This tests scale above the instrument's
+allowance rather than relaxing the criterion. Qualification's runtime checks
+are repeated with explicit worker settings. Both batches include allocation,
+initialization, comparisons and output checks in process wall time; they do
+not isolate the comparison's own elapsed time.
