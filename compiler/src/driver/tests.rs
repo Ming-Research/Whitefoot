@@ -3516,3 +3516,44 @@ fn swapping_binding_names_recomputes_a_bound_packages_verdict() {
     assert_eq!(cached.outcome(), cold.outcome());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// [MOD-11] a symbolic link at a bound package root is an input-envelope
+/// failure; replacing it with a real directory lets the same graph form.
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_at_a_bound_package_root_is_an_envelope_failure() {
+    let root = std::env::temp_dir().join(format!(
+        "whitefoot-driver-packages-{}-symlink",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    write_tree(
+        &root,
+        &[
+            ("real/modules.wfg", "pkg: [];\n"),
+            ("real/module.wfm", "\n"),
+            ("app/modules.wfg", "package lib = \"link\";\n\npkg: [lib];\n"),
+            ("app/module.wfm", "\n"),
+        ],
+    );
+    let link = root.join("app/link");
+    std::os::unix::fs::symlink("../real", &link).expect("create the package root link");
+    let graph = root.join("app/modules.wfg");
+    assert!(matches!(
+        crate::form_module_program_graph(&graph, CompilerLimits::default()),
+        Err(crate::ModuleProgramFailure::Discovery(
+            crate::DiscoveryFailure::SymbolicLink { .. }
+        ))
+    ));
+
+    std::fs::remove_file(&link).expect("remove the package root link");
+    write_tree(
+        &root,
+        &[
+            ("app/link/modules.wfg", "pkg: [];\n"),
+            ("app/link/module.wfm", "\n"),
+        ],
+    );
+    assert!(crate::form_module_program_graph(&graph, CompilerLimits::default()).is_ok());
+    let _ = std::fs::remove_dir_all(&root);
+}
