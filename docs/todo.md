@@ -2186,19 +2186,19 @@ rarely insert at the same place.
   Reopen when a test needs a deadline order that real time cannot produce
   reliably.
 
-- **Diagnose deadline reads that receive the later byte on macOS.**
-  `stdin_deadline.wf` expects its first read's 50 ms deadline to pass before
-  the harness writes after 400 ms. The full gate returned status 10 on both
-  deadline-read tests; an isolated two-test run still returned 10 on the
-  ordinary route while the zero-helper case passed. That status means the
-  first read received the byte. The harness starts its delay at child spawn,
-  not at the program's read, so startup ordering and deadline cancellation
-  are separate hypotheses. Instrument entry, enqueue, deadline and delivery
-  before selecting a fix; if startup explains it, synchronize the writer
-  with a program-ready event, retaining the delayed-byte preservation
-  assertion. Reopen before relying on these tests for deadline changes.
-  Require the failure to be explained on the same host and both routes to
-  pass with a wrong cancellation implementation still failing.
+- **Deadline reads fail on the first corpus run after a build on macOS.**
+  `programs::stream::a_deadline_ends_a_read_of_a_silent_writer_on_both_routes`
+  and `..._under_a_pool_pinned_at_zero` (`stdin_deadline.wf`) returned status
+  10 on the first run after building the compiler, on this branch and on a
+  main-equivalent compiler alike, and passed on every repeat on both (macOS,
+  2026-10-05). Status 10 means the first read received the byte the harness
+  writes after 400 ms, so its 50 ms deadline did not end it; the harness
+  starts its delay at child spawn, not at the program's read, so a slow first
+  start can deliver the byte before the read is queued. Impact: a spurious
+  gate failure on a cold host. Change: synchronize the writer with a
+  program-ready event, keeping the delayed-byte assertion, and confirm that a
+  cancellation implementation that ignores the deadline still fails. Reopen
+  when it fails in CI or before changing deadline reads.
 
 ## Modules and libraries
 
@@ -2528,29 +2528,6 @@ rarely insert at the same place.
   differs from what the ownership judgment says the code touches.
 
 ## Open language questions
-
-- **Clarify unshared keyed-table access in SHARE-1.** The header-grant
-  amendment says a table's entries are reached only through atomic table
-  bindings, while OP-4 admits a subscript through a `&KeyedTable<V>` and
-  the compiler requirement explicitly includes a local table with no
-  statement holding it. A local reference therefore has specified typing
-  but its relation to SHARE-1's restriction is unclear. State whether
-  SHARE-1 restricts shared-state tables or all tables, and align the
-  representation decision with that boundary. Reopen before approving
-  amendment A; validate an unshared write, an absent read and publication
-  into a shared state against the selected rule. No broader acceptance
-  policy is selected here.
-
-- **Resolve the amendment's entry-reference invalidation example.**
-  Amendment A's compiler point 4.3 says a write to `t^[k2]` invalidates
-  a live `&t^[k1]`, while REF-2 preserves writes at the reference's path
-  and invalidates writes at proper prefixes. The two entry paths have equal
-  depth; unknown byte-key offsets do not prove separation, but do not make
-  either path a proper prefix. The checker preserves the entry reference
-  and invalidates a payload reference below that entry. Select whether the
-  compiler point meant the payload case or proposes an additional REF-2
-  rule before approving amendment A. Validate the two minimal witnesses
-  separately; keep the normative proper-prefix rule until then.
 
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
