@@ -50,9 +50,16 @@ struct Line {
 }
 
 fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
-  doc "Reads a count or length line as read_line_full does, first trying the common line of one to nine digits without a sign or leading zero, whose carriage return and the byte after it are held.";
+  doc "Reads a count or length line as read_line_full does, first trying the common line of one to nine digits without a sign or leading zero, whose carriage return and the byte after it are held. A zero byte at the marker ends the line there, as strchr ends it, so that line is left to read_line_full.";
   let position = marker +wrap 1_u64;
   let value = 0_u64;
+  if marker < held {
+    let mark = byte_at(input: input, index: marker);
+    if mark == 0_u8 {
+      let line = read_line_full(input: input, marker: marker, held: held);
+      return line;
+    }
+  }
   loop @digits {
     if position >= held {
       break @digits;
