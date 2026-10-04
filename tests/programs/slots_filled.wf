@@ -1,0 +1,105 @@
+struct Empty {
+}
+
+fn restore(expected: &[u64]) -> code: u8 reads(expected) {
+  doc "Restores independently supplied values by independent indexed writes, then checks them in reverse pop order after grow and a sentinel push/pop.";
+  let count = expected^.len;
+  let restored = box_slots_filled::<u64>(count: count, value: 0_u64);
+  if restored.inner.len != count {
+    return 1_u8;
+  }
+  if restored.inner.cap != count {
+    return 2_u8;
+  }
+  for (index in 0_u64..count) {
+    set restored.inner[index] = expected^[index];
+  }
+  let capacity = count +sat 2_u64;
+  grow(cell: &restored, capacity: capacity);
+  if restored.inner.len != count {
+    return 3_u8;
+  }
+  if restored.inner.cap != capacity {
+    return 4_u8;
+  }
+  if restored.inner.len < restored.inner.cap {
+    place_back(window: &restored.inner, value: 97_u64);
+  } else {
+    return 5_u8;
+  }
+  if restored.inner.len > 0_u64 {
+    let sentinel = take_back(window: &restored.inner);
+    if sentinel != 97_u64 {
+      return 6_u8;
+    }
+  } else {
+    return 7_u8;
+  }
+  for (step in 0_u64..count) {
+    if restored.inner.len > 0_u64 {
+      let actual = take_back(window: &restored.inner);
+      let index = restored.inner.len;
+      if index < expected^.len {
+        if actual != expected^[index] {
+          return 8_u8;
+        }
+      } else {
+        return 9_u8;
+      }
+    } else {
+      return 10_u8;
+    }
+  }
+  if restored.inner.len != 0_u64 {
+    return 11_u8;
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checks empty, singleton and four-element independent sequences, plus a fieldless element window's initialized extent and grow/push/pop behavior.";
+  let empty = array_filled::<u64, 0>(value: 0_u64);
+  let empty_code = restore(expected: &empty[0_u64..0_u64]);
+  if empty_code != 0_u8 {
+    return std::process::exit_status(code: empty_code);
+  }
+  let singleton = array_filled::<u64, 1>(value: 23_u64);
+  let singleton_code = restore(expected: &singleton[0_u64..1_u64]);
+  if singleton_code != 0_u8 {
+    return std::process::exit_status(code: singleton_code);
+  }
+  let expected = array_filled::<u64, 4>(value: 3_u64);
+  set expected[1_u64] = 11_u64;
+  set expected[2_u64] = 29_u64;
+  set expected[3_u64] = 47_u64;
+  let multiple_code = restore(expected: &expected[0_u64..4_u64]);
+  if multiple_code != 0_u8 {
+    return std::process::exit_status(code: multiple_code);
+  }
+  let value = Empty();
+  let zero_bytes = box_slots_filled::<Empty>(count: 3_u64, value: value);
+  if zero_bytes.inner.len != 3_u64 {
+    return std::process::exit_status(code: 12_u8);
+  }
+  if zero_bytes.inner.cap != 3_u64 {
+    return std::process::exit_status(code: 13_u8);
+  }
+  grow(cell: &zero_bytes, capacity: 5_u64);
+  if zero_bytes.inner.len > 0_u64 {
+    let popped = take_back(window: &zero_bytes.inner);
+  } else {
+    return std::process::exit_status(code: 14_u8);
+  }
+  if zero_bytes.inner.len < zero_bytes.inner.cap {
+    place_back(window: &zero_bytes.inner, value: value);
+  } else {
+    return std::process::exit_status(code: 15_u8);
+  }
+  if zero_bytes.inner.len != 3_u64 {
+    return std::process::exit_status(code: 16_u8);
+  }
+  if zero_bytes.inner.cap != 5_u64 {
+    return std::process::exit_status(code: 17_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
