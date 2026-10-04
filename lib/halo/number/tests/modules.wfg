@@ -1,0 +1,5 @@
+package halo = "../..";
+
+pkg::check: [halo::number, std::process, std::io, std::fs, std::time];
+
+entry check = pkg::check::main;

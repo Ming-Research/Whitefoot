@@ -1,0 +1,299 @@
+struct LogPair {
+  doc "A logarithm as a rounded high part and a residual low part.";
+  hi: f64;
+  lo: f64;
+}
+
+fn pow_log(ix: u64) -> value: LogPair pure {
+  doc "musl log_inline: exact range reduction into 128 table intervals followed by a compensated FMA polynomial.";
+  let tmp = ix -wrap 4604531861337669632_u64;
+  let interval = ishr.wrap(tmp, 45_u32);
+  let index = interval % 128_u64;
+  let signed = reinterpret::<u64, i64>(tmp);
+  let k = ishr.wrap(signed, 52_u32);
+  let exponent = iand(tmp, 18442240474082181120_u64);
+  let iz = ix -wrap exponent;
+  let z = reinterpret::<u64, f64>(iz);
+  let kd = cvt.nearest::<i64, f64>(k);
+  let invc = log_inverse[index];
+  let logc = log_center[index];
+  let logctail = log_tail[index];
+  let part_1 = ffma.strict(z, invc, -1.0_f64);
+  let r = part_1;
+  let part_2 = fmul.strict(kd, 0.6931471805598903_f64);
+  let part_3 = fadd.strict(part_2, logc);
+  let t1 = part_3;
+  let part_4 = fadd.strict(t1, r);
+  let t2 = part_4;
+  let part_5 = fmul.strict(kd, 5.497923018708371e-14_f64);
+  let part_6 = fadd.strict(part_5, logctail);
+  let lo1 = part_6;
+  let part_7 = fsub.strict(t1, t2);
+  let part_8 = fadd.strict(part_7, r);
+  let lo2 = part_8;
+  let part_9 = fmul.strict(-0.5_f64, r);
+  let ar = part_9;
+  let part_10 = fmul.strict(r, ar);
+  let ar2 = part_10;
+  let part_11 = fmul.strict(r, ar2);
+  let ar3 = part_11;
+  let part_12 = fadd.strict(t2, ar2);
+  let hi = part_12;
+  let part_13 = fneg(ar2);
+  let part_14 = ffma.strict(ar, r, part_13);
+  let lo3 = part_14;
+  let part_15 = fsub.strict(t2, hi);
+  let part_16 = fadd.strict(part_15, ar2);
+  let lo4 = part_16;
+  let part_17 = fmul.strict(r, 0.5000000000000007_f64);
+  let part_18 = fadd.strict(-0.6666666666666678_f64, part_17);
+  let part_19 = fmul.strict(r, -0.6666666663487739_f64);
+  let part_20 = fadd.strict(0.7999999995323976_f64, part_19);
+  let part_21 = fmul.strict(r, 1.0000415263675541_f64);
+  let part_22 = fadd.strict(-1.142909628459501_f64, part_21);
+  let part_23 = fmul.strict(ar2, part_22);
+  let part_24 = fadd.strict(part_20, part_23);
+  let part_25 = fmul.strict(ar2, part_24);
+  let part_26 = fadd.strict(part_18, part_25);
+  let part_27 = fmul.strict(ar3, part_26);
+  let p = part_27;
+  let part_28 = fadd.strict(lo1, lo2);
+  let part_29 = fadd.strict(part_28, lo3);
+  let part_30 = fadd.strict(part_29, lo4);
+  let part_31 = fadd.strict(part_30, p);
+  let lo = part_31;
+  let part_32 = fadd.strict(hi, lo);
+  let y = part_32;
+  let part_33 = fsub.strict(hi, y);
+  let part_34 = fadd.strict(part_33, lo);
+  let tail = part_34;
+  return LogPair(hi: y, lo: tail);
+}
+
+fn pow_special(tmp: f64, bits: u64, ki: u64) -> value: f64 pure {
+  doc "musl exp specialcase: exponent repair for overflow and compensated rounding before subnormal scaling.";
+  let negative_k = iand(ki, 2147483648_u64);
+  if negative_k == 0_u64 {
+    let fixed = bits -wrap 4544132024016830464_u64;
+    let scale = reinterpret::<u64, f64>(fixed);
+    let part_35 = fmul.strict(scale, tmp);
+    let part_36 = fadd.strict(scale, part_35);
+    let y = part_36;
+    let part_37 = fmul.strict(5.486124068793689e303_f64, y);
+    let result = part_37;
+    return result;
+  }
+  let fixed = bits +wrap 4602678819172646912_u64;
+  let scale = reinterpret::<u64, f64>(fixed);
+  let part_38 = fmul.strict(scale, tmp);
+  let part_39 = fadd.strict(scale, part_38);
+  let rounded = part_39;
+  let y = rounded;
+  let magnitude = fabs(y);
+  if flt(magnitude, 1.0_f64) {
+    let one = fcopysign(1.0_f64, y);
+    let part_40 = fsub.strict(scale, y);
+    let part_41 = fmul.strict(scale, tmp);
+    let part_42 = fadd.strict(part_40, part_41);
+    let low = part_42;
+    let part_43 = fadd.strict(one, y);
+    let high = part_43;
+    let part_44 = fsub.strict(one, high);
+    let part_45 = fadd.strict(part_44, y);
+    let part_46 = fadd.strict(part_45, low);
+    let residual = part_46;
+    let part_47 = fadd.strict(high, residual);
+    let part_48 = fsub.strict(part_47, one);
+    let adjusted = part_48;
+    set y = adjusted;
+    if feq(y, 0.0_f64) {
+      let sign = iand(fixed, sign_bit);
+      set y = reinterpret::<u64, f64>(sign);
+    }
+  }
+  let part_49 = fmul.strict(2.2250738585072012e-308_f64, y);
+  let result = part_49;
+  return result;
+}
+
+fn pow_exp(x: f64, xtail: f64, sign_bias: u64) -> value: f64 pure {
+  doc "musl exp_inline with 128 table entries and a fifth-order polynomial; binary64 round-to-nearest evaluation.";
+  let magnitude = fabs(x);
+  if flt(magnitude, 5.551115123125783e-17_f64) {
+    if sign_bias != 0_u64 {
+      return -1.0_f64;
+    }
+    return 1.0_f64;
+  }
+  if fge(magnitude, 1024.0_f64) {
+    let value = finf::<f64>();
+    if flt(x, 0.0_f64) {
+      set value = 0.0_f64;
+    }
+    if sign_bias != 0_u64 {
+      return fneg(value);
+    }
+    return value;
+  }
+  let part_50 = fmul.strict(184.6649652337873_f64, x);
+  let z = part_50;
+  let part_51 = fadd.strict(z, 6755399441055743.5_f64);
+  let encoded = part_51;
+  let ki = reinterpret::<f64, u64>(encoded);
+  let part_52 = fsub.strict(encoded, 6755399441055743.5_f64);
+  let kd = part_52;
+  let part_53 = fmul.strict(kd, -0.005415212348111709_f64);
+  let part_54 = fadd.strict(x, part_53);
+  let part_55 = fmul.strict(kd, -1.2864023111638345e-14_f64);
+  let part_56 = fadd.strict(part_54, part_55);
+  let part_57 = fadd.strict(part_56, xtail);
+  let r = part_57;
+  let interval = ki % 128_u64;
+  let index = 2_u64 * interval;
+  let biased = ki +wrap sign_bias;
+  let top = ishl.wrap(biased, 45_u32);
+  let tail_bits = exp_table[index];
+  let tail = reinterpret::<u64, f64>(tail_bits);
+  let next = index + 1_u64;
+  let base_bits = exp_table[next];
+  let bits = base_bits +wrap top;
+  let part_58 = fmul.strict(r, r);
+  let r2 = part_58;
+  let part_59 = fadd.strict(tail, r);
+  let part_60 = fmul.strict(r, 0.16666666666665885_f64);
+  let part_61 = fadd.strict(0.49999999999996784_f64, part_60);
+  let part_62 = fmul.strict(r2, part_61);
+  let part_63 = fadd.strict(part_59, part_62);
+  let part_64 = fmul.strict(r2, r2);
+  let part_65 = fmul.strict(r, 0.008333335853059549_f64);
+  let part_66 = fadd.strict(0.0416666808410674_f64, part_65);
+  let part_67 = fmul.strict(part_64, part_66);
+  let part_68 = fadd.strict(part_63, part_67);
+  let tmp = part_68;
+  if fge(magnitude, 512.0_f64) {
+    return pow_special(tmp: tmp, bits: bits, ki: ki);
+  }
+  let scale = reinterpret::<u64, f64>(bits);
+  let part_69 = fmul.strict(scale, tmp);
+  let part_70 = fadd.strict(scale, part_69);
+  let result = part_70;
+  return result;
+}
+
+fn pow_integer(bits: u64) -> kind: u64 pure {
+  doc "Returns zero for a fractional value, one for an odd integer, two for an even integer, from the exponent and significand.";
+  let top = ishr.wrap(bits, 52_u32);
+  let exponent = iand(top, 2047_u64);
+  if exponent < 1023_u64 {
+    return 0_u64;
+  }
+  if exponent > 1075_u64 {
+    return 2_u64;
+  }
+  let distance = 1075_u64 -wrap exponent;
+  let shift = cvt.wrap::<u64, u32>(distance);
+  let unit_bit = ishl.wrap(1_u64, shift);
+  let mask = unit_bit -wrap 1_u64;
+  let fraction = iand(bits, mask);
+  if fraction != 0_u64 {
+    return 0_u64;
+  }
+  let odd = iand(bits, unit_bit);
+  if odd != 0_u64 {
+    return 1_u64;
+  }
+  return 2_u64;
+}
+
+fn pow(a: f64, b: f64) -> value: f64 pure {
+  doc "Port of musl pow.c, Copyright (c) 2018 Arm Limited, MIT license (full terms in research/experiments/halo-number/README.md), with C pow's special values and its Arm FMA log/exp algorithm. The floating-point environment is round-to-nearest, as required by OP-3.";
+  let original = reinterpret::<f64, u64>(a);
+  let ybits = reinterpret::<f64, u64>(b);
+  let ix = iand(original, 9223372036854775807_u64);
+  let iy = iand(ybits, 9223372036854775807_u64);
+  let negative_x = original >= sign_bit;
+  let negative_y = ybits >= sign_bit;
+  if iy == 0_u64 {
+    return 1.0_f64;
+  }
+  if original == 4607182418800017408_u64 {
+    return 1.0_f64;
+  }
+  let xnan = ix > infinity_bits;
+  let ynan = iy > infinity_bits;
+  if ynan {
+    let quiet = ior(ybits, 2251799813685248_u64);
+    return reinterpret::<u64, f64>(quiet);
+  }
+  if xnan {
+    let quiet = ior(original, 2251799813685248_u64);
+    return reinterpret::<u64, f64>(quiet);
+  }
+  if iy == infinity_bits {
+    if ix == 4607182418800017408_u64 {
+      return 1.0_f64;
+    }
+    let below_one = ix < 4607182418800017408_u64;
+    if bxor(below_one, negative_y) {
+      return 0.0_f64;
+    }
+    return finf::<f64>();
+  }
+  let integer = pow_integer(bits: ybits);
+  let odd = integer == 1_u64;
+  let negative_result = band(negative_x, odd);
+  let zero = ix == 0_u64;
+  let infinite = ix == infinity_bits;
+  if bor(zero, infinite) {
+    let square = fmul.strict(a, a);
+    if negative_result {
+      set square = fneg(square);
+    }
+    if negative_y {
+      return fdiv.strict(1.0_f64, square);
+    }
+    return square;
+  }
+  if negative_x {
+    if integer == 0_u64 {
+      return fnan::<f64>();
+    }
+  }
+  let exponent_y = ishr.wrap(iy, 52_u32);
+  if exponent_y < 958_u64 {
+    return 1.0_f64;
+  }
+  if exponent_y >= 1086_u64 {
+    if ix == 4607182418800017408_u64 {
+      return 1.0_f64;
+    }
+    let above_one = ix > 4607182418800017408_u64;
+    let grows = bxor(above_one, negative_y);
+    if grows {
+      return finf::<f64>();
+    }
+    return 0.0_f64;
+  }
+  let top = ishr.wrap(ix, 52_u32);
+  if top == 0_u64 {
+    let magnitude = fabs(a);
+    let normalized = fmul.strict(magnitude, 4503599627370495.8_f64);
+    let normalized_bits = reinterpret::<f64, u64>(normalized);
+    set ix = normalized_bits -wrap 234187180623265792_u64;
+  }
+  let logarithm = pow_log(ix: ix);
+  let hi = logarithm.hi;
+  let lo = logarithm.lo;
+  let part_71 = fmul.strict(b, hi);
+  let ehi = part_71;
+  let part_72 = fmul.strict(b, lo);
+  let part_73 = fneg(ehi);
+  let part_74 = ffma.strict(b, hi, part_73);
+  let part_75 = fadd.strict(part_72, part_74);
+  let elo = part_75;
+  let sign_bias = 0_u64;
+  if negative_result {
+    set sign_bias = 262144_u64;
+  }
+  return pow_exp(x: ehi, xtail: elo, sign_bias: sign_bias);
+}

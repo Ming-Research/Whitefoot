@@ -1,1 +1,14 @@
+public fn format_number(value: f64, out: &[u8]) -> length: u64 writes(out) contract {
+  requires out^.len >= 32_u64;
+  ensures length <= 32_u64;
+} doc "Writes Lua 5.1 tostring/%.14g text into out; returns its byte length, without a NUL terminator. Capacity 32 covers every binary64 value, including signed zero and NaN.";
 
+public fn str2number(bytes: &[u8]) -> number: Option<f64> reads(bytes) doc "Reads Lua 5.1 luaO_str2d syntax in the macOS C locale: decimal and hexadecimal strtod forms, inf and nan, with optional surrounding ASCII whitespace. The first NUL ends the input; a remaining nonspace suffix is refused. Overflow and underflow are accepted.";
+
+public fn fmod(a: f64, b: f64) -> value: f64 pure doc "C fmod, with the dividend's sign and a truncated quotient; this is math.fmod, distinct from Lua's floor-based % operator.";
+
+public fn pow(a: f64, b: f64) -> value: f64 pure doc "Binary64 a raised to b using musl's Arm log/exp algorithm, including C pow special values. Finite results can differ in their last bit from the host C library.";
+
+public fn floor(value: f64) -> rounded: f64 pure doc "Rounds toward negative infinity using ffloor.";
+
+public fn ceil(value: f64) -> rounded: f64 pure doc "Rounds toward positive infinity using fceil.";
