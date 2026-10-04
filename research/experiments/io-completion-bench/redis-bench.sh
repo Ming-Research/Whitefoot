@@ -576,7 +576,7 @@ if [ "$MODE" = compare ]; then
                 wait "$recorder" || true
                 stop
                 "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
-                    --sort dso,symbol --percent-limit 0.3 -g none >"$OUT/profile-$name-$n.txt" 2>/dev/null
+                    --sort dso,symbol --percent-limit 0.01 -g none >"$OUT/profile-$name-$n.txt" 2>/dev/null
                 if [ -n "$PERF_CALLERS" ]; then
                     "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
                         --sort dso,symbol --percent-limit 1 -g caller,0.5,callee,function,percent \
