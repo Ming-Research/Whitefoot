@@ -143,6 +143,8 @@ void wf__shared_map_key(void *object, const unsigned char *key, uint64_t length)
 /* Holds the collected keys' entries, or the whole map when they cannot be
  * held together. */
 void wf__shared_map_hold_keys(void *object) {
+    extern void wf_diag_hold(void);
+    wf_diag_hold();
     wf_cmap_hold_set(wf_shared_map_user((wf_shared_map *)object), &wf_shared_map_keyed);
 }
 
