@@ -75,9 +75,9 @@ def corpus():
         'return cjson.encode({[math.huge]=1})',
         'cjson.encode_invalid_numbers("null"); return cjson.encode({[math.huge]=1})',
         'cjson.encode_invalid_numbers(true); return cjson.encode({[math.huge]=1})',
-        'return cjson.decode("\\\"\\u0041\\uD800\\\"")',
-        'return cjson.decode("\\\"\\uD834\\uDD1E\\\"")',
-        'return cjson.decode("\\\"\\u0041\\u0042\\\"")',
+        r'return cjson.decode([["\u0041\uD800"]])',
+        r'return cjson.decode([["\uD834\uDD1E"]])',
+        r'return cjson.decode([["\u0041\u0042"]])',
         'local j=cjson.new(); local k=j.new(); j.encode_invalid_numbers(true); return {j.encode(math.huge),k.encode_invalid_numbers(),cjson.encode_invalid_numbers()}',
         'return {cjson.encode_sparse_array()}',
         'return {cjson.encode_sparse_array("on",3,5)}',
@@ -90,6 +90,11 @@ def corpus():
     add('cmsgpack','return cmsgpack.unpack(string.char(129,203,127,248,0,0,0,0,0,0,1))')
     for source in ('return {struct.unpack("", "", -1)}','return {struct.unpack("c0", "abc")}', 'return struct.pack("c4","abc")', 'return {struct.unpack("!8bd",struct.pack("!8bd",1,1.25))}'):
         add('struct',source)
+    add('cmsgpack', 'local t={cmsgpack.unpack(string.rep(string.char(1),300))}; return {#t,t[1],t[256],t[300]}')
+    add('struct', 'local t={struct.unpack(string.rep("b",300),string.rep(string.char(1),300))}; return {#t,t[1],t[256],t[300],t[301]}')
+    for lib in ('cmsgpack', 'struct'):
+        expr = 'cmsgpack.pack("a\\000\\255",65535,-33)' if lib=='cmsgpack' else 'struct.pack(">I2s",65535,"a\\000\\255")'
+        add(lib, 'local s='+expr+'; local t={}; for i=1,#s do t[i]=string.format("%02x",s:byte(i)) end return table.concat(t)')
     return rows
 
 REFERENCE = r"""

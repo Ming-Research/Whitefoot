@@ -100,7 +100,9 @@ fn struct_option(bytes: &Box<Slots<u8>>, state: &StructFormat) -> r: unit reads(
   if bor(low_i_v8, big_i_v9) {
     let n_v10 = struct_num(bytes: bytes, state: state, default_value: 4_u64);
     set state^.size = n_v10;
-    if n_v10 > 32_u64 {
+    let oversized = n_v10 > 32_u64;
+    let valid_size = state^.error == 0_u8;
+    if band(oversized, valid_size) {
       set state^.error = 2_u8;
     }
   }
@@ -117,7 +119,9 @@ fn struct_option(bytes: &Box<Slots<u8>>, state: &StructFormat) -> r: unit reads(
     let nonpower_v13 = iand(align_v11, before_v12);
     let zero_v14 = align_v11 == 0_u64;
     let bits_v15 = nonpower_v13 != 0_u64;
-    if bor(zero_v14, bits_v15) {
+    let invalid_align = bor(zero_v14, bits_v15);
+    let valid_align = state^.error == 0_u8;
+    if band(invalid_align, valid_align) {
       set state^.error = 3_u8;
     }
   }
@@ -323,7 +327,8 @@ fn library_struct(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: 
           }
           Not() => {
             let index_v66 = arg_v42 +sat 1_u64;
-            return lib_argerror(vm: vm, id: id, index: index_v66, argc: argc, value: v_v63, expected: &struct_number[0_u64..6_u64]);
+            let pack_argc = argc +sat 1_u64;
+            return lib_argerror(vm: vm, id: id, index: index_v66, argc: pack_argc, value: v_v63, expected: &struct_number[0_u64..6_u64]);
           }
         }
         set arg_v42 = arg_v42 +sat 1_u64;
@@ -415,7 +420,8 @@ fn library_struct(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: 
           match str_of(v: str_v97) {
             NoHandle() => {
               let index_v98 = arg_v42 +sat 1_u64;
-              return lib_argerror(vm: vm, id: id, index: index_v98, argc: argc, value: v_v96, expected: &struct_string[0_u64..6_u64]);
+              let pack_argc = argc +sat 1_u64;
+              return lib_argerror(vm: vm, id: id, index: index_v98, argc: pack_argc, value: v_v96, expected: &struct_string[0_u64..6_u64]);
             }
             Handle(..) => {
             }

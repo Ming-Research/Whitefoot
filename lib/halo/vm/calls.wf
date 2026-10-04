@@ -241,7 +241,28 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
       return Step::Error();
     }
     let v = stack^.inner[fslot];
-    match func_of(v: v) {
+    let view = func_of(v: v);
+    let codec_closure = False();
+    match view {
+      Lua(h: closure_handle) => {
+        let hi = cvt::<u32, u64>(closure_handle);
+        if hi < vm^.heap.closures.inner.len {
+          if vm^.heap.closures.inner[hi].live {
+            let proto = vm^.heap.closures.inner[hi].payload.proto;
+            let marker = iand(proto, 2147483648_u32);
+            if marker != 0_u32 {
+              set view = FuncView::Native(id: proto);
+              set codec_closure = True();
+            }
+          }
+        }
+      }
+      Native(..) => {
+      }
+      Other() => {
+      }
+    }
+    match view {
       Lua(h: bound_h_2) => {
         return enter_lua(vm: vm, stack: stack, h: bound_h_2, func: fslot, argc: nargs, wanted: nr, return_pc: return_pc, tail: tailing);
       }
@@ -269,14 +290,19 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
           let byte_results = bound_id_1 == builtin_string_byte;
           let protected_results = bound_id_1 == builtin_xpcall;
           let many = bor(unpack_results, byte_results);
-          if bor(many, protected_results) {
+          let msgpack_lower = bound_id_1 >= 113_u32;
+          let msgpack_upper = bound_id_1 <= 115_u32;
+          let msgpack_results = band(msgpack_lower, msgpack_upper);
+          let struct_results = bound_id_1 == 137_u32;
+          let codecs_many = bor(msgpack_results, struct_results);
+          let native_many = bor(many, codecs_many);
+          if bor(native_many, protected_results) {
             let room = fslot +sat 8001_u64;
             ensure_stack(stack: stack, size: room);
           }
           let out = HostOutcome::Raised();
-          let bound_codec = iand(bound_id_1, 2147483648_u32);
           let host_id = bound_id_1 >= 4096_u32;
-          let unbound = bound_codec == 0_u32;
+          let unbound = bnot(codec_closure);
           if band(host_id, unbound) {
             set out = Host::call(env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
           } else {

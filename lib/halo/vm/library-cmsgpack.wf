@@ -324,7 +324,7 @@ fn mp_read(vm: &Vm, source: &[u8], cursor: &MpCursor) -> r: Value reads(source),
 fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) {
   if id == 112_u32 {
     if argc == 0_u64 {
-      return lib_argtext(vm: vm, id: id, index: 0_u64, text: &mp_empty[0_u64..28_u64]);
+      return lib_argtext(vm: vm, id: id, index: 0_u64, text: &mp_empty[0_u64..29_u64]);
     }
     let out_v77 = box_slots_new::<u8>(capacity: 0_u64);
     for (i_v78 in 0_u64..argc) {
@@ -334,17 +334,6 @@ fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id
     let value_v80 = bytes_value(vm: vm, bytes: &out_v77);
     return lib_result(stack: stack, func: func, value: value_v80);
   }
-  let av_v81 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
-  let sv_v82 = coerce_string(vm: vm, v: av_v81);
-  match str_of(v: sv_v82) {
-    NoHandle() => {
-      return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: av_v81, expected: &mp_string[0_u64..6_u64]);
-    }
-    Handle(..) => {
-    }
-  }
-  let source_v83 = box_slots_new::<u8>(capacity: 0_u64);
-  bytes_string(vm: vm, bytes: &source_v83, value: sv_v82);
   let limit_v84 = 2147483647_i64;
   let offset_v85 = 0_i64;
   if id == 114_u32 {
@@ -380,6 +369,17 @@ fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id
       }
     }
   }
+  let av_v81 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let sv_v82 = coerce_string(vm: vm, v: av_v81);
+  match str_of(v: sv_v82) {
+    NoHandle() => {
+      return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: av_v81, expected: &mp_string[0_u64..6_u64]);
+    }
+    Handle(..) => {
+    }
+  }
+  let source_v83 = box_slots_new::<u8>(capacity: 0_u64);
+  bytes_string(vm: vm, bytes: &source_v83, value: sv_v82);
   let n_v93 = source_v83.inner.len;
   let bad_offset_v94 = offset_v85 < 0_i64;
   let bad_limit_v95 = limit_v84 < 0_i64;
@@ -452,7 +452,7 @@ const mp_offset_b: Array<u8, 27> = " greater than input length ";
 fn mp_request_error(vm: &Vm, offset: i64, length: u64, invalid: Bool) -> r: HostOutcome writes(vm) {
   let bytes_v108 = box_slots_new::<u8>(capacity: 128_u64);
   if invalid {
-    bytes_append(bytes: &bytes_v108, text: &mp_invalid_a[0_u64..40_u64]);
+    bytes_append(bytes: &bytes_v108, text: &mp_invalid_a[0_u64..41_u64]);
   } else {
     bytes_append(bytes: &bytes_v108, text: &mp_offset_a[0_u64..13_u64]);
   }
@@ -474,4 +474,29 @@ fn mp_request_error(vm: &Vm, offset: i64, length: u64, invalid: Bool) -> r: Host
   bytes_push(bytes: &bytes_v108, byte: 46_u8);
   let n_v117 = bytes_v108.inner.len;
   return lib_failure(vm: vm, text: &bytes_v108.inner[0_u64..n_v117]);
+}
+
+const mp_key_nil: Array<u8, 18> = "table index is nil";
+
+const mp_key_nan: Array<u8, 18> = "table index is NaN";
+
+fn cmsgpack_raw_error(vm: &Vm) -> r: Bool reads(vm) {
+  let bytes = box_slots_new::<u8>(capacity: 18_u64);
+  bytes_string(vm: vm, bytes: &bytes, value: vm^.error);
+  if bytes.inner.len != 18_u64 {
+    return False();
+  }
+  let nil_error = True();
+  let nan_error = True();
+  for (i in 0_u64..18_u64) {
+    if i < bytes.inner.len {
+      if bytes.inner[i] != mp_key_nil[i] {
+        set nil_error = False();
+      }
+      if bytes.inner[i] != mp_key_nan[i] {
+        set nan_error = False();
+      }
+    }
+  }
+  return bor(nil_error, nan_error);
 }

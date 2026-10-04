@@ -770,6 +770,23 @@ fn lib_index(vm: &Vm, value: Value, default_value: i64) -> r: i64 reads(vm) {
   }
 }
 
+fn lib_call_name(vm: &Vm, bytes: &Box<Slots<u8>>, id: u32) -> r: unit reads(vm), writes(bytes) {
+  let n = vm^.frames.inner.len;
+  if n > 0_u64 {
+    let last = n - 1_u64;
+    if vm^.frames.inner[last].flags == protected_flag {
+      bytes_push(bytes: bytes, byte: 63_u8);
+      return unit;
+    }
+  }
+  let row = library_name(id: id);
+  let length = row.length;
+  if length <= 32_u64 {
+    bytes_append(bytes: bytes, text: &row.name[0_u64..length]);
+  }
+  return unit;
+}
+
 fn lib_argerror(vm: &Vm, id: u32, index: u64, argc: u64, value: Value, expected: &[u8]) -> r: HostOutcome reads(expected), writes(vm) {
   let local_bytes_134 = box_slots_new::<u8>(capacity: 128_u64);
   bytes_append(bytes: &local_bytes_134, text: &library_lib_text_0[0_u64..14_u64]);
@@ -778,11 +795,7 @@ fn lib_argerror(vm: &Vm, id: u32, index: u64, argc: u64, value: Value, expected:
   let local_text_137 = coerce_string(vm: vm, v: local_n_136);
   bytes_string(vm: vm, bytes: &local_bytes_134, value: local_text_137);
   bytes_append(bytes: &local_bytes_134, text: &library_lib_text_1[0_u64..5_u64]);
-  let local_row_138 = library_name(id: id);
-  let local_length_139 = local_row_138.length;
-  if local_length_139 <= 32_u64 {
-    bytes_append(bytes: &local_bytes_134, text: &local_row_138.name[0_u64..local_length_139]);
-  }
+  lib_call_name(vm: vm, bytes: &local_bytes_134, id: id);
   bytes_append(bytes: &local_bytes_134, text: &library_lib_text_2[0_u64..3_u64]);
   bytes_append(bytes: &local_bytes_134, text: expected);
   bytes_append(bytes: &local_bytes_134, text: &library_lib_text_3[0_u64..15_u64]);
@@ -805,11 +818,7 @@ fn lib_argtext(vm: &Vm, id: u32, index: u64, text: &[u8]) -> r: HostOutcome read
   let local_n_144 = coerce_string(vm: vm, v: local_num_143);
   bytes_string(vm: vm, bytes: &local_bytes_141, value: local_n_144);
   bytes_append(bytes: &local_bytes_141, text: &library_lib_text_6[0_u64..5_u64]);
-  let local_row_145 = library_name(id: id);
-  let local_length_146 = local_row_145.length;
-  if local_length_146 <= 32_u64 {
-    bytes_append(bytes: &local_bytes_141, text: &local_row_145.name[0_u64..local_length_146]);
-  }
+  lib_call_name(vm: vm, bytes: &local_bytes_141, id: id);
   bytes_append(bytes: &local_bytes_141, text: &library_lib_text_7[0_u64..3_u64]);
   bytes_append(bytes: &local_bytes_141, text: text);
   bytes_push(bytes: &local_bytes_141, byte: 41_u8);

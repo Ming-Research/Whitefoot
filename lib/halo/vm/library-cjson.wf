@@ -65,6 +65,10 @@ fn cjson_table(vm: &Vm, config: u64) -> r: Value writes(vm) {
           let key_v14 = intern(heap: &vm^.heap, bytes: &row_v12.name[0_u64..n_v13]);
           let id_v15 = cjson_bound(id: row_v12.id, config: config);
           let v_v16 = Value::Builtin(id: id_v15);
+          if config > 0_u64 {
+            let upvals = array_filled::<u32, 0>(value: 0_u32);
+            set v_v16 = pkg::heap::new_closure(heap: &vm^.heap, proto: id_v15, upvals: &upvals[0_u64..0_u64]);
+          }
           let ignored_v17 = table_set(heap: &vm^.heap, t: table_v10, key: key_v14, val: v_v16);
         }
       }
