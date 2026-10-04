@@ -297,6 +297,7 @@ impl<'unit> Checker<'_, 'unit> {
         // control-flow join gave more than one path [REF-1]; every check must
         // then hold for every member.
         let mut actual_paths: Vec<Vec<ResolvedPlace>> = Vec::with_capacity(fields.len());
+        let mut actual_through_state = Vec::with_capacity(fields.len());
         let mut actual_captures = Vec::with_capacity(fields.len());
         let mut actual_modes = Vec::with_capacity(fields.len());
         let call = self.types.declarations.tree.path(node)?.clone();
@@ -450,6 +451,12 @@ impl<'unit> Checker<'_, 'unit> {
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
             argument_atoms.push(atom);
+            actual_through_state.push(self.body.atomic_grant.as_ref().is_some_and(|grant| {
+                argument
+                    .reference
+                    .as_ref()
+                    .is_some_and(|reference| reference.atomic_sources.contains(&grant.state))
+            }));
             actual_paths.push(paths);
             actual_captures.push(
                 self.body.note_capture(
@@ -518,7 +525,9 @@ impl<'unit> Checker<'_, 'unit> {
         let mut written_whole = Vec::new();
         if let Some(grant) = self.body.atomic_grant.as_mut() {
             for effect in &substituted {
-                if effect.place.root != PlaceRoot::Binding(grant.state) {
+                if !actual_through_state[effect.argument]
+                    || effect.place.root != PlaceRoot::Binding(grant.state)
+                {
                     continue;
                 }
                 let actual = &actual_paths[effect.argument];
