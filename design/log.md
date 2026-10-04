@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-04 Key sets in insertion order, the lock order the runtime's
+
+Nodes: language/waiting/shared-objects/keyed-tables, compiler/waiting-contexts/concurrent-map
+
+Owner-approved: 2026-10-04, in the session, written in Chinese: direction E for key sets after the MSET investigation ("I think E is fine"; the payload dropped, "2 agreed"; block order apart from lock order agreed once unit order was shown unchanged, "I meant the former, so it is not affected, good", translated); after the handoff of PR #221, which showed every rule change with its before and after behavior and these tree edits, Q36 A ("Q36 agreed", translated).
+
+Summary: A key set keeps its distinct keys in first-insertion order and `key_set_insert` answers a key's index, so a command naming several keys replies and records in its arguments' order and keeps its own merge policy in data at that index, instead of keys in byte order with payloads, which made every insertion search and move items and leaked the runtime's lock order into program-visible order; holds lock in increasing order of the keys' 62-bit tags, then their bytes, which compares integers where byte order called `memcmp`. The cost of the byte-ordered set and the effect of this one are measured in [MSET after the redesign](../research/investigations/shared-state/DESIGN.md#mset-after-the-redesign).
+
 ## 2026-10-04 Package bindings
 
 Nodes: language/packages, language/name-resolution, language/standard-library

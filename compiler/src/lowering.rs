@@ -364,7 +364,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 29] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 27] = [
     // [OP-13] the ten construction functions.
     "box_new",
     "array_filled",
@@ -396,9 +396,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 29] = [
     "keyed_table_new",
     "keyed_table_count",
     "key_set_new",
-    "key_set_put",
-    "key_set_add",
-    "key_set_payload",
+    "key_set_insert",
 ];
 
 mod builder;

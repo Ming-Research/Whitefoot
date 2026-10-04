@@ -151,10 +151,7 @@ macro_rules! operation_operands {
                 set,
                 ..
             } => vec![$value(entries), $value(position), $value(set)],
-            IrOperation::KeySetPut {
-                set, key, payload, ..
-            } => vec![$value(set), $value(key), $value(payload)],
-            IrOperation::KeySetPayload { set, index } => vec![$value(set), $value(index)],
+            IrOperation::KeySetInsert { set, key } => vec![$value(set), $value(key)],
             IrOperation::ArrayIndex { root, offset, .. } => match root {
                 IrArrayRoot::Value(value) => vec![$value(value), $value(offset)],
                 IrArrayRoot::Constant(_) => vec![$value(offset)],

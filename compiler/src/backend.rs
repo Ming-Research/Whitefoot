@@ -40,7 +40,7 @@ pub(crate) const TABLE_ENTRY_SIZE: u64 = 40;
 
 /// Bytes of the record a hold of a table's entries keeps in the frame;
 /// equals `WF_TABLE_HOLD_SIZE` in `completion/bridge.h`.
-pub(crate) const TABLE_HOLD_SIZE: u64 = 248;
+pub(crate) const TABLE_HOLD_SIZE: u64 = 280;
 
 /// Bytes of the record a guard's watch keeps in the frame; equals
 /// `WF_WATCH_SIZE` in `completion/bridge.h`.

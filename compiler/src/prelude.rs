@@ -335,28 +335,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
-        "prelude/key_set_put.wf",
+        "prelude/key_set_insert.wf",
         PreludeSource::Function,
-        r#"fn key_set_put(keys: &KeySet, key: &[u8], payload: u64) -> result: unit reads(key), writes(keys) contract {
+        r#"fn key_set_insert(keys: &KeySet, key: &[u8]) -> index: u64 reads(key), writes(keys) contract {
   ensures keys^.len >= entry(keys)^.len;
   ensures keys^.len <= entry(keys)^.len + 1_u64;
-};
-"#,
-    ),
-    (
-        "prelude/key_set_add.wf",
-        PreludeSource::Function,
-        r#"fn key_set_add(keys: &KeySet, key: &[u8], amount: u64) -> result: unit reads(key), writes(keys) contract {
-  ensures keys^.len >= entry(keys)^.len;
-  ensures keys^.len <= entry(keys)^.len + 1_u64;
-};
-"#,
-    ),
-    (
-        "prelude/key_set_payload.wf",
-        PreludeSource::Function,
-        r#"fn key_set_payload(keys: &KeySet, index: u64) -> payload: u64 reads(keys) contract {
-  requires index < keys^.len;
+  ensures index < keys^.len;
 };
 "#,
     ),
@@ -433,10 +417,8 @@ mod tests {
         // only per concrete instance, of which this unit, calling none of
         // them, has none.
         let ungeneric = [
-            "key_set_add",
+            "key_set_insert",
             "key_set_new",
-            "key_set_payload",
-            "key_set_put",
         ];
         assert_eq!(signatures, ungeneric);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
