@@ -170,7 +170,9 @@ counts twice.
 - **Units (first layout).** Each table is a unit whose entries are locked by
   key, or whole. All other fields of the state form one unit together, as
   today's object lock does. Units are ordered by the declaration order of
-  their first fields, and one table's entries by the byte order of their keys.
+  their first fields, and one table's entries by the runtime's order of their
+  keys, a hash of each key and then its bytes (the first layout used the
+  keys' byte order, which "Keys: a set in insertion order" replaced).
 - **Taking.** The implementation takes each unit before the block first uses
   it, and takes an earlier unit before any later one. A table's entries named
   in the header are taken in one step, sorted, before the guard and the block,
@@ -292,10 +294,11 @@ statements in nine files.
   built before the statement: `DEL` with no payload, since a key named twice
   is removed and counted once today; `EXISTS` with an occurrence count, since
   a live key named twice counts twice and an expired one counts zero today;
-  and `MSET` with the position of each key's last value. Their loops then
-  visit distinct keys in byte order instead of argument order, which nothing
-  observes: each answers with a count or `OK` after the statement, and the
-  logged record is the command as sent. The one-key branches of `DEL` and
+  and `MSET` with the position of each key's last value. Their loops visit
+  distinct keys in the order the command first names them, so the removals
+  of keys they find expired are recorded in that order, as Redis records
+  them; with the first layout's byte order those records came out in byte
+  order, which replayed to the same state but was not Redis's file. The one-key branches of `DEL` and
   `EXISTS` exist only because their many-key statements held the whole map,
   and can fold into them.
 - **1 statement counts the table** (`DBSIZE`) and holds it whole, as today.
@@ -473,6 +476,11 @@ same requests (52K for `base`, 51K for `main`), so at two server CPUs `main`
 spent no more server CPU per `MSET` than `base`, but that run counts spinning
 for a cell (`try_entry`, 13% in both) as work, and one run carries no spread.
 
+The raw samples of the runs below that produced them, Measurements 2, 3 and 8,
+are kept in
+[mset-after-redesign.csv](../../experiments/io-completion-bench/mset-after-redesign.csv),
+one line per measured run with its run id, image and revision.
+
 **Measurement 2.** The same images on the same kind of runner, the rate
 taken over the run's wall time and the server's CPU time per request read
 from `/proc` before and after each run, at one and at two server CPUs, the
@@ -630,7 +638,8 @@ does not expose.
 on 2026-10-04: a key set keeps its distinct keys in first-insertion order,
 inserting returns the key's stable index, payloads leave the language, and
 the order the hold locks entries in is the implementation's. Before writing
-its rules, [keyset-order-bench.c](keyset-order-bench.c) builds a set from
+its rules, a fixture (`keyset-order-bench.c` in this directory at commit
+`1b1556b6f`) builds a set from
 ten keys of redis-benchmark's shape (`key:` and twelve digits from 100,000)
 and yields them in lock order, three ways: v0.89's ordered insertion; E,
 a 64-bit hash per key, a 32-slot index table for repeats, the key appended
@@ -642,7 +651,8 @@ loaded): ordered 399.8 ns per set, E 140.2, `cea9188d4` 156.5. E's
 checksum equals the ordered one's, so the two produce the same keys and the
 same last-wins values. This is a single-threaded fixture with its own
 storage; E's cost in firn is measured on the 14900K once it is implemented.
-Remove the fixture when that measurement supersedes it.
+Measurement 8 superseded it, and the fixture left the tree; it
+remains at that commit.
 
 **Measurement 8: E in firn.** E implemented (PR #221) and measured on the
 14900K at one CPU against `cea9188d4` (`base`) and PR #212's head

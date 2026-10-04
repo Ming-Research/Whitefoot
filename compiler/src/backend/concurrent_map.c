@@ -1326,6 +1326,8 @@ typedef struct {
 
 typedef struct {
     uint64_t room;
+    /* The items in use, so that a spare's index is cleared slot by slot. */
+    uint64_t count;
     uint64_t bytes_used;
     uint64_t bytes_room;
     unsigned char *bytes;
@@ -1376,6 +1378,7 @@ static uint64_t store_room(uint64_t keys) {
 static key_store *new_store(uint64_t room) {
     key_store *s = take(store_bytes(room));
     s->room = room;
+    s->count = 0;
     s->bytes_used = 0;
     s->bytes_room = 0;
     s->bytes = NULL;
@@ -1394,8 +1397,19 @@ static key_store *first_store(uint64_t room) {
     key_store *spare = WF_CMAP_SPARE_KEYS();
     if (spare != NULL && spare->room >= room) {
         WF_CMAP_SPARE_KEYS() = NULL;
+        /* Clears only the slots the last set used, so that a small set
+         * reusing a large spare does not pay for its whole index. A slot is
+         * found by its exact value, past slots already cleared. */
+        uint32_t *slots = store_index(spare);
+        uint64_t mask = spare->room * 2 - 1;
+        for (uint64_t k = 0; k < spare->count; k++)
+            for (uint64_t i = spare->items[k].tag & mask;; i = (i + 1) & mask)
+                if (slots[i] == (uint32_t)(k + 1)) {
+                    slots[i] = 0;
+                    break;
+                }
+        spare->count = 0;
         spare->bytes_used = 0;
-        memset(store_index(spare), 0, (size_t)spare->room * 2 * sizeof(uint32_t));
         return spare;
     }
 #endif
@@ -1431,6 +1445,7 @@ static key_store *room_for(wf_key_set *set, uint64_t length) {
         grown->bytes_room = s->bytes_room;
         grown->bytes = s->bytes;
         memcpy(grown->items, s->items, (size_t)set->len * sizeof(key_item));
+        grown->count = set->len;
         for (uint64_t i = 0; i < set->len; i++)
             index_item(grown, i);
         WF_CMAP_GIVE(s, store_bytes(s->room));
@@ -1482,6 +1497,7 @@ uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint6
     s->items[index].tag = tag;
     s->bytes_used += length;
     set->len = index + 1;
+    s->count = index + 1;
     index_item(s, index);
     return index;
 }
@@ -1547,7 +1563,8 @@ void wf_cmap_key_set_release(wf_key_set *set) {
 /* Holds of several entries: a statement whose keys are values when it
  * begins holds their entries and no others, so statements on other keys go
  * on beside it. A hold's keys are locked in increasing order of their tags,
- * then lengths, then bytes, the same order in every table, so
+ * then of their bytes, a proper prefix first, the same order in every
+ * table, so
  * a statement waits for a key's entry only while it holds entries of keys
  * before it: holds never wait for each other in a cycle, and a keyed
  * statement holds one entry and waits for none [WAIT-2]. A probe locks every
@@ -1569,11 +1586,12 @@ enum { KEYS_INCREASING, KEYS_NONDECREASING, KEYS_SHUFFLED };
 
 static wf_cmap_held *held_keys(wf_cmap_holding *hold) { return hold->keys != NULL ? hold->keys : hold->inline_keys; }
 
-/* The key that is rank-th in byte order. */
+/* The key that is rank-th in the hold's lock order. */
 static inline wf_cmap_held *ranked(wf_cmap_held *keys, uint64_t rank) { return &keys[keys[rank].rank]; }
 
-/* A hold's lock order: by tag, then length, then bytes, so that ordering
- * compares integers and reads key bytes only for keys of one tag. */
+/* A hold's lock order: by tag, the key's 62-bit hash, then by bytes in
+ * lexicographic order, a proper prefix first, so that ordering compares
+ * integers and reads key bytes only for keys of one tag. */
 static int held_order(const wf_cmap_held *a, const wf_cmap_held *b) {
     if (a->tag != b->tag)
         return a->tag < b->tag ? -1 : 1;
@@ -1694,7 +1712,7 @@ uint64_t wf_cmap_hold_keys(wf_cmap_holding *hold, const wf_key_set *set) {
     return first;
 }
 
-/* Heap sort of the ranks by their keys' bytes, in place. */
+/* Heap sort of the ranks in the hold's lock order, in place. */
 static void sift_ranks(wf_cmap_held *keys, uint64_t root, uint64_t end) {
     for (;;) {
         uint64_t child = 2 * root + 1;

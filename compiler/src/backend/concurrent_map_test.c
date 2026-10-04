@@ -2191,6 +2191,22 @@ static void key_sets(void) {
              (uint64_t)(atomic_load(&blocks_out) - larger), set.len);
     wf_cmap_key_set_release(&set);
     wf_cmap_key_set_drop_spare();
+    /* A small set built in a large spare finds none of the spare's earlier
+     * keys: their index slots were cleared, not left to answer old indices. */
+    wf_cmap_key_set_new(&set, 100);
+    for (unsigned i = 0; i < 100; i++) {
+        unsigned char key[3] = {'s', (unsigned char)('0' + i / 10), (unsigned char)('0' + i % 10)};
+        wf_cmap_key_set_insert(&set, key, 3);
+    }
+    wf_cmap_key_set_release(&set);
+    wf_cmap_key_set_new(&set, 2);
+    uint64_t reused_first = wf_cmap_key_set_insert(&set, (const unsigned char *)"s57", 3);
+    uint64_t reused_second = wf_cmap_key_set_insert(&set, (const unsigned char *)"s05", 3);
+    uint64_t reused_again = wf_cmap_key_set_insert(&set, (const unsigned char *)"s57", 3);
+    if (reused_first != 0 || reused_second != 1 || reused_again != 0 || set.len != 2)
+        fail("a set in a reused spare found an earlier set's key (first, second)", reused_first, reused_second);
+    wf_cmap_key_set_release(&set);
+    wf_cmap_key_set_drop_spare();
     /* A set whose bytes pass the spare's bound is given back whole. */
     static unsigned char long_key[40000];
     memset(long_key, 'x', sizeof long_key);

@@ -112,7 +112,7 @@ void wf_cmap_key_set_drop_spare(void);
  * its tag; its locked cell and slot, the cell kept only by the first of
  * equal keys, its leader; `rank`, which in the record at index i names the
  * position of the key that is i-th in the hold's lock order, by tag, then
- * length, then bytes; whether its entry was created for the hold; and
+ * by bytes, a proper prefix first; whether its entry was created for the hold; and
  * whether it leads its run of equal keys. */
 typedef struct {
     const unsigned char *key;
@@ -167,8 +167,8 @@ uint64_t wf_cmap_hold_key(wf_cmap_holding *hold, const unsigned char *key, uint6
 uint64_t wf_cmap_hold_keys(wf_cmap_holding *hold, const wf_key_set *set);
 /* Holds the entries of the added keys together, creating the absent ones,
  * for a statement that reaches no other entry of the map: their cells are
- * locked in increasing order of the keys' tags, then lengths, then bytes,
- * without repeats, the order every hold uses, so two holds never wait for each other in a cycle. When
+ * locked in increasing order of the keys' tags, then of their bytes, a
+ * proper prefix first, without repeats, the order every hold uses, so two holds never wait for each other in a cycle. When
  * it would wait past its patience, meets a cell it holds itself, which two
  * of its keys of one hash make it do, or finds the table full, it gives
  * everything back and holds the whole map instead, as wf_cmap_hold does,

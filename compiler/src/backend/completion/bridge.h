@@ -381,7 +381,8 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * and release, which keeps each entry whose slot's tag, the `tag_width`
  * bytes (1, 2, 4 or 8) at `tag_offset`, differs from `none_tag` and removes
  * the rest, then reopens a table held whole.  The take locks the keys in
- * increasing byte order without repeats, or holds the whole table, which
+ * the runtime's order, by tag and then bytes, without repeats, or holds the
+ * whole table, which
  * waits out every statement holding its entries and keeps new ones out
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */

@@ -114,11 +114,13 @@ jobs:
       # puts cargo; the step stops on the first missing tool and names it.
       - name: Check the host's tools
         run: |
-          # A cancelled run on a self-hosted machine can leave its servers,
-          # clients and the host-wide lock behind; they would load the host
-          # this run measures, so stop them first and say what was stopped.
+          # A cancelled run on a self-hosted machine can leave its comparison,
+          # its servers and the host-wide lock behind; they would load the
+          # host this run measures, so stop them first and say what was
+          # stopped. Its clients end with their servers; other
+          # redis-benchmark processes on the host are left alone.
           if [ "$RUNNER_ENVIRONMENT" != github-hosted ]; then
-            ps -eo pid,args | grep -E 'redis-bench\.sh compare|_temp/compare/|redis-benchmark|run-check\.pl firn/compare' |
+            ps -eo pid,args | grep -E 'redis-bench\.sh compare|_temp/compare/|run-check\.pl firn/compare' |
               grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
             awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
             sleep 2

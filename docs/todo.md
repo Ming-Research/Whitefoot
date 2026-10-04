@@ -613,7 +613,7 @@ rarely insert at the same place.
   the rows that allocate them, while a shared object's state, a keyed
   table's entries and a key set's store come from the context runtime's
   pool, which a no-heap bundle may still use through `shared_new`,
-  `keyed_table_new` and `key_set_put`. The checker refused `KeySet` there
+  `keyed_table_new` and `key_set_insert`. The checker refused `KeySet` there
   for a while, which [STOR-8] does not name; it no longer does. The
   question for the owner: whether the declaration means no allocation at
   all, which would withdraw those three types and their rows too, or no use
