@@ -848,3 +848,36 @@ fn a_box_replaced_in_the_loop_is_reloaded_while_unchanged_values_wait_in_the_fra
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
+
+#[test]
+fn a_hoisted_projection_an_arm_repeats_is_passed_once() {
+    // The header projects `code`'s box for the match and every arm projects
+    // it again to read the length: the arms name the hoisted projection,
+    // which each part receives once.
+    let source = REGISTER_FILE
+        .replace("NAME", "kept")
+        .replace(
+            "DECREMENT",
+            "let c = regs^.inner[1_u64];\n      let d = c -wrap 1_u64;\n      set regs^.inner[1_u64] = d;",
+        )
+        .replace("  let n = code^.inner.len;\n  match", "  match")
+        .replace("      let next = pc + 1_u64;", "      let n = code^.inner.len;\n      let next = pc + 1_u64;");
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_kept", 4);
+    let dispatch = definition(&module, "wf_kept.dispatch");
+    let header = dispatch.lines().next().expect("a definition header");
+    let mut names: Vec<&str> = header
+        .split(", ")
+        .filter_map(|parameter| parameter.rsplit(' ').next())
+        .collect();
+    let count = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), count, "no part parameter repeats: {header}");
+    assert!(
+        !some_part_reloads_a_box(&module, "wf_kept", 4),
+        "no arm reloads the box the header projects: {module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}

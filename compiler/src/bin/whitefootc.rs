@@ -10,16 +10,14 @@ use whitefoot::{
     COMPLETION_FILE_POSIX_HEADER, COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE,
     COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER,
     CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
-    CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat,
-    FLOOR_STACK_BYTES, FragmentGranularity,
-    HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry, ORDINARY_VALUES_HEADER,
-    ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, OverlapLowering, RecursionBudget,
-    SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
-    SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER, build_module_entry, check,
-    check_module_program, check_with_cache, compile_module_program_with_permission_ledger,
+    CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat, FLOOR_STACK_BYTES,
+    FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry,
+    ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
+    OverlapLowering, RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
+    SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER, build_module_entry,
+    check, check_module_program, check_with_cache, compile_module_program_with_permission_ledger,
     compile_with_cache, compile_with_overlap, compile_with_permission_ledger, content_digest,
-    ModuleProgramFailure, discover_module_sources, entry_verdict, form_module_program_graph,
-    module_verdict,
+    discover_module_sources, entry_verdict, form_module_program_graph, module_verdict,
     render_driver_failure, render_module_interface, running_compiler_identity, split_module,
     stack_ledger,
 };
@@ -536,12 +534,13 @@ fn run_module_program(
 fn read_module_program(
     graph_path: &Path,
 ) -> Result<(whitefoot::ModuleGraph, Vec<whitefoot::ModuleSourceFile>), Stop> {
-    let graph = form_module_program_graph(graph_path, CompilerLimits::default()).map_err(
-        |failure| match failure {
-            ModuleProgramFailure::Compilation(failure) => Stop::Compilation(failure),
-            ModuleProgramFailure::Discovery(failure) => Stop::invocation(failure.to_string()),
-        },
-    )?;
+    let graph =
+        form_module_program_graph(graph_path, CompilerLimits::default()).map_err(|failure| {
+            match failure {
+                ModuleProgramFailure::Compilation(failure) => Stop::Compilation(failure),
+                ModuleProgramFailure::Discovery(failure) => Stop::invocation(failure.to_string()),
+            }
+        })?;
     let root = graph_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1961,12 +1960,17 @@ mod tests {
     /// The dispatch ledger shares stdout with nothing else.
     #[test]
     fn the_dispatch_ledger_keeps_stdout_apart_from_an_emitted_module() {
-        let options =
-            parse(&["--dispatch-ledger", "value.wf"]).expect("the option is accepted");
+        let options = parse(&["--dispatch-ledger", "value.wf"]).expect("the option is accepted");
         assert!(options.dispatch_ledger);
         assert!(parse(&["--dispatch-ledger", "--emit-llvm", "value.wf"]).is_err());
-        let options = parse(&["--dispatch-ledger", "--emit-llvm", "-o", "out.ll", "value.wf"])
-            .expect("a named module output frees stdout");
+        let options = parse(&[
+            "--dispatch-ledger",
+            "--emit-llvm",
+            "-o",
+            "out.ll",
+            "value.wf",
+        ])
+        .expect("a named module output frees stdout");
         assert!(options.dispatch_ledger && options.emit_llvm);
     }
 

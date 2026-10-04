@@ -2336,16 +2336,6 @@ rarely insert at the same place.
   as the next dispatch-lowering change, the invariant-header work having
   landed.
 
-- **An arm reloads a read-only box reached through a value from before the
-  loop.** The dispatch lowering hoists box-referent projections of a
-  read-only reference that is a header parameter passed through unchanged,
-  but not of one an arm reads as a value defined before the loop, as when
-  an arm reads `code^.inner.len` through the function's own binding: that
-  arm still loads the box pointer on every execution. The read-only rule
-  needs no use scan, so such projections could name one value the
-  enclosing function computes. Low priority: the WF interpreter's arms do
-  not read `code`; reopen if a consumer's hot arm does.
-
 - **Values kept in the frame past the registers are unmeasured.** A split
   dispatch loop whose parts need more argument registers than the
   convention has keeps the values it cannot change in frame slots, which

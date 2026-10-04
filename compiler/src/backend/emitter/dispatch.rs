@@ -1488,7 +1488,12 @@ impl FunctionEmitter<'_, '_> {
                 _ => None,
             })
             .collect();
-        result.passed.extend(pinned_passed);
+        // A pinned canonical may also be a hoisted value the loop reads.
+        for value in pinned_passed {
+            if !result.passed.contains(&value) {
+                result.passed.push(value);
+            }
+        }
         result
     }
 
