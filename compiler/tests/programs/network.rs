@@ -1646,7 +1646,7 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes_with_lists_a
     let program = firn();
     for native_ring in [true, false] {
         let what = format!("native ring: {native_ring}");
-        let name = format!("replay-{native_ring}.aof");
+        let name = format!("replay-lists-sets-{native_ring}.aof");
         let port = free_port();
         let text = port.to_string();
         let child = program.spawn_on_route(native_ring, &[text.as_bytes(), b"1", name.as_bytes()]);
@@ -3678,7 +3678,7 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file_with_lists_and_sets() {
     let program = firn();
-    let name = "replay-types.aof";
+    let name = "replay-list-set-types.aof";
     let port = free_port();
     let text = port.to_string();
     let child = program.spawn_on_route(true, &[text.as_bytes(), b"1", name.as_bytes()]);
@@ -5116,7 +5116,7 @@ fn firn_answers_the_value_types_as_redis_does_with_hashes_and_sorted_sets() {
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file_with_hashes_and_sorted_sets() {
     let program = firn();
-    let name = "replay-types.aof";
+    let name = "replay-hash-zset-types.aof";
     let port = free_port();
     let text = port.to_string();
     let child = program.spawn_on_route(true, &[text.as_bytes(), b"1", name.as_bytes()]);
