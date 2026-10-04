@@ -1,0 +1,214 @@
+alias Value = pkg::value::Value;
+
+fn string_hash(bytes: &[u8]) -> r: u64 reads(bytes) {
+  doc "lstring.c luaS_newlstr uses unsigned-int wrapping, then stores the hash.";
+  let h = cvt.wrap::<u64, u32>(bytes^.len);
+  let divided = bytes^.len / 32_u64;
+  let step = divided + 1_u64;
+  let left = bytes^.len;
+  loop @hash {
+    if left >= step {
+      let i = left - 1_u64;
+      if i < bytes^.len {
+        let b = cvt::<u8, u32>(bytes^[i]);
+        let leftbits = ishl(h, 5_u32);
+        let rightbits = ishr(h, 2_u32);
+        let a = leftbits +wrap rightbits;
+        let sum = a +wrap b;
+        set h = ixor(h, sum);
+      }
+      set left = left - step;
+    } else {
+      break @hash;
+    }
+  }
+  return cvt::<u32, u64>(h);
+}
+
+fn string_equal(heap: &Heap, h: u32, hash: u64, bytes: &[u8]) -> r: Bool reads(heap), reads(bytes) {
+  let i = cvt::<u32, u64>(h);
+  if i < heap^.strings.inner.len {
+    if heap^.strings.inner[i].live {
+      if heap^.strings.inner[i].payload.hash == hash {
+        if heap^.strings.inner[i].payload.bytes.inner.len == bytes^.len {
+          for (k in 0_u64..bytes^.len) {
+            if k < heap^.strings.inner[i].payload.bytes.inner.len {
+              if heap^.strings.inner[i].payload.bytes.inner[k] != bytes^[k] {
+                return False();
+              }
+            } else {
+              return False();
+            }
+          }
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn intern_place(slots: &Box<Slots<u32>>, hash: u64, h: u32) -> r: unit writes(slots) {
+  let n = slots^.inner.len;
+  if n > 0_u64 {
+    let i = hash % n;
+    for (step in 0_u64..n) {
+      if i < slots^.inner.len {
+        if slots^.inner[i] == no_handle {
+          set slots^.inner[i] = h;
+          return unit;
+        }
+      }
+      let last = n - 1_u64;
+      if i < last {
+        set i = i + 1_u64;
+      } else {
+        set i = 0_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn rebuild_intern(heap: &Heap, capacity: u64) -> r: unit writes(heap) {
+  doc "Rebuilding removes weak entries and repairs probe chains after sweep.";
+  let slots = box_slots_new::<u32>(capacity: capacity);
+  for (i in 0_u64..capacity) {
+    if slots.inner.len < slots.inner.cap {
+      place_back(window: &slots.inner, value: no_handle);
+    }
+  }
+  let count = 0_u64;
+  for (i in 0_u64..heap^.strings.inner.len) {
+    if heap^.strings.inner[i].live {
+      if i < 4294967295_u64 {
+        let h = cvt::<u64, u32>(i);
+        let hash = heap^.strings.inner[i].payload.hash;
+        intern_place(slots: &slots, hash: hash, h: h);
+        set count = count +sat 1_u64;
+      }
+    }
+  }
+  set heap^.interned = move slots;
+  set heap^.intern_count = count;
+  return unit;
+}
+
+fn intern(heap: &Heap, bytes: &[u8]) -> r: Value reads(bytes), writes(heap) {
+  let hash = string_hash(bytes: bytes);
+  let n = heap^.interned.inner.len;
+  if n > 0_u64 {
+    let i = hash % n;
+    for (step in 0_u64..n) {
+      if i < heap^.interned.inner.len {
+        let h = heap^.interned.inner[i];
+        if h == no_handle {
+          break;
+        }
+        if string_equal(heap: heap, h: h, hash: hash, bytes: bytes) {
+          return Value::Str(h: h);
+        }
+      }
+      let last = n - 1_u64;
+      if i < last {
+        set i = i + 1_u64;
+      } else {
+        set i = 0_u64;
+      }
+    }
+  }
+  if n == 0_u64 {
+    rebuild_intern(heap: heap, capacity: 4_u64);
+  } else {
+    let quarter = n / 4_u64;
+    let threshold = n - quarter;
+    if heap^.intern_count >= threshold {
+      if n <= 9223372036854775807_u64 {
+        let bigger = n * 2_u64;
+        rebuild_intern(heap: heap, capacity: bigger);
+      }
+    }
+  }
+  let b = box_slots_new::<u8>(capacity: bytes^.len);
+  for (i in 0_u64..bytes^.len) {
+    if b.inner.len < b.inner.cap {
+      place_back(window: &b.inner, value: bytes^[i]);
+    }
+  }
+  let s = String(hash: hash, bytes: move b);
+  match alloc_string_cell(heap: heap, payload: move s) {
+    Some(value: h) => {
+      intern_place(slots: &heap^.interned, hash: hash, h: h);
+      set heap^.intern_count = heap^.intern_count +sat 1_u64;
+      return Value::Str(h: h);
+    }
+    None() => {
+      return Value::Nil();
+    }
+  }
+}
+
+fn string_of(heap: &Heap, value: Value) -> r: Option<StringView> reads(heap) {
+  match pkg::value::str_of(v: value) {
+    Handle(h: hv) => {
+      let i = cvt::<u32, u64>(hv);
+      if i < heap^.strings.inner.len {
+        if heap^.strings.inner[i].live {
+          let v = StringView(handle: hv, length: heap^.strings.inner[i].payload.bytes.inner.len);
+          return Some<StringView>(value: v);
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return None<StringView>();
+}
+
+fn remove_intern(heap: &Heap, h: u32) -> r: unit writes(heap) {
+  doc "Delete the weak entry and reinsert its following probe cluster, retaining a true empty terminator. No tombstone handle is reserved.";
+  let n = heap^.interned.inner.len;
+  for (i in 0_u64..n) {
+    if i < heap^.interned.inner.len {
+      if heap^.interned.inner[i] == h {
+        set heap^.interned.inner[i] = no_handle;
+        let count = heap^.intern_count;
+        if count > 0_u64 {
+          set heap^.intern_count = count - 1_u64;
+        }
+        if n > 0_u64 {
+          let last = n - 1_u64;
+          let j = i;
+          for (step in 0_u64..n) {
+            if j < last {
+              set j = j + 1_u64;
+            } else {
+              set j = 0_u64;
+            }
+            if j < heap^.interned.inner.len {
+              let moved = heap^.interned.inner[j];
+              if moved == no_handle {
+                return unit;
+              }
+              set heap^.interned.inner[j] = no_handle;
+              let si = cvt::<u32, u64>(moved);
+              if si < heap^.strings.inner.len {
+                if heap^.strings.inner[si].live {
+                  let hash = heap^.strings.inner[si].payload.hash;
+                  intern_place(slots: &heap^.interned, hash: hash, h: moved);
+                }
+              }
+            }
+          }
+        }
+        return unit;
+      }
+    }
+  }
+  return unit;
+}
+
+fn alloc_string(heap: &Heap, bytes: &[u8]) -> r: Value reads(bytes), writes(heap) {
+  doc "Every public string allocation takes bytes through the canonical interning path.";
+  return intern(heap: heap, bytes: bytes);
+}

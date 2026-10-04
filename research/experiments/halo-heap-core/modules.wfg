@@ -1,0 +1,2 @@
+package halo = "../../../lib/halo";
+pkg::test: [halo::heap, halo::value, std::process, std::io, std::fs, std::time];

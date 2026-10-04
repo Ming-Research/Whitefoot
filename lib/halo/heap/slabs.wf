@@ -1,0 +1,323 @@
+alias Value = pkg::value::Value;
+
+fn heap_new(limit: u64) -> r: Heap pure {
+  let strings = box_slots_new::<StringCell>(capacity: 0_u64);
+  let tables = box_slots_new::<TableCell>(capacity: 0_u64);
+  let closures = box_slots_new::<ClosureCell>(capacity: 0_u64);
+  let upvalues = box_slots_new::<UpvalCell>(capacity: 0_u64);
+  let interned = box_slots_new::<u32>(capacity: 0_u64);
+  return Heap(strings: move strings, tables: move tables, closures: move closures, upvalues: move upvalues, strings_free: no_handle, tables_free: no_handle, closures_free: no_handle, upvalues_free: no_handle, interned: move interned, intern_count: 0_u64, bytes: 0_u64, bytes_since_gc: 0_u64, limit: limit);
+}
+
+fn charge(heap: &Heap, amount: u64) -> r: Bool writes(heap.bytes), writes(heap.bytes_since_gc) {
+  let b = heap^.bytes;
+  let s = heap^.bytes_since_gc;
+  let room = 18446744073709551615_u64 - amount;
+  if b <= room {
+    if s <= room {
+      set heap^.bytes = b + amount;
+      set heap^.bytes_since_gc = s + amount;
+      return True();
+    }
+  }
+  return False();
+}
+
+fn uncharge(heap: &Heap, amount: u64) -> r: unit writes(heap.bytes) {
+  let b = heap^.bytes;
+  if amount <= b {
+    set heap^.bytes = b - amount;
+  }
+  return unit;
+}
+
+fn alloc_string_cell(heap: &Heap, payload: String) -> r: Option<u32> writes(heap) {
+  let amount = 24_u64 +sat payload.bytes.inner.cap;
+  if amount == 18446744073709551615_u64 {
+    return None<u32>();
+  }
+  let h = heap^.strings_free;
+  let i = cvt::<u32, u64>(h);
+  let n = heap^.strings.inner.len;
+  if i >= n {
+    if n >= 4294967295_u64 {
+      return None<u32>();
+    }
+  }
+  if charge(heap: heap, amount: amount) {
+  } else {
+    return None<u32>();
+  }
+  let live = True();
+  let cell = StringCell(live: live, mark: 0_u32, next_free: no_handle, payload: move payload);
+  if i < heap^.strings.inner.len {
+    let next = heap^.strings.inner[i].next_free;
+    set heap^.strings_free = next;
+    set heap^.strings.inner[i] = move cell;
+    return Some<u32>(value: h);
+  } else if n < 4294967295_u64 {
+    let hnew = cvt::<u64, u32>(n);
+    let needed = n + 1_u64;
+    let oldcap = heap^.strings.inner.cap;
+    if needed > oldcap {
+      let capacity = needed;
+      if oldcap <= 2147483647_u64 {
+        let doubled = oldcap * 2_u64;
+        if doubled > capacity {
+          set capacity = doubled;
+        }
+      } else {
+        set capacity = 4294967295_u64;
+      }
+      grow(cell: &heap^.strings, capacity: capacity);
+    }
+    if heap^.strings.inner.len < heap^.strings.inner.cap {
+      place_back(window: &heap^.strings.inner, value: move cell);
+      return Some<u32>(value: hnew);
+    }
+  }
+  return None<u32>();
+}
+
+fn free_string(heap: &Heap, h: u32) -> r: unit writes(heap) {
+  let i = cvt::<u32, u64>(h);
+  if i < heap^.strings.inner.len {
+    if heap^.strings.inner[i].live {
+      let amount = 24_u64 +sat heap^.strings.inner[i].payload.bytes.inner.cap;
+      let b = box_slots_new::<u8>(capacity: 0_u64);
+      let empty = String(hash: 0_u64, bytes: move b);
+      set heap^.strings.inner[i].payload = move empty;
+      set heap^.strings.inner[i].live = False();
+      set heap^.strings.inner[i].next_free = heap^.strings_free;
+      set heap^.strings_free = h;
+      uncharge(heap: heap, amount: amount);
+      remove_intern(heap: heap, h: h);
+    }
+  }
+  return unit;
+}
+
+fn alloc_table(heap: &Heap, payload: Table) -> r: Option<u32> writes(heap) {
+  let amount = table_bytes(array: payload.array.inner.cap, nodes: payload.nodes.inner.cap);
+  if amount == 18446744073709551615_u64 {
+    return None<u32>();
+  }
+  let h = heap^.tables_free;
+  let i = cvt::<u32, u64>(h);
+  let n = heap^.tables.inner.len;
+  if i >= n {
+    if n >= 4294967295_u64 {
+      return None<u32>();
+    }
+  }
+  if charge(heap: heap, amount: amount) {
+  } else {
+    return None<u32>();
+  }
+  let live = True();
+  let cell = TableCell(live: live, mark: 0_u32, next_free: no_handle, payload: move payload);
+  if i < heap^.tables.inner.len {
+    let next = heap^.tables.inner[i].next_free;
+    set heap^.tables_free = next;
+    set heap^.tables.inner[i] = move cell;
+    return Some<u32>(value: h);
+  } else if n < 4294967295_u64 {
+    let hnew = cvt::<u64, u32>(n);
+    let needed = n + 1_u64;
+    let oldcap = heap^.tables.inner.cap;
+    if needed > oldcap {
+      let capacity = needed;
+      if oldcap <= 2147483647_u64 {
+        let doubled = oldcap * 2_u64;
+        if doubled > capacity {
+          set capacity = doubled;
+        }
+      } else {
+        set capacity = 4294967295_u64;
+      }
+      grow(cell: &heap^.tables, capacity: capacity);
+    }
+    if heap^.tables.inner.len < heap^.tables.inner.cap {
+      place_back(window: &heap^.tables.inner, value: move cell);
+      return Some<u32>(value: hnew);
+    }
+  }
+  return None<u32>();
+}
+
+fn free_table(heap: &Heap, h: u32) -> r: unit writes(heap) {
+  let i = cvt::<u32, u64>(h);
+  if i < heap^.tables.inner.len {
+    if heap^.tables.inner[i].live {
+      let amount = table_bytes(array: heap^.tables.inner[i].payload.array.inner.cap, nodes: heap^.tables.inner[i].payload.nodes.inner.cap);
+      let a = box_slots_new::<Value>(capacity: 0_u64);
+      let n = box_slots_new::<Node>(capacity: 0_u64);
+      let ro = False();
+      let empty = Table(array: move a, nodes: move n, node_count: 0_u32, meta: no_handle, read_only: ro, flags: 255_u8);
+      set heap^.tables.inner[i].payload = move empty;
+      set heap^.tables.inner[i].live = False();
+      set heap^.tables.inner[i].next_free = heap^.tables_free;
+      set heap^.tables_free = h;
+      uncharge(heap: heap, amount: amount);
+    }
+  }
+  return unit;
+}
+
+fn alloc_closure(heap: &Heap, payload: Closure) -> r: Option<u32> writes(heap) {
+  let amount_tail = 4_u64 *sat payload.upvals.inner.cap;
+  let amount = 24_u64 +sat amount_tail;
+  if amount == 18446744073709551615_u64 {
+    return None<u32>();
+  }
+  let h = heap^.closures_free;
+  let i = cvt::<u32, u64>(h);
+  let n = heap^.closures.inner.len;
+  if i >= n {
+    if n >= 4294967295_u64 {
+      return None<u32>();
+    }
+  }
+  if charge(heap: heap, amount: amount) {
+  } else {
+    return None<u32>();
+  }
+  let live = True();
+  let cell = ClosureCell(live: live, mark: 0_u32, next_free: no_handle, payload: move payload);
+  if i < heap^.closures.inner.len {
+    let next = heap^.closures.inner[i].next_free;
+    set heap^.closures_free = next;
+    set heap^.closures.inner[i] = move cell;
+    return Some<u32>(value: h);
+  } else if n < 4294967295_u64 {
+    let hnew = cvt::<u64, u32>(n);
+    let needed = n + 1_u64;
+    let oldcap = heap^.closures.inner.cap;
+    if needed > oldcap {
+      let capacity = needed;
+      if oldcap <= 2147483647_u64 {
+        let doubled = oldcap * 2_u64;
+        if doubled > capacity {
+          set capacity = doubled;
+        }
+      } else {
+        set capacity = 4294967295_u64;
+      }
+      grow(cell: &heap^.closures, capacity: capacity);
+    }
+    if heap^.closures.inner.len < heap^.closures.inner.cap {
+      place_back(window: &heap^.closures.inner, value: move cell);
+      return Some<u32>(value: hnew);
+    }
+  }
+  return None<u32>();
+}
+
+fn free_closure(heap: &Heap, h: u32) -> r: unit writes(heap) {
+  let i = cvt::<u32, u64>(h);
+  if i < heap^.closures.inner.len {
+    if heap^.closures.inner[i].live {
+      let amount_tail = 4_u64 *sat heap^.closures.inner[i].payload.upvals.inner.cap;
+      let amount = 24_u64 +sat amount_tail;
+      let b = box_slots_new::<u32>(capacity: 0_u64);
+      let empty = Closure(proto: 0_u32, upvals: move b);
+      set heap^.closures.inner[i].payload = move empty;
+      set heap^.closures.inner[i].live = False();
+      set heap^.closures.inner[i].next_free = heap^.closures_free;
+      set heap^.closures_free = h;
+      uncharge(heap: heap, amount: amount);
+    }
+  }
+  return unit;
+}
+
+fn alloc_upvalue(heap: &Heap, payload: Upval) -> r: Option<u32> writes(heap) {
+  let amount = 32_u64;
+  let h = heap^.upvalues_free;
+  let i = cvt::<u32, u64>(h);
+  let n = heap^.upvalues.inner.len;
+  if i >= n {
+    if n >= 4294967295_u64 {
+      return None<u32>();
+    }
+  }
+  if charge(heap: heap, amount: amount) {
+  } else {
+    return None<u32>();
+  }
+  let live = True();
+  let cell = UpvalCell(live: live, mark: 0_u32, next_free: no_handle, payload: payload);
+  if i < heap^.upvalues.inner.len {
+    let next = heap^.upvalues.inner[i].next_free;
+    set heap^.upvalues_free = next;
+    set heap^.upvalues.inner[i] = cell;
+    return Some<u32>(value: h);
+  } else if n < 4294967295_u64 {
+    let hnew = cvt::<u64, u32>(n);
+    let needed = n + 1_u64;
+    let oldcap = heap^.upvalues.inner.cap;
+    if needed > oldcap {
+      let capacity = needed;
+      if oldcap <= 2147483647_u64 {
+        let doubled = oldcap * 2_u64;
+        if doubled > capacity {
+          set capacity = doubled;
+        }
+      } else {
+        set capacity = 4294967295_u64;
+      }
+      grow(cell: &heap^.upvalues, capacity: capacity);
+    }
+    if heap^.upvalues.inner.len < heap^.upvalues.inner.cap {
+      place_back(window: &heap^.upvalues.inner, value: cell);
+      return Some<u32>(value: hnew);
+    }
+  }
+  return None<u32>();
+}
+
+fn free_upvalue(heap: &Heap, h: u32) -> r: unit writes(heap) {
+  let i = cvt::<u32, u64>(h);
+  if i < heap^.upvalues.inner.len {
+    if heap^.upvalues.inner[i].live {
+      let amount = 32_u64;
+      let v = Value::Nil();
+      let empty = Upval::Closed(v: v);
+      set heap^.upvalues.inner[i].payload = empty;
+      set heap^.upvalues.inner[i].live = False();
+      set heap^.upvalues.inner[i].next_free = heap^.upvalues_free;
+      set heap^.upvalues_free = h;
+      uncharge(heap: heap, amount: amount);
+    }
+  }
+  return unit;
+}
+
+fn new_closure(heap: &Heap, proto: u32, upvals: &[u32]) -> r: Value reads(upvals), writes(heap) {
+  let b = box_slots_new::<u32>(capacity: upvals^.len);
+  for (i in 0_u64..upvals^.len) {
+    if b.inner.len < b.inner.cap {
+      place_back(window: &b.inner, value: upvals^[i]);
+    }
+  }
+  let c = Closure(proto: proto, upvals: move b);
+  match alloc_closure(heap: heap, payload: move c) {
+    Some(value: h) => {
+      return Value::Fun(h: h);
+    }
+    None() => {
+      return Value::Nil();
+    }
+  }
+}
+
+fn new_upvalue(heap: &Heap, value: Upval) -> r: Option<u32> writes(heap) {
+  return alloc_upvalue(heap: heap, payload: value);
+}
+
+fn table_bytes(array: u64, nodes: u64) -> r: u64 pure {
+  let a = 16_u64 *sat array;
+  let n = 32_u64 *sat nodes;
+  let total = a +sat n;
+  return total +sat 48_u64;
+}
