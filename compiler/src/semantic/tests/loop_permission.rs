@@ -95,6 +95,37 @@ fn permitted(source: &[u8], function: &str) -> LoopPermission {
     judged
 }
 
+#[test]
+fn filled_runtime_slots_allow_independent_restore_but_not_shared_updates() {
+    let source = include_bytes!("../../../../tests/programs/slots_filled.wf");
+    let table = permission_of(source);
+    let judged = loops(&table, "restore");
+    assert_eq!(
+        judged.len(),
+        2,
+        "restore has its copy loop and its pop loop"
+    );
+    assert_eq!(judged[0].verdict, LoopVerdict::PermittedEligible);
+    assert!(matches!(judged[1].verdict, LoopVerdict::Denied(_)));
+
+    for (construction, body) in [
+        (
+            "box_slots_filled::<u64>(count: 4_u64, value: 0_u64)",
+            "set cells.inner[0_u64] = i;",
+        ),
+        (
+            "box_slots_new::<u64>(capacity: 4_u64)",
+            "if cells.inner.len < cells.inner.cap {\n      place_back(window: &cells.inner, value: i);\n    }",
+        ),
+    ] {
+        let source = format!(
+            "fn shared() -> result: unit pure {{\n  let cells = {construction};\n  for (i in 0_u64..4_u64) {{\n    {body}\n  }}\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  shared();\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        let refused = denied(source.as_bytes(), "shared", 2);
+        assert!(matches!(refused, LoopDenial::SharedWrite { .. }));
+    }
+}
+
 /// The compute programs under `tests/programs/compute` are not owned by this
 /// module; they carry the whole-program shapes the judgment was designed
 /// against, and their port to v0.60 lands with those files.

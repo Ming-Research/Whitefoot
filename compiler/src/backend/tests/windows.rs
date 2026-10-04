@@ -47,6 +47,70 @@ use crate::target::{
 use super::system::with_ir;
 use super::*;
 
+#[test]
+fn filled_runtime_slots_program_runs_with_one_and_four_workers() {
+    let source = include_bytes!("../../../../tests/programs/slots_filled.wf");
+    let module = emit_lowered(source, OverlapLowering::On);
+    let directory = test_directory();
+    let executable = build_linked_executable(&module, None, &[], &directory);
+    for workers in ["1", "4"] {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", workers)
+            .bounded_output()
+            .expect("run independent filled-window oracle");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "workers={workers}: {output:?}"
+        );
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
+    std::fs::remove_dir_all(directory).expect("remove filled-window oracle");
+}
+
+#[test]
+fn filled_runtime_slots_preserve_aggregate_and_zero_byte_values_with_one_owner() {
+    let source = br#"struct Pair {
+  first: u64;
+  second: u32;
+}
+
+struct Empty {
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let vacant = box_slots_filled::<u64>(count: 0_u64, value: 71_u64);
+  let value = Pair(first: 23_u64, second: 47_u32);
+  let pairs = box_slots_filled::<Pair>(count: 2_u64, value: value);
+  if pairs.inner[0_u64].first != 23_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if pairs.inner[1_u64].second != 47_u32 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let empty = Empty();
+  let huge = box_slots_filled::<Empty>(count: 9223372036854775808_u64, value: empty);
+  let last = take_back(window: &huge.inner);
+  if huge.inner.len != 9223372036854775807_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if huge.inner.cap != 9223372036854775808_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = compile(source)
+        .replace("@malloc(", "@wf_test_allocate(")
+        .replace("@free(", "@wf_test_release(");
+    let observer = super::owned_places::allocation_observer(3, 0);
+    let output = compile_link_and_run(&module, Some(&observer), &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(output.stdout, b"A1;A2;A3;F3;F2;F1;");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
 /// The baseline clears the complete empty-window representation, including
 /// every descriptor word. This checks the shared row, not its callers.
 fn assert_empty_window_zeroed(module: &str, row: &str, header_fields: usize) {
@@ -67,6 +131,12 @@ fn assert_empty_window_zeroed(module: &str, row: &str, header_fields: usize) {
 const U64_RUNTIME_WINDOW: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   doc "One eight-byte slot in a runtime-capacity window, whose actual alignment the selected allocator has to promise.";
   let values = box_slots_new::<u64>(capacity: 1_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+const U64_FILLED_RUNTIME_WINDOW: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
+  let values = box_slots_filled::<u64>(count: 1_u64, value: 23_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -442,28 +512,35 @@ fn an_above_u64_zero_count_reaches_target_qualification() {
 #[test]
 fn a_runtime_window_and_a_cell_must_fit_the_selected_allocator_alignment() {
     for fixture in [U64_RUNTIME_WINDOW, U64_CELL] {
-        with_ir(fixture, |program| {
-            let host =
-                TargetLayout::host().expect("the backend test runs on a supported host layout");
-
-            // The byte domain stays the host's own: cutting the
-            // address-index domain to the allocation's own size would refuse
-            // the window's own block layout before the alignment is reached.
-            // Only the alignment guarantee moves here.
-            let byte_domain = i64::MAX as u64;
-            let exact = host.with_runtime_allocation_limits_for_test(byte_domain, 8);
-            assert_eq!(validate_program(exact, program), Ok(()));
-
-            let one_alignment_step_short =
-                host.with_runtime_allocation_limits_for_test(byte_domain, 4);
-            assert_eq!(
-                validate_program(one_alignment_step_short, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    TargetObject::RuntimeSizedAllocation
-                ))
-            );
-        });
+        assert_runtime_allocator_alignment(fixture);
     }
+}
+
+#[test]
+fn filled_runtime_slots_obey_selected_allocator_alignment() {
+    assert_runtime_allocator_alignment(U64_FILLED_RUNTIME_WINDOW);
+}
+
+fn assert_runtime_allocator_alignment(fixture: &[u8]) {
+    with_ir(fixture, |program| {
+        let host = TargetLayout::host().expect("the backend test runs on a supported host layout");
+
+        // The byte domain stays the host's own: cutting the
+        // address-index domain to the allocation's own size would refuse
+        // the window's own block layout before the alignment is reached.
+        // Only the alignment guarantee moves here.
+        let byte_domain = i64::MAX as u64;
+        let exact = host.with_runtime_allocation_limits_for_test(byte_domain, 8);
+        assert_eq!(validate_program(exact, program), Ok(()));
+
+        let one_alignment_step_short = host.with_runtime_allocation_limits_for_test(byte_domain, 4);
+        assert_eq!(
+            validate_program(one_alignment_step_short, program),
+            Err(TargetLayoutFailure::Unrepresentable(
+                TargetObject::RuntimeSizedAllocation
+            ))
+        );
+    });
 }
 
 #[test]

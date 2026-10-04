@@ -62,6 +62,59 @@ const CANONICAL_LIMITS: CanonicalLimits = CanonicalLimits {
 const PLAIN_ENTRY: &str = "fn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
 
 #[test]
+fn filled_runtime_slots_keep_both_operands_and_allocation_obligations() {
+    let source = br#"fn main() -> status: std::process::ExitStatus pure {
+  let cells = box_slots_filled::<u32>(count: 3_u64, value: 17_u32);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let mut seen = 0;
+        for function in program.functions() {
+            for block in function.blocks() {
+                for instruction in block.instructions() {
+                    if let IrInstruction::Define {
+                        operation:
+                            IrOperation::WindowBlockNew {
+                                capacity,
+                                fill: Some(value),
+                                obligations,
+                                ..
+                            },
+                        ..
+                    } = instruction
+                    {
+                        seen += 1;
+                        assert_eq!(*capacity, function.parameters()[0].0);
+                        assert_eq!(*value, function.parameters()[1].0);
+                        assert_eq!(instruction.operands(), vec![*capacity, *value]);
+                        assert!(obligations.target_domains.is_complete());
+                        assert_eq!(
+                            obligations.layout_ceiling,
+                            super::IrLayoutCeiling {
+                                size: super::IrLayoutMagnitude::Finite(4),
+                                align: 4,
+                                stride: super::IrLayoutMagnitude::Finite(4),
+                            }
+                        );
+                        let mut rewritten = instruction.clone();
+                        rewritten.remap_operands(|operand| {
+                            if operand == *capacity {
+                                *value
+                            } else {
+                                *capacity
+                            }
+                        });
+                        assert_eq!(rewritten.operands(), vec![*value, *capacity]);
+                    }
+                }
+            }
+        }
+        assert_eq!(seen, 1, "one shared prelude body owns the allocation");
+    });
+}
+
+#[test]
 fn a_split_captures_an_array_payload_but_keeps_owner_and_inline_storage_addressed() {
     let source = br#"nocopy struct Inline {
   values: Array<u8, 16>;

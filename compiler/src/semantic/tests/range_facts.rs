@@ -12,6 +12,38 @@ use crate::{SemanticIssueKind, SemanticOutcome, SemanticRule};
 use super::super::loop_permission::{LoopDenial, LoopVerdict};
 use super::with_semantics;
 
+#[test]
+fn filled_runtime_slots_publish_fill_facts_and_writes_invalidate_them() {
+    for (write, accepted) in [("", true), ("  set cells.inner[1_u64] = 19_u64;\n", false)] {
+        let source = format!(
+            "fn inspect(values: &[u64]) -> result: unit reads(values) contract {{\n  requires forall filled(k in 0_u64..values^.len): values^[k] == 17_u64;\n}} {{\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let cells = box_slots_filled::<u64>(count: 3_u64, value: 17_u64);\n{write}  inspect(values: &cells.inner[0_u64..3_u64]);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_semantics(source.as_bytes(), |outcome| {
+            if accepted {
+                let SemanticOutcome::Complete(checked) = outcome else {
+                    panic!("the constructor publishes its fill fact: {outcome:?}");
+                };
+                for name in ["box_slots_filled", "main"] {
+                    let function = checked
+                        .data
+                        .executable_functions()
+                        .find(|function| function.name == name)
+                        .unwrap_or_else(|| panic!("missing allocating function {name}"));
+                    assert!(
+                        function.allocates,
+                        "{name} retains EFF-3 allocation metadata"
+                    );
+                }
+            } else {
+                let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+                    panic!("the overwritten fill fact must fail: {outcome:?}");
+                };
+                assert_eq!(issue.rule(), SemanticRule::Range3);
+            }
+        });
+    }
+}
+
 /// A scatter through a left inverse: iteration k writes `out^[order^[k]]`,
 /// and `inv` makes two iterations name two slots. `header` is the counted
 /// header's canonical text, `extra` statements after the write.
