@@ -36,7 +36,7 @@ on:
       compare_cpus:
         description: Server CPUs for the firn comparison
         type: string
-        default: "2"
+        default: "1 2"
       compare_profile:
         description: Record a perf profile of each image under MSET at depth 16
         type: boolean

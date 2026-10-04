@@ -457,3 +457,28 @@ under `MSET` at depth 16. The criteria, fixed before the run:
   least half of the loss; otherwise they do not separate the hypotheses, and
   the next measurement changes one hypothesis's work in a diagnostic image
   instead.
+
+**Measurement 1's result: inconclusive.** Run 37186349691, an Intel Xeon
+Platinum 8573C runner with four CPUs. Every image answered every check, and
+`main-twin` matched `main` in every cell (medians 1.000). But the rates do
+not resolve the question: redis-benchmark's own rate divides by a clock that
+ticks every 250 ms, and the sized runs lasted about five seconds, so `MSET`
+at depth 16 read 759,805 or 725,557 requests a second, one tick apart, and
+nothing between; at depth 1 every image and test answered 200,000, the two
+client threads' limit. The profiles took the same number of samples for the
+same requests (52K for `base`, 51K for `main`), so at two server CPUs `main`
+spent no more server CPU per `MSET` than `base`, but that run counts spinning
+for a cell (`try_entry`, 13% in both) as work, and one run carries no spread.
+
+**Measurement 2.** The same images on the same kind of runner, the rate
+taken over the run's wall time and the server's CPU time per request read
+from `/proc` before and after each run, at one and at two server CPUs, the
+other settings as before. The criteria, fixed before the run:
+
+- a cell is valid when the median over passes of `main-twin`'s CPU per
+  request to `main`'s, and of its rate to `main`'s, lie within 0.98 to 1.02;
+- the loss is the median per pass of `main`'s CPU per request to `base`'s,
+  in each valid `MSET` cell, the rates beside it; `SET` and `GET` are the
+  controls, and a control off by more than 0.03 makes the comparison suspect;
+- the profiles at one server CPU, where no other driver contends for a cell,
+  attribute a loss as Measurement 1 states.
