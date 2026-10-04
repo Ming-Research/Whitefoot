@@ -341,6 +341,15 @@ struct LoopInvariants {
     /// reads once the hoisted work has left it.
     dropped: HashSet<IrValueId>,
     facts: HashMap<IrValueId, String>,
+    /// For a reference whose box the loop never replaces, every projection
+    /// of its referent inside the loop, mapped to the one the enclosing
+    /// function computes: (the header parameter, the block and index of that
+    /// projection's instruction).
+    pinned: Vec<(IrValueId, usize, usize)>,
+    replaced: HashMap<IrValueId, IrValueId>,
+    /// References whose every projection is hoisted, which the loop then
+    /// only hands on to itself through joins and its own back-edge place.
+    unread: HashSet<IrValueId>,
 }
 
 /// Which part of a split function is being emitted.
@@ -381,6 +390,14 @@ pub(super) struct DispatchEmission {
     /// The checked reference facts of a parameter that holds the same
     /// pointer as one of the function's own parameters.
     facts: HashMap<IrValueId, String>,
+    /// Box-referent projections of references whose box the loop keeps,
+    /// computed once by the enclosing function (see [`LoopInvariants`]).
+    pinned: Vec<(IrValueId, usize, usize)>,
+    replaced: HashMap<IrValueId, IrValueId>,
+    /// Header parameters no part receives. A join inside the loop may still
+    /// name one only to hand it back to itself, a value nothing reads, so
+    /// each part defines it as a frozen poison value.
+    dropped: Vec<(IrValueId, IrType)>,
     frame: bool,
     destination: bool,
     result: String,
@@ -602,6 +619,14 @@ impl FunctionEmitter<'_, '_> {
             parameters,
             hoisted: invariant.hoisted,
             facts: invariant.facts,
+            pinned: invariant.pinned,
+            replaced: invariant.replaced,
+            dropped: header
+                .parameters()
+                .iter()
+                .filter(|(value, _)| invariant.dropped.contains(value))
+                .copied()
+                .collect(),
             frame,
             destination,
             result: result.to_owned(),
@@ -703,28 +728,56 @@ impl FunctionEmitter<'_, '_> {
                 .map(|dispatch| dispatch.hoisted.clone())
                 .unwrap_or_default();
             let header = header.clone();
-            if !hoisted.is_empty() {
-                // The header's parameters are not defined in the enclosing
-                // function: each one the hoisted work reads is named there
-                // as this edge's argument for it.
-                let mut read: HashSet<IrValueId> = HashSet::new();
-                for index in &hoisted {
-                    if let Some(instruction) = header.instructions().get(*index) {
-                        read.extend(instruction.operands());
+            let pinned = self
+                .dispatch
+                .as_ref()
+                .map(|dispatch| dispatch.pinned.clone())
+                .unwrap_or_default();
+            // The header's parameters, and the joins inside the loop that are
+            // the same values, are not defined in the enclosing function:
+            // each one the hoisted work reads is named there as this edge's
+            // argument for the header parameter it stands for.
+            let mut read: Vec<(IrValueId, IrValueId)> = Vec::new();
+            for index in &hoisted {
+                if let Some(instruction) = header.instructions().get(*index) {
+                    for operand in instruction.operands() {
+                        read.push((operand, operand));
                     }
                 }
-                for ((parameter, ty), (_, argument)) in header.parameters().iter().zip(&carried) {
-                    if read.contains(parameter) && self.storage.slot(*parameter).is_none() {
-                        let ty = self.output.type_name(self.program, *ty)?;
-                        let argument = self.value_name(*argument);
-                        writeln!(
-                            self.output,
-                            "  {} = select i1 true, {ty} {argument}, {ty} {argument}",
-                            value_name(*parameter)
-                        )
-                        .map_err(|_| BackendFailure::TextEmission)?;
-                    }
+            }
+            for (parameter, block, index) in &pinned {
+                let instruction = self
+                    .function
+                    .blocks()
+                    .get(*block)
+                    .and_then(|block| block.instructions().get(*index))
+                    .ok_or(BackendFailure::InvalidIr)?;
+                for operand in instruction.operands() {
+                    read.push((operand, *parameter));
                 }
+            }
+            let mut named: HashSet<IrValueId> = HashSet::new();
+            for (value, stands_for) in read {
+                let Some(position) = header
+                    .parameters()
+                    .iter()
+                    .position(|(parameter, _)| *parameter == stands_for)
+                else {
+                    continue;
+                };
+                if !named.insert(value) || self.storage.slot(stands_for).is_some() {
+                    continue;
+                }
+                let ty = self
+                    .output
+                    .type_name(self.program, header.parameters()[position].1)?;
+                let argument = self.value_name(carried[position].1);
+                writeln!(
+                    self.output,
+                    "  {} = select i1 true, {ty} {argument}, {ty} {argument}",
+                    value_name(value)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
             }
             for index in hoisted {
                 let instruction = header
@@ -732,6 +785,18 @@ impl FunctionEmitter<'_, '_> {
                     .get(index)
                     .ok_or(BackendFailure::InvalidIr)?;
                 self.emit_instruction(target, index, instruction)?;
+            }
+            for (_, block, index) in pinned {
+                let block_id =
+                    IrBlockId::from_index(block).ok_or(BackendFailure::CounterOverflow)?;
+                let instruction = self
+                    .function
+                    .blocks()
+                    .get(block)
+                    .and_then(|block| block.instructions().get(index))
+                    .ok_or(BackendFailure::InvalidIr)?
+                    .clone();
+                self.emit_instruction(block_id, index, &instruction)?;
             }
         }
         self.emit_place_edge(target, arguments, drops)?;
@@ -824,7 +889,13 @@ impl FunctionEmitter<'_, '_> {
             } else {
                 value_name(*value)
             };
-            let facts = dispatch.facts.get(value).map_or("", String::as_str);
+            // A range arrives in the parts as its `{ ptr, i64 }` pair, which
+            // carries no pointer attribute; only a pointer takes the facts.
+            let facts = if ty == "ptr" {
+                dispatch.facts.get(value).map_or("", String::as_str)
+            } else {
+                ""
+            };
             parameters.push(Parameter::named(format!("{ty}{facts}"), name));
         }
         if dispatch.frame {
@@ -857,6 +928,7 @@ impl FunctionEmitter<'_, '_> {
         let arms: Vec<(IrBlockId, Vec<bool>)> = dispatch.plan.arms.clone();
         let table = dispatch.plan.table.clone();
         let table_symbol = dispatch.table_symbol.clone();
+        let dropped = dispatch.dropped.clone();
         let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
 
         self.set_part(Part::Header);
@@ -874,7 +946,7 @@ impl FunctionEmitter<'_, '_> {
             .unwrap_or_default();
         for (index, instruction) in block.instructions().iter().enumerate() {
             if !hoisted.contains(&index) {
-                self.emit_instruction(header, index, instruction)?;
+                self.emit_part_instruction(header, index, instruction)?;
             }
         }
         self.emit_terminator(header, block.terminator())?;
@@ -902,7 +974,7 @@ impl FunctionEmitter<'_, '_> {
                 self.output.open_block(block_label(block_id));
                 self.emit_block_parameters(block_id, member)?;
                 for (instruction_index, instruction) in member.instructions().iter().enumerate() {
-                    self.emit_instruction(block_id, instruction_index, instruction)?;
+                    self.emit_part_instruction(block_id, instruction_index, instruction)?;
                 }
                 self.emit_terminator(block_id, member.terminator())?;
                 self.output.finish_ir_block(block_id)?;
@@ -930,9 +1002,14 @@ impl FunctionEmitter<'_, '_> {
                         && !matches!(key, FunctionSlot::Address(_))
                 })
                 .collect();
-            let prelude =
+            let mut prelude =
                 self.frame
                     .render_split(self.program, &mut body.references, false, &locals)?;
+            for (value, ty) in &dropped {
+                let ty = llvm_type_with_references(self.program, *ty, &mut body.references.types)?;
+                writeln!(prelude, "  {} = freeze {ty} poison", value_name(*value))
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
             module.define(signature.define(body, &prelude)?);
             module.text("\n");
         }
@@ -1150,11 +1227,104 @@ impl FunctionEmitter<'_, '_> {
                 terminator => reads.extend(terminator.operands()),
             }
         }
+        // A passed-through reference the loop uses only to project its box's
+        // referent, or hands on unchanged to a join's parameter that is the
+        // same value or to its own place on a back edge, keeps one box for
+        // the whole loop: nothing in the loop can replace that box, and no
+        // other reference reaches it [EFF-5]. Its projections are hoisted.
         for (position, parameter) in parameters.iter().enumerate() {
-            if passed_through[position] && !reads.contains(parameter) {
+            if !passed_through[position] || self.storage.slot(*parameter).is_some() {
+                continue;
+            }
+            let mut projections: Vec<(usize, usize, IrValueId)> = Vec::new();
+            let mut pinned = true;
+            let blocks_in_loop = blocks
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| plan.region[*index] || *index == plan.header.index());
+            for (index, block) in blocks_in_loop {
+                for (position_in_block, instruction) in block.instructions().iter().enumerate() {
+                    let operands = instruction.operands();
+                    if !operands.iter().any(|value| root(value) == *parameter) {
+                        continue;
+                    }
+                    match instruction {
+                        IrInstruction::Define {
+                            result: value,
+                            operation:
+                                crate::IrOperation::ProjectAddress {
+                                    address,
+                                    projection: crate::IrPlaceStep::BoxReferent { .. },
+                                },
+                            ..
+                        } if root(address) == *parameter && operands.len() == 1 => {
+                            projections.push((index, position_in_block, *value));
+                        }
+                        _ => pinned = false,
+                    }
+                }
+                match block.terminator() {
+                    IrTerminator::Jump {
+                        target,
+                        arguments,
+                        drops,
+                    } => {
+                        let target_parameters = blocks[target.index()].parameters();
+                        for (argument_position, argument) in arguments.iter().enumerate() {
+                            if root(argument) != *parameter {
+                                continue;
+                            }
+                            let onward = target_parameters
+                                .get(argument_position)
+                                .map(|(value, _)| *value);
+                            let own_place = *target == plan.header && argument_position == position;
+                            let alias = plan.region[target.index()]
+                                && onward.is_some_and(|value| root(&value) == *parameter);
+                            pinned &= own_place || alias;
+                        }
+                        pinned &= !drops.iter().any(|drop| root(&drop.operand()) == *parameter);
+                    }
+                    terminator => {
+                        pinned &= !terminator
+                            .operands()
+                            .iter()
+                            .any(|value| root(value) == *parameter);
+                    }
+                }
+            }
+            if !pinned || projections.is_empty() {
+                continue;
+            }
+            // Every projection of this reference is now computed before the
+            // loop, whether by the read-only rule above or here, so what is
+            // left of it in the loop only passes it on to itself.
+            let hoisted_already = projections
+                .iter()
+                .filter(|(_, _, projected)| result.hoisted_values.contains(projected))
+                .count();
+            if hoisted_already == projections.len() {
+                result.unread.insert(*parameter);
+                continue;
+            }
+            if hoisted_already > 0 {
+                continue;
+            }
+            result.unread.insert(*parameter);
+            let (block, index, canonical) = projections[0];
+            for (_, _, projected) in &projections {
+                result.replaced.insert(*projected, canonical);
+            }
+            result.pinned.push((*parameter, block, index));
+            result.passed.push(canonical);
+        }
+        for (position, parameter) in parameters.iter().enumerate() {
+            if passed_through[position]
+                && (!reads.contains(parameter) || result.unread.contains(parameter))
+            {
                 result.dropped.insert(*parameter);
             }
         }
+        let pinned_passed = std::mem::take(&mut result.passed);
         result.passed = result
             .hoisted
             .iter()
@@ -1165,7 +1335,38 @@ impl FunctionEmitter<'_, '_> {
                 _ => None,
             })
             .collect();
+        result.passed.extend(pinned_passed);
         result
+    }
+
+    /// Emits one instruction of a part: a hoisted box-referent projection is
+    /// the parameter the part receives, and another projection of the same
+    /// box is a name for it.
+    fn emit_part_instruction(
+        &mut self,
+        block: IrBlockId,
+        index: usize,
+        instruction: &IrInstruction,
+    ) -> Result<(), BackendFailure> {
+        if let IrInstruction::Define { result, .. } = instruction
+            && let Some(canonical) = self
+                .dispatch
+                .as_ref()
+                .and_then(|dispatch| dispatch.replaced.get(result).copied())
+        {
+            if canonical != *result {
+                writeln!(
+                    self.output,
+                    "  {} = select i1 true, ptr {}, ptr {}",
+                    value_name(*result),
+                    value_name(canonical),
+                    value_name(canonical)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            return Ok(());
+        }
+        self.emit_instruction(block, index, instruction)
     }
 
     fn set_part(&mut self, part: Part) {

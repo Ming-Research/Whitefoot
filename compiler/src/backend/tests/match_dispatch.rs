@@ -213,25 +213,24 @@ fn assert_interpreter_split(module: &str, base: &str) {
 #[test]
 fn a_header_match_loop_is_split_into_one_function_per_arm() {
     let module = emit(scalar_interpreter().as_bytes());
-    // Eight parts' parameters: code, pc, acc, count, the code length and the
-    // box's referent hoisted out of the header, the cell's address, and the frame.
+    // Seven parts' parameters: pc, acc, count, the code length and the box's
+    // referent hoisted out of the header, the cell's address, and the frame.
     let (convention, registers) = host_convention();
     let verdict = module
         .lines()
         .find_map(|line| line.strip_prefix(&format!("{}wf_run: ", crate::DISPATCH_LEDGER_PREFIX)))
         .expect("the ledger has a line for run's loop");
-    if registers >= 8 {
+    if registers >= 7 {
         assert!(
             verdict.starts_with(
-                "split: the loop over Op into 4 arms, taking 8 integer and 0 floating"
+                "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
             ),
             "{verdict}"
         );
         assert_interpreter_split(&module, "wf_run");
         // `code` is read-only and passed through unchanged, so its box's
-        // referent and length are computed once before the loop; no part
-        // loads a pointer out of a pointer it receives, and the reference
-        // keeps its checked facts.
+        // referent and length are computed once before the loop and no part
+        // loads a pointer out of a pointer it receives.
         let dispatch = definition(&module, "wf_run.dispatch");
         let header = dispatch.lines().next().expect("a definition header");
         for parameter in header
@@ -248,7 +247,6 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
                 "the dispatch function reloads {name}: {dispatch}"
             );
         }
-        assert!(header.contains("noalias"), "{header}");
         let enclosing = emitted_body(&module, "run");
         assert!(
             enclosing.contains(&format!("call {convention}i64 @wf_run.dispatch("))
@@ -257,7 +255,7 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
         );
     } else {
         assert!(
-            verdict.starts_with("not split: the loop over Op: its parts need 8 integer"),
+            verdict.starts_with("not split: the loop over Op: its parts need 7 integer"),
             "{verdict}"
         );
         assert!(!module.contains("@wf_run.dispatch"), "{module}");
@@ -276,7 +274,7 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
     };
     let (_, registers) = host_convention();
     let destination = base == "wf_run.body";
-    if registers >= 8 + usize::from(destination) {
+    if registers >= 7 + usize::from(destination) {
         assert_interpreter_split(&module, base);
         let dispatch = definition(&module, &format!("{base}.dispatch"));
         assert!(
@@ -453,10 +451,171 @@ fn run(code: &Box<Slots<Op>>"#,
         )),
         "the ledger names the condition the loop failed: {module}"
     );
-    // The interpreter in the same module still splits where its eight
+    // The interpreter in the same module still splits where its seven
     // parameters fit, so the absence above is the recogniser's verdict.
     let (_, registers) = host_convention();
-    if registers >= 8 {
+    if registers >= 7 {
         assert_interpreter_split(&module, "wf_run");
     }
+}
+
+/// An interpreter over a register file it writes through `regs`. In `kept`
+/// every arm only reads and writes elements, so the loop keeps `regs`'s box;
+/// in `touched` one arm hands `regs` itself to a function that writes it,
+/// so the box may change. Both return 3000.
+const REGISTER_FILE: &str = r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Add();
+  Dec();
+  Jnz(t: u64);
+  Halt();
+}
+
+fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {
+  ensures regs^.inner.len == entry(regs)^.inner.len;
+} {
+  if regs^.inner.len > 1_u64 {
+    let c = regs^.inner[1_u64];
+    let d = c -wrap 1_u64;
+    set regs^.inner[1_u64] = d;
+  }
+  return 0_u64;
+}
+
+fn NAME(code: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, pc: u64) -> r: u64 reads(code), writes(regs) contract {
+  requires pc < code^.inner.len;
+  requires 2_u64 <= regs^.inner.len;
+} {
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Add() => {
+      let a = regs^.inner[0_u64];
+      let b = a +wrap 3_u64;
+      set regs^.inner[0_u64] = b;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail NAME(code: code, regs: regs, pc: next);
+      }
+      return 0_u64;
+    }
+    Dec() => {
+      DECREMENT
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail NAME(code: code, regs: regs, pc: next);
+      }
+      return 0_u64;
+    }
+    Jnz(t: tv) => {
+      let c = regs^.inner[1_u64];
+      let next = pc + 1_u64;
+      if c != 0_u64 {
+        set next = tv^;
+      }
+      if next < n {
+        return musttail NAME(code: code, regs: regs, pc: next);
+      }
+      return 0_u64;
+    }
+    Halt() => {
+      let a = regs^.inner[0_u64];
+      return a;
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Add();
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Dec();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Jnz(t: 0_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  let regs = box_slots_new::<u64>(capacity: 2_u64);
+  if regs.inner.len < regs.inner.cap {
+    place_back(window: &regs.inner, value: 0_u64);
+  }
+  if regs.inner.len < regs.inner.cap {
+    place_back(window: &regs.inner, value: 1000_u64);
+  }
+  if code.inner.len > 0_u64 {
+    if regs.inner.len >= 2_u64 {
+      let r = NAME(code: &code, regs: &regs, pc: 0_u64);
+      if r == 3000_u64 {
+        return exit_status(code: 0_u8);
+      }
+      return exit_status(code: 1_u8);
+    }
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+/// Whether any part of a split loop loads a pointer out of a pointer
+/// parameter it receives, as reloading a box's referent does.
+fn some_part_reloads_a_box(module: &str, base: &str, arms: usize) -> bool {
+    let mut symbols = vec![format!("{base}.dispatch")];
+    symbols.extend((0..arms).map(|arm| format!("{base}.arm.{arm}")));
+    symbols.iter().any(|symbol| {
+        let part = definition(module, symbol);
+        let header = part.lines().next().expect("a definition header");
+        header
+            .split(", ")
+            .filter(|parameter| parameter.contains("ptr"))
+            .filter_map(|parameter| parameter.rsplit(' ').next())
+            .map(|name| name.trim_end_matches(')').trim_end_matches(" {"))
+            .any(|name| part.contains(&format!("load ptr, ptr {name}\n")))
+    })
+}
+
+#[test]
+fn a_reference_whose_box_the_loop_keeps_is_projected_once() {
+    let source = REGISTER_FILE.replace("NAME", "kept").replace(
+        "DECREMENT",
+        "let c = regs^.inner[1_u64];\n      let d = c -wrap 1_u64;\n      set regs^.inner[1_u64] = d;",
+    );
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_kept", 4);
+    assert!(
+        !some_part_reloads_a_box(&module, "wf_kept", 4),
+        "no part reloads a box the loop keeps: {module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_reference_handed_to_a_writer_is_reloaded_in_the_loop() {
+    let source = REGISTER_FILE
+        .replace("NAME", "touched")
+        .replace("DECREMENT", "let ignored = touch(regs: regs);");
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_touched", 4);
+    assert!(
+        some_part_reloads_a_box(&module, "wf_touched", 4),
+        "a part reloads the box a writer may replace: {module}"
+    );
+    let dispatch = definition(&module, "wf_touched.dispatch");
+    assert!(
+        dispatch
+            .lines()
+            .next()
+            .is_some_and(|header| header.contains("ptr noalias nonnull")),
+        "the reference the parts receive keeps its checked facts: {dispatch}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
 }

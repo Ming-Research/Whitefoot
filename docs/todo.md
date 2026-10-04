@@ -2341,26 +2341,6 @@ rarely insert at the same place.
   the assembler's identity (its path and version output) as a rerun input.
   Reopen when a host's clang changes under an existing build directory.
 
-- **The parts of a split loop carry no reference parameter facts.** The
-  enclosing function's reference parameters keep `noalias`, `nonnull` and
-  `dereferenceable` (compiler/backend-facts); the same values arrive in the
-  parts as plain pointers, so the host cannot use those facts inside the
-  arms. Stating them on the parts' parameters needs the facts mapped from
-  the enclosing parameters through the header's carried values. Validate
-  with the WF interpreter's kernels. Reopen with the invariant-header
-  work.
-
-- **Loop-invariant header work runs on every dispatch.** A split loop's
-  header is recomputed in each arm: the WF interpreter
-  (`research/experiments/match-dispatch/wf/vm.wf`) reloads `code`'s box
-  pointer and length and `regs`'s box pointer on every dispatch, which
-  LLVM hoisted out of the whole-function loop. A header computation whose
-  operands are values from before the loop or header parameters every
-  back edge passes unchanged, and which reads only memory under a
-  read-only reference parameter, could run once in the enclosing function
-  and travel as a parameter. Validate on the WF interpreter's kernels
-  against the C `u8` form. Reopen with the next dispatch-lowering change.
-
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
   is 10-30% above the pointer form with every other mechanism equal
