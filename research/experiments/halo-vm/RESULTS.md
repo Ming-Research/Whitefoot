@@ -59,3 +59,28 @@ Before that attempt the criterion is: every module must accept; a shorter check
 would support the hypothesis that the large generic proof inventory caused the
 observed cost. This refactoring introduces helper calls on numeric paths; native
 inlining and dispatch performance have not been measured.
+
+The family-helper attempt was stopped without a verdict after 621.93 seconds
+(wrapper exit 143), at 4,216 lines / 146,585 bytes for the VM. It therefore did
+not demonstrate a shorter check. The next attempt removes the common dispatch
+fact join: each instruction arm ends in its own guaranteed self-tail call, with
+a shared helper for outcome handling. The acceptance and elapsed-time criterion
+is unchanged.
+
+The per-arm attempt was stopped without a verdict after 368.58 seconds (wrapper
+exit 143); `dispatch.wf` was 2,093 lines / 91,693 bytes. A second one-second
+local stack sample still showed generic-body proof derivation.
+
+The current attempt moves each opcode body into a private handler function,
+keeping its numeric/table fast path and shared `slow` fallback together. `run`
+remains the eight-parameter guaranteed self-tail dispatcher. Its `Cell` match
+selects a handler, and one checked continuation feeds the tail call. This bounds
+the proof inventory of each opcode; native inlining and its performance effect
+are unmeasured. The acceptance and checker-time criterion remains unchanged.
+
+The first opcode-split run returned a source rejection after 324.13 seconds:
+`slow.wf` read its comparison-result destination after a callback without an
+available stack-length fact. Both comparison paths now restore the entry length
+before reading that slot. At that attempt the VM was 6,647 lines / 236,864 bytes,
+with `run` in a 237-line / 16,456-byte file. The next check must establish full
+acceptance; the elapsed time is a checker-cost finding even if it accepts.

@@ -605,6 +605,7 @@ fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
       let atom7 = is_nil(v: tm);
       if bnot(atom7) {
         let ok = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: b, c: c, third: nil, argc: 2_u64, wanted: 1_i64, mode: 1_u8);
+        resize_stack(stack: stack, size: length);
         if ok {
           let val = stack^.inner[dest];
           let answer = truthy(v: val);
@@ -628,6 +629,7 @@ fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
           let atom8 = is_nil(v: tm);
           if bnot(atom8) {
             let ok = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: c, c: b, third: nil, argc: 2_u64, wanted: 1_i64, mode: 2_u8);
+            resize_stack(stack: stack, size: length);
             if ok {
               let val = stack^.inner[dest];
               let atom9 = truthy(v: val);

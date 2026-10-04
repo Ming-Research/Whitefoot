@@ -1,0 +1,3655 @@
+alias no_handle = pkg::heap::no_handle;
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias num_of = pkg::value::num_of;
+alias truthy = pkg::value::truthy;
+alias table_get = pkg::heap::table_get;
+alias tab_of = pkg::value::tab_of;
+
+const dispatch_text_0: Array<u8, 16> = "invalid bytecode";
+
+const dispatch_text_4: Array<u8, 22> = "invalid constant index";
+
+const dispatch_text_11: Array<u8, 21> = "invalid upvalue index";
+
+const dispatch_text_33: Array<u8, 17> = "not enough memory";
+
+const dispatch_text_36: Array<u8, 22> = "invalid register index";
+
+const dispatch_text_132: Array<u8, 27> = "'for' step must be a number";
+
+const dispatch_text_133: Array<u8, 28> = "'for' limit must be a number";
+
+const dispatch_text_134: Array<u8, 36> = "'for' initial value must be a number";
+
+const dispatch_text_135: Array<u8, 20> = "invalid for register";
+
+const dispatch_text_144: Array<u8, 25> = "invalid iterator register";
+
+const dispatch_text_147: Array<u8, 21> = "invalid setlist block";
+
+fn instruction_move<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let v = register_value(stack: stack, base: base, operand: bv);
+  set stack^.inner[ra] = v;
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_load_k<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, kv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let v = constant_value(consts: consts, kbase: kbase, operand: kv);
+  set stack^.inner[ra] = v;
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_load_kx<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, kv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let k = cvt::<u32, u64>(kv);
+  let idx = kbase +sat k;
+  if idx < consts^.inner.len {
+    let v = consts^.inner[idx];
+    set stack^.inner[ra] = v;
+  } else {
+    set ok = raise_text(vm: vm, text: &dispatch_text_4[0_u64..22_u64]);
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_load_bool<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, skipv: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let b = cvt::<u8, u64>(bv);
+  let skip = cvt::<u8, u64>(skipv);
+  let flag = b != 0_u64;
+  let v = boolean(v: flag);
+  set stack^.inner[ra] = v;
+  if skip != 0_u64 {
+    set next = next +sat 1_u64;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_load_nil<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let b = cvt::<u8, u64>(bv);
+  if a <= b {
+    for (i in a..256_u64) {
+      if i <= b {
+        let j = base + i;
+        set stack^.inner[j] = Value::Nil();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_get_upval<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, uv: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  match upvalue_handle(vm: vm, u: uv) {
+    Some(value: h) => {
+      let v = read_upvalue(vm: vm, stack: stack, h: h);
+      set stack^.inner[ra] = v;
+    }
+    None() => {
+      set ok = raise_text(vm: vm, text: &dispatch_text_11[0_u64..21_u64]);
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_set_upval<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, uv: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  match upvalue_handle(vm: vm, u: uv) {
+    Some(value: h) => {
+      let v = register_value(stack: stack, base: base, operand: av);
+      write_upvalue(vm: vm, stack: stack, h: h, v: v);
+    }
+    None() => {
+      set ok = raise_text(vm: vm, text: &dispatch_text_11[0_u64..21_u64]);
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_get_global<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, kv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let t = Value::Tab(h: vm^.globals);
+  let key = constant_value(consts: consts, kbase: kbase, operand: kv);
+  let operation = SlowOp::Get();
+  let nil = Value::Nil();
+  let expect = False();
+  set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+  set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: t, c: key, v: nil);
+  if frame_limit > stack^.inner.len {
+    return Step::Error();
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_set_global<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, kv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let t = Value::Tab(h: vm^.globals);
+  let key = constant_value(consts: consts, kbase: kbase, operand: kv);
+  let value = register_value(stack: stack, base: base, operand: av);
+  let operation = SlowOp::Set();
+  let nil = Value::Nil();
+  let expect = False();
+  set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+  set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: t, c: key, v: value);
+  if frame_limit > stack^.inner.len {
+    return Step::Error();
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_get_table_r<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, tv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let rt = register_slot(stack: stack, base: base, operand: tv);
+  let t = stack^.inner[rt];
+  let key = register_value(stack: stack, base: base, operand: cv);
+  let value = table_get(heap: &vm^.heap, t: t, key: key);
+  let atom31 = is_nil(v: value);
+  if bnot(atom31) {
+    set stack^.inner[ra] = value;
+  } else {
+    let operation = SlowOp::Get();
+    let nil = Value::Nil();
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: t, c: key, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_get_table_k<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, tv: u8, kv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let rt = register_slot(stack: stack, base: base, operand: tv);
+  let t = stack^.inner[rt];
+  let key = constant_value(consts: consts, kbase: kbase, operand: kv);
+  let value = table_get(heap: &vm^.heap, t: t, key: key);
+  let atom34 = is_nil(v: value);
+  if bnot(atom34) {
+    set stack^.inner[ra] = value;
+  } else {
+    let operation = SlowOp::Get();
+    let nil = Value::Nil();
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: t, c: key, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_set_table_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, tv: u8, keyv: u8, valv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let rt = register_slot(stack: stack, base: base, operand: tv);
+  let rkey = register_slot(stack: stack, base: base, operand: keyv);
+  let rval = register_slot(stack: stack, base: base, operand: valv);
+  let t = stack^.inner[rt];
+  let key = stack^.inner[rkey];
+  let value = stack^.inner[rval];
+  let old = table_get(heap: &vm^.heap, t: t, key: key);
+  let atom37 = is_nil(v: old);
+  if bnot(atom37) {
+    set ok = raw_assign(vm: vm, t: t, key: key, v: value);
+  } else {
+    let operation = SlowOp::Set();
+    let nil = Value::Nil();
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: rt, b: t, c: key, v: value);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_set_table_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, tv: u8, keyv: u8, valv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let rt = register_slot(stack: stack, base: base, operand: tv);
+  let rkey = register_slot(stack: stack, base: base, operand: keyv);
+  let valw = cvt::<u8, u64>(valv);
+  let kval = kbase + valw;
+  let t = stack^.inner[rt];
+  let key = stack^.inner[rkey];
+  let value = consts^.inner[kval];
+  let old = table_get(heap: &vm^.heap, t: t, key: key);
+  let atom40 = is_nil(v: old);
+  if bnot(atom40) {
+    set ok = raw_assign(vm: vm, t: t, key: key, v: value);
+  } else {
+    let operation = SlowOp::Set();
+    let nil = Value::Nil();
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: rt, b: t, c: key, v: value);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_set_table_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, tv: u8, keyv: u8, valv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let rt = register_slot(stack: stack, base: base, operand: tv);
+  let keyw = cvt::<u8, u64>(keyv);
+  let kkey = kbase + keyw;
+  let rval = register_slot(stack: stack, base: base, operand: valv);
+  let t = stack^.inner[rt];
+  let key = consts^.inner[kkey];
+  let value = stack^.inner[rval];
+  let old = table_get(heap: &vm^.heap, t: t, key: key);
+  let atom43 = is_nil(v: old);
+  if bnot(atom43) {
+    set ok = raw_assign(vm: vm, t: t, key: key, v: value);
+  } else {
+    let operation = SlowOp::Set();
+    let nil = Value::Nil();
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: rt, b: t, c: key, v: value);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_set_table_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, tv: u8, keyv: u8, valv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let rt = register_slot(stack: stack, base: base, operand: tv);
+  let keyw = cvt::<u8, u64>(keyv);
+  let kkey = kbase + keyw;
+  let valw = cvt::<u8, u64>(valv);
+  let kval = kbase + valw;
+  let t = stack^.inner[rt];
+  let key = consts^.inner[kkey];
+  let value = consts^.inner[kval];
+  let old = table_get(heap: &vm^.heap, t: t, key: key);
+  let atom46 = is_nil(v: old);
+  if bnot(atom46) {
+    set ok = raw_assign(vm: vm, t: t, key: key, v: value);
+  } else {
+    let operation = SlowOp::Set();
+    let nil = Value::Nil();
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: rt, b: t, c: key, v: value);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_new_table<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, asizev: u8, hsizev: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let asize = cvt::<u8, u64>(asizev);
+  let hsize = cvt::<u8, u64>(hsizev);
+  let az = fb2int(x: asize);
+  let hz = fb2int(x: hsize);
+  let v = pkg::heap::new_table(heap: &vm^.heap, asize: az, hsize: hz);
+  if is_nil(v: v) {
+    set ok = raise_text(vm: vm, text: &dispatch_text_33[0_u64..17_u64]);
+  } else {
+    set stack^.inner[ra] = v;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_self_r<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let t = register_value(stack: stack, base: base, operand: bv);
+  let key = register_value(stack: stack, base: base, operand: cv);
+  if a < 255_u64 {
+    let j = ra + 1_u64;
+    set stack^.inner[j] = t;
+  } else {
+    set ok = raise_text(vm: vm, text: &dispatch_text_36[0_u64..22_u64]);
+  }
+  let value = table_get(heap: &vm^.heap, t: t, key: key);
+  let atom51 = is_nil(v: value);
+  if bnot(atom51) {
+    set stack^.inner[ra] = value;
+  } else {
+    let operation = SlowOp::Get();
+    let nil = Value::Nil();
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: t, c: key, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_self_k<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, kv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let t = register_value(stack: stack, base: base, operand: bv);
+  let key = constant_value(consts: consts, kbase: kbase, operand: kv);
+  if a < 255_u64 {
+    let j = ra + 1_u64;
+    set stack^.inner[j] = t;
+  } else {
+    set ok = raise_text(vm: vm, text: &dispatch_text_36[0_u64..22_u64]);
+  }
+  let value = table_get(heap: &vm^.heap, t: t, key: key);
+  let atom54 = is_nil(v: value);
+  if bnot(atom54) {
+    set stack^.inner[ra] = value;
+  } else {
+    let operation = SlowOp::Get();
+    let nil = Value::Nil();
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: t, c: key, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_add_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_110) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fadd.strict(bound_x_110, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Add();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Add();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_add_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_108) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fadd.strict(bound_x_108, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Add();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Add();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_add_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_106) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fadd.strict(bound_x_106, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Add();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Add();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_add_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_104) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fadd.strict(bound_x_104, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Add();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Add();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_sub_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_102) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fsub.strict(bound_x_102, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Sub();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Sub();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_sub_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_100) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fsub.strict(bound_x_100, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Sub();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Sub();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_sub_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_98) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fsub.strict(bound_x_98, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Sub();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Sub();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_sub_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_96) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fsub.strict(bound_x_96, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Sub();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Sub();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_mul_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_94) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fmul.strict(bound_x_94, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Mul();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Mul();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_mul_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_92) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fmul.strict(bound_x_92, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Mul();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Mul();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_mul_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_90) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fmul.strict(bound_x_90, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Mul();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Mul();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_mul_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_88) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fmul.strict(bound_x_88, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Mul();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Mul();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_div_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_86) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fdiv.strict(bound_x_86, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Div();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Div();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_div_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_84) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fdiv.strict(bound_x_84, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Div();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Div();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_div_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_82) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fdiv.strict(bound_x_82, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Div();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Div();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_div_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_80) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let z = fdiv.strict(bound_x_80, y);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Div();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Div();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_mod_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_78) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let quot = fdiv.strict(bound_x_78, y);
+          let rounded = ffloor(quot);
+          let product = fmul.strict(rounded, y);
+          let z = fsub.strict(bound_x_78, product);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Mod();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Mod();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_mod_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_76) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let quot = fdiv.strict(bound_x_76, y);
+          let rounded = ffloor(quot);
+          let product = fmul.strict(rounded, y);
+          let z = fsub.strict(bound_x_76, product);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Mod();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Mod();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_mod_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_74) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let quot = fdiv.strict(bound_x_74, y);
+          let rounded = ffloor(quot);
+          let product = fmul.strict(rounded, y);
+          let z = fsub.strict(bound_x_74, product);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Mod();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Mod();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_mod_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_72) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          let quot = fdiv.strict(bound_x_72, y);
+          let rounded = ffloor(quot);
+          let product = fmul.strict(rounded, y);
+          let z = fsub.strict(bound_x_72, product);
+          set stack^.inner[ra] = Value::Num(n: z);
+        }
+        Not() => {
+          let operation = SlowOp::Mod();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Mod();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_pow_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_70) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set ok = power_pending(vm: vm, stack: stack, dest: ra, x: bound_x_70, y: y);
+        }
+        Not() => {
+          let operation = SlowOp::Pow();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Pow();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_pow_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_68) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set ok = power_pending(vm: vm, stack: stack, dest: ra, x: bound_x_68, y: y);
+        }
+        Not() => {
+          let operation = SlowOp::Pow();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Pow();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_pow_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_66) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set ok = power_pending(vm: vm, stack: stack, dest: ra, x: bound_x_66, y: y);
+        }
+        Not() => {
+          let operation = SlowOp::Pow();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Pow();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_pow_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  match num_of(v: vb) {
+    Is(x: bound_x_64) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set ok = power_pending(vm: vm, stack: stack, dest: ra, x: bound_x_64, y: y);
+        }
+        Not() => {
+          let operation = SlowOp::Pow();
+          let nil = Value::Nil();
+          let expect = False();
+          set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+          set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+          if frame_limit > stack^.inner.len {
+            return Step::Error();
+          }
+        }
+      }
+    }
+    Not() => {
+      let operation = SlowOp::Pow();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: vb, c: vc, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_unm<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let v = register_value(stack: stack, base: base, operand: bv);
+  match num_of(v: v) {
+    Is(x: bound_x_62) => {
+      let z = fneg(bound_x_62);
+      set stack^.inner[ra] = Value::Num(n: z);
+    }
+    Not() => {
+      let operation = SlowOp::Unm();
+      let nil = Value::Nil();
+      let expect = False();
+      set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+      set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: v, c: v, v: nil);
+      if frame_limit > stack^.inner.len {
+        return Step::Error();
+      }
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_not<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let v = register_value(stack: stack, base: base, operand: bv);
+  let t = truthy(v: v);
+  let flag = bnot(t);
+  let value = boolean(v: flag);
+  set stack^.inner[ra] = value;
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_len<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let v = register_value(stack: stack, base: base, operand: bv);
+  let operation = SlowOp::Len();
+  let nil = Value::Nil();
+  let expect = False();
+  set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: expect);
+  set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: ra, b: v, c: nil, v: nil);
+  if frame_limit > stack^.inner.len {
+    return Step::Error();
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_concat<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let dest = cvt::<u8, u64>(av);
+  let first = cvt::<u8, u64>(bv);
+  let last = cvt::<u8, u64>(cv);
+  let step = concat_step::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, dest: dest, first: first, last: last);
+  return step;
+}
+
+fn instruction_jmp<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, targetv: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let target = cvt::<u32, u64>(targetv);
+  if target <= pc {
+    let atom113 = charge_budget(vm: vm, pc: pc, base: base, kbase: kbase);
+    if bnot(atom113) {
+      return Step::Budget();
+    }
+  }
+  set next = target;
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_eq_jmp_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_56) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = feq(bound_x_56, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Eq();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_eq_jmp_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_54) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = feq(bound_x_54, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Eq();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_eq_jmp_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_52) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = feq(bound_x_52, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Eq();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_eq_jmp_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_50) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = feq(bound_x_50, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Eq();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_lt_jmp_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_48) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = flt(bound_x_48, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Lt();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_lt_jmp_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_46) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = flt(bound_x_46, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Lt();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_lt_jmp_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_44) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = flt(bound_x_44, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Lt();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_lt_jmp_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_42) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = flt(bound_x_42, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Lt();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_le_jmp_rr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_40) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = fle(bound_x_40, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Le();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_le_jmp_rk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = register_value(stack: stack, base: base, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_38) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = fle(bound_x_38, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Le();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_le_jmp_kr<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = register_value(stack: stack, base: base, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_36) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = fle(bound_x_36, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Le();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_le_jmp_kk<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let target = cvt::<u32, u64>(targetv);
+  let vb = constant_value(consts: consts, kbase: kbase, operand: bv);
+  let vc = constant_value(consts: consts, kbase: kbase, operand: cv);
+  let answer = False();
+  let numeric = False();
+  match num_of(v: vb) {
+    Is(x: bound_x_34) => {
+      match num_of(v: vc) {
+        Is(x: y) => {
+          set numeric = True();
+          set answer = fle(bound_x_34, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  if bnot(numeric) {
+    let scratch = base + 255_u64;
+    let operation = SlowOp::Le();
+    let nil = Value::Nil();
+    let expect = a != 0_u64;
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 1_u8, dest: scratch, first: 0_u64, index: 0_u64, target: target, expected: expect);
+    set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: scratch, b: vb, c: vc, v: nil);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[scratch];
+      set answer = truthy(v: v);
+    }
+  }
+  let expected = a != 0_u64;
+  if eeq(answer, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_test_jmp<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, cv: u8, targetv: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let c = cvt::<u8, u64>(cv);
+  let target = cvt::<u32, u64>(targetv);
+  let v = register_value(stack: stack, base: base, operand: av);
+  let actual = truthy(v: v);
+  let expected = c != 0_u64;
+  if eeq(actual, expected) {
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_test_set_jmp<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let c = cvt::<u8, u64>(cv);
+  let target = cvt::<u32, u64>(targetv);
+  let v = register_value(stack: stack, base: base, operand: bv);
+  let actual = truthy(v: v);
+  let expected = c != 0_u64;
+  if eeq(actual, expected) {
+    set stack^.inner[ra] = v;
+    set next = target;
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let b = cvt::<u8, u64>(bv);
+  let c = cvt::<u8, u64>(cv);
+  let atom144 = charge_budget(vm: vm, pc: pc, base: base, kbase: kbase);
+  if bnot(atom144) {
+    return Step::Budget();
+  }
+  let argc = 0_u64;
+  if b == 0_u64 {
+    let first = ra + 1_u64;
+    set argc = vm^.top -sat first;
+  } else {
+    set argc = b - 1_u64;
+    set vm^.top = ra +sat b;
+  }
+  let wanted = -1_i64;
+  if c > 0_u64 {
+    let nr = c - 1_u64;
+    set wanted = cvt::<u64, i64>(nr);
+  }
+  let tailing = False();
+  let step = prepare::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: ra, argc: argc, wanted: wanted, return_pc: next, base: base, kbase: kbase, tail: tailing);
+  let final_step = step;
+  match step {
+    Error() => {
+      set final_step = unwind(vm: vm, stack: stack);
+    }
+    Jump(..) => {
+    }
+    Done(..) => {
+    }
+    Stop() => {
+    }
+    Budget() => {
+    }
+  }
+  return final_step;
+}
+
+fn instruction_tail_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let b = cvt::<u8, u64>(bv);
+  let c = cvt::<u8, u64>(cv);
+  let atom147 = charge_budget(vm: vm, pc: pc, base: base, kbase: kbase);
+  if bnot(atom147) {
+    return Step::Budget();
+  }
+  let argc = 0_u64;
+  if b == 0_u64 {
+    let first = ra + 1_u64;
+    set argc = vm^.top -sat first;
+  } else {
+    set argc = b - 1_u64;
+    set vm^.top = ra +sat b;
+  }
+  let wanted = -1_i64;
+  if c > 0_u64 {
+    let nr = c - 1_u64;
+    set wanted = cvt::<u64, i64>(nr);
+  }
+  let tailing = True();
+  let step = prepare::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: ra, argc: argc, wanted: wanted, return_pc: next, base: base, kbase: kbase, tail: tailing);
+  let final_step = step;
+  match step {
+    Error() => {
+      set final_step = unwind(vm: vm, stack: stack);
+    }
+    Jump(..) => {
+    }
+    Done(..) => {
+    }
+    Stop() => {
+    }
+    Budget() => {
+    }
+  }
+  return final_step;
+}
+
+fn instruction_return<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let b = cvt::<u8, u64>(bv);
+  let count = 0_u64;
+  if b == 0_u64 {
+    set count = vm^.top -sat ra;
+  } else {
+    set count = b - 1_u64;
+  }
+  close_upvalues(vm: vm, stack: stack, level: base);
+  if vm^.frames.inner.len == 0_u64 {
+    return Step::Done(count: count);
+  }
+  let f = take_back(window: &vm^.frames.inner);
+  let step = finish(vm: vm, stack: stack, frame: f, src: ra, count: count);
+  return step;
+}
+
+fn instruction_for_loop<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, targetv: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let target = cvt::<u32, u64>(targetv);
+  let atom152 = charge_budget(vm: vm, pc: pc, base: base, kbase: kbase);
+  if bnot(atom152) {
+    return Step::Budget();
+  }
+  if a <= 252_u64 {
+    let rlimit = ra + 1_u64;
+    let rstep = ra + 2_u64;
+    let rout = ra + 3_u64;
+    let init = register_value(stack: stack, base: base, operand: av);
+    let limit = stack^.inner[rlimit];
+    let step = stack^.inner[rstep];
+    match num_of(v: init) {
+      Is(x: bound_x_27) => {
+        match num_of(v: limit) {
+          Is(x: y) => {
+            match num_of(v: step) {
+              Is(x: s) => {
+                let z = fadd.strict(bound_x_27, s);
+                let more = fle(y, z);
+                if flt(0.0_f64, s) {
+                  set more = fle(z, y);
+                }
+                if more {
+                  set stack^.inner[ra] = Value::Num(n: z);
+                  set stack^.inner[rout] = Value::Num(n: z);
+                  set next = target;
+                }
+              }
+              Not() => {
+                set ok = raise_text(vm: vm, text: &dispatch_text_132[0_u64..27_u64]);
+              }
+            }
+          }
+          Not() => {
+            set ok = raise_text(vm: vm, text: &dispatch_text_133[0_u64..28_u64]);
+          }
+        }
+      }
+      Not() => {
+        set ok = raise_text(vm: vm, text: &dispatch_text_134[0_u64..36_u64]);
+      }
+    }
+  } else {
+    set ok = raise_text(vm: vm, text: &dispatch_text_135[0_u64..20_u64]);
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_for_prep<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, targetv: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let target = cvt::<u32, u64>(targetv);
+  if a <= 252_u64 {
+    let rlimit = ra + 1_u64;
+    let rstep = ra + 2_u64;
+    let rout = ra + 3_u64;
+    let init = register_value(stack: stack, base: base, operand: av);
+    let limit = stack^.inner[rlimit];
+    let step = stack^.inner[rstep];
+    match num_of(v: init) {
+      Is(x: bound_x_25) => {
+        match num_of(v: limit) {
+          Is(x: y) => {
+            match num_of(v: step) {
+              Is(x: s) => {
+                let z = fsub.strict(bound_x_25, s);
+                set stack^.inner[ra] = Value::Num(n: z);
+                set next = target;
+              }
+              Not() => {
+                set ok = raise_text(vm: vm, text: &dispatch_text_132[0_u64..27_u64]);
+              }
+            }
+          }
+          Not() => {
+            set ok = raise_text(vm: vm, text: &dispatch_text_133[0_u64..28_u64]);
+          }
+        }
+      }
+      Not() => {
+        set ok = raise_text(vm: vm, text: &dispatch_text_134[0_u64..36_u64]);
+      }
+    }
+  } else {
+    set ok = raise_text(vm: vm, text: &dispatch_text_135[0_u64..20_u64]);
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_tfor_loop<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, cv: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let c = cvt::<u8, u64>(cv);
+  let target = cvt::<u32, u64>(targetv);
+  let atom157 = charge_budget(vm: vm, pc: pc, base: base, kbase: kbase);
+  if bnot(atom157) {
+    return Step::Budget();
+  }
+  if a <= 252_u64 {
+    let s1 = ra + 1_u64;
+    let s2 = ra + 2_u64;
+    let dest = ra + 3_u64;
+    let f = register_value(stack: stack, base: base, operand: av);
+    let state = stack^.inner[s1];
+    let control = stack^.inner[s2];
+    let wanted = cvt::<u64, i64>(c);
+    let expect = False();
+    set vm^.callback_plan = CallbackPlan(pc: next, base: base, kbase: kbase, kind: 3_u8, dest: dest, first: s2, index: 0_u64, target: target, expected: expect);
+    set ok = iterator_call::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: f, state: state, control: control, wanted: wanted);
+    if frame_limit > stack^.inner.len {
+      return Step::Error();
+    }
+    if ok {
+      let v = stack^.inner[dest];
+      let atom158 = is_nil(v: v);
+      if bnot(atom158) {
+        set stack^.inner[s2] = v;
+        set next = target;
+      }
+    }
+  } else {
+    set ok = raise_text(vm: vm, text: &dispatch_text_144[0_u64..25_u64]);
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_set_list<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let a = cvt::<u8, u64>(av);
+  let ra = base + a;
+  let b = cvt::<u8, u64>(bv);
+  let c = cvt::<u32, u64>(cv);
+  let count = b;
+  if b == 0_u64 {
+    let first = ra + 1_u64;
+    set count = vm^.top -sat first;
+    if vm^.frames.inner.len > 0_u64 {
+      let fi = vm^.frames.inner.len - 1_u64;
+      set vm^.top = vm^.frames.inner[fi].frame_top;
+    }
+  }
+  let t = register_value(stack: stack, base: base, operand: av);
+  if c > 0_u64 {
+    let block = c - 1_u64;
+    let first = block *sat 50_u64;
+    for (i in 0_u64..count) {
+      let offset = i +sat 1_u64;
+      let s = ra +sat offset;
+      let key = first +sat offset;
+      let x = cvt.nearest::<u64, f64>(key);
+      let k = Value::Num(n: x);
+      if s < stack^.inner.len {
+        let v = stack^.inner[s];
+        set ok = raw_assign(vm: vm, t: t, key: k, v: v);
+      }
+      if bnot(ok) {
+        break;
+      }
+    }
+  } else {
+    set ok = raise_text(vm: vm, text: &dispatch_text_147[0_u64..21_u64]);
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_close<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  close_upvalues(vm: vm, stack: stack, level: ra);
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_closure<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, protov: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let proto = cvt::<u32, u64>(protov);
+  let created = create_closure(code: code, vm: vm, stack: stack, dest: ra, proto: protov, pc: next, base: base);
+  match created {
+    Ready(pc: np) => {
+      set next = np;
+    }
+    Failed() => {
+      set ok = False();
+    }
+  }
+  if vm^.suspended {
+    return Step::Budget();
+  }
+  if bnot(ok) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  if next < n {
+    return Step::Jump(pc: next, base: base, kbase: kbase);
+  }
+  let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
+  return Step::Error();
+}
+
+fn instruction_var_arg<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8) -> r: Step reads(code), writes(stack), writes(vm) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  let frame_limit = base + 256_u64;
+  let next = pc + 1_u64;
+  let ok = True();
+  let ra = register_slot(stack: stack, base: base, operand: av);
+  let success = varargs(vm: vm, stack: stack, dest: ra, b: bv);
+  if bnot(success) {
+    if vm^.host_stopped {
+      restore_stopped_stack(vm: vm, stack: stack);
+      return Step::Stop();
+    }
+    return unwind(vm: vm, stack: stack);
+  }
+  return Step::Jump(pc: next, base: base, kbase: kbase);
+}
