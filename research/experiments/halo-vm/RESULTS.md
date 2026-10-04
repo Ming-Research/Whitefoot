@@ -205,3 +205,9 @@ Lua output matches `oracle.expected`; `sh -n run.sh` and `git diff --check` pass
 The changed-hunk review reported no remaining concrete logic issue after the
 concat PC normalization. Its stated diagnostic and conversion limits are
 recorded above rather than presented as implemented behavior.
+
+`make static` passed again on committed revision
+`c207ab00d246ccd630ac2ad92944ca630c44a640` in 32.10 seconds (exit 0); every
+labeled static stage stayed within its existing budget. Only this result record
+was added afterward. Compiler and fixture sources are unchanged from the
+accepted and natively executed revision above.
