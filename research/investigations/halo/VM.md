@@ -124,8 +124,7 @@ object kind is a `Box<Slots<Cell>>` with a free list; a cell is
   `-0` is `0`, NaN and nil keys raise. `#` is Lua 5.1's `luaH_getn` exactly.
   `next` walks the array part, then the nodes. `readonly` is Redis 7's
   readonly table: setting one raises "Attempt to modify a readonly table".
-  Not replicated: PUC's node placement, so `pairs` order over non-sequence
-  keys differs from Redis's Lua (open ruling H1).
+  The hash part is revised to PUC's own (open ruling H1).
 - **Closures** `{ proto: u32; upvals }`; prototypes belong to the compiled
   script and die with `SCRIPT FLUSH`.
 - **Upvalues** `enum Upval { Open(slot: u64); Closed(v: Value) }`; the open
@@ -315,9 +314,16 @@ coding agent.
 
 ## Open rulings
 
-- H1. `pairs` order over non-sequence keys is not Redis's; the oracle sorts
-  such outputs. Recommended: accept, since PUC's own order varies between
-  builds and scripts that depend on it are fragile.
+- H1 (revised during implementation). The first heap, open addressing as
+  section 2 says, gave a different `#` from Redis's Lua on 68 of 2,336
+  traced tables with holes: PUC reuses a nil-valued main position and
+  rehashes only when its `lastfree` pointer runs out, so array sizes differ
+  over time and `luaH_getn` picks another border. Recommended and being
+  implemented: the hash part ports `ltable.c` exactly (chained scatter
+  table, Brent's variation, `lastfree`, PUC's number and string hashes), so
+  `#` and `pairs` order equal Redis's for number, string and boolean keys;
+  only tables and functions used as keys traverse in another order, since
+  PUC hashes them by address.
 - H2. Library callbacks re-enter `run` up to 200 nestings, as PUC does.
   Recommended: accept; measure the stack use once the lowering exists.
 - H3. A loop invariant is lost where a guarded update joins an untouched
