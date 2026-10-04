@@ -969,7 +969,9 @@ impl<'unit> Checker<'_, 'unit> {
         };
         let declared_fields = {
             let nominal = self.types.nominal(id)?;
-            let super::super::model::CheckedNominalKind::Struct { fields } = &nominal.kind else {
+            let (super::super::model::CheckedNominalKind::Struct { fields }
+            | super::super::model::CheckedNominalKind::PreparedKeys { fields }) = &nominal.kind
+            else {
                 return self.types.declarations.issue_node(
                     SemanticRule::Const2,
                     node,
@@ -1509,7 +1511,9 @@ impl<'unit> TypeContext<'unit> {
                     pending.push(self.element_type(element)?);
                 }
                 CheckedType::Nominal(id) => {
-                    let CheckedNominalKind::Struct { fields } = &self.nominal(id)?.kind else {
+                    let (CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(id)?.kind
+                    else {
                         return Ok(false);
                     };
                     pending.extend(fields.iter().map(|field| field.ty));
@@ -1922,7 +1926,9 @@ impl<'unit> TypeContext<'unit> {
                     }
                     return Ok((CheckedEffectStep::Deref, SelectedPlaceType::Value(referent)));
                 }
-                let CheckedNominalKind::Struct { fields } = &self.nominal(nominal)?.kind else {
+                let (CheckedNominalKind::Struct { fields }
+                | CheckedNominalKind::PreparedKeys { fields }) = &self.nominal(nominal)?.kind
+                else {
                     return self
                         .declarations
                         .invalid_effect_row(path_node, EFF1_FIELD_OF_NON_STRUCT);

@@ -3,8 +3,8 @@ use crate::semantic::check::CheckContext;
 use crate::semantic::check::TypeContext;
 
 use super::super::model::{
-    CheckedDrop, CheckedExpression, CheckedNominalKind, CheckedSetTarget, CheckedStatement,
-    CheckedType,
+    CheckedDrop, CheckedExpression, CheckedNominalKind, CheckedProjectedDrop, CheckedSetTarget,
+    CheckedStatement, CheckedType,
 };
 use super::CheckStop;
 
@@ -285,6 +285,7 @@ impl<'unit> TypeContext<'unit> {
                         CheckedNominalKind::Enum { .. }
                         | CheckedNominalKind::Box { .. }
                         | CheckedNominalKind::Opaque
+                        | CheckedNominalKind::PreparedKeys { .. }
                         | CheckedNominalKind::Shared { .. } => {
                             drops.push((path, current));
                         }
@@ -299,7 +300,7 @@ impl<'unit> TypeContext<'unit> {
         check_context: &CheckContext<'_>,
         ty: CheckedType,
         moved: &[u32],
-    ) -> Result<Vec<(Vec<u32>, CheckedType)>, CheckStop> {
+    ) -> Result<Vec<CheckedProjectedDrop>, CheckStop> {
         let mut drops = Vec::new();
         let mut pending = vec![(ty, Vec::new(), true, 0_usize, false)];
         while let Some((current, path, selected, depth, postorder)) = pending.pop() {
@@ -307,7 +308,11 @@ impl<'unit> TypeContext<'unit> {
                 continue;
             }
             if postorder {
-                drops.push((path, current));
+                drops.push(CheckedProjectedDrop {
+                    fields: path,
+                    ty: current,
+                    prepared_order: false,
+                });
                 continue;
             }
             match current {
@@ -342,7 +347,11 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::KeySet
                 | CheckedType::KeyedEntries { .. } => {
                     if !self.is_copy_type(check_context, current)? {
-                        drops.push((path, current));
+                        drops.push(CheckedProjectedDrop {
+                            fields: path,
+                            ty: current,
+                            prepared_order: false,
+                        });
                     }
                 }
                 CheckedType::Nominal(id) => {
@@ -353,11 +362,27 @@ impl<'unit> TypeContext<'unit> {
                         }
                         continue;
                     }
-                    let CheckedNominalKind::Struct { fields } = &nominal.kind else {
+                    if matches!(nominal.kind, CheckedNominalKind::PreparedKeys { .. }) {
+                        drops.push(CheckedProjectedDrop {
+                            fields: path.clone(),
+                            ty: current,
+                            prepared_order: selected,
+                        });
+                        if !selected {
+                            continue;
+                        }
+                    }
+                    let (CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields }) = &nominal.kind
+                    else {
                         if selected {
                             return Err(SemanticCompilerFailure::InvalidResolution.into());
                         }
-                        drops.push((path, current));
+                        drops.push(CheckedProjectedDrop {
+                            fields: path,
+                            ty: current,
+                            prepared_order: false,
+                        });
                         continue;
                     };
                     if !selected {

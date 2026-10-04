@@ -795,6 +795,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .is_empty()
                 {
                     releases.push(CheckedProjectedDrop {
+                        prepared_order: false,
                         fields: vec![ordinal],
                         ty: field.ty,
                     });

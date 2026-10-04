@@ -2113,6 +2113,220 @@ static void holds_in_one_order(void) {
     wf_cmap_destroy(map);
 }
 
+/* A fixed byte-order oracle, independent of the runtime comparison and
+ * sort. The mutations show that every position, count and uniqueness the
+ * oracle requires can make this check fail. */
+static int prepared_order_is(const wf_key_order *order, const uint64_t *expected, uint64_t count) {
+    if (order->count != count)
+        return 0;
+    const uint64_t *indices = key_order_indices(order);
+    for (uint64_t i = 0; i < count; i++)
+        if (indices[i] != expected[i])
+            return 0;
+    return 1;
+}
+
+static void prepared_key_orders(void) {
+    int64_t before = atomic_load(&blocks_out);
+    unsigned char bytes[] = {'z', 'a', 'a', 'b', 'a', 0, 255};
+    const unsigned char original_bytes[] = {'z', 'a', 'a', 'b', 'a', 0, 255};
+    wf_key_span spans[] = {{0, 1}, {1, 2}, {2, 4}, {7, 7}, {4, 6}, {6, 7}};
+    const wf_key_span original_spans[] = {{0, 1}, {1, 2}, {2, 4}, {7, 7}, {4, 6}, {6, 7}};
+    const uint64_t expected[] = {3, 1, 4, 2, 0, 5};
+    wf_key_order order;
+    uint64_t first, second;
+    uint32_t result = wf__key_prepare(&order, bytes, sizeof bytes, spans, 6, &first, &second);
+    if (result != WF_KEY_PREPARED || !prepared_order_is(&order, expected, 6))
+        fail("prepared binary and prefix keys differ from byte-order oracle", result, order.count);
+    if (atomic_load(&blocks_out) != before || order.heap_indices != NULL)
+        fail("small prepared keys allocated permutation memory", atomic_load(&blocks_out) - before, 0);
+    if (memcmp(bytes, original_bytes, sizeof bytes) != 0 || memcmp(spans, original_spans, sizeof spans) != 0)
+        fail("preparation changed its original source", 0, 0);
+    /* Relocation must not retain a pointer into the former inline owner. */
+    wf_key_order relocated = order;
+    memset(&order, 0xa5, sizeof order);
+    if (!prepared_order_is(&relocated, expected, 6))
+        fail("an inline permutation did not survive relocation", 0, 0);
+    for (uint64_t i = 0; i < 6; i++) {
+        wf_key_order wrong = relocated;
+        wrong.inline_indices[i] = 6;
+        if (prepared_order_is(&wrong, expected, 6))
+            fail("prepared oracle admitted a wrong or missing source index", i, 0);
+        wrong = relocated;
+        wrong.inline_indices[i] = expected[(i + 1) % 6];
+        if (prepared_order_is(&wrong, expected, 6))
+            fail("prepared oracle admitted a repeated source index", i, 0);
+    }
+    order = relocated;
+    order.count--;
+    if (prepared_order_is(&order, expected, 6))
+        fail("prepared oracle admitted the wrong source count", 0, 0);
+    wf__key_order_free(&relocated);
+    if (relocated.count != 0 || relocated.heap_indices != NULL)
+        fail("released inline order retained ownership", relocated.count, 0);
+
+    result = wf_cmap_key_prepare(&order, NULL, 0, NULL, 0, &first, &second);
+    if (result != WF_KEY_PREPARED || order.count != 0 || order.heap_indices != NULL)
+        fail("an empty source was not prepared without allocation", result, order.count);
+    wf_cmap_key_order_release(&order);
+    wf_key_span empty[] = {{0, 0}};
+    result = wf_cmap_key_prepare(&order, NULL, 0, empty, 1, &first, &second);
+    const uint64_t singleton[] = {0};
+    if (result != WF_KEY_PREPARED || !prepared_order_is(&order, singleton, 1))
+        fail("one empty key was not prepared", result, order.count);
+    wf_cmap_key_order_release(&order);
+
+    /* Validation order and both range boundaries are observable errors. */
+    wf_key_span invalid[][3] = {
+        {{0, 1}, {3, 2}, {0, 9}},
+        {{0, 1}, {0, 8}, {0, 9}},
+        {{0, 1}, {0, 1}, {UINT64_MAX, UINT64_MAX}},
+    };
+    for (uint64_t i = 0; i < 3; i++) {
+        wf_key_span saved[3];
+        memcpy(saved, invalid[i], sizeof saved);
+        result = wf_cmap_key_prepare(&order, bytes, sizeof bytes, invalid[i], 3, &first, &second);
+        uint64_t wanted = i == 2 ? 2 : 1;
+        if (result != WF_KEY_INVALID_SPAN || first != wanted || order.count != 0 || order.heap_indices != NULL ||
+            memcmp(saved, invalid[i], sizeof saved) != 0)
+            fail("invalid span did not return its lowest original index and unchanged source", result, first);
+    }
+    /* The lexicographically first duplicate KEY is 'a', but the smallest
+     * original-index pair is the two 'z' keys at (0, 4). */
+    const unsigned char repeats[] = {'z', 'a', 'a', 'a', 'z', 'z'};
+    wf_key_span repeated[6];
+    for (uint64_t i = 0; i < 6; i++)
+        repeated[i] = (wf_key_span){i, i + 1};
+    result = wf_cmap_key_prepare(&order, repeats, sizeof repeats, repeated, 6, &first, &second);
+    if (result != WF_KEY_DUPLICATE || first != 0 || second != 4)
+        fail("duplicate preparation did not report smallest original-index pair", first, second);
+    if (order.count != 0 || order.heap_indices != NULL)
+        fail("rejected duplicate preparation retained private order ownership", order.count, 0);
+    wf_key_span empty_twice[] = {{0, 0}, {7, 7}};
+    result = wf_cmap_key_prepare(&order, bytes, sizeof bytes, empty_twice, 2, &first, &second);
+    if (result != WF_KEY_DUPLICATE || first != 0 || second != 1)
+        fail("empty duplicate keys were admitted", result, second);
+
+    /* More than inline room: source keys are two-byte big-endian integers
+     * in reverse order, so the expected permutation is arithmetic, not a
+     * second invocation of the runtime's comparison or sort. */
+    enum { MANY = 257 };
+    unsigned char many_bytes[2 * MANY];
+    wf_key_span many_spans[MANY];
+    uint64_t many_expected[MANY];
+    for (uint64_t i = 0; i < MANY; i++) {
+        uint64_t value = MANY - 1 - i;
+        many_bytes[2 * i] = (unsigned char)(value >> 8);
+        many_bytes[2 * i + 1] = (unsigned char)value;
+        many_spans[i] = (wf_key_span){2 * i, 2 * i + 2};
+        many_expected[i] = MANY - 1 - i;
+    }
+    result = wf_cmap_key_prepare(&order, many_bytes, sizeof many_bytes, many_spans, MANY, &first, &second);
+    if (result != WF_KEY_PREPARED || !prepared_order_is(&order, many_expected, MANY) ||
+        order.heap_indices == NULL || atomic_load(&blocks_out) != before + 1)
+        fail("bulk preparation did not use one compact permutation", result, atomic_load(&blocks_out) - before);
+    relocated = order;
+    memset(&order, 0xa5, sizeof order);
+    if (!prepared_order_is(&relocated, many_expected, MANY))
+        fail("a bulk permutation did not survive relocation", 0, 0);
+    wf_cmap_key_order_release(&relocated);
+    many_spans[MANY - 1] = many_spans[0];
+    result = wf_cmap_key_prepare(&order, many_bytes, sizeof many_bytes, many_spans, MANY, &first, &second);
+    if (result != WF_KEY_DUPLICATE || first != 0 || second != MANY - 1 || atomic_load(&blocks_out) != before)
+        fail("rejected bulk preparation leaked its order or misreported duplicate", first, second);
+    if (atomic_load(&blocks_out) != before)
+        fail("preparation changed caller ownership or leaked scratch", atomic_load(&blocks_out) - before, 0);
+}
+
+static void prepared_holds(void) {
+    const unsigned char bytes_a[] = "cadb", bytes_b[] = "ebc";
+    const wf_key_span spans_a[] = {{0, 1}, {1, 2}, {2, 3}, {3, 4}};
+    const wf_key_span spans_b[] = {{0, 1}, {1, 2}, {2, 3}};
+    wf_key_order a, b;
+    uint64_t first, second;
+    if (wf_cmap_key_prepare(&a, bytes_a, 4, spans_a, 4, &first, &second) != WF_KEY_PREPARED ||
+        wf_cmap_key_prepare(&b, bytes_b, 3, spans_b, 3, &first, &second) != WF_KEY_PREPARED)
+        fail("distinct prepared hold sources were rejected", first, second);
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    wf_cmap_user *user = wf_cmap_user_at(map, 0);
+    wf_cmap_holding hold;
+    /* A single prepared group keeps original positions and never sorts its
+     * rank stream again when the hold is taken. */
+    wf_cmap_hold_begin(&hold, map);
+    struct { void *hold; uint64_t first; uint64_t count; } entries;
+    wf__table_hold_prepared(&hold, bytes_a, spans_a, &a, &entries);
+    if (entries.hold != &hold || entries.first != 0 || entries.count != 4 || hold.order != KEYS_RANKED_UNIQUE)
+        fail("prepared entry descriptor lost original source count", entries.first, entries.count);
+    for (uint64_t i = 0; i < 4; i++)
+        if (held_keys(&hold)[i].key != bytes_a + spans_a[i].start)
+            fail("a prepared hold copied or reordered its original key bytes", i, 0);
+    wf_cmap_hold_take(user, &hold);
+    for (uint64_t i = 0; i < 4; i++)
+        *(uint64_t *)wf_cmap_hold_slot(&hold, i) = bytes_a[i];
+    wf_cmap_hold_release(&hold, 0, 8, 0);
+
+    wf_key_set tail;
+    wf_cmap_key_set_new(&tail, 2);
+    wf_cmap_key_set_put(&tail, (const unsigned char *)"z", 1, 0);
+    wf_cmap_key_set_put(&tail, (const unsigned char *)"h", 1, 0);
+    wf_cmap_hold_begin(&hold, map);
+    wf_cmap_hold_key(&hold, (const unsigned char *)"g", 1);
+    wf_cmap_hold_key(&hold, (const unsigned char *)"f", 1);
+    if (wf_cmap_hold_prepared(&hold, bytes_a, spans_a, &a) != 2 ||
+        wf_cmap_hold_prepared(&hold, bytes_b, spans_b, &b) != 6 ||
+        wf_cmap_hold_key(&hold, (const unsigned char *)"a", 1) != 9 ||
+        wf_cmap_hold_keys(&hold, &tail) != 10)
+        fail("combined prepared headers lost original positions", hold.count, 0);
+    const unsigned char original[] = "gfcadbebcahz";
+    const uint64_t ranked_positions[] = {3, 9, 5, 7, 2, 8, 4, 6, 1, 0, 10, 11};
+    uint64_t distinct_count = order_hold(&hold);
+    if (distinct_count != 9)
+        fail("prepared header union did not identify nine distinct entries", distinct_count, 9);
+    wf_cmap_hold_take(user, &hold);
+    for (uint64_t i = 0; i < sizeof ranked_positions / sizeof *ranked_positions; i++) {
+        if (held_keys(&hold)[i].rank != ranked_positions[i])
+            fail("combined prepared headers did not merge in canonical order", i, held_keys(&hold)[i].rank);
+        *(uint64_t *)wf_cmap_hold_slot(&hold, i) = original[i];
+    }
+    if (wf_cmap_hold_slot(&hold, 3) != wf_cmap_hold_slot(&hold, 9) ||
+        wf_cmap_hold_slot(&hold, 5) != wf_cmap_hold_slot(&hold, 7) ||
+        wf_cmap_hold_slot(&hold, 2) != wf_cmap_hold_slot(&hold, 8))
+        fail("overlapping prepared bindings did not share their entry", 0, 0);
+    wf_cmap_hold_release(&hold, 0, 8, 0);
+    if (wf_cmap_count(map) != 9)
+        fail("combined prepared headers counted repeats as different entries", wf_cmap_count(map), 9);
+    const unsigned char distinct[] = "abcdefghz";
+    for (uint64_t i = 0; i < sizeof distinct - 1; i++) {
+        wf_cmap_entry entry;
+        uint64_t *slot = wf_cmap_lock_entry(user, &distinct[i], 1, 0, &entry);
+        if (*slot != distinct[i])
+            fail("a prepared original index wrote another key's value", *slot, distinct[i]);
+        wf_cmap_unlock_entry(user, &entry, 0, 1);
+    }
+    /* The whole-table path consumes the same merged rank stream and keeps
+     * the same original positions and overlapping slots. */
+    wf_cmap_hold_begin(&hold, map);
+    wf_cmap_hold_whole(&hold);
+    wf_cmap_hold_prepared(&hold, bytes_a, spans_a, &a);
+    wf_cmap_hold_prepared(&hold, bytes_b, spans_b, &b);
+    wf_cmap_hold_take(user, &hold);
+    if (!hold.whole)
+        fail("a whole prepared header did not hold the whole table", 0, 0);
+    const unsigned char whole_original[] = "cadbebc";
+    for (uint64_t i = 0; i < sizeof whole_original - 1; i++)
+        if (*(uint64_t *)wf_cmap_hold_slot(&hold, i) != whole_original[i])
+            fail("whole prepared positions differed from original keys", i, whole_original[i]);
+    if (wf_cmap_hold_slot(&hold, 0) != wf_cmap_hold_slot(&hold, 6) ||
+        wf_cmap_hold_slot(&hold, 3) != wf_cmap_hold_slot(&hold, 5))
+        fail("whole prepared overlaps did not share their entry", 0, 0);
+    wf_cmap_hold_release(&hold, 0, 8, 0);
+    wf_cmap_key_set_release(&tail);
+    wf_cmap_key_set_drop_spare();
+    wf_cmap_key_order_release(&a);
+    wf_cmap_key_order_release(&b);
+    wf_cmap_destroy(map);
+}
+
 /* Key sets: distinct keys in increasing byte order, a proper prefix first,
  * whatever order they are put in; put replaces a payload and add adds to
  * it, modulo 2^64; a set grows past its capacity, a capacity past the first
@@ -2888,11 +3102,22 @@ static void entries_huge_capacity(void) {
     wf_cmap_destroy(map);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     /* Writers that wait on each other in a cycle fail the test here rather
      * than at the gate's limit. */
     alarm(120);
     set_patience(PATIENCE, PATIENCE);
+    /* The same assertions, isolated for preparation mutation experiments;
+     * the ordinary gate continues to run every applicable runtime test. */
+    if (argc == 2 && strcmp(argv[1], "--prepared-only") == 0) {
+        prepared_key_orders();
+        prepared_holds();
+        if (atomic_load(&blocks_out) != 0)
+            fail("prepared tests retained an allocation", atomic_load(&blocks_out), 0);
+        return 0;
+    }
+    if (argc != 1)
+        fail("usage: concurrent-map-test [--prepared-only]", argc, 0);
     if (ENTRY_TESTS) {
         entries_huge_capacity();
         entries_sequential();
@@ -2916,6 +3141,8 @@ int main(void) {
         reads_block_moves();
         entries_shared_reads(0);
         entries_shared_reads(1);
+        prepared_key_orders();
+        prepared_holds();
         key_sets();
         holds_sequential();
         holds_positions();

@@ -1354,6 +1354,112 @@ static int compare_keys(const unsigned char *a, uint64_t a_length, const unsigne
     return a_length < b_length ? -1 : a_length > b_length ? 1 : 0;
 }
 
+/* A prepared value owns only indices here. Its source stays in the
+ * language's ordinary owners, exposed readonly until the wrapper dies. */
+static const uint64_t *key_order_indices(const wf_key_order *order) {
+    return order->heap_indices != NULL ? order->heap_indices : order->inline_indices;
+}
+
+static const unsigned char *span_bytes(const unsigned char *bytes, const wf_key_span *span) {
+    static const unsigned char empty[1] = {0};
+    return span->start == span->end ? empty : bytes + span->start;
+}
+
+static int span_order(const unsigned char *bytes, const wf_key_span *spans, uint64_t a, uint64_t b) {
+    return compare_keys(span_bytes(bytes, &spans[a]), spans[a].end - spans[a].start,
+                        span_bytes(bytes, &spans[b]), spans[b].end - spans[b].start);
+}
+
+/* Source index breaks ties, so a duplicate run starts with its two lowest
+ * original indices independently of the sorting algorithm's stability. */
+static int index_order(const unsigned char *bytes, const wf_key_span *spans, uint64_t a, uint64_t b) {
+    int compared = span_order(bytes, spans, a, b);
+    return compared != 0 ? compared : a < b ? -1 : a > b ? 1 : 0;
+}
+
+static void sift_key_indices(uint64_t *indices, uint64_t root, uint64_t end,
+                             const unsigned char *bytes, const wf_key_span *spans) {
+    while (root < end / 2) {
+        uint64_t child = 2 * root + 1;
+        if (child + 1 < end && index_order(bytes, spans, indices[child], indices[child + 1]) < 0)
+            child++;
+        if (index_order(bytes, spans, indices[root], indices[child]) >= 0)
+            return;
+        uint64_t swap = indices[root];
+        indices[root] = indices[child];
+        indices[child] = swap;
+        root = child;
+    }
+}
+
+void wf_cmap_key_order_release(wf_key_order *order) {
+    if (order->heap_indices != NULL)
+        WF_CMAP_GIVE(order->heap_indices, (size_t)order->count * sizeof(uint64_t));
+    order->count = 0;
+    order->heap_indices = NULL;
+}
+
+uint32_t wf_cmap_key_prepare(wf_key_order *out, const unsigned char *bytes,
+                             uint64_t byte_count, const wf_key_span *spans,
+                             uint64_t count, uint64_t *first, uint64_t *second) {
+    memset(out, 0, sizeof *out);
+    *first = 0;
+    *second = 0;
+    if (count > SIZE_MAX / sizeof *spans || byte_count > SIZE_MAX)
+        WF_CMAP_EXHAUSTED();
+    /* Validate every range before any key read. The error's index is the
+     * lowest invalid source index, even when earlier keys are duplicates. */
+    for (uint64_t i = 0; i < count; i++) {
+        if (spans[i].start > spans[i].end || spans[i].end > byte_count) {
+            *first = i;
+            return WF_KEY_INVALID_SPAN;
+        }
+    }
+    out->count = count;
+    if (count > WF_KEY_ORDER_INLINE)
+        out->heap_indices = take((size_t)count * sizeof(uint64_t));
+    uint64_t *indices = out->heap_indices != NULL ? out->heap_indices : out->inline_indices;
+    int increasing = 1;
+    uint64_t duplicate_first = UINT64_MAX, duplicate_second = UINT64_MAX;
+    for (uint64_t i = 0; i < count; i++) {
+        indices[i] = i;
+        if (i != 0) {
+            int compared = span_order(bytes, spans, i - 1, i);
+            if (compared > 0)
+                increasing = 0;
+            else if (compared == 0 && duplicate_first == UINT64_MAX) {
+                duplicate_first = i - 1;
+                duplicate_second = i;
+            }
+        }
+    }
+    if (!increasing) {
+        for (uint64_t i = count / 2; i-- > 0;)
+            sift_key_indices(indices, i, count, bytes, spans);
+        for (uint64_t end = count; end-- > 1;) {
+            uint64_t swap = indices[0];
+            indices[0] = indices[end];
+            indices[end] = swap;
+            sift_key_indices(indices, 0, end, bytes, spans);
+        }
+        for (uint64_t i = 1; i < count; i++) {
+            uint64_t a = indices[i - 1], b = indices[i];
+            if (span_order(bytes, spans, a, b) == 0 &&
+                (a < duplicate_first || (a == duplicate_first && b < duplicate_second))) {
+                duplicate_first = a;
+                duplicate_second = b;
+            }
+        }
+    }
+    if (duplicate_first != UINT64_MAX) {
+        *first = duplicate_first;
+        *second = duplicate_second;
+        wf_cmap_key_order_release(out);
+        return WF_KEY_DUPLICATE;
+    }
+    return WF_KEY_PREPARED;
+}
+
 static size_t store_bytes(uint64_t room) {
     if (room > (SIZE_MAX - sizeof(key_store)) / sizeof(key_item))
         WF_CMAP_EXHAUSTED();
@@ -1557,7 +1663,11 @@ void wf_cmap_key_set_release(wf_key_set *set) {
  * start, and its keys' entries under it. */
 
 /* How a hold's added keys stand. */
-enum { KEYS_INCREASING, KEYS_NONDECREASING, KEYS_SHUFFLED };
+enum { KEYS_INCREASING, KEYS_NONDECREASING, KEYS_SHUFFLED, KEYS_RANKED_UNIQUE, KEYS_RANKED_REPEATED };
+
+static uint64_t order_hold(wf_cmap_holding *hold);
+static void merge_key_ranks(wf_cmap_holding *hold, uint64_t first, uint64_t count,
+                            const uint64_t *indices, int earlier_unique);
 
 /* The most keys whose memory a user keeps for its next hold, so that a hold
  * of many keys once does not keep its memory for the map's life. */
@@ -1662,10 +1772,14 @@ static void set_held(wf_cmap_held *e, const unsigned char *key, uint64_t length)
 uint64_t wf_cmap_hold_key(wf_cmap_holding *hold, const unsigned char *key, uint64_t length) {
     wf_cmap_held *keys = reserve_keys(hold, 1);
     uint64_t position = hold->count;
-    if (position != 0)
+    int ranked_order = hold->order == KEYS_RANKED_UNIQUE || hold->order == KEYS_RANKED_REPEATED;
+    int earlier_unique = hold->order == KEYS_RANKED_UNIQUE;
+    if (position != 0 && !ranked_order)
         note_order(hold, &keys[position - 1], key, length);
     set_held(&keys[position], key, length);
     hold->count = position + 1;
+    if (ranked_order)
+        merge_key_ranks(hold, position, 1, NULL, earlier_unique);
     return position;
 }
 
@@ -1674,14 +1788,63 @@ uint64_t wf_cmap_hold_keys(wf_cmap_holding *hold, const wf_key_set *set) {
     if (set->len == 0)
         return first;
     wf_cmap_held *keys = reserve_keys(hold, set->len);
+    int ranked_order = hold->order == KEYS_RANKED_UNIQUE || hold->order == KEYS_RANKED_REPEATED;
+    int earlier_unique = hold->order == KEYS_RANKED_UNIQUE;
     const key_store *s = set->store;
     for (uint64_t i = 0; i < set->len; i++)
         set_held(&keys[first + i], item_bytes(s, &s->items[i]), s->items[i].length);
     /* The set's keys increase, so only its first may stand at or before an
      * earlier key. */
-    if (first != 0)
+    if (first != 0 && !ranked_order)
         note_order(hold, &keys[first - 1], keys[first].key, keys[first].length);
     hold->count = first + set->len;
+    if (ranked_order)
+        merge_key_ranks(hold, first, set->len, NULL, earlier_unique);
+    return first;
+}
+
+/* Merge two already ordered streams backwards into the rank fields. The
+ * earlier stream is in those fields and the later stream is independent
+ * immutable metadata, so every unread earlier rank stays below the write.
+ * NULL indices denotes a later stream already in source order. */
+static void merge_key_ranks(wf_cmap_holding *hold, uint64_t first, uint64_t count,
+                            const uint64_t *indices, int earlier_unique) {
+    wf_cmap_held *keys = held_keys(hold);
+    uint64_t left = first, right = count, destination = first + count;
+    int unique = earlier_unique;
+    while (left != 0 && right != 0) {
+        uint64_t a = keys[left - 1].rank;
+        uint64_t b = first + (indices != NULL ? indices[right - 1] : right - 1);
+        int compared = held_order(&keys[a], &keys[b]);
+        if (compared == 0)
+            unique = 0;
+        if (compared > 0) {
+            keys[--destination].rank = a;
+            left--;
+        } else {
+            keys[--destination].rank = b;
+            right--;
+        }
+    }
+    while (right != 0) {
+        right--;
+        keys[--destination].rank = first + (indices != NULL ? indices[right] : right);
+    }
+    /* When only left remains, its ranks are already in their final places. */
+    hold->order = unique ? KEYS_RANKED_UNIQUE : KEYS_RANKED_REPEATED;
+}
+
+uint64_t wf_cmap_hold_prepared(wf_cmap_holding *hold, const unsigned char *bytes,
+                              const wf_key_span *spans, const wf_key_order *order) {
+    uint64_t first = hold->count;
+    if (order->count == 0)
+        return first;
+    int earlier_unique = order_hold(hold) == first;
+    wf_cmap_held *keys = reserve_keys(hold, order->count);
+    for (uint64_t i = 0; i < order->count; i++)
+        set_held(&keys[first + i], span_bytes(bytes, &spans[i]), spans[i].end - spans[i].start);
+    hold->count = first + order->count;
+    merge_key_ranks(hold, first, order->count, key_order_indices(order), earlier_unique);
     return first;
 }
 
@@ -1705,18 +1868,20 @@ static void sift_ranks(wf_cmap_held *keys, uint64_t root, uint64_t end) {
 /* Ranks the added keys in byte order, without memory of its own, and marks
  * the first of each run of equal keys, which locks the run's entry; answers
  * how many lead. Keys added in increasing order, as a key set's are, are
- * ranked as they stand. */
+ * ranked as they stand. Prepared streams retain their merged ranks. */
 static uint64_t order_hold(wf_cmap_holding *hold) {
     wf_cmap_held *keys = held_keys(hold);
     uint64_t added = hold->count;
+    int ranked_order = hold->order == KEYS_RANKED_UNIQUE || hold->order == KEYS_RANKED_REPEATED;
     for (uint64_t i = 0; i < added; i++) {
-        keys[i].rank = i;
+        if (!ranked_order)
+            keys[i].rank = i;
         keys[i].cell = NULL;
         keys[i].slot = NULL;
         keys[i].fresh = 0;
         keys[i].leads = 1;
     }
-    if (hold->order == KEYS_INCREASING)
+    if (hold->order == KEYS_INCREASING || hold->order == KEYS_RANKED_UNIQUE)
         return added;
     if (hold->order == KEYS_SHUFFLED) {
         for (uint64_t i = added / 2; i-- > 0;)

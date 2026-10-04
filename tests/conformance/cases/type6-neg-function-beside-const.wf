@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const width: u8 = 8_u8;
+
+fn width() -> result: u8 pure {
+  doc "A function and a named const of one module's inventory compete whatever their class, so that a module path names one declaration [TYPE-6, MOD-3].";
+  return 4_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

@@ -1,4 +1,4 @@
-# Kernel Specification v0.86
+# Kernel Specification v0.89
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -17,7 +17,7 @@ No written conclusion, origin annotation, trusted-value mark, runtime observatio
 [SCOPE-3] Accepted programs have no undefined behavior, conditional on the declared trusted computing base: compiler, checker, linked function definitions, runtime, allocator, and OS.
 Every linked definition must implement its ordinary declaration with the same value, ownership, effect, contract, and call-lifetime meaning as a Whitefoot body. Its implementation language and build binding do not alter source acceptance or permissions.
 The source outcome model leaves resource availability outside it: heap exhaustion, stack exhaustion, operating-system quotas, and runtime-start resources may stop execution without a Whitefoot value, status, or cleanup guarantee.
-That placement does not defer static layout, stride, allocation-ceiling, address, target-domain, or parallel-independence proof; each obligation still succeeds before the governed operation is emitted.
+That placement does not defer static layout, stride, address, target-domain, or parallel-independence proof; each obligation still succeeds before the governed operation is emitted.
 Resource failure establishes no source fact, grants no fallback path, and cannot turn an unproved operation into an accepted one.
 
 ## 2. Canonical form
@@ -411,7 +411,7 @@ The five are ordinary nominals of the nominal-type TYPEID domain [TYPE-6], writt
 In this specification's prose `N` stands for a written const argument; source writes a `const` IDENT, lowercase under [FORM-3], as the [PRE-1] rows do.
 `Slots`, `Ring`, `Segments`, and `Box` are declared `nocopy`, so their values are affine unless an element or content type makes them linear, and an `Array` has exactly the capabilities of its element type [OWN-1, PROV-6].
 A `struct` or `enum` declaration may carry one capability modifier [GRAM-2]: `nodrop`, which states a logical must-consume obligation on values of that nominal in every scope, or `nocopy`, which makes its values non-duplicable although every part could be copied; neither changes a component, layout, or construction route [OWN-1, PROV-6].
-A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of one of its fields is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: a construction row [OP-13] forms the four storage shapes and `Box<T>`, which the prelude declares [PRE-1], and a host function forms the opaque structs the host modules declare, their host handles among them [PRE-2], so no other opaque struct ever has a value.
+A `struct` declaration may carry the `opaque` modifier [GRAM-2], written before a capability modifier when both are present: an opaque struct has fields and no usable constructor. Its constructor entry [TYPE-6] exists to be refused: a constructor `call` whose leading TYPEID names an opaque struct is a hard error citing TYPE-2 at the complete `call`, and a destructuring `let_stmt` whose TYPEID names one is a hard error citing TYPE-2 at the complete `let_stmt`, each with a repair [DIAG-1]. Its fields obey the ordinary field, ownership, and release rules [OWN-1, PROV-6, STOR-3], and a `move` out of one of its fields is the ordinary [WIN-3] consume. A value of an opaque struct is formed only by a definition the build supplies: the prelude operations form its storage and shared-state values [OP-13, SHARE-1, PRE-1], an atomic entry binding forms its entry view [SHARE-2], and a host function forms the opaque structs the host modules declare, their host handles among them [PRE-2]. No other opaque struct ever has a value.
 A `field` may carry the `readonly` modifier [GRAM-2]; a source field carries it only together with `public` [MOD-6]. Inside the module that declares a source struct its readonly field is an ordinary field. Outside that module — and everywhere, for a PRE-1 struct's field — a path that ends at or passes through a readonly field is never a write target: a `set` whose target is such a path [SET-1], and an argument naming such a path at a reference parameter whose callee row writes that parameter [EFF-5], are each a hard error citing TYPE-2 at the complete target `place` or argument `atom`, with a repair [DIAG-1]. Construction gives a readonly field its value like any other field [GRAM-8], and a construction outside the declaring module supplies none [MOD-5]; a whole-value assignment replaces it together with its owner. Its value otherwise changes only through a compiler-owned [PRE-1] operation whose row declares `writes` of it [OP-10]; a declared row may name a readonly field in `writes`, because a row reports every change its callees make [EFF-2]. `readonly` states that the field is not assignable, not that its value is constant.
 
 [TYPE-11] Type invariants.
@@ -501,7 +501,7 @@ After the route's leading constructor and field are admitted, that binder is vis
 It must differ from its paired field, every parameter, the result binder, and every live definition.
 Different ensures clauses have disjoint result-datum scopes and may reuse one route-binder spelling.
 Neither kind of result datum has runtime storage or ownership state, and neither is visible in the function body, so a body `let` may reuse a result binder's spelling without a redeclaration event.
-A match binder becomes visible in its arm body only after the complete fieldbind list and only after GRAM-10 has established that it differs from its paired field label, every earlier binder in that arm list, and every lexical-IDENT declaration live on arm entry.
+A match binder becomes visible in its arm body only after the complete fieldbind list and only after GRAM-10 has established that it differs from its paired field label, every earlier binder in that arm list, and every lexical-IDENT declaration live on arm entry that it competes with.
 A `for_binding` binder becomes visible after its complete `for_binding`, including both endpoint atoms, through the remaining `header_invariant` clauses and the counted body; it is not visible in either endpoint.
 An ordinary or counted loop label, when written, is visible only in its loop body; a counted label is not visible in the binding or invariant header.
 A loop label is an optional lexical name, never the identity of the loop: every `loop_stmt` and `for_stmt` has one distinct compiler-owned structural loop identity whether or not it writes a LABEL.
@@ -516,12 +516,16 @@ Within the invariant-name domain a new live declaration may not shadow another l
 Adding, removing, or changing a loop label cannot change any invariant binding.
 A named const is visible in its whole module like every top-level declaration; [CONST-2] judges the dependencies among constants.
 
-Within one domain, two declarations in one module's inventory, in one record's alias header, or in the same lexical scope are a redeclaration attributed to the later declaration event.
+The lexical IDENT domain has two use classes: callables, which are top-level `fn_decl`s, raw function-kind `gparam`s and PRE-1 functions, and values, which are its other entries; a module alias is in both, and any other alias is in its target's class [MOD-4].
+Every other domain is one use class.
+Two declarations compete when they have one spelling and one domain and either share a use class or both enter one module's inventory [MOD-3].
+So `let narrow = narrow(width: w);` binds a value beside a function of the same spelling, each use selecting the declaration its role admits.
+Two competing declarations in one module's inventory, in one record's alias header, or in the same lexical scope are a redeclaration attributed to the later declaration event.
 Declarations in unrelated function or declaration owners are not duplicates merely because their spellings match.
-A nested lexical declaration may not shadow an entry live at that declaration.
-GRAM-10 exclusively owns arm match-binder distinctness and freshness: a second IDENT of an arm `fieldbind` equal to its paired field label, an earlier binder in the same arm list, or any lexical-IDENT declaration live on arm entry is rejected citing GRAM-10 at that later/offending binder before it becomes a declaration, rather than also being reported as TYPE-6 shadowing.
+A nested lexical declaration may not shadow a competing entry live at that declaration.
+GRAM-10 exclusively owns arm match-binder distinctness and freshness: a second IDENT of an arm `fieldbind` equal to its paired field label, an earlier binder in the same arm list, or any lexical-IDENT declaration live on arm entry that it competes with is rejected citing GRAM-10 at that later/offending binder before it becomes a declaration, rather than also being reported as TYPE-6 shadowing.
 FN-9 exclusively owns the analogous result-datum checks described above; failure creates no TYPE-6 declaration or duplicate event.
-Because every top-level declaration and every alias is live throughout its module or record, any other parameter, local, or generic in a nested scope may not use such a spelling in its domain even when that declaration's source item occurs later; the nested declaration is the offending shadow event.
+Because every top-level declaration and every alias is live throughout its module or record, a parameter, local, or generic in a nested scope that competes with one may not use its spelling even when that declaration's source item occurs later; the nested declaration is the offending shadow event.
 Disjoint expired lexical scopes may reuse an ordinary value or label spelling.
 Within one module, logical paths and record boundaries never create a namespace or lookup key; a module and a record's alias header are the only scopes above a declaration [MOD-3, MOD-4].
 
@@ -816,7 +820,7 @@ No judgment of this specification depends on a value's address being stable, and
 [STOR-8] There is one heap, provided by the trusted base and internally synchronized.
 Allocation is total in the source: heap exhaustion never returns a failure and never traps, and no allocating operation carries a `Result`.
 Exhaustion of the heap terminates the program from the trusted base, outside the language [SCOPE-3], so no payload is ever handed back and no program point holds a value whose owner has vanished.
-The arithmetic that computes an allocation size is bounded before it is performed: a count by the static overflow obligation [OP-9], and a sum of lengths by `box_segments_filled`'s size predicate [OP-13].
+The arithmetic that computes an allocation size never wraps: a count's size and a sum of lengths are computed as [OP-9] states.
 Addresses are not observable, so allocator concurrency does not affect program determinism.
 Allocation and release carry no effect entry [EFF-1] and never prevent two statements from overlapping [PAR-1].
 A source bundle that carries the no-heap declaration [GRAM-2, PROG-3] cannot name `Box`, the runtime-capacity shapes, or `Segments` [TYPE-9] and cannot call an allocating prelude row — `box_new`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, and `grow` [OP-13, OP-10]; naming such a type is a hard error citing STOR-8 at the complete `type`, and calling such a row is a hard error citing STOR-8 at the complete `call`, each with a repair [DIAG-1].
@@ -843,7 +847,7 @@ A `Slots` or `Ring` release is each element's compiler-derived release over its 
 A `const` item [CONST-2] is never released.
 Every other frame-resident owned value [STOR-1] has no release action.
 
-A host handle [PRE-2] has no fields, so its release is empty; every other opaque struct [TYPE-2] takes the release its fields give it under this rule, `Box` the cell case above.
+A host handle [PRE-2] has no fields, so its release is empty. The shared-state prelude types additionally release their owned runtime resources as [SHARE-1] specifies; extracting the source of `PreparedKeys` releases only its private ordering. Every other opaque struct [TYPE-2] takes the release its fields give it under this rule, `Box` the cell case above.
 An opaque struct's `nodrop` modifier, and only the ordinary ownership closure of [PROV-6], requires explicit consumption.
 No source declaration, annotation, attribute, contract, or binding attaches a finalizer or any other user-defined action to a value's release.
 
@@ -872,17 +876,14 @@ It must not wrap, truncate, underallocate, reduce alignment, change [STOR-1] sto
 This stop is a target-layout failure under [DIAG-1], not a source-language rejection, and cites no language rule.
 
 For a runtime-sized allocation, the concrete descriptor and element layout are checked statically as above.
-For every runtime-capacity shape materialized by a construction function [OP-13] or resized by `grow` [OP-10], target qualification additionally verifies the actual size, alignment, and element stride against [OP-9]'s language ceilings before lowering the operation.
-The accepted [OP-9] judgment retains a numeric upper bound for the source length at that allocation site; target qualification computes the complete allocation size, including the shape's descriptor, its padding before the elements, and that bound multiplied by the actual target stride, using checked mathematical arithmetic, and requires the result to fit both the allocator-parameter and address-index domains before lowering the operation.
-At this target stage, when the actual element stride is positive, the exact SSA result of a runtime-capacity shape's `len` measure additionally carries the selected target's runtime-allocation byte maximum minus that shape's padded descriptor size, divided by its actual element stride and rounded down, because every materialized shape already satisfies the successful-allocation representation invariant.
-When that stride is zero, the invariant contributes no additional count bound beyond the source length type; the complete padded descriptor must still satisfy target qualification, and every actually emitted address operand still obeys the exact-representation requirement below.
-For every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification verifies the element's actual size, alignment, and stride against [OP-9]'s language ceilings, and requires the largest block its predicate admits, `2^62` bytes of elements and boundaries together with the shape's own descriptor and its padding before the elements, to fit both the allocator-parameter and address-index domains, before lowering the operation.
-Qualification may intersect this target bound with the retained source bound only for that exact SSA result; it does not publish a Whitefoot comparison fact or transfer the bound through a block parameter, storage load, conversion, user call, or another value merely because its source spelling or type is similar.
-The source allocation proof and this target qualification jointly establish that every reachable runtime byte count has one exact value-preserving target representation; neither alone authorizes emission, and the allocator receives exactly that value.
+For every runtime-capacity shape materialized by a construction function [OP-13] or resized by `grow` [OP-10], and every `Segments<T>` that `box_segments_filled` materializes [OP-13], target qualification additionally verifies the actual size, alignment, and element stride against [OP-9]'s language ceilings, and the shape's padded descriptor against the selected target's runtime-allocation byte maximum, before lowering the operation; a `Segments` descriptor counts here its `len` word and its first boundary, the others following at a runtime count.
+The lowered operation computes the complete allocation size, the shape's descriptor, its padding before the elements and the count multiplied by the actual target stride, with checked arithmetic, and compares it with the selected target's runtime-allocation byte maximum before any allocator call; for a `Segments` the descriptor holds every boundary, whose number is the length of an allocated run of lengths and so keeps the descriptor's arithmetic from wrapping, and the count is the element total, itself summed with checked arithmetic. A sum or size that wraps or a size that exceeds that maximum is one the target cannot allocate [OP-9], so every size an allocator receives fits both the allocator-parameter and address-index domains.
+Every materialized runtime-capacity shape and `Segments` therefore satisfies the successful-allocation representation invariant: its padded descriptor and the elements its count sizes, at the actual stride, fit the selected target's runtime-allocation byte maximum.
+The emitted size check and this target qualification establish that every byte count an allocator receives has one exact value-preserving target representation, and the allocator receives exactly that value.
 Every emitted target address computation must likewise be proved valid for every runtime value that reaches it: the compiler establishes before emission that each runtime index and each mathematically scaled byte offset actually used by the computation has an exact value-preserving representation in the applicable target address-index domain, and that scaling and offset addition do not wrap.
 An [OP-4] bounds judgment together with an established complete-object-layout or successful-allocation invariant may discharge these obligations; a backend's implicit narrowing does not.
 If target qualification cannot establish one of these facts, target compilation stops before emitting the governed allocation or address operation.
-This stop is a target-layout failure, not a source rejection, [OP-4] bounds failure, runtime proof outcome, or resource-availability failure; no target-domain runtime guard is emitted.
+This stop is a target-layout failure, not a source rejection, [OP-4] bounds failure, runtime proof outcome, or resource-availability failure, and no runtime guard takes its place.
 
 Complete generated frames remain subject to the mandatory checked-representability judgment above.
 That judgment does not predict available stack capacity: available capacity depends on dynamic call depth, recursion, the caller, and the execution environment.
@@ -1131,22 +1132,15 @@ Both operations lower directly to equality or inequality of the validated discri
 They are pure and total: after normal operand evaluation, the primitive does not inspect a payload, access memory, trap, convert a value, or introduce a new optimizer fact channel; an operand read still exhibits its ordinary effect before the primitive executes.
 Payload-carrying enums, enum ordering, and enum/integer conversion remain outside the operation table.
 
-[OP-9] The static allocation-size obligation over a stored type T and a runtime count `n` is the pure, total, target-independent predicate
-`n <= floor((2^64 - 1) / stride_ceiling(T))`, where `stride_ceiling(T) >= 1` is the language layout ceiling fixed below.
-It is exactly the condition that the allocation's own size arithmetic `stride_ceiling(T) * n` does not leave the u64 domain [STOR-8]; it has no writer-callable spelling, exposes no target ABI value, and has the same result for one source type and n on every qualified target.
-Each runtime-capacity construction [OP-13] and `grow` [OP-10] carries it over that operation's own stored type and count.
-
-The obligation is accepted only when [ENT-6] discharges that exact goal; its sole normalized component is the defining comparison above, which may supply an alternate L0 derivation of the same root.
-The root does not project a new general L0 fact in the other direction.
-A refuted or unproved goal is a static OP-9 rejection; a contradictory state discharges it under [ENT-4].
-When n comes from runtime input, it remains an ordinary symbolic term; only an enumerated fact constructor such as a selected real branch, a proved invariant target (including one checked by [PRF-1]), or a verified postcondition may discharge this goal [SCOPE-2, ENT-3, ENT-6].
-No written conclusion alone, runtime multiplication guard, or fallback is retained.
+[OP-9] An allocation's size is computed at run time, and a size the target cannot allocate is heap exhaustion; a stored type has fixed language layout ceilings.
+A runtime-capacity construction [OP-13] and `grow` [OP-10] compute the byte size of their storage from their own count `n`, and `box_segments_filled` [OP-13] from the sum of its lengths and their number, with the checked arithmetic [STOR-6] fixes, and a size the selected target cannot allocate, including one whose sum of lengths wraps, is a request the heap cannot serve, which is heap exhaustion [STOR-8].
+No count or length carries a static obligation, and every value of its `u64` type is admitted.
 
 All layout-ceiling arithmetic is over unbounded mathematical integers.
 Let `round_up(x,a) = ceil(x/a) * a`.
 For a sequence of `(size, alignment)` pairs, start at offset zero, round each current offset up to the next field's alignment, add that field's size, take aggregate alignment as the maximum of one and the field alignments, and round the final offset to that aggregate alignment.
 The primitive `(size_ceiling, align_ceiling)` pairs are: `unit`, `Bool`, `i8`, and `u8` `(1,1)`; `i16` and `u16` `(2,2)`; `i32`, `u32`, and `f32` `(4,4)`; `i64`, `u64`, and `f64` `(8,8)`; `Box<T>` `(8,8)`, one pointer, its `inner` field living in the heap object and entering no sequence; a runtime-capacity `Array<T>` `(16,8)`, a pointer and a length; a runtime-capacity `Slots<T>` `(24,8)`, a pointer, a capacity, and a length; a runtime-capacity `Ring<T>` `(32,8)`, those three and a window origin; a `Segments<T>` `(16,8)`, a pointer and a length; and every fieldless opaque struct `(32,16)`, the host handles' host-supplied representation [PRE-1].
-Every other struct applies the sequence rule to fields in declaration order.
+`PreparedKeys` has ceilings `(160,8)`, including its visible source and private ordering storage [SHARE-1]. Every other struct applies the sequence rule to fields in declaration order.
 A constant-capacity `Array<T, N>` repeats T's pair N times.
 A constant-capacity `Slots<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by one `(8,8)` word, its length.
 A constant-capacity `Ring<T, N>` repeats T's pair N times and then applies the sequence rule to that block followed by two `(8,8)` words, its length and its window origin.
@@ -1156,7 +1150,6 @@ The existing recursive-type rejection remains, and the `Box`, runtime-capacity s
 `stride_ceiling(T)` is `max(1, size_ceiling(T))` after the aggregate rule.
 
 Before emitting a stored type S, target qualification verifies that its actual size, alignment, and stride do not exceed the three language ceilings.
-Only with both that qualification and the source obligation disposition may lowering emit `n * actual_stride(S)` as non-overflowing arithmetic.
 Qualification failure is a target failure and may not become a runtime guard.
 The [STOR-6] rule separately governs allocator and address-index representability; heap exhaustion remains a trusted-base resource failure [SCOPE-3, STOR-8], never a language trap.
 `Array<T, N>` performs no runtime size computation: N is fixed at monomorphization and concrete target representability is checked under [STOR-6].
@@ -1172,7 +1165,7 @@ An operand whose shape is outside the operation's admitted set — `place_front`
 `insert_at` and `remove_at` each shift `r.filled` by one memmove and move the boundary by one, `insert_at` filling the append slot on its way.
 Each of those two is a content write of `r.filled`, so a surviving slot reference names its slot, whose occupant may have changed, exactly as a stale index does [OP-13].
 `append` and `split_off` each move a run of elements between two windows by one copy and move both boundaries.
-`grow` is defined on `Box<Slots<T>>` alone, remakes the cell's content `cell^.inner` whole, may reallocate in place, and carries [OP-9]'s obligation.
+`grow` is defined on `Box<Slots<T>>` alone, remakes the cell's content `cell^.inner` whole, may reallocate in place, and computes its new size as [OP-9] states.
 `place_front` and `take_front` admit `Ring<T, n>` and `Ring<T>` alone and shift every logical index of `r`, so every reference into `r` becomes invalid [REF-2].
 Writing one element is not a window operation: it is the ordinary assignment `set r[k] = x;` [SET-1], whose old value takes [WIN-3]'s disposition.
 A reference into a window is formed under a bound and stays valid while that bound holds: `&r[i]` under `i < r.len`, and `&r[lo..hi]` under `hi <= r.len` [REF-4].
@@ -1202,12 +1195,12 @@ An atomic update is not a [PAR-2] accumulator form: that rule's accumulator comb
 
 [OP-13] Construction.
 The construction functions are the [PRE-1] records `box_new`, `slots_new`, `ring_new`, `array_filled`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, `slots_from_array`, and `slots_into_array`; there is no `Type::name` spelling and no element-list literal in expression position [FORM-5].
-Each runtime-capacity construction and `grow` [OP-10] carries [OP-9]'s static allocation-size obligation on its own count.
+Each runtime-capacity construction and `grow` [OP-10] computes its size from its own count as [OP-9] states.
 Allocation is total [STOR-8], so no construction has a failure arm for exhausted storage.
 A window built by `slots_new`, `ring_new`, `box_slots_new`, or `box_ring_new` starts empty.
 An `Array` built by `array_filled` or `box_array_filled` has every slot holding the supplied value and requires a copy element type [OWN-1].
 `box_segments_filled(lengths: r, value: v)` builds a `Segments<T>` of `r^.len` segments whose segment k holds `r^[k]` elements, every element holding the supplied value, and requires a copy element type [OWN-1].
-Its element total t, the sum of the lengths, is a runtime sum that no term states, so it carries no [OP-9] obligation; instead its result is `Some` of the cell exactly when the pure, total, target-independent predicate `stride_ceiling(T) * t + 8 * r^.len <= 2^62` over unbounded integers holds, with [OP-9]'s `stride_ceiling`, and `None` otherwise.
+Its element total, the sum of the lengths, is a runtime sum that no term states; the run's block holds `r^.len + 1` boundaries and that total of elements, its size is computed as [OP-9] states, and its result is the cell itself.
 `slots_from_array` consumes a full array into a full window, and `slots_into_array` consumes a window whose `len` equals its `cap`.
 A pool is a `Slots` plus indices used as handles, and a bump allocator is the same storage used with `place_back` [OP-10] as allocation and a library reset.
 A stale index that is still in bounds names the current occupant of that slot, which is a logic error and not a memory error, and a program that must detect it keeps a generation number as data.
@@ -1598,7 +1591,7 @@ On `Ok(v)` propagation binds v; on `Err(err)` the function returns `Err(err)`, a
 For an enclosing FN-9 `Ok` route, that automatic error return is unselected and publishes no normal-result relation.
 This is Result propagation, not an exception construct or a scope in which an exception may be thrown.
 
-[ERR-4] Classification: expected environment and input failures represented by an operation contract are values (`Result`); unproved function, operation-domain, allocation-size, bounds, layout, address, and target-domain obligations attached to source execution are source rejections.
+[ERR-4] Classification: expected environment and input failures represented by an operation contract are values (`Result`); unproved function, operation-domain, bounds, layout, address, and target-domain obligations attached to source execution are source rejections.
 A use of an invalid reference and an unproved overlap at a call or in a reference-validity judgment are source rejections of the same class [REF-2, EFF-5].
 Unavailable external resources and trusted-computing-base failures remain outside the source outcome model under [SCOPE-3].
 An operation's classification is fixed by its table row and attached static obligations, never by call-site preference.
@@ -1849,7 +1842,7 @@ Its closed carrier roles are function, named-const, parameter, contract-definiti
 A dotless-operation ordinal is the zero-based first occurrence among distinct operation-family spellings, scanning OP-1 rows top to bottom and each `op` cell left to right and skipping every later occurrence of the same spelling.
 A mode-word ordinal is the zero-based FORM-3 alternative order `wrap`, `defined`, `checked`, `sat`, `strict`, `nearest`.
 Those two reserved sets are disjoint in this version.
-For the GRAM-10 violation defined by TYPE-6, the payload is `(binder_spelling, paired_field_spelling, optional_earlier_binder_origin, ordered_arm_entry_live_lexical_ident_origins)`.
+For the GRAM-10 violation defined by TYPE-6, the payload is `(binder_spelling, paired_field_spelling, optional_earlier_binder_origin, ordered_arm_entry_competing_lexical_ident_origins)`.
 Earlier binders and arm-entry origins are ordered by declaration-event key.
 That binder does not also create a TYPE-6 duplicate or shadow candidate.
 
@@ -1985,11 +1978,11 @@ This rejection is never replaced with a runtime fallback or reported at the call
 
 An [FN-9] result-datum admission subjudgment begins only after [FN-8] contract admission, FORM-3 result reservation, the route's ordinary leading-variant lookup when present, and concrete [FN-2] signature substitution.
 Admission through freshness precedes lexical resolution or semantic checking of the owning `ensures_clause` expression; the remaining clause, selected-return, and proof judgments begin only after that expression resolves and the surrounding function's ordinary semantic judgments required by the failed premise succeed.
-For an unrouted clause, test in this fixed order: result mode/type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause.
-For a routed clause, test in this fixed order: whole-result mode/type determined by its declared `rtype`, its `Result` or `Option` class, and the data [CALL-4] gives its payload type; resolved variant owner and exact success-variant identity, `Ok` for a Result and `Some` for an Option; the written field against the variant's sole declaration-order field; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause.
+For an unrouted clause, test in this fixed order: result mode/type determined by its declared `rtype` and the data [CALL-4] gives its class; header result-candidate freshness against every declaration live in the clause that it competes with [TYPE-6].
+For a routed clause, test in this fixed order: whole-result mode/type determined by its declared `rtype`, its `Result` or `Option` class, and the data [CALL-4] gives its payload type; resolved variant owner and exact success-variant identity, `Ok` for a Result and `Some` for an Option; the written field against the variant's sole declaration-order field; route-candidate freshness against that field, the header result candidate, and every declaration live in the clause that it competes with [TYPE-6].
 A result, class, owner, variant, or missing-field failure uses `SourceNode` at the complete `ensures_clause` or its `result_route` when present.
 An extra, misspelled, or out-of-order field uses `SourceNode` at the complete `fieldbind`.
-A candidate equal to its paired field or another live candidate or declaration uses `SourceNode` at its owning `result_binding` or `fieldbind`, with coordinate equal to the candidate IDENT token.
+A candidate equal to its paired field, another live candidate, or a live declaration it competes with uses `SourceNode` at its owning `result_binding` or `fieldbind`, with coordinate equal to the candidate IDENT token.
 Those are FN-9 events, not GRAM-10 or TYPE-6 duplicates.
 An unresolved leading route TYPEID remains the earlier TYPE-6 lexical-use rejection and forms no FN-9 candidate.
 
@@ -2008,7 +2001,7 @@ For one local `invariant_stmt`, INV-1 first admits its name and then checks targ
 For an optional block, ordinary parsing and lexical resolution precede semantic checking; PRF-1 then selects a rejection in this precedence: for each `proof_use` in source order, factor canonicality and then relation-source formation; whole-block redundancy; the 4096-entry capacity, duplicate normalized sources, and checked scaled-sum formation; every written `proof_use` independently against the one entering context in source order; then the one final DIRECT residual.
 The first failed premise or target owns the rejection at the smallest source node fixed by INV-1 or PRF-1.
 No written invariant conclusion enters the context before its complete owning judgment succeeds, and no later invariant may supply evidence to an earlier one.
-Complete OP-2, OP-4, OP-9, OP-12, FN-8, FN-9, layout, address, and target-domain judgments select their own ordinary source errors; an [OP-12] atomic update whose callee row writes, moves out of, or frees a prefix of the target rejects at that complete `call`, while an update demoted to an ordinary `set` rejects at the consumed argument `atom` under OWN-1.
+Complete OP-2, OP-4, OP-12, FN-8, FN-9, layout, address, and target-domain judgments select their own ordinary source errors; an [OP-12] atomic update whose callee row writes, moves out of, or frees a prefix of the target rejects at that complete `call`, while an update demoted to an ordinary `set` rejects at the consumed argument `atom` under OWN-1.
 PAR-1 and PAR-2 permission failures select the sequential checked lowering or an explicit unsupported target lowering, never a source rejection.
 An unavailable semantic judgment or inconsistent internal derivation is a compiler failure or explicit unsupported capability, not a guessed source rejection.
 
@@ -2026,11 +2019,11 @@ It is the only input that may grant lowering authority.
 
 The checked program explicitly represents every source operation and every compiler-derived operation required for execution, including drops, monomorphized instances, propagation edges, every reference's recorded path and target set [REF-1], every reference-validity fact and its invalidating event [REF-2], every atomic in-place update and its committed call [OP-12], every call-site pairwise disjointness derivation [EFF-5], and one abstract target-domain representability obligation at every runtime-sized allocation and element-address operation governed by [STOR-6].
 It retains every [FN-8] GoalTemplate, its requirement occurrence `(concrete callee instance, requires_clause NodePath)`, every concrete call substitution and discharged-goal derivation, every proved body-entry requirement, and each inhabited or contradiction-proved body disposition.
-It retains every proof-required integer-domain, allocation-size, subscript-bounds, layout, address, and target-domain obligation occurrence together with the exact derivation authorizing its accepted source node.
+It retains every proof-required integer-domain, subscript-bounds, layout, address, and target-domain obligation occurrence together with the exact derivation authorizing its accepted source node.
 It separately retains each successful PAR-1 and PAR-2 permission derivation that authorizes an optional nonsequential lowering; absence retains no permission and changes no source verdict.
 It also retains every proved loop-invariant base and arbitrary-backedge judgment, each permitted exhaustion export, and every PRF-1 premise-admission, factor, scaled-sum, and final-DIRECT-residual judgment.
 Target lowering must discharge each target-domain obligation from the selected target plus already-checked layout, allocation, and bounds facts before emitting the governed allocation or address operation; it may not replace a missing proof with a runtime guard.
-No accepted proof-required operation carries an implicit runtime check or elimination disposition: a subscript, exact integer operation, allocation, or function range requirement is `discharged` at its owning source node, and the checked program retains its exact [ENT-4] or [ENT-6] derivation there.
+No accepted proof-required operation carries an implicit runtime check or elimination disposition: a subscript, exact integer operation, or function range requirement is `discharged` at its owning source node, and the checked program retains its exact [ENT-4] or [ENT-6] derivation there.
 A concrete terminal-root identity uses the owning function instance plus the operation NodePath/family/conjunct, the call NodePath/callee/requirement NodePath, or the complete-postcondition block/relation ordinal; display symbols are never identity.
 A `requires_clause` is represented only by its GoalTemplate, call-site derivations, and proved body-entry fact; an `ensures_clause` only by its verified RelationTemplate, selected-exit judgments, and derivations.
 Neither contract clause has executable checked-program form.
@@ -2208,18 +2201,25 @@ A value of the prelude type `KeySet` is a key set: its `len` distinct keys, in i
 `key_set_put` adds its key with its payload when the set lacks that key, and otherwise replaces that key's payload; `key_set_add` adds its key with payload `amount` when the set lacks that key, and otherwise adds `amount` to that key's payload modulo 2^64.
 `key_set_payload` returns the payload of the key at its index.
 
+A value of the ordinary prelude struct `KeySource` owns a byte buffer and a sequence of `KeySpan` records. A span selects the bytes from its `start`, included, to its `end`, excluded, in that buffer.
+`key_prepare` consumes a source and returns an ordinary `Result`. It first checks every span's `start <= end` and `end <= source.bytes.inner.len`. If a span fails, the result is `Err(InvalidSpan(...))` carrying the unchanged source and the smallest failing span index. With valid spans, if two selected byte strings are equal, the result is `Err(Duplicate(...))` carrying the unchanged source and the lexicographically smallest pair of original indices `(first, second)` with `first < second` that selects equal strings. Empty spans select the empty key.
+Otherwise the result is `Ok` with a `PreparedKeys` owning the unchanged source and a private ordering of its distinct keys for taking their entries together. The source's bytes, spans, lengths, capacities and span order are unchanged. The ordering is not a source field or a sequence the writer can read or change; `key_prepare` is the only operation that prepares it. Duplicate selection and value combination belong to ordinary application code before this call.
+The prepared value's `source` field is readonly under [TYPE-2]. Reading it is ordinary field access; consuming it is [OWN-1]'s ordinary field consume, which releases the rest of the prepared owner and prevents any further use of that owner. Releasing a complete prepared value releases its source and its private ordering.
+
 [SHARE-2] Atomic statements.
 An `atomic_stmt` [GRAM-4] has a target, the `place` after its first `&`; a binding, its first `IDENT`; entry bindings, each a later `IDENT` with the `place` after its `&`; a block; and optionally a guard, the `expr` after `when`.
 The target has type `Shared<T>`, and the binding is a reference variable of kind `&T` whose path is the state of the object the target names.
-An entry binding's place is the binding, then `^`, then field selections through no `Box` [TYPE-9] that end at a field of type `KeyedTable<V>`, or none when the state itself has that type, then one index step whose atom has type `&[u8]` or is a place of type `KeySet`. The atom is no `move`, and it reads no path through the binding or an entry binding, since the statement reads it when it begins, before it holds the state. The entry binding is a reference variable of the kind this table gives:
+An entry binding's place is the binding, then `^`, then field selections through no `Box` [TYPE-9] that end at a field of type `KeyedTable<V>`, or none when the state itself has that type, then one index step whose atom has type `&[u8]` or is a place of type `KeySet` or `PreparedKeys`. The atom is no `move`, and it reads no path through the binding or an entry binding, since the statement reads it when it begins, before it holds the state. The entry binding is a reference variable of the kind this table gives:
 
 | index atom | entry binding |
 |---|---|
 | of type `&[u8]` | `&Option<V>`, whose path is the table's entry under the bytes the atom names |
 | a place of type `KeySet` | `&KeyedEntries<V>`, whose element at each index is the table's entry under the set's key at that index, and whose `len` is the set's |
+| a place `p` of type `PreparedKeys` | `&KeyedEntries<V>`, whose element at index `i` is the table's entry under the bytes selected by `p.source.spans.inner[i]` in `p.source.bytes.inner`, and whose `len` is `p.source.spans.inner.len` |
 
 The statement reads its target place and each index atom when it begins. The object stays live until the statement completes, whatever its block does with the target place [SHARE-1].
 The binding and the entry bindings are in scope in the guard and the block, and their roots leave scope when the block ends by any edge [REF-2]. An entry binding `e` whose atom is a key set `k` establishes `e^.len == k.len` at the block's entry, as a guard's comparison is established there [ENT-3.S1], and a write to `k` while `e` is valid invalidates `e` [REF-2].
+An entry binding `e` whose atom is a prepared value `p` establishes `e^.len == p.source.spans.inner.len` at the block's entry in the same way. Replacing or consuming `p` or any of its owned parts while `e` is valid invalidates `e` under [REF-2]. The private acquisition order does not change the source-index correspondence of its entries.
 Every atomic statement counts as a waiting call for [WAIT-1], [PAR-1] and [PAR-2], so one in the body of a function that does not wait is WAIT-1's hard error at that `atomic_stmt`.
 The guard and the block contain no call to a waiting function [WAIT-1] and no atomic statement. The guard has the condition judgment of an `if` [GRAM-6], and its footprint [PAR-1] writes no path.
 The guard and the block together form a path through the binding or an entry binding, and use every entry binding.
@@ -2238,7 +2238,7 @@ An implementation may hold less than a statement's state, or hold it together wi
 
 [PRE-1] The prelude contributes ordinary nominal, constructor, numeric-bound and function declarations to every module. Their source visibility, collisions, typing, ownership and calls are the ordinary rules; an entry's prelude origin supplies only its deterministic diagnostic ordinal [TYPE-6, DIAG-1].
 
-The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handle `Shared`, the keyed table `KeyedTable` and the key set `KeySet` [SHARE-1], and the `KeyedEntries` an entry binding names [SHARE-2]. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. Their declarations are:
+The prelude's opaque structs [TYPE-2] are the four storage shapes and the cell `Box` [TYPE-9], built by the construction rows [OP-13], the shared-object handle `Shared`, the keyed table `KeyedTable`, the key set `KeySet` and the prepared source `PreparedKeys` [SHARE-1], and the `KeyedEntries` an entry binding names [SHARE-2]. `KeySpan` and `KeySource` are ordinary non-opaque structs with ordinary constructors. An opaque struct is not const-eligible [CONST-2]; its capability modifier and the ordinary ownership closure are exactly [OWN-1, PROV-6]. The complete struct declarations are:
 
 ```
 opaque struct Array<T, const n: u64> {
@@ -2277,6 +2277,20 @@ opaque nocopy struct KeySet {
 opaque nocopy struct KeyedEntries<V: drop> {
   readonly len: u64;
 }
+
+struct KeySpan {
+  start: u64;
+  end: u64;
+}
+
+struct KeySource {
+  bytes: Box<Slots<u8>>;
+  spans: Box<Slots<KeySpan>>;
+}
+
+opaque nocopy struct PreparedKeys {
+  readonly source: KeySource;
+}
 ```
 
 The complete enum declarations are:
@@ -2309,6 +2323,11 @@ enum DivError {
 enum NarrowError {
   NarrowError();
 }
+
+enum KeyPrepareError {
+  InvalidSpan(source: KeySource, index: u64);
+  Duplicate(source: KeySource, first: u64, second: u64);
+}
 ```
 
 The two built-in numeric bounds `Int` and `Float` admit exactly OP-1's integer and floating-point domains and imply `copy` under PROV-6. They are not source declarations, interface groups, implicit behaviors or logical-law bundles; a source actual cannot bind or extend either bound.
@@ -2333,10 +2352,10 @@ fn box_array_filled<T: copy>(count: u64, value: T) -> result: Box<Array<T>> pure
   ensures result.inner.len == count;
   ensures forall filled(k in 0_u64..result.inner.len): result.inner[k] == value;
 };
-fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Option<Box<Segments<T>>> reads(lengths) contract {
-  ensures when Some(value: made): made.inner.len == lengths^.len;
-  ensures when Some(value: made): forall sized(d in 0_u64..made.inner.len): made.inner[d].len == lengths^[d];
-  ensures when Some(value: made): forall filled(d in 0_u64..made.inner.len, k in 0_u64..made.inner[d].len): made.inner[d][k] == value;
+fn box_segments_filled<T: copy>(lengths: &[u64], value: T) -> result: Box<Segments<T>> reads(lengths) contract {
+  ensures result.inner.len == lengths^.len;
+  ensures forall sized(d in 0_u64..result.inner.len): result.inner[d].len == lengths^[d];
+  ensures forall filled(d in 0_u64..result.inner.len, k in 0_u64..result.inner[d].len): result.inner[d][k] == value;
 };
 fn box_slots_new<T>(capacity: u64) -> result: Box<Slots<T>> pure contract {
   ensures result.inner.len == 0_u64;
@@ -2422,6 +2441,7 @@ fn key_set_add(keys: &KeySet, key: &[u8], amount: u64) -> result: unit reads(key
 fn key_set_payload(keys: &KeySet, index: u64) -> payload: u64 reads(keys) contract {
   requires index < keys^.len;
 };
+fn key_prepare(source: KeySource) -> result: Result<PreparedKeys, KeyPrepareError> pure;
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
@@ -2429,7 +2449,7 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `keyed_table_new`, `keyed_table_count`, `key_set_new`, `key_set_put`, `key_set_add`, `key_set_payload` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each struct above in written order with its constructor, refused exactly when it is opaque, and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `keyed_table_new`, `keyed_table_count`, `key_set_new`, `key_set_put`, `key_set_add`, `key_set_payload`, `key_prepare` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 
@@ -2795,7 +2815,7 @@ A runtime-origin value is an ordinary typed term in those judgments; its origin 
 Only the fact sources enumerated above establish propositions; a written conclusion, unselected condition, diagnostic record, or optimizer result does not.
 
 No source postcondition is trusted: FN-9 proves every selected exit, requires a nonempty selected-exit set, and withholds same-SCC summaries before atomic publication.
-The fragment is the deterministic checker derivation of [OP-2], [OP-4], [OP-6], [OP-9], [FN-8], [FN-9], [INV-1], [PRF-1], [STOR-6], and [DIAG-2] for the judgments this version attaches.
+The fragment is the deterministic checker derivation of [OP-2], [OP-4], [OP-6], [FN-8], [FN-9], [INV-1], [PRF-1], [STOR-6], and [DIAG-2] for the judgments this version attaches.
 A solver result never participates, and no implementation may strengthen, weaken, time-bound, randomize, or truncate an unsuccessful query within the derivable set.
 Every semantic candidate family and iteration count is fixed below from the complete source text; an unproved result requires exhausting its complete family regardless of elapsed time, machine speed, thread schedule, hash iteration order, or memory pressure short of [SCOPE-3]'s external resource boundary.
 A successful query may retain the first witness in the specification-fixed order and omit later witnesses, because no later candidate can revoke that success; this changes diagnostic parent choice only, never the derivable set or acceptance.
@@ -2805,7 +2825,7 @@ Two conforming implementations derive the same fact state at every applicable pr
 
 Every nongeneric source body receives this judgment whether or not the selected invocation reaches it.
 Every generic source body additionally receives one source-schema judgment under the one source-canonical symbolic substitution formed during generic-body validation, even when it has no concrete instantiation.
-That schema checks every OP-2/OP-4/OP-9, FN-8, and expressible FN-9 judgment its symbolic vocabulary can represent; an unproved operation is not accepted merely because no concrete instance is reachable.
+That schema checks every OP-2/OP-4, FN-8, and expressible FN-9 judgment its symbolic vocabulary can represent; an unproved operation is not accepted merely because no concrete instance is reachable.
 Generic integer and float type parameters are copy datums only for exact opaque goals in this schema and are not [ENT-2] L0 fragment types, while an integer-typed const generic remains the symbolic constant term [ENT-2] fixes.
 An FN-9 schema goal exists only when its result datum, selected return, and normalized relation are expressible in the finite schema vocabulary; otherwise it is rechecked in every inhabited concrete instance and is never approximated.
 The schema publishes no executable function, callable summary, or lowering authority.
@@ -2861,7 +2881,7 @@ FN-8's call-argument form is identified by `(concrete caller instance, call Node
 An [ENT-6] obligation-operand form is identified by `(concrete function instance, owning obligation NodePath, operand ordinal, exact captured type, ordered projections, final result type)` and may occur only in the canonical Goal queried for that one obligation.
 Both forms are neither places nor L0 terms, have no direct or complete ordinary source goal origin, add no flow fact or place support, and cannot be established by naming or reevaluating their source expression.
 Goal equality is exact typed tree equality, including every selected row and datum field, and therefore may hold across two source occurrences or concrete callee instances only when their complete typed trees are identical.
-The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, and the canonical OP-2, OP-6, and OP-9 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit.
+The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit.
 Invariant targets and `proof_use` sources are affine inequalities rather than opaque Goals [INV-1, PRF-1]; an OP-4 bounds obligation remains an L0/affine relation and has no opaque Goal of its own.
 Goal construction may intern only written subexpressions and the exact normalized components fixed by their owning rules; it synthesizes no arbitrary formula or unbounded algebraic search.
 
@@ -3479,7 +3499,7 @@ Step 2 applies exactly when the submitted goal has an exact signed identity in [
 Step 6 visits its candidates in compiler-owned source-allocation order, measure terms before own integer bindings; when closed L0 has the tightest bound `m - r <= c` relating a candidate m to the goal's right-hand term r, it submits the one exact residual target to `AUTO` and composes a success transitively with that L0 bridge.
 An unavailable image or an unrepresentable candidate is skipped without suppressing a later candidate; a goal no step discharges is unproved and is rejected by its owning rule.
 
-The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [OP-9] allocation size, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.
+The consumers are exactly [OP-4] subscript bounds, [OP-2] integer domain, [OP-6] conversion domain, [FN-8] requirements, [FN-9] normal-result relations, and [INV-1] invariant targets.
 Each keeps its own normalization — which proposition it forms from its source node — and none keeps a route grant of its own: an operation adds a goal, never a route.
 A rejection for a goal that no step discharges names its disposition, `refuted` or `unproved` [ENT-4], and carries a repair [DIAG-1]; an [INV-1] target that no step discharges is refuted when this disposition derives the negation of one of its bounds, and unproved otherwise.
 Each family paragraph below states its normalization and then submits.
@@ -3537,18 +3557,13 @@ ConversionDomain attaches one obligation to every bare `cvt` occurrence [OP-6] a
 
 The bound normalizations prove only the positive domain: a failed component yields unknown, establishes no negation and refutes no requirement. An exact decoded constant answer can prove either sign; an established identical negative goal refutes the domain in a consistent state. An established domain goal is not projected back into numeric inequalities. All other conversion goals are unproved: nonconstant float operands gain no automatic integrality, round-trip, divisibility or float-arithmetic rule. Merely computing a domain Bool establishes neither sign; [ENT-3] supplies its ordinary origins and establishments, and [ENT-5] supplies its support and kills. Each successful normalization retains one derivation root with its parents in the stated order and publishes no new premise. A refuted or unproved bare occurrence is the OP-6 rejection; a refuted or unproved ordinary-call requirement is the FN-8 rejection.
 
-The allocation-size family attaches one canonical Goal to each runtime-capacity construction [OP-13] and to `grow` [OP-10], at that `call` node [OP-9].
-Its count child uses the same stable-or-occurrence-local identity rule as IntegerDomain, so every allocation-size occurrence has one canonical Goal.
-Its normalization is `n <= floor((2^64 - 1) / stride_ceiling(S))` for the selected stored type S, and that proposition, with the Goal itself supplying step 2's exact signed identity, is submitted to [MSR-4]'s disposition; a derived false comparison refutes.
-A refuted or unproved occurrence is an OP-9 rejection and creates no allocation or runtime operation.
-
 Initialization, ownership and references, state effects, layout and address formation, selected-target integer domains and parallel permissions keep their own finite proposition and checker domains under their owning numbered rules.
 They use the same fail-closed Goal/checker principle; a later domain needing a source numeric conclusion consumes the checked conclusion retained from ProofContext rather than repeating its derivation. They are not encoded as numeric L0 relations merely to make one universal solver, and they do not become a second authority for accepting source propositions.
 Each checker has a specification-fixed finite algorithm whose complete work is a deterministic function of its source-derived input, a unique closure or result, a deterministic diagnostic order, and no timeout-selected acceptance.
 
 
 Each concrete obligation identity is `(concrete function instance, exact source NodePath, family ordinal)`.
-SubscriptBounds, IntegerDomain, ConversionDomain, and the allocation-size family use ordinal zero.
+SubscriptBounds, IntegerDomain, and ConversionDomain use ordinal zero.
 A requirement occurrence is `(concrete function instance, requires_clause NodePath)` [DIAG-2].
 These identities do not participate in Goal equality [FN-8].
 The checked program retains the accepted Goal, its deterministic derivation root, and its erased disposition for diagnostics and proof consumers.

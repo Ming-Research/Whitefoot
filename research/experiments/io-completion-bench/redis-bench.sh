@@ -11,6 +11,11 @@
 #   sh redis-bench.sh verify      only the correctness pass
 #   sh redis-bench.sh suite       the correctness pass and the firn criteria:
 #                                 redis-benchmark's default suite on every line
+#   sh redis-bench.sh compare     candidate, identical-image control, published
+#                                 PR208 and pre208 on COMPARE_CPUS (default 1 2),
+#                                 depths 1/16; exact revision labels required;
+#                                 COMPARE_PILOT_ONLY=1 keeps preliminary sizing
+#                                 and correctness observations without timings
 #   sh redis-bench.sh scale       the suite's lines on each server CPU count in
 #                                 SCALE (default 2 4 8 16), the client on the
 #                                 host's other CPUs, for SCALE_TESTS at each
@@ -62,11 +67,32 @@ SECONDS_PER_RUN=${SECONDS_PER_RUN:-12}
 # than from one fixed port a run a minute earlier may still hold.
 PORT=${PORT:-$((10000 + $$ % 400 * 50))}
 MODE=${1:-bench}
+HOST_OS=$(uname -s)
+# Darwin has no CPU-affinity equivalent here. Compare mode explicitly runs
+# unpinned; its driver count is not described as a reserved CPU count.
+pinned() {
+    if [ "$MODE" = compare ] && [ "$HOST_OS" = Darwin ]; then
+        shift 2
+        "$@"
+    else
+        taskset "$@"
+    fi
+}
+server_pinned() {
+    if [ "$MODE" = compare ] && [ "$HOST_OS" = Darwin ]; then
+        shift 2
+        exec "$@"
+    else
+        exec taskset "$@"
+    fi
+}
 
 mkdir -p "$OUT"
 # firn is linked as a server would be, its module and the runtime's units
 # optimized together; FIRN_LINK names other link options, or none.
-"$WHITEFOOTC" ${FIRN_LINK---full-lto} --graph "$ROOT/apps/firn/modules.wfg" --entry firn -o "$OUT/firn"
+if [ "$MODE" != compare ]; then
+    "$WHITEFOOTC" ${FIRN_LINK---full-lto} --graph "$ROOT/apps/firn/modules.wfg" --entry firn -o "$OUT/firn"
+fi
 baselines=
 if [ -n "$BASELINE_ROOT" ]; then
     "$BASELINE_ROOT/compiler/target/gate/whitefootc" -o "$OUT/redis_baseline" \
@@ -75,6 +101,7 @@ if [ -n "$BASELINE_ROOT" ]; then
 fi
 
 server=
+sampler=
 # IDLE, when set, is the idle limit in seconds a start gives the server; KEEP,
 # when set, keeps the append-only file a previous start left.
 IDLE=
@@ -97,11 +124,20 @@ cpu_count() {
 # out TIME_WAIT on its port, which a server without SO_REUSEADDR cannot bind.
 start() {
     PORT=$((PORT + 1))
-    cpus=$(cpu_count "$SERVER_CPUS")
+    cpus=${COMPARE_DRIVERS:-$(cpu_count "$SERVER_CPUS")}
     if [ -z "$KEEP" ]; then
         rm -rf "$OUT/appendonlydir" "$OUT/firn.aof"
     fi
     case $1 in
+        candidate|identical|published|pre208)
+            case $1 in
+                candidate|identical) image=$FIRN_CANDIDATE ;;
+                published) image=$FIRN_PUBLISHED ;;
+                pre208) image=$FIRN_PRE208 ;;
+            esac
+            WF_DRIVERS=$cpus server_pinned -c "$SERVER_CPUS" "$image" "$PORT" 0 - 0 \
+                >"$OUT/server-$1.log" 2>&1 &
+            ;;
         reference)
             taskset -c "$SERVER_CPUS" redis-server --port "$PORT" --save "" \
                 --appendonly no --timeout "${IDLE:-0}" --daemonize no \
@@ -166,6 +202,7 @@ start() {
 stop() {
     kill "$server"
     wait "$server" 2>/dev/null || true
+    server=
 }
 
 fail() {
@@ -177,7 +214,7 @@ fail() {
 # from 50 clients reaches the one counter.
 verify() {
     start "$1"
-    taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" -t incr -n 100000 \
+    pinned -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" -t incr -n 100000 \
         -c 50 -q >"$OUT/verify-$1.txt" 2>&1
     counted=$(redis-cli -p "$PORT" GET counter:__rand_int__)
     replies=$(printf 'SET a 1\nGET a\nINCR a\nDEL a\nGET a\n' |
@@ -304,7 +341,7 @@ EOF
 # with no error reply.
 verify_suite() {
     start "$1"
-    taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" -c 50 -n 20000 \
+    pinned -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" -c 50 -n 20000 \
         -r 100000 --threads "$CLIENT_THREADS" --csv >"$OUT/suite-$1.csv" \
         2>"$OUT/suite-$1.err"
     stop
@@ -453,6 +490,254 @@ quick_measure() {
 # CPU count and client count and kept in quick-ref-<n>-<clients>.csv until
 # QUICK_REFRESH is set; nothing
 # is verified. Its rates are its own: its client is not the suite's.
+# An explicitly invoked recovery experiment, separate from the historical
+# suite. All four lines get the same request count and CPU placement per cell.
+# The identical line is the exact candidate executable, not another build.
+if [ "$MODE" = compare ]; then
+    trap 'if [ -n "$sampler" ]; then kill "$sampler" 2>/dev/null || true; wait "$sampler" 2>/dev/null || true; fi; if [ -n "$server" ]; then kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; fi' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    : "${FIRN_CANDIDATE:?candidate executable required}"
+    : "${FIRN_PUBLISHED:?published PR208 executable required}"
+    : "${FIRN_PRE208:?pre208 executable required}"
+    : "${CANDIDATE_REVISION:?complete candidate revision required}"
+    : "${PUBLISHED_REVISION:?complete published revision required}"
+    : "${PRE208_REVISION:?complete pre208 revision required}"
+    for image in "$FIRN_CANDIDATE" "$FIRN_PUBLISHED" "$FIRN_PRE208"; do
+        test -x "$image" || { echo "not executable: $image" >&2; exit 1; }
+    done
+    for revision in "$CANDIDATE_REVISION" "$PUBLISHED_REVISION" "$PRE208_REVISION"; do
+        case $revision in *[!0-9a-f]*) echo "not a commit SHA: $revision" >&2; exit 1 ;; esac
+        test "${#revision}" -eq 40 || { echo "complete SHA required" >&2; exit 1; }
+    done
+    if [ "$HOST_OS" = Darwin ]; then
+        usable=unpinned
+        total=$(sysctl -n hw.logicalcpu)
+    else
+        # sched_getaffinity lists usable IDs, including container cpusets.
+        usable=$(python3 - <<'CPU_IDS'
+import os
+print(" ".join(map(str, sorted(os.sched_getaffinity(0)))))
+CPU_IDS
+)
+        total=$(echo "$usable" | wc -w)
+    fi
+    {
+        uname -a
+        echo "usable CPUs: $usable"
+        if [ "$HOST_OS" = Darwin ]; then
+            sw_vers
+            sysctl hw.model hw.logicalcpu hw.physicalcpu hw.memsize machdep.cpu.brand_string
+            echo 'Placement: unpinned; server and client may share cores.'
+            echo 'server_cpus column denotes requested driver count, not reserved CPUs.'
+            echo 'Memory: ps RSS samples, not a continuous peak or allocation count.'
+        else
+            cat /proc/cpuinfo
+            cat /proc/meminfo
+            cat /proc/loadavg
+            taskset --version
+            echo 'Memory: /proc VmRSS and VmHWM, not allocation counts.'
+        fi
+        redis-cli --version
+        redis-benchmark --version
+        echo "redis_client_revision,${REDIS_CLIENT_REVISION:-system package; version recorded above}"
+        echo "candidate,$CANDIDATE_REVISION,$FIRN_CANDIDATE"
+        echo "identical,$CANDIDATE_REVISION,$FIRN_CANDIDATE"
+        echo "published,$PUBLISHED_REVISION,$FIRN_PUBLISHED"
+        echo "pre208,$PRE208_REVISION,$FIRN_PRE208"
+        if [ "$HOST_OS" = Darwin ]; then
+            shasum -a 256 "$(command -v redis-cli)" "$(command -v redis-benchmark)"
+            shasum -a 256 "$FIRN_CANDIDATE" "$FIRN_PUBLISHED" "$FIRN_PRE208"
+        else
+            sha256sum "$(command -v redis-cli)" "$(command -v redis-benchmark)"
+            sha256sum "$FIRN_CANDIDATE" "$FIRN_PUBLISHED" "$FIRN_PRE208"
+        fi
+        echo "passes=${COMPARE_PASSES:-6},warmup_requests=100000,seconds=${SECONDS_PER_RUN},clients=50,random_keys=100000,value_bytes=3,pipelines=1 16,tests=mset set get"
+    } >"$OUT/compare-host.txt"
+    echo 'line,revision,server_cpus,pass,pipeline,test,rps,avg_ms,min_ms,p50_ms,p95_ms,p99_ms,max_ms' >"$OUT/compare.csv"
+    echo 'line,revision,server_cpus,pass,pipeline,test,rss_kB,peak_rss_kB,memory_method' >"$OUT/compare-memory.csv"
+    # Redis 7.0.15's built-in GET randomizes key:__rand_int__ to twelve
+    # decimal digits (redis-benchmark.c randomizeClientKey/default GET).
+    # Populate its complete domain before every GET pilot and measured cell.
+    python3 - "$OUT/compare-get-data.resp" <<'GET_DATA'
+import sys
+with open(sys.argv[1], "wb") as out:
+    for index in range(100000):
+        parts = (b"SET", f"key:{index:012d}".encode(), b"x" * 3)
+        out.write(b"*3\r\n")
+        for part in parts:
+            out.write(f"${len(part)}\r\n".encode() + part + b"\r\n")
+GET_DATA
+    echo 'GET dataset: all 100000 key:000000000000..key:000000099999, 3 x bytes, hit-only' >>"$OUT/compare-host.txt"
+    compare_populate() {
+        redis-cli -p "$PORT" --pipe <"$OUT/compare-get-data.resp" >"$OUT/populate-$line-$n-$pass-$depth.txt"
+        grep -q '^errors: 0, replies: 100000$' "$OUT/populate-$line-$n-$pass-$depth.txt" || exit 1
+        test "$(redis-cli -p "$PORT" DBSIZE)" = 100000 || exit 1
+        test "$(redis-cli -p "$PORT" GET key:000000000000)" = xxx || exit 1
+        test "$(redis-cli -p "$PORT" GET key:000000099999)" = xxx || exit 1
+    }
+    # Every client result is read only after redis-benchmark's exit succeeds.
+    # Empty/malformed CSV or unexpected diagnostics fail this experiment.
+    compare_client() {
+        file="$OUT/client-$1-$2-$3-$4-$5.csv"
+        pinned -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
+            --threads "$CLIENT_THREADS" -c 50 -n "$6" -r 100000 -d 3 \
+            -t "$5" -P "$4" --csv >"$file" 2>"$file.err"
+        python3 - "$file" "$5" <<'CHECK_CSV'
+import csv, math, pathlib, sys
+path, test = pathlib.Path(sys.argv[1]), sys.argv[2].upper()
+if test == "MSET":
+    test = "MSET (10 keys)"
+errors = [line for line in pathlib.Path(str(path) + ".err").read_text().splitlines()
+          if line != "WARNING: Could not fetch server CONFIG"]
+rows = [row for row in csv.reader(path.open()) if row and row[0] != "test"]
+if errors or len(rows) != 1 or len(rows[0]) != 8 or rows[0][0] != test:
+    raise SystemExit(f"unexpected client output: {path}, {rows}, {errors}")
+values = [float(value) for value in rows[0][1:]]
+if not all(math.isfinite(value) and value >= 0 for value in values) or values[0] <= 0:
+    raise SystemExit(f"invalid metrics: {path}")
+CHECK_CSV
+    }
+    for n in ${COMPARE_CPUS:-1 2}; do
+        case $n in ''|0*|*[!0-9]*) echo "invalid CPU count: $n" >&2; exit 1 ;; esac
+        test "$n" -gt 0 || exit 1
+        if [ "$n" -ge "$total" ]; then
+            echo "skip,compare $n,only $total host CPUs; requested count leaves no client capacity"
+            continue
+        fi
+        COMPARE_DRIVERS=$n
+        if [ "$HOST_OS" = Darwin ]; then
+            SERVER_CPUS=unpinned
+            CLIENT_CPUS=unpinned
+            CLIENT_THREADS=${COMPARE_CLIENT_THREADS:-2}
+        else
+            SERVER_CPUS=$(echo "$usable" | awk -v n="$n" '{for(i=1;i<=n;i++) printf "%s%s",(i>1?",":""),$i}')
+            CLIENT_CPUS=$(echo "$usable" | awk -v n="$n" '{for(i=n+1;i<=NF && i<=n+16;i++) printf "%s%s",(i>n+1?",":""),$i}')
+            CLIENT_THREADS=$(cpu_count "$CLIENT_CPUS")
+        fi
+        echo "placement,$n,$SERVER_CPUS,$CLIENT_CPUS,$CLIENT_THREADS" >>"$OUT/compare-host.txt"
+        # Choose identical request counts using the fastest pilot of all images.
+        echo 'line,revision,pipeline,test,rps' >"$OUT/compare-pilot-$n.csv"
+        for line in candidate identical published pre208; do
+            case $line in
+                candidate|identical) revision=$CANDIDATE_REVISION ;;
+                published) revision=$PUBLISHED_REVISION ;;
+                pre208) revision=$PRE208_REVISION ;;
+            esac
+            verify "$line"
+            verify_suite "$line"
+            pass=pilot
+            for depth in 1 16; do
+                for test in mset set get; do
+                    start "$line"
+                    if [ "$test" = get ]; then compare_populate; fi
+                    compare_client "$line" "$n" pilot "$depth" "$test" 100000
+                    rate=$(awk -F, '$1!="\"test\"" {gsub(/"/,"",$2); print $2}' "$file")
+                    # A second sizing run lasts about two seconds, avoiding
+                    # gross comparisons from the client's 250-ms end tick.
+                    sizing=$(awk -v rate="$rate" 'BEGIN {n=int(rate*2); if(n<100000)n=100000; print n}')
+                    compare_client "$line" "$n" "pilot-sized" "$depth" "$test" "$sizing"
+                    rate=$(awk -F, '$1!="\"test\"" {gsub(/"/,"",$2); print $2}' "$file")
+                    echo "$line,$revision,$depth,$test,$rate" >>"$OUT/compare-pilot-$n.csv"
+                    stop
+                done
+            done
+        done
+        if [ "${COMPARE_PILOT_ONLY:-0}" = 1 ]; then
+            echo "preliminary sizing only,$n drivers; recovery has not been measured"
+            cat "$OUT/compare-pilot-$n.csv"
+            continue
+        fi
+        pass=1
+        while [ "$pass" -le "${COMPARE_PASSES:-6}" ]; do
+            # Forward/reverse pairs put each image equally in its two
+            # opposite positions across the predeclared six rounds.
+            case $((pass % 2)) in
+                1) lines="candidate identical published pre208" ;;
+                0) lines="pre208 published identical candidate" ;;
+            esac
+            for line in $lines; do
+                case $line in
+                    candidate|identical) revision=$CANDIDATE_REVISION ;;
+                    published) revision=$PUBLISHED_REVISION ;;
+                    pre208) revision=$PRE208_REVISION ;;
+                esac
+                for depth in 1 16; do
+                    for test in mset set get; do
+                        # Fresh server per cell avoids other tests' state and
+                        # makes each RSS high-water observation attributable.
+                        start "$line"
+                        if [ "$test" = get ]; then compare_populate; fi
+                        compare_client "$line" "$n" "warmup-$pass" "$depth" "$test" 100000
+                        requests=$(awk -F, -v p="$depth" -v t="$test" -v seconds="$SECONDS_PER_RUN" '$3==p && $4==t {if($5+0>rate)rate=$5+0} END {printf "%d\n", rate*seconds+1}' "$OUT/compare-pilot-$n.csv")
+                        sampler=
+                        if [ "$HOST_OS" = Darwin ]; then
+                            samples="$OUT/rss-$line-$n-$pass-$depth-$test.txt"
+                            (
+                                while kill -0 "$server" 2>/dev/null; do
+                                    ps -o rss= -p "$server" || exit 1
+                                    sleep 0.1
+                                done
+                            ) >"$samples" &
+                            sampler=$!
+                        fi
+                        compare_client "$line" "$n" "$pass" "$depth" "$test" "$requests"
+                        if [ -n "$sampler" ]; then
+                            kill "$sampler"
+                            wait "$sampler" 2>/dev/null || true
+                            sampler=
+                        fi
+                        python3 - "$file" "$line" "$revision" "$n" "$pass" "$depth" >>"$OUT/compare.csv" <<'WRITE_CSV'
+import csv, sys
+rows = [row for row in csv.reader(open(sys.argv[1])) if row and row[0] != "test"]
+csv.writer(sys.stdout).writerow(sys.argv[2:] + rows[0])
+WRITE_CSV
+                        if [ "$HOST_OS" = Darwin ]; then
+                            rss=$(ps -o rss= -p "$server" | tr -d ' ')
+                            peak=$(awk 'NF {if($1>peak)peak=$1} END {print peak+0}' "$samples")
+                            echo "$line,$revision,$n,$pass,$depth,$test,$rss,$peak,ps_sampled" >>"$OUT/compare-memory.csv"
+                        else
+                            awk -v prefix="$line,$revision,$n,$pass,$depth,$test" '/^VmRSS:/ {rss=$2} /^VmHWM:/ {hwm=$2} END {if(rss=="" || hwm=="") exit 1; print prefix "," rss "," hwm ",proc_status"}' "/proc/$server/status" >>"$OUT/compare-memory.csv"
+                        fi
+                        stop
+                    done
+                done
+            done
+            pass=$((pass + 1))
+        done
+    done
+    if [ "${COMPARE_PILOT_ONLY:-0}" = 1 ]; then
+        echo 'Preliminary correctness and sizing only; no completed recovery comparison.'
+        exit 0
+    fi
+    python3 - "$OUT/compare.csv" "$OUT/compare-memory.csv" "${COMPARE_PASSES:-6}" <<'CHECK_MATRIX'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+memory = list(csv.DictReader(open(sys.argv[2])))
+if not rows or len(memory) != len(rows):
+    raise SystemExit("missing measured cells or memory observations")
+counts = {row["server_cpus"] for row in rows}
+expected = {(line, n, str(p), depth, test) for line in ("candidate", "identical", "published", "pre208")
+            for n in counts for p in range(1, int(sys.argv[3]) + 1)
+            for depth in ("1", "16") for test in ("MSET (10 keys)", "SET", "GET")}
+actual = [(r["line"], r["server_cpus"], r["pass"], r["pipeline"], r["test"]) for r in rows]
+if len(actual) != len(expected) or set(actual) != expected:
+    raise SystemExit("duplicate or missing sample cells")
+def memory_test(test):
+    return "MSET (10 keys)" if test == "mset" else test.upper()
+observations = [(r["line"], r["server_cpus"], r["pass"], r["pipeline"], memory_test(r["test"])) for r in memory]
+if len(set(observations)) != len(expected) or set(observations) != expected:
+    raise SystemExit("duplicate or mismatched memory cells")
+revisions = {r["line"]: r["revision"] for r in rows}
+for row in memory:
+    if (row["revision"] != revisions[row["line"]] or int(row["rss_kB"]) <= 0 or
+            int(row["peak_rss_kB"]) <= 0 or row["memory_method"] not in ("proc_status", "ps_sampled")):
+        raise SystemExit("invalid memory observation")
+CHECK_MATRIX
+    cat "$OUT/compare.csv"
+    exit 0
+fi
+
 if [ "$MODE" = quick ]; then
     n=${QUICK_CPUS:-4}
     total=$(nproc)

@@ -9,12 +9,24 @@ struct Store {
   resets: u64;
 }
 
-fn prefixes() -> keys: KeySet pure {
-  let keys = key_set_new(capacity: 8_u64);
-  for @key (at in 1_u64..9_u64) {
-    key_set_put(keys: &keys, key: &names[0_u64..at], payload: at);
+fn prefixes() -> keys: Result<PreparedKeys, KeyPrepareError> pure {
+  doc "The eight distinct prefixes of the name, prepared from an owned source in prefix order.";
+  let bytes = box_slots_new::<u8>(capacity: 8_u64);
+  for @copy (at in 0_u64..8_u64) {
+    let byte = names[at];
+    if bytes.inner.len < bytes.inner.cap {
+      place_back(window: &bytes.inner, value: byte);
+    }
   }
-  return move keys;
+  let spans = box_slots_new::<KeySpan>(capacity: 8_u64);
+  for @key (at in 1_u64..9_u64) {
+    let span = KeySpan(start: 0_u64, end: at);
+    if spans.inner.len < spans.inner.cap {
+      place_back(window: &spans.inner, value: span);
+    }
+  }
+  let source = KeySource(bytes: move bytes, spans: move spans);
+  return key_prepare(source: move source);
 }
 
 fn bump_keys(store: Shared<Store>) -> result: unit pure waits {
@@ -52,11 +64,21 @@ fn reset(store: Shared<Store>) -> result: unit pure waits {
   return unit;
 }
 
-fn trade(store: Shared<Store>) -> result: unit pure waits {
+fn trade(store: Shared<Store>, mismatches: Shared<u64>) -> result: unit pure waits {
   doc "Exchanges the state's table with a table of its own a hundred times, adjusting the total by what each table held, in one statement.";
   let mine = keyed_table_new::<u64>(capacity: 0_u64);
   let held = 0_u64;
-  let keys = prefixes();
+  let keys = match prefixes() {
+    Ok(value: prepared) => {
+      give move prepared;
+    }
+    Err(error: failure) => {
+      atomic wrong = &mismatches {
+        set wrong^ = wrong^ +wrap 1_u64;
+      }
+      return unit;
+    }
+  }
   for @again (index in 0_u64..100_u64) {
     atomic s = &store, all = &s^.map[keys] {
       let sum = 0_u64;
@@ -85,7 +107,17 @@ fn free_table(table: KeyedTable<u64>) -> result: unit pure {
 
 fn watch_sums(store: Shared<Store>, mismatches: Shared<u64>) -> result: unit pure waits {
   doc "Reads all eight entries and the total in one statement, three hundred times, and counts each time they disagree.";
-  let keys = prefixes();
+  let keys = match prefixes() {
+    Ok(value: prepared) => {
+      give move prepared;
+    }
+    Err(error: failure) => {
+      atomic wrong = &mismatches {
+        set wrong^ = wrong^ +wrap 1_u64;
+      }
+      return unit;
+    }
+  }
   for @look (index in 0_u64..300_u64) {
     let sum = 0_u64;
     let counted = 0_u64;
@@ -118,7 +150,8 @@ fn run(store: &Shared<Store>, mismatches: &Shared<u64>) -> result: unit reads(st
   let resetting = shared_share::<Store>(shared: store);
   spawn reset(store: move resetting);
   let trading = shared_share::<Store>(shared: store);
-  spawn trade(store: move trading);
+  let trade_mismatches = shared_share::<u64>(shared: mismatches);
+  spawn trade(store: move trading, mismatches: move trade_mismatches);
   for @watch (index in 0_u64..2_u64) {
     let handle = shared_share::<Store>(shared: store);
     let seen = shared_share::<u64>(shared: mismatches);
@@ -134,7 +167,14 @@ fn main() -> status: ExitStatus pure waits {
   let store = shared_new::<Store>(value: move state);
   let mismatches = shared_new::<u64>(value: 0_u64);
   run(store: &store, mismatches: &mismatches);
-  let keys = prefixes();
+  let keys = match prefixes() {
+    Ok(value: prepared) => {
+      give move prepared;
+    }
+    Err(error: failure) => {
+      return exit_status(code: 4_u8);
+    }
+  }
   let sum = 0_u64;
   let total = 1_u64;
   let resets = 0_u64;

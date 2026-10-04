@@ -1,0 +1,16 @@
+fn block_of(slots: &[u64], blocks: &[u64], k: u64) -> result: u64 reads(slots), reads(blocks) contract {
+  requires k < slots^.len;
+  requires forall bounded(j in 0_u64..slots^.len): slots^[j] < blocks^.len;
+} {
+  doc "Reads the block at a stored position that a range requirement bounds, citing an instance of the requirement in a local invariant.";
+  let at = slots^[k];
+  invariant within: at < blocks^.len {
+    use bounded(k);
+  }
+  let found = blocks^[at];
+  return found;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

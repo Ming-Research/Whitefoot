@@ -183,7 +183,9 @@ impl IrBuilder<'_> {
             Some(drops) => {
                 let mut lowered = Vec::with_capacity(drops.len());
                 for drop in drops {
-                    lowered.push(wrapper.lower_projected_drop(returned, drop)?);
+                    if let Some(drop) = wrapper.lower_projected_drop(returned, drop)? {
+                        lowered.push(drop);
+                    }
                 }
                 wrapper.append_drops(lowered)?;
                 wrapper.define(IrType::Unit, IrOperation::Constant(IrConstant::Unit))?

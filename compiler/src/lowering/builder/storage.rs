@@ -437,7 +437,8 @@ impl IrBuilder<'_> {
                     let IrType::Nominal(nominal) = base.ty() else {
                         return Err(LoweringFailure::InvalidCheckedProgram);
                     };
-                    let IrNominalKind::Struct { fields } = &self.nominals[nominal.index()].kind
+                    let (IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields }) =
+                        &self.nominals[nominal.index()].kind
                     else {
                         return Err(LoweringFailure::InvalidCheckedProgram);
                     };
@@ -547,6 +548,7 @@ impl IrBuilder<'_> {
                     .ok_or(LoweringFailure::InvalidCheckedProgram)?
                     .kind,
                 IrNominalKind::Struct { .. }
+                    | IrNominalKind::PreparedKeys { .. }
                     | IrNominalKind::Enum { .. }
                     | IrNominalKind::Box { .. }
                     | IrNominalKind::Opaque

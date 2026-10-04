@@ -4,7 +4,7 @@ alias exit_status = std::process::exit_status;
 fn make(n: u64) -> made: Box<Slots<i32>> pure contract {
   requires n <= 1024_u64;
 } {
-  doc "A runtime-capacity construction takes its count only after the source allocation bound is proved; target qualification then proves the reachable byte range fits the selected allocation and address domains [OP-9, STOR-6].";
+  doc "A runtime-capacity construction takes a contract-bounded count; target qualification holds the element and descriptor layout to their ceilings, and the emitted operation checks the size it computes [OP-9, STOR-6].";
   let taken = box_slots_new::<i32>(capacity: n);
   return move taken;
 }

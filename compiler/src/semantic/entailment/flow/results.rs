@@ -87,9 +87,10 @@ impl Input<'_, '_> {
                 .get(nominal.0 as usize)
                 .map(|record| &record.kind)
             {
-                Some(CheckedNominalKind::Struct { fields }) => {
-                    fields.iter().map(|field| field.ty).collect::<Vec<_>>()
-                }
+                Some(
+                    CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields },
+                ) => fields.iter().map(|field| field.ty).collect::<Vec<_>>(),
                 Some(CheckedNominalKind::Box { referent, .. }) => vec![*referent],
                 _ => Vec::new(),
             };
@@ -116,9 +117,11 @@ impl Input<'_, '_> {
                 return None;
             };
             ty = match (&self.context.nominals.get(nominal.0 as usize)?.kind, step) {
-                (CheckedNominalKind::Struct { fields }, PlaceStep::Field(field)) => {
-                    fields.get(*field as usize)?.ty
-                }
+                (
+                    CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields },
+                    PlaceStep::Field(field),
+                ) => fields.get(*field as usize)?.ty,
                 (CheckedNominalKind::Box { referent, .. }, PlaceStep::Deref) => *referent,
                 _ => return None,
             };

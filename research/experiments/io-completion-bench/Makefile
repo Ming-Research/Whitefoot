@@ -629,3 +629,23 @@ ordinary-bench: ordinary-build compiler $(BUILD)/baseline $(BUILD)/many_files_na
 	  printf 'WF.loop.seq\t\t%s\n' '$(BUILD)/many_files_loop_seq'; \
 	} > $(BUILD)/ordinary-plan.tsv
 	cd $(TREE) && $(BUILD)/runner $(BUILD)/ordinary-plan.tsv $(ROUNDS) $(WARMUP) '$(EXPECTED)'
+
+# Same-source native key preparation experiment, explicitly invoked only.
+# An uninstrumented image times both algorithms; a separate image observes
+# runtime allocator calls and explicit memcpy/memmove bytes.
+.PHONY: key-prepare-build key-prepare-check key-prepare-bench
+key-prepare-build: $(BUILD)/key-prepare $(BUILD)/key-prepare-observe
+
+$(BUILD)/key-prepare: key_prepare_bench.c $(ROOT)/compiler/src/backend/concurrent_map.c $(ROOT)/compiler/src/backend/concurrent_map.h | prepare
+	$(CLANG) $(CFLAGS) $< -o $@
+
+$(BUILD)/key-prepare-observe: key_prepare_bench.c $(ROOT)/compiler/src/backend/concurrent_map.c $(ROOT)/compiler/src/backend/concurrent_map.h | prepare
+	$(CLANG) $(CFLAGS) -DKEY_PREP_OBSERVE $< -o $@
+
+key-prepare-check: key-prepare-build
+	$(BUILD)/key-prepare --check
+	$(BUILD)/key-prepare-observe --check
+
+key-prepare-bench: key-prepare-check
+	$(BUILD)/key-prepare > $(WORK)/key-prepare-times.csv
+	$(BUILD)/key-prepare-observe > $(WORK)/key-prepare-observations.csv

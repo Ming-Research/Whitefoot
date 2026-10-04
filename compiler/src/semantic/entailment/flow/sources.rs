@@ -820,7 +820,7 @@ impl Input<'_, '_> {
         ancestors.push(nominal);
         let mut recursive = false;
         match kind {
-            CheckedNominalKind::Struct { fields } => {
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
                 for (ordinal, field) in fields.iter().enumerate() {
                     let Ok(ordinal) = u32::try_from(ordinal) else {
                         continue;
@@ -866,9 +866,11 @@ impl Input<'_, '_> {
                 return None;
             };
             ty = match (&self.context.nominals.get(nominal.0 as usize)?.kind, step) {
-                (CheckedNominalKind::Struct { fields }, PlaceStep::Field(field)) => {
-                    fields.get(*field as usize)?.ty
-                }
+                (
+                    CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields },
+                    PlaceStep::Field(field),
+                ) => fields.get(*field as usize)?.ty,
                 (CheckedNominalKind::Box { referent, .. }, PlaceStep::Deref) => *referent,
                 (CheckedNominalKind::Enum { variants }, PlaceStep::Payload { variant, field }) => {
                     variants
@@ -917,7 +919,7 @@ impl Input<'_, '_> {
         ancestors.push(nominal);
         let mut recursive = false;
         match kind {
-            CheckedNominalKind::Struct { fields } => {
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
                 for (ordinal, field) in fields.iter().enumerate() {
                     let Ok(ordinal) = u32::try_from(ordinal) else {
                         continue;
@@ -964,9 +966,11 @@ impl Input<'_, '_> {
                 return None;
             };
             ty = match (&self.context.nominals.get(nominal.0 as usize)?.kind, step) {
-                (CheckedNominalKind::Struct { fields }, PlaceStep::Field(field)) => {
-                    fields.get(*field as usize)?.ty
-                }
+                (
+                    CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields },
+                    PlaceStep::Field(field),
+                ) => fields.get(*field as usize)?.ty,
                 (CheckedNominalKind::Box { referent, .. }, PlaceStep::Deref) => *referent,
                 (CheckedNominalKind::Enum { variants }, PlaceStep::Payload { variant, field }) => {
                     variants
@@ -2807,6 +2811,7 @@ impl Analyzer<'_, '_> {
             // receiver's value separately.
             affine: AffineFlowState::default(),
             written: source.written.clone(),
+            measure_kills: source.measure_kills.clone(),
             continuing: Vec::new(),
         };
         // The forward substitution happens above before the ordinary edge

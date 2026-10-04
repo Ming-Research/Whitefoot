@@ -59,7 +59,7 @@ pub(super) fn base_elements(
             .get(id.0 as usize)
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
         match &nominal.kind {
-            CheckedNominalKind::Struct { fields } => {
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
                 pending.extend(fields.iter().map(|field| field.ty))
             }
             CheckedNominalKind::Enum { variants } => pending.extend(
@@ -263,6 +263,16 @@ impl<'a> PhysicalTypes<'a> {
                     })
                     .collect::<Result<_, LoweringFailure>>()?,
             },
+            CheckedNominalKind::PreparedKeys { fields } => IrNominalKind::PreparedKeys {
+                fields: fields
+                    .iter()
+                    .map(|field| {
+                        Ok(IrField {
+                            ty: self.ty(field.ty)?,
+                        })
+                    })
+                    .collect::<Result<_, LoweringFailure>>()?,
+            },
             CheckedNominalKind::Enum { variants } => IrNominalKind::Enum {
                 variants: variants
                     .iter()
@@ -400,6 +410,10 @@ impl<'a> PhysicalTypes<'a> {
                         (
                             CheckedNominalKind::Struct { fields: left },
                             CheckedNominalKind::Struct { fields: right },
+                        )
+                        | (
+                            CheckedNominalKind::PreparedKeys { fields: left },
+                            CheckedNominalKind::PreparedKeys { fields: right },
                         ) => {
                             if left.len() != right.len() {
                                 return Ok(false);

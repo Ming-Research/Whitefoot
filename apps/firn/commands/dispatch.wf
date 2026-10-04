@@ -200,7 +200,7 @@ fn admitted(client: &Client, input: &[u8], name: Span, fits: Bool) -> go: Bool r
 }
 
 fn execute(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "Answers one command, whose arguments are spans of the bytes, by appending its reply to the client's. A command that changes the keyspace does so in one atomic statement, which also appends the change to the append-only file's pending bytes when the keyspace keeps them. As in Redis, an unknown command or a known one outside its command-table arity is answered so whether or not the connection has authenticated, and every other command but AUTH, HELLO and QUIT from a connection that must authenticate first is answered NOAUTH.";
+  doc "Answers one command, whose arguments are spans of the bytes, by appending its reply to the client's and returning the complete input buffer unchanged on every path, so later requests retain their bytes and absolute offsets. A command that changes the keyspace does so in one atomic statement, which also appends the change to the append-only file's pending bytes when the keyspace keeps them. As in Redis, an unknown command or a known one outside its command-table arity is answered so whether or not the connection has authenticated, and every other command but AUTH, HELLO and QUIT from a connection that must authenticate first is answered NOAUTH.";
   let length = input.inner.len;
   let bytes = &input.inner[0_u64..length];
   let count = args^.inner.len;

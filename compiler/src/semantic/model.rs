@@ -963,6 +963,11 @@ pub(crate) enum CheckedConstructor {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedNominalKind {
+    /// An owned prepared key source and private runtime sort order. Only
+    /// the declared readonly source field is visible to source programs.
+    PreparedKeys {
+        fields: Vec<CheckedField>,
+    },
     Struct {
         fields: Vec<CheckedField>,
     },
@@ -1149,7 +1154,8 @@ pub(crate) fn type_has_copy_capability(
                     return Some(false);
                 }
                 match &nominal.kind {
-                    CheckedNominalKind::Struct { fields } => {
+                    CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields } => {
                         pending.extend(fields.iter().map(|field| field.ty));
                     }
                     CheckedNominalKind::Enum { variants } => pending.extend(
@@ -1605,78 +1611,6 @@ pub(crate) enum CheckedTargetDomainObligation {
     ElementAddress,
 }
 
-/// Target-independent upper bounds for one stored value's representation.
-/// The backend must qualify its concrete layout against all three cells
-/// before it may use the source-level `buffer_fits<T>` proof.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CheckedLayoutMagnitude {
-    Finite(u64),
-    AboveU64,
-}
-
-impl CheckedLayoutMagnitude {
-    /// The exact largest element count admitted by OP-9 for this stride.
-    /// Every stride represented by `AboveU64` is greater than U64_MAX, so
-    /// only the zero-length allocation can fit its u64 byte-count domain.
-    pub(crate) const fn allocation_limit(self) -> u64 {
-        match self {
-            Self::Finite(stride) => {
-                assert!(stride >= 1, "a layout stride ceiling is always positive");
-                u64::MAX / stride
-            }
-            Self::AboveU64 => 0,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedLayoutCeiling {
-    pub(crate) size: CheckedLayoutMagnitude,
-    pub(crate) align: u64,
-    pub(crate) stride: CheckedLayoutMagnitude,
-}
-
-/// The static allocation-size obligation one call carries [OP-9].
-///
-/// [OP-13] attaches it to every runtime-capacity construction and [OP-10] to
-/// `grow`, each "over that operation's own stored type and count". The
-/// predicate is `n <= floor((2^64 - 1) / stride_ceiling(T))`, so the record
-/// names the stored type, the language ceiling its stride fixes, and which
-/// declared argument supplies the count `n`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedAllocationFit {
-    /// The allocating cell whose runtime-capacity content fixes the emitted
-    /// block shape and header. Construction returns this cell; `grow`
-    /// receives it as its first parameter.
-    pub(crate) cell: CheckedType,
-    /// The stored type T, after [FN-2] instantiation.
-    pub(crate) element: CheckedType,
-    /// [OP-9]'s language layout ceilings for that stored type.
-    pub(crate) layout_ceiling: CheckedLayoutCeiling,
-    /// The declared-order ordinal of the count argument.
-    pub(crate) count: usize,
-    /// Where the call is written and where its count argument is, so that a
-    /// selected target that cannot hold the retained bound names the
-    /// allocation and the count to bound [STOR-6]. The checker holds the
-    /// tree that resolves the call's node; target qualification does not.
-    pub(crate) site: crate::SyntaxCoordinate,
-    pub(crate) count_site: crate::SyntaxCoordinate,
-    /// Tightest numeric upper bound retained by this call's accepted OP-9
-    /// derivation. Entailment installs it after proving the obligation;
-    /// lowering must not proceed while it is absent.
-    pub(crate) source_length_upper_bound: Option<u64>,
-}
-
-impl CheckedAllocationFit {
-    pub(crate) fn install_source_length_upper_bound(&mut self, upper: u64) {
-        self.source_length_upper_bound = Some(upper);
-    }
-
-    pub(crate) const fn source_length_upper_bound(self) -> Option<u64> {
-        self.source_length_upper_bound
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedArrayRoot {
     Binding {
@@ -2121,7 +2055,9 @@ fn selects_readonly_fragment_field(
         let CheckedType::Nominal(nominal) = ty else {
             return None;
         };
-        let CheckedNominalKind::Struct { fields } = &nominals.get(nominal.0 as usize)?.kind else {
+        let (CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields }) =
+            &nominals.get(nominal.0 as usize)?.kind
+        else {
             return None;
         };
         fields.get(field as usize)
@@ -2289,10 +2225,6 @@ pub(crate) enum CheckedExpression {
         /// [ENT-5]; it is `None` for every own-mode result and whenever the
         /// extension is off.
         result_borrow: Option<CheckedResultBorrow>,
-        /// [OP-9, OP-13, OP-10] the static allocation-size obligation this
-        /// call carries, where it is a runtime-capacity construction or
-        /// `grow`. Every other call carries none.
-        allocation: Option<CheckedAllocationFit>,
     },
     IntegerOperation {
         carrier: NodePath,
@@ -2619,6 +2551,8 @@ pub(crate) struct CheckedDrop {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedProjectedDrop {
+    /// A consumed prepared source leaves only its private sort order.
+    pub(crate) prepared_order: bool,
     pub(crate) fields: Vec<u32>,
     pub(crate) ty: CheckedType,
 }

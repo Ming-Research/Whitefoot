@@ -319,7 +319,10 @@ fn type_holds_heap(
                 .map(|nominal| &nominal.kind)
             {
                 Some(CheckedNominalKind::Box { .. }) => true,
-                Some(CheckedNominalKind::Struct { fields }) => fields
+                Some(
+                    CheckedNominalKind::Struct { fields }
+                    | CheckedNominalKind::PreparedKeys { fields },
+                ) => fields
                     .iter()
                     .any(|field| type_holds_heap(program, field.ty, visited)),
                 Some(CheckedNominalKind::Enum { variants }) => variants

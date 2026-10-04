@@ -90,7 +90,7 @@ impl TypeContext<'_> {
         // Allocation closure is a judgment product. A newly selected view
         // starts from the declaration's own base fact, then closes its bodies.
         self.signatures[id.0 as usize].declared_effects.allocates =
-            super::generics::HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&signature.name.as_str());
+            super::generics::prelude_function_allocates(&signature.name);
         Ok(())
     }
 
@@ -147,7 +147,9 @@ impl TypeContext<'_> {
 
     pub(super) fn activate_nominal_fields(&mut self, id: NominalId) -> Result<(), CheckStop> {
         let fields = match &self.nominal(id)?.kind {
-            CheckedNominalKind::Struct { fields } => fields.iter().map(|field| field.ty).collect(),
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
+                fields.iter().map(|field| field.ty).collect()
+            }
             CheckedNominalKind::Enum { variants } => variants
                 .iter()
                 .flat_map(|variant| &variant.fields)

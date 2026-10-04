@@ -1,0 +1,7 @@
+fn forge(source: KeySource) -> result: PreparedKeys pure {
+  return PreparedKeys(source: move source);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

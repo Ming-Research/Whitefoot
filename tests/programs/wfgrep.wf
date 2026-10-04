@@ -196,7 +196,7 @@ fn zeroed_bytes(count: u64) -> made: Box<Slots<u8>> pure contract {
 }
 
 fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell) {
-  doc "Raises one byte window's capacity and length to total and zero-fills the new slots, keeping the bytes it already holds, within the 2^30-byte line ceiling. A line longer than the read window is held whole, because both the matcher and the published record need the complete line, so the only bound on a line is this ceiling and never the initial window. The written ceiling is what discharges the allocation-size obligation, and the fill is what lets a range reference cover the new slots [OP-9, OP-10, REF-4].";
+  doc "Raises one byte window's capacity and length to total and zero-fills the new slots, keeping the bytes it already holds, within the 2^30-byte line ceiling. A line longer than the read window is held whole, because both the matcher and the published record need the complete line, so the only bound on a line is this ceiling and never the initial window. The fill is what lets a range reference cover the new slots [OP-10, REF-4].";
   let capacity = cell^.inner.cap;
   let bounded = total <= 1073741824_u64;
   let larger = total >= capacity;
@@ -226,7 +226,7 @@ fn widen_window(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell)
 }
 
 fn push_byte(cell: &Box<Slots<u8>>, value: u8) -> pushed: Bool writes(cell) {
-  doc "Appends one byte, doubling full backing, or taking 4096 bytes for an empty store, within the 2^32-byte collection ceiling, and reports False only at that ceiling. A directory's collected names therefore have no fixed entry count [OP-9, OP-10].";
+  doc "Appends one byte, doubling full backing, or taking 4096 bytes for an empty store, within the 2^32-byte collection ceiling, and reports False only at that ceiling. A directory's collected names therefore have no fixed entry count [OP-10].";
   let length = cell^.inner.len;
   let capacity = cell^.inner.cap;
   let full = length >= capacity;
@@ -254,7 +254,7 @@ fn push_byte(cell: &Box<Slots<u8>>, value: u8) -> pushed: Bool writes(cell) {
 }
 
 fn push_word(cell: &Box<Slots<u64>>, value: u64) -> pushed: Bool writes(cell) {
-  doc "The same for word slots, taking 512 for an empty store, within a 2^28-entry ceiling, which is also what discharges the word window's allocation-size obligation [OP-9].";
+  doc "The same for word slots, taking 512 for an empty store, within a 2^28-entry ceiling [OP-10].";
   let length = cell^.inner.len;
   let capacity = cell^.inner.cap;
   let full = length >= capacity;

@@ -8,13 +8,24 @@ struct Store {
   total: u64;
 }
 
-fn prefixes() -> keys: KeySet pure {
-  doc "The eight prefixes of the name, each with its length as its payload.";
-  let keys = key_set_new(capacity: 8_u64);
-  for @key (at in 1_u64..9_u64) {
-    key_set_put(keys: &keys, key: &names[0_u64..at], payload: at);
+fn prefixes() -> keys: Result<PreparedKeys, KeyPrepareError> pure {
+  doc "The eight distinct prefixes of the name, prepared from an owned source in prefix order.";
+  let bytes = box_slots_new::<u8>(capacity: 8_u64);
+  for @copy (at in 0_u64..8_u64) {
+    let byte = names[at];
+    if bytes.inner.len < bytes.inner.cap {
+      place_back(window: &bytes.inner, value: byte);
+    }
   }
-  return move keys;
+  let spans = box_slots_new::<KeySpan>(capacity: 8_u64);
+  for @key (at in 1_u64..9_u64) {
+    let span = KeySpan(start: 0_u64, end: at);
+    if spans.inner.len < spans.inner.cap {
+      place_back(window: &spans.inner, value: span);
+    }
+  }
+  let source = KeySource(bytes: move bytes, spans: move spans);
+  return key_prepare(source: move source);
 }
 
 fn bump_keys(store: Shared<Store>) -> result: unit pure waits {
@@ -39,7 +50,17 @@ fn bump_keys(store: Shared<Store>) -> result: unit pure waits {
 }
 
 fn watch_sums(store: Shared<Store>, mismatches: Shared<u64>) -> result: unit pure waits {
-  let keys = prefixes();
+  let keys = match prefixes() {
+    Ok(value: prepared) => {
+      give move prepared;
+    }
+    Err(error: failure) => {
+      atomic wrong = &mismatches {
+        set wrong^ = wrong^ +wrap 1_u64;
+      }
+      return unit;
+    }
+  }
   for @look (index in 0_u64..300_u64) {
     let sum = 0_u64;
     let counted = 0_u64;
@@ -86,7 +107,14 @@ fn main() -> status: ExitStatus pure waits {
   bump_together(store: &store, mismatches: &mismatches);
   let counted = 0_u64;
   let wrong = 0_u64;
-  let keys = prefixes();
+  let keys = match prefixes() {
+    Ok(value: prepared) => {
+      give move prepared;
+    }
+    Err(error: failure) => {
+      return exit_status(code: 6_u8);
+    }
+  }
   atomic s = &store, all = &s^.map[keys] {
     set counted = keyed_table_count::<u64>(table: &s^.map);
     for @check (at in 0_u64..all^.len) {

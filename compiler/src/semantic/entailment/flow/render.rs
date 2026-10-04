@@ -333,7 +333,9 @@ impl Input<'_, '_> {
             return Some(None);
         };
         let nominal = self.context.nominals.get(id.0 as usize)?;
-        let CheckedNominalKind::Struct { fields } = &nominal.kind else {
+        let (CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields }) =
+            &nominal.kind
+        else {
             return Some(None);
         };
         let field = fields.get(field as usize)?;
@@ -727,7 +729,8 @@ impl Input<'_, '_> {
                     .nominals
                     .get(nominal.0 as usize)
                     .and_then(|nominal| match &nominal.kind {
-                        CheckedNominalKind::Struct { fields } => {
+                        CheckedNominalKind::Struct { fields }
+                        | CheckedNominalKind::PreparedKeys { fields } => {
                             fields.get(*field as usize).map(|field| field.name.clone())
                         }
                         _ => None,
@@ -1027,7 +1030,6 @@ pub(super) fn render_goal_row(
             [collection, offset] => format!("{collection}[{offset}]"),
             _ => "<invalid index goal>".to_owned(),
         },
-        GoalOperation::BufferFits { .. } => render_operation_spelling("buffer_fits", arguments),
     }
 }
 

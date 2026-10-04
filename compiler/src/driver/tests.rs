@@ -1,5 +1,5 @@
 use super::{
-    CompilationFailureKind, CompilationStage, CompilerLimits, DiagnosticFormat, check, compile,
+    CompilationFailureKind, CompilationStage, CompilerLimits, check, compile,
     compile_with_permission_ledger,
 };
 use crate::{OverlapLowering, RecursionBudget, SourceInput};
@@ -2716,69 +2716,12 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
-#[test]
-fn u16_buffer_whose_proved_count_exceeds_the_target_byte_domain_is_a_target_failure() {
-    let source = br#"fn bounded_count(n: u64) -> result: u64 pure contract {
-  ensures result <= 5000000000000000000_u64;
-} {
-  if n <= 5000000000000000000_u64 {
-    return n;
-  } else {
-    return 5000000000000000000_u64;
-  }
-}
-
-fn make(n: u64) -> result: Box<Array<u16>> pure {
-  let bounded = bounded_count(n: n);
-  return box_array_filled::<u16>(count: bounded, value: 0_u16);
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  let values = make(n: 4_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    check(
-        &[SourceInput::new("value.wf", source)],
-        CompilerLimits::default(),
-    )
-    .expect("the OP-9 proof is accepted before selected-target qualification");
-    let failure = compile(
-        &[SourceInput::new("value.wf", source)],
-        CompilerLimits::default(),
-    )
-    .expect_err("the proved u16 byte ceiling exceeds the selected target domain");
-    assert_eq!(failure.stage(), CompilationStage::TargetLayout);
-    assert_eq!(failure.kind(), CompilationFailureKind::TargetLayout);
-    assert_eq!(failure.rule_id(), None);
-    // [STOR-6] the stop names the allocating call, the bound the program
-    // proves and the largest count the target admits: every supported target
-    // allocates at most `i64::MAX` bytes, and an `Array<u16>` block spends one
-    // header word, so `(i64::MAX - 8) / 2` elements fit.
-    let location = failure.location().expect("the stop names the allocation");
-    assert_eq!(
-        (location.path(), location.line(), location.column()),
-        ("value.wf", 13, 10),
-        "{failure}"
-    );
-    assert!(
-        failure.render(DiagnosticFormat::Text).starts_with(
-            "value.wf:13:10: target layout failure in TargetLayout: AllocationCountExceedsTarget\n"
-        ),
-        "{failure}"
-    );
-    let detail = failure.detail();
-    for line in [
-        "count: \"bounded\"",
-        "proved_count_bound: 5000000000000000000",
-        "target_count_limit: 4611686018427387899",
-    ] {
-        assert!(
-            detail.lines().any(|field| field == line),
-            "{line}\n{detail}"
-        );
-    }
-}
+// Retired: u16_buffer_whose_proved_count_exceeds_the_target_byte_domain_is_a_target_failure.
+// Its subject, the target-layout stop at an allocation whose proved count
+// bound the selected target's byte domain cannot hold, retired with v0.87's
+// [OP-9]: a count carries no static bound, and the emitted operation checks
+// the size it computes. pinned_repairs::an_allocation_count_bounded_only_by_its_type_builds
+// keeps the build, and the backend exhaustion tests the run-time check.
 
 #[test]
 fn complete_frame_is_checked_after_each_slot_layout_succeeds() {
@@ -3432,4 +3375,34 @@ fn an_entry_build_reuses_every_analysis_its_module_verdicts_recorded() {
         rebuilt, recorded,
         "the entry build analyzes no function its module verdicts analyzed"
     );
+}
+
+/// [GRAM-10, TYPE-6] a module alias is in both use classes, so a match binder
+/// of its spelling competes with it, and GRAM-10, which owns binder
+/// freshness, reports it rather than TYPE-6.
+#[test]
+fn a_match_binder_beside_a_module_alias_is_a_binder_freshness_error() {
+    let source = br#"alias process = std::process;
+
+fn probe(found: Option<u8>) -> result: u8 pure {
+  match found {
+    Some(value: process) => {
+      return process;
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let failure = check(
+        &[SourceInput::new("binder.wf", source)],
+        CompilerLimits::default(),
+    )
+    .expect_err("a binder beside a module alias of its spelling is refused");
+    assert_eq!(failure.rule_id(), Some("GRAM-10"), "{failure}");
 }

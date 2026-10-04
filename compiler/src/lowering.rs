@@ -9,8 +9,8 @@
 use crate::ir::*;
 use crate::semantic::{
     CheckedBooleanOperation, CheckedConversionMode, CheckedElement, CheckedEnumType,
-    CheckedFloatOperation, CheckedIntegerOperation, CheckedLayoutCeiling, CheckedLayoutMagnitude,
-    CheckedNumericType, CheckedTargetDomainObligation, CheckedType,
+    CheckedFloatOperation, CheckedIntegerOperation, CheckedNumericType,
+    CheckedTargetDomainObligation, CheckedType,
 };
 
 mod operands;
@@ -262,25 +262,6 @@ impl From<CheckedBooleanOperation> for IrBooleanOperation {
     }
 }
 
-impl From<CheckedLayoutMagnitude> for IrLayoutMagnitude {
-    fn from(value: CheckedLayoutMagnitude) -> Self {
-        match value {
-            CheckedLayoutMagnitude::Finite(value) => Self::Finite(value),
-            CheckedLayoutMagnitude::AboveU64 => Self::AboveU64,
-        }
-    }
-}
-
-impl From<CheckedLayoutCeiling> for IrLayoutCeiling {
-    fn from(value: CheckedLayoutCeiling) -> Self {
-        Self {
-            size: value.size.into(),
-            align: value.align,
-            stride: value.stride.into(),
-        }
-    }
-}
-
 impl From<CheckedTargetDomainObligation> for IrTargetDomainObligation {
     fn from(value: CheckedTargetDomainObligation) -> Self {
         match value {
@@ -383,7 +364,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 29] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 30] = [
     // [OP-13] the ten construction functions.
     "box_new",
     "array_filled",
@@ -414,6 +395,7 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 29] = [
     "shared_share",
     "keyed_table_new",
     "keyed_table_count",
+    "key_prepare",
     "key_set_new",
     "key_set_put",
     "key_set_add",

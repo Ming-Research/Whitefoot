@@ -452,9 +452,29 @@ fn key_sets_built_on_compute_workers_keep_their_payloads() {
     }
 }
 
+/// [PAR-1, SHARE-1, SHARE-2] sibling compute calls prepare 64 distinct
+/// owned sources per batch, repeated 64 times. Every returned byte and span
+/// order is checked against the input ordinal. All 64 prepared entry views
+/// of one batch and the first/last representatives of later batches must
+/// create the independent expected counts of distinct table entries, and
+/// raw byte-key probes must read the per-label values written through the
+/// corresponding source indexes. Span order varies between owners. This
+/// observes source preservation and acquisition data kept per owner on
+/// every worker count without replacing the legacy KeySet TLS regression.
+/// A separate owner is fully consumed after its final entry use inside
+/// atomic; raw-key probes after unlock check the new nodes still own bytes.
+#[test]
+fn prepared_keys_built_on_compute_workers_retain_sources_and_distinct_entries() {
+    let parallel = build_program(&compile_program_with_overlap("parallel/prepared_keys.wf"));
+    for workers in [Some("1"), Some("4"), Some("8")] {
+        let output = parallel.run_with_workers(workers);
+        assert!(output.status.success(), "workers={workers:?}: {output:?}");
+    }
+}
+
 /// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
 /// eight keys of a state's table, and to the state's total in the same
-/// statement, while two others hold all eight entries through a key set and
+/// statement, while two others hold all eight entries through prepared spans and
 /// compare their sum with the total, reach the counts every order of their
 /// statements gives, on one driver and on four. An entry not locked alone
 /// loses increments (status 2), a statement that took its entries and the

@@ -1,0 +1,8 @@
+fn consume(keys: PreparedKeys) -> result: u64 pure {
+  let source = move keys.source;
+  return keys.source.spans.inner.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -240,7 +240,11 @@ impl<'unit> Checker<'_, 'unit> {
                         .types
                         .drop_paths(check_context, value.expression.ty(), Vec::new())?
                         .into_iter()
-                        .map(|(fields, ty)| CheckedProjectedDrop { fields, ty })
+                        .map(|(fields, ty)| CheckedProjectedDrop {
+                            fields,
+                            ty,
+                            prepared_order: false,
+                        })
                         .collect();
                     CheckedStatement::DropExpression {
                         node_path,

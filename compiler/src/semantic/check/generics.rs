@@ -237,12 +237,8 @@ impl GenericSubstitution {
 
 /// [OP-13, OP-10] the [PRE-1] records that take from the heap [STOR-1].
 ///
-/// [EFF-3]'s licence excepts a call that allocates from deduplication and
-/// reordering, on the ground that the heap is finite and a duplicated take is
-/// a different program [STOR-8]. Allocation carries no effect entry, so the
-/// base case of that fact is this list and every other boundary's fact is the
-/// union of the facts of the calls its body exhibits. Frame-resident
-/// construction and conversion rows are not allocations [EFF-1].
+/// The ordinary prelude functions that take storage from the program
+/// allocator. [STOR-8] withdraws these operations under `no_heap`.
 pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 6] = [
     "box_new",
     "box_array_filled",
@@ -251,6 +247,14 @@ pub(in crate::semantic::check) const HEAP_ALLOCATING_PRELUDE_FUNCTIONS: [&str; 6
     "box_ring_new",
     "grow",
 ];
+
+/// [EFF-3] excepts allocating calls from deduplication and reordering.
+/// Allocation carries no effect entry; each body's fact is the union of its
+/// calls' facts. Key preparation allocates private runtime storage, while
+/// [STOR-8] withdraws only the program allocator under `no_heap`.
+pub(super) fn prelude_function_allocates(name: &str) -> bool {
+    HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&name) || name == "key_prepare"
+}
 
 impl<'unit> Checker<'_, 'unit> {
     /// Builds only the source template inventory and exact generic-cycle
@@ -1131,8 +1135,7 @@ impl<'unit> Checker<'_, 'unit> {
         // [OP-10]'s `grow`. It is not a row category [EFF-1, STOR-8], so it is
         // set here from the declaration's own identity and unioned along the
         // call graph by the ordinary effect walk.
-        declared_effects.allocates |=
-            HEAP_ALLOCATING_PRELUDE_FUNCTIONS.contains(&template.name.as_str());
+        declared_effects.allocates |= prelude_function_allocates(&template.name);
         // [MOD-3] functions of different modules may share a name, so a
         // module other than the root prefixes its path; a source bundle's
         // root-module symbols keep their plain names.
@@ -1831,7 +1834,8 @@ impl<'unit> TypeContext<'unit> {
                     self.concrete_substitution_identity(substitution)?
                 } else {
                     match &self.nominal(id)?.kind {
-                        CheckedNominalKind::Struct { fields } => {
+                        CheckedNominalKind::Struct { fields }
+                        | CheckedNominalKind::PreparedKeys { fields } => {
                             let mut concrete = true;
                             for field in fields {
                                 concrete &= self.concrete_type_identity(field.ty)?;

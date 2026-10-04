@@ -4,7 +4,7 @@ fn deque_new<T, const ceiling: u64>(capacity: u64) -> made: Box<Ring<T>> pure co
   ensures made.inner.cap == capacity;
   ensures made.inner.head == 0_u64;
 } {
-  doc "Constructs an empty ring with the requested capacity. The explicit ceiling bounds this concrete allocation instance under OP-9; it is not a hidden invariant on an owning Box<Ring<T>>. Allocation is total under STOR-8, including zero capacity.";
+  doc "Constructs an empty ring with the requested capacity. The explicit ceiling bounds this concrete instance's capacity; it is not a hidden invariant on an owning Box<Ring<T>>. Allocation is total under STOR-8, including zero capacity.";
   let storage = box_ring_new::<T>(capacity: capacity);
   return move storage;
 }

@@ -291,3 +291,185 @@ fn reads_a_field(store: &Shared<Pairs>) -> result: u8 reads(store) waits {
         "these write nothing of their entry, so each reads it: {writers:?}"
     );
 }
+
+/// A prepared source exposes its ordinary readonly owner and uses the
+/// original span count to bound its entry binding.
+#[test]
+fn prepared_keys_keep_the_source_and_publish_its_span_count() {
+    let source = r#"fn restore(prepared: PreparedKeys) -> source: KeySource pure {
+  return move prepared.source;
+}
+
+fn discard(prepared: PreparedKeys) -> result: unit pure {
+  return unit;
+}
+
+fn invalid_span(source: KeySource) -> result: KeyPrepareError pure {
+  return InvalidSpan(source: move source, index: 0_u64);
+}
+
+fn duplicate(source: KeySource) -> result: KeyPrepareError pure {
+  return Duplicate(source: move source, first: 0_u64, second: 1_u64);
+}
+
+fn inspect(store: &Shared<KeyedTable<u8>>, prepared: &PreparedKeys) -> result: unit reads(store), reads(prepared) waits {
+  atomic state = &store^, entries = &state^[prepared^] {
+    invariant count: entries^.len == prepared^.source.spans.inner.len;
+    for @read (at in 0_u64..prepared^.source.spans.inner.len) {
+      match entries^[at] {
+        Some(value: seen) => {
+          let observed = seen^;
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let bytes = box_slots_new::<u8>(capacity: 0_u64);
+  let spans = box_slots_new::<KeySpan>(capacity: 0_u64);
+  let source = KeySource(bytes: move bytes, spans: move spans);
+  let outcome = key_prepare(source: move source);
+  match move outcome {
+    Ok(value: prepared) => {
+      let returned = restore(prepared: move prepared);
+    }
+    Err(error: failure) => {
+      match move failure {
+        InvalidSpan(source: returned, index: bad) => {
+        }
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("ordinary source storage and prepared keys check: {outcome:?}");
+        };
+        let restore = checked
+            .data
+            .executable_functions()
+            .find(|function| function.name == "restore")
+            .expect("restore checks");
+        let [
+            CheckedStatement::Return {
+                value:
+                    crate::semantic::CheckedExpression::Project {
+                        consume_root,
+                        residual_drops,
+                        ..
+                    },
+                ..
+            },
+        ] = restore.body.as_deref().expect("restore body")
+        else {
+            panic!("return moves the prepared source");
+        };
+        assert!(
+            *consume_root,
+            "moving the source consumes the prepared owner"
+        );
+        let [order] = residual_drops.as_slice() else {
+            panic!("only the hidden order remains: {residual_drops:?}");
+        };
+        assert!(order.prepared_order && order.fields.is_empty());
+        let discard = checked
+            .data
+            .executable_functions()
+            .find(|function| function.name == "discard")
+            .expect("discard checks");
+        let [CheckedStatement::Return { drops, .. }] =
+            discard.body.as_deref().expect("discard body")
+        else {
+            panic!("discard has one return");
+        };
+        let [whole] = drops.as_slice() else {
+            panic!("a complete prepared owner has one release: {drops:?}");
+        };
+        assert!(whole.fields.is_empty());
+
+        assert!(
+            checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == "key_prepare")
+                .expect("key_prepare checks")
+                .allocates
+        );
+    });
+    let wrong_count = source.replace(
+        "invariant count: entries^.len ==",
+        "invariant count: entries^.len <",
+    );
+    super::assert_rule_kind(wrong_count.as_bytes(), crate::SemanticRule::Inv1, |_| true);
+    let after_move = source.replace("  return move prepared.source;", "  let returned_source = move prepared.source;\n  let reused = prepared.source.spans.inner.len;\n  return move returned_source;");
+    super::assert_rule_kind(after_move.as_bytes(), crate::SemanticRule::Own1, |_| true);
+}
+
+/// Prepared sources cannot be fabricated or changed through their readonly
+/// field; preparation is the constructor that establishes the key invariants.
+#[test]
+fn prepared_keys_refuse_fabrication_and_source_writes() {
+    let source = r#"fn fabricate(source: KeySource) -> prepared: PreparedKeys pure {
+  return PreparedKeys(source: move source);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    super::assert_rule_at(
+        source.as_bytes(),
+        crate::SemanticRule::Type2,
+        "PreparedKeys(source: move source)",
+    );
+    let write = r#"fn rewrite(prepared: &PreparedKeys, source: KeySource) -> result: unit writes(prepared.source) {
+  set prepared^.source = move source;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    super::assert_rule_kind(write.as_bytes(), crate::SemanticRule::Type2, |_| true);
+}
+
+/// Preparing an already owned source takes only private runtime storage. It
+/// keeps the EFF-3 allocation bit without using the program heap [STOR-8].
+#[test]
+fn key_preparation_marks_runtime_allocation_without_requiring_the_program_heap() {
+    let source = br#"program no_heap;
+
+fn prepare(source: KeySource) -> result: Result<PreparedKeys, KeyPrepareError> pure {
+  return key_prepare(source: move source);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("preparation uses no program allocator: {outcome:?}");
+        };
+        for name in ["key_prepare", "prepare"] {
+            let function = checked
+                .data
+                .executable_functions()
+                .find(|function| function.name == name)
+                .expect("preparation checks");
+            assert!(
+                function.allocates,
+                "{name} retains runtime allocation metadata"
+            );
+        }
+    });
+}

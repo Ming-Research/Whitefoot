@@ -73,6 +73,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrAddressed::Nominal(nominal) => matches!(
                 self.nominal(nominal)?.kind(),
                 IrNominalKind::Struct { .. }
+                    | IrNominalKind::PreparedKeys { .. }
                     | IrNominalKind::Enum { .. }
                     | IrNominalKind::Box { .. }
                     | IrNominalKind::Opaque
@@ -465,7 +466,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if self.value_type(aggregate) != Some(IrType::Nominal(nominal)) {
             return Err(BackendFailure::InvalidIr);
         }
-        let IrNominalKind::Struct { fields } = self.nominal(nominal)?.kind() else {
+        let (IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields }) =
+            self.nominal(nominal)?.kind()
+        else {
             return Err(BackendFailure::InvalidIr);
         };
         if fields.get(field as usize).map(|field| field.ty()) != Some(ty) {
@@ -505,7 +508,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if ty != IrType::Nominal(nominal) || self.value_type(aggregate) != Some(ty) {
             return Err(BackendFailure::InvalidIr);
         }
-        let IrNominalKind::Struct { fields } = self.nominal(nominal)?.kind() else {
+        let (IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields }) =
+            self.nominal(nominal)?.kind()
+        else {
             return Err(BackendFailure::InvalidIr);
         };
         let field_ty = fields

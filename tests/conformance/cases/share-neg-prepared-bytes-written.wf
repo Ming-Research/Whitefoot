@@ -1,0 +1,10 @@
+fn mutate(keys: &PreparedKeys) -> result: unit writes(keys) {
+  if keys^.source.bytes.inner.len > 0_u64 {
+    set keys^.source.bytes.inner[0_u64] = 9_u8;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

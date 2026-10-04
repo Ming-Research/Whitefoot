@@ -1,0 +1,36 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let bytes = box_slots_new::<u8>(capacity: 2_u64);
+  let spans = box_slots_new::<KeySpan>(capacity: 2_u64);
+  let source = KeySource(bytes: move bytes, spans: move spans);
+  let prepared = key_prepare(source: move source);
+  match move prepared {
+    Err(error: failure) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+    Ok(value: keys) => {
+      let table = keyed_table_new::<u8>(capacity: 0_u64);
+      let store = shared_new::<KeyedTable<u8>>(value: move table);
+      let count = 99_u64;
+      atomic state = &store, entries = &state^[keys] {
+        set count = entries^.len;
+      }
+      if count != 0_u64 {
+        return std::process::exit_status(code: 2_u8);
+      }
+      let original = move keys.source;
+      if original.bytes.inner.cap != 2_u64 {
+        return std::process::exit_status(code: 10_u8);
+      }
+      if original.bytes.inner.len != 0_u64 {
+        return std::process::exit_status(code: 3_u8);
+      }
+      if original.spans.inner.cap != 2_u64 {
+        return std::process::exit_status(code: 10_u8);
+      }
+      if original.spans.inner.len != 0_u64 {
+        return std::process::exit_status(code: 4_u8);
+      }
+      return std::process::exit_status(code: 9_u8);
+    }
+  }
+}

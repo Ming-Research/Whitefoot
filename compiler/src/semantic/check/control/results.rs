@@ -211,7 +211,9 @@ impl<'unit> Checker<'_, 'unit> {
                 .destructuring_shape_rejection(node, &written);
         }
         let fields = match &self.types.nominal(nominal)?.kind {
-            CheckedNominalKind::Struct { fields } => fields.clone(),
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
+                fields.clone()
+            }
             _ => {
                 return self
                     .types
@@ -588,7 +590,7 @@ impl<'unit> TypeContext<'unit> {
         nominal: crate::NominalId,
     ) -> Result<Vec<CheckedType>, CheckStop> {
         match &self.nominal(nominal)?.kind {
-            CheckedNominalKind::Struct { fields } => {
+            CheckedNominalKind::Struct { fields } | CheckedNominalKind::PreparedKeys { fields } => {
                 Ok(fields.iter().map(|field| field.ty).collect())
             }
             _ => Err(SemanticCompilerFailure::InvalidResolution.into()),
@@ -646,7 +648,11 @@ impl<'unit> TypeContext<'unit> {
             let ordinal =
                 u32::try_from(*ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
             for (path, ty) in self.drop_paths(check_context, field.ty, vec![ordinal])? {
-                releases.push(CheckedProjectedDrop { fields: path, ty });
+                releases.push(CheckedProjectedDrop {
+                    fields: path,
+                    ty,
+                    prepared_order: false,
+                });
             }
         }
         Ok(releases)

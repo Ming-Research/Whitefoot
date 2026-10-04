@@ -28,7 +28,7 @@ pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a
 pub(in crate::semantic::check) const SHARE2_NAME_A_TABLE_ENTRY: &str = "write the entry binding as `name = &s^.table[key]`, where `s` is the statement's binding and `table` a field of type `KeyedTable<V>` in its state";
 /// The repair for an index atom that is neither a byte range nor a key set
 /// [SHARE-2].
-pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`";
+pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `PreparedKeys` built by `key_prepare` before the statement, such as `prepared` or, through a reference to one, `prepared^`; existing `KeySet` selectors are also admitted";
 /// [SHARE-2] repair for an index atom that reads the state.
 pub(in crate::semantic::check) const SHARE2_KEY_BEFORE_THE_STATEMENT: &str = "compute the key into a local before the statement, through an earlier atomic statement if it comes from the state: a statement reads its keys when it begins, before it holds the state";
 /// The repair for a waiting call inside an atomic statement [SHARE-2].
@@ -408,7 +408,7 @@ impl Checker<'_, '_> {
 
     /// [SHARE-2] one entry binding: its place is the statement's binding,
     /// `^`, fields ending at a `KeyedTable<V>`, and one index whose atom has
-    /// type `&[u8]` or is a place of type `KeySet`.
+    /// type `&[u8]` or is a place of type `KeySet` or `PreparedKeys`.
     #[allow(clippy::too_many_arguments)]
     fn check_entry_binding(
         &mut self,
@@ -567,7 +567,14 @@ impl Checker<'_, '_> {
                 block_bindings,
                 loop_depth,
             )?;
-            if set.expression.ty() != CheckedType::KeySet {
+            let prepared = match set.expression.ty() {
+                CheckedType::Nominal(nominal) => matches!(
+                    self.types.nominal(nominal)?.kind,
+                    CheckedNominalKind::PreparedKeys { .. }
+                ),
+                _ => false,
+            };
+            if set.expression.ty() != CheckedType::KeySet && !prepared {
                 return self.types.declarations.issue_node(
                     SemanticRule::Share2,
                     header.atom,

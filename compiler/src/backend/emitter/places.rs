@@ -82,6 +82,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         operation: &IrOperation,
     ) -> Result<bool, BackendFailure> {
         match operation {
+            IrOperation::KeyPrepare { source } => self.emit_key_prepare(result, ty, *source)?,
             IrOperation::AddressOf { value, referent } => {
                 self.emit_address_of(result, ty, *value, *referent)?;
             }
@@ -141,7 +142,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 if ty != IrType::Nominal(*nominal) {
                     return Err(BackendFailure::InvalidIr);
                 }
-                let IrNominalKind::Struct { fields: declared } = self.nominal(*nominal)?.kind()
+                let (IrNominalKind::Struct { fields: declared }
+                | IrNominalKind::PreparedKeys { fields: declared }) =
+                    self.nominal(*nominal)?.kind()
                 else {
                     return Err(BackendFailure::InvalidIr);
                 };
@@ -192,7 +195,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 field,
                 consume_root,
             } => {
-                let IrNominalKind::Struct { fields } = self.nominal(*nominal)?.kind() else {
+                let (IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields }) =
+                    self.nominal(*nominal)?.kind()
+                else {
                     return Err(BackendFailure::InvalidIr);
                 };
                 if self.value_type(*aggregate) != Some(IrType::Nominal(*nominal))
@@ -244,7 +249,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 field,
                 value,
             } => {
-                let IrNominalKind::Struct { fields } = self.nominal(*nominal)?.kind() else {
+                let (IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields }) =
+                    self.nominal(*nominal)?.kind()
+                else {
                     return Err(BackendFailure::InvalidIr);
                 };
                 if ty != IrType::Nominal(*nominal)
@@ -445,7 +452,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         };
         let pointer = match projection {
             crate::IrPlaceStep::Field { nominal, field } => {
-                let IrNominalKind::Struct { fields } = self.nominal(*nominal)?.kind() else {
+                let (IrNominalKind::Struct { fields } | IrNominalKind::PreparedKeys { fields }) =
+                    self.nominal(*nominal)?.kind()
+                else {
                     return Err(BackendFailure::InvalidIr);
                 };
                 if base.ty() != IrType::Nominal(*nominal)
