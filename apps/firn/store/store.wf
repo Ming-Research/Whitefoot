@@ -12,6 +12,8 @@ alias priority_queue_peek = std::collections::priority_queue::priority_queue_pee
 alias priority_queue_pop = std::collections::priority_queue::priority_queue_pop;
 alias priority_queue_push = std::collections::priority_queue::priority_queue_push;
 
+const word_del: Array<u8, 3> =[68_u8, 69_u8, 76_u8];
+
 struct Probe {
   at: u64;
 }
@@ -41,16 +43,30 @@ fn due_order(env: &KeyEnv, left: &Due, right: &Due) -> order: i32 reads(left), r
   return 0_i32;
 }
 
-fn keyspace_new(seed: u64, logging: Bool) -> made: Keyspace pure {
-  doc "An empty keyspace sized for 2^18 keys, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed. The size spares a benchmark's 2^17 keys the table's moves into memory the host has not yet given the process.";
-  let map = keyed_table_new::<Entry>(capacity: 262144_u64);
+fn keyspace_table() -> made: KeyedTable<Entry> pure {
+  doc "An empty table of entries sized for 2^18 keys, which spares a benchmark's 2^17 keys the table's moves into memory the host has not yet given the process.";
+  let made = keyed_table_new::<Entry>(capacity: 262144_u64);
+  return move made;
+}
+
+const encoding_defaults: Array<i64, 9> =[512_i64, 64_i64, 0_i64, -2_i64, 512_i64, 4096_i64, 100_i64, 128_i64, 64_i64];
+
+fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64, started: u64) -> made: Keyspace pure {
+  doc "An empty keyspace, its table made by keyspace_table, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed, beside a server's state that requires the password, none when it is empty, keeps a silent client timeout seconds, none when it is zero, and holds Redis 7.0.15's defaults for the encoding parameters: hash-max-listpack-entries 512, hash-max-listpack-value 64, list-compress-depth 0, list-max-listpack-size -2, set-max-intset-entries 512, stream-node-max-bytes 4096, stream-node-max-entries 100, zset-max-listpack-entries 128 and zset-max-listpack-value 64, in that order, the order of their names; and records started, the calendar time in milliseconds at which the server started.";
+  let map = keyspace_table();
   let due = priority_queue_new::<Due, ceiling>();
   let log = box_slots_new::<u8>(capacity: 65536_u64);
   let running = False();
   let meta = Meta(due: move due, log: move log, clients: 0_u64, stopping: running, random: seed);
   let state = KeyspaceState(map: move map, meta: move meta);
   let shared = shared_new::<KeyspaceState>(value: move state);
-  return Keyspace(state: move shared, logging: logging);
+  let encodings = array_filled::<i64, 9>(value: 0_i64);
+  for @defaults (slot in 0_u64..9_u64) {
+    set encodings[slot] = encoding_defaults[slot];
+  }
+  let server = ServerState(password: move password, timeout: timeout, encodings: encodings, connections: 0_u64, started: started);
+  let beside = shared_new::<ServerState>(value: move server);
+  return Keyspace(state: move shared, server: move beside, logging: logging);
 }
 
 fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) {
@@ -60,17 +76,18 @@ fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) {
 }
 
 fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(store) {
-  doc "A handle to the same keyspace that appends changes to the append-only file's pending bytes when logging is true.";
+  doc "A handle to the same keyspace and server's state that appends changes to the append-only file's pending bytes when logging is true.";
   let shared = shared_share::<KeyspaceState>(shared: &store^.state);
-  return Keyspace(state: move shared, logging: logging);
+  let beside = shared_share::<ServerState>(shared: &store^.server);
+  return Keyspace(state: move shared, server: move beside, logging: logging);
 }
 
 fn expired(expires: u64, now: u64) -> reached: Bool pure {
-  doc "Whether an expiry, zero for none, has been reached at now.";
+  doc "Whether an expiry, zero for none, has passed at now: a key lives through the millisecond its expiry names, as Redis 7.0.15's keyIsExpired keeps it.";
   if expires == 0_u64 {
     return False();
   }
-  let reached = expires <= now;
+  let reached = expires < now;
   return reached;
 }
 
@@ -81,7 +98,7 @@ fn due_at(env: &Probe, value: &Due) -> result: u64 reads(value), writes(env) {
 }
 
 fn take_due(meta: &Meta, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(env), writes(meta), writes(batch) {
-  doc "Moves up to 256 queued expiries that have been reached, the earliest first, into the batch, and returns whether more may be due.";
+  doc "Moves up to 256 queued expiries that have passed, the earliest first, into the batch, and returns whether more may be due; an expiry equal to now stays queued, as Redis's active expiry keeps a key through the millisecond its expiry names.";
   for @batch (step in 0_u64..256_u64) {
     let pending = priority_queue_len::<Due, ceiling>(queue: &meta^.due);
     if pending == 0_u64 {
@@ -89,7 +106,7 @@ fn take_due(meta: &Meta, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> mor
     }
     let probe = Probe(at: 0_u64);
     let first = priority_queue_peek::<Due, Probe, u64, fn due_at, ceiling>(queue: &meta^.due, env: &probe);
-    if first > now {
+    if first >= now {
       return False();
     }
     let due = priority_queue_pop::<DueOrder, ceiling>(queue: &meta^.due, env: env);
@@ -103,8 +120,20 @@ fn take_due(meta: &Meta, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> mor
   return True();
 }
 
+fn log_removal(log: &Box<Slots<u8>>, key: &[u8]) -> result: unit reads(key), writes(log) {
+  doc "Appends DEL key, as Redis 7.0.15 propagates the removal of a key whose expiry has passed, so that a replay, which counts no key as expired, removes the key where the server did and a later command finds it absent there too.";
+  let length = key^.len;
+  let room = length +wrap 32_u64;
+  log_count(log: log, count: 2_u64, room: room);
+  log_word(log: log, word: &word_del[0_u64..3_u64]);
+  let span = Span(start: 0_u64, length: length);
+  log_input(log: log, input: key, span: span);
+  return unit;
+}
+
 fn expire_key(store: &Keyspace, key: &[u8], at: u64) -> result: unit reads(store), reads(key) waits {
-  doc "Removes the key when its expiry is still the one queued at at.";
+  doc "Removes the key when its expiry is still the one queued at at, recording the removal as log_removal does.";
+  let logged = store^.logging;
   atomic s = &store^.state, slot = &s^.map[key] {
     let matched = False();
     match slot^ {
@@ -118,13 +147,17 @@ fn expire_key(store: &Keyspace, key: &[u8], at: u64) -> result: unit reads(store
     }
     if matched {
       set slot^ = None<Entry>();
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
+      }
     }
   }
   return unit;
 }
 
 fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits {
-  doc "Removes the key when its expiry has been reached at now, for a command that found it expired in a statement that only read it; a key set again since keeps its value.";
+  doc "Removes the key when its expiry has passed at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does; a key set again since keeps its value.";
+  let logged = store^.logging;
   atomic s = &store^.state, slot = &s^.map[key] {
     let lapsed = False();
     match slot^ {
@@ -136,13 +169,16 @@ fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(
     }
     if lapsed {
       set slot^ = None<Entry>();
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
+      }
     }
   }
   return unit;
 }
 
 fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits {
-  doc "Takes up to 256 queued expiries that have been reached, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped.";
+  doc "Takes up to 256 queued expiries that have passed, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, recording the removal as log_removal does, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped.";
   let more = False();
   atomic s = &store^.state {
     set more = take_due(meta: &s^.meta, now: now, env: env, batch: batch);

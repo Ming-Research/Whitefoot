@@ -1,5 +1,6 @@
 alias Bytes = pkg::bytes::Bytes;
 alias Client = pkg::protocol::Client;
+alias Keyspace = pkg::store::Keyspace;
 alias Span = pkg::protocol::Span;
 alias arg = pkg::protocol::arg;
 alias byte_at = pkg::bytes::byte_at;
@@ -125,18 +126,18 @@ fn exact_word(input: &[u8], span: Span, word: &[u8]) -> same: Bool reads(input),
   return True();
 }
 
-fn credentials_accepted(client: &Client, input: &[u8], user: Span, password: Span) -> accepted: Bool reads(client), reads(input) {
-  doc "Whether a user name and a password authenticate as Redis's check of its default user does: default, spelled exactly, is the only user, and it takes any password while none is configured.";
+fn credentials_accepted(secret: &Bytes, input: &[u8], user: Span, password: Span) -> accepted: Bool reads(secret), reads(input) {
+  doc "Whether a user name and a password authenticate as Redis's check of its default user does against the configured password, the secret: default, spelled exactly, is the only user, and it takes any password while none is configured.";
   let named = exact_word(input: input, span: user, word: &word_default[0_u64..7_u64]);
   if named {
   } else {
     return False();
   }
-  let length = bytes_length(bytes: &client^.settings.password);
+  let length = bytes_length(bytes: secret);
   if length == 0_u64 {
     return True();
   }
-  let right = secret_matches(input: input, span: password, secret: &client^.settings.password);
+  let right = secret_matches(input: input, span: password, secret: secret);
   return right;
 }
 
@@ -158,8 +159,8 @@ fn set_name(client: &Client, input: &[u8], name: Span) -> named: Bool reads(inpu
   return True();
 }
 
-fn run_auth(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
-  doc "AUTH [username] password: authenticates the connection as Redis 7.0 does with its one user, default. With a password configured, the right one, alone or after the user name default, unlocks the connection, and a wrong one or another user name is answered WRONGPASS and leaves the connection as it was. With none configured, a password alone is answered with Redis's error for that and default with any password succeeds. More than two arguments are a syntax error.";
+fn run_auth(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
+  doc "AUTH [username] password: authenticates the connection as Redis 7.0 does with its one user, default, against the password the server's state holds now, which CONFIG SET may have changed. With a password configured, the right one, alone or after the user name default, authenticates the connection, which then stays authenticated as Redis's flag does, and a wrong one or another user name is answered WRONGPASS and leaves the connection as it was. With none configured, a password alone is answered with Redis's error for that, and default with any password succeeds and authenticates the connection, as in Redis. More than two arguments are a syntax error.";
   let count = args^.inner.len;
   if count > 3_u64 {
     reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
@@ -167,19 +168,27 @@ fn run_auth(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: u
   }
   let accepted = False();
   if count == 2_u64 {
-    let length = bytes_length(bytes: &client^.settings.password);
-    if length == 0_u64 {
+    let password = arg(args: args, index: 1_u64);
+    let configured = False();
+    atomic v = &store^.server {
+      let length = bytes_length(bytes: &v^.password);
+      set configured = length > 0_u64;
+      set accepted = secret_matches(input: input, span: password, secret: &v^.password);
+    }
+    if configured {
+    } else {
       reply_error(client: client, word: &text_auth_unset[0_u64..124_u64]);
       return unit;
     }
-    let password = arg(args: args, index: 1_u64);
-    set accepted = secret_matches(input: input, span: password, secret: &client^.settings.password);
   } else {
     let user = arg(args: args, index: 1_u64);
     let password = arg(args: args, index: 2_u64);
-    set accepted = credentials_accepted(client: client, input: input, user: user, password: password);
+    atomic v = &store^.server {
+      set accepted = credentials_accepted(secret: &v^.password, input: input, user: user, password: password);
+    }
   }
   if accepted {
+    set client^.authenticated = True();
     set client^.locked = False();
     reply_ok(client: client);
   } else {
@@ -188,8 +197,8 @@ fn run_auth(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: u
   return unit;
 }
 
-fn run_hello(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
-  doc "HELLO [protover [AUTH username password] [SETNAME clientname]]: answers as Redis 7.0 answers under RESP2. A version that is not a number is refused with Redis's error, and one other than 2 as unsupported, 3 included, since firn speaks RESP2 alone. The options then apply in order, AUTH as AUTH with a user name applies, SETNAME as CLIENT SETNAME does, each stopping the command at its error with the options before it applied, and any other option is a syntax error; an option's name is read up to a zero byte, as Redis's strcasecmp reads it. A connection still locked is then refused; any other is answered with Redis's map of the server's facts, an array under RESP2: server redis and version 7.0.15, the server and version whose replies firn follows, protocol 2, the connection's id, standalone mode, the master role and no modules.";
+fn run_hello(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
+  doc "HELLO [protover [AUTH username password] [SETNAME clientname]]: answers as Redis 7.0 answers under RESP2. A version that is not a number is refused with Redis's error, and one other than 2 as unsupported, 3 included, since firn speaks RESP2 alone. The options then apply in order, AUTH as AUTH with a user name applies, against the password the server's state holds now, SETNAME as CLIENT SETNAME does, each stopping the command at its error with the options before it applied, and any other option is a syntax error; an option's name is read up to a zero byte, as Redis's strcasecmp reads it. A connection still locked is then refused; any other is answered with Redis's map of the server's facts, an array under RESP2: server redis and version 7.0.15, the server and version whose replies firn follows, protocol 2, the connection's id, standalone mode, the master role and no modules.";
   let count = args^.inner.len;
   if count >= 2_u64 {
     let version = arg(args: args, index: 1_u64);
@@ -223,8 +232,12 @@ fn run_hello(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: 
       let password_index = index +wrap 2_u64;
       let user = arg(args: args, index: user_index);
       let password = arg(args: args, index: password_index);
-      let accepted = credentials_accepted(client: client, input: input, user: user, password: password);
+      let accepted = False();
+      atomic v = &store^.server {
+        set accepted = credentials_accepted(secret: &v^.password, input: input, user: user, password: password);
+      }
       if accepted {
+        set client^.authenticated = True();
         set client^.locked = False();
       } else {
         reply_error(client: client, word: &text_wrongpass[0_u64..61_u64]);
