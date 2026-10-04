@@ -5,6 +5,29 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-03 Firn's standalone deployment and Whitefoot Lua direction
+
+Nodes: language/firn
+
+Owner-approved: In the session, the owner accepted the standalone deployment
+scope and Whitefoot Lua interpreter direction, then requested (translated
+from Chinese): "Okay. Open a new PR, update the TODO to confirm this overall
+direction, and give the Lua work its own TODO item with the important work."
+This records Q1 (complete standalone application workloads) and Q2 (a
+Whitefoot interpreter, beginning with a vertical slice); it does not approve
+a VM, GC, locking design, schedule or merge revision.
+
+Summary: Firn demonstrates Whitefoot through usable cache/session and scripted
+conditional-update workloads with existing clients and unchanged business
+logic, instead of a benchmark-only release or complete Redis ecosystem parity
+as a prerequisite. Replication, clustering and unused feature families remain
+later scope. Lua will be implemented in Whitefoot for Redis's execution
+environment and tested first through a vertical slice; native Lua would not demonstrate
+those language capabilities, and JIT is not a release prerequisite. The
+[deployment direction](../research/investigations/firn/DESIGN.md#deployment-direction)
+defines the evidence boundary; the TODO tracks unfinished work rather than
+claiming these capabilities exist.
+
 ## 2026-10-02 Keep data only proofs read ordinary, and leave its cost to the compiler
 
 Nodes: language/checks-and-proofs
