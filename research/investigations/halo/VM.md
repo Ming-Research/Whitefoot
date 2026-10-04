@@ -17,12 +17,18 @@ loop (invariant fetch: pc < n, invariant frame: base + 256_u64 <= stack^.inner.l
 }
 ```
 
-INV-1 checks a loop's header invariants as one batch, and an arm that sets
-`pc` but not `base` (most arms) loses the `base` invariant on that path:
-`witnesses/vm/ts.wf` and `s1_core.wf` are refused with
-`INV-1 UndischargedLoopInvariant ... obligation: Backedge`. `t3.wf` passes
-when every path sets both variables; `u7.wf` passes by re-checking
-`base <= room` at run time before `set pc`, two comparisons per dispatch.
+The arms change different loop variables, and the body's paths join before
+the backedge, where only facts identical on every input survive: an arm
+that sets `base = t` under `t <= room` carries `t <= room` and `base == t`,
+an arm that leaves `base` carries the assumed `base <= room`, and the join
+keeps neither, so `witnesses/vm/ts.wf` and `s1_core.wf` are refused with
+`INV-1 UndischargedLoopInvariant ... obligation: Backedge`. The minimal
+witness has one invariant and two paths (`witnesses/vm/join.wf`; recorded
+in docs/todo.md under checker precision). `t3.wf` passes when every path
+sets both variables; `u7.wf` passes by re-checking `base <= room` at run
+time before `set pc`, two comparisons per dispatch. (The consultation first
+attributed this to the header batch as a whole; a loop with two invariants
+whose body sets only one variable is accepted, which refutes that.)
 
 The interpreter is therefore the guaranteed self-tail call [FN-10], whose
 parameters are never set, so the entry requirements hold in every arm:
@@ -314,6 +320,7 @@ coding agent.
   builds and scripts that depend on it are fragile.
 - H2. Library callbacks re-enter `run` up to 200 nestings, as PUC does.
   Recommended: accept; measure the stack use once the lowering exists.
-- H3. The header-invariant batch behavior of INV-1 (a path that sets one
-  invariant's variable drops the whole batch): specified rule or checker
-  limitation. Slice 1 does not depend on it.
+- H3. A loop invariant is lost where a guarded update joins an untouched
+  path (`witnesses/vm/join.wf`): the join keeps only identical facts. The
+  program is sound, so this is a precision gap, recorded in docs/todo.md.
+  Slice 1 does not depend on it.
