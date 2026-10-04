@@ -22,6 +22,17 @@ struct Exponent {
   valid: Bool;
 }
 
+fn space(byte: u8) -> result: Bool pure {
+  doc "Whether a byte is white space as C's isspace reads it in the C locale: space, tab, line feed, vertical tab, form feed or carriage return.";
+  if byte == 32_u8 {
+    return True();
+  }
+  let low = byte >= 9_u8;
+  let high = byte <= 13_u8;
+  let within = band(low, high);
+  return within;
+}
+
 fn refused() -> result: ScoreBits pure {
   doc "Text Redis does not accept as a score.";
   let invalid = False();

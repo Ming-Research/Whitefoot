@@ -1194,3 +1194,21 @@ fn extended_sum(value: &[u8], increment: &Reading) -> sum: Sum reads(value), rea
   let text = extended_text(value: &total);
   return Sum(text: move text, state: 1_u64);
 }
+
+fn extended_sum_text(text: &Bytes, increment: &Reading) -> sum: Sum reads(text), reads(increment) {
+  doc "Adds the increment to a stored string read as a long double, as extended_sum adds it, with the same sum states and text.";
+  match text^ {
+    Short(bytes: short) => {
+      let length = short^.len;
+      let window = &short^[0_u64..length];
+      let sum = extended_sum(value: window, increment: increment);
+      return move sum;
+    }
+    Long(bytes: long) => {
+      let length = long^.inner.len;
+      let window = &long^.inner[0_u64..length];
+      let sum = extended_sum(value: window, increment: increment);
+      return move sum;
+    }
+  }
+}

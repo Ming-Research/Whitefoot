@@ -39,16 +39,15 @@ alias reply_nil = pkg::protocol::reply_nil;
 alias reply_ok = pkg::protocol::reply_ok;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
 alias Bytes = pkg::bytes::Bytes;
-alias Extended = pkg::scores::Extended;
-alias extended_add = pkg::scores::extended_add;
-alias extended_text = pkg::scores::extended_text;
+alias Reading = pkg::extended::Reading;
+alias Sum = pkg::extended::Sum;
+alias extended_read = pkg::extended::extended_read;
+alias extended_sum_text = pkg::extended::extended_sum_text;
 alias key_text = pkg::bytes::key_text;
 alias log_count = pkg::store::log_count;
 alias log_input = pkg::store::log_input;
 alias log_text = pkg::store::log_text;
 alias log_word = pkg::store::log_word;
-alias read_extended = pkg::scores::read_extended;
-alias read_extended_text = pkg::scores::read_extended_text;
 alias reply_text = pkg::protocol::reply_text;
 
 const code_hset: u64 = 1413829448_u64;
@@ -1089,32 +1088,32 @@ fn run_hincrby(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
 
 struct Floating {
   doc "HINCRBYFLOAT's increment and what it did: text, the sum as Redis writes it, and state 1 when it computed the sum, 5 for a stored value that does not read as a long double, and 6 for a sum that is not finite.";
-  increment: Extended;
+  increment: Reading;
   text: Bytes;
   state: u64;
 }
 
-fn float_sum(floating: &Floating, base: Extended) -> result: unit writes(floating) {
-  doc "Adds the increment to a base value, recording the sum's text and done, or 6 when the sum is not finite.";
-  let sum = extended_add(left: base, right: floating^.increment);
-  if sum.infinite {
-    set floating^.state = 6_u64;
+fn float_sum(floating: &Floating, base: &Bytes) -> result: unit reads(base), writes(floating) {
+  doc "Adds the increment to a stored value read as a long double, recording the sum's text and done, 5 for a value that does not read as one, or 6 when the sum is not finite.";
+  let sum = extended_sum_text(text: base, increment: &floating^.increment);
+  let Sum(text: made, state: outcome) = move sum;
+  if outcome == 1_u64 {
+    set floating^.text = move made;
+    set floating^.state = state_done;
     return unit;
   }
-  set floating^.text = extended_text(value: sum);
-  set floating^.state = state_done;
+  let unused = move made;
+  if outcome == 2_u64 {
+    set floating^.state = 6_u64;
+  } else {
+    set floating^.state = 5_u64;
+  }
   return unit;
 }
 
 fn float_field(env: &Floating, key: &Key, value: &Bytes) -> result: u64 writes(env), writes(value) {
   doc "Adds the increment to a field's stored value read as a long double, replacing it with the sum's text; records 5 for a value that does not read as one and 6 for a sum that is not finite, leaving the value as it was.";
-  let read = read_extended_text(text: value);
-  if read.valid {
-  } else {
-    set env^.state = 5_u64;
-    return 5_u64;
-  }
-  float_sum(floating: env, base: read.value);
+  float_sum(floating: env, base: value);
   if env^.state == state_done {
     let stored = bytes_copy(bytes: &env^.text);
     set value^ = move stored;
@@ -1140,10 +1139,8 @@ fn add_float(env: &Client, value: &Entry, floating: &Floating) -> kind: u64 writ
             let kept = move field;
           }
           Err(error: absent) => {
-            let positive = False();
-            let finite = False();
-            let zero = Extended(negative: positive, mantissa: 0_u64, exponent: 0_i64, infinite: finite);
-            float_sum(floating: floating, base: zero);
+            let zero = decimal_text(value: 0_i64);
+            float_sum(floating: floating, base: &zero);
             if floating^.state == state_done {
               let stored = bytes_copy(bytes: &floating^.text);
               let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: hash_of, key: move field, value: move stored, env: &keys);
@@ -1178,13 +1175,13 @@ fn add_float(env: &Client, value: &Entry, floating: &Floating) -> kind: u64 writ
 fn run_hincrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "HINCRBYFLOAT key field increment: adds the increment to the field's value in x87 extended precision, the long double Redis computes in on x86-64, an absent field or key counting as 0, stores the sum as Redis's ld2string writes it and answers it as a bulk string. An increment that is not a valid float, or one that is NaN or infinite, is refused before the key is read; a stored value that does not read as a long double, or a sum that is not finite, leaves the hash as it was. The change is appended to the file as HSET key field sum, as Redis propagates it, so that a replay stores the same text.";
   let amount = arg(args: args, index: 3_u64);
-  let read = read_extended(input: input, start: amount.start, length: amount.length);
+  let read = extended_read(input: input, start: amount.start, length: amount.length);
   if read.valid {
   } else {
     reply_error(client: client, word: &text_not_float[0_u64..30_u64]);
     return unit;
   }
-  if read.value.infinite {
+  if read.value.kind == 2_u64 {
     reply_error(client: client, word: &text_nan_or_infinity[0_u64..28_u64]);
     return unit;
   }
@@ -1198,7 +1195,7 @@ fn run_hincrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, cli
   set client^.now = time^.check;
   set client^.state = state_absent;
   let empty = decimal_text(value: 0_i64);
-  let floating = Floating(increment: read.value, text: move empty, state: state_absent);
+  let floating = Floating(increment: read, text: move empty, state: state_absent);
   atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
@@ -1216,10 +1213,8 @@ fn run_hincrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, cli
       set create = True();
     }
     if create {
-      let positive = False();
-      let finite = False();
-      let zero = Extended(negative: positive, mantissa: 0_u64, exponent: 0_i64, infinite: finite);
-      float_sum(floating: &floating, base: zero);
+      let zero = decimal_text(value: 0_i64);
+      float_sum(floating: &floating, base: &zero);
       if floating.state == state_done {
         let fields = hash_map_new::<Key, Bytes, ceiling>(capacity: 4_u64);
         if client^.items.inner.len > 0_u64 {
