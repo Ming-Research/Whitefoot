@@ -685,6 +685,15 @@ fn restore_stopped_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit reads(vm
 
 fn type_error(vm: &Vm, v: Value, op: u8) -> r: Bool writes(vm) {
   let rejected = raw_type_error(vm: vm, v: v, op: op);
+  let count = vm^.frames.inner.len;
+  if count == 0_u64 {
+    return rejected;
+  }
+  let last = count - 1_u64;
+  let frame = vm^.frames.inner[last];
+  if frame.activation != vm^.activation {
+    return rejected;
+  }
   let plan = vm^.callback_plan;
   let pc = plan.pc;
   if plan.kind != 2_u8 {
