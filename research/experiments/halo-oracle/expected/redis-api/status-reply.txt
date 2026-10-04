@@ -1,0 +1,4 @@
+{
+  "type": "status",
+  "bytes": "oracle helper status"
+}

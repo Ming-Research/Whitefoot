@@ -1,0 +1,17 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    },
+    {
+      "type": "bulk",
+      "bytes": "a9993e364706816aba3e25717850c26c9cd0d89d"
+    },
+    {
+      "type": "bulk",
+      "bytes": "4a3dec2d1f8245280855c42db0ee4239f917fdb8"
+    }
+  ]
+}
