@@ -197,6 +197,12 @@ fn run(code: &Code, regs: &Box<Slots<Value>>, base: u64)
   is attributed before the design proceeds. Short runs first; more
   repetitions only if the spread across three runs exceeds 10%.
   ([experiments/halo-heap](../../experiments/halo-heap/))
+  Result (2026-10-04, M1 Pro under shared load): met at every depth.
+  Depth 16 medians: C 0.38 s, Whitefoot 0.37 s, Redis Lua 2.55 s; peak RSS
+  5.3, 31.6 and 79.1 MiB. Collection ran only at safe points between tree
+  constructions, so the collector's cost inside a running interpreter, with
+  roots on the Lua stack, is not yet measured
+  ([RESULTS.md](../../experiments/halo-heap/RESULTS.md)).
 - **E2, dispatch.** With the match-dispatch work: the Halo instruction set as
   the benchmark VM.
 - **E3, checked operands.** The same loop with checked and with `u8`-bounded
