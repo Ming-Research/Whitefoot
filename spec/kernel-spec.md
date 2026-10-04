@@ -1,4 +1,4 @@
-# Kernel Specification v0.89
+# Kernel Specification v0.90
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -32,12 +32,12 @@ A source forest is not a second `program` node, and a source with no items owns 
 That source's canonical bytes are exactly the result of rendering its forest by the following rules.
 The input bytes must equal that rendering byte for byte; the toolchain does not normalize or rewrite input.
 A source that has no complete `item*` derivation is rejected by its owning lexical or grammar rule before this forest-format comparison, and no tree or forest is fabricated [DIAG-1].
-A module graph record [MOD-1] is rendered by the same rules over its forest of `module_row` and `entry_decl` subtrees under its `graph_file` root.
+A module graph record [MOD-1] is rendered by the same rules over its forest of `package_decl`, `module_row` and `entry_decl` subtrees under its `graph_file` root.
 
 Outside terminal interiors, lines end only with LF and formatting bytes are only ASCII space and LF.
 There is no CR, tab, trailing horizontal whitespace, leading blank line, or blank line inside a top-level item.
 A nonempty source has exactly one empty line between consecutive top-level `item` nodes and no trailing blank line; its final nonempty line ends with exactly one LF.
-The one exception is a run of consecutive `alias_decl` items, and a run of consecutive `module_row`s of a graph record, which stand on consecutive lines with no empty line between them [MOD-1, MOD-4].
+The one exception is a run of consecutive `alias_decl` items, a run of consecutive `package_decl`s of a graph record and a run of consecutive `module_row`s of a graph record, each of which stands on consecutive lines with no empty line between them [MOD-1, MOD-4, MOD-11].
 A source containing zero items is exactly one LF.
 Terminal interiors retain their exact bytes and are checked by their owning FORM rule.
 
@@ -59,7 +59,7 @@ Every nonempty physical line begins with exactly two ASCII spaces for each enclo
 A closing brace is rendered after reducing the depth for the block it closes.
 A match-arm header is therefore one level inside its match, and statements in the arm body are two levels inside it.
 
-The line-bearing simple productions are `field`, `type_invariant`, `variant`, `fn_bind`, `const_decl`, `heap_decl`, `alias_decl`, `module_row`, `doc`, `contract_define`, `requires_clause`, `ensures_clause`, `set_stmt`, `expr_stmt`, `return_stmt`, `proof_use`, `break_stmt`, and `give_stmt`, plus a `let_stmt` whose selected right-hand side is `ordinary_let_rhs` or `propagate_let_rhs` and a `let_stmt` whose selected binder is a parenthesized binder list or a destructuring consume [GRAM-4].
+The line-bearing simple productions are `field`, `type_invariant`, `variant`, `fn_bind`, `const_decl`, `heap_decl`, `alias_decl`, `package_decl`, `module_row`, `doc`, `contract_define`, `requires_clause`, `ensures_clause`, `set_stmt`, `expr_stmt`, `return_stmt`, `proof_use`, `break_stmt`, and `give_stmt`, plus a `let_stmt` whose selected right-hand side is `ordinary_let_rhs` or `propagate_let_rhs` and a `let_stmt` whose selected binder is a parenthesized binder list or a destructuring consume [GRAM-4].
 Each renders completely on one line, including its final semicolon.
 A `fn_sig` renders its signature inline, with a result-list space after `->` just as a `fn_decl` does. Its optional `contract_block` uses the ordinary block layout. In an interface body each member starts a new line and the following semicolon attaches to the signature or its contract's closing brace. In a `gparam` the signature stays in the surrounding generic header; no member semicolon is inserted.
 
@@ -113,7 +113,7 @@ Other examples are `1.5_f64` and `6.022e23_f64`.
 A text item is one raw ASCII-printable byte in U+0020..U+007E other than `\` and the quote that delimits its literal, or one escape: `\\`, that quote preceded by `\`, `\n`, `\t`, `\r`, or `\u{H}` with H one or more lowercase hexadecimal digits `[0-9a-f]`; no other byte is legal.
 A raw byte denotes its own scalar value, `\\` U+005C, the quote escape its quote, `\n` U+000A, `\t` U+0009, `\r` U+000D, and `\u{H}` the value of H read in base 16; [FORM-7] gives each value its one spelling.
 A character literal `'C'_TYPE` is exactly one text item C delimited by `'` with a mandatory suffix TYPE, `u8` or `u32`; it is an integer literal of TYPE, spelled as a character rather than in decimal, whose value is C's scalar value, e.g. `'a'_u8`, `'\n'_u8`, `'\''_u8`, and `'\u{e9}'_u32`.
-STRING `"..."` is a sequence of zero or more text items delimited by `"`, denoting the sequence of their scalar values; it is written in a `doc` entry [GRAM-2] and as a `cvalue` [CONST-2] and is not a member of `literal`, so no expression contains one.
+STRING `"..."` is a sequence of zero or more text items delimited by `"`, denoting the sequence of their scalar values; it is written in a `doc` entry [GRAM-2], as a `cvalue` [CONST-2] and as a package location [MOD-11], and is not a member of `literal`, so no expression contains one.
 There are no boolean literals: `Bool` is a prelude enum (§14).
 Generic-numeric literals `0_T` and `1_T` are legal where `T` is a gparam bound by a numeric contract (`Int` or `Float`, §14), denoting T's additive and multiplicative identity; a concrete type uses `0_i32` and the like, so there is no dual spelling.
 NaN and the infinities are not literals; they are the nullary ops `fnan` and `finf` [OP-1].
@@ -183,7 +183,7 @@ item         := alias_decl
               | const_decl )
               | fn_decl | struct_decl | enum_decl | interface_decl | binding_decl | const_decl
               | heap_decl
-alias_decl   := "alias" (IDENT | TYPEID) "=" ("pkg" | "std") ("::" (IDENT | TYPEID))* ";"
+alias_decl   := "alias" (IDENT | TYPEID) "=" ("pkg" | "std" | IDENT) ("::" (IDENT | TYPEID))* ";"
 heap_decl    := "program" "no_heap" ";"
 struct_decl  := "opaque"? ("nocopy" | "nodrop")? "struct" TYPEID generics? "{" doc? field*
                 type_invariant* "}"
@@ -217,9 +217,10 @@ gparam       := TYPEID (":" (TYPEID | capability_bound))?
 capability_bound:= "copy" | "drop"
 param_list   := param ("," param)*
 param        := IDENT ":" (type | "&" (type | "[" type "]"))
-graph_file   := module_row+ entry_decl*
+graph_file   := package_decl* module_row+ entry_decl*
+package_decl := "package" IDENT "=" STRING ";"
 module_row   := module_path ":" "[" (module_path ("," module_path)*)? "]" ";"
-module_path  := ("pkg" | "std") ("::" IDENT)*
+module_path  := ("pkg" | "std" | IDENT) ("::" IDENT)*
 entry_decl   := "entry" IDENT "=" module_path (";" | "{" "no_heap" ";" "}")
 ```
 
@@ -1600,8 +1601,8 @@ If an implementation does select an overlapping lowering, every premise of that 
 
 ## 11. Programs and modules
 
-[PROG-1] A program is a module program, whose graph [MOD-1] registers its modules, or a source bundle [PROG-2], which forms one module. Every language name is declared by one of the program's modules, by a standard library module it selects [MOD-10] or by the prelude [PRE-1].
-The standard library is the one package a program reads besides its own: there is no source include, other external package, glob import, source-path search, dynamic loading or reflection, and a module program reads exactly the records its graph registers [MOD-2] and those of the standard library modules it selects [MOD-10].
+[PROG-1] A program is a module program, whose graph [MOD-1] registers its modules, or a source bundle [PROG-2], which forms one module. Every language name is declared by one of the program's modules, by a module of a package its graphs bind [MOD-11], by a standard library module it selects [MOD-10] or by the prelude [PRE-1].
+Besides its own package, a module program reads exactly the packages its graphs bind [MOD-11] and the standard library, and a source bundle the standard library alone: there is no source include, glob import, source-path search, dynamic loading or reflection, and a module program reads exactly the records its packages' graphs register [MOD-2] and those of the standard library modules it selects [MOD-10].
 Build and link supply definitions for ordinary declarations and select the invocation [PROG-3]; implementation language and linkage are not source semantic inputs.
 
 [PROG-2] A source bundle is one ordered nonempty sequence of logical source records.
@@ -1623,13 +1624,13 @@ Resource unavailability before that call and trusted-computing-base termination 
 [MOD-1] A module program is selected by one graph record, `modules.wfg`, whose directory is the package root; no other location, working directory or search selects it.
 The graph record derives `graph_file` [GRAM-2] and passes the lexical, grammar and canonical [FORM-2] stages as every source record does [DIAG-1].
 Each `module_row` registers one module: `pkg` alone registers the root module, and `pkg::a::b` the directory `a/b` below the package root; registering a directory registers none of its ancestors or descendants.
-The row's bracketed list is the module's exact set of direct dependencies: every `pkg` dependency is an earlier row, which is what makes the graph acyclic, and every `std` dependency a standard library module [MOD-10].
-A row that registers an already registered module, a dependency naming the row's own module, a dependency listed twice in one row, and a `pkg` dependency that no earlier row registers are each a hard error citing MOD-1 at that `module_path`.
+The row's bracketed list is the module's exact set of direct dependencies: every `pkg` dependency is an earlier row, which is what makes the graph acyclic, every `std` dependency a standard library module [MOD-10], and every dependency rooted at a name the graph binds a module of the bound package [MOD-11].
+A row that registers an already registered module, a dependency naming the row's own module, a dependency listed twice in one row, a `pkg` dependency that no earlier row registers, and a row or entry path rooted at an IDENT are each a hard error citing MOD-1 at that `module_path`; a row registers and an entry names only modules of the graph's own package.
 Each `entry_decl` takes a fresh entry name and names one function by a `module_path` whose last component is the function's name and whose other components name its module; a repeated entry name, or an entry whose module is not registered, is a hard error citing MOD-1.
 Written row and dependency order is preserved and never inferred; the meaning of a graph does not depend on it.
 
 [MOD-2] A registered module's records are the file `module.wfm` in its directory, its interface record, and the directory's direct regular files whose names end in `.wf`, its implementation records; a child directory's files belong to no ancestor module.
-The bound unit orders modules by row and each module's interface record before its implementation records, which follow in byte order of their names; a record's logical path is its path below the package root [PROG-2].
+The bound unit orders modules by package [MOD-11] and then by row, and each module's interface record before its implementation records, which follow in byte order of their names; a record's logical path is its path below its package's root [PROG-2], after the prefix MOD-11 gives a bound package's records.
 An absent registered directory, a missing `module.wfm`, a symbolic link at the package root or on the path of a module directory or record, a record name that is not a logical path component, and two entries of one directory that differ only in letter case are input-envelope failures, not source-language rejections.
 
 [MOD-3] Each module has one declaration inventory.
@@ -1639,13 +1640,13 @@ A lowercase top-level declaration whose spelling extends the declaring module's 
 Visibility grants no value, proof or layout: constant dependencies, group expansion, finite instantiation and layout are judged by their own rules [CONST-2, FN-3, FN-6, STOR-6].
 
 [MOD-4] A record's items begin with its `heap_decl` when it has one [GRAM-2], then its alias header, which holds every `alias_decl` of the record; an `alias_decl` that follows an item that is neither an `alias_decl` nor the `heap_decl` is a hard error citing MOD-4 at the alias.
-An alias binds its IDENT or TYPEID, in its own record alone, to the identity its complete `pkg` or `std` path names in the alias's module: a lowercase alias binds a registered module, or a function or named const of one; an uppercase alias binds a struct, enum, interface or binding of one, or a variant of a nongeneric enum of one, written as that enum's path followed by the variant TYPEID.
+An alias binds its IDENT or TYPEID, in its own record alone, to the identity its complete path names in the alias's module, a path rooted at `pkg`, at `std` or at a name its package's graph binds [MOD-11]: a lowercase alias binds a registered module, or a function or named const of one; an uppercase alias binds a struct, enum, interface or binding of one, or a variant of a nongeneric enum of one, written as that enum's path followed by the variant TYPEID.
 A path whose registered module the alias's module may not name is a hard error citing [MOD-5] at the alias. Otherwise a path naming nothing an alias of that case binds where the alias is written, or a variant of a generic enum, is a hard error citing MOD-4 at the alias: of another module's declarations an alias binds only public ones, and an alias of an interface record sees what that record sees [MOD-3].
-An alias takes its target's lookup classes and collision domains, and a module alias the lexical-IDENT domain, and it collides as a declaration of its record's scope does [TYPE-6]: with another alias, with a declaration of its module's inventory, with a PRE-1 declaration, and with a local declaration that would shadow it.
+An alias takes its target's lookup classes and collision domains, and a module alias the lexical-IDENT domain, and it collides as a declaration of its record's scope does [TYPE-6]: with another alias, with a declaration of its module's inventory, with a PRE-1 declaration, and with a local declaration that would shadow it; a lowercase alias whose spelling is a name its package's graph binds [MOD-11] is a hard error citing MOD-4 at the alias.
 Every use of an alias resolves to its target's own identity. An alias is never public, never another alias's target, and grants no graph edge; an unused alias receives the same checks.
 
-[MOD-5] A qualified `type`, `callee`, construction or destructuring target begins with a module prefix: `pkg`, `std`, or a module alias of the record, followed by lowercase path components [GRAM-3, GRAM-5].
-The prefix names the registered module with the resulting path, a `std` prefix the standard library module with it [MOD-10]; a prefix naming no registered module, or rooted at an IDENT that is not a module alias of the record, is a hard error citing MOD-5 at the prefix.
+[MOD-5] A qualified `type`, `callee`, construction or destructuring target begins with a module prefix: `pkg`, `std`, a name the record's package's graph binds [MOD-11], or a module alias of the record, followed by lowercase path components [GRAM-3, GRAM-5].
+The prefix names the registered module with the resulting path, a `std` prefix the standard library module with it [MOD-10] and a bound name the bound package's module with it [MOD-11]; a prefix naming no registered module, or rooted at an IDENT that is neither a bound name nor a module alias of the record, is a hard error citing MOD-5 at the prefix.
 A record may name its own module and the modules its module's graph row lists; naming any other module, by a prefix or an alias, is a hard error citing MOD-5 whatever transitive or ancestral relation connects them.
 The final name resolves in the named module's inventory in the grammar-selected domain [TYPE-6]; a name that inventory does not declare is a hard error citing MOD-5, and so is a declaration of another module that is not public [MOD-6].
 One accessibility rule serves executable code and annotations: every name and field selection in a body, a contract clause or `define`, an invariant, a `use` premise, an effect row and a function-kind formal must be accessible where it is written.
@@ -1662,8 +1663,9 @@ An interface function declaration has at most one definition among its module's 
 A struct, enum, interface, binding or const that an interface record declares has that one definition, used by every record of the module; a declaration of the same name in an implementation record is a redeclaration [TYPE-6].
 
 [MOD-8] A module's source verdict covers every judgment on its records and depends only on them, the graph, the prelude and the interfaces of the modules it may name; it never depends on another module's implementation records.
+A module program's source check judges the verdict of every module of its own package and of every package it binds [MOD-11], in the bound unit's module order, and then each named entry's composition; a standard library module's verdict is judged with the library [MOD-10].
 An interface function declaration without a definition is pending: callers use its written boundary as they use every callee's [FN-8, FN-9], and it blocks only composition, lowering and publication.
-A program composes when every selected module's verdict holds, every declared function has its definition, which is a body in its module's implementation records or the definition the build supplies for a host function [PRE-2], every required concrete instance checks [FN-2, FN-6] and every target requirement of its entry holds [MOD-9]. Composition judges the selected modules' verdicts in row order before its own conditions and reports the first rejection. A rejection raised while checking a required concrete instance is reported at its template's source, in the module that declares the template, and names a call that requested the instance.
+A program composes when every selected module's verdict holds, every declared function has its definition, which is a body in its module's implementation records or the definition the build supplies for a host function [PRE-2], every required concrete instance checks [FN-2, FN-6] and every target requirement of its entry holds [MOD-9]. Composition judges the selected modules' verdicts in the bound unit's module order [MOD-2, MOD-10] before its own conditions and reports the first rejection. A rejection raised while checking a required concrete instance is reported at its template's source, in the module that declares the template, and names a call that requested the instance.
 
 [MOD-9] A named entry selects one public, ordinary, nongeneric function by its full path, and a build may select any ordinary nongeneric function of a registered module as an unnamed entry; the build calls the selected function under [PROG-3], and an entry naming no such function is a hard error citing MOD-9, at a named entry's `entry_decl`.
 An entry's `no_heap` states the no-heap requirement over that entry's execution closure [STOR-8]; entries of one graph share its modules and proofs and impose no requirement on one another.
@@ -1672,9 +1674,20 @@ A module program's record never writes `program no_heap`: a `heap_decl` in one i
 [MOD-10] The standard library is one package the toolchain supplies: a graph record and the records of the modules it registers, judged by MOD-1 to MOD-9 as every package is, in whose records `pkg` names the standard library itself.
 Every other package names it `std`: `std::a::b` is the module the standard library's graph registers as `pkg::a::b`, and a standard library record's logical path is its path below the standard library's root after the component `std`.
 A `std` prefix in a standard library record, a `module_row` or `entry_decl` path that begins with `std`, and a `std` dependency that names no standard library module are each a hard error citing MOD-10 at that path.
-A module program selects the standard library modules its rows list, and a source bundle those its records name by a `std` path; each selected module selects its dependencies in the standard library's graph. The bound unit orders the program's modules first [MOD-2], then the selected standard library modules in the standard library's row order, so a program record's ordinal never depends on which standard library modules it selects.
+The standard library's graph binds no package [MOD-11].
+A module program selects the standard library modules its packages' rows list, and a source bundle those its records name by a `std` path; each selected module selects its dependencies in the standard library's graph. The bound unit orders the program's modules first [MOD-2], then its bound packages' modules [MOD-11], then the selected standard library modules in the standard library's row order, so a program record's ordinal never depends on which packages or standard library modules it selects.
 A standard library module's verdict depends only on the standard library's records and graph and the prelude [MOD-8], never on the program that selects it, and a check or composition reads a standard library module's records only when it selects that module.
 The host modules are the standard library modules PRE-2 fixes; every other standard library module is written in Whitefoot and checked as every module is.
+
+[MOD-11] A `package_decl` binds its IDENT, in its graph's package alone, to one package.
+Its STRING's value is a relative location: one or more components separated by exactly one `/`, each `..` or a logical path component [PROG-2]. The bound package's root is the directory the host reaches from the binding graph's package root by following those components in order, a symbolic link on the way being followed as the host follows it, and its graph record is the `modules.wfg` in that directory. A STRING whose value is not a relative location is a hard error citing MOD-11 at the `package_decl`.
+A package is its root directory: bindings whose locations reach one directory, from whichever graphs they are written in, bind one package, whose modules, declarations and types are the same whichever name each binding gives it.
+The package order of a module program is its own package and then each bound package in the order a depth-first walk first reaches it. The walk starts at the program's own package, visits each graph's bindings in written order, and on reaching a package it has not reached before reads its graph record and walks that graph's bindings before returning.
+One graph binds each IDENT at most once and each package at most once; a binding that repeats either is a hard error citing MOD-11 at that `package_decl`. A binding that reaches its own graph's package, or a package whose bindings the walk is still visiting, closes a cycle of bindings and is a hard error citing MOD-11 at that `package_decl`.
+A bound name is visible in the binding graph's package alone, never in a package the binding reaches. In that graph a dependency rooted at it, `name::a::b`, names the module the bound package's graph registers as `pkg::a::b`, and `name` alone names its root module; a dependency rooted at an IDENT the graph binds to no package, or naming no module of the bound package, is a hard error citing MOD-11 at that `module_path`. In that package's records the name is a module prefix [MOD-4, MOD-5].
+A bound package's graph is judged by MOD-1, MOD-10 and these rules as every graph is; its entries are judged by MOD-1 and MOD-10 alone and select nothing in a program that binds it [MOD-9].
+A bound package's record's logical path is `package/`, the package's label, `/` and the record's path below the package's root [MOD-2]. Labels are given in binding order, the bindings of each graph in package order and within a graph in written order: a package takes the IDENT of its first binding, or, when a package labeled before it already has that label, the IDENT followed by `.` and the least decimal integer from 2 that no label given before it uses. A label names the package in no source record, and `package` is a fixed grammar atom [FORM-3], so no module directory of a program's own package has that name.
+A location that reaches no directory, a package root without its graph record and a symbolic link at a package root are input-envelope failures, not source-language rejections [MOD-2].
 
 ## 12. Diagnostics and checked compilation (toolchain floor)
 
@@ -1800,7 +1813,7 @@ After canonical FORM-2 succeeds for every source, semantic diagnostic selection 
 An empty or define-only block uses `SourceNode` at that complete `contract_block`; no declaration, route reservation, or use role inside such a rejected block is classified or counted.
 Grammar already fixes each admitted block's definitions-before-requirements-before-postconditions structure and excludes every statement form, so no second structural-entry filter exists.
 Only complete unit-wide FN-8 admission permits the remaining resolution stages, each complete over the unit before the next begins: the [GRAM-2] heap-declaration position of a source bundle; the module forms, one scan in source order judging [MOD-4]'s alias placement, [MOD-9]'s heap declaration of a module program, [MOD-6]'s `public` and `readonly` placement and [MOD-7]'s function item forms; ordinary role classification and declaration inventory, whose event order also reports each refused alias target [MOD-4, MOD-5]; lexical resolution, including qualified references [MOD-5]; [MOD-6]'s closure of public signatures, in source order of the offending use; and [MOD-7]'s correspondence of each definition with its interface declaration, in definition source order.
-A module program's graph record is formed first [MOD-1]; no module record is read before its graph forms.
+A module program's graph records are formed first [MOD-1]. A graph record, when read, passes the lexical, grammar and canonical stages and has its locations' form and its repeated names judged [MOD-11]; the walk then judges its bindings in written order, each binding's reached directory, cycle and repeated package, reading a newly reached package's graph record and walking its bindings before the next binding; after the walk each graph's rows and entries are judged in package order. The first rejection in this order is reported, and no module record is read before every graph forms.
 Within an admitted routed `ensures_clause`, the route's leading lookup and [FN-9] route-admission subjudgment occur before lexical resolution of that clause expression; every unrelated block and event retains the ordinary global ordering.
 Poison declarations and partial resolution are forbidden.
 An early FN-8 rejection outranks every inventory or resolution rejection; inventory still outranks resolution even when the later-stage event has an earlier source coordinate.

@@ -1,0 +1,5 @@
+package codec = "../json";
+
+pkg::vm: [codec];
+
+entry tool = pkg::vm::box_number;

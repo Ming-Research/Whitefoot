@@ -1,0 +1,4 @@
+fn spare() -> result: i32 pure {
+  doc "Returns a value of the wrong type.";
+  return 1_u8;
+}

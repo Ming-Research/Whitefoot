@@ -786,8 +786,8 @@ impl Report for SemanticIssue {
     }
 }
 
-/// A refused graph row or entry is located at its written path; the kind
-/// carries the payload [MOD-1].
+/// A refused graph binding, row or entry is located at its written binding
+/// or path; the kind carries the payload [MOD-1, MOD-11].
 impl Report for GraphIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let kind = self.kind();
@@ -802,6 +802,13 @@ impl Report for GraphIssue {
             StandardPath { path };
             UnknownStandardModule { path };
             StandardPrefixInLibrary { path };
+            BoundPath { path };
+            InvalidLocation { location };
+            DuplicateBindingName { name };
+            DuplicatePackage { name };
+            BindingCycle { name };
+            UnboundPackage { path };
+            UnknownBoundModule { path };
         )
     }
 }
@@ -951,6 +958,7 @@ impl Report for ResolutionIssue {
             ModuleProgramHeapDeclaration;
             MisplacedAlias;
             InvalidAliasTarget { spelling, target, reason };
+            AliasNamesPackage { spelling };
             LibraryNamesItself { path };
             UnknownModule { path };
             MissingModuleEdge { from, to };

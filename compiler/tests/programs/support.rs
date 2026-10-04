@@ -179,13 +179,9 @@ pub fn compile_app(name: &str, entry: &str) -> whitefoot::LlvmModule {
         .expect("the compiler package lives directly under the repository root")
         .join("apps")
         .join(name);
-    let graph_bytes = std::fs::read(root.join("modules.wfg"))
-        .unwrap_or_else(|error| panic!("read {}'s graph: {error}", root.display()));
-    let graph = whitefoot::form_module_graph(
-        SourceInput::new("modules.wfg", &graph_bytes),
-        CompilerLimits::default(),
-    )
-    .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure}"));
+    let graph =
+        whitefoot::form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
+            .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure:?}"));
     let sources = whitefoot::discover_module_sources(&root, &graph)
         .unwrap_or_else(|failure| panic!("{name}'s records must read: {failure}"));
     let inputs = sources

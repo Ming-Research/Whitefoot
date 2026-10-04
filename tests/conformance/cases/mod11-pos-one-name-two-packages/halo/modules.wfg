@@ -1,0 +1,3 @@
+package json = "../other";
+
+pkg::vm: [json];

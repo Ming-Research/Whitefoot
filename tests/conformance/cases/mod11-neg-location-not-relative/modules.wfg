@@ -1,0 +1,6 @@
+package halo = "halo";
+package json = "./json";
+
+pkg: [halo::vm, json, std::process];
+
+entry main = pkg::main;

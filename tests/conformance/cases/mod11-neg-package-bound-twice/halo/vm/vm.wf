@@ -1,0 +1,6 @@
+alias Value = codec::Value;
+
+fn box_number(n: i32) -> v: Value pure {
+  doc "Calls into the codec package under its own name for it.";
+  return codec::make(n: n);
+}

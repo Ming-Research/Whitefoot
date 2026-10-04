@@ -41,6 +41,13 @@ impl ModuleView<'_> {
             .map_or(crate::Package::Program, crate::ModuleRecord::package)
     }
 
+    /// The package a name of `module`'s package's graph binds [MOD-11].
+    fn bound_package(&self, module: crate::ModuleId, name: &str) -> Option<crate::Package> {
+        self.modules
+            .get(module.index())
+            .and_then(|record| record.bound_package(name))
+    }
+
     /// [MOD-5] a source may name its own module and the modules its graph
     /// row lists; no other edge, transitive or ancestral, grants a name.
     fn permits(&self, from: crate::ModuleId, to: crate::ModuleId) -> bool {
@@ -116,7 +123,18 @@ fn resolve_module_prefix(
                 declarations[meta.record_index].role == super::super::DeclarationRole::Alias
                     && scopes.is_ancestor(meta.scope, use_record.scope)
             });
-        let Some(AliasTarget::Module(module)) = alias.and_then(|meta| meta.alias) else {
+        if let Some(AliasTarget::Module(module)) = alias.and_then(|meta| meta.alias) {
+            let record = modules
+                .modules
+                .get(module.index())
+                .ok_or(ResolutionCompilerFailure::InvalidScopeTree)?;
+            package = record.package();
+            path.extend(record.path().iter().cloned());
+        } else if let Some(bound) = modules.bound_package(use_record.module, &root.spelling) {
+            // [MOD-11] a name its package's graph binds roots a path in
+            // the bound package; an alias never shares its spelling [MOD-4].
+            package = bound;
+        } else {
             return Ok(Err(ResolutionIssue {
                 rule: ResolutionRule::Mod5,
                 origin: segment_origin(&use_record.origin, root),
@@ -124,13 +142,7 @@ fn resolve_module_prefix(
                     path: written_path(qualifier, ""),
                 },
             }));
-        };
-        let record = modules
-            .modules
-            .get(module.index())
-            .ok_or(ResolutionCompilerFailure::InvalidScopeTree)?;
-        package = record.package();
-        path.extend(record.path().iter().cloned());
+        }
     }
     path.extend(
         qualifier
@@ -734,7 +746,8 @@ fn use_rule(role: LexicalUseRole) -> ResolutionRule {
     }
 }
 
-/// Resolves every alias's complete `pkg` path [MOD-4].
+/// Resolves every alias's complete `pkg`, `std` or bound-package path
+/// [MOD-4, MOD-11].
 ///
 /// A lowercase alias binds a registered module, or a lowercase function or
 /// constant of one; an uppercase alias binds a type, group or struct of one,
@@ -778,6 +791,19 @@ pub(super) fn resolve_alias_targets(
                 reason,
             },
         };
+        if modules.bound_package(alias_module, &spelling).is_some() {
+            issues.push((
+                record_index,
+                ResolutionIssue {
+                    rule: ResolutionRule::Mod4,
+                    origin: origin.clone(),
+                    kind: ResolutionIssueKind::AliasNamesPackage {
+                        spelling: spelling.clone(),
+                    },
+                },
+            ));
+            continue;
+        }
         let target = alias_target(
             topology,
             scopes,
@@ -873,6 +899,14 @@ fn alias_target(
     }
     let package = if qualifier.standard {
         crate::Package::Standard
+    } else if let Some(root) = &qualifier.alias_root {
+        // [MOD-11] an alias path rooted at a name its package's graph binds.
+        let Some(bound) = modules.bound_package(alias_module, &root.spelling) else {
+            return Ok(Err(AliasRefusal::Target(
+                "the path's root is neither pkg, std nor a package its graph binds",
+            )));
+        };
+        bound
     } else {
         alias_package
     };

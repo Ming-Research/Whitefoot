@@ -1,0 +1,5 @@
+package halo = "halo";
+
+pkg: [halo::vm, std::process];
+
+entry main = pkg::main;

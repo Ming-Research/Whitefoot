@@ -120,6 +120,7 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         ("=>", "FatArrow"),
         ("move", "Move"),
         ("^", "Caret"),
+        ("package", "Package"),
         ("entry", "Entry"),
         (".", "Dot"),
         ("pure", "Pure"),
