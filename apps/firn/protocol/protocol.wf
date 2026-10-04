@@ -557,10 +557,11 @@ fn client_new(capacity: u64) -> made: Client pure contract {
   let scores = box_slots_new::<f64>(capacity: 16_u64);
   let keys = KeyEnv();
   let name = empty_text();
+  let trusted = True();
   let unlocked = False();
   let open = False();
   let settings = settings_empty();
-  return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, keys: keys, random: 0_u64, id: 0_u64, name: move name, locked: unlocked, closing: open, unix_us: 0_u64, settings: move settings);
+  return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, keys: keys, random: 0_u64, id: 0_u64, name: move name, authenticated: trusted, locked: unlocked, closing: open, unix_us: 0_u64, settings: move settings);
 }
 
 fn empty_text() -> made: Bytes pure {
@@ -570,19 +571,17 @@ fn empty_text() -> made: Bytes pure {
 }
 
 fn settings_empty() -> made: Settings pure {
-  doc "Settings of port 0, no idle limit, and empty address, file name and password, for a client no server configured, such as the one an append-only file's replay runs its commands as.";
+  doc "Settings of port 0 and an empty address and file name, for a client no server configured, such as the one an append-only file's replay runs its commands as.";
   let bind = empty_text();
   let appendfilename = empty_text();
-  let password = empty_text();
-  return Settings(port: 0_u64, timeout: 0_u64, bind: move bind, appendfilename: move appendfilename, password: move password);
+  return Settings(port: 0_u64, bind: move bind, appendfilename: move appendfilename);
 }
 
 fn settings_copy(settings: &Settings) -> made: Settings reads(settings) {
   doc "A copy of the settings, for another connection.";
   let bind = bytes_copy(bytes: &settings^.bind);
   let appendfilename = bytes_copy(bytes: &settings^.appendfilename);
-  let password = bytes_copy(bytes: &settings^.password);
-  return Settings(port: settings^.port, timeout: settings^.timeout, bind: move bind, appendfilename: move appendfilename, password: move password);
+  return Settings(port: settings^.port, bind: move bind, appendfilename: move appendfilename);
 }
 
 fn clear_items(client: &Client) -> result: unit writes(client) {

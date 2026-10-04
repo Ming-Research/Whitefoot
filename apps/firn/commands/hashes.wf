@@ -8,25 +8,246 @@ alias Span = pkg::protocol::Span;
 alias Keyspace = pkg::store::Keyspace;
 alias Time = pkg::store::Time;
 alias Value = pkg::store::Value;
+alias arg = pkg::protocol::arg;
+alias byte_at = pkg::bytes::byte_at;
+alias bytes_copy = pkg::bytes::bytes_copy;
+alias bytes_integer = pkg::bytes::bytes_integer;
+alias bytes_length = pkg::bytes::bytes_length;
 alias ceiling = pkg::store::ceiling;
 alias clear_items = pkg::protocol::clear_items;
 alias copy_key = pkg::bytes::copy_key;
+alias decimal_text = pkg::bytes::decimal_text;
 alias expired = pkg::store::expired;
 alias remove_expired = pkg::store::remove_expired;
+alias hash_map_each = std::collections::hash_map::hash_map_each;
 alias hash_map_edit = std::collections::hash_map::hash_map_edit;
+alias hash_map_len = std::collections::hash_map::hash_map_len;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
 alias hash_map_new = std::collections::hash_map::hash_map_new;
 alias hash_map_put = std::collections::hash_map::hash_map_put;
 alias hash_map_remove = std::collections::hash_map::hash_map_remove;
 alias log_command = pkg::store::log_command;
+alias log_removal = pkg::store::log_removal;
+alias name_is = pkg::bytes::name_is;
 alias push_item = pkg::protocol::push_item;
+alias read_integer = pkg::bytes::read_integer;
+alias reply_array = pkg::protocol::reply_array;
+alias reply_arity = pkg::protocol::reply_arity;
 alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
 alias reply_nil = pkg::protocol::reply_nil;
+alias reply_ok = pkg::protocol::reply_ok;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
 alias Bytes = pkg::bytes::Bytes;
+alias Reading = pkg::extended::Reading;
+alias Sum = pkg::extended::Sum;
+alias extended_read = pkg::extended::extended_read;
+alias extended_sum_text = pkg::extended::extended_sum_text;
 alias key_text = pkg::bytes::key_text;
+alias log_count = pkg::store::log_count;
+alias log_input = pkg::store::log_input;
+alias log_text = pkg::store::log_text;
+alias log_word = pkg::store::log_word;
 alias reply_text = pkg::protocol::reply_text;
+
+const code_hset: u64 = 1413829448_u64;
+
+const code_hmset: u64 = 361940340040_u64;
+
+const code_hsetnx: u64 = 97093444522824_u64;
+
+const code_hget: u64 = 1413826376_u64;
+
+const code_hmget: u64 = 361939553608_u64;
+
+const code_hdel: u64 = 1279607880_u64;
+
+const code_hexists: u64 = 23455139756524872_u64;
+
+const code_hstrlen: u64 = 22031242284520264_u64;
+
+const code_hlen: u64 = 1313164360_u64;
+
+const code_hgetall: u64 = 21475941700421448_u64;
+
+const code_hkeys: u64 = 357979999048_u64;
+
+const code_hvals: u64 = 357761635912_u64;
+
+const code_hincrby: u64 = 25124194011203912_u64;
+
+const code_hrandfield: u64 = 18395311412156125768_u64;
+
+const code_hincrbyfloat: u64 = 18399810673682827592_u64;
+
+const word_hrandfield: Array<u8, 10> = "HRANDFIELD";
+
+const word_hincrbyfloat: Array<u8, 12> = "HINCRBYFLOAT";
+
+const word_hset: Array<u8, 4> = "HSET";
+
+const text_hash_not_float: Array<u8, 29> = "ERR hash value is not a float";
+
+const text_nan_or_infinity: Array<u8, 28> = "ERR value is NaN or Infinity";
+
+const text_would_be_infinite: Array<u8, 43> = "ERR increment would produce NaN or Infinity";
+
+const word_withvalues: Array<u8, 10> = "WITHVALUES";
+
+const text_hash_not_integer: Array<u8, 32> = "ERR hash value is not an integer";
+
+const text_count_range: Array<u8, 90> = "ERR value is out of range, value must between -9223372036854775807 and 9223372036854775807";
+
+const text_out_of_range: Array<u8, 25> = "ERR value is out of range";
+
+fn option_matches(input: &[u8], span: Span, word: &[u8]) -> matched: Bool reads(input), reads(word) {
+  doc "Whether an argument spells an upper-case word, letters in either case, compared as Redis compares an option with strcasecmp: up to the argument's first zero byte.";
+  let length = span.length;
+  for @bytes (offset in 0_u64..span.length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      set length = offset;
+      break @bytes;
+    }
+  }
+  let matched = name_is(input: input, start: span.start, length: length, word: word);
+  return matched;
+}
+
+fn hash_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, code: u64, name: Span) -> handled: Bool reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "Answers the hash command code names, when it names one, and returns whether it did. Each command is first given the number of arguments Redis's command table admits, checked before authentication as execute checks every command's; a count the table admits but the command refuses, such as HSET's unpaired field, is the command's own reply, after authentication.";
+  let count = args^.inner.len;
+  let counting = True();
+  let plain = False();
+  if code == code_hset {
+    let fits = count >= 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: counting);
+    }
+    return True();
+  }
+  if code == code_hmset {
+    let fits = count >= 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: plain);
+    }
+    return True();
+  }
+  if code == code_hsetnx {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hsetnx(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hget {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hget(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hmget {
+    let fits = count >= 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hmget(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hdel {
+    let fits = count >= 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hdel(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hexists {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: plain);
+    }
+    return True();
+  }
+  if code == code_hstrlen {
+    let fits = count == 3_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: counting);
+    }
+    return True();
+  }
+  if code == code_hlen {
+    let fits = count == 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hlen(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hgetall {
+    let fits = count == 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 2_i64);
+    }
+    return True();
+  }
+  if code == code_hkeys {
+    let fits = count == 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 0_i64);
+    }
+    return True();
+  }
+  if code == code_hvals {
+    let fits = count == 2_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 1_i64);
+    }
+    return True();
+  }
+  if code == code_hincrby {
+    let fits = count == 4_u64;
+    let go = admitted(client: client, input: input, name: name, fits: fits);
+    if go {
+      run_hincrby(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hincrbyfloat {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hincrbyfloat[0_u64..12_u64]);
+    if spelled {
+      let fits = count == 4_u64;
+      let go = admitted(client: client, input: input, name: name, fits: fits);
+      if go {
+        run_hincrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+  }
+  if code == code_hrandfield {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hrandfield[0_u64..10_u64]);
+    if spelled {
+      let fits = count >= 2_u64;
+      let go = admitted(client: client, input: input, name: name, fits: fits);
+      if go {
+        run_hrandfield(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+  }
+  return False();
+}
 
 fn put_fields(fields: &HashMap<Key, Bytes, ceiling>, client: &Client) -> added: u64 writes(fields), writes(client) {
   doc "Stores every prepared field and value pair in the hash, the field taken first, and returns how many fields it did not already hold.";
@@ -83,8 +304,30 @@ fn set_fields(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(valu
   }
 }
 
-fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "HSET key field value [field value ...]: stores each pair in the hash, creating it for an absent key, and answers how many fields were new.";
+fn fresh_hash(slot: &Option<Entry>, client: &Client) -> result: unit writes(slot), writes(client) {
+  doc "Stores a new hash of the prepared pairs in an entry that holds no live value, recording how many fields it holds in number and done.";
+  let pairs = client^.items.inner.len / 2_u64;
+  let capacity = imax(pairs, 4_u64);
+  if capacity <= ceiling {
+    let fields = hash_map_new::<Key, Bytes, ceiling>(capacity: capacity);
+    set client^.number = put_fields(fields: &fields, client: client);
+    let made = Value::Fields(fields: move fields);
+    let fresh = Entry(value: move made, expires: 0_u64);
+    set slot^ = Some<Entry>(value: move fresh);
+    set client^.state = state_done;
+  }
+  return unit;
+}
+
+fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, counted: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HSET key field value [field value ...] and HMSET: stores each pair in the hash, creating it for an absent key, and answers how many fields were new when counted, as HSET does, or OK, as HMSET does. An unpaired field is answered as the wrong number of arguments. A key found expired is removed first and, as Redis does, its removal is appended to the file as DEL before the command.";
+  let count = args^.inner.len;
+  let odd = count % 2_u64;
+  if odd != 0_u64 {
+    let name = arg(args: args, index: 0_u64);
+    reply_arity(client: client, input: input, name: name);
+    return unit;
+  }
   prepare_keys(input: input, args: args, client: client, first: 2_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
@@ -102,19 +345,13 @@ fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let create = client^.state == state_absent;
     if client^.state == state_expired {
       set slot^ = None<Entry>();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
       set create = True();
     }
     if create {
-      let pairs = client^.items.inner.len / 2_u64;
-      let capacity = imax(pairs, 4_u64);
-      if capacity <= ceiling {
-        let fields = hash_map_new::<Key, Bytes, ceiling>(capacity: capacity);
-        set client^.number = put_fields(fields: &fields, client: client);
-        let made = Value::Fields(fields: move fields);
-        let fresh = Entry(value: move made, expires: 0_u64);
-        set slot^ = Some<Entry>(value: move fresh);
-        set client^.state = state_done;
-      }
+      fresh_hash(slot: slot, client: client);
     }
     if client^.state == state_done {
       if store^.logging {
@@ -124,8 +361,110 @@ fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   clear_items(client: client);
   if client^.state == state_done {
-    let added = cvt.wrap::<u64, i64>(client^.number);
-    reply_integer(client: client, value: added);
+    if counted {
+      let added = cvt.wrap::<u64, i64>(client^.number);
+      reply_integer(client: client, value: added);
+    } else {
+      reply_ok(client: client);
+    }
+    return unit;
+  }
+  reply_wrong_type(client: client);
+  return unit;
+}
+
+fn field_seen(env: &Client, key: &Key, value: &Bytes) -> result: u64 reads(value), writes(env) {
+  doc "Records a field's value's length in number and done.";
+  set env^.number = bytes_length(bytes: value);
+  set env^.state = state_done;
+  return 1_u64;
+}
+
+fn set_field_once(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Stores the prepared pair in a live hash when it does not hold the field, recording done and in number 1 when it stored it and 0 when the field was there; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      if env^.items.inner.len >= 2_u64 {
+        let field = take_back(window: &env^.items.inner);
+        let keys = env^.keys;
+        let found = hash_map_lookup::<KeyHash, Bytes, Client, u64, fn field_seen, ceiling>(map: hash_of, key: &field, key_env: &keys, visit_env: env);
+        match found {
+          Ok(value: seen) => {
+            let kept = move field;
+            set env^.number = 0_u64;
+          }
+          Err(error: absent) => {
+            push_item(client: env, item: move field);
+            set env^.number = put_fields(fields: hash_of, client: env);
+          }
+        }
+      }
+      set env^.state = state_done;
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hsetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HSETNX key field value: stores the pair when the hash does not hold the field, creating the hash for an absent key, and answers 1 when it stored it and 0 otherwise; only a stored pair is appended to the file.";
+  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = set_field_once(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+    let create = client^.state == state_absent;
+    if client^.state == state_expired {
+      set slot^ = None<Entry>();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+      set create = True();
+    }
+    if create {
+      fresh_hash(slot: slot, client: client);
+    }
+    if client^.state == state_done {
+      if client^.number > 0_u64 {
+        if store^.logging {
+          log_command(log: &s^.meta.log, input: input, args: args);
+        }
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_done {
+    let stored = cvt.wrap::<u64, i64>(client^.number);
+    reply_integer(client: client, value: stored);
     return unit;
   }
   reply_wrong_type(client: client);
@@ -204,5 +543,955 @@ fn run_hget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     return unit;
   }
   reply_nil(client: client);
+  return unit;
+}
+
+fn get_fields(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes the values of the prepared fields of a live hash as an array, the null bulk string for a field it does not hold, recording done; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      let count = env^.items.inner.len;
+      reply_array(client: env, count: count);
+      loop @fields {
+        if env^.items.inner.len > 0_u64 {
+          let field = take_back(window: &env^.items.inner);
+          let keys = env^.keys;
+          let found = hash_map_lookup::<KeyHash, Bytes, Client, u64, fn field_out, ceiling>(map: hash_of, key: &field, key_env: &keys, visit_env: env);
+          match found {
+            Ok(value: written) => {
+            }
+            Err(error: absent) => {
+              reply_nil(client: env);
+            }
+          }
+        } else {
+          break @fields;
+        }
+      }
+      set env^.state = state_done;
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hmget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HMGET key field [field ...]: answers the value of each field in the hash as an array, the null bulk string for a field the hash does not hold and for every field of an absent key.";
+  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  let fields = args^.inner.len -sat 2_u64;
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = get_fields(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  clear_items(client: client);
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_array(client: client, count: fields);
+  for @absent (step in 0_u64..fields) {
+    reply_nil(client: client);
+  }
+  return unit;
+}
+
+fn delete_fields(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Removes the prepared fields from a live hash, recording how many it held in number, and done, or emptied when the hash is left empty; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      let removed = 0_u64;
+      loop @fields {
+        if env^.items.inner.len > 0_u64 {
+          let field = take_back(window: &env^.items.inner);
+          let pair = hash_map_remove::<KeyHash, Bytes, ceiling>(map: hash_of, key: &field, env: &env^.keys);
+          match move pair {
+            Some(value: gone) => {
+              set removed = removed +wrap 1_u64;
+            }
+            None() => {
+            }
+          }
+        } else {
+          break @fields;
+        }
+      }
+      set env^.number = removed;
+      set env^.state = state_done;
+      let left = hash_map_len::<Key, Bytes, ceiling>(map: hash_of);
+      if left == 0_u64 {
+        set env^.state = state_emptied;
+      }
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hdel(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HDEL key field [field ...]: removes the fields from the hash, removing the key when the hash is left empty, and answers how many it held.";
+  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = delete_fields(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+    let emptied = client^.state == state_emptied;
+    let lapsed = client^.state == state_expired;
+    let removing = bor(emptied, lapsed);
+    if removing {
+      set slot^ = None<Entry>();
+    }
+    if lapsed {
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    if client^.number > 0_u64 {
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let removed = cvt.wrap::<u64, i64>(client^.number);
+  reply_integer(client: client, value: removed);
+  return unit;
+}
+
+fn find_field(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Records done and the length of the prepared field's value in number when a live hash holds the field, or leaves absent when it does not; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      if env^.items.inner.len > 0_u64 {
+        let field = take_back(window: &env^.items.inner);
+        let keys = env^.keys;
+        let found = hash_map_lookup::<KeyHash, Bytes, Client, u64, fn field_seen, ceiling>(map: hash_of, key: &field, key_env: &keys, visit_env: env);
+      }
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, length: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HEXISTS key field: answers 1 when the hash holds the field and 0 otherwise; and HSTRLEN key field (length): answers the length of the field's value, 0 when the key or the field is absent.";
+  clear_items(client: client);
+  let field = key_at(input: input, args: args, index: 2_u64);
+  push_item(client: client, item: move field);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = find_field(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  clear_items(client: client);
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let answer = 0_i64;
+  if client^.state == state_done {
+    set answer = 1_i64;
+    if length {
+      set answer = cvt.wrap::<u64, i64>(client^.number);
+    }
+  }
+  reply_integer(client: client, value: answer);
+  return unit;
+}
+
+fn hash_size(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Records a live hash's number of fields in number and done; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      set env^.number = hash_map_len::<Key, Bytes, ceiling>(map: hash_of);
+      set env^.state = state_done;
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hlen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HLEN key: answers the hash's number of fields, 0 for an absent key.";
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = hash_size(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+    set client^.number = 0_u64;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let size = cvt.wrap::<u64, i64>(client^.number);
+  reply_integer(client: client, value: size);
+  return unit;
+}
+
+fn pair_out(env: &Client, key: &Key, value: &Bytes) -> result: unit reads(key), reads(value), writes(env) {
+  doc "Writes a field and its value as two bulk strings.";
+  reply_text(client: env, text: &key^.bytes);
+  reply_text(client: env, text: value);
+  return unit;
+}
+
+fn name_out(env: &Client, key: &Key, value: &Bytes) -> result: unit reads(key), writes(env) {
+  doc "Writes a field as a bulk string.";
+  reply_text(client: env, text: &key^.bytes);
+  return unit;
+}
+
+fn value_out(env: &Client, key: &Key, value: &Bytes) -> result: unit reads(value), writes(env) {
+  doc "Writes a field's value as a bulk string.";
+  reply_text(client: env, text: value);
+  return unit;
+}
+
+fn all_fields(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes every field of a live hash as an array, in no promised order: the fields when low is 0, their values when it is 1, and each field followed by its value when it is 2. Records done; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      let size = hash_map_len::<Key, Bytes, ceiling>(map: hash_of);
+      if env^.low == 2_i64 {
+        let doubled = size *wrap 2_u64;
+        reply_array(client: env, count: doubled);
+        hash_map_each::<Key, Bytes, Client, fn pair_out, ceiling>(map: hash_of, env: env);
+      } else if env^.low == 1_i64 {
+        reply_array(client: env, count: size);
+        hash_map_each::<Key, Bytes, Client, fn value_out, ceiling>(map: hash_of, env: env);
+      } else {
+        reply_array(client: env, count: size);
+        hash_map_each::<Key, Bytes, Client, fn name_out, ceiling>(map: hash_of, env: env);
+      }
+      set env^.state = state_done;
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hall(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, shown: i64) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HKEYS key (shown 0), HVALS key (1) and HGETALL key (2): answers the hash's fields, their values, or each field followed by its value, as an array in no promised order, written inside the statement that finds the hash; an absent key answers an empty array.";
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.low = shown;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = all_fields(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_array(client: client, count: 0_u64);
+  return unit;
+}
+
+fn bump_field(env: &Client, key: &Key, value: &Bytes) -> result: u64 writes(env), writes(value) {
+  doc "Adds the increment low carries to a field's stored integer, recording done and the sum in high; records 5 for a value that does not read as an integer as Redis reads one, and 6 for a sum past the range of i64, leaving the value as it was.";
+  let number = bytes_integer(bytes: value);
+  if number.state != 1_u64 {
+    set env^.state = 5_u64;
+    return 5_u64;
+  }
+  let increment = env^.low;
+  match number.value +checked increment {
+    Ok(value: sum) => {
+      let text = decimal_text(value: sum);
+      set value^ = move text;
+      set env^.high = sum;
+      set env^.state = state_done;
+      return 1_u64;
+    }
+    Err(error: overflow) => {
+      set env^.state = 6_u64;
+      return 6_u64;
+    }
+  }
+}
+
+fn add_to_field(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Adds the increment low carries to the prepared field of a live hash, a field it does not hold counting as 0, recording the sum in high and done, or bump_field's states; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      if env^.items.inner.len > 0_u64 {
+        let field = take_back(window: &env^.items.inner);
+        let keys = env^.keys;
+        let edited = hash_map_edit::<KeyHash, Bytes, Client, u64, fn bump_field, ceiling>(map: hash_of, key: &field, key_env: &keys, edit_env: env);
+        match edited {
+          Ok(value: outcome) => {
+            let kept = move field;
+          }
+          Err(error: absent) => {
+            let text = decimal_text(value: env^.low);
+            let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: hash_of, key: move field, value: move text, env: &keys);
+            set env^.high = env^.low;
+            set env^.state = state_done;
+          }
+        }
+      }
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hincrby(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HINCRBY key field increment: adds the increment to the field's integer, an absent field or key counting as 0, and answers the sum. An increment that is not an integer is refused before the key is read, as Redis refuses it; a stored value that is not an integer, or a sum past the range of i64, leaves the hash as it was.";
+  let amount = arg(args: args, index: 3_u64);
+  let number = read_integer(input: input, start: amount.start, length: amount.length);
+  if number.state != 1_u64 {
+    reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+    return unit;
+  }
+  clear_items(client: client);
+  let field = key_at(input: input, args: args, index: 2_u64);
+  push_item(client: client, item: move field);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.low = number.value;
+  set client^.high = 0_i64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = add_to_field(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+    let create = client^.state == state_absent;
+    if client^.state == state_expired {
+      set slot^ = None<Entry>();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+      set create = True();
+    }
+    if create {
+      let fields = hash_map_new::<Key, Bytes, ceiling>(capacity: 4_u64);
+      if client^.items.inner.len > 0_u64 {
+        let named = take_back(window: &client^.items.inner);
+        let text = decimal_text(value: client^.low);
+        let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: &fields, key: move named, value: move text, env: &client^.keys);
+      }
+      let made = Value::Fields(fields: move fields);
+      let fresh = Entry(value: move made, expires: 0_u64);
+      set slot^ = Some<Entry>(value: move fresh);
+      set client^.high = client^.low;
+      set client^.state = state_done;
+    }
+    if client^.state == state_done {
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  clear_items(client: client);
+  let sum = client^.high;
+  if client^.state == state_done {
+    reply_integer(client: client, value: sum);
+  } else if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+  } else if client^.state == 6_u64 {
+    reply_error(client: client, word: &text_overflow[0_u64..41_u64]);
+  } else {
+    reply_error(client: client, word: &text_hash_not_integer[0_u64..32_u64]);
+  }
+  return unit;
+}
+
+struct Floating {
+  doc "HINCRBYFLOAT's increment and what it did: text, the sum as Redis writes it, and state 1 when it computed the sum, 5 for a stored value that does not read as a long double, and 6 for a sum that is not finite.";
+  increment: Reading;
+  text: Bytes;
+  state: u64;
+}
+
+fn float_sum(floating: &Floating, base: &Bytes) -> result: unit reads(base), writes(floating) {
+  doc "Adds the increment to a stored value read as a long double, recording the sum's text and done, 5 for a value that does not read as one, or 6 when the sum is not finite.";
+  let sum = extended_sum_text(text: base, increment: &floating^.increment);
+  let Sum(text: made, state: outcome) = move sum;
+  if outcome == 1_u64 {
+    set floating^.text = move made;
+    set floating^.state = state_done;
+    return unit;
+  }
+  let unused = move made;
+  if outcome == 2_u64 {
+    set floating^.state = 6_u64;
+  } else {
+    set floating^.state = 5_u64;
+  }
+  return unit;
+}
+
+fn float_field(env: &Floating, key: &Key, value: &Bytes) -> result: u64 writes(env), writes(value) {
+  doc "Adds the increment to a field's stored value read as a long double, replacing it with the sum's text; records 5 for a value that does not read as one and 6 for a sum that is not finite, leaving the value as it was.";
+  float_sum(floating: env, base: value);
+  if env^.state == state_done {
+    let stored = bytes_copy(bytes: &env^.text);
+    set value^ = move stored;
+  }
+  return env^.state;
+}
+
+fn add_float(env: &Client, value: &Entry, floating: &Floating) -> kind: u64 writes(env), writes(value), writes(floating) {
+  doc "Adds the increment to the prepared field of a live hash as float_field does, a field the hash does not hold counting as 0 and taking the sum, recording the outcome in floating and done in the client's state; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      if env^.items.inner.len > 0_u64 {
+        let field = take_back(window: &env^.items.inner);
+        let keys = env^.keys;
+        let edited = hash_map_edit::<KeyHash, Bytes, Floating, u64, fn float_field, ceiling>(map: hash_of, key: &field, key_env: &keys, edit_env: floating);
+        match edited {
+          Ok(value: outcome) => {
+            let kept = move field;
+          }
+          Err(error: absent) => {
+            let zero = decimal_text(value: 0_i64);
+            float_sum(floating: floating, base: &zero);
+            if floating^.state == state_done {
+              let stored = bytes_copy(bytes: &floating^.text);
+              let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: hash_of, key: move field, value: move stored, env: &keys);
+            } else {
+              let unused = move field;
+            }
+          }
+        }
+      }
+      set env^.state = state_done;
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hincrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HINCRBYFLOAT key field increment: adds the increment to the field's value in x87 extended precision, the long double Redis computes in on x86-64, an absent field or key counting as 0, stores the sum as Redis's ld2string writes it and answers it as a bulk string. An increment that is not a valid float, or one that is NaN or infinite, is refused before the key is read; a stored value that does not read as a long double, or a sum that is not finite, leaves the hash as it was. The change is appended to the file as HSET key field sum, as Redis propagates it, so that a replay stores the same text.";
+  let amount = arg(args: args, index: 3_u64);
+  let read = extended_read(input: input, start: amount.start, length: amount.length);
+  if read.valid {
+  } else {
+    reply_error(client: client, word: &text_not_float[0_u64..30_u64]);
+    return unit;
+  }
+  if read.value.kind == 2_u64 {
+    reply_error(client: client, word: &text_nan_or_infinity[0_u64..28_u64]);
+    return unit;
+  }
+  clear_items(client: client);
+  let field = key_at(input: input, args: args, index: 2_u64);
+  push_item(client: client, item: move field);
+  let key_span = arg(args: args, index: 1_u64);
+  let field_span = arg(args: args, index: 2_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  let empty = decimal_text(value: 0_i64);
+  let floating = Floating(increment: read, text: move empty, state: state_absent);
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = add_float(env: client, value: held, floating: &floating);
+      }
+      None() => {
+      }
+    }
+    let create = client^.state == state_absent;
+    if client^.state == state_expired {
+      set slot^ = None<Entry>();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+      set create = True();
+    }
+    if create {
+      let zero = decimal_text(value: 0_i64);
+      float_sum(floating: &floating, base: &zero);
+      if floating.state == state_done {
+        let fields = hash_map_new::<Key, Bytes, ceiling>(capacity: 4_u64);
+        if client^.items.inner.len > 0_u64 {
+          let named = take_back(window: &client^.items.inner);
+          let stored = bytes_copy(bytes: &floating.text);
+          let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: &fields, key: move named, value: move stored, env: &client^.keys);
+        }
+        let made = Value::Fields(fields: move fields);
+        let fresh = Entry(value: move made, expires: 0_u64);
+        set slot^ = Some<Entry>(value: move fresh);
+        set client^.state = state_done;
+      }
+    }
+    let stored_sum = floating.state == state_done;
+    let live = client^.state == state_done;
+    let changed = band(stored_sum, live);
+    if changed {
+      if store^.logging {
+        let both = key_span.length +wrap field_span.length;
+        let text_length = bytes_length(bytes: &floating.text);
+        let room = both +wrap text_length;
+        log_count(log: &s^.meta.log, count: 4_u64, room: room);
+        log_word(log: &s^.meta.log, word: &word_hset[0_u64..4_u64]);
+        log_input(log: &s^.meta.log, input: input, span: key_span);
+        log_input(log: &s^.meta.log, input: input, span: field_span);
+        log_text(log: &s^.meta.log, text: &floating.text);
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if floating.state == state_done {
+    reply_text(client: client, text: &floating.text);
+    return unit;
+  }
+  if floating.state == 6_u64 {
+    reply_error(client: client, word: &text_would_be_infinite[0_u64..43_u64]);
+    return unit;
+  }
+  reply_error(client: client, word: &text_hash_not_float[0_u64..29_u64]);
+  return unit;
+}
+
+fn random_field(fields: &HashMap<Key, Bytes, ceiling>, start: u64, client: &Client, with_values: Bool) -> found: Bool reads(fields), writes(client) {
+  doc "Writes the field of the first filled bucket at or after a start position, wrapping around the buckets, and its value when with_values is true; false for an empty hash, which writes nothing.";
+  let buckets = fields^.cells.inner.len;
+  if buckets == 0_u64 {
+    return False();
+  }
+  let first = start % buckets;
+  for @scan (step in 0_u64..buckets) {
+    let offset = first +wrap step;
+    let index = offset % buckets;
+    if index < fields^.cells.inner.len {
+      let slot = &fields^.cells.inner[index];
+      match slot^ {
+        HashMapFilled(key: field, value: stored) => {
+          reply_text(client: client, text: &field^.bytes);
+          if with_values {
+            reply_text(client: client, text: stored);
+          }
+          return True();
+        }
+        HashMapVacant() => {
+        }
+        HashMapDeleted() => {
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn distinct_fields(fields: &HashMap<Key, Bytes, ceiling>, wanted: u64, client: &Client, with_values: Bool) -> result: unit reads(fields), writes(client) {
+  doc "Writes wanted distinct fields of the hash, fewer than it holds, each with its value when with_values is true: one pass over the buckets keeps each filled one with the chance that still-wanted fields bear to the fields not yet passed, which keeps exactly wanted fields, every set of them as likely as another.";
+  let needed = wanted;
+  let remaining = hash_map_len::<Key, Bytes, ceiling>(map: fields);
+  let buckets = fields^.cells.inner.len;
+  for @scan (index in 0_u64..buckets) {
+    if needed == 0_u64 {
+      break @scan;
+    }
+    if remaining == 0_u64 {
+      break @scan;
+    }
+    if index < fields^.cells.inner.len {
+      let slot = &fields^.cells.inner[index];
+      match slot^ {
+        HashMapFilled(key: field, value: stored) => {
+          set client^.random = next_random(state: client^.random);
+          let draw = client^.random % remaining;
+          if draw < needed {
+            reply_text(client: client, text: &field^.bytes);
+            if with_values {
+              reply_text(client: client, text: stored);
+            }
+            set needed = needed -wrap 1_u64;
+          }
+          set remaining = remaining -wrap 1_u64;
+        }
+        HashMapVacant() => {
+        }
+        HashMapDeleted() => {
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn random_fields(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes fields of a live hash chosen at random, each followed by its value when high is 1. When low is 0, one field as a bulk string; when it is 1, number distinct fields as an array, or every field once number reaches the hash's size; otherwise number fields as an array, each drawn alone, so that a field may repeat. Records done; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Fields(fields: hash_of) => {
+      let size = hash_map_len::<Key, Bytes, ceiling>(map: hash_of);
+      if size == 0_u64 {
+        return 4_u64;
+      }
+      let with_values = env^.high == 1_i64;
+      let wanted = env^.number;
+      if env^.low == 0_i64 {
+        set env^.random = next_random(state: env^.random);
+        let start = env^.random;
+        let one = False();
+        let written = random_field(fields: hash_of, start: start, client: env, with_values: one);
+      } else if env^.low == 1_i64 {
+        let shown = imin(wanted, size);
+        let elements = shown;
+        if with_values {
+          set elements = shown *wrap 2_u64;
+        }
+        reply_array(client: env, count: elements);
+        if wanted >= size {
+          if with_values {
+            hash_map_each::<Key, Bytes, Client, fn pair_out, ceiling>(map: hash_of, env: env);
+          } else {
+            hash_map_each::<Key, Bytes, Client, fn name_out, ceiling>(map: hash_of, env: env);
+          }
+        } else {
+          distinct_fields(fields: hash_of, wanted: wanted, client: env, with_values: with_values);
+        }
+      } else {
+        let elements = wanted;
+        if with_values {
+          set elements = wanted *wrap 2_u64;
+        }
+        reply_array(client: env, count: elements);
+        for @draws (step in 0_u64..wanted) {
+          set env^.random = next_random(state: env^.random);
+          let start = env^.random;
+          let written = random_field(fields: hash_of, start: start, client: env, with_values: with_values);
+        }
+      }
+      set env^.state = state_done;
+      return 4_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_hrandfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "HRANDFIELD key [count [WITHVALUES]]: answers a field of the hash chosen at random, or the null bulk string for an absent key; with a count, an array of up to count distinct fields when it is positive and of count fields that may repeat when it is negative, each followed by its value with WITHVALUES, an absent key answering an empty array. The count is read and checked, then the option, before the key, as Redis checks them.";
+  let count = args^.inner.len;
+  let mode = 0_i64;
+  let wanted = 1_u64;
+  let with_values = 0_i64;
+  if count >= 3_u64 {
+    let amount = arg(args: args, index: 2_u64);
+    let number = read_integer(input: input, start: amount.start, length: amount.length);
+    if number.state != 1_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    if number.value < -9223372036854775807_i64 {
+      reply_error(client: client, word: &text_count_range[0_u64..90_u64]);
+      return unit;
+    }
+    if count > 4_u64 {
+      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+      return unit;
+    }
+    if count == 4_u64 {
+      let option = arg(args: args, index: 3_u64);
+      let named = option_matches(input: input, span: option, word: &word_withvalues[0_u64..10_u64]);
+      if named {
+      } else {
+        reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+        return unit;
+      }
+      let below = number.value < -4611686018427387903_i64;
+      let above = number.value > 4611686018427387903_i64;
+      let outside = bor(below, above);
+      if outside {
+        reply_error(client: client, word: &text_out_of_range[0_u64..25_u64]);
+        return unit;
+      }
+      set with_values = 1_i64;
+    }
+    if number.value >= 0_i64 {
+      set mode = 1_i64;
+      set wanted = cvt.wrap::<i64, u64>(number.value);
+    } else {
+      set mode = 2_i64;
+      let flipped = 0_i64 -wrap number.value;
+      set wanted = cvt.wrap::<i64, u64>(flipped);
+    }
+  }
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.low = mode;
+  set client^.high = with_values;
+  set client^.number = wanted;
+  let asked = wanted != 0_u64;
+  let single = mode == 0_i64;
+  let reading = bor(asked, single);
+  if reading {
+    atomic s = &store^.state, slot = &s^.map[key] {
+      match slot^ {
+        Some(value: held) => {
+          let found = random_fields(env: client, value: held);
+        }
+        None() => {
+        }
+      }
+    }
+  } else {
+    atomic s = &store^.state, slot = &s^.map[key] {
+      match slot^ {
+        Some(value: held) => {
+          let found = hash_size(env: client, value: held);
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if reading {
+    if client^.state == state_done {
+      return unit;
+    }
+    if single {
+      reply_nil(client: client);
+      return unit;
+    }
+  }
+  reply_array(client: client, count: 0_u64);
   return unit;
 }
