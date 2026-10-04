@@ -26,7 +26,7 @@ an equivalent maintained Halo program suite takes ownership of these observation
 | same tail recursion, budget 7 | 100000 | pending |
 
 The Lua reference run completed successfully; its exact output is
-`oracle.expected`. Package acceptance and native execution are still pending.
+`oracle.expected`. All package modules accept; native execution is pending.
 
 ## Reproduction
 
@@ -84,3 +84,14 @@ available stack-length fact. Both comparison paths now restore the entry length
 before reading that slot. At that attempt the VM was 6,647 lines / 236,864 bytes,
 with `run` in a 237-line / 16,456-byte file. The next check must establish full
 acceptance; the elapsed time is a checker-cost finding even if it accepts.
+
+## Accepted module milestone
+
+On revision `96a17771077da8e097ed2a069bfc0ea75e2ae46b`, the requested compiler with
+`--cache /private/tmp/halo-vm-build-cache --graph lib/halo/modules.wfg
+--check-modules` accepted `pkg::value`, `pkg::number`, `pkg::lex`, `pkg::heap`
+and `pkg::vm`. The wrapper reported 57.43 seconds, exit 0 (compiler: 57.36 real,
+53.18 user, 4.11 system). The VM was 6,649 lines / 236,968 bytes.
+The same opcode split that first exposed the callback-bound failure now accepts
+after the length restoration was moved before both comparison result reads.
+This establishes acceptance, not native performance or complete Lua parity.
