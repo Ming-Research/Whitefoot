@@ -1,0 +1,9 @@
+public struct Scan {
+  public end: u64;
+  public error: u64;
+  public valid: Bool;
+}
+
+public fn scan(source: &[u8], start: u64) -> result: Scan reads(source) doc "Scans RFC 8259 number syntax from start. end is the first byte after the number; valid is false with error at the first offending byte, or source length when a digit is missing at EOF. A valid prefix must still be followed by a JSON delimiter, checked by the decoder or whole-text caller.";
+
+public fn convert(source: &[u8]) -> result: Option<f64> reads(source) doc "Converts one complete RFC 8259 number to binary64, round to nearest, ties to even, using integer Simple Decimal Conversion (800 significant digits plus a sticky bit). Signed zero is preserved; decimal overflow yields signed infinity and underflow signed zero, like C-locale glibc strtod with FE_TONEAREST. This does not admit NaN or Infinity text. Independent of libc, Halo and Lua.";
