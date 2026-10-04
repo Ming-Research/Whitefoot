@@ -485,6 +485,17 @@ impl IrBuilder<'_> {
         let mut roots = Vec::new();
         expression_roots(guard, &mut roots);
         let mut read = self.region_units(region, &roots)?;
+        read.extend(region.units.iter().enumerate().filter_map(|(index, unit)| {
+            matches!(
+                unit.as_ref().map(|u| &u.lock),
+                Some(Lock::Table {
+                    take: TableTake::Hold { whole: true, .. },
+                    ..
+                })
+            )
+            .then_some(index)
+        }));
+
         // A guard reading nothing of the state no statement can change; it
         // watches every unit the statement reaches.
         if read.is_empty() {
@@ -959,11 +970,9 @@ impl IrBuilder<'_> {
             return None;
         };
         let fields = fields.iter().map(|field| field.ty).collect::<Vec<_>>();
-        fields
+        self.state_parts(ty)
             .iter()
-            .any(|field| {
-                self.table_nominal(*field).is_some() || self.fields_with_tables(*field).is_some()
-            })
+            .any(|(_, table)| table.is_some())
             .then_some(fields)
     }
 
@@ -1082,15 +1091,10 @@ impl IrBuilder<'_> {
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?;
             depth += 1;
         }
-        let prefix = &fields[..depth];
-        let mut units = shapes
-            .iter()
-            .enumerate()
-            .filter(|(_, shape)| {
-                matches!(shape, UnitShape::Table { fields: table, .. } if table.starts_with(prefix))
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
+        if shapes.iter().any(|shape| matches!(shape, UnitShape::Table { fields: table, .. } if fields.starts_with(table))) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let mut units = Vec::new();
         if self.holds_plain_part(ty) {
             units.extend(object);
         }

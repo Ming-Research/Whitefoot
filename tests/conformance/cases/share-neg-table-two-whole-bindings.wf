@@ -13,7 +13,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let second = &names[1_u64..2_u64];
   let n = 0_u64;
   atomic s = &store, t = &s^.map, u = &s^.map {
-    set n = keyed_table_count::<u8>(table: t) +wrap keyed_table_count::<u8>(table: u);
+    set n = keyed_table_count::<u8>(table: t);
+    set n = keyed_table_count::<u8>(table: u);
   }
   return std::process::exit_status(code: 0_u8);
 }

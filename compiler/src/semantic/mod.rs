@@ -1151,6 +1151,9 @@ pub enum SemanticIssueKind {
         table: String,
         mechanical_fix: &'static str,
     },
+    TableNeedsReference {
+        mechanical_fix: &'static str,
+    },
     TableOffsetNotKey {
         mechanical_fix: &'static str,
     },

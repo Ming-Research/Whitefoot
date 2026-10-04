@@ -257,6 +257,10 @@ impl Checker<'_, '_> {
         .into_iter()
         .filter_map(|(path, table)| table.map(|_| path))
         .collect::<Vec<_>>();
+        let names = tables
+            .iter()
+            .map(|path| self.atomic_table_name(state, declaration.spelling(), path))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut whole = Vec::new();
         let mut named: Vec<(Vec<PlaceStep>, bool)> = Vec::new();
         for entry in &entries {
@@ -278,7 +282,7 @@ impl Checker<'_, '_> {
                     .position(|e| e.binding == entry.binding)
                     .unwrap()];
                 return self.types.declarations.issue_node(SemanticRule::Share2, place, SemanticIssueKind::AtomicTableBoundTwice {
-                    table: format!("{path:?}"), mechanical_fix: "name each table once: a whole binding `t = &s^.table` when the block computes its keys, reaching entries as `t^[key]` and `&t^[keys]`, or entry bindings for keys known before the statement",
+                    table: self.atomic_table_name(state, declaration.spelling(), &root.path.iter().filter_map(|step| match step { CheckedPlaceStep::Field(field) => Some(*field), _ => None }).collect::<Vec<_>>())?, mechanical_fix: "name each table once: a whole binding `t = &s^.table` when the block computes its keys, reaching entries as `t^[key]` and `&t^[keys]`, or entry bindings for keys known before the statement",
                 });
             }
             named.push((path.clone(), is_whole));
@@ -289,6 +293,7 @@ impl Checker<'_, '_> {
         self.body.atomic_grant = Some(super::super::AtomicGrant {
             state: binding,
             tables,
+            names,
             whole,
             touched: Vec::new(),
             refusals: Vec::new(),
@@ -796,6 +801,33 @@ impl Checker<'_, '_> {
         })
     }
 
+    fn atomic_table_name(
+        &self,
+        state: CheckedType,
+        binder: &str,
+        fields: &[u32],
+    ) -> Result<String, CheckStop> {
+        let mut ty = state;
+        let mut name = format!("{binder}^");
+        for index in fields {
+            let CheckedType::Nominal(nominal) = ty else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            let CheckedNominalKind::Struct { fields } =
+                &self.types.nominals[nominal.0 as usize].kind
+            else {
+                return Err(SemanticCompilerFailure::InvalidResolution.into());
+            };
+            let field = fields
+                .get(*index as usize)
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+            name.push('.');
+            name.push_str(&field.name);
+            ty = field.ty;
+        }
+        Ok(name)
+    }
+
     /// Record a formed place through the state binder for the grant judgment.
     /// Refusals are reported after ordinary reference and operation checks.
     pub(in crate::semantic::check) fn note_atomic_place(
@@ -865,9 +897,13 @@ impl Checker<'_, '_> {
             ty = member.ty();
         }
         let grant = self.body.atomic_grant.as_mut().unwrap();
-        if let Some(table) = grant.tables.iter().find(|table| fields.starts_with(table)) {
+        if let Some(index) = grant
+            .tables
+            .iter()
+            .position(|table| fields.starts_with(table))
+        {
             grant.refusals.push((node, SemanticIssueKind::AtomicTableNotGranted {
-                table: format!("{table:?}"), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
+                table: grant.names[index].clone(), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
             }));
         }
         Ok(())

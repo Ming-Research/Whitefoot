@@ -2127,13 +2127,26 @@ static int settle_entries(wf_cmap_user *u, wf_cmap_holding *hold, uint64_t tag_o
  * held descriptors retain nodes' copied keys rather than caller storage. */
 void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length, int write) {
     wf_cmap_holding *hold = map->whole_hold;
-    if (hold == NULL) {
-        if (map->local_hold == NULL) {
-            map->local_hold = take(sizeof(wf_cmap_holding));
-            wf_cmap_hold_begin(map->local_hold, map);
-            wf_cmap_hold_whole(map->local_hold);
-            wf_cmap_hold_take(WF_CMAP_CURRENT_USER(map), map->local_hold);
+    if (hold == NULL && !write) {
+        /* A local table has one user. A read takes no hold and allocates
+         * nothing, including on the first absent probe. */
+        table *t = atomic_load_explicit(&map->current, memory_order_relaxed);
+        uint64_t tag = tag_of(key, length), at = start_of(t, tag), left = t->capacity;
+        while (left-- != 0) {
+            cell *c = &t->cells[at];
+            uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed);
+            uint64_t bare = k & ~(LOCKED | PENDING);
+            if (bare == EMPTY) break;
+            if (bare == tag && same_key(node_at(c), key, length)) return slot_of(map, node_at(c));
+            at = (at + 1) & t->mask;
         }
+        return NULL;
+    }
+    if (hold == NULL) {
+        map->local_hold = take(sizeof(wf_cmap_holding));
+        wf_cmap_hold_begin(map->local_hold, map);
+        wf_cmap_hold_whole(map->local_hold);
+        wf_cmap_hold_take(WF_CMAP_CURRENT_USER(map), map->local_hold);
         hold = map->local_hold;
     }
     wf_cmap_user *u = hold->user;
@@ -2173,7 +2186,7 @@ void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length
             if (e->cell == NULL) continue;
             if (e->fresh != 0) count(u, 0, 1);
             e->fresh = 0;
-            unlock(e->cell, atomic_load_explicit(&e->cell->key, memory_order_relaxed) & ~LOCKED);
+            unlock(e->cell, atomic_load_explicit(&((cell *)e->cell)->key, memory_order_relaxed) & ~LOCKED);
             e->cell = NULL;
         }
         start_move_for(map, t, 1);

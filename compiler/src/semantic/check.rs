@@ -638,6 +638,7 @@ struct BodyChecker {
 struct AtomicGrant {
     state: BindingId,
     tables: Vec<Vec<u32>>,
+    names: Vec<String>,
     whole: Vec<(Vec<super::places::PlaceStep>, BindingId)>,
     touched: Vec<BindingId>,
     refusals: Vec<(NodeId, SemanticIssueKind)>,

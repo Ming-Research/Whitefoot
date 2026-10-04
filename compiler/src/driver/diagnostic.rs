@@ -903,6 +903,7 @@ impl Report for SemanticIssueKind {
             AtomicTableBoundTwice { table, mechanical_fix };
             AtomicTableNotGranted { table, mechanical_fix };
             AtomicRowReachesTable { callee, path, table, mechanical_fix };
+            TableNeedsReference { mechanical_fix };
             TableOffsetNotKey { mechanical_fix };
             TableEntriesNotBorrowed { mechanical_fix };
             AtomicKeyNotBytes { found, mechanical_fix };

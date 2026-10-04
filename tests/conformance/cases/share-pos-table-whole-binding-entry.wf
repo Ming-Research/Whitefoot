@@ -27,6 +27,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set counted = keyed_table_count::<u8>(table: t);
     set s^.count = got;
   }
-  let code = got *wrap 10_u8 +wrap cvt.wrap::<u64, u8>(counted);
+  let tens = got *wrap 10_u8;
+  let ones = cvt.wrap::<u64, u8>(counted);
+  let code = tens +wrap ones;
   return std::process::exit_status(code: code);
 }

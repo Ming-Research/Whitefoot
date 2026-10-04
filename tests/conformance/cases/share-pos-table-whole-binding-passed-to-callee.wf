@@ -23,5 +23,6 @@ fn main() -> status: std::process::ExitStatus pure waits {
   atomic s = &store, t = &s^.map {
     set counted = keyed_table_count::<u8>(table: t);
   }
-  return std::process::exit_status(code: cvt.wrap::<u64, u8>(counted));
+  let code = cvt.wrap::<u64, u8>(counted);
+  return std::process::exit_status(code: code);
 }

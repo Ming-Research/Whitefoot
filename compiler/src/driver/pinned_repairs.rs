@@ -17,6 +17,7 @@ mod collisions_and_killed_facts;
 mod content_moves;
 mod selector_scope;
 mod storage_destructuring;
+mod table_grants;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
 /// source, the rule and the exact repair its rejection carries, and one
@@ -3522,6 +3523,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(content_moves::CONTENT_MOVES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
+        .chain(table_grants::TABLE_GRANTS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
     {

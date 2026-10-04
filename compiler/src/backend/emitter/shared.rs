@@ -282,11 +282,15 @@ impl FunctionEmitter<'_, '_> {
         key: IrValueId,
         write: bool,
     ) -> Result<(), BackendFailure> {
-        self.checked_entry(nominal)?;
+        let IrType::Nominal(option) = self.checked_entry(nominal)? else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let symbol = format!(".wf_table_none.{}", self.nominal(option)?.link_name());
         let bare = self.bare(result);
         self.key_parts(&bare, key)?;
         self.names(&["wf__table_held_entry"]);
-        writeln!(self.output, "  {} = call ptr @wf__table_held_entry(ptr {}, ptr %{bare}.key, i64 %{bare}.length, i32 {})", self.value_name(result), self.value_name(table), u32::from(write)).map_err(|_| BackendFailure::TextEmission)
+        self.output.symbol(symbol.clone());
+        writeln!(self.output, "  %{bare}.slot = call ptr @wf__table_held_entry(ptr {}, ptr %{bare}.key, i64 %{bare}.length, i32 {})\n  %{bare}.missing = icmp eq ptr %{bare}.slot, null\n  {} = select i1 %{bare}.missing, ptr @{symbol}, ptr %{bare}.slot", self.value_name(table), u32::from(write), self.value_name(result)).map_err(|_| BackendFailure::TextEmission)
     }
 
     pub(super) fn emit_table_held_entries(

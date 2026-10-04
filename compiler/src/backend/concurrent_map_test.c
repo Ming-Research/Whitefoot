@@ -53,6 +53,7 @@
 /* The host the runtime supplies the map, here from the C library, counting
  * the blocks it has handed out and not had back. */
 static _Atomic int64_t blocks_out;
+static _Atomic uint64_t allocations;
 static void *test_take(size_t bytes);
 static void test_give(void *block);
 #define WF_CMAP_TAKE(bytes) test_take((size_t)(bytes))
@@ -100,6 +101,7 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 #include "keyed_table.c"
 
 static void *test_take(size_t bytes) {
+    atomic_fetch_add(&allocations, 1);
     atomic_fetch_add(&blocks_out, 1);
     return aligned_alloc(16, (bytes + 15) / 16 * 16);
 }
@@ -2939,6 +2941,77 @@ static void entries_huge_capacity(void) {
     wf_cmap_destroy(map);
 }
 
+/* Whole holds accept block-computed keys. Absent reads allocate nothing;
+ * writes survive index growth and are counted before and after release. */
+static void tables_held_selection(void) {
+    int64_t before = atomic_load(&blocks_out);
+    wf_cmap *map = wf__keyed_table_new(16, 8, 1);
+    const unsigned char absent[] = "absent";
+    uint64_t takes = atomic_load(&allocations);
+    uint64_t *none = wf__table_held_entry(map, absent, 6, 0);
+    if (none != NULL || atomic_load(&allocations) != takes || map->local_hold != NULL)
+        fail("a local absent read allocated or was not None", none != NULL, atomic_load(&allocations) - takes);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    takes = atomic_load(&allocations);
+    for (unsigned i = 0; i < 1000; i++) {
+        none = wf__table_held_entry(map, absent, 6, 0);
+        if (none != NULL) fail("an absent whole-held read was not None", 1, i);
+    }
+    if (atomic_load(&allocations) != takes || hold.count != 0)
+        fail("absent whole-held reads materialized cells", atomic_load(&allocations) - takes, hold.count);
+    unsigned char key[12];
+    for (unsigned i = 0; i < 256; i++) {
+        uint64_t *slot = wf__table_held_entry(map, key, counted_key(i, key), 1);
+        slot[0] = 1;
+        slot[1] = i + 10;
+    }
+    if (wf__keyed_table_count(map, 0, 4, 0) != 256)
+        fail("whole-held writes did not count through growth", wf__keyed_table_count(map, 0, 4, 0), 256);
+    for (unsigned i = 0; i < 256; i++) {
+        uint64_t *slot = wf__table_held_entry(map, key, counted_key(i, key), 0);
+        if (slot[0] != 1 || slot[1] != i + 10)
+            fail("whole-held growth lost a value", slot[1], i + 10);
+    }
+    wf_key_set set;
+    wf__key_set_new(&set, 2);
+    wf__key_set_insert(&set, key, counted_key(300, key));
+    wf__key_set_insert(&set, key, counted_key(301, key));
+    uint64_t entries[3];
+    wf__table_held_entries(map, &set, entries);
+    wf_cmap_holding *selected = (wf_cmap_holding *)(uintptr_t)entries[0];
+    uint64_t *first = wf_cmap_hold_slot(selected, entries[1]);
+    uint64_t *second = wf_cmap_hold_slot(selected, entries[1] + 1);
+    if (entries[2] != 2 || first == second || first[0] != 0 || second[0] != 0)
+        fail("in-block set selection had wrong positions or initial values", entries[2], first == second);
+    first[0] = 1;
+    first[1] = 99;
+    second[0] = 0;
+    if (wf__keyed_table_count(map, 0, 4, 0) != 257)
+        fail("in-block set writes were not counted", wf__keyed_table_count(map, 0, 4, 0), 257);
+    wf__table_hold_release(&hold, 0, 4, 0);
+    wf__key_set_free(set.store);
+    if (wf__keyed_table_count(map, 0, 4, 0) != 257)
+        fail("whole-held release changed the count", wf__keyed_table_count(map, 0, 4, 0), 257);
+    uint64_t *slot = wf__table_held_entry(map, key, counted_key(400, key), 1);
+    slot[0] = 1;
+    slot[1] = 44;
+    if (wf__keyed_table_count(map, 0, 4, 0) != 258)
+        fail("local writes were not counted", wf__keyed_table_count(map, 0, 4, 0), 258);
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    slot = wf__table_held_entry(map, key, counted_key(400, key), 0);
+    if (slot[0] != 1 || slot[1] != 44)
+        fail("a local write did not survive a later header hold", slot[1], 44);
+    wf__table_hold_release(&hold, 0, 4, 0);
+    wf__keyed_table_free(map);
+    if (atomic_load(&blocks_out) != before)
+        fail("whole-held selection leaked blocks", atomic_load(&blocks_out), before);
+}
+
 int main(void) {
     /* Writers that wait on each other in a cycle fail the test here rather
      * than at the gate's limit. */
@@ -2980,6 +3053,7 @@ int main(void) {
         holds_wait_out_moves();
         maps_swap();
         tables_wake_writers();
+        tables_held_selection();
         holds_move_amounts(0, PATIENCE);
         holds_move_amounts(1, PATIENCE);
         holds_move_amounts(1, 0);

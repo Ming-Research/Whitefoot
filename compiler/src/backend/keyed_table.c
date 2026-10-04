@@ -88,15 +88,16 @@ static void table_finish_local(wf_cmap *map) {
 
 void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write) {
     wf_cmap *map = table;
-    void *slot = wf_cmap_held_entry(map, key, length, write != 0);
-    return slot != NULL ? slot : map->none;
+    return wf_cmap_held_entry(map, key, length, write != 0);
 }
 
 void wf__table_held_entries(void *table, const wf_key_set *set, uint64_t *entries) {
     wf_cmap *map = table;
     if (map->whole_hold == NULL) {
-        /* An empty read initializes a local table's sole-user hold. */
-        (void)wf_cmap_held_entry(map, NULL, 0, 0);
+        map->local_hold = take(sizeof(wf_cmap_holding));
+        wf_cmap_hold_begin(map->local_hold, map);
+        wf_cmap_hold_whole(map->local_hold);
+        wf_cmap_hold_take(WF_CMAP_CURRENT_USER(map), map->local_hold);
     }
     wf_cmap_holding *hold = map->whole_hold;
     uint64_t first = wf_cmap_hold_keys(hold, set);

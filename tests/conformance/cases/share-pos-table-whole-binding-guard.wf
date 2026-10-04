@@ -5,6 +5,11 @@ struct Store {
 
 const names: Array<u8, 2> =[97_u8, 98_u8];
 
+fn one(table: &KeyedTable<u8>) -> result: Bool reads(table) {
+  let count = keyed_table_count::<u8>(table: table);
+  return count == 1_u64;
+}
+
 fn deliver(store: Shared<Store>) -> result: unit pure waits {
   atomic s = &store, t = &s^.map {
     let key = &names[0_u64..1_u64];
@@ -22,8 +27,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let n = 0_u64;
   let handle = shared_share::<Store>(shared: &store);
   spawn deliver(store: move handle);
-  atomic s = &store, t = &s^.map when keyed_table_count::<u8>(table: t) == 1_u64 {
+  atomic s = &store, t = &s^.map when one(table: t) {
     set n = keyed_table_count::<u8>(table: t);
   }
-  return std::process::exit_status(code: cvt.wrap::<u64, u8>(n));
+  let code = cvt.wrap::<u64, u8>(n);
+  return std::process::exit_status(code: code);
 }

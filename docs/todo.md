@@ -77,13 +77,6 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **A table subscripted in a block is refused without a repair.** `s^.map[k]`
-  in an atomic block is OP-4's type mismatch, "an indexable base", against
-  `KeyedTable<V>`, and names nothing a writer can do instead, where the
-  intended form is an entry binding in the header, `e = &s^.map[k]`
-  [SHARE-2]. The change: give that refusal a repair naming the header form.
-  Found by the adversarial tests of the keyed tables. Reopen with the next
-  change to how a subscript's base is refused.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant

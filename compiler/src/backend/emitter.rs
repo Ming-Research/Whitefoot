@@ -808,6 +808,33 @@ fn aliasing_admitted_row(name: &str) -> bool {
 }
 
 fn emit_global_constants(output: &mut Module, program: &IrProgram) -> Result<(), BackendFailure> {
+    let mut none_types = BTreeSet::new();
+    for nominal in program.nominals() {
+        if let IrNominalKind::Shared {
+            shape: IrShared::Table {
+                entry: IrType::Nominal(option),
+            },
+            ..
+        } = nominal.kind()
+            && none_types.insert(option.index())
+        {
+            let option = program.nominal(*option).ok_or(BackendFailure::InvalidIr)?;
+            let mut references = References::default();
+            let ty = llvm_type_with_references(
+                program,
+                IrType::Nominal(option.id()),
+                &mut references.types,
+            )?;
+            output.global(
+                format!(".wf_table_none.{}", option.link_name()),
+                "unnamed_addr constant",
+                ty,
+                "zeroinitializer".to_owned(),
+                None,
+                references,
+            );
+        }
+    }
     for constant in program.constants() {
         output.text(format!("; const {}\n", constant.name()));
         let mut references = References::default();

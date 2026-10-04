@@ -1397,22 +1397,38 @@ impl<'unit> Checker<'_, 'unit> {
                     .first_child_with(offset_node, Production::Place)?
                 {
                     Some(place) => {
-                        let borrowed = self.check_place_borrow(
-                            context,
-                            offset_node,
+                        let suffixes = self
+                            .types
+                            .declarations
+                            .tree
+                            .children_with(place, Production::Psuffix)?;
+                        let selected = self.elaborate_place_prefix(
+                            check_context,
                             offset_node,
                             place,
+                            &suffixes,
                             bindings,
-                            loop_depth,
+                            LexicalUseRole::PlaceBase,
                         )?;
-                        (borrowed.expression.ty() == CheckedType::KeySet).then_some(borrowed)
+                        if selected.ty == CheckedType::KeySet {
+                            Some(self.check_place_borrow(
+                                context,
+                                offset_node,
+                                offset_node,
+                                place,
+                                bindings,
+                                loop_depth,
+                            )?)
+                        } else {
+                            None
+                        }
                     }
                     None => None,
                 }
             } else {
                 None
             };
-            let offset = match set {
+            let mut offset = match set {
                 Some(set) => set,
                 None => self.check_atom(context, offset_node, &mut probe, loop_depth)?,
             };
@@ -1441,6 +1457,18 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 captured
             };
+            if table_entry.is_some() {
+                for place in offset
+                    .reference
+                    .as_ref()
+                    .map(|reference| reference.paths.as_slice())
+                    .unwrap_or_default()
+                {
+                    for path in self.effect_paths_for_place(suffix, place, bindings)? {
+                        offset.effects.add_read(path);
+                    }
+                }
+            }
             let captured = self
                 .body
                 .note_capture(captured.unwrap_or(CapturedValue::unknown()), bindings);
@@ -1907,6 +1935,10 @@ impl<'unit> Checker<'_, 'unit> {
                     offsets,
                 }))
             }
+            _ if self.table_entry_type(ty).is_some() => self.types.declarations.issue_node(
+                SemanticRule::Op4, anchor, SemanticIssueKind::TableNeedsReference {
+                    mechanical_fix: "form a reference first, `let t = &local.map;`, and index `t^[key]`",
+                }),
             // [TYPE-7] a `Box` is not a reference, so no implicit read and no
             // `p^` fix is at issue here: the cell is simply not one of
             // [OP-4]'s indexable bases, and its content is the ordinary field

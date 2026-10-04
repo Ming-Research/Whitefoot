@@ -20,5 +20,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
     set t^[name] = None<u8>();
     set n = keyed_table_count::<u8>(table: t);
   }
-  return std::process::exit_status(code: cvt.wrap::<u64, u8>(first_count *wrap 10_u64 +wrap n));
+  let tens = first_count *wrap 10_u64;
+  let total = tens +wrap n;
+  let code = cvt.wrap::<u64, u8>(total);
+  return std::process::exit_status(code: code);
 }

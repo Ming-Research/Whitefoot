@@ -521,7 +521,7 @@ impl<'unit> Checker<'_, 'unit> {
                     continue;
                 }
                 let actual = &actual_paths[effect.argument];
-                for table in &grant.tables {
+                for (index, table) in grant.tables.iter().enumerate() {
                     let table_path = table
                         .iter()
                         .copied()
@@ -540,7 +540,7 @@ impl<'unit> Checker<'_, 'unit> {
                             grant.touched.push(*binding);
                         } else {
                             grant.refusals.push((node, SemanticIssueKind::AtomicRowReachesTable {
-                                callee: signature.name.clone(), path: format!("{:?}", effect.place.path), table: format!("{table:?}"),
+                                callee: signature.name.clone(), path: signature.parameters[effect.argument].name.clone(), table: grant.names[index].clone(),
                                 mechanical_fix: "add a whole binding for each table the callee's row reaches through this argument, or pass the parts the callee needs: `&s^.field` for a field, an entry binding for an entry",
                             }));
                         }
