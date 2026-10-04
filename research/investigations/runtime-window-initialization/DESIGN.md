@@ -109,6 +109,9 @@ of this proposal. No Snowghost pin change follows from this record.
 
 ## Results
 
+Work is stopped at the owner's request; the [archive index](handoff-2026-10-03.md)
+records the consolidated branch and the limits of its evidence.
+
 The implementation and focused cases are present on the work branch. The
 recommended interface remains unapproved. Focused semantic and native
 validation passes; the complete gate and Snowghost integration remain
