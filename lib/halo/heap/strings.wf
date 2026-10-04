@@ -1,10 +1,9 @@
 alias Value = pkg::value::Value;
 
 fn string_hash(bytes: &[u8]) -> r: u64 reads(bytes) {
-  doc "lstring.c luaS_newlstr uses unsigned-int wrapping, then stores the hash.";
+  doc "Redis bundled lstring.c luaS_newlstr hashes every byte with unsigned-int wrapping, then stores the hash.";
   let h = cvt.wrap::<u64, u32>(bytes^.len);
-  let divided = bytes^.len / 32_u64;
-  let step = divided + 1_u64;
+  let step = 1_u64;
   let left = bytes^.len;
   loop @hash {
     if left >= step {

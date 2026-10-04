@@ -153,7 +153,7 @@ fn free_table(heap: &Heap, h: u32) -> r: unit writes(heap) {
       let a = box_slots_new::<Value>(capacity: 0_u64);
       let n = box_slots_new::<Node>(capacity: 0_u64);
       let ro = False();
-      let empty = Table(array: move a, nodes: move n, node_count: 0_u32, meta: no_handle, read_only: ro, flags: 255_u8);
+      let empty = Table(array: move a, nodes: move n, node_count: 0_u32, lastfree: 0_u64, meta: no_handle, read_only: ro, flags: 255_u8);
       set heap^.tables.inner[i].payload = move empty;
       set heap^.tables.inner[i].live = False();
       set heap^.tables.inner[i].next_free = heap^.tables_free;

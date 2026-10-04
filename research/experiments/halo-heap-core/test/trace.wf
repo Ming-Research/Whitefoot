@@ -1,5 +1,6 @@
 alias Value = halo::value::Value;
 alias Heap = halo::heap::Heap;
+alias no_handle = halo::heap::no_handle;
 alias HandleFactory = std::io::HandleFactory;
 alias OutputStream = std::io::OutputStream;
 alias Inputs = std::process::Inputs;
@@ -131,7 +132,7 @@ fn str_handle(v: Value) -> r: u32 pure {
       return hv;
     }
     NoHandle() => {
-      return halo::heap::no_handle;
+      return no_handle;
     }
   }
 }
@@ -184,7 +185,22 @@ fn units() -> r: Bool pure {
   }
   let long_a = array_filled::<u8, 96>(value: 97_u8);
   let long_b = array_filled::<u8, 96>(value: 97_u8);
-  set long_b[0_u64] = 98_u8;
+  set long_a[0_u64] = 182_u8;
+  set long_a[1_u64] = 170_u8;
+  set long_a[2_u64] = 139_u8;
+  set long_a[3_u64] = 63_u8;
+  set long_a[4_u64] = 147_u8;
+  set long_a[5_u64] = 140_u8;
+  set long_a[6_u64] = 112_u8;
+  set long_a[7_u64] = 165_u8;
+  set long_b[0_u64] = 40_u8;
+  set long_b[1_u64] = 142_u8;
+  set long_b[2_u64] = 97_u8;
+  set long_b[3_u64] = 26_u8;
+  set long_b[4_u64] = 39_u8;
+  set long_b[5_u64] = 64_u8;
+  set long_b[6_u64] = 181_u8;
+  set long_b[7_u64] = 86_u8;
   let la = halo::heap::intern(heap: &heap, bytes: &long_a[0_u64..96_u64]);
   let lb = halo::heap::intern(heap: &heap, bytes: &long_b[0_u64..96_u64]);
   let lah = str_handle(v: la);
@@ -212,7 +228,7 @@ fn units() -> r: Bool pure {
     let s2 = halo::heap::intern(heap: &heap, bytes: &v[0_u64..1_u64]);
     let h1 = str_handle(v: s1);
     let h2 = str_handle(v: s2);
-    if h1 == halo::heap::no_handle {
+    if h1 == no_handle {
       return False();
     }
     if h1 != h2 {
@@ -628,6 +644,234 @@ fn run(factory: &HandleFactory, output: &OutputStream) -> r: Bool writes(factory
   return True();
 }
 
+fn mixed_keys(heap: &Heap) -> r: Array<Value, 162> writes(heap) {
+  let nil = Value::Nil();
+  let keys = array_filled::<Value, 162>(value: nil);
+  for (i in 0_u64..96_u64) {
+    set keys[i] = numeric(n: i);
+  }
+  let n0 = reinterpret::<u64, f64>(13832806255468478464_u64);
+  let v0 = Value::Num(n: n0);
+  set keys[96_u64] = v0;
+  let n1 = reinterpret::<u64, f64>(13836183955189006336_u64);
+  let v1 = Value::Num(n: n1);
+  set keys[97_u64] = v1;
+  let n2 = reinterpret::<u64, f64>(4609434218613702656_u64);
+  let v2 = Value::Num(n: n2);
+  set keys[98_u64] = v2;
+  let n3 = reinterpret::<u64, f64>(4612811918334230528_u64);
+  let v3 = Value::Num(n: n3);
+  set keys[99_u64] = v3;
+  let n4 = reinterpret::<u64, f64>(9218868437227405312_u64);
+  let v4 = Value::Num(n: n4);
+  set keys[100_u64] = v4;
+  let n5 = reinterpret::<u64, f64>(18442240474082181120_u64);
+  let v5 = Value::Num(n: n5);
+  set keys[101_u64] = v5;
+  let n6 = reinterpret::<u64, f64>(1_u64);
+  let v6 = Value::Num(n: n6);
+  set keys[102_u64] = v6;
+  let n7 = reinterpret::<u64, f64>(9223372036854775809_u64);
+  let v7 = Value::Num(n: n7);
+  set keys[103_u64] = v7;
+  let n8 = reinterpret::<u64, f64>(9218868437227405311_u64);
+  let v8 = Value::Num(n: n8);
+  set keys[104_u64] = v8;
+  let n9 = reinterpret::<u64, f64>(18442240474082181119_u64);
+  let v9 = Value::Num(n: n9);
+  set keys[105_u64] = v9;
+  let n10 = reinterpret::<u64, f64>(4607182423094984703_u64);
+  let v10 = Value::Num(n: n10);
+  set keys[106_u64] = v10;
+  let n11 = reinterpret::<u64, f64>(13830554459949760511_u64);
+  let v11 = Value::Num(n: n11);
+  set keys[107_u64] = v11;
+  let n12 = reinterpret::<u64, f64>(4746794007248502784_u64);
+  let v12 = Value::Num(n: n12);
+  set keys[108_u64] = v12;
+  let n13 = reinterpret::<u64, f64>(13970166044103278592_u64);
+  let v13 = Value::Num(n: n13);
+  set keys[109_u64] = v13;
+  let n14 = reinterpret::<u64, f64>(4845873199050653696_u64);
+  let v14 = Value::Num(n: n14);
+  set keys[110_u64] = v14;
+  let n15 = reinterpret::<u64, f64>(14069245235905429504_u64);
+  let v15 = Value::Num(n: n15);
+  set keys[111_u64] = v15;
+  for (i in 0_u64..32_u64) {
+    let bytes = array_filled::<u8, 96>(value: 97_u8);
+    let first = cvt::<u64, u8>(i);
+    set bytes[0_u64] = first;
+    let key = halo::heap::intern(heap: heap, bytes: &bytes[0_u64..96_u64]);
+    let at = i + 112_u64;
+    set keys[at] = key;
+  }
+  for (i in 0_u64..16_u64) {
+    let bytes = array_filled::<u8, 3>(value: 0_u8);
+    let middle = cvt::<u64, u8>(i);
+    set bytes[1_u64] = middle;
+    set bytes[2_u64] = 255_u8;
+    let key = halo::heap::intern(heap: heap, bytes: &bytes[0_u64..3_u64]);
+    let at = i + 144_u64;
+    set keys[at] = key;
+  }
+  let f = Value::False();
+  let t = Value::True();
+  set keys[160_u64] = f;
+  set keys[161_u64] = t;
+  return keys;
+}
+
+fn key_id(keys: &Array<Value, 162>, key: Value) -> r: u64 reads(keys) {
+  match halo::value::num_of(v: key) {
+    Is(x: number) => {
+      for (i in 0_u64..112_u64) {
+        match halo::value::num_of(v: keys^[i]) {
+          Is(x: y) => {
+            if feq(number, y) {
+              return i;
+            }
+          }
+          Not() => {
+          }
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  let h = str_handle(v: key);
+  if h != no_handle {
+    for (i in 112_u64..160_u64) {
+      let other = str_handle(v: keys^[i]);
+      if other == h {
+        return i;
+      }
+    }
+  }
+  match key {
+    False() => {
+      return 160_u64;
+    }
+    True() => {
+      return 161_u64;
+    }
+    Nil() => {
+    }
+    Num(..) => {
+    }
+    Str(..) => {
+    }
+    Tab(..) => {
+    }
+    Fun(..) => {
+    }
+    Builtin(..) => {
+    }
+  }
+  return 162_u64;
+}
+
+fn ordered(heap: &Heap, t: Value, keys: &Array<Value, 162>, model: &Array<u64, 162>, case: u64, step: u64, factory: &HandleFactory, output: &OutputStream) -> r: Bool reads(heap), reads(keys), reads(model), writes(factory), writes(output) waits {
+  let cursor = Value::Nil();
+  let seen = array_filled::<u8, 162>(value: 0_u8);
+  let count = 0_u64;
+  let border = halo::heap::table_border(heap: heap, t: t);
+  loop @order {
+    match halo::heap::table_next(heap: heap, t: t, key: cursor) {
+      Err(error: problem) => {
+        return False();
+      }
+      Ok(value: option) => {
+        match option {
+          None() => {
+            break @order;
+          }
+          Some(value: pair) => {
+            let id = key_id(keys: keys, key: pair.key);
+            let value = number_value(v: pair.val);
+            if id < 162_u64 {
+              if seen[id] != 0_u8 {
+                return False();
+              }
+              if value != model^[id] {
+                return False();
+              }
+              set seen[id] = 1_u8;
+            } else {
+              return False();
+            }
+            if trace(factory: factory, output: output, tag: 3_u64, step: case, key: step, val: count, border: id, count: value, sum: border) {
+            } else {
+              return False();
+            }
+            set count = count +sat 1_u64;
+            set cursor = pair.key;
+          }
+        }
+      }
+    }
+  }
+  for (i in 0_u64..162_u64) {
+    if model^[i] > 0_u64 {
+      if seen[i] == 0_u8 {
+        return False();
+      }
+    }
+  }
+  return trace(factory: factory, output: output, tag: 4_u64, step: case, key: step, val: count, border: border, count: 0_u64, sum: 0_u64);
+}
+
+fn mixed(factory: &HandleFactory, output: &OutputStream) -> r: Bool writes(factory), writes(output) waits {
+  let heap = halo::heap::heap_new(limit: 67108864_u64);
+  let keys = mixed_keys(heap: &heap);
+  for (case in 0_u64..8_u64) {
+    let t = halo::heap::new_table(heap: &heap, asize: 0_u32, hsize: 0_u32);
+    let model = array_filled::<u64, 162>(value: 0_u64);
+    let offset = case * 997_u64;
+    let seed = offset + 12345_u64;
+    for (step in 0_u64..1024_u64) {
+      let product = seed *wrap 1664525_u64;
+      let added = product +wrap 1013904223_u64;
+      set seed = added % 4294967296_u64;
+      let upper = seed / 256_u64;
+      let id = upper % 162_u64;
+      let op = seed % 8_u64;
+      let value = 0_u64;
+      let val = Value::Nil();
+      if op < 6_u64 {
+        set value = step + 1_u64;
+        set val = numeric(n: value);
+      }
+      if id < 162_u64 {
+        match halo::heap::table_set(heap: &heap, t: t, key: keys[id], val: val) {
+          Err(error: problem) => {
+            return False();
+          }
+          Ok(value: done) => {
+          }
+        }
+        set model[id] = value;
+      }
+      for (i in 0_u64..162_u64) {
+        let got = halo::heap::table_get(heap: &heap, t: t, key: keys[i]);
+        let actual = number_value(v: got);
+        if actual != model[i] {
+          return False();
+        }
+      }
+      let snapshot = step % 128_u64;
+      if snapshot == 127_u64 {
+        if ordered(heap: &heap, t: t, keys: &keys, model: &model, case: case, step: step, factory: factory, output: output) {
+        } else {
+          return False();
+        }
+      }
+    }
+  }
+  return True();
+}
+
 fn main(inputs: Inputs) -> r: ExitStatus pure waits {
   let Inputs(args: args, cwd: cwd, stdout: output, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move cwd;
@@ -638,7 +882,9 @@ fn main(inputs: Inputs) -> r: ExitStatus pure waits {
     return exit_status(code: 2_u8);
   }
   if run(factory: &factory, output: &output) {
-    return exit_status(code: 0_u8);
+    if mixed(factory: &factory, output: &output) {
+      return exit_status(code: 0_u8);
+    }
   }
   return exit_status(code: 1_u8);
 }

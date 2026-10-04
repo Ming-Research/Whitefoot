@@ -6,14 +6,18 @@ public struct String {
 }
 
 public struct Node {
+  doc "PUC Lua 5.1 chained scatter node; next is a node index, or no_handle for NULL.";
+  public next: u32;
   public key: Value;
   public val: Value;
 }
 
 public struct Table {
+  doc "lastfree is the exclusive upper bound of the decreasing free-node scan. An empty node buffer represents PUC's immutable dummy node, with lastfree zero; node_count counts retained keys.";
   public array: Box<Slots<Value>>;
   public nodes: Box<Slots<Node>>;
   public node_count: u32;
+  public lastfree: u64;
   public meta: u32;
   public read_only: Bool;
   public flags: u8;
@@ -120,12 +124,12 @@ public fn intern(heap: &Heap, bytes: &[u8]) -> r: Value reads(bytes), writes(hea
 
 public fn string_of(heap: &Heap, value: Value) -> r: Option<StringView> reads(heap) doc "Returns a live string handle and byte length; readers index the public readonly payload bytes.";
 
-public fn new_table(heap: &Heap, asize: u32, hsize: u32) -> r: Value writes(heap) doc "Allocates a table, or Nil at representational exhaustion.";
+public fn new_table(heap: &Heap, asize: u32, hsize: u32) -> r: Value writes(heap) doc "Allocates a PUC Lua 5.1 array/scatter table, or Nil at representational exhaustion.";
 
 public fn table_get(heap: &Heap, t: Value, key: Value) -> r: Value reads(heap) doc "Raw lookup; absent keys give Nil.";
 
-public fn table_set(heap: &Heap, t: Value, key: Value, val: Value) -> r: Result<unit, TableError> writes(heap) doc "Raw assignment; callers enforce read_only. NilKey, NanKey and InvalidNext mean table index is nil, table index is NaN and invalid key to 'next'.";
+public fn table_set(heap: &Heap, t: Value, key: Value, val: Value) -> r: Result<unit, TableError> writes(heap) doc "Raw PUC Lua 5.1 assignment, including lookup of retained keys with nil values, Brent relocation and rehash; callers enforce read_only. NilKey, NanKey and InvalidNext mean table index is nil, table index is NaN and invalid key to 'next'.";
 
 public fn table_border(heap: &Heap, t: Value) -> r: u64 reads(heap) doc "Lua 5.1 luaH_getn border.";
 
-public fn table_next(heap: &Heap, t: Value, key: Value) -> r: Result<Option<Pair>, TableError> reads(heap) doc "Next array slot then next node; InvalidNext means invalid key to 'next'.";
+public fn table_next(heap: &Heap, t: Value, key: Value) -> r: Result<Option<Pair>, TableError> reads(heap) doc "PUC Lua 5.1 array-index then node-index order. Number, string and boolean keys match Redis Lua; table, closure and builtin keys hash handles instead of PUC addresses. InvalidNext means invalid key to 'next'.";
