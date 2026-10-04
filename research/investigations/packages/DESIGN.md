@@ -154,8 +154,8 @@ modules, so a program record's ordinal never depends on what it binds.
   three-package diamond, `mod11-pos-one-name-two-packages` runs a program
   in which one name binds two packages in two graphs, and
   `mod11-pos-local-shares-bound-name` a local binder spelled like a bound
-  name; twelve negative cases cover each MOD-11 refusal, a type error in a
-  bound module no entry selects, the
+  name; twelve negative cases cover each MOD-11 refusal, a return mismatch
+  (FN-1) in a bound module no entry selects, the
   MOD-1 row path, the MOD-4 alias name, non-transitive visibility (MOD-5),
   directory identity (TYPE-5) and the FORM-2 layout of bindings.
 - Input-envelope failures (a location reaching no directory, a package root
