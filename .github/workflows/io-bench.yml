@@ -57,6 +57,10 @@ on:
         description: Record a perf profile of each image under MSET at depth 16
         type: boolean
         default: true
+      compare_annotate:
+        description: Symbols whose instructions each profile annotates, space-separated
+        type: string
+        default: ""
       compare_callers:
         description: Give each profile sample its DWARF-unwound callers
         type: boolean
@@ -179,6 +183,7 @@ jobs:
           COMPARE_PASSES: ${{ inputs.compare_passes }}
           COMPARE_SECONDS: ${{ inputs.compare_seconds }}
           PROFILE: ${{ inputs.compare_profile }}
+          PERF_ANNOTATE: ${{ inputs.compare_annotate }}
           PERF_CALLERS: ${{ inputs.compare_callers && '1' || '' }}
           PERF_FREQUENCY: ${{ inputs.compare_callers && '999' || '4999' }}
           WHITEFOOT_CHECK_TIMEOUT: "6000"

@@ -577,6 +577,10 @@ if [ "$MODE" = compare ]; then
                 stop
                 "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
                     --sort dso,symbol --percent-limit 0.01 -g none >"$OUT/profile-$name-$n.txt" 2>/dev/null
+                for symbol in $PERF_ANNOTATE; do
+                    "$PERF" annotate -i "$OUT/perf-$name-$n.data" --stdio -s "$symbol" \
+                        >"$OUT/annotate-$name-$n-$symbol.txt" 2>/dev/null || true
+                done
                 if [ -n "$PERF_CALLERS" ]; then
                     "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
                         --sort dso,symbol --percent-limit 0.3 -g caller,0.5,callee,function,percent \
