@@ -3385,7 +3385,7 @@ condition under which it is taken up.
   `COMMAND COUNT` report empty and `COMMAND DOCS`, `INFO`, `LIST` and
   `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
   with `glob_match` (`apps/firn/bytes/bytes.wf`), RESP3, which
-  `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
+  `HELLO 3` refuses, `LMPOP` and the blocking list commands, `SSCAN`, `MULTI` and `EXEC`, publish
   and subscribe, and a random hash seed. firn answers the calls the suite's
   framework makes around its tests: `FLUSHALL` and `FUNCTION FLUSH` at the
   start of each block, `CONFIG GET` and `CONFIG SET` of the block's
@@ -3409,16 +3409,16 @@ condition under which it is taken up.
   a new run belongs in that record. The
   owner sets the list for the deployment stage; reopen when this stage's
   measurement is handed back.
-- **A list, set, hash or sorted-set write that finds its key expired leaves
-  the removal out of the append-only file.** A replay counts no key as
+- **A hash or sorted-set write that finds its key expired leaves the
+  removal out of the append-only file.** A replay counts no key as
   expired, so a removal the file does not record is undone there: the
   replay applies the next command to the old value. The read paths, the
-  expiring context and the string and key commands record each removal as
-  `DEL key`, as Redis 7.0.15 propagates it (`log_removal` in
-  `apps/firn/store/store.wf`), but the visitors of `LPUSH`, `RPUSH`, `LPOP`,
-  `RPOP`, `SADD`, `SREM`, `SPOP`, `HSET`, `ZADD` and `ZPOPMIN` replace or
-  drop an expired value inside their statements without it, so an `LPUSH`
-  onto a list that had expired replays onto the old elements. The change:
+  expiring context and the string, key, list and set commands record each
+  removal as `DEL key`, as Redis 7.0.15 propagates it (`log_removal` in
+  `apps/firn/store/store.wf`), but the visitors of `HSET`, `ZADD` and
+  `ZPOPMIN` replace or drop an expired value inside their statements
+  without it, so an `HSET` on a hash that had expired replays onto the old
+  fields. The change:
   call `log_removal` where each of those statements finds its entry
   expired, as `set_key` (`apps/firn/commands/strings.wf`) does, touching
   the keyspace's `meta` only on that branch. Reopen with the next change to
@@ -3507,15 +3507,20 @@ condition under which it is taken up.
   (`hash_map_rebuild` accepting fewer buckets than it had while they
   outnumber the pairs, and a check after each removal) and would join the
   growth decision of `hash-map-storage` in the design tree.
-- **`SPOP` reads the hash map's buckets.** The library has no entry that
-  returns a member at random, so firn's `pick_member`
-  (`apps/firn/commands/sets.wf`) reads the map's public bucket array and
-  matches its slot variants, which ties firn to the library's representation,
-  and takes the first filled bucket from a random position, which favors a
-  member that follows a run of empty buckets; Redis samples buckets instead.
-  A library entry that picks a filled bucket, as uniformly as its layout
-  allows, would remove both. Reopen with the library's next hash map change
-  or when a second program needs a random member.
+- **`SPOP`, `SRANDMEMBER` and the set operations read the hash map's
+  buckets.** The library has no entry that returns a member at random, so
+  firn's `pick_member` (`apps/firn/commands/sets.wf`) reads the map's public
+  bucket array and matches its slot variants, which ties firn to the
+  library's representation, and takes the first filled bucket from a random
+  position, which favors a member that follows a run of empty buckets; Redis
+  samples buckets instead. `random_members` walks the same array to choose
+  distinct members, and `combine`, which `SINTER`, `SUNION`, `SDIFF`, their
+  stores and `SINTERCARD` share, walks it too, because `hash_map_each` lends
+  each pair to a visitor whose one environment cannot also reach the other
+  sets it must look the member up in. A library entry that picks a filled
+  bucket, as uniformly as its layout allows, and a visit that lends pairs to
+  a caller-chosen step, would remove the three. Reopen with the library's
+  next hash map change or when a second program needs a random member.
 - **A connection that waits with no idle limit misses a limit `CONFIG SET`
   sets.** firn's `serve` (`apps/firn/server/server.wf`) gives a receive a
   deadline, at most a second away, only while an idle limit is set, and reads
@@ -3603,3 +3608,21 @@ condition under which it is taken up.
   reading, and running the first route's checks beside the second's would
   settle them. Reopen with the next change to `CONFIG SET` or the idle
   limit, or when the corpus stage needs the time back.
+- **Some new list and set checks were not each made to fail once.** The work
+  stopped for the owner's budget before these checks added to
+  `compiler/tests/programs/network.rs` were broken one way each: the set
+  batch and the `SRANDMEMBER` draws of
+  `firn_answers_the_value_types_as_redis_does`, the ten list and six set
+  writes of the value-types replay test, and the restart test's keys for
+  `SMOVE`'s two removal records and a store's. The list batch was (eleven
+  breaks, each failing it), so were the eight list removal records (replaced
+  at once, each failing exactly its own key), and `SADD`'s, `SREM`'s and
+  `SPOP`'s records failed exactly their keys in the same check on a branch
+  since dropped. The change: break each
+  set check once (an inverted membership, an absent key's zeros, the -2^63
+  count's error, `SPOP`'s syntax error, `SINTERCARD`'s limit, `SDIFF`'s
+  sense, an emptied destination kept, `SMOVE`'s type check before an absent
+  source, a doubled member in the one-pass draw, independent draws below a
+  third, distinct draws for a negative count, unrecorded `LSET`, `SMOVE` and
+  stores, and each set removal record) and see it fail. Reopen before the
+  firn branches merge.

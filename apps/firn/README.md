@@ -21,8 +21,15 @@ clients send on their own:
   `GETDEL`, `GETEX`, `MGET`, `MSET`, `MSETNX`, `INCR`, `INCRBY`, `DECR`,
   `DECRBY`, `INCRBYFLOAT`, `APPEND`, `STRLEN`, `GETRANGE`, `SUBSTR`,
   `SETRANGE`;
-- lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
-- sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
+- lists: `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP` and `RPOP` with or
+  without a count, `LRANGE`, `LLEN`, `LINDEX`, `LSET`, `LREM`, `LTRIM`,
+  `LINSERT`, `LPOS` with `RANK`, `COUNT` and `MAXLEN`, and `LMOVE` and
+  `RPOPLPUSH`, which move an element in one statement holding both keys;
+- sets: `SADD`, `SREM`, `SPOP` and `SRANDMEMBER` with or without a count,
+  `SCARD`, `SMEMBERS`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`,
+  `SUNION`, `SDIFF`, `SINTERCARD` with `LIMIT`, and `SINTERSTORE`,
+  `SUNIONSTORE` and `SDIFFSTORE`, each in one statement holding every key
+  it names;
 - hashes: `HSET`, `HGET`;
 - sorted sets: `ZADD`, `ZPOPMIN`, `ZCARD`, `ZSCORE`, with scores read and
   written as Redis 7.0.15 reads and writes them;
