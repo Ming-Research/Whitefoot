@@ -2186,6 +2186,20 @@ rarely insert at the same place.
   Reopen when a test needs a deadline order that real time cannot produce
   reliably.
 
+- **Diagnose deadline reads that receive the later byte on macOS.**
+  `stdin_deadline.wf` expects its first read's 50 ms deadline to pass before
+  the harness writes after 400 ms. The full gate returned status 10 on both
+  deadline-read tests; an isolated two-test run still returned 10 on the
+  ordinary route while the zero-helper case passed. That status means the
+  first read received the byte. The harness starts its delay at child spawn,
+  not at the program's read, so startup ordering and deadline cancellation
+  are separate hypotheses. Instrument entry, enqueue, deadline and delivery
+  before selecting a fix; if startup explains it, synchronize the writer
+  with a program-ready event, retaining the delayed-byte preservation
+  assertion. Reopen before relying on these tests for deadline changes.
+  Require the failure to be explained on the same host and both routes to
+  pass with a wrong cancellation implementation still failing.
+
 ## Modules and libraries
 
 - **Library capacity ceilings that existed for OP-9.**
@@ -3438,6 +3452,18 @@ condition under which it is taken up.
   compilers' native builds, and make the two agree or state the exception.
   Reopen when an executable built for a measurement or a check must match
   the release compiler's byte for byte.
+
+- **Attribute the native corpus stage's macOS budget overrun.**
+  The amendment-A full gate took 214.25 s in `compiler/test-corpus` against
+  its 125 s budget, with 1,729 conformance passes and one listener refused by
+  the sandbox; ten program tests also had loopback binds refused and two
+  deadline reads failed. The change adds nine native-positive cases and
+  twenty-one rejection cases, but their contribution to this overrun is
+  unmeasured. Use the existing phase timing support and slow-case records
+  to separate source checking, native build and execution, then compare
+  unchanged and added cases on the same host before attributing the loss
+  or proposing a budget change. Reopen at the next unrestricted macOS gate;
+  retain the complete corpus and select any budget raise with the owner.
 
 ## firn
 
