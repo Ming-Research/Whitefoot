@@ -1,0 +1,243 @@
+alias Cell = pkg::value::Cell;
+alias Value = pkg::value::Value;
+
+fn run<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64) -> r: Outcome reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let step = Step::Error();
+  match code^.inner[pc] {
+    Move(a: av, b: bv) => {
+      set step = instruction_move::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^);
+    }
+    LoadK(a: av, k: kv) => {
+      set step = instruction_load_k::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, kv: kv^);
+    }
+    LoadKx(a: av, k: kv) => {
+      set step = instruction_load_kx::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, kv: kv^);
+    }
+    LoadBool(a: av, b: bv, skip: skipv) => {
+      set step = instruction_load_bool::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, skipv: skipv^);
+    }
+    LoadNil(a: av, b: bv) => {
+      set step = instruction_load_nil::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^);
+    }
+    GetUpval(a: av, u: uv) => {
+      set step = instruction_get_upval::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, uv: uv^);
+    }
+    SetUpval(a: av, u: uv) => {
+      set step = instruction_set_upval::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, uv: uv^);
+    }
+    GetGlobal(a: av, k: kv) => {
+      set step = instruction_get_global::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, kv: kv^);
+    }
+    SetGlobal(a: av, k: kv) => {
+      set step = instruction_set_global::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, kv: kv^);
+    }
+    GetGlobalX(a: av, k: kv) => {
+      set step = instruction_get_global_wide::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, kv: kv^);
+    }
+    SetGlobalX(a: av, k: kv) => {
+      set step = instruction_set_global_wide::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, kv: kv^);
+    }
+    GetTableR(a: av, t: tv, c: cv) => {
+      set step = instruction_get_table_r::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, tv: tv^, cv: cv^);
+    }
+    GetTableK(a: av, t: tv, k: kv) => {
+      set step = instruction_get_table_k::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, tv: tv^, kv: kv^);
+    }
+    SetTableRR(t: tv, key: keyv, val: valv) => {
+      set step = instruction_set_table_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, tv: tv^, keyv: keyv^, valv: valv^);
+    }
+    SetTableRK(t: tv, key: keyv, val: valv) => {
+      set step = instruction_set_table_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, tv: tv^, keyv: keyv^, valv: valv^);
+    }
+    SetTableKR(t: tv, key: keyv, val: valv) => {
+      set step = instruction_set_table_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, tv: tv^, keyv: keyv^, valv: valv^);
+    }
+    SetTableKK(t: tv, key: keyv, val: valv) => {
+      set step = instruction_set_table_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, tv: tv^, keyv: keyv^, valv: valv^);
+    }
+    NewTable(a: av, asize: asizev, hsize: hsizev) => {
+      set step = instruction_new_table::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, asizev: asizev^, hsizev: hsizev^);
+    }
+    SelfR(a: av, b: bv, c: cv) => {
+      set step = instruction_self_r::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    SelfK(a: av, b: bv, k: kv) => {
+      set step = instruction_self_k::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, kv: kv^);
+    }
+    AddRR(a: av, b: bv, c: cv) => {
+      set step = instruction_add_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    AddRK(a: av, b: bv, c: cv) => {
+      set step = instruction_add_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    AddKR(a: av, b: bv, c: cv) => {
+      set step = instruction_add_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    AddKK(a: av, b: bv, c: cv) => {
+      set step = instruction_add_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    SubRR(a: av, b: bv, c: cv) => {
+      set step = instruction_sub_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    SubRK(a: av, b: bv, c: cv) => {
+      set step = instruction_sub_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    SubKR(a: av, b: bv, c: cv) => {
+      set step = instruction_sub_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    SubKK(a: av, b: bv, c: cv) => {
+      set step = instruction_sub_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    MulRR(a: av, b: bv, c: cv) => {
+      set step = instruction_mul_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    MulRK(a: av, b: bv, c: cv) => {
+      set step = instruction_mul_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    MulKR(a: av, b: bv, c: cv) => {
+      set step = instruction_mul_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    MulKK(a: av, b: bv, c: cv) => {
+      set step = instruction_mul_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    DivRR(a: av, b: bv, c: cv) => {
+      set step = instruction_div_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    DivRK(a: av, b: bv, c: cv) => {
+      set step = instruction_div_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    DivKR(a: av, b: bv, c: cv) => {
+      set step = instruction_div_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    DivKK(a: av, b: bv, c: cv) => {
+      set step = instruction_div_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    ModRR(a: av, b: bv, c: cv) => {
+      set step = instruction_mod_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    ModRK(a: av, b: bv, c: cv) => {
+      set step = instruction_mod_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    ModKR(a: av, b: bv, c: cv) => {
+      set step = instruction_mod_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    ModKK(a: av, b: bv, c: cv) => {
+      set step = instruction_mod_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    PowRR(a: av, b: bv, c: cv) => {
+      set step = instruction_pow_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    PowRK(a: av, b: bv, c: cv) => {
+      set step = instruction_pow_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    PowKR(a: av, b: bv, c: cv) => {
+      set step = instruction_pow_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    PowKK(a: av, b: bv, c: cv) => {
+      set step = instruction_pow_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    Unm(a: av, b: bv) => {
+      set step = instruction_unm::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^);
+    }
+    Not(a: av, b: bv) => {
+      set step = instruction_not::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^);
+    }
+    Len(a: av, b: bv) => {
+      set step = instruction_len::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^);
+    }
+    Concat(a: av, b: bv, c: cv) => {
+      set step = instruction_concat::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    Jmp(target: targetv) => {
+      set step = instruction_jmp::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, targetv: targetv^);
+    }
+    EqJmpRR(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_eq_jmp_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    EqJmpRK(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_eq_jmp_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    EqJmpKR(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_eq_jmp_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    EqJmpKK(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_eq_jmp_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    LtJmpRR(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_lt_jmp_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    LtJmpRK(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_lt_jmp_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    LtJmpKR(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_lt_jmp_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    LtJmpKK(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_lt_jmp_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    LeJmpRR(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_le_jmp_rr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    LeJmpRK(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_le_jmp_rk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    LeJmpKR(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_le_jmp_kr::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    LeJmpKK(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_le_jmp_kk::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    TestJmp(a: av, c: cv, target: targetv) => {
+      set step = instruction_test_jmp::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, cv: cv^, targetv: targetv^);
+    }
+    TestSetJmp(a: av, b: bv, c: cv, target: targetv) => {
+      set step = instruction_test_set_jmp::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^, targetv: targetv^);
+    }
+    Call(a: av, b: bv, c: cv) => {
+      set step = instruction_call::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    TailCall(a: av, b: bv, c: cv) => {
+      set step = instruction_tail_call::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    Return(a: av, b: bv) => {
+      set step = instruction_return::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^);
+    }
+    ForLoop(a: av, target: targetv) => {
+      set step = instruction_for_loop::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, targetv: targetv^);
+    }
+    ForPrep(a: av, target: targetv) => {
+      set step = instruction_for_prep::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, targetv: targetv^);
+    }
+    TForLoop(a: av, c: cv, target: targetv) => {
+      set step = instruction_tfor_loop::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, cv: cv^, targetv: targetv^);
+    }
+    SetList(a: av, b: bv, c: cv) => {
+      set step = instruction_set_list::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^, cv: cv^);
+    }
+    Close(a: av) => {
+      set step = instruction_close::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^);
+    }
+    Closure(a: av, proto: protov) => {
+      set step = instruction_closure::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, protov: protov^);
+    }
+    VarArg(a: av, b: bv) => {
+      set step = instruction_var_arg::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: pc, base: base, kbase: kbase, av: av^, bv: bv^);
+    }
+  }
+  let cursor_result = checked_step(code: code, consts: consts, stack: stack, step: step);
+  match cursor_result {
+    Ok(value: cursor) => {
+      let np = cursor.pc;
+      let nb = cursor.base;
+      let nk = cursor.kbase;
+      return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: np, base: nb, kbase: nk);
+    }
+    Err(error: out) => {
+      return out;
+    }
+  }
+}

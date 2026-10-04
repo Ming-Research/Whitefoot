@@ -2166,6 +2166,23 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **Halo's dispatch arms join before the tail call, and its hot paths are
+  not yet fast.** `lib/halo/vm/dispatch.wf` matches the cell, each arm calls
+  a handler function returning a `Step`, and one shared epilogue makes the
+  self-tail call; this halved the vm module's check time (about 60 s for the
+  package on an M1 Pro) but gives the match-dispatch lowering one shared
+  dispatch point instead of a tail jump per arm. Globals always take the slow
+  executor, and `TODO(number)` coercions and numeric `^` await the number
+  library. Change: once a lowering and a benchmark exist (VM.md P1, P2),
+  measure, then move the epilogue into each arm or inline the handlers, and
+  add fast paths where the census shows them hot. Reopen with the first Halo
+  performance measurement.
+- **Checking Halo's vm module takes about a minute.** The whole lib/halo
+  package checks in roughly 60 s, almost all of it the vm module (about
+  5,000 lines, one match of 73 arms over one function family). Attribute the
+  cost by stage (formation, derivation, certificates, propagation) before
+  restructuring source for the checker's sake. Reopen when a Halo edit-check
+  loop becomes the bottleneck or with the next checker cost work.
 - **Halo's number library and oracle corpus were checked on macOS only.**
   `lib/halo/number` matches Redis 7.0.15's bundled Lua built on macOS
   (research/experiments/halo-number), except that NaN text now follows glibc

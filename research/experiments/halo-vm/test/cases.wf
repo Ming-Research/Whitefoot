@@ -1,0 +1,1306 @@
+alias Value = halo::value::Value;
+alias Cell = halo::value::Cell;
+alias Proto = halo::value::Proto;
+alias Script = halo::value::Script;
+alias Vm = halo::vm::Vm;
+alias Outcome = halo::vm::Outcome;
+alias HostOutcome = halo::vm::HostOutcome;
+alias Host = halo::vm::Host;
+alias num_of = halo::value::num_of;
+alias tab_of = halo::value::tab_of;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias unlimited = halo::vm::unlimited;
+
+const text_0: Array<u8, 3> = "fib";
+
+const text_1: Array<u8, 3> = "key";
+
+const text_2: Array<u8, 6> = "answer";
+
+const text_3: Array<u8, 1> = "n";
+
+const text_4: Array<u8, 7> = "__index";
+
+const text_5: Array<u8, 5> = "__add";
+
+const text_6: Array<u8, 4> = "code";
+
+const text_7: Array<u8, 1> = "#";
+
+const text_8: Array<u8, 4> = "loop";
+
+struct Env {
+  stopped: Bool;
+  mode: u8;
+  calls: u64;
+  last_func: u64;
+  last_len: u64;
+}
+
+fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  set env^.calls = env^.calls +sat 1_u64;
+  set env^.last_func = func;
+  set env^.last_len = stack^.inner.len;
+  if env^.mode == 2_u8 {
+    set vm^.error = Value::Num(n: 99.0_f64);
+    return HostOutcome::Raised();
+  }
+  if func < stack^.inner.len {
+    set stack^.inner[func] = Value::Num(n: 73.0_f64);
+  }
+  if env^.mode == 1_u8 {
+    return HostOutcome::Returned(count: 1_u64);
+  }
+  set env^.stopped = True();
+  return HostOutcome::Stop();
+}
+
+binding TestHost : Host<Env> {
+  call = host_call;
+}
+
+fn put_code(code: &Box<Slots<Cell>>, cell: Cell) -> r: unit writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: cell);
+  }
+  return unit;
+}
+
+fn put_const(consts: &Box<Slots<Value>>, value: Value) -> r: unit writes(consts) {
+  if consts^.inner.len < consts^.inner.cap {
+    place_back(window: &consts^.inner, value: value);
+  }
+  return unit;
+}
+
+fn put_proto(protos: &Box<Slots<Proto>>, start: u32, params: u8, vararg: Bool, ups: u8, maxstack: u8) -> r: unit writes(protos) {
+  let p = Proto(start: start, kbase: 0_u32, nk: 16_u32, numparams: params, is_vararg: vararg, maxstack: maxstack, nups: ups);
+  if protos^.inner.len < protos^.inner.cap {
+    place_back(window: &protos^.inner, value: p);
+  }
+  return unit;
+}
+
+fn pad(consts: &Box<Slots<Value>>) -> r: unit writes(consts) {
+  for (i in 0_u64..256_u64) {
+    let nil = Value::Nil();
+    put_const(consts: consts, value: nil);
+  }
+  return unit;
+}
+
+fn raw(vm: &Vm, t: Value, key: Value, val: Value) -> r: unit writes(vm) {
+  let result = halo::heap::table_set(heap: &vm^.heap, t: t, key: key, val: val);
+  return unit;
+}
+
+fn attach(vm: &Vm, t: Value, mt: Value) -> r: unit writes(vm) {
+  match tab_of(v: t) {
+    Handle(h: th) => {
+      match tab_of(v: mt) {
+        Handle(h: mh) => {
+          let i = cvt::<u32, u64>(th);
+          if i < vm^.heap.tables.inner.len {
+            set vm^.heap.tables.inner[i].payload.meta = mh;
+          }
+        }
+        NoHandle() => {
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return unit;
+}
+
+fn number_is(stack: &Box<Slots<Value>>, slot: u64, expected: f64) -> r: Bool reads(stack) {
+  if slot < stack^.inner.len {
+    match num_of(v: stack^.inner[slot]) {
+      Is(x: value) => {
+        return feq(value, expected);
+      }
+      Not() => {
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_smoke(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom0 = False();
+  let env = Env(stopped: atom0, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let c0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::Return(a: 0_u8, b: 2_u8);
+  put_code(code: &code, cell: c1);
+  let k0 = Value::Num(n: 42.0_f64);
+  put_const(consts: &consts, value: k0);
+  pad(consts: &consts);
+  let atom1 = False();
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: atom1, ups: 0_u8, maxstack: 2_u8);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 1_u64 {
+          return False();
+        }
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 42.0_f64);
+        if bnot(matches0) {
+          return False();
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_fib(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom2 = False();
+  let env = Env(stopped: atom2, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let fibname = halo::heap::intern(heap: &vm.heap, bytes: &text_0[0_u64..3_u64]);
+  let c0 = Cell::Closure(a: 0_u8, proto: 1_u32);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::SetGlobal(a: 0_u8, k: 3_u8);
+  put_code(code: &code, cell: c1);
+  let c2 = Cell::LoadK(a: 1_u8, k: 4_u8);
+  put_code(code: &code, cell: c2);
+  let c3 = Cell::Call(a: 0_u8, b: 2_u8, c: 2_u8);
+  put_code(code: &code, cell: c3);
+  let c4 = Cell::Return(a: 0_u8, b: 2_u8);
+  put_code(code: &code, cell: c4);
+  let c5 = Cell::LtJmpRK(a: 1_u8, b: 0_u8, c: 2_u8, target: 14_u32);
+  put_code(code: &code, cell: c5);
+  let c6 = Cell::GetGlobal(a: 1_u8, k: 3_u8);
+  put_code(code: &code, cell: c6);
+  let c7 = Cell::SubRK(a: 2_u8, b: 0_u8, c: 1_u8);
+  put_code(code: &code, cell: c7);
+  let c8 = Cell::Call(a: 1_u8, b: 2_u8, c: 2_u8);
+  put_code(code: &code, cell: c8);
+  let c9 = Cell::GetGlobal(a: 2_u8, k: 3_u8);
+  put_code(code: &code, cell: c9);
+  let c10 = Cell::SubRK(a: 3_u8, b: 0_u8, c: 2_u8);
+  put_code(code: &code, cell: c10);
+  let c11 = Cell::Call(a: 2_u8, b: 2_u8, c: 2_u8);
+  put_code(code: &code, cell: c11);
+  let c12 = Cell::AddRR(a: 0_u8, b: 1_u8, c: 2_u8);
+  put_code(code: &code, cell: c12);
+  let c13 = Cell::Return(a: 0_u8, b: 2_u8);
+  put_code(code: &code, cell: c13);
+  let c14 = Cell::Return(a: 0_u8, b: 2_u8);
+  put_code(code: &code, cell: c14);
+  let k0 = Value::Num(n: 0.0_f64);
+  put_const(consts: &consts, value: k0);
+  let k1 = Value::Num(n: 1.0_f64);
+  put_const(consts: &consts, value: k1);
+  let k2 = Value::Num(n: 2.0_f64);
+  put_const(consts: &consts, value: k2);
+  let k3 = fibname;
+  put_const(consts: &consts, value: k3);
+  let k4 = Value::Num(n: 20.0_f64);
+  put_const(consts: &consts, value: k4);
+  pad(consts: &consts);
+  let atom3 = False();
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: atom3, ups: 0_u8, maxstack: 3_u8);
+  let atom4 = False();
+  put_proto(protos: &protos, start: 5_u32, params: 1_u8, vararg: atom4, ups: 0_u8, maxstack: 4_u8);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 1_u64 {
+          return False();
+        }
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 6765.0_f64);
+        if bnot(matches0) {
+          return False();
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_numeric_for(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom5 = False();
+  let env = Env(stopped: atom5, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let c0 = Cell::LoadK(a: 0_u8, k: 1_u8);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::LoadK(a: 1_u8, k: 2_u8);
+  put_code(code: &code, cell: c1);
+  let c2 = Cell::LoadK(a: 2_u8, k: 1_u8);
+  put_code(code: &code, cell: c2);
+  let c3 = Cell::LoadK(a: 4_u8, k: 0_u8);
+  put_code(code: &code, cell: c3);
+  let c4 = Cell::ForPrep(a: 0_u8, target: 6_u32);
+  put_code(code: &code, cell: c4);
+  let c5 = Cell::AddRR(a: 4_u8, b: 4_u8, c: 3_u8);
+  put_code(code: &code, cell: c5);
+  let c6 = Cell::ForLoop(a: 0_u8, target: 5_u32);
+  put_code(code: &code, cell: c6);
+  let c7 = Cell::Return(a: 4_u8, b: 2_u8);
+  put_code(code: &code, cell: c7);
+  let k0 = Value::Num(n: 0.0_f64);
+  put_const(consts: &consts, value: k0);
+  let k1 = Value::Num(n: 1.0_f64);
+  put_const(consts: &consts, value: k1);
+  let k2 = Value::Num(n: 1.0e2_f64);
+  put_const(consts: &consts, value: k2);
+  pad(consts: &consts);
+  let atom6 = False();
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: atom6, ups: 0_u8, maxstack: 5_u8);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 1_u64 {
+          return False();
+        }
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 5.05e3_f64);
+        if bnot(matches0) {
+          return False();
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_counter(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom7 = False();
+  let env = Env(stopped: atom7, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let c0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::Closure(a: 1_u8, proto: 1_u32);
+  put_code(code: &code, cell: c1);
+  let c2 = Cell::Move(a: 0_u8, b: 0_u8);
+  put_code(code: &code, cell: c2);
+  let c3 = Cell::Closure(a: 2_u8, proto: 1_u32);
+  put_code(code: &code, cell: c3);
+  let c4 = Cell::Move(a: 0_u8, b: 0_u8);
+  put_code(code: &code, cell: c4);
+  let c5 = Cell::Move(a: 3_u8, b: 1_u8);
+  put_code(code: &code, cell: c5);
+  let c6 = Cell::Call(a: 3_u8, b: 1_u8, c: 2_u8);
+  put_code(code: &code, cell: c6);
+  let c7 = Cell::Close(a: 0_u8);
+  put_code(code: &code, cell: c7);
+  let c8 = Cell::Move(a: 4_u8, b: 2_u8);
+  put_code(code: &code, cell: c8);
+  let c9 = Cell::Call(a: 4_u8, b: 1_u8, c: 2_u8);
+  put_code(code: &code, cell: c9);
+  let c10 = Cell::Return(a: 3_u8, b: 3_u8);
+  put_code(code: &code, cell: c10);
+  let c11 = Cell::GetUpval(a: 0_u8, u: 0_u8);
+  put_code(code: &code, cell: c11);
+  let c12 = Cell::AddRK(a: 0_u8, b: 0_u8, c: 1_u8);
+  put_code(code: &code, cell: c12);
+  let c13 = Cell::SetUpval(a: 0_u8, u: 0_u8);
+  put_code(code: &code, cell: c13);
+  let c14 = Cell::Return(a: 0_u8, b: 2_u8);
+  put_code(code: &code, cell: c14);
+  let k0 = Value::Num(n: 0.0_f64);
+  put_const(consts: &consts, value: k0);
+  let k1 = Value::Num(n: 1.0_f64);
+  put_const(consts: &consts, value: k1);
+  pad(consts: &consts);
+  let atom8 = False();
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: atom8, ups: 0_u8, maxstack: 5_u8);
+  let atom9 = False();
+  put_proto(protos: &protos, start: 11_u32, params: 0_u8, vararg: atom9, ups: 1_u8, maxstack: 2_u8);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 2_u64 {
+          return False();
+        }
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 1.0_f64);
+        if bnot(matches0) {
+          return False();
+        }
+        let matches1 = number_is(stack: &stack, slot: 1_u64, expected: 2.0_f64);
+        if bnot(matches1) {
+          return False();
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_tables(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom10 = False();
+  let env = Env(stopped: atom10, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let key = halo::heap::intern(heap: &vm.heap, bytes: &text_1[0_u64..3_u64]);
+  let c0 = Cell::NewTable(a: 0_u8, asize: 2_u8, hsize: 2_u8);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::SetTableKK(t: 0_u8, key: 0_u8, val: 1_u8);
+  put_code(code: &code, cell: c1);
+  let c2 = Cell::SetTableKK(t: 0_u8, key: 2_u8, val: 3_u8);
+  put_code(code: &code, cell: c2);
+  let c3 = Cell::GetTableK(a: 1_u8, t: 0_u8, k: 0_u8);
+  put_code(code: &code, cell: c3);
+  let c4 = Cell::GetTableK(a: 2_u8, t: 0_u8, k: 2_u8);
+  put_code(code: &code, cell: c4);
+  let c5 = Cell::AddRR(a: 0_u8, b: 1_u8, c: 2_u8);
+  put_code(code: &code, cell: c5);
+  let c6 = Cell::Return(a: 0_u8, b: 2_u8);
+  put_code(code: &code, cell: c6);
+  let k0 = Value::Num(n: 1.0_f64);
+  put_const(consts: &consts, value: k0);
+  let k1 = Value::Num(n: 42.0_f64);
+  put_const(consts: &consts, value: k1);
+  let k2 = key;
+  put_const(consts: &consts, value: k2);
+  let k3 = Value::Num(n: 73.0_f64);
+  put_const(consts: &consts, value: k3);
+  pad(consts: &consts);
+  let atom11 = False();
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: atom11, ups: 0_u8, maxstack: 3_u8);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 1_u64 {
+          return False();
+        }
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 115.0_f64);
+        if bnot(matches0) {
+          return False();
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_meta(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom12 = False();
+  let env = Env(stopped: atom12, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let answer = halo::heap::intern(heap: &vm.heap, bytes: &text_2[0_u64..6_u64]);
+  let nkey = halo::heap::intern(heap: &vm.heap, bytes: &text_3[0_u64..1_u64]);
+  let indexkey = halo::heap::intern(heap: &vm.heap, bytes: &text_4[0_u64..7_u64]);
+  let addkey = halo::heap::intern(heap: &vm.heap, bytes: &text_5[0_u64..5_u64]);
+  let ta = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 4_u32);
+  let tb = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 4_u32);
+  let mt = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 4_u32);
+  let fallback = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 4_u32);
+  let chain = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 4_u32);
+  let chainmt = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 4_u32);
+  let ups = array_filled::<u32, 0>(value: 0_u32);
+  let add = halo::heap::new_closure(heap: &vm.heap, proto: 1_u32, upvals: &ups[0_u64..0_u64]);
+  let atom13 = Value::Num(n: 3.0_f64);
+  raw(vm: &vm, t: ta, key: nkey, val: atom13);
+  let atom14 = Value::Num(n: 5.0_f64);
+  raw(vm: &vm, t: tb, key: nkey, val: atom14);
+  let atom15 = Value::Num(n: 9.0_f64);
+  raw(vm: &vm, t: fallback, key: answer, val: atom15);
+  raw(vm: &vm, t: chainmt, key: indexkey, val: fallback);
+  attach(vm: &vm, t: chain, mt: chainmt);
+  raw(vm: &vm, t: mt, key: indexkey, val: chain);
+  raw(vm: &vm, t: mt, key: addkey, val: add);
+  attach(vm: &vm, t: ta, mt: mt);
+  attach(vm: &vm, t: tb, mt: mt);
+  let c0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::LoadK(a: 1_u8, k: 1_u8);
+  put_code(code: &code, cell: c1);
+  let c2 = Cell::GetTableK(a: 2_u8, t: 0_u8, k: 2_u8);
+  put_code(code: &code, cell: c2);
+  let c3 = Cell::AddRR(a: 3_u8, b: 0_u8, c: 1_u8);
+  put_code(code: &code, cell: c3);
+  let c4 = Cell::AddRR(a: 0_u8, b: 2_u8, c: 3_u8);
+  put_code(code: &code, cell: c4);
+  let c5 = Cell::Return(a: 0_u8, b: 2_u8);
+  put_code(code: &code, cell: c5);
+  let c6 = Cell::GetTableK(a: 2_u8, t: 0_u8, k: 3_u8);
+  put_code(code: &code, cell: c6);
+  let c7 = Cell::GetTableK(a: 3_u8, t: 1_u8, k: 3_u8);
+  put_code(code: &code, cell: c7);
+  let c8 = Cell::AddRR(a: 2_u8, b: 2_u8, c: 3_u8);
+  put_code(code: &code, cell: c8);
+  let c9 = Cell::LoadK(a: 4_u8, k: 4_u8);
+  put_code(code: &code, cell: c9);
+  let c10 = Cell::Move(a: 5_u8, b: 0_u8);
+  put_code(code: &code, cell: c10);
+  let c11 = Cell::Call(a: 4_u8, b: 2_u8, c: 1_u8);
+  put_code(code: &code, cell: c11);
+  let c12 = Cell::LoadK(a: 4_u8, k: 4_u8);
+  put_code(code: &code, cell: c12);
+  let c13 = Cell::Move(a: 5_u8, b: 0_u8);
+  put_code(code: &code, cell: c13);
+  let c14 = Cell::Call(a: 4_u8, b: 2_u8, c: 1_u8);
+  put_code(code: &code, cell: c14);
+  let c15 = Cell::Return(a: 2_u8, b: 2_u8);
+  put_code(code: &code, cell: c15);
+  let k0 = ta;
+  put_const(consts: &consts, value: k0);
+  let k1 = tb;
+  put_const(consts: &consts, value: k1);
+  let k2 = answer;
+  put_const(consts: &consts, value: k2);
+  let k3 = nkey;
+  put_const(consts: &consts, value: k3);
+  let k4 = Value::Builtin(id: 3_u32);
+  put_const(consts: &consts, value: k4);
+  pad(consts: &consts);
+  let atom16 = False();
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: atom16, ups: 0_u8, maxstack: 4_u8);
+  let atom17 = False();
+  put_proto(protos: &protos, start: 6_u32, params: 2_u8, vararg: atom17, ups: 0_u8, maxstack: 6_u8);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 1_u64 {
+          return False();
+        }
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 17.0_f64);
+        if bnot(matches0) {
+          return False();
+        }
+        if budget != unlimited {
+          if suspensions == 0_u64 {
+            return False();
+          }
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_protected_error(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom18 = False();
+  let env = Env(stopped: atom18, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let codekey = halo::heap::intern(heap: &vm.heap, bytes: &text_6[0_u64..4_u64]);
+  let err1 = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 2_u32);
+  let err2 = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 2_u32);
+  let atom19 = Value::Num(n: 1.0_f64);
+  raw(vm: &vm, t: err1, key: codekey, val: atom19);
+  let atom20 = Value::Num(n: 2.0_f64);
+  raw(vm: &vm, t: err2, key: codekey, val: atom20);
+  let c0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::Closure(a: 1_u8, proto: 1_u32);
+  put_code(code: &code, cell: c1);
+  let c2 = Cell::Call(a: 0_u8, b: 2_u8, c: 3_u8);
+  put_code(code: &code, cell: c2);
+  let c3 = Cell::Move(a: 1_u8, b: 1_u8);
+  put_code(code: &code, cell: c3);
+  let c4 = Cell::LoadK(a: 2_u8, k: 0_u8);
+  put_code(code: &code, cell: c4);
+  let c5 = Cell::Closure(a: 3_u8, proto: 2_u32);
+  put_code(code: &code, cell: c5);
+  let c6 = Cell::Call(a: 2_u8, b: 2_u8, c: 3_u8);
+  put_code(code: &code, cell: c6);
+  let c7 = Cell::GetTableK(a: 1_u8, t: 1_u8, k: 4_u8);
+  put_code(code: &code, cell: c7);
+  let c8 = Cell::GetTableK(a: 3_u8, t: 3_u8, k: 4_u8);
+  put_code(code: &code, cell: c8);
+  let c9 = Cell::AddRR(a: 1_u8, b: 1_u8, c: 3_u8);
+  put_code(code: &code, cell: c9);
+  let c10 = Cell::Return(a: 0_u8, b: 4_u8);
+  put_code(code: &code, cell: c10);
+  let c11 = Cell::LoadK(a: 0_u8, k: 1_u8);
+  put_code(code: &code, cell: c11);
+  let c12 = Cell::LoadK(a: 1_u8, k: 2_u8);
+  put_code(code: &code, cell: c12);
+  let c13 = Cell::Call(a: 0_u8, b: 2_u8, c: 1_u8);
+  put_code(code: &code, cell: c13);
+  let c14 = Cell::Return(a: 0_u8, b: 1_u8);
+  put_code(code: &code, cell: c14);
+  let c15 = Cell::Closure(a: 0_u8, proto: 3_u32);
+  put_code(code: &code, cell: c15);
+  let c16 = Cell::Call(a: 0_u8, b: 1_u8, c: 1_u8);
+  put_code(code: &code, cell: c16);
+  let c17 = Cell::Return(a: 0_u8, b: 1_u8);
+  put_code(code: &code, cell: c17);
+  let c18 = Cell::LoadK(a: 0_u8, k: 1_u8);
+  put_code(code: &code, cell: c18);
+  let c19 = Cell::LoadK(a: 1_u8, k: 3_u8);
+  put_code(code: &code, cell: c19);
+  let c20 = Cell::Call(a: 0_u8, b: 2_u8, c: 1_u8);
+  put_code(code: &code, cell: c20);
+  let c21 = Cell::Return(a: 0_u8, b: 1_u8);
+  put_code(code: &code, cell: c21);
+  let k0 = Value::Builtin(id: 0_u32);
+  put_const(consts: &consts, value: k0);
+  let k1 = Value::Builtin(id: 1_u32);
+  put_const(consts: &consts, value: k1);
+  let k2 = err1;
+  put_const(consts: &consts, value: k2);
+  let k3 = err2;
+  put_const(consts: &consts, value: k3);
+  let k4 = codekey;
+  put_const(consts: &consts, value: k4);
+  pad(consts: &consts);
+  let atom21 = False();
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: atom21, ups: 0_u8, maxstack: 5_u8);
+  let atom22 = False();
+  put_proto(protos: &protos, start: 11_u32, params: 0_u8, vararg: atom22, ups: 0_u8, maxstack: 2_u8);
+  let atom23 = False();
+  put_proto(protos: &protos, start: 15_u32, params: 0_u8, vararg: atom23, ups: 0_u8, maxstack: 2_u8);
+  let atom24 = False();
+  put_proto(protos: &protos, start: 18_u32, params: 0_u8, vararg: atom24, ups: 0_u8, maxstack: 2_u8);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 3_u64 {
+          return False();
+        }
+        let matches1 = number_is(stack: &stack, slot: 1_u64, expected: 3.0_f64);
+        if bnot(matches1) {
+          return False();
+        }
+        if stack.inner.len > 0_u64 {
+          match stack.inner[0_u64] {
+            False() => {
+            }
+            Nil() => {
+              return False();
+            }
+            True() => {
+              return False();
+            }
+            Num(..) => {
+              return False();
+            }
+            Str(..) => {
+              return False();
+            }
+            Tab(..) => {
+              return False();
+            }
+            Fun(..) => {
+              return False();
+            }
+            Builtin(..) => {
+              return False();
+            }
+          }
+        }
+        let second_false = false_is(stack: &stack, slot: 2_u64);
+        if bnot(second_false) {
+          return False();
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_vararg(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom25 = False();
+  let env = Env(stopped: atom25, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let hashkey = halo::heap::intern(heap: &vm.heap, bytes: &text_7[0_u64..1_u64]);
+  let c0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::LoadK(a: 1_u8, k: 1_u8);
+  put_code(code: &code, cell: c1);
+  let c2 = Cell::VarArg(a: 2_u8, b: 0_u8);
+  put_code(code: &code, cell: c2);
+  let c3 = Cell::Call(a: 0_u8, b: 0_u8, c: 2_u8);
+  put_code(code: &code, cell: c3);
+  let c4 = Cell::Return(a: 0_u8, b: 2_u8);
+  put_code(code: &code, cell: c4);
+  let k0 = Value::Builtin(id: 2_u32);
+  put_const(consts: &consts, value: k0);
+  let k1 = hashkey;
+  put_const(consts: &consts, value: k1);
+  pad(consts: &consts);
+  let atom26 = True();
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: atom26, ups: 0_u8, maxstack: 6_u8);
+  for (i in 1_u64..5_u64) {
+    if i < stack.inner.len {
+      let x = cvt::<u64, f64>(i);
+      set stack.inner[i] = Value::Num(n: x);
+    }
+  }
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 4_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 1_u64 {
+          return False();
+        }
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 4.0_f64);
+        if bnot(matches0) {
+          return False();
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_tail(budget: u64) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let atom27 = False();
+  let env = Env(stopped: atom27, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 128_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 8_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let loopname = halo::heap::intern(heap: &vm.heap, bytes: &text_8[0_u64..4_u64]);
+  let c0 = Cell::LtJmpRK(a: 1_u8, b: 0_u8, c: 1_u8, target: 7_u32);
+  put_code(code: &code, cell: c0);
+  let c1 = Cell::GetGlobal(a: 2_u8, k: 2_u8);
+  put_code(code: &code, cell: c1);
+  let c2 = Cell::SubRK(a: 3_u8, b: 0_u8, c: 1_u8);
+  put_code(code: &code, cell: c2);
+  let c3 = Cell::AddRK(a: 4_u8, b: 1_u8, c: 1_u8);
+  put_code(code: &code, cell: c3);
+  let c4 = Cell::TailCall(a: 2_u8, b: 3_u8, c: 0_u8);
+  put_code(code: &code, cell: c4);
+  let c5 = Cell::Return(a: 2_u8, b: 0_u8);
+  put_code(code: &code, cell: c5);
+  let c6 = Cell::Return(a: 1_u8, b: 2_u8);
+  put_code(code: &code, cell: c6);
+  let c7 = Cell::Return(a: 1_u8, b: 2_u8);
+  put_code(code: &code, cell: c7);
+  let k0 = Value::Num(n: 0.0_f64);
+  put_const(consts: &consts, value: k0);
+  let k1 = Value::Num(n: 1.0_f64);
+  put_const(consts: &consts, value: k1);
+  let k2 = loopname;
+  put_const(consts: &consts, value: k2);
+  pad(consts: &consts);
+  let atom28 = False();
+  put_proto(protos: &protos, start: 0_u32, params: 2_u8, vararg: atom28, ups: 0_u8, maxstack: 5_u8);
+  if stack.inner.len >= 3_u64 {
+    set stack.inner[1_u64] = Value::Num(n: 1.0e5_f64);
+    set stack.inner[2_u64] = Value::Num(n: 0.0_f64);
+  }
+  let ups = array_filled::<u32, 0>(value: 0_u32);
+  let loopfun = halo::heap::new_closure(heap: &vm.heap, proto: 0_u32, upvals: &ups[0_u64..0_u64]);
+  let globals = Value::Tab(h: vm.globals);
+  raw(vm: &vm, t: globals, key: loopname, val: loopfun);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 2_u64, budget: budget);
+  let suspensions = 0_u64;
+  loop {
+    match out {
+      Done(count: got) => {
+        if got != 1_u64 {
+          return False();
+        }
+        let matches0 = number_is(stack: &stack, slot: 0_u64, expected: 1.0e5_f64);
+        if bnot(matches0) {
+          return False();
+        }
+        if stack.inner.len != 1024_u64 {
+          return False();
+        }
+        if vm.frames.inner.len != 0_u64 {
+          return False();
+        }
+        if budget != unlimited {
+          if suspensions == 0_u64 {
+            return False();
+          }
+        }
+        return True();
+      }
+      Error() => {
+        return False();
+      }
+      HostStopped() => {
+        return False();
+      }
+      Budget() => {
+        set suspensions = suspensions +sat 1_u64;
+        set out = halo::vm::resume::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+      }
+    }
+  }
+  return False();
+}
+
+fn smoke() -> r: ExitStatus pure {
+  let ok = fixture_smoke(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn fib() -> r: ExitStatus pure {
+  let ok = fixture_fib(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn numeric_for() -> r: ExitStatus pure {
+  let ok = fixture_numeric_for(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn counter() -> r: ExitStatus pure {
+  let ok = fixture_counter(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn tables() -> r: ExitStatus pure {
+  let ok = fixture_tables(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn meta() -> r: ExitStatus pure {
+  let ok = fixture_meta(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn protected_error() -> r: ExitStatus pure {
+  let ok = fixture_protected_error(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn vararg() -> r: ExitStatus pure {
+  let ok = fixture_vararg(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn tail() -> r: ExitStatus pure {
+  let ok = fixture_tail(budget: unlimited);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn budget_one() -> r: ExitStatus pure {
+  let ok = fixture_tail(budget: 1_u64);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn budget_seven() -> r: ExitStatus pure {
+  let ok = fixture_tail(budget: 7_u64);
+  if ok {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+
+fn suite() -> r: ExitStatus pure {
+  let case1 = fixture_smoke(budget: unlimited);
+  if bnot(case1) {
+    return exit_status(code: 1_u8);
+  }
+  let case2 = fixture_fib(budget: unlimited);
+  if bnot(case2) {
+    return exit_status(code: 2_u8);
+  }
+  let case3 = fixture_numeric_for(budget: unlimited);
+  if bnot(case3) {
+    return exit_status(code: 3_u8);
+  }
+  let case4 = fixture_counter(budget: unlimited);
+  if bnot(case4) {
+    return exit_status(code: 4_u8);
+  }
+  let case5 = fixture_tables(budget: unlimited);
+  if bnot(case5) {
+    return exit_status(code: 5_u8);
+  }
+  let case6 = fixture_meta(budget: unlimited);
+  if bnot(case6) {
+    return exit_status(code: 6_u8);
+  }
+  let meta_resumed = fixture_meta(budget: 1_u64);
+  if bnot(meta_resumed) {
+    return exit_status(code: 12_u8);
+  }
+  let case7 = fixture_protected_error(budget: unlimited);
+  if bnot(case7) {
+    return exit_status(code: 7_u8);
+  }
+  let case8 = fixture_vararg(budget: unlimited);
+  if bnot(case8) {
+    return exit_status(code: 8_u8);
+  }
+  let case9 = fixture_tail(budget: unlimited);
+  if bnot(case9) {
+    return exit_status(code: 9_u8);
+  }
+  let case10 = fixture_tail(budget: 1_u64);
+  if bnot(case10) {
+    return exit_status(code: 10_u8);
+  }
+  let case11 = fixture_tail(budget: 7_u64);
+  if bnot(case11) {
+    return exit_status(code: 11_u8);
+  }
+  let no = False();
+  let yes = True();
+  let host_return = fixture_host(mode: 1_u8, metamethod: no);
+  if bnot(host_return) {
+    return exit_status(code: 13_u8);
+  }
+  let host_error = fixture_host(mode: 2_u8, metamethod: no);
+  if bnot(host_error) {
+    return exit_status(code: 14_u8);
+  }
+  let host_stop = fixture_host(mode: 0_u8, metamethod: no);
+  if bnot(host_stop) {
+    return exit_status(code: 15_u8);
+  }
+  let meta_stop = fixture_host(mode: 0_u8, metamethod: yes);
+  if bnot(meta_stop) {
+    return exit_status(code: 16_u8);
+  }
+  let level0 = fixture_error_level(level: 0_u8, callback: 0_u8);
+  if bnot(level0) {
+    return exit_status(code: 17_u8);
+  }
+  let level1 = fixture_error_level(level: 1_u8, callback: 0_u8);
+  if bnot(level1) {
+    return exit_status(code: 18_u8);
+  }
+  let level2 = fixture_error_level(level: 2_u8, callback: 0_u8);
+  if bnot(level2) {
+    return exit_status(code: 19_u8);
+  }
+  let level3 = fixture_error_level(level: 3_u8, callback: 0_u8);
+  if bnot(level3) {
+    return exit_status(code: 20_u8);
+  }
+  let callback_level = fixture_error_level(level: 2_u8, callback: 1_u8);
+  if bnot(callback_level) {
+    return exit_status(code: 21_u8);
+  }
+  let concat_level = fixture_error_level(level: 2_u8, callback: 2_u8);
+  if bnot(concat_level) {
+    return exit_status(code: 22_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+
+fn false_is(stack: &Box<Slots<Value>>, slot: u64) -> r: Bool reads(stack) {
+  if slot < stack^.inner.len {
+    match stack^.inner[slot] {
+      False() => {
+        return True();
+      }
+      Nil() => {
+      }
+      True() => {
+      }
+      Num(..) => {
+      }
+      Str(..) => {
+      }
+      Tab(..) => {
+      }
+      Fun(..) => {
+      }
+      Builtin(..) => {
+      }
+    }
+  }
+  return False();
+}
+
+fn fixture_host(mode: u8, metamethod: Bool) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 256_u64);
+  let no = False();
+  let env = Env(stopped: no, mode: mode, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 8_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 1_u64);
+  let lines = box_slots_new::<u32>(capacity: 0_u64);
+  let native = Value::Builtin(id: 4096_u32);
+  if metamethod {
+    let mt = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 2_u32);
+    let table = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 0_u32);
+    let name = halo::heap::intern(heap: &vm.heap, bytes: &text_5[0_u64..5_u64]);
+    raw(vm: &vm, t: mt, key: name, val: native);
+    attach(vm: &vm, t: table, mt: mt);
+    put_const(consts: &consts, value: table);
+    let cell0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+    put_code(code: &code, cell: cell0);
+    let cell1 = Cell::AddRR(a: 1_u8, b: 0_u8, c: 0_u8);
+    put_code(code: &code, cell: cell1);
+    let cell2 = Cell::Return(a: 1_u8, b: 2_u8);
+    put_code(code: &code, cell: cell2);
+  } else {
+    put_const(consts: &consts, value: native);
+    let cell0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+    put_code(code: &code, cell: cell0);
+    let cell1 = Cell::Call(a: 0_u8, b: 1_u8, c: 2_u8);
+    put_code(code: &code, cell: cell1);
+    let cell2 = Cell::Return(a: 0_u8, b: 2_u8);
+    put_code(code: &code, cell: cell2);
+  }
+  pad(consts: &consts);
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: no, ups: 0_u8, maxstack: 4_u8);
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let result = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: unlimited);
+  if env.calls != 1_u64 {
+    return False();
+  }
+  match result {
+    Done(count: total) => {
+      if mode != 1_u8 {
+        return False();
+      }
+      if total != 1_u64 {
+        return False();
+      }
+      return number_is(stack: &stack, slot: 0_u64, expected: 73.0_f64);
+    }
+    Error() => {
+      if mode != 2_u8 {
+        return False();
+      }
+      match num_of(v: vm.error) {
+        Is(x: number) => {
+          return feq(number, 99.0_f64);
+        }
+        Not() => {
+          return False();
+        }
+      }
+    }
+    Budget() => {
+      return False();
+    }
+    HostStopped() => {
+      if mode != 0_u8 {
+        return False();
+      }
+      if stack.inner.len != env.last_len {
+        return False();
+      }
+      if bnot(env.stopped) {
+        return False();
+      }
+      return number_is(stack: &stack, slot: env.last_func, expected: 73.0_f64);
+    }
+  }
+}
+
+const error_bare: Array<u8, 4> = "oops";
+
+const error_child: Array<u8, 19> = "user_script:2: oops";
+
+const error_parent: Array<u8, 19> = "user_script:3: oops";
+
+const error_concat: Array<u8, 8> = "__concat";
+
+fn fixture_error_level(level: u8, callback: u8) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let no = False();
+  let env = Env(stopped: no, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 16_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 3_u64);
+  let lines = box_slots_new::<u32>(capacity: 16_u64);
+  let msg = halo::heap::intern(heap: &vm.heap, bytes: &error_bare[0_u64..4_u64]);
+  let expected = msg;
+  let local_level = level == 1_u8;
+  let is_callback = callback > 0_u8;
+  let callback_start = 7_u32;
+  if callback == 2_u8 {
+    set callback_start = 8_u32;
+  }
+  if bor(local_level, is_callback) {
+    set expected = halo::heap::intern(heap: &vm.heap, bytes: &error_child[0_u64..19_u64]);
+  }
+  if level == 3_u8 {
+    set expected = halo::heap::intern(heap: &vm.heap, bytes: &error_parent[0_u64..19_u64]);
+  }
+  let pcall_value = Value::Builtin(id: 0_u32);
+  let error_value = Value::Builtin(id: 1_u32);
+  let number = cvt::<u8, f64>(level);
+  let level_value = Value::Num(n: number);
+  put_const(consts: &consts, value: pcall_value);
+  put_const(consts: &consts, value: error_value);
+  put_const(consts: &consts, value: msg);
+  put_const(consts: &consts, value: level_value);
+  if is_callback {
+    let table = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 2_u32);
+    let meta = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 2_u32);
+    let upvals = array_filled::<u32, 0>(value: 0_u32);
+    let handler = halo::heap::new_closure(heap: &vm.heap, proto: 2_u32, upvals: &upvals[0_u64..0_u64]);
+    let key = halo::heap::intern(heap: &vm.heap, bytes: &text_5[0_u64..5_u64]);
+    if callback == 2_u8 {
+      set key = halo::heap::intern(heap: &vm.heap, bytes: &error_concat[0_u64..8_u64]);
+    }
+    raw(vm: &vm, t: meta, key: key, val: handler);
+    attach(vm: &vm, t: table, mt: meta);
+    put_const(consts: &consts, value: table);
+  }
+  pad(consts: &consts);
+  let c0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+  let c1 = Cell::Closure(a: 1_u8, proto: 1_u32);
+  let c2 = Cell::Call(a: 0_u8, b: 2_u8, c: 3_u8);
+  let c3 = Cell::Return(a: 0_u8, b: 3_u8);
+  let c4 = Cell::LoadK(a: 0_u8, k: 1_u8);
+  let c5 = Cell::LoadK(a: 1_u8, k: 2_u8);
+  let c6 = Cell::LoadK(a: 2_u8, k: 3_u8);
+  let c7 = Cell::Call(a: 0_u8, b: 3_u8, c: 1_u8);
+  let c8 = Cell::Return(a: 0_u8, b: 1_u8);
+  put_code(code: &code, cell: c0);
+  put_code(code: &code, cell: c1);
+  put_code(code: &code, cell: c2);
+  put_code(code: &code, cell: c3);
+  if is_callback {
+    let m4 = Cell::LoadK(a: 0_u8, k: 4_u8);
+    let m5 = Cell::AddRR(a: 2_u8, b: 0_u8, c: 0_u8);
+    let m6 = Cell::Return(a: 2_u8, b: 2_u8);
+    put_code(code: &code, cell: m4);
+    if callback == 2_u8 {
+      let load = Cell::LoadK(a: 1_u8, k: 4_u8);
+      put_code(code: &code, cell: load);
+      set m5 = Cell::Concat(a: 2_u8, b: 0_u8, c: 1_u8);
+    }
+    put_code(code: &code, cell: m5);
+    put_code(code: &code, cell: m6);
+  }
+  put_code(code: &code, cell: c4);
+  put_code(code: &code, cell: c5);
+  put_code(code: &code, cell: c6);
+  put_code(code: &code, cell: c7);
+  put_code(code: &code, cell: c8);
+  for (i in 0_u64..code.inner.len) {
+    if lines.inner.len < lines.inner.cap {
+      let line = 2_u32;
+      if i < 4_u64 {
+        set line = 3_u32;
+      } else if is_callback {
+        let handler_start = cvt::<u32, u64>(callback_start);
+        if i >= handler_start {
+          set line = 4_u32;
+        } else if callback == 2_u8 {
+          if i < 6_u64 {
+            set line = 1_u32;
+          }
+        }
+      }
+      place_back(window: &lines.inner, value: line);
+    }
+  }
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: no, ups: 0_u8, maxstack: 2_u8);
+  put_proto(protos: &protos, start: 4_u32, params: 0_u8, vararg: no, ups: 0_u8, maxstack: 3_u8);
+  if is_callback {
+    put_proto(protos: &protos, start: callback_start, params: 2_u8, vararg: no, ups: 0_u8, maxstack: 3_u8);
+  }
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: unlimited);
+  match out {
+    Done(count: got) => {
+      if got == 2_u64 {
+        let failed = false_is(stack: &stack, slot: 0_u64);
+        if failed {
+          if stack.inner.len > 1_u64 {
+            match halo::value::str_of(v: stack.inner[1_u64]) {
+              Handle(h: actual) => {
+                match halo::value::str_of(v: expected) {
+                  Handle(h: wanted) => {
+                    return actual == wanted;
+                  }
+                  NoHandle() => {
+                  }
+                }
+              }
+              NoHandle() => {
+              }
+            }
+          }
+        }
+      }
+    }
+    Error() => {
+    }
+    Budget() => {
+    }
+    HostStopped() => {
+    }
+  }
+  return False();
+}

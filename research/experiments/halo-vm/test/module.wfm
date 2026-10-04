@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+
+public fn smoke() -> r: ExitStatus pure doc "Independent Lua oracle fixture: smoke.";
+
+public fn fib() -> r: ExitStatus pure doc "Independent Lua oracle fixture: fib.";
+
+public fn numeric_for() -> r: ExitStatus pure doc "Independent Lua oracle fixture: numeric_for.";
+
+public fn counter() -> r: ExitStatus pure doc "Independent Lua oracle fixture: counter.";
+
+public fn tables() -> r: ExitStatus pure doc "Independent Lua oracle fixture: tables.";
+
+public fn meta() -> r: ExitStatus pure doc "Independent Lua oracle fixture: meta.";
+
+public fn protected_error() -> r: ExitStatus pure doc "Independent Lua oracle fixture: protected_error.";
+
+public fn vararg() -> r: ExitStatus pure doc "Independent Lua oracle fixture: vararg.";
+
+public fn tail() -> r: ExitStatus pure doc "Independent Lua oracle fixture: tail.";
+
+public fn budget_one() -> r: ExitStatus pure doc "Tail loop with resumptions under budget 1.";
+
+public fn budget_seven() -> r: ExitStatus pure doc "Tail loop with resumptions under budget 7.";
+
+public fn suite() -> r: ExitStatus pure doc "Runs every dispatch fixture with independent expected values.";
