@@ -2637,11 +2637,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     let emission_argument_0 = invalid_tag_label(block);
 
                     writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
+                    // Every value of an enum type carries one of its declared
+                    // tags, so no execution reaches this default
+                    // (compiler/backend-facts).
                     self.output.open_block(emission_argument_0.to_string());
-                    {
-                        self.output.symbol("abort");
-                        write!(self.output, "  call void @abort()\n  unreachable\n")
-                    }?;
+                    writeln!(self.output, "  unreachable")?;
                     Ok::<_, BackendFailure>(())
                 }
             }

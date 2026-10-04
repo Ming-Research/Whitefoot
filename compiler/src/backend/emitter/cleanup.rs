@@ -1095,9 +1095,9 @@ fn emit_enum_cleanup_body(
         output.push_str("  br label %done\n");
     }
 
-    output.symbol("abort");
+    // Every enum value carries a declared tag (compiler/backend-facts).
     output.open_block("invalid".to_owned());
-    output.instructions("  call void @abort()\n  unreachable\n", &["abort"]);
+    output.push_str("  unreachable\n");
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     Ok(())

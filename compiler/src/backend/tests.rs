@@ -1077,7 +1077,19 @@ fn main() -> status: std::process::ExitStatus pure {
             .expect("each selected payload field has a destination");
         initialized(body, &compact, tag, &[(address, field_type)]);
     }
-    assert!(llvm.contains("call void @abort()"));
+    // compiler/backend-facts: a match's default is unreachable, since every
+    // enum value carries a declared tag.
+    let defaults: Vec<&str> = llvm
+        .lines()
+        .zip(llvm.lines().skip(1))
+        .filter(|(label, _)| label.starts_with("invalid.tag.b"))
+        .map(|(_, body)| body.trim())
+        .collect();
+    assert!(!defaults.is_empty(), "{llvm}");
+    assert!(
+        defaults.iter().all(|body| *body == "unreachable"),
+        "{defaults:?}"
+    );
     assert!(!llvm.contains(&format!("{} = type", nominal_type("Flag"))));
     let output = compile_and_run(&llvm);
     assert!(output.status.success(), "{output:?}");
