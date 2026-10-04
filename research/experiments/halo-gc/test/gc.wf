@@ -1,0 +1,136 @@
+alias Value = halo::value::Value;
+alias Heap = halo::heap::Heap;
+alias exit_status = std::process::exit_status;
+alias ExitStatus = std::process::ExitStatus;
+
+const s1_bytes: Array<u8, 2> = "s1";
+
+const s2_bytes: Array<u8, 2> = "s2";
+
+fn live_table(heap: &Heap, v: Value) -> r: Bool reads(heap) {
+  doc "Whether a table value names a live cell.";
+  match v {
+    Tab(h: hv) => {
+      let i = cvt::<u32, u64>(hv);
+      if i < heap^.tables.inner.len {
+        return heap^.tables.inner[i].live;
+      }
+      return False();
+    }
+    Nil() => {
+      return False();
+    }
+    False() => {
+      return False();
+    }
+    True() => {
+      return False();
+    }
+    Num(n: x) => {
+      return False();
+    }
+    Str(h: hv) => {
+      return False();
+    }
+    Fun(h: hv) => {
+      return False();
+    }
+    Builtin(id: bid) => {
+      return False();
+    }
+  }
+}
+
+fn handle_of(v: Value) -> r: u64 pure {
+  doc "A string's handle, or a value no handle takes.";
+  match halo::value::str_of(v: v) {
+    Handle(h: hv) => {
+      return cvt::<u32, u64>(hv);
+    }
+    NoHandle() => {
+      return 18446744073709551615_u64;
+    }
+  }
+}
+
+fn scenario(rooted: Bool) -> r: u64 pure {
+  doc "Builds A[1] = B (array part), A[0.5] = s1 (a node value) and A[F] = true (a node key) reachable from A, C alone, D <-> E a cycle, s2 alone; collects with A as the only root when rooted; returns how many cells were freed, or a large code on a failed check.";
+  let heap = halo::heap::heap_new(limit: 0_u64);
+  let a = halo::heap::new_table(heap: &heap, asize: 0_u32, hsize: 0_u32);
+  let b = halo::heap::new_table(heap: &heap, asize: 0_u32, hsize: 0_u32);
+  let c = halo::heap::new_table(heap: &heap, asize: 0_u32, hsize: 0_u32);
+  let d = halo::heap::new_table(heap: &heap, asize: 0_u32, hsize: 0_u32);
+  let e = halo::heap::new_table(heap: &heap, asize: 0_u32, hsize: 0_u32);
+  let s1 = halo::heap::intern(heap: &heap, bytes: &s1_bytes[0_u64..2_u64]);
+  let s2 = halo::heap::intern(heap: &heap, bytes: &s2_bytes[0_u64..2_u64]);
+  let f = halo::heap::new_table(heap: &heap, asize: 0_u32, hsize: 0_u32);
+  let one = Value::Num(n: 1.0_f64);
+  let half = Value::Num(n: 0.5_f64);
+  let yes = Value::True();
+  let r1 = halo::heap::table_set(heap: &heap, t: a, key: one, val: b);
+  let r2 = halo::heap::table_set(heap: &heap, t: a, key: half, val: s1);
+  let r5 = halo::heap::table_set(heap: &heap, t: a, key: f, val: yes);
+  let r3 = halo::heap::table_set(heap: &heap, t: d, key: one, val: e);
+  let r4 = halo::heap::table_set(heap: &heap, t: e, key: one, val: d);
+  halo::heap::gc_begin(heap: &heap);
+  if rooted {
+    halo::heap::gc_mark(heap: &heap, v: a);
+  }
+  halo::heap::gc_propagate(heap: &heap);
+  let freed = halo::heap::gc_sweep(heap: &heap);
+  if rooted {
+    let la = live_table(heap: &heap, v: a);
+    let lb = live_table(heap: &heap, v: b);
+    let lc = live_table(heap: &heap, v: c);
+    let ld = live_table(heap: &heap, v: d);
+    let lf = live_table(heap: &heap, v: f);
+    if lf {
+    } else {
+      return 106_u64;
+    }
+    if la {
+    } else {
+      return 101_u64;
+    }
+    if lb {
+    } else {
+      return 102_u64;
+    }
+    if lc {
+      return 103_u64;
+    }
+    if ld {
+      return 104_u64;
+    }
+    let again = halo::heap::intern(heap: &heap, bytes: &s1_bytes[0_u64..2_u64]);
+    let ha = handle_of(v: again);
+    let h1 = handle_of(v: s1);
+    if ha != h1 {
+      return 105_u64;
+    }
+  }
+  return freed;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Rooted: C, D, E and s2 are freed (4); unrooted: all eight cells are freed.";
+  let yes = True();
+  let no = False();
+  let rooted = scenario(rooted: yes);
+  if rooted != 4_u64 {
+    if rooted > 100_u64 {
+      let small = rooted -wrap 100_u64;
+      let code = 99_u8;
+      if small < 100_u64 {
+        set code = cvt::<u64, u8>(small);
+      }
+      return exit_status(code: code);
+    }
+    return exit_status(code: 20_u8);
+  }
+  let bare = scenario(rooted: no);
+  if bare != 8_u64 {
+    return exit_status(code: 30_u8);
+  }
+  return exit_status(code: 0_u8);
+}

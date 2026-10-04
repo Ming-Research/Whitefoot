@@ -1,0 +1,274 @@
+alias Value = pkg::value::Value;
+
+fn gc_begin(heap: &Heap) -> r: unit writes(heap.epoch) {
+  doc "A mark equal to the epoch means reached in this collection; new cells carry mark zero, which no epoch takes.";
+  if heap^.epoch == 4294967295_u32 {
+    set heap^.epoch = 1_u32;
+  } else {
+    set heap^.epoch = heap^.epoch + 1_u32;
+  }
+  return unit;
+}
+
+fn gray_push(heap: &Heap, v: Value) -> r: unit writes(heap.gray) {
+  doc "Pushes onto the gray stack, doubling its capacity when full.";
+  let n = heap^.gray.inner.len;
+  if n >= heap^.gray.inner.cap {
+    let capacity = 64_u64;
+    if n >= 64_u64 {
+      if n <= 9223372036854775807_u64 {
+        set capacity = n * 2_u64;
+      } else {
+        return unit;
+      }
+    }
+    if capacity >= heap^.gray.inner.cap {
+      grow(cell: &heap^.gray, capacity: capacity);
+    }
+  }
+  if heap^.gray.inner.len < heap^.gray.inner.cap {
+    place_back(window: &heap^.gray.inner, value: v);
+  }
+  return unit;
+}
+
+fn gc_mark(heap: &Heap, v: Value) -> r: unit writes(heap) {
+  doc "Strings have no references; tables and closures are gray until propagated.";
+  let epoch = heap^.epoch;
+  match v {
+    Str(h: hv) => {
+      let i = cvt::<u32, u64>(hv);
+      if i < heap^.strings.inner.len {
+        if heap^.strings.inner[i].live {
+          set heap^.strings.inner[i].mark = epoch;
+        }
+      }
+    }
+    Tab(h: hv) => {
+      let i = cvt::<u32, u64>(hv);
+      if i < heap^.tables.inner.len {
+        if heap^.tables.inner[i].live {
+          if heap^.tables.inner[i].mark != epoch {
+            set heap^.tables.inner[i].mark = epoch;
+            gray_push(heap: heap, v: v);
+          }
+        }
+      }
+    }
+    Fun(h: hv) => {
+      let i = cvt::<u32, u64>(hv);
+      if i < heap^.closures.inner.len {
+        if heap^.closures.inner[i].live {
+          if heap^.closures.inner[i].mark != epoch {
+            set heap^.closures.inner[i].mark = epoch;
+            gray_push(heap: heap, v: v);
+          }
+        }
+      }
+    }
+    Nil() => {
+    }
+    False() => {
+    }
+    True() => {
+    }
+    Num(n: x) => {
+    }
+    Builtin(id: bid) => {
+    }
+  }
+  return unit;
+}
+
+fn gc_mark_upvalue(heap: &Heap, h: u32) -> r: unit writes(heap) {
+  doc "An open upvalue's value lives on the stack, which the VM marks as a root.";
+  let epoch = heap^.epoch;
+  let i = cvt::<u32, u64>(h);
+  if i < heap^.upvalues.inner.len {
+    if heap^.upvalues.inner[i].live {
+      if heap^.upvalues.inner[i].mark != epoch {
+        set heap^.upvalues.inner[i].mark = epoch;
+        let u = heap^.upvalues.inner[i].payload;
+        match u {
+          Closed(v: held) => {
+            gc_mark(heap: heap, v: held);
+          }
+          Open(slot: s) => {
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn mark_table_contents(heap: &Heap, ti: u64) -> r: unit writes(heap) {
+  doc "Marks a table's array values, node keys and values, and metatable; bounds are re-read after every mark, which writes the heap.";
+  let j = 0_u64;
+  loop {
+    if ti < heap^.tables.inner.len {
+      if j < heap^.tables.inner[ti].payload.array.inner.len {
+        let v = heap^.tables.inner[ti].payload.array.inner[j];
+        gc_mark(heap: heap, v: v);
+        set j = j +wrap 1_u64;
+      } else {
+        break;
+      }
+    } else {
+      return unit;
+    }
+  }
+  let k = 0_u64;
+  loop {
+    if ti < heap^.tables.inner.len {
+      if k < heap^.tables.inner[ti].payload.nodes.inner.len {
+        let key = heap^.tables.inner[ti].payload.nodes.inner[k].key;
+        let val = heap^.tables.inner[ti].payload.nodes.inner[k].val;
+        gc_mark(heap: heap, v: key);
+        gc_mark(heap: heap, v: val);
+        set k = k +wrap 1_u64;
+      } else {
+        break;
+      }
+    } else {
+      return unit;
+    }
+  }
+  if ti < heap^.tables.inner.len {
+    let meta = heap^.tables.inner[ti].payload.meta;
+    if meta != no_handle {
+      let mv = Value::Tab(h: meta);
+      gc_mark(heap: heap, v: mv);
+    }
+  }
+  return unit;
+}
+
+fn mark_closure_contents(heap: &Heap, ci: u64) -> r: unit writes(heap) {
+  doc "Marks every upvalue a closure captured.";
+  let j = 0_u64;
+  loop {
+    if ci < heap^.closures.inner.len {
+      if j < heap^.closures.inner[ci].payload.upvals.inner.len {
+        let u = heap^.closures.inner[ci].payload.upvals.inner[j];
+        gc_mark_upvalue(heap: heap, h: u);
+        set j = j +wrap 1_u64;
+      } else {
+        return unit;
+      }
+    } else {
+      return unit;
+    }
+  }
+  return unit;
+}
+
+fn gc_propagate(heap: &Heap) -> r: unit writes(heap) {
+  doc "Empties the gray stack; each object is pushed at most once per epoch, so the work is proportional to what is reachable.";
+  loop {
+    if heap^.gray.inner.len > 0_u64 {
+      let v = take_back(window: &heap^.gray.inner);
+      match v {
+        Tab(h: hv) => {
+          let ti = cvt::<u32, u64>(hv);
+          mark_table_contents(heap: heap, ti: ti);
+        }
+        Fun(h: hv) => {
+          let ci = cvt::<u32, u64>(hv);
+          mark_closure_contents(heap: heap, ci: ci);
+        }
+        Nil() => {
+        }
+        False() => {
+        }
+        True() => {
+        }
+        Num(n: x) => {
+        }
+        Str(h: hv) => {
+        }
+        Builtin(id: bid) => {
+        }
+      }
+    } else {
+      return unit;
+    }
+  }
+  return unit;
+}
+
+fn gc_sweep(heap: &Heap) -> r: u64 writes(heap) {
+  doc "Frees unmarked live cells of every kind; free_string also removes the string from the weak intern table.";
+  let epoch = heap^.epoch;
+  let freed = 0_u64;
+  let i = 0_u64;
+  loop {
+    if i < heap^.tables.inner.len {
+      if heap^.tables.inner[i].live {
+        if heap^.tables.inner[i].mark != epoch {
+          if i < 4294967296_u64 {
+            let h = cvt::<u64, u32>(i);
+            free_table(heap: heap, h: h);
+            set freed = freed +wrap 1_u64;
+          }
+        }
+      }
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  set i = 0_u64;
+  loop {
+    if i < heap^.closures.inner.len {
+      if heap^.closures.inner[i].live {
+        if heap^.closures.inner[i].mark != epoch {
+          if i < 4294967296_u64 {
+            let h = cvt::<u64, u32>(i);
+            free_closure(heap: heap, h: h);
+            set freed = freed +wrap 1_u64;
+          }
+        }
+      }
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  set i = 0_u64;
+  loop {
+    if i < heap^.upvalues.inner.len {
+      if heap^.upvalues.inner[i].live {
+        if heap^.upvalues.inner[i].mark != epoch {
+          if i < 4294967296_u64 {
+            let h = cvt::<u64, u32>(i);
+            free_upvalue(heap: heap, h: h);
+            set freed = freed +wrap 1_u64;
+          }
+        }
+      }
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  set i = 0_u64;
+  loop {
+    if i < heap^.strings.inner.len {
+      if heap^.strings.inner[i].live {
+        if heap^.strings.inner[i].mark != epoch {
+          if i < 4294967296_u64 {
+            let h = cvt::<u64, u32>(i);
+            free_string(heap: heap, h: h);
+            set freed = freed +wrap 1_u64;
+          }
+        }
+      }
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  set heap^.bytes_since_gc = 0_u64;
+  return freed;
+}
