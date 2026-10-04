@@ -652,9 +652,11 @@ fn with_library_records<'input>(
     all
 }
 
-/// Checks every registered module of a module program against its
-/// dependencies' interfaces, in row order, without selecting an entry, and
-/// returns the first rejected module's failure [MOD-8].
+/// Checks every module of a module program's own package and of the
+/// packages it binds against its dependencies' interfaces, in package and
+/// row order, without selecting an entry, and returns the first rejected
+/// module's failure [MOD-8, MOD-11]. Standard library modules are checked
+/// with the library.
 ///
 /// `inputs` are the modules' interface and implementation records, each
 /// placed with [`SourceInput::in_module`].

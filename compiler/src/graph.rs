@@ -167,13 +167,14 @@ impl ModuleGraph {
         }
     }
 
-    /// Returns every module of the program's own package, in row order; the
-    /// standard library's modules follow them [MOD-10].
+    /// Returns every module of the program's own package and of the packages
+    /// it binds, in package and row order; the standard library's modules
+    /// follow them [MOD-10, MOD-11].
     pub fn program_modules(&self) -> impl Iterator<Item = ModuleId> + '_ {
         self.modules
             .iter()
             .enumerate()
-            .filter(|(_, module)| module.package() == Package::Program)
+            .filter(|(_, module)| module.package() != Package::Standard)
             .filter_map(|(index, _)| ModuleId::from_index(index))
     }
 }

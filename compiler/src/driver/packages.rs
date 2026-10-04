@@ -84,6 +84,7 @@ pub fn form_module_program_graph(
     )?];
     let mut walking = vec![0];
     walk(&mut packages, 0, &mut walking, limits)?;
+    assign_labels(&mut packages);
 
     let registered = packages
         .iter()
@@ -192,11 +193,10 @@ fn walk(
                 }
                 _ => return Err(DiscoveryFailure::MissingPackage { path: graph_path }.into()),
             };
-            let label = label_for(packages, &binding.name);
             let loaded = load(
                 reached,
                 identity,
-                label,
+                String::new(),
                 &graph_path.display().to_string(),
                 &bytes,
                 limits,
@@ -210,19 +210,32 @@ fn walk(
     Ok(())
 }
 
-/// A newly reached package's label [MOD-11]: the name of the binding that
-/// reached it, or, when an earlier package has that label, the name followed
-/// by `.` and the least integer from 2 that no earlier label uses. A label
-/// holding `.` is no IDENT, so it never equals a module directory's name.
-fn label_for(packages: &[LoadedPackage], name: &str) -> String {
-    let taken = |label: &str| packages.iter().any(|package| package.label == label);
-    if !taken(name) {
-        return name.to_owned();
+/// Gives every bound package its label [MOD-11], bindings taken in binding
+/// order, each graph's in package order and then in written order: a
+/// package takes its first binding's name, or, when an earlier package has
+/// that label, the name followed by `.` and the least integer from 2 that no
+/// earlier label uses. A label holding `.` is no IDENT, so it never equals a
+/// module directory's name.
+fn assign_labels(packages: &mut [LoadedPackage]) {
+    let bindings = packages
+        .iter()
+        .flat_map(|package| package.bound.iter().cloned())
+        .collect::<Vec<_>>();
+    for (name, target) in bindings {
+        if !packages[target].label.is_empty() {
+            continue;
+        }
+        let taken = |label: &str| packages.iter().any(|package| package.label == label);
+        let label = if taken(&name) {
+            (2_u64..)
+                .map(|suffix| format!("{name}.{suffix}"))
+                .find(|label| !taken(label))
+                .unwrap_or_default()
+        } else {
+            name
+        };
+        packages[target].label = label;
     }
-    (2_u64..)
-        .map(|suffix| format!("{name}.{suffix}"))
-        .find(|label| !taken(label))
-        .unwrap_or_default()
 }
 
 /// Reads one graph record through the syntax stages and its bindings'

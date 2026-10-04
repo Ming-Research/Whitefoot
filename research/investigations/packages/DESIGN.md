@@ -102,6 +102,23 @@ against it on 2026-10-04 (Q6): a binding name is the binder's private choice,
 as an alias is a file's, and two independently written libraries should not
 have to agree on what they call their dependencies.
 
+### Bound names and local names (Q7, open)
+
+A bound name roots qualified paths and is never a value, like `pkg` and
+`std`, so the grammar tells `json::make` from a local `json`:
+
+```
+let json = json::make(n: 7_i32);   // accepted: the local and the prefix differ
+```
+
+A module alias, by contrast, sits in the lexical-identifier domain beside
+other aliases, which may bind functions and constants used as values, and a
+local that shadows it is refused. Placing bound names in that domain would
+make every record of a library avoid its dependencies' names. The
+implementation keeps bound names out of every declaration domain and refuses
+only a lowercase alias of a bound name, since both would root qualified
+paths in one file; the owner has not yet ruled on this.
+
 ## Order and diagnostics
 
 The package order is the program's own package, then each bound package in
@@ -134,9 +151,11 @@ modules, so a program record's ordinal never depends on what it binds.
 ## Validation
 
 - Conformance: `mod11-pos-diamond-shares-one-package` builds and runs a
-  three-package diamond, and `mod11-pos-one-name-two-packages` runs a program
-  in which one name binds two packages in two graphs; eleven negative cases
-  cover each MOD-11 refusal, the
+  three-package diamond, `mod11-pos-one-name-two-packages` runs a program
+  in which one name binds two packages in two graphs, and
+  `mod11-pos-local-shares-bound-name` a local binder spelled like a bound
+  name; twelve negative cases cover each MOD-11 refusal, a type error in a
+  bound module no entry selects, the
   MOD-1 row path, the MOD-4 alias name, non-transitive visibility (MOD-5),
   directory identity (TYPE-5) and the FORM-2 layout of bindings.
 - Input-envelope failures (a location reaching no directory, a package root

@@ -422,12 +422,13 @@ fn run_module_program(
     }
     if options.check_modules {
         let mut verdicts = Vec::new();
-        // [MOD-10] the program's own modules; a composition below judges the
-        // standard library modules its entry selects.
+        // [MOD-10, MOD-11] the program's own modules and those of the
+        // packages it binds; a composition below judges the standard library
+        // modules its entry selects.
         for record in graph
             .modules()
             .iter()
-            .filter(|record| record.package() == whitefoot::Package::Program)
+            .filter(|record| record.package() != whitefoot::Package::Standard)
         {
             let module = record.qualified_name();
             let (verdict, analyses) = counting_analyses(cache, || {

@@ -1,0 +1,4 @@
+package codec = "../json";
+
+pkg::vm: [codec];
+pkg::spare: [];
