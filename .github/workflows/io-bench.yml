@@ -428,6 +428,7 @@ jobs:
   # worker and a used, fully reaped IOCP path. C2 has ordinary synchronous call
   # boundaries; no cross-call completion overlap or speed threshold is required.
   bench-windows:
+    if: ${{ !inputs.compare_firn }}
     name: bench-windows-measured (windows-latest)
     runs-on: windows-latest
     timeout-minutes: 120
