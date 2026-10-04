@@ -138,29 +138,32 @@ Half of `hold` came back, as the owner agreed: parts whose identity the
 declaration fixes are found by the compiler, and parts whose identity is a
 value are named before the block.
 
-### Keys: an ordered set
+### Keys: a set in insertion order
 
-`Keys` (name open) is an ordinary value, built before the statement by
-ordinary code:
+`KeySet` is an ordinary value, built before the statement by ordinary code:
 
 - it owns copies of its keys, since an aggregate holds no reference [REF-3];
-- its keys are kept in byte order, and a key added twice is one element;
-- each element may carry a payload, which a later addition of the same key
-  replaces, or which counts the additions;
-- iterating it visits the keys in that order, which is the order their
-  entries are locked in, so the loop a reader sees is the locking order and
-  nothing is sorted out of sight;
+- its keys are kept in the order each was first inserted, and a key
+  inserted twice is one element;
+- `key_set_insert` answers the key's index, that of its first insertion,
+  so a program keeps a key's last value or count in its own data at that
+  index;
+- iterating it visits the keys in that order; the entries are locked in an
+  order of the runtime's, all of them when the statement begins, so the
+  visiting order and the locking order need not agree;
 - two different positions are two different keys, so `slots^[i]` and
   `slots^[j]` for different `i` and `j` are different entries.
 
-Building the set and then using it is two loops, and the owner noted why that
-is not a cost: until every key is known their order is not, and the entries
-cannot be locked without it.
+The first version kept the keys in byte order, each with a payload, so that
+the order a reader saw was the locking order. The owner replaced it on
+2026-10-04 (direction E of "MSET after the redesign", below): commands need
+their arguments' order, and keeping byte order at every insertion was the
+key set's cost in `MSET`.
 
-The multi-key commands keep their Redis results: `MSET` carries each key's
-value position, a later pair replacing an earlier one so the last value wins;
-`DEL` with a key named twice removes it once; `EXISTS` carries a count so that
-a key named twice counts twice.
+The multi-key commands keep their Redis results: `MSET` keeps for each index
+the last value's position, so the last value wins; `DEL` acts on a key once,
+at its first index; `EXISTS` counts each argument, so a key named twice
+counts twice.
 
 ### Locking: order, taking and release
 

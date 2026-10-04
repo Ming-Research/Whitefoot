@@ -949,18 +949,6 @@ rarely insert at the same place.
   next change to `Slots` lowering or when a profile shows the clearing
   again.
 
-- **Reconcile the key-set design record with insertion-order semantics.**
-  `design/language/waiting/shared-objects/keyed-tables.md` still selects
-  lexicographic order and built-in payload replacement/addition, whereas
-  [SHARE-1 and PRE-1](../spec/kernel-spec.md) define first-insertion order
-  and `key_set_insert` returning an index without a payload. This stale
-  guidance can misdirect future changes. Update the decision and refused
-  alternative on the owner-authorized design change; verify correspondence
-  with SHARE-1, SHARE-2 and PRE-1 and the insertion-order conformance case.
-  Reopen with the next key-set design-tree update; the bounded test migration
-  cannot edit the design tree. Remove after the record agrees with the active
-  specification and the owner's decision is recorded.
-
 ## Parallel lowering and runtime
 
 - **The concurrent map's writers wait a count of pauses, not a time.** A
