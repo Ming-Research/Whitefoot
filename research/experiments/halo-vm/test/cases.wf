@@ -611,7 +611,7 @@ fn fixture_protected_error(budget: u64) -> r: Bool pure {
   put_code(code: &code, cell: c1);
   let c2 = Cell::Call(a: 0_u8, b: 2_u8, c: 3_u8);
   put_code(code: &code, cell: c2);
-  let c3 = Cell::Move(a: 4_u8, b: 1_u8);
+  let c3 = Cell::Move(a: 1_u8, b: 1_u8);
   put_code(code: &code, cell: c3);
   let c4 = Cell::LoadK(a: 2_u8, k: 0_u8);
   put_code(code: &code, cell: c4);
@@ -619,7 +619,7 @@ fn fixture_protected_error(budget: u64) -> r: Bool pure {
   put_code(code: &code, cell: c5);
   let c6 = Cell::Call(a: 2_u8, b: 2_u8, c: 3_u8);
   put_code(code: &code, cell: c6);
-  let c7 = Cell::GetTableK(a: 1_u8, t: 4_u8, k: 4_u8);
+  let c7 = Cell::GetTableK(a: 1_u8, t: 1_u8, k: 4_u8);
   put_code(code: &code, cell: c7);
   let c8 = Cell::GetTableK(a: 3_u8, t: 3_u8, k: 4_u8);
   put_code(code: &code, cell: c8);

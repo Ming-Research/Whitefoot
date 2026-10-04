@@ -13,20 +13,20 @@ an equivalent maintained Halo program suite takes ownership of these observation
 
 | Script | PUC result | Native status |
 | --- | --- | --- |
-| fib(20), recursive Call/Return | 6765 | pending |
-| numeric for sum 1..100 | 5050 | pending |
-| shared counter upvalue, before and after Close | 1, 2 | pending |
-| integer/string table keys | 115 | pending |
-| table-form __index chain and Lua __add | 17 | pending |
-| same __add with budget 1 | 17 | pending |
-| pcall of table-valued error and nested error | false, 3, false | pending |
-| varargs and select('#', ...) | 4 | pending |
-| tail recursion, depth 100000, unlimited | 100000 | pending |
-| same tail recursion, budget 1 | 100000 | pending |
-| same tail recursion, budget 7 | 100000 | pending |
+| fib(20), recursive Call/Return | 6765 | PASS |
+| numeric for sum 1..100 | 5050 | PASS |
+| shared counter upvalue, before and after Close | 1, 2 | PASS |
+| integer/string table keys | 115 | PASS |
+| table-form __index chain and Lua __add | 17 | PASS |
+| same __add with budget 1 | 17 | PASS |
+| pcall of table-valued error and nested error | false, 3, false | PASS |
+| varargs and select('#', ...) | 4 | PASS |
+| tail recursion, depth 100000, unlimited | 100000 | PASS |
+| same tail recursion, budget 1 | 100000 | PASS |
+| same tail recursion, budget 7 | 100000 | PASS |
 
 The Lua reference run completed successfully; its exact output is
-`oracle.expected`. All package modules accept; the native smoke entry passes; the combined suite is pending.
+`oracle.expected`. All package modules accept; the native smoke entry passes; the combined suite passes.
 
 ## Reproduction
 
@@ -38,8 +38,10 @@ sh research/experiments/halo-vm/run.sh
 
 The runner starts with the smallest smoke build and execution before building the
 combined short suite. It invokes no Cargo and uses the host-wide check wrapper.
-The suite's exit status identifies its first failed fixture (1..11 in source;
-12 is the metatable budget/resume case).
+The suite's exit status identifies its first failed fixture: 1 smoke, 2 fib,
+3 numeric for, 4 counter, 5 tables, 6 metatable, 7 protected error, 8 varargs,
+9 tail unlimited, 10 tail budget 1, 11 tail budget 7, 12 metatable budget 1,
+13 host return, 14 host raise, 15 host stop, 16 metamethod host stop.
 
 ## Checker cost
 
@@ -103,3 +105,18 @@ The smoke entry built successfully in 120.06 seconds (exit 0) and ran in
 `Env` construction field order, and float literal spellings; the Lua-derived
 expected values are unchanged. The combined suite build follows this smallest
 useful successful sample.
+
+## Native suite milestone
+
+On core revision `d0e623b0d07f88e25083ef3841c74e135fdfffda`, the combined suite
+built in 59.45 seconds (exit 0). Its first execution returned fixture index 7
+after 0.43 seconds: the hand-built protected-error script retained its first
+error in register 4, which the second overlapping call frame reused. The fixture
+now keeps that value in register 1, below the second call's function slot.
+The expected `false, 3, false` result and all assertions remain unchanged.
+After this fixture repair, the suite rebuilt in 59.54 seconds (exit 0) and
+ran in 0.54 seconds (exit 0). All sixteen fixture observations passed,
+including host return/raise/stop and preservation of the stopped stack inside
+a metamethod. The equivalent Lua reference was also executed and compared with
+`oracle.expected` successfully. These short runs are correctness observations,
+not performance comparisons.
