@@ -1,4 +1,4 @@
-# Kernel Specification v0.90
+# Kernel Specification v0.91
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -563,7 +563,7 @@ The element type of any shape is any nameable type, copy, affine, or linear [OWN
 A constructor `call` and a destructuring `let_stmt` naming any of the five is refused by [TYPE-2] like every opaque struct's, with a repair [DIAG-1].
 
 [TYPE-10] Window parts are names, not declarations.
-`len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the keyed entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and only the operations of [OP-10] and [OP-13] and the key-set additions of [SHARE-1] change them.
+`len`, `cap`, and `head` are the readonly fields the prelude declares on the storage shapes, the key set and the keyed entries [PRE-1, MSR-1]; a program reads them as fields [OP-15] and can never assign one [TYPE-2], and only the operations of [OP-10] and [OP-13] and the key-set insertions of [SHARE-1] change them.
 `next`, `last`, `filled`, and `free` are the four window parts [WIN-2]; they are vocabulary for effect rows and the overlap judgment only, selected by the window type of the place they follow, and they occupy no declaration domain and reserve nothing: a binding, a field of another type, or a label may carry the same spelling.
 A read of a window part, a `borrow_expr` over one, and a write of one are each a hard error citing TYPE-10 at the complete `place`, with a repair [DIAG-1].
 
@@ -2209,10 +2209,9 @@ The state of a shared object is storage of no binding and belongs to no context 
 A value of the prelude type `KeyedTable<V>` is a keyed table, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the table holds under that key, or `None`. Releasing a table releases every value its entries hold.
 `keyed_table_new` returns a table whose every entry is `None`, sized for its argument's number of `Some` entries, and `keyed_table_count` returns how many entries of the table its argument names are `Some`.
 A table is no indexable base [OP-4]: its entries are reached only through the entry bindings of an atomic statement [SHARE-2].
-A value of the prelude type `KeySet` is a key set: its `len` distinct keys, in increasing lexicographic order of their bytes, each carrying a `u64`, its payload.
+A value of the prelude type `KeySet` is a key set: its `len` distinct keys, the key at each index from zero being the one whose first insertion was that many insertions of a new key after the set was made.
 `key_set_new` returns an empty set with room for its argument's number of keys.
-`key_set_put` adds its key with its payload when the set lacks that key, and otherwise replaces that key's payload; `key_set_add` adds its key with payload `amount` when the set lacks that key, and otherwise adds `amount` to that key's payload modulo 2^64.
-`key_set_payload` returns the payload of the key at its index.
+`key_set_insert` returns the index of its key: the key's own index when the set holds it, and otherwise `len`, after adding the key there.
 
 [SHARE-2] Atomic statements.
 An `atomic_stmt` [GRAM-4] has a target, the `place` after its first `&`; a binding, its first `IDENT`; entry bindings, each a later `IDENT` with the `place` after its `&`; a block; and optionally a guard, the `expr` after `when`.
@@ -2417,16 +2416,10 @@ fn keyed_table_count<V: drop>(table: &KeyedTable<V>) -> count: u64 reads(table);
 fn key_set_new(capacity: u64) -> result: KeySet pure contract {
   ensures result.len == 0_u64;
 };
-fn key_set_put(keys: &KeySet, key: &[u8], payload: u64) -> result: unit reads(key), writes(keys) contract {
+fn key_set_insert(keys: &KeySet, key: &[u8]) -> index: u64 reads(key), writes(keys) contract {
   ensures keys^.len >= entry(keys)^.len;
   ensures keys^.len <= entry(keys)^.len + 1_u64;
-};
-fn key_set_add(keys: &KeySet, key: &[u8], amount: u64) -> result: unit reads(key), writes(keys) contract {
-  ensures keys^.len >= entry(keys)^.len;
-  ensures keys^.len <= entry(keys)^.len + 1_u64;
-};
-fn key_set_payload(keys: &KeySet, index: u64) -> payload: u64 reads(keys) contract {
-  requires index < keys^.len;
+  ensures index < keys^.len;
 };
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
@@ -2435,7 +2428,7 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `keyed_table_new`, `keyed_table_count`, `key_set_new`, `key_set_put`, `key_set_add`, `key_set_payload` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_share`, `keyed_table_new`, `keyed_table_count`, `key_set_new`, `key_set_insert` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 
@@ -2909,7 +2902,7 @@ The table in this version is:
 | &[T]            | range elements, exact    | absent             | absent                  |
 ```
 
-Two cell classes are *bounded*. A `Ring`'s `head` is the one cell the two `Ring` rows share: the two front-moving operations `place_front` and `take_front` [OP-10] publish it two-sidedly and no operation re-establishes it exactly, so no derivation may treat a `Ring`'s window origin as a known constant after a front operation. A `KeySet`'s `len` is the other: `key_set_put` and `key_set_add` [SHARE-1] publish it two-sidedly, since a key the set already holds adds none.
+Two cell classes are *bounded*. A `Ring`'s `head` is the one cell the two `Ring` rows share: the two front-moving operations `place_front` and `take_front` [OP-10] publish it two-sidedly and no operation re-establishes it exactly, so no derivation may treat a `Ring`'s window origin as a known constant after a front operation. A `KeySet`'s `len` is the other: `key_set_insert` [SHARE-1] publishes it two-sidedly, since a key the set already holds adds none.
 
 A measure is a logical quantity, and a measured value's window origin is `P.head` where the table gives that cell and slot zero where it does not.
 A measured value's initialized set is the `P.len` slots beginning at that origin taken modulo `P.cap`, and a **logical offset** `i` names the slot at physical offset `(origin + i) mod P.cap`.

@@ -376,6 +376,24 @@ outside, because a threaded one ends only on a tick of about 250 ms and is
 the limit on 8 or more server CPUs; so its rates are compared only with one
 another, it verifies nothing, and a result recorded as evidence is confirmed
 by `scale`.
+With `compare` it instead measures prebuilt firn images against each other:
+`IMAGES` lists `name=path` pairs, one image may appear under two names as a
+noise control, each pass starts every image in turn with the order reversed
+on even passes, and each test in `COMPARE_TESTS` at each depth in
+`COMPARE_DEPTHS` runs for about `COMPARE_SECONDS` seconds on each server CPU
+count in `COMPARE_CPUS` for `COMPARE_PASSES` passes. Each sample is the rate
+over the run's wall time and the server's CPU microseconds per request read
+from `/proc`, since redis-benchmark's own rate steps by its 250 ms tick; with
+`PERF` naming a perf executable it also records a flat profile of each image,
+with DWARF-unwound callers under `PERF_CALLERS` and instruction annotations
+of the symbols in `PERF_ANNOTATE`. The `compare-firn` job of
+`.github/workflows/io-bench.yml` builds each named revision's firn with its
+own compiler and runs this mode, on a GitHub runner or on the owner's
+i9-14900K machine (`compare_runner=14900k`); probe with two short passes
+first, the job's default. `mset-after-redesign.csv` holds the samples of the
+shared-state investigation's MSET measurements
+(`research/investigations/shared-state/DESIGN.md`, "MSET after the
+redesign").
 `redis-samples.csv` holds the raw output of Experiment 7's runs, including its
 attribution runs, `redis-persistence-samples.csv` that of Experiment 8,
 `firn-samples.csv` that of the firn investigation, `keyspace-samples.csv`

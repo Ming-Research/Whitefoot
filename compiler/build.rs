@@ -71,6 +71,47 @@ pub const SPEC_SHA256_HEX: &str = "{hex}";
         "cargo::rustc-env=WHITEFOOT_NO_CAPTURE_ATTRIBUTE={}",
         no_capture_attribute()
     );
+    println!(
+        "cargo::rustc-env=WHITEFOOT_PRESERVE_NONE={}",
+        u8::from(preserve_none_supported())
+    );
+}
+
+/// Whether the toolchain this build hands its modules to accepts a
+/// guaranteed tail call between functions of the calling convention without
+/// callee-saved registers (compiler/match-dispatch-lowering).
+///
+/// LLVM 19 added the convention, and no version is pinned, so it is probed:
+/// a two-function module with the convention and a `musttail` call between
+/// them is handed to the assembler `whitefootc` runs. Where it is refused,
+/// or no assembler can be run, the lowering uses the C convention.
+fn preserve_none_supported() -> bool {
+    let Ok(directory) = env::var("OUT_DIR") else {
+        return false;
+    };
+    let probe = Path::new(&directory).join("preserve_none_probe.ll");
+    if fs::write(
+        &probe,
+        "define internal preserve_nonecc i64 @q(i64 %a) {\n  ret i64 %a\n}\n\n\
+         define preserve_nonecc i64 @p(i64 %a) {\n  \
+         %r = musttail call preserve_nonecc i64 @q(i64 %a)\n  ret i64 %r\n}\n",
+    )
+    .is_err()
+    {
+        return false;
+    }
+    // The assembler `whitefootc` hands its modules to (src/bin/whitefootc.rs).
+    let assembler = if env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows") {
+        "clang"
+    } else {
+        "/usr/bin/clang"
+    };
+    Command::new(assembler)
+        .args(["-x", "ir", "-c", "-o"])
+        .arg(Path::new(&directory).join("preserve_none_probe.o"))
+        .arg(&probe)
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 /// Which spelling of the no-capture parameter attribute the toolchain this

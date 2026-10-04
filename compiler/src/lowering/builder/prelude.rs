@@ -64,9 +64,7 @@ impl IrBuilder<'_> {
             "keyed_table_new" => self.row_keyed_table_new(),
             "keyed_table_count" => self.row_keyed_table_count(),
             "key_set_new" => self.row_key_set_new(),
-            "key_set_put" => self.row_key_set_put(false),
-            "key_set_add" => self.row_key_set_put(true),
-            "key_set_payload" => self.row_key_set_payload(),
+            "key_set_insert" => self.row_key_set_insert(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
                 crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
                     .iter()
@@ -201,39 +199,18 @@ impl IrBuilder<'_> {
         self.return_value(set)
     }
 
-    /// `key_set_put(set: &KeySet, key: &[u8], payload: u64)` and
-    /// `key_set_add(set: &KeySet, key: &[u8], amount: u64)`: the key with its
-    /// payload, replacing the payload of a key the set holds or, with `add`,
-    /// adding to it [SHARE-1].
-    fn row_key_set_put(&mut self, add: bool) -> Result<(), LoweringFailure> {
-        let [set, key, payload] = self.row_parameters()?;
+    /// `key_set_insert(keys: &KeySet, key: &[u8]) -> u64`: the index of the
+    /// key's first insertion, appending it when the set lacks it [SHARE-1].
+    fn row_key_set_insert(&mut self) -> Result<(), LoweringFailure> {
+        let [set, key] = self.row_parameters()?;
         if self.value_type(set)? != IrType::Address(IrAddressed::KeySet)
             || !matches!(self.value_type(key)?, IrType::Range { .. })
-            || self.value_type(payload)? != U64
+            || self.result != U64
         {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
-        self.define(
-            IrType::Unit,
-            IrOperation::KeySetPut {
-                set,
-                key,
-                payload,
-                add,
-            },
-        )?;
-        self.return_unit()
-    }
-
-    /// `key_set_payload(set: &KeySet, index: u64) -> u64`: the payload of the
-    /// set's key `index` [SHARE-1].
-    fn row_key_set_payload(&mut self) -> Result<(), LoweringFailure> {
-        let [set, index] = self.row_parameters()?;
-        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet) {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        }
-        let payload = self.define(U64, IrOperation::KeySetPayload { set, index })?;
-        self.return_value(payload)
+        let index = self.define(U64, IrOperation::KeySetInsert { set, key })?;
+        self.return_value(index)
     }
 
     /// `shared_share<T>(shared: &Shared<T>) -> Shared<T>`: a further handle

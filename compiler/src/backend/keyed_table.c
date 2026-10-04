@@ -67,15 +67,9 @@ static inline void table_written(wf_cmap *map) {
 
 void wf__key_set_new(wf_key_set *out, uint64_t capacity) { wf_cmap_key_set_new(out, capacity); }
 
-void wf__key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload) {
-    wf_cmap_key_set_put(set, key, length, payload);
+uint64_t wf__key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length) {
+    return wf_cmap_key_set_insert(set, key, length);
 }
-
-void wf__key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount) {
-    wf_cmap_key_set_add(set, key, length, amount);
-}
-
-uint64_t wf__key_set_payload(const wf_key_set *set, uint64_t index) { return wf_cmap_key_set_payload(set, index); }
 
 void wf__key_set_free(void *store) { wf_cmap_key_set_free_store(store); }
 

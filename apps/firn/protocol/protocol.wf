@@ -50,12 +50,66 @@ struct Line {
 }
 
 fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
-  doc "Reads a count or length line whose marker byte, * or $, is at marker, as Redis 7.0 reads one. The line ends at the first carriage return from the marker on, found as strchr finds it, so that a zero byte, like the end of the bytes held, leaves the line incomplete; the byte after the carriage return must be held too and is skipped unread. State 1 is a complete line whose bytes after the marker read as a number, as string2ll reads one, into value; 2 is a complete line that does not read as one; 0 is an incomplete line; and 3 is a line still incomplete with more than 65,536 bytes held from its marker. end is the carriage return's position. Digits without a sign or leading zero, at most nine of them, are summed as they are scanned; any other line is read again by read_integer.";
-  let position = marker;
-  let digits = 0_u64;
-  let plain = True();
-  let leading = 0_u8;
+  doc "Reads a count or length line as read_line_full does, first trying the common line of one to nine digits without a sign or leading zero, whose carriage return and the byte after it are held. A marker byte that is a zero byte or a carriage return ends the line at the marker, as strchr ends it, so that line is left to read_line_full.";
+  let position = marker +wrap 1_u64;
   let value = 0_u64;
+  if marker < held {
+    let mark = byte_at(input: input, index: marker);
+    let zero = mark == 0_u8;
+    let ends = mark == 13_u8;
+    let at_marker = bor(zero, ends);
+    if at_marker {
+      let line = read_line_full(input: input, marker: marker, held: held);
+      return line;
+    }
+  }
+  loop @digits {
+    if position >= held {
+      break @digits;
+    }
+    let byte = byte_at(input: input, index: position);
+    if byte == 13_u8 {
+      let first = marker +wrap 1_u64;
+      let digits = position -wrap first;
+      let after = position +wrap 1_u64;
+      let some = digits >= 1_u64;
+      let held_after = after < held;
+      let lone = digits == 1_u64;
+      let lead = byte_at(input: input, index: first);
+      let unpadded = lead != 48_u8;
+      let canonical = bor(lone, unpadded);
+      let counted = band(some, held_after);
+      let quick = band(counted, canonical);
+      if quick {
+        let summed = cvt.wrap::<u64, i64>(value);
+        return Line(value: summed, end: position, state: 1_u64);
+      }
+      break @digits;
+    }
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    let first = marker +wrap 1_u64;
+    let count = position -wrap first;
+    let room = count < 9_u64;
+    let take = band(digit, room);
+    if take {
+    } else {
+      break @digits;
+    }
+    let offset = byte -wrap 48_u8;
+    let wide = cvt::<u8, u64>(offset);
+    let scaled = value *wrap 10_u64;
+    set value = scaled +wrap wide;
+    set position = position +wrap 1_u64;
+  }
+  let line = read_line_full(input: input, marker: marker, held: held);
+  return line;
+}
+
+fn read_line_full(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
+  doc "Reads a count or length line whose marker byte, * or $, is at marker, as Redis 7.0 reads one. The line ends at the first carriage return from the marker on, found as strchr finds it, so that a zero byte, like the end of the bytes held, leaves the line incomplete; the byte after the carriage return must be held too and is skipped unread. State 1 is a complete line whose bytes after the marker read as a number, as string2ll reads one, into value; 2 is a complete line that does not read as one; 0 is an incomplete line; and 3 is a line still incomplete with more than 65,536 bytes held from its marker. end is the carriage return's position.";
+  let position = marker;
   loop @find {
     if position >= held {
       break @find;
@@ -65,18 +119,6 @@ fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
       let after = position +wrap 1_u64;
       if after >= held {
         return Line(value: 0_i64, end: position, state: 0_u64);
-      }
-      let some = digits >= 1_u64;
-      let short = digits <= 9_u64;
-      let lone = digits == 1_u64;
-      let unpadded = leading != 48_u8;
-      let canonical = bor(lone, unpadded);
-      let counted = band(some, short);
-      let simple = band(plain, counted);
-      let quick = band(simple, canonical);
-      if quick {
-        let summed = cvt.wrap::<u64, i64>(value);
-        return Line(value: summed, end: position, state: 1_u64);
       }
       if position > marker {
         let first = marker +wrap 1_u64;
@@ -90,23 +132,6 @@ fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
     }
     if byte == 0_u8 {
       break @find;
-    }
-    if position > marker {
-      let low = byte >= 48_u8;
-      let high = byte <= 57_u8;
-      let digit = band(low, high);
-      if digit {
-        if digits == 0_u64 {
-          set leading = byte;
-        }
-        set digits = digits +wrap 1_u64;
-        let offset = byte -wrap 48_u8;
-        let wide = cvt::<u8, u64>(offset);
-        let scaled = value *wrap 10_u64;
-        set value = scaled +wrap wide;
-      } else {
-        set plain = False();
-      }
     }
     set position = position +wrap 1_u64;
   }
@@ -555,12 +580,14 @@ fn client_new(capacity: u64) -> made: Client pure contract {
   }
   let items = box_slots_new::<Key>(capacity: 16_u64);
   let scores = box_slots_new::<f64>(capacity: 16_u64);
+  let key_metadata = box_slots_new::<u64>(capacity: 16_u64);
   let keys = KeyEnv();
   let name = empty_text();
+  let trusted = True();
   let unlocked = False();
   let open = False();
   let settings = settings_empty();
-  return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, keys: keys, random: 0_u64, id: 0_u64, name: move name, locked: unlocked, closing: open, unix_us: 0_u64, settings: move settings);
+  return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, key_metadata: move key_metadata, keys: keys, random: 0_u64, id: 0_u64, name: move name, authenticated: trusted, locked: unlocked, closing: open, unix_us: 0_u64, settings: move settings);
 }
 
 fn empty_text() -> made: Bytes pure {
@@ -570,19 +597,17 @@ fn empty_text() -> made: Bytes pure {
 }
 
 fn settings_empty() -> made: Settings pure {
-  doc "Settings of port 0, no idle limit, and empty address, file name and password, for a client no server configured, such as the one an append-only file's replay runs its commands as.";
+  doc "Settings of port 0 and an empty address and file name, for a client no server configured, such as the one an append-only file's replay runs its commands as.";
   let bind = empty_text();
   let appendfilename = empty_text();
-  let password = empty_text();
-  return Settings(port: 0_u64, timeout: 0_u64, bind: move bind, appendfilename: move appendfilename, password: move password);
+  return Settings(port: 0_u64, bind: move bind, appendfilename: move appendfilename);
 }
 
 fn settings_copy(settings: &Settings) -> made: Settings reads(settings) {
   doc "A copy of the settings, for another connection.";
   let bind = bytes_copy(bytes: &settings^.bind);
   let appendfilename = bytes_copy(bytes: &settings^.appendfilename);
-  let password = bytes_copy(bytes: &settings^.password);
-  return Settings(port: settings^.port, timeout: settings^.timeout, bind: move bind, appendfilename: move appendfilename, password: move password);
+  return Settings(port: settings^.port, bind: move bind, appendfilename: move appendfilename);
 }
 
 fn clear_items(client: &Client) -> result: unit writes(client) {

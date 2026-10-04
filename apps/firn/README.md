@@ -8,30 +8,114 @@ the entries of the keys a command names, so that commands on different keys
 do not wait for each other. It is named for firn, snow that has lasted a
 season: stored and compacted.
 
-Its commands are the ones `redis-benchmark`'s default suite sends, with
-expiry, an append-only file and the connection commands clients send on their
-own:
+Its commands are these, which began as the ones `redis-benchmark`'s default
+suite sends, with expiry, an append-only file and the connection commands
+clients send on their own:
 
-- keys: `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `PEXPIRE`, `PEXPIREAT`, `TTL`,
-  `PTTL`, `PERSIST`, `DBSIZE`;
-- strings: `GET`, `SET` with `EX` or `PX`, `MSET`, `INCR`;
-- lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
-- sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
-- hashes: `HSET`, `HGET`;
-- sorted sets: `ZADD`, `ZPOPMIN`, `ZCARD`, `ZSCORE`, with scores read and
-  written as Redis 7.0.15 reads and writes them;
+- keys: `DEL`, `UNLINK`, `EXISTS`, `TOUCH`, `TYPE`, `RENAME`, `RENAMENX`,
+  `COPY` with `REPLACE` and `DB 0`, `EXPIRE`, `PEXPIRE`, `EXPIREAT` and
+  `PEXPIREAT` with their options `NX`, `XX`, `GT` and `LT`, `TTL`, `PTTL`,
+  `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`;
+- strings: `GET`, `SET` with its options `NX`, `XX`, `GET`, `KEEPTTL`,
+  `EX`, `PX`, `EXAT` and `PXAT`, `SETNX`, `SETEX`, `PSETEX`, `GETSET`,
+  `GETDEL`, `GETEX`, `MGET`, `MSET`, `MSETNX`, `INCR`, `INCRBY`, `DECR`,
+  `DECRBY`, `INCRBYFLOAT`, `APPEND`, `STRLEN`, `GETRANGE`, `SUBSTR`,
+  `SETRANGE`;
+- lists: `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP` and `RPOP` with or
+  without a count, `LRANGE`, `LLEN`, `LINDEX`, `LSET`, `LREM`, `LTRIM`,
+  `LINSERT`, `LPOS` with `RANK`, `COUNT` and `MAXLEN`, and `LMOVE` and
+  `RPOPLPUSH`, which move an element in one statement holding both keys;
+- sets: `SADD`, `SREM`, `SPOP` and `SRANDMEMBER` with or without a count,
+  `SCARD`, `SMEMBERS`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`,
+  `SUNION`, `SDIFF`, `SINTERCARD` with `LIMIT`, and `SINTERSTORE`,
+  `SUNIONSTORE` and `SDIFFSTORE`, each in one statement holding every key
+  it names;
+- hashes: `HSET`, `HMSET`, `HSETNX`, `HGET`, `HMGET`, `HDEL`, `HEXISTS`,
+  `HSTRLEN`, `HLEN`, `HGETALL`, `HKEYS`, `HVALS`, `HINCRBY`, `HINCRBYFLOAT`,
+  in the x87 extended precision Redis computes it in on x86-64, and
+  `HRANDFIELD` with a count and `WITHVALUES`;
+- sorted sets: `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH` and `INCR`,
+  `ZINCRBY`, `ZRANGE` with `BYSCORE`, `BYLEX`, `REV`, `LIMIT` and
+  `WITHSCORES`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`,
+  `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`, `ZREVRANK`,
+  `ZSCORE`, `ZMSCORE`, `ZCARD`, `ZREM`, `ZPOPMIN` and `ZPOPMAX` with a count,
+  `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE` and `ZREMRANGEBYLEX`, with scores
+  read and written as Redis 7.0.15 reads and writes them;
 - connection: `PING`, `ECHO`, `QUIT`, `AUTH`, `HELLO` with no version or
   version 2, version 3 being refused as unsupported, `SELECT 0`, firn
   having one database, and `CLIENT ID`, `CLIENT GETNAME` and
   `CLIENT SETNAME`;
-- server: `CONFIG GET` with Redis's glob patterns over the parameters
-  `appendfilename`, `appendonly`, `bind`, `databases`, `port`,
-  `requirepass`, `save` and `timeout`, `TIME`, and `COMMAND` and
-  `COMMAND COUNT`, which describe no command. `COMMAND DOCS` is answered as
-  an unknown subcommand, so that `redis-cli` uses its own help.
+- server: `CONFIG GET`, `CONFIG SET`, `CONFIG RESETSTAT` and `INFO`,
+  described below, `TIME`, and `COMMAND` and `COMMAND COUNT`, which
+  describe no command. `COMMAND DOCS` is answered as an unknown subcommand,
+  so that `redis-cli` uses its own help. `FLUSHALL` and `FLUSHDB`, with
+  `ASYNC` or `SYNC`, empty firn's one database and its queued expiries in
+  one atomic statement and are appended to the append-only file as Redis
+  appends them; the old keys are released before the reply is sent, under
+  either option. `FUNCTION FLUSH`, with `ASYNC` or `SYNC`,
+  succeeds as Redis does with no function loaded, firn having none, and is
+  appended to the file as Redis appends it; every other `FUNCTION`
+  subcommand is answered as an unknown one. `DEBUG LOG` with a message
+  answers OK, as Redis does with its debug command enabled, firn keeping no
+  log to write it to; every other `DEBUG` subcommand is answered as an
+  unknown one.
 
-`HELLO` reports the server as `redis` version 7.0.15, the version whose
-replies firn follows.
+`CONFIG GET` takes Redis's glob patterns over firn's parameters:
+`appendfilename`, `appendonly`, `bind`, `databases`, `port`, `requirepass`,
+`save` and `timeout`, and the parameters whose only effect in Redis is on its
+internal encodings, leaving every value as commands read it,
+`hash-max-listpack-entries`, `hash-max-listpack-value`,
+`list-compress-depth`, `list-max-listpack-size`, `set-max-intset-entries`,
+`stream-node-max-bytes`, `stream-node-max-entries`,
+`zset-max-listpack-entries` and `zset-max-listpack-value`, with their aliases
+`hash-max-ziplist-entries`, `hash-max-ziplist-value`, `list-max-ziplist-size`,
+`zset-max-ziplist-entries` and `zset-max-ziplist-value`. firn has none of
+those encodings: it reports their parameters with Redis's defaults and keeps
+what `CONFIG SET` gives them, and they change nothing else.
+`hll-sparse-max-bytes` is not among them, since a HyperLogLog's encoding is
+the string `GET` reads, and firn has no HyperLogLog.
+
+`CONFIG SET` takes these parameters with Redis's checks and errors, refusing
+any other as Redis refuses one it does not know, and applies all of its pairs
+or none. `requirepass` changes the password for every connection that has
+not authenticated, as in Redis: a connection authenticates by giving the
+password, or by being accepted while none is set, and stays authenticated;
+removing the password lets the others in until one is set again. `timeout`
+changes the idle limit for new connections and, within a second, for
+connections waiting under a limit, while a connection that waits with no
+limit reads a new one only once it sends again. A client's silence is
+counted from its last request or the replies to it, as Redis counts it from
+its last read or write. `appendfilename` and `databases` are refused as Redis
+refuses them. An `appendonly`, `port` or `bind` other than the one firn
+started with, and a `save` schedule other than the empty one, are refused in
+Redis's form for a refused value with firn's own reason, since firn cannot
+change them while it runs and saves no snapshot; Redis would apply them.
+`CONFIG RESETSTAT` answers OK and zeroes the count of connections the server
+has accepted.
+
+`INFO`, with no section, `default`, `all`, `everything` or named sections,
+answers Redis's sections in Redis's order and form. Its fields carry real
+values for the port, the calendar time, the uptime, the clients connected,
+whether the append-only file is kept, the connections accepted and the keys
+held, which it counts holding the table whole, as `DBSIZE` does; the other
+fields it reports have values that are fixed and true of firn: Redis's
+version 7.0.15, no git revision, `redis_git_sha1` being 00000000 as in
+Redis's builds from a release, standalone mode, 64 bits, its active
+expiry's 10 runs a second, no configuration file, memory limit, eviction,
+script, function, replica, background save, rewrite, fork, module, publish
+and subscribe, tracking or cluster. What firn does not measure, memory and
+processor time, per-command and per-error counts among them, is left out,
+so its CPU, Commandstats, Errorstats and Latencystats sections are empty,
+and the keyspace line's `expires` and `avg_ttl`, which firn does not count,
+are 0.
+
+`HELLO` and `INFO` report the server as `redis` version 7.0.15, the version
+whose replies firn follows.
+
+`HINCRBYFLOAT` computes in the long double of Redis on x86-64 Linux, x87's
+80-bit extended format, and answers as that Redis does. Redis built where
+long double has another format answers it, and `INCRBYFLOAT`, differently:
+in binary128 on aarch64 Linux, and in a double where long double is one.
 
 What is not there yet is listed in [docs/todo.md](../../docs/todo.md) under
 "firn"; the measurements and the design are in
@@ -91,13 +175,20 @@ default.
   patterns read as Redis reads them;
 - `protocol`: reading requests, writing replies, and a connection's state and
   settings;
-- `scores`: sorted-set scores read as Redis's `strtod` reads them, to the
-  nearest double, and written as its `%.17g` writes them;
+- `scores`: sorted-set scores and the ends of score ranges read as Redis's
+  `strtod` reads them, to the nearest double, and written as its `%.17g`
+  writes them;
+- `extended`: numbers of x86-64's 80-bit long double, read as glibc's
+  `strtold` reads them, added, and written as `%.17Lf` writes them, the
+  arithmetic of `INCRBYFLOAT` and `HINCRBYFLOAT`;
 - `store`: the keyspace, one shared state holding a keyed table of entries
   and, after it, the queued expiries, the append-only file's pending bytes
   and the server's counts
-  ([firn under the shared-state design](../../research/investigations/shared-state/DESIGN.md#firn-under-the-design));
-- `commands`: one file per kind of value, the connection and server
-  commands, and the dispatch;
+  ([firn under the shared-state design](../../research/investigations/shared-state/DESIGN.md#firn-under-the-design)),
+  and beside it a second shared state, the server's, with what `CONFIG SET`
+  changes, the count of accepted connections and the time the server
+  started;
+- `commands`: one file per kind of value, sorted sets' ranges in a second,
+  the connection and server commands, and the dispatch;
 - `persistence`: the append-only file's writer and its replay;
 - `server`: connections, active expiry, the invocation's options and `main`.

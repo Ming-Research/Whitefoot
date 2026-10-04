@@ -1,0 +1,979 @@
+alias KeyHash = pkg::bytes::KeyHash;
+alias Bytes = pkg::bytes::Bytes;
+alias Client = pkg::protocol::Client;
+alias Entry = pkg::store::Entry;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+alias OrderedNode = std::collections::ordered_map::OrderedNode;
+alias Rank = pkg::store::Rank;
+alias RankOrder = pkg::store::RankOrder;
+alias Sorted = pkg::store::Sorted;
+alias Span = pkg::protocol::Span;
+alias Keyspace = pkg::store::Keyspace;
+alias Time = pkg::store::Time;
+alias arg = pkg::protocol::arg;
+alias byte_at = pkg::bytes::byte_at;
+alias bytes_new = pkg::bytes::bytes_new;
+alias bytes_order = pkg::bytes::bytes_order;
+alias ceiling = pkg::store::ceiling;
+alias copy_key = pkg::bytes::copy_key;
+alias clear_items = pkg::protocol::clear_items;
+alias expired = pkg::store::expired;
+alias remove_expired = pkg::store::remove_expired;
+alias hash_map_remove = std::collections::hash_map::hash_map_remove;
+alias log_command = pkg::store::log_command;
+alias log_removal = pkg::store::log_removal;
+alias ordered_map_len = std::collections::ordered_map::ordered_map_len;
+alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
+alias push_item = pkg::protocol::push_item;
+alias push_score = pkg::protocol::push_score;
+alias read_bound = pkg::scores::read_bound;
+alias read_integer = pkg::bytes::read_integer;
+alias reply_array = pkg::protocol::reply_array;
+alias reply_error = pkg::protocol::reply_error;
+alias reply_integer = pkg::protocol::reply_integer;
+alias reply_score = pkg::scores::reply_score;
+alias reply_wrong_type = pkg::protocol::reply_wrong_type;
+alias reply_text = pkg::protocol::reply_text;
+
+const word_withscores: Array<u8, 10> = "WITHSCORES";
+
+const word_limit: Array<u8, 5> = "LIMIT";
+
+const word_rev: Array<u8, 3> = "REV";
+
+const word_bylex: Array<u8, 5> = "BYLEX";
+
+const word_byscore: Array<u8, 7> = "BYSCORE";
+
+const text_limit_rank: Array<u8, 85> = "ERR syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX";
+
+const text_scores_lex: Array<u8, 68> = "ERR syntax error, WITHSCORES not supported in combination with BYLEX";
+
+const text_range_float: Array<u8, 29> = "ERR min or max is not a float";
+
+const text_range_lex: Array<u8, 42> = "ERR min or max not valid string range item";
+
+struct Walk {
+  doc "A walk over a sorted set's order, from its lowest rank or, when reverse, from its highest, as Redis 7.0.15 walks a sorted set it encodes as a listpack: ranks before the range's start are passed over, and the first one past it must also lie before the range's end, or the walk takes nothing; offset ranks from there are skipped, then up to limit, any number when unlimited, are taken while each lies before the range's end. The range's start is its lower end and its end the upper, or the reverse when reverse is set. kind 0 walks by position, every rank in range; 1 by score, between min and max, either excluded when its open flag is set; 2 by member, between low and high, whose end flag marks the least string, -, with 1 and the greatest, +, with 2. A taken rank's member is written when act is 0, with its score when 1; it is counted when 2, and a copy of its member and score is kept among the client's prepared keys and scores when 3. While the range's start is sought, prune lets the walk pass over the subtrees wholly before it, which is sound when the start can be found by comparison: by score, and by member when every score is equal. phase is 0 while the start is sought, 1 while skipping and 2 while taking; taken counts the ranks taken and ended stops the walk.";
+  reverse: Bool;
+  kind: u64;
+  act: u64;
+  min: f64;
+  min_open: Bool;
+  max: f64;
+  max_open: Bool;
+  low: Bytes;
+  low_open: Bool;
+  low_end: u64;
+  high: Bytes;
+  high_open: Bool;
+  high_end: u64;
+  prune: Bool;
+  phase: u64;
+  offset: u64;
+  limit: u64;
+  unlimited: Bool;
+  taken: u64;
+  ended: Bool;
+}
+
+struct ScoreBound {
+  doc "One end of a score range as read: its score, whether it is excluded, and whether it read.";
+  value: f64;
+  open: Bool;
+  valid: Bool;
+}
+
+struct LexBound {
+  doc "One end of a lexicographic range as read: its bytes, whether it is excluded, 1 for the least string and 2 for the greatest in end, 0 for bytes, and whether it read.";
+  bytes: Bytes;
+  open: Bool;
+  end: u64;
+  valid: Bool;
+}
+
+fn read_score_bound(input: &[u8], span: Span) -> bound: ScoreBound reads(input) {
+  doc "Reads one end of a score range as Redis's zslParseRange reads it: excluded after a leading (, its score read as read_bound reads one.";
+  let first = 0_u8;
+  if span.length > 0_u64 {
+    set first = byte_at(input: input, index: span.start);
+  }
+  if first == 40_u8 {
+    let rest = span.start +wrap 1_u64;
+    let length = span.length -wrap 1_u64;
+    let open = read_bound(input: input, start: rest, length: length);
+    let excluded = True();
+    return ScoreBound(value: open.value, open: excluded, valid: open.valid);
+  }
+  let closed = read_bound(input: input, start: span.start, length: span.length);
+  let included = False();
+  return ScoreBound(value: closed.value, open: included, valid: closed.valid);
+}
+
+fn read_lex_bound(input: &[u8], span: Span) -> bound: LexBound reads(input) {
+  doc "Reads one end of a lexicographic range as Redis's zslParseLexRangeItem reads it: + alone, the greatest string, and - alone, the least, each read as a C string, so that a zero byte after it ends it; ( or [ followed by the bytes of an excluded or included end; anything else, the empty string among it, does not read.";
+  let empty = bytes_new(input: input, start: 0_u64, length: 0_u64);
+  let excluded = True();
+  let included = False();
+  let invalid = False();
+  if span.length == 0_u64 {
+    return LexBound(bytes: move empty, open: included, end: 0_u64, valid: invalid);
+  }
+  let first = byte_at(input: input, index: span.start);
+  let second = 0_u8;
+  if span.length > 1_u64 {
+    let next = span.start +wrap 1_u64;
+    set second = byte_at(input: input, index: next);
+  }
+  let alone = second == 0_u8;
+  if first == 43_u8 {
+    return LexBound(bytes: move empty, open: excluded, end: 2_u64, valid: alone);
+  }
+  if first == 45_u8 {
+    return LexBound(bytes: move empty, open: excluded, end: 1_u64, valid: alone);
+  }
+  let open_end = first == 40_u8;
+  let closed_end = first == 91_u8;
+  let marked = bor(open_end, closed_end);
+  if marked {
+    let rest = span.start +wrap 1_u64;
+    let length = span.length -wrap 1_u64;
+    let bytes = bytes_new(input: input, start: rest, length: length);
+    let read = True();
+    let dropped = move empty;
+    return LexBound(bytes: move bytes, open: open_end, end: 0_u64, valid: read);
+  }
+  return LexBound(bytes: move empty, open: included, end: 0_u64, valid: invalid);
+}
+
+fn walk_new(reverse: Bool, kind: u64, act: u64, input: &[u8]) -> made: Walk reads(input) {
+  doc "A walk of the given kind and direction over an unbounded range, taking every rank.";
+  let low = bytes_new(input: input, start: 0_u64, length: 0_u64);
+  let high = bytes_new(input: input, start: 0_u64, length: 0_u64);
+  let shut = False();
+  return Walk(reverse: reverse, kind: kind, act: act, min: 0.0_f64, min_open: shut, max: 0.0_f64, max_open: shut, low: move low, low_open: shut, low_end: 1_u64, high: move high, high_open: shut, high_end: 2_u64, prune: shut, phase: 0_u64, offset: 0_u64, limit: 0_u64, unlimited: shut, taken: 0_u64, ended: shut);
+}
+
+fn read_range(input: &[u8], args: &Box<Slots<Span>>, low_index: u64, high_index: u64, walk: &Walk) -> valid: Bool reads(input), reads(args), writes(walk) {
+  doc "Reads the range a walk by score or by member covers from the arguments at low_index, its lower end, and high_index, its upper, as zslParseRange and zslParseLexRange read them, and returns whether both ends read.";
+  let low_span = arg(args: args, index: low_index);
+  let high_span = arg(args: args, index: high_index);
+  if walk^.kind == 1_u64 {
+    let low = read_score_bound(input: input, span: low_span);
+    let high = read_score_bound(input: input, span: high_span);
+    set walk^.min = low.value;
+    set walk^.min_open = low.open;
+    set walk^.max = high.value;
+    set walk^.max_open = high.open;
+    let both = band(low.valid, high.valid);
+    return both;
+  }
+  let low = read_lex_bound(input: input, span: low_span);
+  let high = read_lex_bound(input: input, span: high_span);
+  let both = band(low.valid, high.valid);
+  set walk^.low_open = low.open;
+  set walk^.low_end = low.end;
+  set walk^.high_open = high.open;
+  set walk^.high_end = high.end;
+  let LexBound(bytes: low_bytes, open: low_flag, end: low_mark, valid: low_valid) = move low;
+  let LexBound(bytes: high_bytes, open: high_flag, end: high_mark, valid: high_valid) = move high;
+  set walk^.low = move low_bytes;
+  set walk^.high = move high_bytes;
+  return both;
+}
+
+fn lex_against(member: &Bytes, bound: &Bytes, end: u64) -> order: i32 reads(member), reads(bound) {
+  doc "Orders a member against one end of a lexicographic range as Redis's sdscmplex orders them: every member lies after the least string and before the greatest, and otherwise byte by byte.";
+  if end == 1_u64 {
+    return 1_i32;
+  }
+  if end == 2_u64 {
+    return -1_i32;
+  }
+  let order = bytes_order(left: member, right: bound);
+  return order;
+}
+
+fn at_least_min(walk: &Walk, rank: &Rank) -> reached: Bool reads(walk), reads(rank) {
+  doc "Whether a rank lies within the range's lower end: by score at or above min, or above it when min_open, as zslValueGteMin reads it; by member at or after low, or after it when low_open, as zslLexValueGteMin reads it; and always for a walk by position.";
+  if walk^.kind == 1_u64 {
+    if walk^.min_open {
+      let above = fgt(rank^.score, walk^.min);
+      return above;
+    }
+    let at = fge(rank^.score, walk^.min);
+    return at;
+  }
+  if walk^.kind == 2_u64 {
+    let order = lex_against(member: &rank^.member.bytes, bound: &walk^.low, end: walk^.low_end);
+    if walk^.low_open {
+      let after = order > 0_i32;
+      return after;
+    }
+    let at = order >= 0_i32;
+    return at;
+  }
+  return True();
+}
+
+fn at_most_max(walk: &Walk, rank: &Rank) -> reached: Bool reads(walk), reads(rank) {
+  doc "Whether a rank lies within the range's upper end: by score at or below max, or below it when max_open, as zslValueLteMax reads it; by member at or before high, or before it when high_open, as zslLexValueLteMax reads it; and always for a walk by position.";
+  if walk^.kind == 1_u64 {
+    if walk^.max_open {
+      let below = flt(rank^.score, walk^.max);
+      return below;
+    }
+    let at = fle(rank^.score, walk^.max);
+    return at;
+  }
+  if walk^.kind == 2_u64 {
+    let order = lex_against(member: &rank^.member.bytes, bound: &walk^.high, end: walk^.high_end);
+    if walk^.high_open {
+      let before = order < 0_i32;
+      return before;
+    }
+    let at = order <= 0_i32;
+    return at;
+  }
+  return True();
+}
+
+fn starts(walk: &Walk, rank: &Rank) -> begun: Bool reads(walk), reads(rank) {
+  doc "Whether a rank lies past the range's start: its lower end, or its upper when the walk is reversed.";
+  if walk^.reverse {
+    let within = at_most_max(walk: walk, rank: rank);
+    return within;
+  }
+  let within = at_least_min(walk: walk, rank: rank);
+  return within;
+}
+
+fn continues(walk: &Walk, rank: &Rank) -> within: Bool reads(walk), reads(rank) {
+  doc "Whether a rank lies before the range's end: its upper end, or its lower when the walk is reversed.";
+  if walk^.reverse {
+    let inside = at_least_min(walk: walk, rank: rank);
+    return inside;
+  }
+  let inside = at_most_max(walk: walk, rank: rank);
+  return inside;
+}
+
+fn walk_visit(walk: &Walk, client: &Client, rank: &Rank) -> result: unit reads(rank), writes(walk), writes(client) {
+  doc "Takes one rank in the walk's order through its phases, acting on it when it is taken.";
+  if walk^.ended {
+    return unit;
+  }
+  if walk^.phase == 0_u64 {
+    let begun = starts(walk: walk, rank: rank);
+    if begun {
+    } else {
+      return unit;
+    }
+    let inside = continues(walk: walk, rank: rank);
+    if inside {
+    } else {
+      set walk^.ended = True();
+      return unit;
+    }
+    set walk^.phase = 1_u64;
+  }
+  if walk^.phase == 1_u64 {
+    if walk^.offset > 0_u64 {
+      set walk^.offset = walk^.offset -wrap 1_u64;
+      return unit;
+    }
+    set walk^.phase = 2_u64;
+  }
+  if walk^.unlimited {
+  } else if walk^.limit == 0_u64 {
+    set walk^.ended = True();
+    return unit;
+  }
+  let within = continues(walk: walk, rank: rank);
+  if within {
+  } else {
+    set walk^.ended = True();
+    return unit;
+  }
+  if walk^.unlimited {
+  } else {
+    set walk^.limit = walk^.limit -wrap 1_u64;
+  }
+  set walk^.taken = walk^.taken +wrap 1_u64;
+  if walk^.act == 0_u64 {
+    reply_text(client: client, text: &rank^.member.bytes);
+  } else if walk^.act == 1_u64 {
+    reply_text(client: client, text: &rank^.member.bytes);
+    reply_score(client: client, score: rank^.score);
+  } else if walk^.act == 3_u64 {
+    let member = copy_key(key: &rank^.member);
+    push_item(client: client, item: move member);
+    push_score(client: client, score: rank^.score);
+  }
+  return unit;
+}
+
+fn walk_link(link: &Slots<Box<OrderedNode<Rank, unit>>, 1>, walk: &Walk, client: &Client) -> result: unit reads(link), writes(walk), writes(client) {
+  doc "Walks the subtree a link holds, if any.";
+  if walk^.ended {
+    return unit;
+  }
+  if link^.len > 0_u64 {
+    walk_node(node: &link^[0_u64].inner, walk: walk, client: client);
+  }
+  return unit;
+}
+
+fn walk_node(node: &OrderedNode<Rank, unit>, walk: &Walk, client: &Client) -> result: unit reads(node), writes(walk), writes(client) {
+  doc "Walks a node's subtree in the walk's order, visiting each rank. While the range's start is sought and prune is set, the entries before it are compared without being visited, and the subtrees wholly before it are passed over: in order, those before the subtree that precedes the first entry past the start; in reverse, those after the subtree that follows the last such entry.";
+  let count = node^.entries.len;
+  let seeking = walk^.phase == 0_u64;
+  let pruning = band(seeking, walk^.prune);
+  if walk^.reverse {
+    let position = count;
+    if pruning {
+      loop @seek {
+        if position == 0_u64 {
+          break @seek;
+        }
+        let index = position -wrap 1_u64;
+        if index < node^.entries.len {
+          let begun = starts(walk: walk, rank: &node^.entries[index].pair.key);
+          if begun {
+            break @seek;
+          }
+        }
+        set position = index;
+      }
+    }
+    for @entries (step in 0_u64..position) {
+      if walk^.ended {
+        return unit;
+      }
+      let back = position -wrap step;
+      let index = back -wrap 1_u64;
+      if index < node^.entries.len {
+        walk_link(link: &node^.entries[index].after, walk: walk, client: client);
+        walk_visit(walk: walk, client: client, rank: &node^.entries[index].pair.key);
+      }
+    }
+    walk_link(link: &node^.leading, walk: walk, client: client);
+    return unit;
+  }
+  let first = 0_u64;
+  if pruning {
+    loop @seek {
+      if first >= count {
+        break @seek;
+      }
+      if first < node^.entries.len {
+        let begun = starts(walk: walk, rank: &node^.entries[first].pair.key);
+        if begun {
+          break @seek;
+        }
+      }
+      set first = first +wrap 1_u64;
+    }
+  }
+  if first == 0_u64 {
+    walk_link(link: &node^.leading, walk: walk, client: client);
+  } else {
+    let previous = first -wrap 1_u64;
+    if previous < node^.entries.len {
+      walk_link(link: &node^.entries[previous].after, walk: walk, client: client);
+    }
+  }
+  for @entries (index in first..count) {
+    if walk^.ended {
+      return unit;
+    }
+    if index < node^.entries.len {
+      walk_visit(walk: walk, client: client, rank: &node^.entries[index].pair.key);
+      walk_link(link: &node^.entries[index].after, walk: walk, client: client);
+    }
+  }
+  return unit;
+}
+
+fn walk_from(order: &OrderedMap<Rank, unit, ceiling>, walk: &Walk, client: &Client, offset: u64, limit: u64, unlimited: Bool, act: u64) -> taken: u64 reads(order), writes(walk), writes(client) {
+  doc "Walks the order afresh, skipping offset ranks from the range's start and then taking up to limit, any number when unlimited, each acted on as act says, and returns how many it took.";
+  set walk^.phase = 0_u64;
+  set walk^.offset = offset;
+  set walk^.limit = limit;
+  set walk^.unlimited = unlimited;
+  set walk^.act = act;
+  set walk^.taken = 0_u64;
+  set walk^.ended = False();
+  walk_link(link: &order^.root, walk: walk, client: client);
+  return walk^.taken;
+}
+
+fn lex_bounds_order(walk: &Walk) -> order: i32 reads(walk) {
+  doc "Orders a lexicographic range's lower end against its upper as Redis's sdscmplex orders them: two least or two greatest strings are the same string; the least string comes first, the greatest last, and other ends compare byte by byte.";
+  let same_mark = walk^.low_end == walk^.high_end;
+  let marked = walk^.low_end != 0_u64;
+  let same = band(same_mark, marked);
+  if same {
+    return 0_i32;
+  }
+  let low_least = walk^.low_end == 1_u64;
+  let high_greatest = walk^.high_end == 2_u64;
+  let ordered = bor(low_least, high_greatest);
+  if ordered {
+    return -1_i32;
+  }
+  let low_greatest = walk^.low_end == 2_u64;
+  let high_least = walk^.high_end == 1_u64;
+  let reversed = bor(low_greatest, high_least);
+  if reversed {
+    return 1_i32;
+  }
+  let order = bytes_order(left: &walk^.low, right: &walk^.high);
+  return order;
+}
+
+fn range_open(sorted: &Sorted, walk: &Walk) -> possible: Bool reads(sorted), writes(walk) {
+  doc "Whether a walk by score or by member can take anything, as Redis's zzlIsInRange and zzlIsInLexRange decide before a listpack's walk: the range is not empty, the set's last rank lies within its lower end and its first rank within its upper end. A walk by member is pruned only when the first and last ranks share their score, so that every score is equal and the order of members is the set's order.";
+  if walk^.kind == 1_u64 {
+    let crossed = fgt(walk^.min, walk^.max);
+    if crossed {
+      return False();
+    }
+    let equal = feq(walk^.min, walk^.max);
+    let excluded = bor(walk^.min_open, walk^.max_open);
+    let pinched = band(equal, excluded);
+    if pinched {
+      return False();
+    }
+    set walk^.prune = True();
+  } else {
+    let order = lex_bounds_order(walk: walk);
+    if order > 0_i32 {
+      return False();
+    }
+    let excluded = bor(walk^.low_open, walk^.high_open);
+    let equal = order == 0_i32;
+    let pinched = band(equal, excluded);
+    if pinched {
+      return False();
+    }
+  }
+  let first = lowest(sorted: sorted);
+  let last = highest(sorted: sorted);
+  match move first {
+    Some(value: low_rank) => {
+      match move last {
+        Some(value: high_rank) => {
+          let reaches = at_least_min(walk: walk, rank: &high_rank);
+          let starts_below = at_most_max(walk: walk, rank: &low_rank);
+          if walk^.kind == 2_u64 {
+            set walk^.prune = feq(low_rank.score, high_rank.score);
+          }
+          let possible = band(reaches, starts_below);
+          return possible;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    None() => {
+      let unused = move last;
+      return False();
+    }
+  }
+}
+
+fn range_ranked(env: &Client, value: &Entry, walk: &Walk) -> kind: u64 reads(value), writes(env), writes(walk) {
+  doc "Writes the members a walk takes from a live sorted set, with their scores when its act is 1, as an array, recording done; wrong for another kind and expired for an expired entry. A walk by position takes the ranks from position low to high, both inclusive and counted from the end when negative, as Redis sanitizes them, and writes how many before walking; a walk by score or member counts what it takes in a first walk, writes that count, then writes the ranks in a second. offset and limit in the walk give LIMIT's, limit 0 taking nothing.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Ranked(ranked: sorted) => {
+      set env^.state = state_done;
+      let act = walk^.act;
+      let scored = act == 1_u64;
+      if walk^.kind == 0_u64 {
+        let size = ordered_map_len::<Rank, unit, ceiling>(map: &sorted^.order);
+        let length = cvt.wrap::<u64, i64>(size);
+        let start = env^.low;
+        let stop = env^.high;
+        if start < 0_i64 {
+          set start = length +wrap start;
+        }
+        if stop < 0_i64 {
+          set stop = length +wrap stop;
+        }
+        if start < 0_i64 {
+          set start = 0_i64;
+        }
+        let crossed = start > stop;
+        let past = start >= length;
+        let empty = bor(crossed, past);
+        if empty {
+          reply_array(client: env, count: 0_u64);
+          return 5_u64;
+        }
+        if stop >= length {
+          set stop = length -wrap 1_i64;
+        }
+        let first = cvt.wrap::<i64, u64>(start);
+        let last = cvt.wrap::<i64, u64>(stop);
+        let span = last -wrap first;
+        let count = span +wrap 1_u64;
+        let elements = count;
+        if scored {
+          set elements = count *wrap 2_u64;
+        }
+        reply_array(client: env, count: elements);
+        let bounded = False();
+        let walked = walk_from(order: &sorted^.order, walk: walk, client: env, offset: first, limit: count, unlimited: bounded, act: act);
+        return 5_u64;
+      }
+      let offset = walk^.offset;
+      let limit = walk^.limit;
+      let unlimited = walk^.unlimited;
+      let limited = bnot(unlimited);
+      let spent = limit == 0_u64;
+      let nothing = band(limited, spent);
+      let possible = range_open(sorted: sorted, walk: walk);
+      let wanted = bnot(nothing);
+      let taking = band(possible, wanted);
+      let found = 0_u64;
+      if taking {
+        set found = walk_from(order: &sorted^.order, walk: walk, client: env, offset: offset, limit: limit, unlimited: unlimited, act: 2_u64);
+      }
+      let elements = found;
+      if scored {
+        set elements = found *wrap 2_u64;
+      }
+      reply_array(client: env, count: elements);
+      if found > 0_u64 {
+        let bounded = False();
+        let written = walk_from(order: &sorted^.order, walk: walk, client: env, offset: offset, limit: found, unlimited: bounded, act: act);
+      }
+      return 5_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+  }
+}
+
+fn run_zrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, kind: u64, direction: u64) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "ZRANGE key start stop [BYSCORE|BYLEX] [REV] [LIMIT offset count] [WITHSCORES] (kind 0, direction 0), ZREVRANGE (kind 1, direction 2), ZRANGEBYSCORE (2, 1), ZREVRANGEBYSCORE (2, 2), ZRANGEBYLEX (3, 1) and ZREVRANGEBYLEX (3, 2), as Redis's zrangeGenericCommand reads them: the options from the fourth argument on, letters in either case and compared up to a zero byte, where REV and BYSCORE or BYLEX are taken only when the command leaves them open and an unknown option is a syntax error; LIMIT with a rank range unless its count is -1, and WITHSCORES with BYLEX, are refused; the range, its two ends swapped for a reversed range by score or member, is read before the key; the members are written inside the statement that finds the set, an absent key answering an empty array.";
+  let count = args^.inner.len;
+  let withscores = False();
+  let offset = 0_i64;
+  let limit = -1_i64;
+  let rangetype = kind;
+  let order = direction;
+  let index = 4_u64;
+  loop @options {
+    if index >= count {
+      break @options;
+    }
+    let option = arg(args: args, index: index);
+    let after = index +wrap 1_u64;
+    let left = count -sat after;
+    let is_withscores = option_matches(input: input, span: option, word: &word_withscores[0_u64..10_u64]);
+    let is_limit = option_matches(input: input, span: option, word: &word_limit[0_u64..5_u64]);
+    let is_rev = option_matches(input: input, span: option, word: &word_rev[0_u64..3_u64]);
+    let is_bylex = option_matches(input: input, span: option, word: &word_bylex[0_u64..5_u64]);
+    let is_byscore = option_matches(input: input, span: option, word: &word_byscore[0_u64..7_u64]);
+    let room = left >= 2_u64;
+    let limited = band(is_limit, room);
+    let open_order = order == 0_u64;
+    let open_type = rangetype == 0_u64;
+    let rev = band(open_order, is_rev);
+    let bylex = band(open_type, is_bylex);
+    let byscore = band(open_type, is_byscore);
+    if is_withscores {
+      set withscores = True();
+    } else if limited {
+      let first_span = arg(args: args, index: after);
+      let first = read_integer(input: input, start: first_span.start, length: first_span.length);
+      if first.state != 1_u64 {
+        reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+        return unit;
+      }
+      let second_index = after +wrap 1_u64;
+      let second_span = arg(args: args, index: second_index);
+      let second = read_integer(input: input, start: second_span.start, length: second_span.length);
+      if second.state != 1_u64 {
+        reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+        return unit;
+      }
+      set offset = first.value;
+      set limit = second.value;
+      set index = second_index;
+    } else if rev {
+      set order = 2_u64;
+    } else if bylex {
+      set rangetype = 3_u64;
+    } else if byscore {
+      set rangetype = 2_u64;
+    } else {
+      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+      return unit;
+    }
+    set index = index +wrap 1_u64;
+  }
+  if order == 0_u64 {
+    set order = 1_u64;
+  }
+  if rangetype == 0_u64 {
+    set rangetype = 1_u64;
+  }
+  let limit_given = limit != -1_i64;
+  let by_rank = rangetype == 1_u64;
+  let by_lex = rangetype == 3_u64;
+  let rank_limited = band(limit_given, by_rank);
+  if rank_limited {
+    reply_error(client: client, word: &text_limit_rank[0_u64..85_u64]);
+    return unit;
+  }
+  let lex_scored = band(withscores, by_lex);
+  if lex_scored {
+    reply_error(client: client, word: &text_scores_lex[0_u64..68_u64]);
+    return unit;
+  }
+  let reverse = order == 2_u64;
+  let act = 0_u64;
+  if withscores {
+    set act = 1_u64;
+  }
+  let walk_kind = rangetype -wrap 1_u64;
+  let walk = walk_new(reverse: reverse, kind: walk_kind, act: act, input: input);
+  set client^.low = 0_i64;
+  set client^.high = 0_i64;
+  if by_rank {
+    let first_span = arg(args: args, index: 2_u64);
+    let first = read_integer(input: input, start: first_span.start, length: first_span.length);
+    if first.state != 1_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    let last_span = arg(args: args, index: 3_u64);
+    let last = read_integer(input: input, start: last_span.start, length: last_span.length);
+    if last.state != 1_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    set client^.low = first.value;
+    set client^.high = last.value;
+  } else {
+    let low_index = 2_u64;
+    let high_index = 3_u64;
+    if reverse {
+      set low_index = 3_u64;
+      set high_index = 2_u64;
+    }
+    let valid = read_range(input: input, args: args, low_index: low_index, high_index: high_index, walk: &walk);
+    if valid {
+    } else {
+      if by_lex {
+        reply_error(client: client, word: &text_range_lex[0_u64..42_u64]);
+      } else {
+        reply_error(client: client, word: &text_range_float[0_u64..29_u64]);
+      }
+      return unit;
+    }
+    if offset < 0_i64 {
+      set walk.limit = 0_u64;
+      set walk.unlimited = False();
+    } else {
+      set walk.offset = cvt.wrap::<i64, u64>(offset);
+      if limit < 0_i64 {
+        set walk.unlimited = True();
+      } else {
+        set walk.limit = cvt.wrap::<i64, u64>(limit);
+        set walk.unlimited = False();
+      }
+    }
+  }
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = range_ranked(env: client, value: held, walk: &walk);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_array(client: client, count: 0_u64);
+  return unit;
+}
+
+fn count_ranked(env: &Client, value: &Entry, walk: &Walk) -> kind: u64 reads(value), writes(env), writes(walk) {
+  doc "Records in number how many ranks of a live sorted set a walk by score or by member takes, and done; wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Ranked(ranked: sorted) => {
+      let possible = range_open(sorted: sorted, walk: walk);
+      set env^.number = 0_u64;
+      if possible {
+        let any = True();
+        set env^.number = walk_from(order: &sorted^.order, walk: walk, client: env, offset: 0_u64, limit: 0_u64, unlimited: any, act: 2_u64);
+      }
+      set env^.state = state_done;
+      return 5_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+  }
+}
+
+fn run_zcount(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, kind: u64) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "ZCOUNT key min max (kind 1) and ZLEXCOUNT key min max (kind 2): answers how many members lie in the range of scores or of members, read before the key, 0 for an absent key.";
+  let forward = False();
+  let walk = walk_new(reverse: forward, kind: kind, act: 2_u64, input: input);
+  let valid = read_range(input: input, args: args, low_index: 2_u64, high_index: 3_u64, walk: &walk);
+  if valid {
+  } else {
+    if kind == 2_u64 {
+      reply_error(client: client, word: &text_range_lex[0_u64..42_u64]);
+    } else {
+      reply_error(client: client, word: &text_range_float[0_u64..29_u64]);
+    }
+    return unit;
+  }
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = count_ranked(env: client, value: held, walk: &walk);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+    set client^.number = 0_u64;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let counted = cvt.wrap::<u64, i64>(client^.number);
+  reply_integer(client: client, value: counted);
+  return unit;
+}
+
+fn remove_walked(env: &Client, value: &Entry, walk: &Walk) -> kind: u64 writes(env), writes(value), writes(walk) {
+  doc "Removes from a live sorted set the ranks a walk takes, recording how many in number, and done, or emptied when the set is left empty; wrong for another kind and expired for an expired entry. A walk by position takes the ranks from position low to high, sanitized as Redis sanitizes them; the walk keeps copies of the ranks it takes, which are then removed.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Ranked(ranked: sorted) => {
+      set env^.number = 0_u64;
+      set env^.state = state_done;
+      let all = True();
+      let bounded = False();
+      if walk^.kind == 0_u64 {
+        let size = ordered_map_len::<Rank, unit, ceiling>(map: &sorted^.order);
+        let length = cvt.wrap::<u64, i64>(size);
+        let start = env^.low;
+        let stop = env^.high;
+        if start < 0_i64 {
+          set start = length +wrap start;
+        }
+        if stop < 0_i64 {
+          set stop = length +wrap stop;
+        }
+        if start < 0_i64 {
+          set start = 0_i64;
+        }
+        let crossed = start > stop;
+        let past = start >= length;
+        let empty = bor(crossed, past);
+        if empty {
+          return 5_u64;
+        }
+        if stop >= length {
+          set stop = length -wrap 1_i64;
+        }
+        let first = cvt.wrap::<i64, u64>(start);
+        let last = cvt.wrap::<i64, u64>(stop);
+        let span = last -wrap first;
+        let count = span +wrap 1_u64;
+        let kept = walk_from(order: &sorted^.order, walk: walk, client: env, offset: first, limit: count, unlimited: bounded, act: 3_u64);
+      } else {
+        let possible = range_open(sorted: sorted, walk: walk);
+        if possible {
+          let kept = walk_from(order: &sorted^.order, walk: walk, client: env, offset: 0_u64, limit: 0_u64, unlimited: all, act: 3_u64);
+        }
+      }
+      let keys = env^.keys;
+      let removed = 0_u64;
+      loop @ranks {
+        let have_member = env^.items.inner.len > 0_u64;
+        let have_score = env^.scores.inner.len > 0_u64;
+        let both = band(have_member, have_score);
+        if both {
+        } else {
+          break @ranks;
+        }
+        let member = take_back(window: &env^.items.inner);
+        let score = take_back(window: &env^.scores.inner);
+        let dropped = hash_map_remove::<KeyHash, f64, ceiling>(map: &sorted^.scores, key: &member, env: &keys);
+        let rank = Rank(score: score, member: move member);
+        let unranked = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &rank, env: &keys);
+        set removed = removed +wrap 1_u64;
+      }
+      set env^.number = removed;
+      let left = ordered_map_len::<Rank, unit, ceiling>(map: &sorted^.order);
+      if left == 0_u64 {
+        set env^.state = state_emptied;
+      }
+      return 5_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Members(members: set_of) => {
+      set env^.state = state_wrong;
+      return 3_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+  }
+}
+
+fn run_zremrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, kind: u64) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "ZREMRANGEBYRANK key start stop (kind 0), ZREMRANGEBYSCORE key min max (1) and ZREMRANGEBYLEX key min max (2): removes the members in the range, read before the key, removing the key when the set is left empty, and answers how many it removed, 0 for an absent key.";
+  let forward = False();
+  let walk = walk_new(reverse: forward, kind: kind, act: 3_u64, input: input);
+  set client^.low = 0_i64;
+  set client^.high = 0_i64;
+  if kind == 0_u64 {
+    let first_span = arg(args: args, index: 2_u64);
+    let first = read_integer(input: input, start: first_span.start, length: first_span.length);
+    if first.state != 1_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    let last_span = arg(args: args, index: 3_u64);
+    let last = read_integer(input: input, start: last_span.start, length: last_span.length);
+    if last.state != 1_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    set client^.low = first.value;
+    set client^.high = last.value;
+  } else {
+    let valid = read_range(input: input, args: args, low_index: 2_u64, high_index: 3_u64, walk: &walk);
+    if valid {
+    } else {
+      if kind == 2_u64 {
+        reply_error(client: client, word: &text_range_lex[0_u64..42_u64]);
+      } else {
+        reply_error(client: client, word: &text_range_float[0_u64..29_u64]);
+      }
+      return unit;
+    }
+  }
+  clear_items(client: client);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let edited = remove_walked(env: client, value: held, walk: &walk);
+      }
+      None() => {
+      }
+    }
+    let emptied = client^.state == state_emptied;
+    let lapsed = client^.state == state_expired;
+    let removing = bor(emptied, lapsed);
+    if removing {
+      set slot^ = None<Entry>();
+    }
+    if lapsed {
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
+    if client^.number > 0_u64 {
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let removed = cvt.wrap::<u64, i64>(client^.number);
+  reply_integer(client: client, value: removed);
+  return unit;
+}

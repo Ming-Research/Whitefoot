@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-04 v0.91: key sets in insertion order
+
+Rules: changed SHARE-1, PRE-1, TYPE-10, MSR-1
+
+Owner-approved: 2026-10-04, in the session, written in Chinese: after the handoff of PR #221, which showed every rule change with its before and after behavior, Q36 A ("Q36 agreed", translated).
+
+Summary: SHARE-1 makes a key set's index order the order of its keys' first insertions and gives `key_set_insert`, which answers a key's index, appending a new key at index `len`; the payload sentences leave it. PRE-1 replaces `key_set_put`, `key_set_add` and `key_set_payload` by `key_set_insert`, which ensures `index < keys^.len` and bounds the new `len` two-sidedly, and its declaration preorder follows. TYPE-10 names key-set insertions where it named additions; MSR-1 names `key_set_insert` as what publishes a key set's `len` two-sidedly. SHARE-2's text is unchanged; its element i is now the i-th inserted key. Selected by the owner's ruling Q36 A after the MSET investigation.
+
 ## 2026-10-04 v0.90: package bindings
 
 Rules: added MOD-11; changed FORM-2, FORM-5, GRAM-2, PROG-1, MOD-1, MOD-2, MOD-4, MOD-5, MOD-8, MOD-10, DIAG-1
