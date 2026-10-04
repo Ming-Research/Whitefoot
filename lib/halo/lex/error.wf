@@ -1,0 +1,246 @@
+const text_eof: Array<u8, 5> = "<eof>";
+
+const text_near: Array<u8, 7> = " near '";
+
+const text_colon: Array<u8, 2> = ": ";
+
+const text_dots: Array<u8, 3> = "...";
+
+const text_string_start: Array<u8, 9> = "[string \"";
+
+const text_string_end: Array<u8, 2> = "\"]";
+
+fn append_decimal(buffer: &Box<Slots<u8>>, value: u64) -> result: unit writes(buffer) {
+  doc "Append unsigned decimal text with no heap scratch.";
+  let digits = slots_new::<u8, 20>();
+  let n = value;
+  loop {
+    let d = n % 10_u64;
+    let b = cvt.wrap::<u64, u8>(d);
+    let c = b +wrap 48_u8;
+    if digits.len < digits.cap {
+      place_back(window: &digits, value: c);
+    }
+    set n = n / 10_u64;
+    if n == 0_u64 {
+      break;
+    }
+  }
+  loop {
+    if digits.len == 0_u64 {
+      break;
+    }
+    let c = take_back(window: &digits);
+    put(buffer: buffer, byte: c);
+  }
+  return unit;
+}
+
+fn c_length(bytes: &[u8]) -> length: u64 reads(bytes) {
+  doc "Length before the first NUL, as Lua's diagnostic C strings.";
+  let length = bytes^.len;
+  for (i in 0_u64..length) {
+    let b = bytes^[i];
+    if b == 0_u8 {
+      return i;
+    }
+  }
+  return length;
+}
+
+fn format_chunk(chunk: &[u8], output: &Box<Slots<u8>>) -> result: unit reads(chunk), writes(output) {
+  doc "luaO_chunkid with MAXSRC 80, including its filename suffix and source-line abbreviation.";
+  let length = c_length(bytes: chunk);
+  let first = at(source: chunk, index: 0_u64);
+  if first == 61_u16 {
+    let end = imin(length, 80_u64);
+    copy_range(source: chunk, start: 1_u64, end: end, buffer: output);
+  } else if first == 64_u16 {
+    let start = 1_u64;
+    if length > 73_u64 {
+      set start = length - 72_u64;
+      copy_range(source: &text_dots[0_u64..3_u64], start: 0_u64, end: 3_u64, buffer: output);
+    }
+    copy_range(source: chunk, start: start, end: length, buffer: output);
+  } else {
+    let end = imin(length, 63_u64);
+    for (i in 0_u64..end) {
+      let c = at(source: chunk, index: i);
+      let nl = newline(c: c);
+      if nl {
+        set end = i;
+        break;
+      }
+    }
+    copy_range(source: &text_string_start[0_u64..9_u64], start: 0_u64, end: 9_u64, buffer: output);
+    copy_range(source: chunk, start: 0_u64, end: end, buffer: output);
+    if end < length {
+      copy_range(source: &text_dots[0_u64..3_u64], start: 0_u64, end: 3_u64, buffer: output);
+    }
+    copy_range(source: &text_string_end[0_u64..2_u64], start: 0_u64, end: 2_u64, buffer: output);
+  }
+  return unit;
+}
+
+fn format_error(chunk: &[u8], error: &Error, decoded: &Box<Slots<u8>>, output: &Box<Slots<u8>>) -> result: unit reads(chunk), reads(error), reads(decoded), writes(output) {
+  doc "The returned message and PUC's diagnostic buffer become a full lexical error string.";
+  clear(buffer: output);
+  format_chunk(chunk: chunk, output: output);
+  put(buffer: output, byte: 58_u8);
+  append_decimal(buffer: output, value: error^.line);
+  copy_range(source: &text_colon[0_u64..2_u64], start: 0_u64, end: 2_u64, buffer: output);
+  let count = error^.message.len;
+  copy_range(source: &error^.message[0_u64..count], start: 0_u64, end: count, buffer: output);
+  if error^.near_kind != 0_u16 {
+    copy_range(source: &text_near[0_u64..7_u64], start: 0_u64, end: 7_u64, buffer: output);
+    if error^.near_kind == tk_eof {
+      copy_range(source: &text_eof[0_u64..5_u64], start: 0_u64, end: 5_u64, buffer: output);
+    } else {
+      format_token(kind: error^.near_kind, decoded: decoded, output: output);
+    }
+    put(buffer: output, byte: 39_u8);
+  }
+  return unit;
+}
+
+const text_char: Array<u8, 5> = "char(";
+
+fn format_token(kind: u16, decoded: &Box<Slots<u8>>, output: &Box<Slots<u8>>) -> result: unit reads(decoded), writes(output) {
+  doc "luaX_token2str and txtToken, including the previous token used by inclinenumber's line-limit error.";
+  if kind < 257_u16 {
+    let control = kind < 32_u16;
+    if kind == 127_u16 {
+      set control = True();
+    }
+    if control {
+      copy_range(source: &text_char[0_u64..5_u64], start: 0_u64, end: 5_u64, buffer: output);
+      let wide = cvt::<u16, u64>(kind);
+      append_decimal(buffer: output, value: wide);
+      put(buffer: output, byte: 41_u8);
+    } else {
+      let b = cvt.wrap::<u16, u8>(kind);
+      put(buffer: output, byte: b);
+    }
+    return unit;
+  }
+  if kind == 257_u16 {
+    copy_range(source: &word_and[0_u64..3_u64], start: 0_u64, end: 3_u64, buffer: output);
+    return unit;
+  }
+  if kind == 258_u16 {
+    copy_range(source: &word_break[0_u64..5_u64], start: 0_u64, end: 5_u64, buffer: output);
+    return unit;
+  }
+  if kind == 259_u16 {
+    copy_range(source: &word_do[0_u64..2_u64], start: 0_u64, end: 2_u64, buffer: output);
+    return unit;
+  }
+  if kind == 260_u16 {
+    copy_range(source: &word_else[0_u64..4_u64], start: 0_u64, end: 4_u64, buffer: output);
+    return unit;
+  }
+  if kind == 261_u16 {
+    copy_range(source: &word_elseif[0_u64..6_u64], start: 0_u64, end: 6_u64, buffer: output);
+    return unit;
+  }
+  if kind == 262_u16 {
+    copy_range(source: &word_end[0_u64..3_u64], start: 0_u64, end: 3_u64, buffer: output);
+    return unit;
+  }
+  if kind == 263_u16 {
+    copy_range(source: &word_false[0_u64..5_u64], start: 0_u64, end: 5_u64, buffer: output);
+    return unit;
+  }
+  if kind == 264_u16 {
+    copy_range(source: &word_for[0_u64..3_u64], start: 0_u64, end: 3_u64, buffer: output);
+    return unit;
+  }
+  if kind == 265_u16 {
+    copy_range(source: &word_function[0_u64..8_u64], start: 0_u64, end: 8_u64, buffer: output);
+    return unit;
+  }
+  if kind == 266_u16 {
+    copy_range(source: &word_if[0_u64..2_u64], start: 0_u64, end: 2_u64, buffer: output);
+    return unit;
+  }
+  if kind == 267_u16 {
+    copy_range(source: &word_in[0_u64..2_u64], start: 0_u64, end: 2_u64, buffer: output);
+    return unit;
+  }
+  if kind == 268_u16 {
+    copy_range(source: &word_local[0_u64..5_u64], start: 0_u64, end: 5_u64, buffer: output);
+    return unit;
+  }
+  if kind == 269_u16 {
+    copy_range(source: &word_nil[0_u64..3_u64], start: 0_u64, end: 3_u64, buffer: output);
+    return unit;
+  }
+  if kind == 270_u16 {
+    copy_range(source: &word_not[0_u64..3_u64], start: 0_u64, end: 3_u64, buffer: output);
+    return unit;
+  }
+  if kind == 271_u16 {
+    copy_range(source: &word_or[0_u64..2_u64], start: 0_u64, end: 2_u64, buffer: output);
+    return unit;
+  }
+  if kind == 272_u16 {
+    copy_range(source: &word_repeat[0_u64..6_u64], start: 0_u64, end: 6_u64, buffer: output);
+    return unit;
+  }
+  if kind == 273_u16 {
+    copy_range(source: &word_return[0_u64..6_u64], start: 0_u64, end: 6_u64, buffer: output);
+    return unit;
+  }
+  if kind == 274_u16 {
+    copy_range(source: &word_then[0_u64..4_u64], start: 0_u64, end: 4_u64, buffer: output);
+    return unit;
+  }
+  if kind == 275_u16 {
+    copy_range(source: &word_true[0_u64..4_u64], start: 0_u64, end: 4_u64, buffer: output);
+    return unit;
+  }
+  if kind == 276_u16 {
+    copy_range(source: &word_until[0_u64..5_u64], start: 0_u64, end: 5_u64, buffer: output);
+    return unit;
+  }
+  if kind == 277_u16 {
+    copy_range(source: &word_while[0_u64..5_u64], start: 0_u64, end: 5_u64, buffer: output);
+    return unit;
+  }
+  if kind == 278_u16 {
+    put(buffer: output, byte: 46_u8);
+    put(buffer: output, byte: 46_u8);
+    return unit;
+  }
+  if kind == 279_u16 {
+    put(buffer: output, byte: 46_u8);
+    put(buffer: output, byte: 46_u8);
+    put(buffer: output, byte: 46_u8);
+    return unit;
+  }
+  if kind == 280_u16 {
+    put(buffer: output, byte: 61_u8);
+    put(buffer: output, byte: 61_u8);
+    return unit;
+  }
+  if kind == 281_u16 {
+    put(buffer: output, byte: 62_u8);
+    put(buffer: output, byte: 61_u8);
+    return unit;
+  }
+  if kind == 282_u16 {
+    put(buffer: output, byte: 60_u8);
+    put(buffer: output, byte: 61_u8);
+    return unit;
+  }
+  if kind == 283_u16 {
+    put(buffer: output, byte: 126_u8);
+    put(buffer: output, byte: 61_u8);
+    return unit;
+  }
+  let length = decoded^.inner.len;
+  let bytes = &decoded^.inner[0_u64..length];
+  let end = c_length(bytes: bytes);
+  copy_range(source: bytes, start: 0_u64, end: end, buffer: output);
+  return unit;
+}
