@@ -573,7 +573,7 @@ if [ "$MODE" = compare ]; then
                 wait "$recorder" || true
                 stop
                 "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
-                    --sort symbol --percent-limit 0.3 >"$OUT/profile-$name-$n.txt" 2>/dev/null
+                    --sort dso,symbol --percent-limit 0.3 >"$OUT/profile-$name-$n.txt" 2>/dev/null
             done
         fi
     done

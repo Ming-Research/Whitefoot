@@ -45,6 +45,14 @@ on:
         description: Pipeline depths for the firn comparison
         type: string
         default: "16 1"
+      compare_passes:
+        description: Passes for the firn comparison; probe with 2 first
+        type: string
+        default: "2"
+      compare_seconds:
+        description: Seconds per measured run; probe with 5 first
+        type: string
+        default: "5"
       compare_profile:
         description: Record a perf profile of each image under MSET at depth 16
         type: boolean
@@ -164,6 +172,8 @@ jobs:
           COMPARE_CPUS: ${{ inputs.compare_cpus }}
           COMPARE_TESTS: ${{ inputs.compare_tests }}
           COMPARE_DEPTHS: ${{ inputs.compare_depths }}
+          COMPARE_PASSES: ${{ inputs.compare_passes }}
+          COMPARE_SECONDS: ${{ inputs.compare_seconds }}
           PROFILE: ${{ inputs.compare_profile }}
           WHITEFOOT_CHECK_TIMEOUT: "6000"
         run: |
