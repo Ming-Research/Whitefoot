@@ -231,6 +231,31 @@ which the whole-function loop had hoisted; the cell is 24 bytes against
 16; and the call and return arms push and pop frame records through the
 library's window operations.
 
+### Invariant loads hoisted (`wfhoist`)
+
+The lowering then computes in the enclosing function what the loop cannot
+change: `code`'s box referent and length (a read-only reference passed
+through unchanged) and the referents of `regs`, `mem` and `frames`, whose
+boxes the loop only projects, so no arm reloads a box pointer; the
+references themselves leave the parts' parameters (nine remain). Same core,
+eight interleaved launches (`run-wf-hoist.tsv`), with the whole-function
+and first split builds remeasured beside it:
+
+| | loop | fib | sieve | mandel |
+|---|---:|---:|---:|---:|
+| `wfwhole`, cycles | 5234M | 934M | 2855M | 434M |
+| `wfsplit`, cycles | 4434M | 773M | 2498M | 409M |
+| `wfhoist`, cycles | 4004M | 607M | 2378M | 341M |
+| `wfhoist` against `wfwhole` | -23.5% | -35.0% | -16.7% | -21.4% |
+| `wfhoist` against C `tailpn-u8` | 1.00x | 1.05x | 1.13x | 1.05x |
+| `wfhoist` against Silverfir-nano | 2.34x | 1.71x | 2.03x | 1.81x |
+| `wfhoist`, instructions per dispatch | 20.2 | 21.5 | 20.8 | 20.6 |
+
+The WF interpreter now runs at the C tail-call form's speed on `loop` and
+within 13% elsewhere. Its distance to Silverfir-nano is that of the C form
+with the same design: E1 measured the accumulator and pinned locals, which
+this interpreter does not have, as the larger lever.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which
