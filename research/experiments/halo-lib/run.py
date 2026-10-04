@@ -65,7 +65,7 @@ def main():
     rows = []
     revision = run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True).stdout.decode().strip()
     sources = {str(path.relative_to(ROOT)): digest(path) for path in sorted((ROOT / 'lib/halo/vm').glob('*')) if path.is_file()}
-    sources.update({str(path.relative_to(ROOT)): digest(path) for path in sorted(HERE.glob('*')) if path.suffix in ('.lua', '.c', '.py')})
+    sources.update({str(path.relative_to(ROOT)): digest(path) for path in sorted(HERE.rglob('*')) if path.suffix in ('.lua', '.c', '.py', '.wf', '.wfm', '.wfg')})
     sources['Reference lua.o'] = digest(a.lua.parent / 'lua.o')
     sources['Reference liblua.a'] = digest(a.lua.parent / 'liblua.a')
     sources['Redis deps/lua/src/linit.c'] = digest(a.redis_source / 'deps/lua/src/linit.c')

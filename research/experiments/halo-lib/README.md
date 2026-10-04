@@ -67,3 +67,10 @@ strings cannot be compared. Host-specific last-bit libm and NaN spelling
 differences remain observable. These tests cover the requested functions and
 selected boundaries, rather than exhaustively certifying every floating
 input or platform-dependent C conversion.
+
+`string.format` follows the supplied macOS Lua's NaN flag behavior: NaN
+suppresses sign flags, while infinity retains them. Script metadata currently
+provides line numbers but no original source name or local debug names. Error
+locations therefore use the existing `user_script` convention and registered
+builtin names; aliases and method calls cannot reproduce every PUC debug name
+without metadata changes outside this task's file boundary.
