@@ -53,8 +53,6 @@ const text_unknown_subcommand: Array<u8, 25> =[45_u8, 69_u8, 82_u8, 82_u8, 32_u8
 
 const parameter_names: Array<u8, 379> = "appendfilenameappendonlybinddatabaseshash-max-listpack-entrieshash-max-listpack-valuehash-max-ziplist-entrieshash-max-ziplist-valuelist-compress-depthlist-max-listpack-sizelist-max-ziplist-sizeportrequirepasssaveset-max-intset-entriesstream-node-max-bytesstream-node-max-entriestimeoutzset-max-listpack-entrieszset-max-listpack-valuezset-max-ziplist-entrieszset-max-ziplist-value";
 
-const text_crlf: Array<u8, 2> = "\r\n";
-
 const text_minus: Array<u8, 1> = "-";
 
 const text_set_failed: Array<u8, 54> = "-ERR CONFIG SET failed (possibly related to argument '";
