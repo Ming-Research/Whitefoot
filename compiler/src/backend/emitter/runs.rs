@@ -1112,7 +1112,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         self.output.open_block(body.to_string());
         let address = self.value_name(result);
         let slot = self.window_element_pointer_at(shape, block, &address, &format!("%{index}"))?;
-        self.store_value_at(value, &slot)?;
+        self.store_value_at(value, &format!("%{slot}"))?;
         write!(
             self.output,
             "  %{next_index} = add i64 %{index}, 1\n  br label %{head}\n"

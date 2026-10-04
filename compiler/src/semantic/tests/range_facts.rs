@@ -16,7 +16,7 @@ use super::with_semantics;
 fn filled_runtime_slots_publish_fill_facts_and_writes_invalidate_them() {
     for (write, accepted) in [("", true), ("  set cells.inner[1_u64] = 19_u64;\n", false)] {
         let source = format!(
-            "fn inspect(values: &[u64]) -> result: unit reads(values) contract {{\n  requires forall filled(k in 0_u64..values^.len): values^[k] == 17_u64;\n}} {{\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let cells = box_slots_filled::<u64>(count: 3_u64, value: 17_u64);\n{write}  inspect(values: &cells.inner[0_u64..3_u64]);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "fn inspect(values: &[u64]) -> result: unit pure contract {{\n  requires forall filled(k in 0_u64..values^.len): values^[k] == 17_u64;\n}} {{\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let cells = box_slots_filled::<u64>(count: 3_u64, value: 17_u64);\n{write}  inspect(values: &cells.inner[0_u64..3_u64]);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_semantics(source.as_bytes(), |outcome| {
             if accepted {
