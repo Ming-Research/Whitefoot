@@ -330,11 +330,19 @@ impl IrBuilder<'_> {
         Ok(address)
     }
 
-    pub(super) fn borrow_may_write(&self, writable: bool, sources: &[BindingId]) -> bool {
+    pub(super) fn borrow_may_write(
+        &self,
+        writable: bool,
+        sources: &[BindingId],
+        roots: &[BindingId],
+    ) -> bool {
         writable
             && sources
                 .iter()
                 .all(|source| !self.readonly_atomic_sources.contains(source))
+            && roots
+                .iter()
+                .all(|root| !self.readonly_capture_roots.contains(root))
     }
 
     /// Lowers the address carried by a checked borrowed-place expression.
@@ -357,9 +365,10 @@ impl IrBuilder<'_> {
                 root,
                 writable,
                 atomic_sources,
+                write_roots,
                 ..
             } => {
-                let write = self.borrow_may_write(*writable, atomic_sources);
+                let write = self.borrow_may_write(*writable, atomic_sources, write_roots);
                 self.lower_place_address_access(root, write)?
             }
             CheckedExpression::BorrowRangeIndex { place, .. } => self.lower_range_address(

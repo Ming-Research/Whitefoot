@@ -240,7 +240,7 @@ struct BuiltChunk {
     call_results: HashMap<NodePath, (IrBlockId, IrValueId)>,
 }
 
-impl IrBuilder<'_> {
+impl<'program> IrBuilder<'program> {
     /// Lowers one split candidate, or leaves the ordinary path to its caller.
     ///
     /// A candidate whose reduced frame is too wide reuses its completed CFG
@@ -257,7 +257,10 @@ impl IrBuilder<'_> {
         lower: IrValueId,
         upper: IrValueId,
     ) -> Result<bool, LoweringFailure> {
-        let Some(actualization) = self.permitted_loop(node_path) else {
+        let Some(permission) = self.permitted_loop(node_path) else {
+            return Ok(false);
+        };
+        let Some(actualization) = permission.actualization else {
             return Ok(false);
         };
         let accumulator = match actualization {
@@ -378,6 +381,7 @@ impl IrBuilder<'_> {
             actualization,
             result_type,
             &captures,
+            &permission.written_roots,
             prune_captures,
         )?;
         captures = captures
@@ -500,7 +504,7 @@ impl IrBuilder<'_> {
 
     /// The actualization payload of the permitted loop at this statement, when
     /// this compilation asked for overlap lowering at all.
-    fn permitted_loop(&self, node_path: &NodePath) -> Option<LoopActualization> {
+    fn permitted_loop(&self, node_path: &NodePath) -> Option<&'program LoopPermission> {
         if self.overlap != crate::OverlapLowering::On {
             return None;
         }
@@ -508,7 +512,6 @@ impl IrBuilder<'_> {
             .loops
             .iter()
             .find(|judged: &&LoopPermission| judged.statement == *node_path)
-            .and_then(|judged| judged.actualization)
     }
 
     /// The emission conditions, all of them properties of the shape rather than
@@ -572,6 +575,7 @@ impl IrBuilder<'_> {
         actualization: LoopActualization,
         result_type: IrType,
         captures: &[Capture],
+        written_roots: &[BindingId],
         prune_captures: bool,
     ) -> Result<BuiltChunk, LoweringFailure> {
         #[cfg(test)]
@@ -589,6 +593,18 @@ impl IrBuilder<'_> {
         builder
             .readonly_atomic_sources
             .clone_from(&self.readonly_atomic_sources);
+        builder
+            .readonly_capture_roots
+            .clone_from(&self.readonly_capture_roots);
+        // The parent owns these roots, but chunks only read a captured root
+        // absent from the body's resolved write footprint. Keep formation's
+        // judgment and refine its execution context in borrow_may_write.
+        builder.readonly_capture_roots.extend(
+            captures
+                .iter()
+                .map(|capture| capture.binding)
+                .filter(|binding| !written_roots.contains(binding)),
+        );
         let seed = builder.new_parameter(result_type)?;
         let lower = builder.new_parameter(U64)?;
         let upper = builder.new_parameter(U64)?;

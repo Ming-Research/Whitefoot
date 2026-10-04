@@ -158,6 +158,9 @@ pub(crate) struct LoopPermission {
     /// The judgment does not decide that anything is emitted: lowering reads
     /// this, applies its own emission conditions, and may still decline.
     pub(crate) actualization: Option<LoopActualization>,
+    /// Resolved roots written by the body, retained for capture permissions
+    /// in the context executing an actualized chunk.
+    pub(crate) written_roots: Vec<BindingId>,
 }
 
 /// The two disjoint actualization shapes produced by the counted judgment.
@@ -391,6 +394,7 @@ fn judge<'check>(
         inner_loops: Vec::new(),
         reads: Vec::new(),
         accumulates: Vec::new(),
+        written_roots: Vec::new(),
         carried: None,
         shared: None,
         unresolved: None,
@@ -509,6 +513,7 @@ struct Survey<'check, 'run> {
     /// Every read occurrence, with multiplicity and resolved places.
     reads: Vec<ReadOccurrence>,
     accumulates: Vec<Accumulate>,
+    written_roots: Vec<BindingId>,
     carried: Option<NodePath>,
     shared: Option<NodePath>,
     unresolved: Option<NodePath>,
@@ -680,6 +685,7 @@ impl<'check> Survey<'check, '_> {
         }
         let affine_map = self.proven_affine_map(target);
         for write in &footprint.writes {
+            self.record_written_root(&write.place);
             if self.is_iteration_own(&write.place) {
                 continue;
             }
@@ -1326,6 +1332,7 @@ impl<'check> Survey<'check, '_> {
             });
         }
         for write in &footprint.writes {
+            self.record_written_root(&write.place);
             if self.is_iteration_own(&write.place) {
                 continue;
             }
@@ -1351,6 +1358,14 @@ impl<'check> Survey<'check, '_> {
                 continue;
             }
             self.shared.get_or_insert(write.argument.clone());
+        }
+    }
+
+    fn record_written_root(&mut self, place: &ResolvedPlace) {
+        if let PlaceRoot::Binding(binding) = place.root
+            && !self.written_roots.contains(&binding)
+        {
+            self.written_roots.push(binding);
         }
     }
 
@@ -1442,6 +1457,7 @@ impl<'check> Survey<'check, '_> {
             combines,
             advises_split,
             actualization,
+            written_roots: self.written_roots,
         }
     }
 

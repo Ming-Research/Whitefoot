@@ -63,6 +63,70 @@ use super::{
 /// in the bytes.
 const PERMITTED_FOLD: &[u8] = include_bytes!("../../../../tests/programs/parallel/range_fold.wf");
 
+const TABLE_READ_FOLD: &[u8] =
+    include_bytes!("../../../../tests/programs/parallel/table_read_fold.wf");
+
+#[test]
+fn split_table_read_fold_uses_read_selections() {
+    let module = emit_with_overlap(TABLE_READ_FOLD);
+    let chunks = synthesized_symbols(&module, "@wf__par_chunk_");
+    assert!(!chunks.is_empty(), "the table reader must split");
+    let mut selections = 0;
+    for chunk in chunks {
+        for line in function_body(&module, &chunk).lines() {
+            if line.contains("call ptr @wf__table_held_entry(") {
+                selections += 1;
+                assert!(
+                    line.ends_with("i32 0)"),
+                    "chunk selection must read: {line}"
+                );
+            }
+        }
+    }
+    assert!(selections > 0, "the chunk must select table entries");
+}
+
+#[test]
+fn split_table_read_fold_runs_repeatedly() {
+    let module = emit_with_overlap(TABLE_READ_FOLD);
+    let directory = test_directory();
+    let executable = CountedProgram::link(&module, &directory);
+    for run in 0..20 {
+        let (grants, output) = executable.run(Some("4"));
+        assert_eq!(output.status.code(), Some(0), "run {run}: {output:?}");
+        assert!(grants > 0, "run {run} must execute a worker: {output:?}");
+    }
+    std::fs::remove_dir_all(&directory).expect("remove the test directory");
+}
+
+#[test]
+fn split_table_read_fold_with_overlapping_writes_stays_sequential() {
+    let source = std::str::from_utf8(TABLE_READ_FOLD)
+        .expect("UTF-8 table reader")
+        .replace(
+            "    let slot = &t^[key];",
+            "    set t^[key] = None<u8>();\n    let slot = &t^[key];",
+        );
+    let ledger = super::compile_permission_ledger(source.as_bytes());
+    assert!(
+        ledger
+            .iter()
+            .any(|line| line.starts_with("PAR loop") && line.contains("denied")),
+        "{ledger:#?}"
+    );
+    let module = emit_with_overlap(source.as_bytes());
+    assert!(
+        !module.contains("@wf__par_split_"),
+        "overlapping table writes cannot split"
+    );
+    assert!(
+        module.lines().any(
+            |line| line.contains("call ptr @wf__table_held_entry(") && line.ends_with("i32 1)")
+        ),
+        "the sequential write must still materialize its cell"
+    );
+}
+
 fn fold_module(parallel: bool) -> String {
     use std::sync::OnceLock;
     static PLAIN: OnceLock<String> = OnceLock::new();
