@@ -4,6 +4,9 @@ fn scan_bad(position: u64) -> result: Scan pure {
 }
 
 fn scan(source: &[u8], start: u64) -> result: Scan reads(source) {
+  if start >= source^.len {
+    return scan_bad(position: source^.len);
+  }
   let p = start;
   let c = byte_at(input: source, index: p);
   if c == 45_u8 {

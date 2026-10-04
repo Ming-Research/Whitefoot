@@ -146,6 +146,32 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     } else if op == 6_u8 {
       let writer = json::encode::new(escape_slash: slash);
       set result = json::encode::number(writer: &writer, output: &output, bytes: &payload[0_u64..length]);
+    } else if op == 7_u8 {
+      let scanned = json::number::scan(source: &payload[0_u64..length], start: depth);
+      record_word(buffer: &output, value: scanned.end);
+      record_word(buffer: &output, value: scanned.error);
+      let valid = 0_u8;
+      if scanned.valid {
+        set valid = 1_u8;
+      }
+      record_byte(buffer: &output, byte: valid);
+    } else if op == 8_u8 {
+      match json::text::string(source: &payload[0_u64..length], start: depth, decoded: &events) {
+        Ok(value: end) => {
+          record_word(buffer: &output, value: end);
+          let n = events.inner.len;
+          for (i in 0_u64..n) {
+            if i < events.inner.len {
+              let b = events.inner[i];
+              record_byte(buffer: &output, byte: b);
+            }
+          }
+          json::text::clear(buffer: &events);
+        }
+        Err(error: problem) => {
+          set result = Err<unit, json::text::Error>(error: move problem);
+        }
+      }
     } else {
       return std::process::exit_status(code: 2_u8);
     }

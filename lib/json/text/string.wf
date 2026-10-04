@@ -2,7 +2,8 @@ fn string(source: &[u8], start: u64, decoded: &Box<Slots<u8>>) -> result: Result
   clear(buffer: decoded);
   let quote = at(source: source, index: start);
   if quote != 34_u16 {
-    let e = error(code: 1_u8, offset: start);
+    let offset = imin(start, source^.len);
+    let e = error(code: 1_u8, offset: offset);
     return Err<u64, Error>(error: move e);
   }
   let p = start +sat 1_u64;

@@ -67,8 +67,8 @@ binary64 remains valid JSON text even though its conversion is infinity.
 
 The runner reconstructs values from the decoder event stream and compares them
 with `python3`'s `json.loads`; it separately parses the writer's output with
-Python. Numeric events are checked against their original source range and an
-integer rational-rounding oracle. The Python expectation uses binary64 for
+Python. Numeric events are checked against independently located source token positions
+in order and an integer rational-rounding oracle. The Python expectation uses binary64 for
 integer tokens too, matching the package's numeric API while distinguishing
 booleans and signed zeros. Writer numeric output retains the original token.
 A duplicate-key fixture additionally checks both key events.
@@ -76,12 +76,14 @@ A duplicate-key fixture additionally checks both key events.
 Fixed cases cover each source diagnostic class and its byte offset/message,
 all control escapes, UTF-8 scalar boundaries, bad UTF-8, surrogate pairs and
 lone surrogates, number syntax, slash modes, caller prefixes, writer misuse and
-reuse after refusal. Nesting is checked at and one beyond the limit, including
+reuse after refusal. Public scanner/string helpers also exercise starts at EOF,
+past EOF and u64-max. Nesting is checked at and one beyond the limit, including
 4,096 arrays and 512 objects. A 32,000-byte string exercises buffer growth and
 scratch reuse. Exact decimal halfway cases are generated from dyadic rational
 values, without a float formatter. Mutation controls intentionally corrupt
 writer output, event text, numeric ranges/bits, event completeness, error codes,
-offsets and messages; each must be detected.
+offsets and messages, including two equal numeric tokens with incorrectly shared
+source ranges; each must be detected.
 
 Source diagnostic codes 1..14 and writer sequencing codes 16..19 have executable
 cases. Code 15 is reserved for adapter consistency failures. Code 20 reports

@@ -49,6 +49,26 @@ def unpack(line):
     return ('OK', bytes.fromhex(parts[1].decode()), bytes.fromhex(parts[2].decode()))
 
 
+def number_ranges(source):
+    """Locate numeric tokens independently, skipping whole quoted strings."""
+    ranges = []
+    i = 0
+    while i < len(source):
+        if source[i] == 34:
+            i += 1
+            while i < len(source) and source[i] != 34:
+                i += 2 if source[i] == 92 else 1
+            i += 1
+        elif source[i] == 45 or 48 <= source[i] <= 57:
+            match = NUMBER.match(source, i)
+            require(match is not None, 'invalid numeric token in valid fixture')
+            ranges.append(match.span())
+            i = match.end()
+        else:
+            i += 1
+    return ranges
+
+
 def events_tree(source, events):
     """Reconstruct solely from events, and check every numeric range and bit field."""
     cursor = 0
@@ -123,6 +143,7 @@ def events_tree(source, events):
         else:
             raise AssertionError(f'unknown event tag {tag}')
     require(ended, 'missing End event')
+    require([(a, b) for a, b, _ in numbers] == number_ranges(source), 'numeric token occurrences differ')
     return root, tags, strings, numbers
 
 
@@ -162,7 +183,7 @@ def check_error(result, code, offset):
             f'expected {code}@{offset} ({MESSAGES[code]}), got {result!r}')
 
 
-def controls(valid_source, valid_result, invalid_result):
+def controls(valid_source, valid_result, invalid_result, repeated_result):
     """Prove independent observations detect wrong output, payloads and diagnostics."""
     bad = [
         ('OK', b'null', valid_result[2]),  # writer differs
@@ -175,6 +196,15 @@ def controls(valid_source, valid_result, invalid_result):
     for delta in (1, 9, 17):
         b = bytearray(valid_result[2]); b[index + delta] ^= 1
         bad.append(('OK', valid_result[1], bytes(b)))
+    repeated = bytearray(repeated_result[2])
+    # Array begin, then two 25-byte Number records: point the second at the first.
+    repeated[27:43] = repeated[2:18]
+    try:
+        check_valid(b'[1,1]', ('OK', repeated_result[1], bytes(repeated)))
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError('repeated-token range mutation escaped the oracle')
     for result in bad:
         try:
             check_valid(valid_source, result)
@@ -192,13 +222,13 @@ def controls(valid_source, valid_result, invalid_result):
             pass
         else:
             raise AssertionError('error-result mutation escaped the oracle')
-    return len(bad) + 4
+    return len(bad) + 5
 
 
 def document(rng, depth=0):
     alphabet = ['a', 'z', ' ', '/', '"', '\\', '\0', '\n', '\b', '\f', '\r', '\t',
                 '\x1f', '\x7f', '\u0080', '\u07ff', '\u0800', '\ud7ff', '\ue000',
-                '\uffff', '\U00010000', '\U0010ffff', '中文', '𝄞']
+                '\uffff', '\U00010000', '\U0010ffff', '\u4e2d\u6587', '\U0001d11e']
     def text():
         return ''.join(rng.choice(alphabet) for _ in range(rng.randrange(15)))
     kind = rng.randrange(8 if depth < 7 else 6)
@@ -263,6 +293,7 @@ def fixtures(samples, seed):
         cases.append((op, data, depth, ('error', code, offset)))
     valid(b'{"word":[1.25,"word",true,false,null]}')  # mutation-control fixture
     invalid(b'[1,]', 1, 3)                              # error-control fixture
+    valid(b'[1,1]')                                    # repeated-token range control
     for data in [b'null', b'true', b'false', b'0', b'-0', b'1.0', b'-0.0',
                  b'1e400', b'-1e400', b'1e-9999', b'-1e-9999',
                  b'[]', b'{}', b' [ ] \r\n\t', b'{"a":1,"a":2}',
@@ -319,6 +350,16 @@ def fixtures(samples, seed):
     for data in ['hello/\0\n"\\', '\U0010ffff', ''.join(map(chr, range(32)))]:
         cases.append((5,data.encode(),0,('string',data)))
     cases.append((4,b'',0,('writer',)))
+    for data, start, end, error, valid_scan in [
+        (b'',0,0,0,0), (b'1',1,1,1,0), (b'1',2,1,1,0),
+        (b'1',2**64-1,1,1,0), (b'12x',0,2,2,1),
+        (b'x-2E+3,',1,6,6,1), (b'-',0,1,1,0), (b'00',0,1,1,0),
+    ]:
+        cases.append((7,data,start,('scan',struct.pack('<QQB',end,error,valid_scan))))
+    # Total public quoted-string helper offsets at/past EOF.
+    for start in (1, 2, 2**64-1): invalid(b'"',1,1,depth=start,op=8)
+    invalid(b'',1,0,depth=2**64-1,op=8)
+    cases.append((8,b'x"a"tail',1,('scan',struct.pack('<Q',4)+b'a')))
     # Exact decimal halfway values, and tiny changes on either side.
     numbers = ['0','-0','1','-1','9007199254740993','18446744073709551615',
                '2.2250738585072014e-308','2.2250738585072012e-308',
@@ -379,7 +420,7 @@ def main():
     lines=p.stdout.splitlines()
     require(len(lines)==len(cases),f'{len(lines)} replies for {len(cases)} records')
     results=list(map(unpack,lines))
-    counts={name:0 for name in ['valid','error','string','writer','number']}
+    counts={name:0 for name in ['valid','error','string','writer','number','scan']}
     for index,((op,data,depth,expected),result) in enumerate(zip(cases,results)):
         try:
             kind=expected[0]
@@ -392,12 +433,13 @@ def main():
             elif kind=='writer': require(result==('OK',bytes(8),b''),'writer state checks failed')
             elif kind=='string':
                 require(result[0]=='OK' and json.loads(result[1])==expected[1], 'raw string writer differs')
+            elif kind=='scan': require(result==('OK',expected[1],b''), 'scanner boundary differs')
             elif kind=='number':
                 require(result==('OK',expected[1],b''),f'number bits differ for {data[:100]!r}')
             counts[kind]+=1
         except Exception as error:
             raise AssertionError(f'case {index} op={op} depth={depth} input={data[:100]!r}: {error}') from error
-    mutations=controls(cases[0][1],results[0],results[1])
+    mutations=controls(cases[0][1],results[0],results[1],results[2])
     metadata={'counts':counts,'random_documents':args.samples,'random_numbers':args.samples,
               'mutation_controls':mutations,'seed':args.seed,'build_seconds':build_seconds,
               'execution_seconds':execution_seconds,
