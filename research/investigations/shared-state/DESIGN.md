@@ -492,3 +492,42 @@ the matrix was narrowed to depth 16, `MSET` with `SET` as the control, and
 1, 4 and 16 server CPUs, about 25 minutes instead of two hours: depth 1 is
 bound by the client, `GET` and `SET` control the same thing, and 1 and 16
 CPUs bound the range; the criteria are unchanged.
+
+**Measurement 2's result on the 14900K** (run 37190448134; Linux 6.8 in a
+Hyper-V machine of 32 CPUs, depth 16, six passes of ten seconds). Every
+cell is valid: `main-twin` to `main` lay within 0.989 to 1.012 in CPU per
+request and at 1.000 in rate.
+
+| server CPUs | `MSET` CPU per request, `main` to `base` | `MSET` rate | `SET` CPU per request |
+|---|---:|---:|---:|
+| 1 | 1.087 (1.396 to 1.515 µs) | 0.914 | 0.997 |
+| 4 | 1.096 (2.050 to 2.221 µs) | 1.000 | 1.007 |
+| 16 | 1.075 (2.179 to 2.335 µs) | 1.000 | 1.006 |
+
+At 4 and 16 CPUs the client bounds both images' rate, about 1.04 million
+`MSET`s a second, so the loss shows only as CPU. The first two passes alone
+gave the same medians within 0.013, so a probe of two short passes would have
+answered this question.
+
+The profiles at one CPU, task-clock nanoseconds over the same 6,623,520
+requests, attribute the 0.89 s more that `main` spends (134 ns per `MSET`):
+
+- the statement's own work does not grow: `base`'s `run_mset`, `sift_held`,
+  `wf__shared_map_held`, `hold_keys`, `key` and `release_keys` took 2.26 s;
+  `main`'s `run_mset`, `insert_key`, `wf__table_hold_take`, `fill_slots`,
+  `hold_keys`, `hold_release` and the unnamed addresses beside them about
+  2.07 s. `insert_key` itself is 0.17 s; the ordered insertion (H1) cannot
+  be half the loss;
+- the request parser grows by 0.24 s: `wf_protocol.read_line`, absent from
+  `base`, takes 0.35 s while `parse_multibulk` falls by 0.11 s, about 1.7 ns
+  per bulk argument, which also fits `SET`'s three arguments costing 4 ns
+  more;
+- the cell locks grow by 0.32 s: `try_entry` by 0.18 s and `acquire_entry`
+  by 0.14 s, at one CPU, where nothing contends;
+- the rest, about 0.3 s, lies in addresses the report did not name.
+
+So the profiles reject H1 as the main cause by the criterion; none of H1 to
+H4 alone reaches half the loss, and two causes outside the key set appear:
+the parser and the cell locks. The next measurements name the unnamed
+addresses and change one cause at a time in a diagnostic image, at one CPU
+and two short passes first.
