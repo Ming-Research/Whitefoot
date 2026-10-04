@@ -3449,7 +3449,22 @@ condition under which it is taken up.
   `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
   with `glob_match` (`apps/firn/bytes/bytes.wf`), RESP3, which
   `HELLO 3` refuses, `LMPOP` and the blocking list commands, `SSCAN`,
-  `MULTI` and `EXEC`, publish and subscribe, and a random hash seed. firn answers the calls the suite's
+  `MULTI` and `EXEC`, publish and subscribe, and a random hash seed; and
+  `RANDOMKEY`, `SORT`, `LCS`, `OBJECT`, `DUMP`, `RESTORE`, `MOVE`, `MIGRATE`,
+  `WAIT`, `HSCAN`, `ZSCAN`, `ZRANGESTORE`, `ZRANDMEMBER`, `ZMPOP` and
+  `BZMPOP`, `BZPOPMIN` and `BZPOPMAX`, and `ZDIFF`, `ZINTER`, `ZUNION`,
+  `ZINTERCARD` and their stores, which firn answers as unknown commands.
+  A relative expiry whose sum with the current time passes 2^63 - 1
+  milliseconds (`SETEX k 9223372036854775 v`, and `SET`'s, `GETEX`'s and
+  `PSETEX`'s equivalents) is refused by firn as an invalid expire time, where
+  a redis-server 7.0.15 built on arm64 macOS answered `OK`: Redis adds the
+  time in signed arithmetic before its nonpositive check (`t_string.c`), an
+  overflow C leaves undefined, so the reference to match needs Redis's x86-64
+  build observed first. These come from a differential run of firn at
+  `18d8637ab` against that redis-server over about 160,000 requests on
+  strings, keys, connection commands, lists, sets, hashes and sorted sets,
+  which found no other difference in the commands firn answers beyond
+  launch settings, client numbering and `CONFIG GET`'s order. firn answers the calls the suite's
   framework makes around its tests: `FLUSHALL` and `FUNCTION FLUSH` at the
   start of each block, `CONFIG GET` and `CONFIG SET` of the block's
   overrides, `INFO`'s `aof_rewrite_in_progress` after an `appendonly yes`
