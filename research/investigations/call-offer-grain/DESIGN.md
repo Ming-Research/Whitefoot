@@ -688,3 +688,52 @@ unbalanced tree; that is a separate budget question, recorded in
 - `research/experiments/par-quicksort/quicksort.wf` no longer compiled on
   main: it still spelled dereference `deref(v)`. Fixed on main by PR #183
   before the implementation was measured.
+
+## Synthesized split reachability: prospective causal probe
+
+Question: does a source-nonrecursive list comparison retain a cheap call offer
+only because its permitted loop lowers to a recursive splitter? The experiment
+compares the pinned compiler at `3629be153b8fdb792ffe146d21dfc3251e4f887a`
+with the same compiler whose call-grain recursion graph follows a `LoopSplit`
+only to its chunk. Ordinary calls, including source recursion inside chunks,
+remain edges. Generated splitters retain their self-calls and range allowance.
+This is an experimental compiler change, not selection of a default policy.
+The existing static cost estimator already follows the chunk for loop work;
+the IR operation supplies provenance without testing generated symbol names.
+
+The independent work is an outer map with two list comparisons per element.
+Each comparison reduces independent equality flags with Boolean conjunction.
+Neither comparison depends on the other; only the element's output depends on
+both. A last-element mismatch, lengths 0, 1, 8 and 4096, and a source-recursive
+callee reached from a loop chunk provide correctness and classification
+controls. The research workload `split-reachability.wf` belongs beside this
+record, is called explicitly by this probe, and is removed if it ceases to
+reproduce this question and its retained evidence no longer needs it. Raw
+commands, failed trials, compiler/source hashes and outputs live in ignored
+`build/call-grain-probe/`; retained results will identify their surviving bundle.
+
+Before builds or timings, the discriminating criteria are:
+
+1. Both compilers accept the identical source and produce every independently
+   calculated flag. Deliberately wrong expected flags must fail the oracle.
+2. The baseline retains comparison offers through generated recursion; the
+   candidate omits them below 150000 static units. Source recursion reached
+   through a chunk retains exemption, and generated range splitting remains.
+3. Permission evidence and non-parallel LLVM emission are identical. A changed
+   permission, proof, acceptance or sequential module invalidates this probe.
+4. After mechanism confirmation, three interleaved timing blocks compare
+   baseline, candidate and a second copy of baseline, sequential and four
+   workers. A control difference exceeding 5 percent or 10 ms (whichever is
+   larger) makes a block inconclusive. A causal speed claim requires candidate
+   improvement exceeding that allowance in each short-list block. Long-list
+   results bound the tradeoff; they do not establish a general policy.
+
+The hypothesis is refuted for this workload if the baseline does not retain
+these offers or the candidate does not remove them. Unchanged runtime despite
+verified offer removal refutes scheduling cost as the measured cause for this
+workload. Compilation failure is an untested mechanism, not a runtime result.
+No Snowghost source or submodule pin changes, runtime constants, permission
+rules, specification edits, or proof changes are part of the A/B comparison.
+The test host is Darwin 25.6.0 arm64; further machine, compiler and environment
+details are recorded with the run. Every build and run uses the host-wide
+check lock, after the separately coordinated renderer measurements finish.
