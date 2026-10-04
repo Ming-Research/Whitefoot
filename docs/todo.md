@@ -2315,6 +2315,74 @@ rarely insert at the same place.
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
 
+## Interpreter dispatch lowering
+
+- **A dispatch loop past the argument registers is emitted whole.**
+  compiler/match-dispatch-lowering gives every part one parameter per
+  carried value, header value and value from before the loop, and emits a
+  loop whose parts would need more than the convention's argument registers
+  (measured in `research/experiments/match-dispatch/RESULTS.md`, "Argument
+  registers": without callee-saved registers 24 integer on arm64 and 12 on
+  x86-64) as one function, since the C experiment measured a stack-passed
+  parameter at 8% and two at 43%. The owner's direction is a spill block in
+  the enclosing function's frame: keep the values the loop's carried
+  dependency chains need in registers and store the coldest values from
+  before the loop in frame slots the parts read, so such loops split too.
+  Validate with a loop past twelve parameters on x86-64, comparing cycles
+  against whole emission. Reopen when a consumer's dispatch loop exceeds a
+  target's register parameters.
+
+- **Build-time toolchain probes are not rerun when the toolchain changes.**
+  `compiler/build.rs` probes the assembler for the no-capture spelling and
+  for `preserve_none`, but declares no `rerun-if` dependency on the
+  assembler, so after a clang upgrade the recorded answers stay until the
+  build script reruns for another reason. A stale `preserve_none` answer
+  after a downgrade would emit a convention the assembler refuses. Track
+  the assembler's identity (its path and version output) as a rerun input.
+  Reopen when a host's clang changes under an existing build directory.
+
+- **The parts of a split loop carry no reference parameter facts.** The
+  enclosing function's reference parameters keep `noalias`, `nonnull` and
+  `dereferenceable` (compiler/backend-facts); the same values arrive in the
+  parts as plain pointers, so the host cannot use those facts inside the
+  arms. Stating them on the parts' parameters needs the facts mapped from
+  the enclosing parameters through the header's carried values. Validate
+  with the WF interpreter's kernels. Reopen with the invariant-header
+  work.
+
+- **Loop-invariant header work runs on every dispatch.** A split loop's
+  header is recomputed in each arm: the WF interpreter
+  (`research/experiments/match-dispatch/wf/vm.wf`) reloads `code`'s box
+  pointer and length and `regs`'s box pointer on every dispatch, which
+  LLVM hoisted out of the whole-function loop. A header computation whose
+  operands are values from before the loop or header parameters every
+  back edge passes unchanged, and which reads only memory under a
+  read-only reference parameter, could run once in the enclosing function
+  and travel as a parameter. Validate on the WF interpreter's kernels
+  against the C `u8` form. Reopen with the next dispatch-lowering change.
+
+- **A loop-carried index is recomputed into an address in every arm.** The
+  C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
+  is 10-30% above the pointer form with every other mechanism equal
+  (E1 in `research/experiments/match-dispatch/RESULTS.md`). When every
+  use of a carried index addresses one array and the index changes only by
+  offsets and stores of checked values, the parts could carry the derived
+  address beside the index. Needs its own design and a falsifier; reopen
+  after the invariant-header work.
+
+- **The handler table's address is rematerialised in every arm.** Two
+  instructions per dispatch on arm64 (`adrp`, `add`); E1 passing it as a
+  parameter matched Silverfir-nano's instruction count on its loop kernel.
+  Pass it as a hidden parameter once the register budget above exists.
+
+- **A `match` on a place copies the scrutinee into a frame slot.** The
+  emitter copies the matched value into a slot to read its tag while the
+  arms read their binders from the place itself. In one function the host
+  removes the copy; in a split loop it cost a store and a store-forwarded
+  load per dispatch until the slot became part-local. Reading the tag from
+  the place would remove the copy everywhere. Low priority; reopen if a
+  profile shows the copy outside split loops.
+
 ## Code structure
 
 - **Five parallel substitution walkers over a type invariant.**
