@@ -102,7 +102,8 @@ sets and ranges, every successful back-reference `%1` through `%9`, anchors,
 frontiers at source edges and NULs, balanced delimiters, greedy/minimal/optional
 backtracking with captures, plain/init boundaries, error texts, 31/32/33 capture
 boundaries, replacement percent escapes, max-n coercion, tables/metamethods,
-all callback argument counts, nested substitution, callback error values,
+representative callback argument counts through the 32-capture boundary, nested
+substitution, callback error values,
 budget suspension, and collection of coerced sources and captured iterator strings.
 
 | Existing oracle script | Budget | Result | Seconds | Failure reason |
@@ -132,8 +133,26 @@ Identity digests (SHA-256):
 
 ## Review and remaining scope
 
-Independent read-only completion review is pending. No known differential
-mismatch remains. The complete repository `make check` was not run: this task
+Independent read-only review used the configured `gpt-6.1-sol` reviewer over
+`7d6e73ea5ab7ae2996792d695b28d7df8f96dbc0..1c6e33ec0543714a2e6e30e2965410712e9574a2`, with checklist groups A, D, C, R, M and V. It inspected matcher
+parity against the supplied C source, API/iterator dispatch, callback suspension
+and resumption, collector tracing, reset/error cleanup, scope and artifact
+identities, and design correspondence against the relevant existing guidance
+and the early implementation rationale. T was inapplicable because no formal
+specification, conformance or gate files changed; publication/readiness rules
+were superseded by the explicit local-only task instruction. Green suites were
+not rerun by the reviewer. No code or runtime correctness finding was reported
+within that scope.
+
+The one D3/V2 wording finding overstated callback-arity coverage as "all";
+inspection of the authored function replacement cases confirmed representative
+arities rather than every integer arity. The claim is corrected above. This is
+a prose-only repair, rechecked locally without changing tested VM or case bytes.
+The bundled source's absent matcher-depth counter and its exact 32-capture
+boundary were identified during the port and are recorded above; no unrelated
+defect was found.
+
+No known differential mismatch remains. The complete repository `make check` was not run: this task
 explicitly prohibits Cargo and limits work to the Halo VM and pattern experiment.
 No network, push, pull request or merge is performed. No universal behavior or
 performance claim follows from this finite corpus; the matcher-depth difference
