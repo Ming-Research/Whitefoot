@@ -1,9 +1,10 @@
 /* E0's kernels as a WASI program, for running the same work on
  * Silverfir-nano's interpreter. Each kernel follows vm.c's bytecode step for
  * step and prints the same checksum, which the runner compares with vm.c's.
- * The floor kernel has no counterpart: compiled C would remove its stores.
+ * poly and floor have no counterpart: compiled from C, poly's body folds to
+ * constants and floor's stores are removed.
  *
- *   kernels <loop|fib|sieve|mandel|poly>
+ *   kernels <loop|fib|sieve|mandel|nop>
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -74,25 +75,6 @@ static uint64_t k_mandel(int64_t size) {
     return total;
 }
 
-/* Volatile so that the compiler cannot evaluate the whole kernel at
- * compile time, which it otherwise does. */
-static volatile uint64_t poly_init[8] = { 13, 7932, 15851, 23770, 31689, 39608, 47527, 55446 };
-static volatile int64_t poly_reps = 100000;
-static uint64_t k_poly(int64_t reps_unused) {
-    (void)reps_unused;
-    int64_t reps = poly_reps;
-    uint64_t r[8];
-    for (int i = 0; i < 8; i++)
-        r[i] = poly_init[i];
-    uint64_t r0 = r[0], r1 = r[1], r2 = r[2], r3 = r[3], r4 = r[4], r5 = r[5], r6 = r[6], r7 = r[7];
-    int64_t rep = 0;
-    do {
-#include "poly_body.h"
-        rep += 1;
-    } while (rep < reps);
-    return r0 ^ r1 ^ r2 ^ r3 ^ r4 ^ r5 ^ r6 ^ r7;
-}
-
 int main(int argc, char **argv) {
     if (argc < 2)
         return 2;
@@ -102,7 +84,6 @@ int main(int argc, char **argv) {
     else if (!strcmp(k, "fib")) v = fib(35);
     else if (!strcmp(k, "sieve")) v = k_sieve(4000);
     else if (!strcmp(k, "mandel")) v = k_mandel(600);
-    else if (!strcmp(k, "poly")) v = k_poly(100000);
     else if (!strcmp(k, "nop")) v = 0;
     else return 2;
     printf("%s %llu\n", k, (unsigned long long)v);

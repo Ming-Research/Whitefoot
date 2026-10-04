@@ -267,12 +267,14 @@ completion criterion were refused.
   built without and with `--par`, best of seven under the host lock on a
   four-processor x86-64 host, 0.178 s sequentially and 0.069 s on four
   workers. One input, one size, one host.
-- [match-dispatch/](match-dispatch/RESULTS.md) — E0 of the match-dispatch
-  investigation: one C interpreter compiled as a switch loop, computed goto,
-  and per-opcode `musttail` functions with a handler table or a handler
-  offset in each cell, under four operand-access forms; per-opcode
-  functions under `preserve_none` measured 15-21% below the switch loop on
-  an M1 Pro, and passing state beyond the argument registers up to 43% above.
+- [match-dispatch/](match-dispatch/RESULTS.md) — the match-dispatch
+  investigation's measurements on an M1 Pro: one C interpreter compiled as a
+  switch loop, computed goto and per-opcode `musttail` functions (E0: the
+  latter 15-21% below the switch loop, state beyond the argument registers
+  up to 43% above); the same work on Silverfir-nano's interpreter; the C
+  interpreter with Silverfir-nano's accumulator and pinned locals (E1); the
+  argument registers of each calling convention; and the Whitefoot port of
+  the interpreter under the compiler's per-arm lowering (stage 2).
 
 ## Frozen v0.17 floor studies
 

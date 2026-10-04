@@ -126,34 +126,74 @@ fn definition<'module>(module: &'module str, symbol: &str) -> &'module str {
     &module[start..end]
 }
 
-fn assert_split(module: &str, base: &str) {
+/// The calling convention the build's assembler admits and the integer
+/// argument registers it has on this host, as compiler/match-dispatch-lowering
+/// records them.
+fn host_convention() -> (&'static str, usize) {
+    let preserve_none = env!("WHITEFOOT_PRESERVE_NONE") == "1";
+    match (preserve_none, cfg!(target_arch = "aarch64"), cfg!(windows)) {
+        (true, true, _) => ("preserve_nonecc ", 24),
+        (true, false, _) => ("preserve_nonecc ", 12),
+        (false, _, true) => ("", 4),
+        (false, true, false) => ("", 8),
+        (false, false, false) => ("", 6),
+    }
+}
+
+fn assert_split(module: &str, base: &str, arms: usize) {
+    let (convention, _) = host_convention();
     let dispatch = definition(module, &format!("{base}.dispatch"));
     assert!(
-        dispatch.starts_with("define internal preserve_nonecc ")
+        dispatch.starts_with(&format!("define internal {convention}"))
             && dispatch.contains("alwaysinline"),
-        "the dispatch function is internal, inlined and register-preserving: {dispatch}"
+        "the dispatch function is internal, inlined and of the parts' convention: {dispatch}"
     );
     assert!(
         dispatch.contains(&format!("ptr @{base}.dispatch.table"))
-            && dispatch.contains("musttail call preserve_nonecc"),
+            && dispatch.contains(&format!("musttail call {convention}")),
         "the header transfers through the handler table: {dispatch}"
     );
     assert!(
         !dispatch.contains("switch "),
         "the header's match is the table transfer: {dispatch}"
     );
-    for arm in 0..4 {
+    for arm in 0..arms {
         let arm = definition(module, &format!("{base}.arm.{arm}"));
-        assert!(arm.starts_with("define internal preserve_nonecc "), "{arm}");
+        assert!(
+            arm.starts_with(&format!("define internal {convention}")),
+            "{arm}"
+        );
+        assert!(
+            !arm.contains("%wf.frame = alloca"),
+            "only the enclosing function allocates the frame: {arm}"
+        );
     }
     assert!(
-        !module.contains(&format!("@{base}.arm.4(")),
+        !module.contains(&format!("@{base}.arm.{arms}(")),
         "one function per arm"
     );
+    let table = module
+        .lines()
+        .find(|line| line.starts_with(&format!("@{base}.dispatch.table = ")))
+        .expect("the handler table is emitted");
+    assert!(
+        table.contains(&format!("[{arms} x ptr]"))
+            && (0..arms).all(|arm| table.contains(&format!("ptr @{base}.arm.{arm}"))),
+        "the table has one entry per tag: {table}"
+    );
+}
+
+/// The four-instruction interpreter's split: its three looping arms tail-call
+/// the dispatch function, the halting arm returns, and the scrutinee's copy,
+/// which only the dispatch function reads, is that function's own
+/// allocation.
+fn assert_interpreter_split(module: &str, base: &str) {
+    let (convention, _) = host_convention();
+    assert_split(module, base, 4);
     for arm in 0..3 {
         let arm = definition(module, &format!("{base}.arm.{arm}"));
         assert!(
-            arm.contains("musttail call preserve_nonecc")
+            arm.contains(&format!("musttail call {convention}"))
                 && arm.contains(&format!("@{base}.dispatch(")),
             "every looping arm ends in a guaranteed tail call of the dispatch function: {arm}"
         );
@@ -163,27 +203,30 @@ fn assert_split(module: &str, base: &str) {
         !halt.contains("musttail"),
         "the halting arm returns: {halt}"
     );
-    let table = module
-        .lines()
-        .find(|line| line.starts_with(&format!("@{base}.dispatch.table = ")))
-        .expect("the handler table is emitted");
+    let dispatch = definition(module, &format!("{base}.dispatch"));
     assert!(
-        table.contains("[4 x ptr]")
-            && (0..4).all(|arm| table.contains(&format!("ptr @{base}.arm.{arm}"))),
-        "the table has one entry per tag: {table}"
+        dispatch.contains(" = alloca "),
+        "a slot only the dispatch function uses is its own: {dispatch}"
     );
 }
 
 #[test]
 fn a_header_match_loop_is_split_into_one_function_per_arm() {
     let module = emit(scalar_interpreter().as_bytes());
-    assert_split(&module, "wf_run");
-    let enclosing = emitted_body(&module, "run");
-    assert!(
-        enclosing.contains("call preserve_nonecc i64 @wf_run.dispatch(")
-            && !enclosing.contains("musttail"),
-        "the enclosing function calls the dispatch function once and returns its result: {enclosing}"
-    );
+    // Seven parts' parameters: code, pc, acc, count, the code length and the
+    // cell's address from the header, and the frame.
+    let (convention, registers) = host_convention();
+    if registers >= 7 {
+        assert_interpreter_split(&module, "wf_run");
+        let enclosing = emitted_body(&module, "run");
+        assert!(
+            enclosing.contains(&format!("call {convention}i64 @wf_run.dispatch("))
+                && !enclosing.contains("musttail"),
+            "the enclosing function calls the dispatch function once and returns its result: {enclosing}"
+        );
+    } else {
+        assert!(!module.contains("@wf_run.dispatch"), "{module}");
+    }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
@@ -196,14 +239,141 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
     } else {
         "wf_run"
     };
-    assert_split(&module, base);
-    let dispatch = definition(&module, &format!("{base}.dispatch"));
-    if base == "wf_run.body" {
+    let (_, registers) = host_convention();
+    let destination = base == "wf_run.body";
+    if registers >= 7 + usize::from(destination) {
+        assert_interpreter_split(&module, base);
+        let dispatch = definition(&module, &format!("{base}.dispatch"));
         assert!(
-            dispatch.contains("(ptr %wf.result, "),
+            !destination || dispatch.contains("(ptr %wf.result, "),
             "a destination-form body passes its destination to every part: {dispatch}"
         );
+    } else {
+        assert!(!module.contains(&format!("@{base}.dispatch")), "{module}");
     }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
+    // A tag-only enum of two variants has a one-bit tag, which must index
+    // the table as 0 or 1, never as -1. Ten alternating steps add 25.
+    let source = r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Parity {
+  Even();
+  Odd();
+}
+
+fn run(n: u64, acc: u64, step: Parity) -> r: u64 pure {
+  match step {
+    Even() => {
+      if n == 0_u64 {
+        return acc;
+      }
+      let left = n -wrap 1_u64;
+      let sum = acc +wrap 2_u64;
+      let next = Parity::Odd();
+      return musttail run(n: left, acc: sum, step: next);
+    }
+    Odd() => {
+      if n == 0_u64 {
+        return acc;
+      }
+      let left = n -wrap 1_u64;
+      let sum = acc +wrap 3_u64;
+      let next = Parity::Even();
+      return musttail run(n: left, acc: sum, step: next);
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let first = Parity::Even();
+  let r = run(n: 10_u64, acc: 0_u64, step: first);
+  if r == 25_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_run", 2);
+    let dispatch = definition(&module, "wf_run.dispatch");
+    assert!(
+        dispatch.contains("zext i1 "),
+        "the one-bit tag is zero-extended before indexing: {dispatch}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_loop_whose_parts_exceed_the_argument_registers_is_emitted_whole() {
+    // Thirty carried values exceed every convention's integer argument
+    // registers, so the loop keeps one function.
+    let names: Vec<String> = (0..30).map(|index| format!("p{index}")).collect();
+    let parameters = names
+        .iter()
+        .map(|name| format!("{name}: u64"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let forwarded = names
+        .iter()
+        .map(|name| format!("{name}: {name}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+        .replacen("p0: p0", "p0: left", 1);
+    let initial = names
+        .iter()
+        .map(|name| format!("{name}: 1_u64"))
+        .collect::<Vec<_>>()
+        .join(", ")
+        .replacen("p0: 1_u64", "p0: 7_u64", 1);
+    let source = format!(
+        r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Parity {{
+  Even();
+  Odd();
+}}
+
+fn run({parameters}, step: Parity) -> r: u64 pure {{
+  match step {{
+    Even() => {{
+      if p0 == 0_u64 {{
+        return p29;
+      }}
+      let left = p0 -wrap 1_u64;
+      let next = Parity::Odd();
+      return musttail run({forwarded}, step: next);
+    }}
+    Odd() => {{
+      if p0 == 0_u64 {{
+        return p29;
+      }}
+      let left = p0 -wrap 1_u64;
+      let next = Parity::Even();
+      return musttail run({forwarded}, step: next);
+    }}
+  }}
+}}
+
+fn main() -> status: ExitStatus pure {{
+  let first = Parity::Even();
+  let r = run({initial}, step: first);
+  if r == 1_u64 {{
+    return exit_status(code: 0_u8);
+  }}
+  return exit_status(code: 1_u8);
+}}
+"#
+    );
+    let module = emit(source.as_bytes());
+    assert!(!module.contains("@wf_run.dispatch"), "{module}");
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
@@ -241,5 +411,4 @@ fn run(code: &Box<Slots<Op>>"#,
     );
     let module = emit(source.as_bytes());
     assert!(!module.contains("@wf_count.dispatch"), "{module}");
-    assert_split(&module, "wf_run");
 }

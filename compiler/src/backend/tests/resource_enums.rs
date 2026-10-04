@@ -270,6 +270,17 @@ fn main() -> status: std::process::ExitStatus pure {
         .expect("drop helper must close");
     let helper = &llvm[helper_start..helper_end];
     assert_eq!(helper.matches("call void @free").count(), 1);
+    // compiler/backend-facts: the helper's tag switch defaults to
+    // unreachable, since every enum value carries a declared tag.
+    let (_, default) = helper
+        .split_once("\ninvalid:\n")
+        .expect("the helper's tag switch has a default block");
+    assert_eq!(
+        default.lines().next().map(str::trim),
+        Some("unreachable"),
+        "{helper}"
+    );
+    assert!(!helper.contains("@abort"), "{helper}");
     assert_eq!(
         emitted_function(&llvm, "abandon")
             .matches("call void @wf.drop.")

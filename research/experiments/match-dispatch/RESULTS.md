@@ -201,11 +201,13 @@ Cycles against Silverfir-nano on the same work (loop, fib, sieve, mandel):
 ## Stage 2: the Whitefoot interpreter under the compiler's lowering
 
 `wf/vm.wf` is `vm.c`'s interpreter in the `u8` form, written as guaranteed
-self-tail transfers, one binary per kernel (`build.sh` replaces the
-kernel number), each exiting 0 only when its checksum equals `vm.c`'s. It
-is compiled by one compiler source twice: with
-compiler/match-dispatch-lowering (`wfsplit`) and with the recogniser
-returning no loop (`wfwhole`). Same M1 Pro, eight interleaved launches
+self-tail transfers, one binary per kernel, each exiting 0 only when its
+checksum equals `vm.c`'s; `WHITEFOOTC=<compiler> WF_NAME=<name> build.sh
+<dir>` builds them. It is compiled by one compiler source twice: with
+compiler/match-dispatch-lowering (`wfsplit`) and with
+`FunctionEmitter::plan_dispatch` in
+`compiler/src/backend/emitter/dispatch.rs` returning `Ok(None)` before it
+looks for a loop (`wfwhole`). Same M1 Pro, eight interleaved launches
 against Silverfir-nano and the C forms (`run-wf.tsv`); dispatch counts are
 `vm.c`'s, since the bytecode is the same.
 
@@ -221,12 +223,31 @@ against Silverfir-nano and the C forms (`run-wf.tsv`); dispatch counts are
 
 The first build of the lowering, which left the `match` scrutinee's copy
 in the shared frame, measured 12% slower than `wfwhole` on `loop` in a
-single probe launch; the part-local slot accounts for the change. The
+single probe launch; the measurement above is the build with that slot
+part-local, and no interleaved comparison isolates the slot alone. The
 remaining distance to the C form is visible in the arm code: each dispatch
 reloads `code`'s box pointer and length and each arm `regs`'s box pointer,
 which the whole-function loop had hoisted; the cell is 24 bytes against
 16; and the call and return arms push and pop frame records through the
 library's window operations.
+
+## Argument registers
+
+How many arguments each calling convention passes in registers, which
+compiler/match-dispatch-lowering uses as its register budget: `regprobe.py`
+compiles a function of n `i64` (or n `double`) parameters with clang
+21.0.0 for each target and reports the largest n whose assembly reads no
+argument from the stack.
+
+| convention | target | integer | floating |
+|---|---|---:|---:|
+| `preserve_none` | aarch64 (Apple, Linux) | 24 | 8 |
+| `preserve_none` | x86-64 (Linux, Windows) | 12 | 8 |
+| C | aarch64 (Apple, Linux) | 8 | 8 |
+| C | x86-64 Linux | 6 | 8 |
+| C | x86-64 Windows | 4 | 4 |
+
+The Windows C convention's four positions are shared between the two kinds.
 
 ## Limitations
 

@@ -2283,20 +2283,29 @@ rarely insert at the same place.
 
 ## Interpreter dispatch lowering
 
-- **A split loop passes every value in registers whatever the target has.**
+- **A dispatch loop past the argument registers is emitted whole.**
   compiler/match-dispatch-lowering gives every part one parameter per
-  carried value, header value and value from before the loop. Past the
-  calling convention's argument registers (about 24 general registers on
-  arm64 and 12 on x86-64 without callee-saved registers) LLVM passes the
-  rest on the stack, which the C experiment measured at 8% for one
-  parameter over and 43% for two
-  (`research/experiments/match-dispatch/RESULTS.md`). The owner's
-  direction is a spill block in the enclosing function's frame: keep the
-  values the loop's carried dependency chains need in registers and store
-  the coldest values from before the loop in frame slots the parts read.
+  carried value, header value and value from before the loop, and emits a
+  loop whose parts would need more than the convention's argument registers
+  (measured in `research/experiments/match-dispatch/RESULTS.md`, "Argument
+  registers": without callee-saved registers 24 integer on arm64 and 12 on
+  x86-64) as one function, since the C experiment measured a stack-passed
+  parameter at 8% and two at 43%. The owner's direction is a spill block in
+  the enclosing function's frame: keep the values the loop's carried
+  dependency chains need in registers and store the coldest values from
+  before the loop in frame slots the parts read, so such loops split too.
   Validate with a loop past twelve parameters on x86-64, comparing cycles
-  with and without the spill. Reopen when a consumer's dispatch loop
-  exceeds a target's register parameters.
+  against whole emission. Reopen when a consumer's dispatch loop exceeds a
+  target's register parameters.
+
+- **The parts of a split loop carry no reference parameter facts.** The
+  enclosing function's reference parameters keep `noalias`, `nonnull` and
+  `dereferenceable` (compiler/backend-facts); the same values arrive in the
+  parts as plain pointers, so the host cannot use those facts inside the
+  arms. Stating them on the parts' parameters needs the facts mapped from
+  the enclosing parameters through the header's carried values. Validate
+  with the WF interpreter's kernels. Reopen with the invariant-header
+  work.
 
 - **Loop-invariant header work runs on every dispatch.** A split loop's
   header is recomputed in each arm: the WF interpreter

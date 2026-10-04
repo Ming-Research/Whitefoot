@@ -242,17 +242,22 @@ part's own allocation.
 Measured on the WF port of E0's interpreter
 ([results](../../experiments/match-dispatch/RESULTS.md#stage-2-the-whitefoot-interpreter-under-the-compilers-lowering)):
 10-17% fewer cycles than the same compiler emitting the loop whole on three
-kernels and 6% on the fourth, and 1.11-1.35x of the C `u8` form. The
-deferred register budget, invariant header work, derived addresses and
+kernels and 6% on the fourth, and 1.11-1.35x of the C `u8` form.
+
+The parts use `preserve_none` where a build-time probe finds it (LLVM 19 and
+later) and the C convention otherwise, and a loop whose parts would need
+more argument registers than the convention has is emitted whole. The
+deferred spill block, invariant header work, derived addresses and
 handler-base parameter are recorded in `docs/todo.md` under "Interpreter
 dispatch lowering".
 
 ## Later stages
 
-1. Lower the loop in the compiler to the shape E0 selects, with the
-   recognition rule, register budget and spill block above.
-2. Measure the same interpreter written in Whitefoot under the current
-   lowering and under the new one, against E0's C variants.
+1. Done in part as stage 2: the lowering, with the register budget enforced
+   by emitting an over-budget loop whole; the spill block that would split
+   such loops too is open (`docs/todo.md`).
+2. Done as stage 2: the Whitefoot interpreter measured under both
+   emissions against E0's C forms.
 3. Write a wasm 2.0 interpreter in Whitefoot that runs CoreMark, following
    Silverfir-nano's interpreter design (predecoded folded cells, an
    accumulator, register-resident locals as loop-carried state), and compare

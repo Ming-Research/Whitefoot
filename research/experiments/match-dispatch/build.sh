@@ -49,3 +49,21 @@ for access in 2 4 3; do
     build1 "e1hb-tailpn-$a" -DDISPATCH=3 -DACCESS=$access -DHANDLER_BASE_PARAM
     build1 "e1hb-cellpn-$a" -DDISPATCH=4 -DACCESS=$access -DHANDLER_BASE_PARAM
 done
+
+# Optional inputs of the Silverfir-nano comparison and stage 2:
+#   WASI_SDK=<wasi-sdk directory>  builds wasm/kernels.wasm as kernels.wasm;
+#   WHITEFOOTC=<whitefootc>        builds wf/vm.wf once per kernel as
+#                                  ${WF_NAME:-wfsplit}-<kernel>.
+if [ -n "${WASI_SDK:-}" ]; then
+    "$WASI_SDK/bin/clang" --sysroot="$WASI_SDK/share/wasi-sysroot" -O2 \
+        -o "$out/kernels.wasm" "$here/wasm/kernels.c"
+fi
+if [ -n "${WHITEFOOTC:-}" ]; then
+    name=${WF_NAME:-wfsplit}
+    i=0
+    for kernel in loop fib sieve mandel; do
+        sed "s/  let which = 0_u64;/  let which = ${i}_u64;/" "$here/wf/vm.wf" > "$out/vm-$kernel.wf"
+        "$WHITEFOOTC" "$out/vm-$kernel.wf" -o "$out/$name-$kernel"
+        i=$((i + 1))
+    done
+fi

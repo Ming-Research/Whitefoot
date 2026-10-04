@@ -12,10 +12,8 @@
 //! enclosing function's activation, which calls the dispatch function once
 //! and returns its result.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
-
-use std::collections::HashMap;
 
 use super::{
     BackendFailure, FunctionEmitter, FunctionFramePlan, FunctionSlot, RESULT_POINTER, block_label,
@@ -27,9 +25,69 @@ use crate::{
     IrValueId,
 };
 
-/// The calling convention of every part: no callee-saved registers, so the
-/// values the parts pass stay in registers across the chain.
-const CONVENTION: &str = "preserve_nonecc ";
+/// The calling convention of every part, with its argument registers on the
+/// target: the convention without callee-saved registers where the build's
+/// assembler accepts it, so the values the parts pass stay in registers
+/// across the chain, and the C convention otherwise. The register counts
+/// are those measured for each convention and target
+/// (compiler/match-dispatch-lowering); a loop whose parts would need more is
+/// not split.
+fn convention(triple: &str) -> (&'static str, ArgumentRegisters) {
+    let aarch64 = triple.starts_with("aarch64");
+    let windows = triple.contains("windows");
+    if env!("WHITEFOOT_PRESERVE_NONE") == "1" {
+        let integer = if aarch64 { 24 } else { 12 };
+        (
+            "preserve_nonecc ",
+            ArgumentRegisters::Separate { integer, float: 8 },
+        )
+    } else if windows {
+        ("", ArgumentRegisters::Shared(4))
+    } else {
+        let integer = if aarch64 { 8 } else { 6 };
+        ("", ArgumentRegisters::Separate { integer, float: 8 })
+    }
+}
+
+/// How many arguments a convention passes in registers.
+#[derive(Clone, Copy)]
+enum ArgumentRegisters {
+    /// Separate integer and floating-point register sequences.
+    Separate { integer: usize, float: usize },
+    /// One sequence of positions shared by both kinds (Windows x64).
+    Shared(usize),
+}
+
+impl ArgumentRegisters {
+    /// Whether parameters of these LLVM types all arrive in registers; a
+    /// type other than a pointer, an integer, a float or a range's
+    /// `{ ptr, i64 }` pair counts as not fitting.
+    fn admit(self, types: &[String]) -> bool {
+        let (mut integer, mut float) = (0_usize, 0_usize);
+        for ty in types {
+            match ty.as_str() {
+                "ptr" => integer += 1,
+                "float" | "double" => float += 1,
+                "{ ptr, i64 }" => integer += 2,
+                other
+                    if other.strip_prefix('i').is_some_and(|width| {
+                        !width.is_empty() && width.bytes().all(|byte| byte.is_ascii_digit())
+                    }) =>
+                {
+                    integer += 1;
+                }
+                _ => return false,
+            }
+        }
+        match self {
+            Self::Separate {
+                integer: integers,
+                float: floats,
+            } => integer <= integers && float <= floats,
+            Self::Shared(positions) => integer + float <= positions,
+        }
+    }
+}
 
 /// One recognised dispatch loop of a function.
 pub(super) struct DispatchLoop {
@@ -130,7 +188,10 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             }
             for successor in successors(candidate) {
                 if region[index] {
-                    closed &= region[successor] || successor == header;
+                    // An edge back to the header must be a jump, which the
+                    // emitter turns into a tail call.
+                    let jump = matches!(candidate.terminator(), IrTerminator::Jump { .. });
+                    closed &= region[successor] || (successor == header && jump);
                     backedge |= successor == header;
                 } else if index != header {
                     closed &= !region[successor];
@@ -227,6 +288,7 @@ pub(super) struct DispatchEmission {
     frame: bool,
     destination: bool,
     result: String,
+    convention: &'static str,
 }
 
 impl FunctionFramePlan {
@@ -331,6 +393,25 @@ impl FunctionEmitter<'_, '_> {
                 }
             }
         }
+        let (convention, registers) = convention(self.target.triple());
+        let mut types = Vec::new();
+        let mut scratch = References::default();
+        if destination {
+            types.push("ptr".to_owned());
+        }
+        for (_, ty, _) in &parameters {
+            types.push(llvm_type_with_references(
+                self.program,
+                *ty,
+                &mut scratch.types,
+            )?);
+        }
+        if !self.frame.target.is_empty() {
+            types.push("ptr".to_owned());
+        }
+        if !registers.admit(&types) {
+            return Ok(None);
+        }
         let enclosing = self.frame.render_split(
             self.program,
             &mut self.output.references,
@@ -353,6 +434,7 @@ impl FunctionEmitter<'_, '_> {
             frame,
             destination,
             result: result.to_owned(),
+            convention,
         }))
     }
 
@@ -425,7 +507,16 @@ impl FunctionEmitter<'_, '_> {
         let tail = dispatch.part != Part::Enclosing;
         let symbol = dispatch.symbol.clone();
         let result = dispatch.result.clone();
+        let convention = dispatch.convention;
         let header = self.block(target)?;
+        if header.parameters().len() != arguments.len()
+            || arguments
+                .iter()
+                .zip(header.parameters())
+                .any(|(argument, (_, ty))| self.value_type(*argument) != Some(*ty))
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
         let carried: Vec<(IrValueId, IrValueId)> = header
             .parameters()
             .iter()
@@ -437,11 +528,11 @@ impl FunctionEmitter<'_, '_> {
         self.output.symbol(symbol.clone());
         let call = if tail { "musttail call" } else { "call" };
         let text = if result == "void" {
-            format!("  {call} {CONVENTION}void @{symbol}({list})\n  ret void\n")
+            format!("  {call} {convention}void @{symbol}({list})\n  ret void\n")
         } else {
             let temporary = self.next_temporary()?;
             format!(
-                "  %{temporary} = {call} {CONVENTION}{result} @{symbol}({list})\n  ret {result} %{temporary}\n"
+                "  %{temporary} = {call} {convention}{result} @{symbol}({list})\n  ret {result} %{temporary}\n"
             )
         };
         self.output.push_str(&text);
@@ -466,6 +557,7 @@ impl FunctionEmitter<'_, '_> {
         let table = dispatch.table_symbol.clone();
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
+        let convention = dispatch.convention;
         self.materialize_operands([scrutinee])?;
         let (tag, tag_ty) = self.match_tag(scrutinee, enum_type)?;
         let carried: Vec<(IrValueId, IrValueId)> = self
@@ -478,17 +570,27 @@ impl FunctionEmitter<'_, '_> {
         let slot = self.next_temporary()?;
         let handler = self.next_temporary()?;
         self.output.symbol(table.clone());
-        let mut text = format!(
-            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr @{table}, i64 0, {tag_ty} {tag}\n  %{handler} = load ptr, ptr %{slot}\n"
-        );
+        // A tag narrower than the index is zero-extended: a two-variant
+        // tag-only enum's `i1` tag would otherwise index as -1.
+        let index = self.next_temporary()?;
+        let mut text = if tag_ty == "i64" {
+            format!("  %{index} = add i64 {tag}, 0\n")
+        } else {
+            format!("  %{index} = zext {tag_ty} {tag} to i64\n")
+        };
+        write!(
+            text,
+            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr @{table}, i64 0, i64 %{index}\n  %{handler} = load ptr, ptr %{slot}\n"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         if result == "void" {
             text.push_str(&format!(
-                "  musttail call {CONVENTION}void %{handler}({list})\n  ret void\n"
+                "  musttail call {convention}void %{handler}({list})\n  ret void\n"
             ));
         } else {
             let returned = self.next_temporary()?;
             text.push_str(&format!(
-                "  %{returned} = musttail call {CONVENTION}{result} %{handler}({list})\n  ret {result} %{returned}\n"
+                "  %{returned} = musttail call {convention}{result} %{handler}({list})\n  ret {result} %{returned}\n"
             ));
         }
         self.output.push_str(&text);
@@ -518,7 +620,7 @@ impl FunctionEmitter<'_, '_> {
         }
         let mut signature = Signature::new(symbol, dispatch.result.clone(), parameters);
         signature.linkage = Linkage::Internal;
-        signature.convention = CONVENTION;
+        signature.convention = dispatch.convention;
         signature.references = references;
         if part == Part::Header {
             signature.suffix.push_str(" alwaysinline");
