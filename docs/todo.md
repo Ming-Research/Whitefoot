@@ -77,6 +77,21 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A loop invariant is lost where a guarded update joins an untouched path.**
+  `research/investigations/halo/witnesses/vm/join.wf` is refused with
+  `INV-1 UndischargedLoopInvariant`, obligation `Backedge`, on its one header
+  invariant `j <= room`: one path sets `j = t` under `t <= room`, another
+  leaves `j`, and each path alone re-proves `j <= room`, but the join keeps
+  only facts identical on both inputs (`t <= room` with `j == t` on one,
+  the assumed `j <= room` on the other), so the body's fallthrough has
+  neither. The program is sound and a checker could accept it by proving
+  the header batch on each input of the final join, or by closing each
+  input's facts under its value images before joining. Impact: a
+  `loop { match }` interpreter, whose arms change different loop variables,
+  needs a run-time re-check per dispatch; Halo writes its interpreter as a
+  self-tail call instead ([VM.md](../research/investigations/halo/VM.md)).
+  Reopen when a loop-shaped program cannot be rewritten that way, or with
+  the INV-1 join rules.
 - **A table subscripted in a block is refused without a repair.** `s^.map[k]`
   in an atomic block is OP-4's type mismatch, "an indexable base", against
   `KeyedTable<V>`, and names nothing a writer can do instead, where the
