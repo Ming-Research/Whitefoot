@@ -1,0 +1,4 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+
+public fn main(inputs: Inputs) -> status: ExitStatus pure waits doc "Streaming number oracle adapter: a 17-byte little-endian header (opcode, two u64 words), plus a byte payload for opcode 2, produces one ASCII result line.";
