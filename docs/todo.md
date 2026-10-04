@@ -3463,8 +3463,9 @@ condition under which it is taken up.
   build observed first. These come from a differential run of firn at
   `18d8637ab` against that redis-server over about 160,000 requests on
   strings, keys, connection commands, lists, sets, hashes and sorted sets,
-  which found no other difference in the commands firn answers beyond
-  launch settings, client numbering and `CONFIG GET`'s order. firn answers the calls the suite's
+  which left out `INCRBYFLOAT` and `HINCRBYFLOAT`, whose long double is a
+  double on that platform, random replies and replies that depend on the
+  clock, and sent no request before authentication with a password set. firn answers the calls the suite's
   framework makes around its tests: `FLUSHALL` and `FUNCTION FLUSH` at the
   start of each block, `CONFIG GET` and `CONFIG SET` of the block's
   overrides, `INFO`'s `aof_rewrite_in_progress` after an `appendonly yes`

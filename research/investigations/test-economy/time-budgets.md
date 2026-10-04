@@ -379,9 +379,8 @@ on ubuntu at `c8168dc18` and `825244c60`, every test passing (136 at the
 second), against 193.3 s at the redesign's head `cb05ed6ae`; the batch adds
 firn's string, key, list, set, hash and sorted-set network cases and their
 replay suites, and `compiler/test-corpus` inside the group stayed within its
-145 s (125.1 s). 1.25 times the slower run, rounded up to 5 s, is 265 s, on
-the owner's standing instruction of 2026-10-04 to give an overrunning stage
-a little room; macOS stays at 255 s.
+145 s (125.1 s). 1.25 times the slower run, rounded up to 5 s, is 265 s,
+which awaits the owner's approval; macOS stays at 255 s.
 
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,

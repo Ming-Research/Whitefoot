@@ -211,10 +211,14 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let head = True();
   let tail = False();
   if code == code_ping {
-    let fits = count <= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let any = True();
+    let go = admitted(client: client, input: input, name: name, fits: any);
     if go {
-      run_ping(input: input, args: args, client: client);
+      if count <= 2_u64 {
+        run_ping(input: input, args: args, client: client);
+      } else {
+        reply_arity(client: client, input: input, name: name);
+      }
     }
     return unit;
   }
