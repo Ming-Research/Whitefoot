@@ -1,0 +1,217 @@
+fn next(source: &[u8], state: &State, decoded: &Box<Slots<u8>>) -> result: Result<Token, Error> reads(source), writes(state), writes(decoded) {
+  doc "Skip trivia and return one token, with the exact llex consumption boundaries.";
+  clear(buffer: decoded);
+  loop {
+    let start = state^.offset;
+    let line = state^.line;
+    let c = at(source: source, index: start);
+    let nl = newline(c: c);
+    if nl {
+      line_step(source: source, state: state);
+    } else if c == 32_u16 {
+      step(source: source, state: state);
+    } else if c == 9_u16 {
+      step(source: source, state: state);
+    } else if c == 11_u16 {
+      step(source: source, state: state);
+    } else if c == 12_u16 {
+      step(source: source, state: state);
+    } else if c == 45_u16 {
+      step(source: source, state: state);
+      let second = at(source: source, index: state^.offset);
+      if second != 45_u16 {
+        let token = Token(kind: 45_u16, start: start, end: state^.offset, line: line);
+        set state^.previous = token.kind;
+        return Ok<Token, Error>(value: token);
+      }
+      step(source: source, state: state);
+      let bracket = at(source: source, index: state^.offset);
+      let long = False();
+      let comment = True();
+      if bracket == 91_u16 {
+        let sep = separator(source: source, state: state);
+        if sep.valid {
+          set long = True();
+          let second_bracket = state^.offset;
+          let done = long_body(source: source, state: state, decoded: decoded, level: sep.level, comment: comment);
+          let code = 4_u8;
+          let near_kind = tk_eof;
+          let completed = False();
+          match done {
+            Closed() => {
+              set completed = True();
+            }
+            Unfinished() => {
+              set code = 4_u8;
+            }
+            Nested() => {
+              set code = 7_u8;
+              set near_kind = 91_u16;
+            }
+            LineLimit() => {
+              set code = 6_u8;
+              set near_kind = state^.previous;
+              comment_context(source: source, second: second_bracket, end: state^.offset, level: sep.level, decoded: decoded);
+            }
+          }
+          if completed {
+          } else {
+            let error = failure(code: code, line: state^.line, near_kind: near_kind, start: start, end: state^.offset);
+            return Err<Token, Error>(error: move error);
+          }
+        }
+      }
+      if long {
+      } else {
+        loop {
+          let byte = at(source: source, index: state^.offset);
+          if byte == 256_u16 {
+            break;
+          }
+          let is_nl = newline(c: byte);
+          if is_nl {
+            break;
+          }
+          step(source: source, state: state);
+        }
+      }
+    } else {
+      if c == 91_u16 {
+        let sep = separator(source: source, state: state);
+        if sep.valid {
+          let comment = False();
+          let done = long_body(source: source, state: state, decoded: decoded, level: sep.level, comment: comment);
+          let code = 3_u8;
+          let near_kind = tk_eof;
+          let completed = False();
+          match done {
+            Closed() => {
+              set completed = True();
+            }
+            Unfinished() => {
+              set code = 3_u8;
+            }
+            Nested() => {
+              set code = 7_u8;
+              set near_kind = 91_u16;
+            }
+            LineLimit() => {
+              set code = 6_u8;
+              set near_kind = state^.previous;
+              string_context(source: source, start: start, decoded: decoded);
+            }
+          }
+          if completed {
+            let token = Token(kind: tk_string, start: start, end: state^.offset, line: line);
+            set state^.previous = token.kind;
+            return Ok<Token, Error>(value: token);
+          }
+          let error = failure(code: code, line: state^.line, near_kind: near_kind, start: start, end: state^.offset);
+          return Err<Token, Error>(error: move error);
+        }
+        if sep.level != 0_u64 {
+          copy_range(source: source, start: start, end: state^.offset, buffer: decoded);
+          let error = failure(code: 5_u8, line: state^.line, near_kind: tk_string, start: start, end: state^.offset);
+          return Err<Token, Error>(error: move error);
+        }
+        let token = Token(kind: 91_u16, start: start, end: state^.offset, line: line);
+        set state^.previous = token.kind;
+        return Ok<Token, Error>(value: token);
+      }
+      if c == 34_u16 {
+        return short_string(source: source, state: state, decoded: decoded, start: start, line: line);
+      }
+      if c == 39_u16 {
+        return short_string(source: source, state: state, decoded: decoded, start: start, line: line);
+      }
+      if c == 256_u16 {
+        let token = Token(kind: tk_eof, start: start, end: start, line: line);
+        set state^.previous = token.kind;
+        return Ok<Token, Error>(value: token);
+      }
+      let d = digit(c: c);
+      if d {
+        return number(source: source, state: state, decoded: decoded, start: start, line: line);
+      }
+      let a = alpha(c: c);
+      let name = a;
+      if c == 95_u16 {
+        set name = True();
+      }
+      if name {
+        loop {
+          step(source: source, state: state);
+          let byte = at(source: source, index: state^.offset);
+          let more = name_byte(c: byte);
+          if more {
+          } else {
+            break;
+          }
+        }
+        let kind = keyword(source: source, start: start, end: state^.offset);
+        let token = Token(kind: kind, start: start, end: state^.offset, line: line);
+        set state^.previous = token.kind;
+        return Ok<Token, Error>(value: token);
+      }
+      step(source: source, state: state);
+      let kind = c;
+      let second = at(source: source, index: state^.offset);
+      if c == 46_u16 {
+        let dot = second == 46_u16;
+        if second == 0_u16 {
+          set dot = True();
+        }
+        if dot {
+          step(source: source, state: state);
+          set kind = tk_concat;
+          let third = at(source: source, index: state^.offset);
+          let dot3 = third == 46_u16;
+          if third == 0_u16 {
+            set dot3 = True();
+          }
+          if dot3 {
+            step(source: source, state: state);
+            set kind = tk_dots;
+          }
+        } else {
+          let numerical = digit(c: second);
+          if numerical {
+            return number(source: source, state: state, decoded: decoded, start: start, line: line);
+          }
+        }
+      }
+      if second == 61_u16 {
+        let pair = False();
+        if c == 61_u16 {
+          set kind = tk_eq;
+          set pair = True();
+        }
+        if c == 62_u16 {
+          set kind = tk_ge;
+          set pair = True();
+        }
+        if c == 60_u16 {
+          set kind = tk_le;
+          set pair = True();
+        }
+        if c == 126_u16 {
+          set kind = tk_ne;
+          set pair = True();
+        }
+        if pair {
+          step(source: source, state: state);
+        }
+      }
+      let token = Token(kind: kind, start: start, end: state^.offset, line: line);
+      set state^.previous = token.kind;
+      return Ok<Token, Error>(value: token);
+    }
+    if state^.line >= 2147483645_u64 {
+      let error = failure(code: 6_u8, line: state^.line, near_kind: state^.previous, start: start, end: state^.offset);
+      return Err<Token, Error>(error: move error);
+    }
+  }
+  let token = Token(kind: tk_eof, start: state^.offset, end: state^.offset, line: state^.line);
+  set state^.previous = token.kind;
+  return Ok<Token, Error>(value: token);
+}

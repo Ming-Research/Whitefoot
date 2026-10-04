@@ -1,0 +1,258 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+
+fn push(out: &Box<Slots<u8>>, byte: u8) -> result: unit writes(out) {
+  doc "Append a byte to reusable experiment storage.";
+  let cap = out^.inner.cap;
+  if out^.inner.len == cap {
+    let twice = cap +sat cap;
+    let target = imax(twice, 4096_u64);
+    if target >= cap {
+      grow(cell: out, capacity: target);
+    }
+  }
+  if out^.inner.len < out^.inner.cap {
+    place_back(window: &out^.inner, value: byte);
+  }
+  return unit;
+}
+
+fn decimal(out: &Box<Slots<u8>>, number: u64) -> result: unit writes(out) {
+  doc "Decimal field in a token dump.";
+  let digits = slots_new::<u8, 20>();
+  let n = number;
+  loop {
+    let d = n % 10_u64;
+    let b = cvt.wrap::<u64, u8>(d);
+    let c = b +wrap 48_u8;
+    if digits.len < digits.cap {
+      place_back(window: &digits, value: c);
+    }
+    set n = n / 10_u64;
+    if n == 0_u64 {
+      break;
+    }
+  }
+  loop {
+    if digits.len == 0_u64 {
+      break;
+    }
+    let b = take_back(window: &digits);
+    push(out: out, byte: b);
+  }
+  push(out: out, byte: 9_u8);
+  return unit;
+}
+
+fn hex_digit(n: u8) -> b: u8 pure {
+  doc "Lowercase hexadecimal digit.";
+  if n < 10_u8 {
+    return n +wrap 48_u8;
+  }
+  return n +wrap 87_u8;
+}
+
+fn hex(out: &Box<Slots<u8>>, bytes: &[u8], start: u64, end: u64) -> result: unit reads(bytes), writes(out) {
+  doc "Binary-safe payload; a dash denotes empty or absent bytes.";
+  if start == end {
+    push(out: out, byte: 45_u8);
+  }
+  if start <= end {
+    for (i in start..end) {
+      if i < bytes^.len {
+        let byte = bytes^[i];
+        let hi = byte / 16_u8;
+        let lo = byte % 16_u8;
+        let h = hex_digit(n: hi);
+        let l = hex_digit(n: lo);
+        push(out: out, byte: h);
+        push(out: out, byte: l);
+      }
+    }
+  }
+  push(out: out, byte: 10_u8);
+  return unit;
+}
+
+fn read_source(factory: &HandleFactory, input: &InputStream, source: &Box<Slots<u8>>) -> success: Bool writes(factory), writes(input), writes(source) waits {
+  doc "Read stdin in small host operations, preserving all binary bytes.";
+  let scratch = array_filled::<u8, 4096>(value: 0_u8);
+  loop {
+    let deadline = None<std::time::Instant>();
+    let got = std::io::read_next(factory: factory, input: input, destination: &scratch[0_u64..4096_u64], start: 0_u64, end: 4096_u64, deadline: deadline);
+    match got {
+      Ok(value: count) => {
+        for (i in 0_u64..count) {
+          if i < 4096_u64 {
+            let b = scratch[i];
+            push(out: source, byte: b);
+          }
+        }
+      }
+      Err(error: stop) => {
+        match stop {
+          ReadEnd() => {
+            return True();
+          }
+          ReadFailed(error: problem) => {
+            return False();
+          }
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn dump_source(bytes: &[u8], name: &[u8], initial_line: u64, out: &Box<Slots<u8>>) -> result: unit reads(bytes), reads(name), writes(out) {
+  doc "Dump one independent source, including its terminal EOF or lexical error.";
+  let state = halo::lex::new();
+  set state.line = initial_line;
+  let decoded = box_slots_new::<u8>(capacity: 0_u64);
+  let error_text = box_slots_new::<u8>(capacity: 0_u64);
+  loop {
+    let result = halo::lex::next(source: bytes, state: &state, decoded: &decoded);
+    match move result {
+      Ok(value: token) => {
+        push(out: out, byte: 84_u8);
+        push(out: out, byte: 9_u8);
+        let kind = cvt::<u16, u64>(token.kind);
+        decimal(out: out, number: kind);
+        decimal(out: out, number: token.start);
+        decimal(out: out, number: token.end);
+        decimal(out: out, number: token.line);
+        if token.kind == 286_u16 {
+          let length = decoded.inner.len;
+          hex(out: out, bytes: &decoded.inner[0_u64..length], start: 0_u64, end: length);
+        } else if token.kind == 285_u16 {
+          hex(out: out, bytes: bytes, start: token.start, end: token.end);
+        } else if token.kind == 284_u16 {
+          hex(out: out, bytes: bytes, start: token.start, end: token.end);
+        } else {
+          push(out: out, byte: 45_u8);
+          push(out: out, byte: 10_u8);
+        }
+        if token.kind == 287_u16 {
+          break;
+        }
+      }
+      Err(error: problem) => {
+        halo::lex::format_error(chunk: name, error: &problem, decoded: &decoded, output: &error_text);
+        push(out: out, byte: 69_u8);
+        push(out: out, byte: 9_u8);
+        let length = error_text.inner.len;
+        hex(out: out, bytes: &error_text.inner[0_u64..length], start: 0_u64, end: length);
+        break;
+      }
+    }
+  }
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Compare the public lexer interface through a native Whitefoot entry.";
+  let Inputs(args: args, cwd: cwd, stdout: output, stderr: stderr, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd_read, write: cwd_write) = move cwd;
+  std::fs::close_directory(factory: &factory, directory: move cwd_read);
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
+  let source = box_slots_new::<u8>(capacity: 0_u64);
+  let read = read_source(factory: &factory, input: &input, source: &source);
+  if read {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let out = box_slots_new::<u8>(capacity: 0_u64);
+  let size = source.inner.len;
+  let bytes = &source.inner[0_u64..size];
+  let cursor = 0_u64;
+  loop {
+    if cursor >= size {
+      break;
+    }
+    let initial_line = 0_u64;
+    for (i in 0_u64..4_u64) {
+      if cursor < size {
+        let byte = bytes^[cursor];
+        let wide = cvt::<u8, u64>(byte);
+        let shifted = initial_line *wrap 256_u64;
+        set initial_line = shifted +wrap wide;
+        set cursor = cursor + 1_u64;
+      } else {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+    let chunk_length = 0_u64;
+    for (i in 0_u64..4_u64) {
+      if cursor < size {
+        let byte = bytes^[cursor];
+        let wide = cvt::<u8, u64>(byte);
+        let shifted = chunk_length *wrap 256_u64;
+        set chunk_length = shifted +wrap wide;
+        set cursor = cursor + 1_u64;
+      } else {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+    let name_start = cursor;
+    let name_end = cursor;
+    if cursor <= size {
+      let remaining_name = size - cursor;
+      if chunk_length <= remaining_name {
+        set name_end = cursor + chunk_length;
+        set cursor = name_end;
+      } else {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+    let payload_length = 0_u64;
+    for (i in 0_u64..4_u64) {
+      if cursor < size {
+        let byte = bytes^[cursor];
+        let wide = cvt::<u8, u64>(byte);
+        let shifted = payload_length *wrap 256_u64;
+        set payload_length = shifted +wrap wide;
+        set cursor = cursor + 1_u64;
+      } else {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+    if cursor <= size {
+      let remaining = size - cursor;
+      if payload_length <= remaining {
+        let end = cursor + payload_length;
+        if name_start <= name_end {
+          if name_end <= size {
+            dump_source(bytes: &bytes^[cursor..end], name: &bytes^[name_start..name_end], initial_line: initial_line, out: &out);
+          }
+        }
+        set cursor = end;
+      } else {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+  }
+  let length = out.inner.len;
+  let position = 0_u64;
+  loop {
+    if position >= length {
+      break;
+    }
+    let deadline = None<std::time::Instant>();
+    let written = std::io::write_once(factory: &factory, output: &output, source: &out.inner[0_u64..length], start: position, end: length, deadline: deadline);
+    match written {
+      Ok(value: end) => {
+        if end == position {
+          return std::process::exit_status(code: 2_u8);
+        }
+        set position = end;
+      }
+      Err(error: problem) => {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

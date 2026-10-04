@@ -1,0 +1,443 @@
+struct Separator {
+  valid: Bool;
+  level: u64;
+}
+
+fn separator(source: &[u8], state: &State) -> sep: Separator reads(source), writes(state.offset) {
+  doc "Consume the first bracket and equals; leave the second bracket current, as skip_sep does.";
+  let bracket = at(source: source, index: state^.offset);
+  step(source: source, state: state);
+  let count = 0_u64;
+  loop {
+    let c = at(source: source, index: state^.offset);
+    if c != 61_u16 {
+      break;
+    }
+    step(source: source, state: state);
+    set count = count +sat 1_u64;
+  }
+  let c = at(source: source, index: state^.offset);
+  let valid = c == bracket;
+  return Separator(valid: valid, level: count);
+}
+
+enum LongEnd {
+  Closed();
+  Unfinished();
+  Nested();
+  LineLimit();
+}
+
+fn long_body(source: &[u8], state: &State, decoded: &Box<Slots<u8>>, level: u64, comment: Bool) -> result: LongEnd reads(source), writes(state), writes(decoded) {
+  doc "Decode a long string or skip a long comment. Redis enables LUA_COMPAT_LSTR=1: a nested level-zero opener is an error, and other opening levels remain content.";
+  step(source: source, state: state);
+  let first = at(source: source, index: state^.offset);
+  let nl = newline(c: first);
+  if nl {
+    line_step(source: source, state: state);
+    if state^.line >= 2147483645_u64 {
+      return LongEnd::LineLimit();
+    }
+  }
+  loop {
+    let c = at(source: source, index: state^.offset);
+    if c == 256_u16 {
+      return LongEnd::Unfinished();
+    }
+    if c == 93_u16 {
+      let start = state^.offset;
+      let sep = separator(source: source, state: state);
+      if sep.valid {
+        if sep.level == level {
+          step(source: source, state: state);
+          return LongEnd::Closed();
+        }
+      }
+      if comment {
+      } else {
+        copy_range(source: source, start: start, end: state^.offset, buffer: decoded);
+      }
+    } else if c == 91_u16 {
+      let opening = state^.offset;
+      let sep = separator(source: source, state: state);
+      if sep.valid {
+        if sep.level == level {
+          step(source: source, state: state);
+          if level == 0_u64 {
+            return LongEnd::Nested();
+          }
+        }
+      }
+      if comment {
+      } else {
+        copy_range(source: source, start: opening, end: state^.offset, buffer: decoded);
+      }
+    } else {
+      let is_nl = newline(c: c);
+      if is_nl {
+        if comment {
+        } else {
+          put(buffer: decoded, byte: 10_u8);
+        }
+        line_step(source: source, state: state);
+      } else {
+        if comment {
+        } else {
+          let b = cvt.wrap::<u16, u8>(c);
+          put(buffer: decoded, byte: b);
+        }
+        step(source: source, state: state);
+      }
+    }
+    if state^.line >= 2147483645_u64 {
+      return LongEnd::LineLimit();
+    }
+  }
+  return LongEnd::Unfinished();
+}
+
+fn short_string(source: &[u8], state: &State, decoded: &Box<Slots<u8>>, start: u64, line: u64) -> result: Result<Token, Error> reads(source), writes(state), writes(decoded) {
+  doc "PUC escapes, including unknown escapes dropping their backslash and decimal escapes of up to three digits.";
+  let quote = at(source: source, index: state^.offset);
+  let q = cvt.wrap::<u16, u8>(quote);
+  put(buffer: decoded, byte: q);
+  step(source: source, state: state);
+  loop {
+    let c = at(source: source, index: state^.offset);
+    if c == quote {
+      step(source: source, state: state);
+      if decoded^.inner.len > 0_u64 {
+        let opening = remove_at(window: &decoded^.inner, index: 0_u64);
+      }
+      let token = Token(kind: tk_string, start: start, end: state^.offset, line: line);
+      set state^.previous = token.kind;
+      return Ok<Token, Error>(value: token);
+    }
+    if c == 256_u16 {
+      let error = failure(code: 0_u8, line: state^.line, near_kind: tk_eof, start: start, end: state^.offset);
+      return Err<Token, Error>(error: move error);
+    }
+    let nl = newline(c: c);
+    if nl {
+      let error = failure(code: 0_u8, line: state^.line, near_kind: tk_string, start: start, end: state^.offset);
+      return Err<Token, Error>(error: move error);
+    }
+    if c == 92_u16 {
+      step(source: source, state: state);
+      let escaped = at(source: source, index: state^.offset);
+      let escaped_nl = newline(c: escaped);
+      if escaped_nl {
+        put(buffer: decoded, byte: 10_u8);
+        line_step(source: source, state: state);
+      } else {
+        let is_digit = digit(c: escaped);
+        if is_digit {
+          let value = 0_u16;
+          for (i in 0_u64..3_u64) {
+            let d = at(source: source, index: state^.offset);
+            let valid = digit(c: d);
+            if valid {
+              let part = d -wrap 48_u16;
+              let tens = value *wrap 10_u16;
+              set value = tens +wrap part;
+              step(source: source, state: state);
+            } else {
+              break;
+            }
+          }
+          if value > 255_u16 {
+            let error = failure(code: 2_u8, line: state^.line, near_kind: tk_string, start: start, end: state^.offset);
+            return Err<Token, Error>(error: move error);
+          }
+          let byte = cvt.wrap::<u16, u8>(value);
+          put(buffer: decoded, byte: byte);
+        } else if escaped != 256_u16 {
+          let byte = cvt.wrap::<u16, u8>(escaped);
+          if escaped == 97_u16 {
+            set byte = 7_u8;
+          }
+          if escaped == 98_u16 {
+            set byte = 8_u8;
+          }
+          if escaped == 102_u16 {
+            set byte = 12_u8;
+          }
+          if escaped == 110_u16 {
+            set byte = 10_u8;
+          }
+          if escaped == 114_u16 {
+            set byte = 13_u8;
+          }
+          if escaped == 116_u16 {
+            set byte = 9_u8;
+          }
+          if escaped == 118_u16 {
+            set byte = 11_u8;
+          }
+          put(buffer: decoded, byte: byte);
+          step(source: source, state: state);
+        }
+      }
+    } else {
+      let byte = cvt.wrap::<u16, u8>(c);
+      put(buffer: decoded, byte: byte);
+      step(source: source, state: state);
+    }
+    if state^.line >= 2147483645_u64 {
+      let error = failure(code: 6_u8, line: state^.line, near_kind: state^.previous, start: start, end: state^.offset);
+      return Err<Token, Error>(error: move error);
+    }
+  }
+  let error = failure(code: 0_u8, line: state^.line, near_kind: tk_eof, start: start, end: state^.offset);
+  return Err<Token, Error>(error: move error);
+}
+
+fn hex_digit(c: u16) -> yes: Bool pure {
+  doc "A hexadecimal digit.";
+  let d = digit(c: c);
+  if d {
+    return True();
+  }
+  if c >= 65_u16 {
+    if c <= 70_u16 {
+      return True();
+    }
+  }
+  if c >= 97_u16 {
+    if c <= 102_u16 {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn numeral_valid(source: &[u8], start: u64, end: u64) -> yes: Bool reads(source) {
+  doc "C-locale strtod spelling in the range read_numeral can reach. Conversion belongs to the parser. Hexadecimal forms and exponents follow the host PUC oracle; a saved NUL terminates strtod's input.";
+  let stop = end;
+  if start <= end {
+    for (i in start..end) {
+      let c = at(source: source, index: i);
+      if c == 0_u16 {
+        set stop = i;
+        break;
+      }
+    }
+  }
+  let p = start;
+  let radix = 10_u16;
+  let first_byte = at(source: source, index: p);
+  if first_byte == 48_u16 {
+    if p < stop {
+      let second = p + 1_u64;
+      let x = at(source: source, index: second);
+      if x == 120_u16 {
+        set radix = 16_u16;
+      }
+      if x == 88_u16 {
+        set radix = 16_u16;
+      }
+      if radix == 16_u16 {
+        if second < stop {
+          set p = second + 1_u64;
+        }
+      }
+    }
+  }
+  let dots = 0_u64;
+  let digits = 0_u64;
+  loop {
+    if p >= stop {
+      break;
+    }
+    let c = at(source: source, index: p);
+    let d = digit(c: c);
+    if radix == 16_u16 {
+      set d = hex_digit(c: c);
+    }
+    if d {
+      set digits = digits +sat 1_u64;
+    } else if c == 46_u16 {
+      if dots != 0_u64 {
+        return False();
+      }
+      set dots = 1_u64;
+    } else {
+      break;
+    }
+    set p = p + 1_u64;
+  }
+  if digits == 0_u64 {
+    return False();
+  }
+  if p == stop {
+    return True();
+  }
+  let e = at(source: source, index: p);
+  let exponent = False();
+  if radix == 10_u16 {
+    if e == 101_u16 {
+      set exponent = True();
+    }
+    if e == 69_u16 {
+      set exponent = True();
+    }
+  } else {
+    if e == 112_u16 {
+      set exponent = True();
+    }
+    if e == 80_u16 {
+      set exponent = True();
+    }
+  }
+  if exponent {
+  } else {
+    return False();
+  }
+  if p < stop {
+    set p = p + 1_u64;
+  }
+  let sign = at(source: source, index: p);
+  if sign == 43_u16 {
+    if p < stop {
+      set p = p + 1_u64;
+    }
+  }
+  if sign == 45_u16 {
+    if p < stop {
+      set p = p + 1_u64;
+    }
+  }
+  let exponent_start = p;
+  loop {
+    if p >= stop {
+      break;
+    }
+    let c = at(source: source, index: p);
+    let d = digit(c: c);
+    if d {
+    } else {
+      return False();
+    }
+    set p = p + 1_u64;
+  }
+  return p > exponent_start;
+}
+
+fn number(source: &[u8], state: &State, decoded: &Box<Slots<u8>>, start: u64, line: u64) -> result: Result<Token, Error> reads(source), writes(state), writes(decoded) {
+  doc "The exact read_numeral scan, with no numeric value produced.";
+  loop {
+    let c = at(source: source, index: state^.offset);
+    let d = digit(c: c);
+    if d {
+      step(source: source, state: state);
+    } else if c == 46_u16 {
+      step(source: source, state: state);
+    } else {
+      break;
+    }
+  }
+  let exponent_byte = at(source: source, index: state^.offset);
+  let exp = False();
+  if exponent_byte == 101_u16 {
+    set exp = True();
+  }
+  if exponent_byte == 69_u16 {
+    set exp = True();
+  }
+  if exponent_byte == 0_u16 {
+    set exp = True();
+  }
+  if exp {
+    step(source: source, state: state);
+    let sign = at(source: source, index: state^.offset);
+    if sign == 43_u16 {
+      step(source: source, state: state);
+    }
+    if sign == 45_u16 {
+      step(source: source, state: state);
+    }
+    if sign == 0_u16 {
+      step(source: source, state: state);
+    }
+  }
+  loop {
+    let c = at(source: source, index: state^.offset);
+    let n = name_byte(c: c);
+    if n {
+      step(source: source, state: state);
+    } else {
+      break;
+    }
+  }
+  let valid = numeral_valid(source: source, start: start, end: state^.offset);
+  if valid {
+    let token = Token(kind: tk_number, start: start, end: state^.offset, line: line);
+    set state^.previous = token.kind;
+    return Ok<Token, Error>(value: token);
+  }
+  copy_range(source: source, start: start, end: state^.offset, buffer: decoded);
+  let error = failure(code: 1_u8, line: state^.line, near_kind: tk_number, start: start, end: state^.offset);
+  return Err<Token, Error>(error: move error);
+}
+
+fn string_context(source: &[u8], start: u64, decoded: &Box<Slots<u8>>) -> result: unit reads(source), writes(decoded) {
+  doc "Restore the long opener only on a line-limit diagnostic; normal string storage contains decoded bytes alone.";
+  let prefix = new();
+  set prefix.offset = start;
+  let sep = separator(source: source, state: &prefix);
+  step(source: source, state: &prefix);
+  let buffer = box_slots_new::<u8>(capacity: 0_u64);
+  copy_range(source: source, start: start, end: prefix.offset, buffer: &buffer);
+  let length = decoded^.inner.len;
+  copy_range(source: &decoded^.inner[0_u64..length], start: 0_u64, end: length, buffer: &buffer);
+  set decoded^ = move buffer;
+  return unit;
+}
+
+fn comment_context(source: &[u8], second: u64, end: u64, level: u64, decoded: &Box<Slots<u8>>) -> result: unit reads(source), writes(decoded) {
+  doc "Reconstruct PUC's sparse long-comment buffer only on its line-limit error, avoiding normal comment allocations.";
+  clear(buffer: decoded);
+  put(buffer: decoded, byte: 91_u8);
+  let cursor = new();
+  set cursor.offset = second;
+  step(source: source, state: &cursor);
+  let first = at(source: source, index: cursor.offset);
+  let initial_nl = newline(c: first);
+  if initial_nl {
+    line_step(source: source, state: &cursor);
+  }
+  loop {
+    if cursor.offset >= end {
+      break;
+    }
+    let c = at(source: source, index: cursor.offset);
+    let nl = newline(c: c);
+    if nl {
+      put(buffer: decoded, byte: 10_u8);
+      line_step(source: source, state: &cursor);
+      if cursor.offset < end {
+        clear(buffer: decoded);
+      }
+    } else {
+      let bracket = c == 93_u16;
+      if c == 91_u16 {
+        set bracket = True();
+      }
+      if bracket {
+        let start = cursor.offset;
+        let sep = separator(source: source, state: &cursor);
+        if c == 91_u16 {
+          if sep.valid {
+            if sep.level == level {
+              step(source: source, state: &cursor);
+            }
+          }
+        }
+        copy_range(source: source, start: start, end: cursor.offset, buffer: decoded);
+      } else {
+        step(source: source, state: &cursor);
+      }
+    }
+  }
+  return unit;
+}

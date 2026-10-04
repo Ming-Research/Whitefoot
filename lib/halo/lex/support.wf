@@ -1,0 +1,363 @@
+fn new() -> state: State pure {
+  doc "Initial cursor.";
+  return State(offset: 0_u64, line: 1_u64, previous: 0_u16);
+}
+
+fn at(source: &[u8], index: u64) -> byte: u16 reads(source) {
+  doc "EOZ is 256, distinct from every source byte including NUL.";
+  if index < source^.len {
+    let b = source^[index];
+    return cvt::<u8, u16>(b);
+  }
+  return 256_u16;
+}
+
+fn step(source: &[u8], state: &State) -> result: unit reads(source), writes(state.offset) {
+  doc "Advance within the source; stay at EOF.";
+  let p = state^.offset;
+  if p < source^.len {
+    set state^.offset = p + 1_u64;
+  }
+  return unit;
+}
+
+fn digit(c: u16) -> yes: Bool pure {
+  doc "ASCII decimal digit, matching the C locale.";
+  if c >= 48_u16 {
+    if c <= 57_u16 {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn alpha(c: u16) -> yes: Bool pure {
+  doc "ASCII letter, matching the C locale.";
+  if c >= 65_u16 {
+    if c <= 90_u16 {
+      return True();
+    }
+  }
+  if c >= 97_u16 {
+    if c <= 122_u16 {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn name_byte(c: u16) -> yes: Bool pure {
+  doc "Letter, decimal digit or underscore.";
+  let a = alpha(c: c);
+  if a {
+    return True();
+  }
+  let d = digit(c: c);
+  if d {
+    return True();
+  }
+  return c == 95_u16;
+}
+
+fn newline(c: u16) -> yes: Bool pure {
+  doc "Lua's two newline bytes.";
+  if c == 10_u16 {
+    return True();
+  }
+  return c == 13_u16;
+}
+
+fn line_step(source: &[u8], state: &State) -> result: unit reads(source), writes(state) {
+  doc "One newline, folding CRLF and LFCR into one line.";
+  let old = at(source: source, index: state^.offset);
+  step(source: source, state: state);
+  let c = at(source: source, index: state^.offset);
+  let nl = newline(c: c);
+  if nl {
+    if c != old {
+      step(source: source, state: state);
+    }
+  }
+  let line = state^.line;
+  set state^.line = line +sat 1_u64;
+  return unit;
+}
+
+fn clear(buffer: &Box<Slots<u8>>) -> result: unit writes(buffer) {
+  doc "Retain capacity for reuse.";
+  loop {
+    if buffer^.inner.len > 0_u64 {
+      let dropped = take_back(window: &buffer^.inner);
+    } else {
+      break;
+    }
+  }
+  return unit;
+}
+
+fn put(buffer: &Box<Slots<u8>>, byte: u8) -> result: unit writes(buffer) {
+  doc "Geometric buffer growth. Capacity saturation is the allocation exhaustion floor, never a source-language failure.";
+  let length = buffer^.inner.len;
+  let cap = buffer^.inner.cap;
+  if length == cap {
+    let doubled = cap +sat cap;
+    let target = imax(doubled, 32_u64);
+    if target >= cap {
+      grow(cell: buffer, capacity: target);
+    }
+  }
+  if buffer^.inner.len < buffer^.inner.cap {
+    place_back(window: &buffer^.inner, value: byte);
+  }
+  return unit;
+}
+
+fn copy_range(source: &[u8], start: u64, end: u64, buffer: &Box<Slots<u8>>) -> result: unit reads(source), writes(buffer) {
+  doc "Copy a source range into the diagnostic buffer.";
+  if start <= end {
+    for (i in start..end) {
+      if i < source^.len {
+        let b = source^[i];
+        put(buffer: buffer, byte: b);
+      }
+    }
+  }
+  return unit;
+}
+
+fn same(source: &[u8], start: u64, end: u64, word: &[u8]) -> yes: Bool reads(source), reads(word) {
+  doc "Exact source word comparison.";
+  if start <= end {
+    let n = end - start;
+    if n == word^.len {
+      for (i in 0_u64..n) {
+        let p = start +wrap i;
+        let c = at(source: source, index: p);
+        let b = word^[i];
+        let w = cvt::<u8, u16>(b);
+        if c != w {
+          return False();
+        }
+      }
+      return True();
+    }
+  }
+  return False();
+}
+
+const word_and: Array<u8, 3> = "and";
+
+const word_break: Array<u8, 5> = "break";
+
+const word_do: Array<u8, 2> = "do";
+
+const word_else: Array<u8, 4> = "else";
+
+const word_elseif: Array<u8, 6> = "elseif";
+
+const word_end: Array<u8, 3> = "end";
+
+const word_false: Array<u8, 5> = "false";
+
+const word_for: Array<u8, 3> = "for";
+
+const word_function: Array<u8, 8> = "function";
+
+const word_if: Array<u8, 2> = "if";
+
+const word_in: Array<u8, 2> = "in";
+
+const word_local: Array<u8, 5> = "local";
+
+const word_nil: Array<u8, 3> = "nil";
+
+const word_not: Array<u8, 3> = "not";
+
+const word_or: Array<u8, 2> = "or";
+
+const word_repeat: Array<u8, 6> = "repeat";
+
+const word_return: Array<u8, 6> = "return";
+
+const word_then: Array<u8, 4> = "then";
+
+const word_true: Array<u8, 4> = "true";
+
+const word_until: Array<u8, 5> = "until";
+
+const word_while: Array<u8, 5> = "while";
+
+fn keyword(source: &[u8], start: u64, end: u64) -> kind: u16 reads(source) {
+  doc "The complete Lua 5.1 reserved word table.";
+  let is_and = same(source: source, start: start, end: end, word: &word_and[0_u64..3_u64]);
+  if is_and {
+    return tk_and;
+  }
+  let is_break = same(source: source, start: start, end: end, word: &word_break[0_u64..5_u64]);
+  if is_break {
+    return tk_break;
+  }
+  let is_do = same(source: source, start: start, end: end, word: &word_do[0_u64..2_u64]);
+  if is_do {
+    return tk_do;
+  }
+  let is_else = same(source: source, start: start, end: end, word: &word_else[0_u64..4_u64]);
+  if is_else {
+    return tk_else;
+  }
+  let is_elseif = same(source: source, start: start, end: end, word: &word_elseif[0_u64..6_u64]);
+  if is_elseif {
+    return tk_elseif;
+  }
+  let is_end = same(source: source, start: start, end: end, word: &word_end[0_u64..3_u64]);
+  if is_end {
+    return tk_end;
+  }
+  let is_false = same(source: source, start: start, end: end, word: &word_false[0_u64..5_u64]);
+  if is_false {
+    return tk_false;
+  }
+  let is_for = same(source: source, start: start, end: end, word: &word_for[0_u64..3_u64]);
+  if is_for {
+    return tk_for;
+  }
+  let is_function = same(source: source, start: start, end: end, word: &word_function[0_u64..8_u64]);
+  if is_function {
+    return tk_function;
+  }
+  let is_if = same(source: source, start: start, end: end, word: &word_if[0_u64..2_u64]);
+  if is_if {
+    return tk_if;
+  }
+  let is_in = same(source: source, start: start, end: end, word: &word_in[0_u64..2_u64]);
+  if is_in {
+    return tk_in;
+  }
+  let is_local = same(source: source, start: start, end: end, word: &word_local[0_u64..5_u64]);
+  if is_local {
+    return tk_local;
+  }
+  let is_nil = same(source: source, start: start, end: end, word: &word_nil[0_u64..3_u64]);
+  if is_nil {
+    return tk_nil;
+  }
+  let is_not = same(source: source, start: start, end: end, word: &word_not[0_u64..3_u64]);
+  if is_not {
+    return tk_not;
+  }
+  let is_or = same(source: source, start: start, end: end, word: &word_or[0_u64..2_u64]);
+  if is_or {
+    return tk_or;
+  }
+  let is_repeat = same(source: source, start: start, end: end, word: &word_repeat[0_u64..6_u64]);
+  if is_repeat {
+    return tk_repeat;
+  }
+  let is_return = same(source: source, start: start, end: end, word: &word_return[0_u64..6_u64]);
+  if is_return {
+    return tk_return;
+  }
+  let is_then = same(source: source, start: start, end: end, word: &word_then[0_u64..4_u64]);
+  if is_then {
+    return tk_then;
+  }
+  let is_true = same(source: source, start: start, end: end, word: &word_true[0_u64..4_u64]);
+  if is_true {
+    return tk_true;
+  }
+  let is_until = same(source: source, start: start, end: end, word: &word_until[0_u64..5_u64]);
+  if is_until {
+    return tk_until;
+  }
+  let is_while = same(source: source, start: start, end: end, word: &word_while[0_u64..5_u64]);
+  if is_while {
+    return tk_while;
+  }
+  return tk_name;
+}
+
+const msg_0: Array<u8, 17> = "unfinished string";
+
+const msg_1: Array<u8, 16> = "malformed number";
+
+const msg_2: Array<u8, 25> = "escape sequence too large";
+
+const msg_3: Array<u8, 22> = "unfinished long string";
+
+const msg_4: Array<u8, 23> = "unfinished long comment";
+
+const msg_5: Array<u8, 29> = "invalid long string delimiter";
+
+const msg_6: Array<u8, 24> = "chunk has too many lines";
+
+const msg_7: Array<u8, 32> = "nesting of [[...]] is deprecated";
+
+fn failure(code: u8, line: u64, near_kind: u16, start: u64, end: u64) -> error: Error pure {
+  doc "An owned fixed-size error message and diagnostic location.";
+  let message = slots_new::<u8, 40>();
+  if code == 0_u8 {
+    for (i in 0_u64..17_u64) {
+      let b = msg_0[i];
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
+    }
+  }
+  if code == 1_u8 {
+    for (i in 0_u64..16_u64) {
+      let b = msg_1[i];
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
+    }
+  }
+  if code == 2_u8 {
+    for (i in 0_u64..25_u64) {
+      let b = msg_2[i];
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
+    }
+  }
+  if code == 3_u8 {
+    for (i in 0_u64..22_u64) {
+      let b = msg_3[i];
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
+    }
+  }
+  if code == 4_u8 {
+    for (i in 0_u64..23_u64) {
+      let b = msg_4[i];
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
+    }
+  }
+  if code == 5_u8 {
+    for (i in 0_u64..29_u64) {
+      let b = msg_5[i];
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
+    }
+  }
+  if code == 6_u8 {
+    for (i in 0_u64..24_u64) {
+      let b = msg_6[i];
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
+    }
+  }
+  if code == 7_u8 {
+    for (i in 0_u64..32_u64) {
+      let b = msg_7[i];
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
+    }
+  }
+  return Error(message: move message, line: line, near_kind: near_kind, start: start, end: end);
+}

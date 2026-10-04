@@ -1,1 +1,88 @@
+public struct State {
+  public offset: u64;
+  public line: u64;
+  public previous: u16;
+}
 
+public struct Token {
+  public kind: u16;
+  public start: u64;
+  public end: u64;
+  public line: u64;
+}
+
+public struct Error {
+  public message: Slots<u8, 40>;
+  public line: u64;
+  public near_kind: u16;
+  public start: u64;
+  public end: u64;
+}
+
+public fn new() -> state: State pure doc "Starts at source offset zero and line one. The source must remain the same across next calls.";
+
+public fn next(source: &[u8], state: &State, decoded: &Box<Slots<u8>>) -> result: Result<Token, Error> reads(source), writes(state), writes(decoded) doc "Returns a PUC 5.1 token code (single bytes are 0..255), its half-open source range and starting line. String bytes replace the caller-owned decoded buffer, valid until the next call. Names and numbers borrow their source range, with no conversion or token allocation. Errors are terminal: decoded retains the context needed by format_error; pass it to format_error before restarting.";
+
+public fn format_error(chunk: &[u8], error: &Error, decoded: &Box<Slots<u8>>, output: &Box<Slots<u8>>) -> result: unit reads(chunk), reads(error), reads(decoded), writes(output) doc "Replaces output with PUC luaX_lexerror text, including luaO_chunkid's 80-byte chunk abbreviation. chunk is the Lua source name: @filename, =literal, or source text. Errors and strings use C-string truncation at NUL in diagnostics, while successful decoded strings preserve NUL.";
+
+public const tk_and: u16 = 257_u16;
+
+public const tk_break: u16 = 258_u16;
+
+public const tk_do: u16 = 259_u16;
+
+public const tk_else: u16 = 260_u16;
+
+public const tk_elseif: u16 = 261_u16;
+
+public const tk_end: u16 = 262_u16;
+
+public const tk_false: u16 = 263_u16;
+
+public const tk_for: u16 = 264_u16;
+
+public const tk_function: u16 = 265_u16;
+
+public const tk_if: u16 = 266_u16;
+
+public const tk_in: u16 = 267_u16;
+
+public const tk_local: u16 = 268_u16;
+
+public const tk_nil: u16 = 269_u16;
+
+public const tk_not: u16 = 270_u16;
+
+public const tk_or: u16 = 271_u16;
+
+public const tk_repeat: u16 = 272_u16;
+
+public const tk_return: u16 = 273_u16;
+
+public const tk_then: u16 = 274_u16;
+
+public const tk_true: u16 = 275_u16;
+
+public const tk_until: u16 = 276_u16;
+
+public const tk_while: u16 = 277_u16;
+
+public const tk_concat: u16 = 278_u16;
+
+public const tk_dots: u16 = 279_u16;
+
+public const tk_eq: u16 = 280_u16;
+
+public const tk_ge: u16 = 281_u16;
+
+public const tk_le: u16 = 282_u16;
+
+public const tk_ne: u16 = 283_u16;
+
+public const tk_number: u16 = 284_u16;
+
+public const tk_name: u16 = 285_u16;
+
+public const tk_string: u16 = 286_u16;
+
+public const tk_eof: u16 = 287_u16;

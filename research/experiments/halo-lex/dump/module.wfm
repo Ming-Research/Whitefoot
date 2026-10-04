@@ -1,0 +1,7 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+
+public fn main(inputs: Inputs) -> status: ExitStatus pure waits doc "Reads a framed source batch from stdin and writes the PUC comparison dump.";
