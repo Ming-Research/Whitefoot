@@ -407,7 +407,16 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   std::fs::close_directory(factory: &factory_v103, directory: move cwd_read_v107);
   std::fs::close_directory_write(factory: &factory_v103, directory: move cwd_write_v108);
   let modes = std::text::args_count(args: &args_v99);
-  if modes > 3_u64 {
+  let stress = False();
+  let positional = 0_u64;
+  for (index in 1_u64..modes) {
+    if argument_is(args: &args_v99, index: index, text: &stress_option[0_u64..11_u64]) {
+      set stress = True();
+    } else {
+      set positional = positional +sat 1_u64;
+    }
+  }
+  if positional > 2_u64 {
     return smoke();
   }
   let source_v109 = box_slots_new::<u8>(capacity: 0_u64);
@@ -427,13 +436,14 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     return std::process::exit_status(code: 2_u8);
   }
   let engine_v114 = halo::embed::new_engine(limit: 67108864_u64);
+  halo::embed::set_gc_stress(engine: &engine_v114, enabled: stress);
   let nil_v115 = Value::Nil();
   let no_v116 = False();
   let env_v117 = Env(db: nil_v115, types: nil_v115, expiry: nil_v115, error: no_v116);
   install_host(engine: &engine_v114, env: &env_v117);
   let out_v118 = box_slots_new::<u8>(capacity: 0_u64);
   let budget_v119 = 1000_u64;
-  let argc_v120 = std::text::args_count(args: &args_v99);
+  let argc_v120 = positional +sat 1_u64;
   if argc_v120 > 1_u64 {
     set budget_v119 = 1_u64;
   }
@@ -464,6 +474,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   }
   protect(engine: &engine_v114);
   let start_v124 = split_v112 + 1_u64;
+  let collections_before = halo::embed::collection_count(engine: &engine_v114);
   let compiled_v125 = halo::embed::compile(engine: &engine_v114, chunk_name: &s_52[0_u64..12_u64], source: &source_v109.inner[start_v124..n_v111]);
   match move compiled_v125 {
     Err(error: problem_v126) => {
@@ -511,25 +522,94 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     }
   }
   push(out: &out_v118, byte: 10_u8);
-  let length_v135 = out_v118.inner.len;
-  let position_v136 = 0_u64;
-  loop {
-    if position_v136 >= length_v135 {
-      break;
+  let wrote = write_bytes(factory: &factory_v103, output: &output_v101, bytes: &out_v118);
+  if bnot(wrote) {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let stats = box_slots_new::<u8>(capacity: 0_u64);
+  text_bytes(out: &stats, bytes: &stats_prefix[0_u64..15_u64]);
+  let collections_after = halo::embed::collection_count(engine: &engine_v114);
+  let collections = collections_after -sat collections_before;
+  decimal(out: &stats, n: collections);
+  text_bytes(out: &stats, bytes: &stats_bytes[0_u64..9_u64]);
+  decimal(out: &stats, n: engine_v114.vm.heap.bytes);
+  push(out: &stats, byte: 125_u8);
+  push(out: &stats, byte: 10_u8);
+  let reported = write_bytes(factory: &factory_v103, output: &stderr_v102, bytes: &stats);
+  if bnot(reported) {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+
+const stress_option: Array<u8, 11> = "--gc-stress";
+
+const stats_prefix: Array<u8, 15> = "{\"collections\":";
+
+const stats_bytes: Array<u8, 9> = ",\"bytes\":";
+
+fn argument_is(args: &std::text::Args, index: u64, text: &[u8]) -> r: Bool reads(args), reads(text) {
+  let fetched = std::text::arg_get(args: args, position: index);
+  match move fetched {
+    Err(..) => {
+      return False();
     }
-    let deadline_v137 = None<std::time::Instant>();
-    let written_v138 = std::io::write_once(factory: &factory_v103, output: &output_v101, source: &out_v118.inner[0_u64..length_v135], start: position_v136, end: length_v135, deadline: deadline_v137);
-    match written_v138 {
-      Ok(value: end_v139) => {
-        if end_v139 == position_v136 {
-          return std::process::exit_status(code: 2_u8);
-        }
-        set position_v136 = end_v139;
+    Ok(value: argument) => {
+      let length = std::text::host_bytes_len(value: &argument);
+      if length != text^.len {
+        return False();
       }
-      Err(error: problem_v140) => {
-        return std::process::exit_status(code: 2_u8);
+      let bytes = box_slots_new::<u8>(capacity: length);
+      for (i in 0_u64..length) {
+        if bytes.inner.len < bytes.inner.cap {
+          place_back(window: &bytes.inner, value: 0_u8);
+        }
+      }
+      let n = bytes.inner.len;
+      match std::text::host_copy_bytes(value: &argument, destination: &bytes.inner[0_u64..n], start: 0_u64, end: n) {
+        Err(..) => {
+          return False();
+        }
+        Ok(value: copied) => {
+          if copied != text^.len {
+            return False();
+          }
+          for (i in 0_u64..text^.len) {
+            if i < bytes.inner.len {
+              if bytes.inner[i] != text^[i] {
+                return False();
+              }
+            } else {
+              return False();
+            }
+          }
+          return True();
+        }
       }
     }
   }
-  return std::process::exit_status(code: 0_u8);
+}
+
+fn write_bytes(factory: &HandleFactory, output: &OutputStream, bytes: &Box<Slots<u8>>) -> r: Bool reads(bytes), writes(factory), writes(output) waits {
+  let length = bytes^.inner.len;
+  let position = 0_u64;
+  loop {
+    if position >= length {
+      return True();
+    }
+    let deadline = None<std::time::Instant>();
+    let written = std::io::write_once(factory: factory, output: output, source: &bytes^.inner[0_u64..length], start: position, end: length, deadline: deadline);
+    match written {
+      Ok(value: end) => {
+        if end == position {
+          return False();
+        }
+        set position = end;
+      }
+      Err(..) => {
+        return False();
+      }
+    }
+  }
+  return False();
 }

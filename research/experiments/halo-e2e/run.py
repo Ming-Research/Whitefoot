@@ -181,6 +181,8 @@ def main():
     parser.add_argument('--verify-errors', action='store_true', help='check source-grounded Redis error/location probes')
     parser.add_argument('--verify-sha1', action='store_true', help='compare 1000 random binary inputs with hashlib')
     parser.add_argument('--binary', type=Path, help='reuse an already built test executable')
+    parser.add_argument('--gc-stress', action='store_true', help='force full collection at every collector safepoint')
+    parser.add_argument('--cases', type=Path, default=ORACLE, help='case root with scripts/GROUP/*.lua and expected/GROUP/*.txt')
     parser.add_argument('--filter', default='')
     parser.add_argument('--report', type=Path)
     parser.add_argument('--actual', type=Path, help='scratch directory for typed replies')
@@ -190,13 +192,14 @@ def main():
     budgets = [int(x) for x in args.budgets.split(',')]
     if any(b not in (1, 7, 1000) for b in budgets):
         parser.error('supported budgets are 1,7,1000')
-    cases = sorted((ORACLE / 'scripts').glob('*/*.lua'))
-    cases = [p for p in cases if str(p.relative_to(ORACLE / 'scripts').with_suffix('')).startswith(args.filter)]
+    case_root = args.cases.resolve()
+    cases = sorted((case_root / 'scripts').glob('*/*.lua'))
+    cases = [p for p in cases if str(p.relative_to(case_root / 'scripts').with_suffix('')).startswith(args.filter)]
     if not cases:
         parser.error('filter matched no scripts')
-    required = {p.relative_to(ORACLE / 'scripts').with_suffix('.txt') for p in cases}
+    required = {p.relative_to(case_root / 'scripts').with_suffix('.txt') for p in cases}
     if not args.filter:
-        present = {p.relative_to(ORACLE / 'expected') for p in (ORACLE / 'expected').glob('*/*.txt')}
+        present = {p.relative_to(case_root / 'expected') for p in (case_root / 'expected').glob('*/*.txt')}
         if required != present:
             raise ValueError('missing or surplus baseline files')
     source_files = sorted((ROOT / 'lib/halo').rglob('*.wf')) + sorted((ROOT / 'lib/halo').rglob('*.wfm'))
@@ -208,6 +211,7 @@ def main():
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True, capture_output=True, check=True).stdout.strip()
     report = ['# Halo end-to-end comparison', '',
               f'Local parent revision: `{revision}`. Source digest: `{digest.hexdigest()}`.',
+              f'GC stress: {args.gc_stress}.',
               'The digest includes every Halo module, the graph, host and runner; it identifies uncommitted source bytes too.', '']
     with tempfile.TemporaryDirectory(prefix='halo-e2e-', dir='/private/tmp') as temporary:
         scratch = Path(temporary)
@@ -228,8 +232,8 @@ def main():
         summary = defaultdict(Counter)
         observed = {}
         for path in cases:
-            relative = path.relative_to(ORACLE / 'scripts').with_suffix('')
-            expected_path = ORACLE / 'expected' / relative.with_suffix('.txt')
+            relative = path.relative_to(case_root / 'scripts').with_suffix('')
+            expected_path = case_root / 'expected' / relative.with_suffix('.txt')
             expected_bytes = expected_path.read_text('ascii')
             expected = json.loads(expected_bytes)
             if canonical(expected) != expected_bytes:
@@ -237,11 +241,18 @@ def main():
             source = path.read_bytes()
             for budget in budgets:
                 extra = [] if budget == 1000 else ['one'] if budget == 1 else ['seven', 'seven']
+                if args.gc_stress:
+                    extra += ['--gc-stress']
+                collections = None
                 try:
                     result, seconds = run([str(binary)] + extra, input=fixture(source))
                     if result.returncode:
                         status, why, actual = 'FAIL', f'native exit {result.returncode} (2 transport/I/O, 3 setup compile, 4 setup runtime, 5 budget limit, 6 host stop)', None
                     else:
+                        stats = json.loads(result.stderr)
+                        collections = stats['collections']
+                        if type(collections) is not int or collections < 0:
+                            raise ValueError('invalid collection count')
                         actual = json.loads(result.stdout)
                         actual_bytes = canonical(actual)
                         status = 'PASS' if actual_bytes == expected_bytes else 'FAIL'
@@ -256,14 +267,14 @@ def main():
                 except (subprocess.TimeoutExpired, ValueError) as error:
                     status, why, seconds = 'FAIL', str(error), 0.0
                 summary[(relative.parts[0], budget)][status] += 1
-                rows.append((str(relative), budget, status, seconds, why))
-                print(f'{status} {relative} budget={budget}: {why}', flush=True)
+                rows.append((str(relative), budget, status, seconds, collections, why))
+                print(f'{status} {relative} budget={budget} collections={collections}: {why}', flush=True)
         report += ['| Group | Budget | Passed | Failed |', '| --- | --- | ---: | ---: |']
         for (group, budget), count in sorted(summary.items()):
             report += [f'| {group} | {budget} | {count["PASS"]} | {count["FAIL"]} |']
-        report += ['', '| Case | Budget | Result | Seconds | Failure reason |', '| --- | ---: | --- | ---: | --- |']
-        for case, budget, status, seconds, why in rows:
-            report += [f'| {case} | {budget} | {status} | {seconds:.4f} | {why.replace("|", "&#124;").replace(chr(0), "<NUL>")} |']
+        report += ['', '| Case | Budget | Result | Seconds | Collections | Failure reason |', '| --- | ---: | --- | ---: | ---: | --- |']
+        for case, budget, status, seconds, collections, why in rows:
+            report += [f'| {case} | {budget} | {status} | {seconds:.4f} | {collections} | {why.replace("|", "&#124;").replace(chr(0), "<NUL>")} |']
         report += ['', 'No scripts or expected replies were changed. No network or Redis server was used.',
                    'The reference is the stored Redis 7.0.15 RESP2 corpus. All cases are executed, including unavailable library cases.',
                    'Budget comparisons use fresh stores. They compare replies; atomic kill/restart and host Stop store preservation require separate checks.', '']

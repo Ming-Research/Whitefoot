@@ -11,7 +11,7 @@ The embedding module, test program, runner and result record serve VM.md section
 and experiment homes, and are removed or superseded when the production firn
 binding replaces this test host or Halo is retired.
 
-No compiler, VM, heap or oracle files are changed by this experiment. Unsupported
+The runner never changes compiler, VM, heap or oracle files. Unsupported
 commands and library functions are reported as failures rather than silently
 removed from the corpus. See RESULTS.md for the measured coverage and gaps.
 
@@ -59,3 +59,12 @@ Whitefoot `redis.sha1hex` used by scripts. `lib/halo/embed/sha1.wf` and
 `redis-error.wf` serve digest generation and the EVAL reply formatter in
 this embedding; they are superseded with the embedding if Halo is retired
 or its production binding replaces these responsibilities.
+
+Add `--gc-stress` to enable the engine's collector stress switch. Budget
+arguments still use the existing positional protocol; `--gc-stress` is an
+explicit flag received by the test executable and excluded from that count.
+Completed collections during the tested script (excluding preparation) are
+reported on stderr as JSON and included in each comparison row. The reply on
+stdout keeps the original typed RESP2 schema. The switch defaults off.
+See [the F4 experiment](../halo-gc/README.md#vm-stress-experiment-f4) for
+missing-root mutation and memory-limit evidence.

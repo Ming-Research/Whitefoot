@@ -2200,6 +2200,16 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **Halo does not enforce its logical heap limit at VM safepoints.**
+  The F4 bounded growing-table probe in
+  `research/experiments/halo-gc/README.md` returns successfully with
+  74,462,693 bytes under a 67,108,864-byte engine limit. Impact: an
+  unbounded allocator can exhaust the host instead of returning the intended
+  Lua memory error. Change: force a root-preserving full collection when
+  over the limit, then unwind with `not enough memory` if survivors still
+  exceed it. Reopen immediately for F4; verify an unbounded case and a
+  following script on the same engine/store, and remove when fixed.
+
 - **Halo codec error names need Lua debug metadata.** The library comparison
   in `research/experiments/halo-luacodecs/RESULTS.md` includes
   `local f=bit.tobit; return f(false)` and operations on `cjson.null`.

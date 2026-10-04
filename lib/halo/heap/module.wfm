@@ -99,6 +99,8 @@ public struct Heap {
   public epoch: u32;
   public gray: Box<Slots<Value>>;
   public threshold: u64;
+  public gc_stress: Bool;
+  public collections: u64;
 }
 
 public fn gc_begin(heap: &Heap) -> r: unit writes(heap.epoch) doc "Starts a collection: a new epoch, so every cell's mark is stale until marked again.";
@@ -111,7 +113,7 @@ public fn gc_propagate(heap: &Heap) -> r: unit writes(heap) doc "Marks everythin
 
 public fn gc_sweep(heap: &Heap) -> r: u64 writes(heap) doc "Frees every live cell not marked in the current epoch, dead strings leaving the intern table, and returns how many cells were freed; resets bytes_since_gc and sets threshold to the larger of 1 MiB and the bytes still live, Lua 5.1's pause of 200%.";
 
-public fn gc_due(heap: &Heap) -> r: Bool reads(heap) doc "Whether the bytes allocated since the last collection exceed the threshold.";
+public fn gc_due(heap: &Heap) -> r: Bool reads(heap) doc "Whether stress is enabled or the bytes allocated since the last collection exceed the threshold.";
 
 public fn heap_new(limit: u64) -> r: Heap pure doc "Constructs empty, iteration-friendly slabs and an empty weak intern table.";
 

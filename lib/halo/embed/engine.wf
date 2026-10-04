@@ -248,3 +248,12 @@ fn unpin(engine: &Engine, token: u64) -> r: unit writes(engine) {
   }
   return unit;
 }
+
+fn set_gc_stress(engine: &Engine, enabled: Bool) -> r: unit writes(engine.vm.heap.gc_stress) {
+  set engine^.vm.heap.gc_stress = enabled;
+  return unit;
+}
+
+fn collection_count(engine: &Engine) -> r: u64 reads(engine.vm.heap.collections) {
+  return engine^.vm.heap.collections;
+}

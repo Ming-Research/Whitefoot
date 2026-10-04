@@ -34,6 +34,10 @@ public struct BuiltinName {
 
 public fn new_engine(limit: u64) -> r: Engine pure doc "Constructs an engine with core globals and a logical heap byte limit.";
 
+public fn set_gc_stress(engine: &Engine, enabled: Bool) -> r: unit writes(engine.vm.heap.gc_stress) doc "Forces a full collection at each collector safepoint while enabled; new engines default to off.";
+
+public fn collection_count(engine: &Engine) -> r: u64 reads(engine.vm.heap.collections) doc "Completed collections since engine construction, saturating at u64 maximum; reset does not clear the count.";
+
 public fn compile(engine: &Engine, chunk_name: &[u8], source: &[u8]) -> r: Result<ScriptId, CompileError> reads(chunk_name), reads(source), writes(engine) doc "Caches a compiled chunk; compiler error text is preserved.";
 
 public fn forget_all(engine: &Engine) -> r: unit writes(engine) doc "Resets and flushes compiled scripts, invalidating every ScriptId.";
