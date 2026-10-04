@@ -51,7 +51,7 @@ defaults:
     shell: bash
 
 concurrency:
-  group: io-bench-${{ github.ref }}
+  group: io-bench-${{ github.ref }}-${{ inputs.compare_runner }}
   cancel-in-progress: true
 
 env:
