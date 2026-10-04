@@ -1,0 +1,214 @@
+alias Token = pkg::types::Token;
+alias Error = pkg::types::Error;
+alias Event = pkg::types::Event;
+
+fn next(source: &[u8], offset: u64) -> r: Result<Option<Token>, Error> reads(source) {
+  let length = source^.len;
+  if offset > length {
+    let e = Error::Offset(offset: offset);
+    return Err<Option<Token>, Error>(error: e);
+  }
+  if offset == length {
+    let e = None<Token>();
+    return Ok<Option<Token>, Error>(value: e);
+  }
+  let tag = source^[offset];
+  let at = offset + 1_u64;
+  let event = Event::Nil();
+  let width = 0_u64;
+  let size = 0_u64;
+  let category = 0_u8;
+  if tag < 128_u8 {
+    let n = cvt::<u8, u64>(tag);
+    set event = Event::Unsigned(value: n);
+  } else if tag >= 224_u8 {
+    let narrow = reinterpret::<u8, i8>(tag);
+    let n = cvt::<i8, i64>(narrow);
+    set event = Event::Signed(value: n);
+  } else if tag < 144_u8 {
+    let n = iand(tag, 15_u8);
+    let count = cvt::<u8, u32>(n);
+    set event = Event::Map(count: count);
+  } else if tag < 160_u8 {
+    let n = iand(tag, 15_u8);
+    let count = cvt::<u8, u32>(n);
+    set event = Event::Array(count: count);
+  } else if tag < 192_u8 {
+    let n = iand(tag, 31_u8);
+    set size = cvt::<u8, u64>(n);
+    set category = 5_u8;
+  } else if tag == 192_u8 {
+  } else if tag == 193_u8 {
+    let e = Error::Reserved(offset: offset);
+    return Err<Option<Token>, Error>(error: e);
+  } else if tag == 194_u8 {
+    set event = Event::False();
+  } else if tag == 195_u8 {
+    set event = Event::True();
+  } else if tag == 196_u8 {
+    set width = 1_u64;
+    set category = 6_u8;
+  } else if tag == 197_u8 {
+    set width = 2_u64;
+    set category = 6_u8;
+  } else if tag == 198_u8 {
+    set width = 4_u64;
+    set category = 6_u8;
+  } else if tag == 199_u8 {
+    set width = 1_u64;
+    set category = 7_u8;
+  } else if tag == 200_u8 {
+    set width = 2_u64;
+    set category = 7_u8;
+  } else if tag == 201_u8 {
+    set width = 4_u64;
+    set category = 7_u8;
+  } else if tag == 202_u8 {
+    set width = 4_u64;
+    set category = 3_u8;
+  } else if tag == 203_u8 {
+    set width = 8_u64;
+    set category = 4_u8;
+  } else if tag == 204_u8 {
+    set width = 1_u64;
+    set category = 1_u8;
+  } else if tag == 205_u8 {
+    set width = 2_u64;
+    set category = 1_u8;
+  } else if tag == 206_u8 {
+    set width = 4_u64;
+    set category = 1_u8;
+  } else if tag == 207_u8 {
+    set width = 8_u64;
+    set category = 1_u8;
+  } else if tag == 208_u8 {
+    set width = 1_u64;
+    set category = 2_u8;
+  } else if tag == 209_u8 {
+    set width = 2_u64;
+    set category = 2_u8;
+  } else if tag == 210_u8 {
+    set width = 4_u64;
+    set category = 2_u8;
+  } else if tag == 211_u8 {
+    set width = 8_u64;
+    set category = 2_u8;
+  } else if tag == 217_u8 {
+    set width = 1_u64;
+    set category = 5_u8;
+  } else if tag == 218_u8 {
+    set width = 2_u64;
+    set category = 5_u8;
+  } else if tag == 219_u8 {
+    set width = 4_u64;
+    set category = 5_u8;
+  } else if tag == 220_u8 {
+    set width = 2_u64;
+    set category = 8_u8;
+  } else if tag == 221_u8 {
+    set width = 4_u64;
+    set category = 8_u8;
+  } else if tag == 222_u8 {
+    set width = 2_u64;
+    set category = 9_u8;
+  } else if tag == 223_u8 {
+    set width = 4_u64;
+    set category = 9_u8;
+  } else if tag == 212_u8 {
+    set size = 1_u64;
+    set category = 7_u8;
+  } else if tag == 213_u8 {
+    set size = 2_u64;
+    set category = 7_u8;
+  } else if tag == 214_u8 {
+    set size = 4_u64;
+    set category = 7_u8;
+  } else if tag == 215_u8 {
+    set size = 8_u64;
+    set category = 7_u8;
+  } else if tag == 216_u8 {
+    set size = 16_u64;
+    set category = 7_u8;
+  }
+  let available = length - at;
+  if width > available {
+    let e = Error::Truncated(start: offset, offset: at, needed: width, available: available);
+    return Err<Option<Token>, Error>(error: e);
+  }
+  let end = at + width;
+  let bits = 0_u64;
+  for (i in at..end) {
+    let b = source^[i];
+    let wide = cvt::<u8, u64>(b);
+    let shifted = ishl.wrap(bits, 8_u32);
+    set bits = ior(shifted, wide);
+  }
+  set at = end;
+  if category == 1_u8 {
+    set event = Event::Unsigned(value: bits);
+  } else if category == 2_u8 {
+    let signed = reinterpret::<u64, i64>(bits);
+    if width == 1_u64 {
+      let n = cvt.wrap::<u64, i8>(bits);
+      set signed = cvt::<i8, i64>(n);
+    } else if width == 2_u64 {
+      let n = cvt.wrap::<u64, i16>(bits);
+      set signed = cvt::<i16, i64>(n);
+    } else if width == 4_u64 {
+      let n = cvt.wrap::<u64, i32>(bits);
+      set signed = cvt::<i32, i64>(n);
+    }
+    set event = Event::Signed(value: signed);
+  } else if category == 3_u8 {
+    let b = cvt.wrap::<u64, u32>(bits);
+    let n = reinterpret::<u32, f32>(b);
+    set event = Event::Float32(value: n);
+  } else if category == 4_u8 {
+    let n = reinterpret::<u64, f64>(bits);
+    set event = Event::Float64(value: n);
+  } else if category == 8_u8 {
+    let n = cvt.wrap::<u64, u32>(bits);
+    set event = Event::Array(count: n);
+  } else if category == 9_u8 {
+    let n = cvt.wrap::<u64, u32>(bits);
+    set event = Event::Map(count: n);
+  }
+  if category >= 5_u8 {
+    if category <= 7_u8 {
+      if width != 0_u64 {
+        set size = bits;
+      }
+      let kind = 0_i8;
+      if category == 7_u8 {
+        if at >= length {
+          let e = Error::Truncated(start: offset, offset: at, needed: 1_u64, available: 0_u64);
+          return Err<Option<Token>, Error>(error: e);
+        }
+        let b = source^[at];
+        set kind = reinterpret::<u8, i8>(b);
+        set at = at + 1_u64;
+      }
+      if at > length {
+        let e = Error::Offset(offset: at);
+        return Err<Option<Token>, Error>(error: e);
+      }
+      let remaining = length - at;
+      if size > remaining {
+        let e = Error::Truncated(start: offset, offset: at, needed: size, available: remaining);
+        return Err<Option<Token>, Error>(error: e);
+      }
+      let payload_end = at + size;
+      if category == 5_u8 {
+        set event = Event::String(start: at, end: payload_end);
+      } else if category == 6_u8 {
+        set event = Event::Binary(start: at, end: payload_end);
+      } else {
+        set event = Event::Extension(kind: kind, start: at, end: payload_end);
+      }
+      set at = payload_end;
+    }
+  }
+  let token = Token(tag: tag, start: offset, next: at, event: event);
+  let item = Some<Token>(value: token);
+  return Ok<Option<Token>, Error>(value: item);
+}

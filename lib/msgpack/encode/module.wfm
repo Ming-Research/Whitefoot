@@ -1,0 +1,28 @@
+public enum Error {
+  Length();
+  Capacity();
+}
+
+public fn nil(out: &Box<Slots<u8>>) -> r: Result<unit, Error> writes(out) doc "Append nil; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn boolean(out: &Box<Slots<u8>>, value: Bool) -> r: Result<unit, Error> writes(out) doc "Append boolean; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn unsigned(out: &Box<Slots<u8>>, value: u64) -> r: Result<unit, Error> writes(out) doc "Append unsigned; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn signed(out: &Box<Slots<u8>>, value: i64) -> r: Result<unit, Error> writes(out) doc "Append signed; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn number(out: &Box<Slots<u8>>, value: f64) -> r: Result<unit, Error> writes(out) doc "Append number; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn float32(out: &Box<Slots<u8>>, value: f32) -> r: Result<unit, Error> writes(out) doc "Append float32; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn float64(out: &Box<Slots<u8>>, value: f64) -> r: Result<unit, Error> writes(out) doc "Append float64; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn string(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: Result<unit, Error> reads(bytes), writes(out) doc "Append string; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn binary(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: Result<unit, Error> reads(bytes), writes(out) doc "Append binary; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn extension(out: &Box<Slots<u8>>, kind: i8, bytes: &[u8]) -> r: Result<unit, Error> reads(bytes), writes(out) doc "Append extension; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn array(out: &Box<Slots<u8>>, count: u32) -> r: Result<unit, Error> writes(out) doc "Append array; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";
+
+public fn map(out: &Box<Slots<u8>>, count: u32) -> r: Result<unit, Error> writes(out) doc "Append map; errors preserve existing bytes. Length refuses a payload above u32; Capacity refuses total-length overflow.";

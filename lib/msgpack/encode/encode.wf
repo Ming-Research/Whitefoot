@@ -1,0 +1,257 @@
+const empty: Array<u8, 0> = "";
+
+fn emit(out: &Box<Slots<u8>>, tag: u8, bits: u64, width: u64, typed: Bool, kind: i8, bytes: &[u8]) -> r: Result<unit, Error> reads(bytes), writes(out) {
+  let header = slots_new::<u8, 10>();
+  place_back(window: &header, value: tag);
+  if width > 8_u64 {
+    let e = Error::Capacity();
+    return Err<unit, Error>(error: e);
+  }
+  for (i in 0_u64..width) {
+    let distance = width - i;
+    let shift = distance - 1_u64;
+    let scaled = shift * 8_u64;
+    let k = cvt.wrap::<u64, u32>(scaled);
+    let word = ishr.wrap(bits, k);
+    let b = cvt.wrap::<u64, u8>(word);
+    if header.len < header.cap {
+      place_back(window: &header, value: b);
+    }
+  }
+  if typed {
+    let b = reinterpret::<i8, u8>(kind);
+    if header.len < header.cap {
+      place_back(window: &header, value: b);
+    }
+  }
+  let size = bytes^.len;
+  let h = header.len;
+  if h +defined size {
+    let extra = h + size;
+    let n = out^.inner.len;
+    if n +defined extra {
+      let total = n + extra;
+      if total > out^.inner.cap {
+        let doubled = out^.inner.cap +sat out^.inner.cap;
+        let target = imax(total, doubled);
+        grow(cell: out, capacity: target);
+      }
+      for (i in 0_u64..h) {
+        let b = header[i];
+        if out^.inner.len < out^.inner.cap {
+          place_back(window: &out^.inner, value: b);
+        }
+      }
+      for (i in 0_u64..size) {
+        let b = bytes^[i];
+        if out^.inner.len < out^.inner.cap {
+          place_back(window: &out^.inner, value: b);
+        }
+      }
+      return Ok<unit, Error>(value: unit);
+    }
+  }
+  let e = Error::Capacity();
+  return Err<unit, Error>(error: e);
+}
+
+fn nil(out: &Box<Slots<u8>>) -> r: Result<unit, Error> writes(out) {
+  let false_value = False();
+  return emit(out: out, tag: 192_u8, bits: 0_u64, width: 0_u64, typed: false_value, kind: 0_i8, bytes: &empty[0_u64..0_u64]);
+}
+
+fn boolean(out: &Box<Slots<u8>>, value: Bool) -> r: Result<unit, Error> writes(out) {
+  let tag = 194_u8;
+  if value {
+    set tag = 195_u8;
+  }
+  let false_value = False();
+  return emit(out: out, tag: tag, bits: 0_u64, width: 0_u64, typed: false_value, kind: 0_i8, bytes: &empty[0_u64..0_u64]);
+}
+
+fn unsigned(out: &Box<Slots<u8>>, value: u64) -> r: Result<unit, Error> writes(out) {
+  let tag = cvt.wrap::<u64, u8>(value);
+  let width = 0_u64;
+  if value > 4294967295_u64 {
+    set tag = 207_u8;
+    set width = 8_u64;
+  } else if value > 65535_u64 {
+    set tag = 206_u8;
+    set width = 4_u64;
+  } else if value > 255_u64 {
+    set tag = 205_u8;
+    set width = 2_u64;
+  } else if value > 127_u64 {
+    set tag = 204_u8;
+    set width = 1_u64;
+  }
+  let false_value = False();
+  return emit(out: out, tag: tag, bits: value, width: width, typed: false_value, kind: 0_i8, bytes: &empty[0_u64..0_u64]);
+}
+
+fn signed(out: &Box<Slots<u8>>, value: i64) -> r: Result<unit, Error> writes(out) {
+  if value >= 0_i64 {
+    let n = cvt::<i64, u64>(value);
+    return unsigned(out: out, value: n);
+  }
+  let bits = reinterpret::<i64, u64>(value);
+  let tag = cvt.wrap::<i64, u8>(value);
+  let width = 0_u64;
+  if value < -2147483648_i64 {
+    set tag = 211_u8;
+    set width = 8_u64;
+  } else if value < -32768_i64 {
+    set tag = 210_u8;
+    set width = 4_u64;
+  } else if value < -128_i64 {
+    set tag = 209_u8;
+    set width = 2_u64;
+  } else if value < -32_i64 {
+    set tag = 208_u8;
+    set width = 1_u64;
+  }
+  let false_value = False();
+  return emit(out: out, tag: tag, bits: bits, width: width, typed: false_value, kind: 0_i8, bytes: &empty[0_u64..0_u64]);
+}
+
+fn float32(out: &Box<Slots<u8>>, value: f32) -> r: Result<unit, Error> writes(out) {
+  let b = reinterpret::<f32, u32>(value);
+  let bits = cvt::<u32, u64>(b);
+  let false_value = False();
+  return emit(out: out, tag: 202_u8, bits: bits, width: 4_u64, typed: false_value, kind: 0_i8, bytes: &empty[0_u64..0_u64]);
+}
+
+fn float64(out: &Box<Slots<u8>>, value: f64) -> r: Result<unit, Error> writes(out) {
+  let bits = reinterpret::<f64, u64>(value);
+  let false_value = False();
+  return emit(out: out, tag: 203_u8, bits: bits, width: 8_u64, typed: false_value, kind: 0_i8, bytes: &empty[0_u64..0_u64]);
+}
+
+fn number(out: &Box<Slots<u8>>, value: f64) -> r: Result<unit, Error> writes(out) {
+  if cvt.defined::<f64, i64>(value) {
+    let integer = cvt::<f64, i64>(value);
+    let back = cvt.nearest::<i64, f64>(integer);
+    if feq(back, value) {
+      return signed(out: out, value: integer);
+    }
+  }
+  let narrow = cvt.nearest::<f64, f32>(value);
+  let back = cvt.nearest::<f32, f64>(narrow);
+  if feq(back, value) {
+    return float32(out: out, value: narrow);
+  }
+  return float64(out: out, value: value);
+}
+
+fn string(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: Result<unit, Error> reads(bytes), writes(out) {
+  let size = bytes^.len;
+  if size > 4294967295_u64 {
+    let e = Error::Length();
+    return Err<unit, Error>(error: e);
+  }
+  let tag = 217_u8;
+  let width = 1_u64;
+  if size > 65535_u64 {
+    set tag = 219_u8;
+    set width = 4_u64;
+  } else if size > 255_u64 {
+    set tag = 218_u8;
+    set width = 2_u64;
+  } else if size < 32_u64 {
+    let n = cvt.wrap::<u64, u8>(size);
+    set tag = ior(160_u8, n);
+    set width = 0_u64;
+  }
+  let false_value = False();
+  return emit(out: out, tag: tag, bits: size, width: width, typed: false_value, kind: 0_i8, bytes: bytes);
+}
+
+fn binary(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: Result<unit, Error> reads(bytes), writes(out) {
+  let size = bytes^.len;
+  if size > 4294967295_u64 {
+    let e = Error::Length();
+    return Err<unit, Error>(error: e);
+  }
+  let tag = 196_u8;
+  let width = 1_u64;
+  if size > 65535_u64 {
+    set tag = 198_u8;
+    set width = 4_u64;
+  } else if size > 255_u64 {
+    set tag = 197_u8;
+    set width = 2_u64;
+  }
+  let false_value = False();
+  return emit(out: out, tag: tag, bits: size, width: width, typed: false_value, kind: 0_i8, bytes: bytes);
+}
+
+fn extension(out: &Box<Slots<u8>>, kind: i8, bytes: &[u8]) -> r: Result<unit, Error> reads(bytes), writes(out) {
+  let size = bytes^.len;
+  if size > 4294967295_u64 {
+    let e = Error::Length();
+    return Err<unit, Error>(error: e);
+  }
+  let tag = 199_u8;
+  let width = 1_u64;
+  if size > 65535_u64 {
+    set tag = 201_u8;
+    set width = 4_u64;
+  } else if size > 255_u64 {
+    set tag = 200_u8;
+    set width = 2_u64;
+  }
+  if size == 1_u64 {
+    set tag = 212_u8;
+    set width = 0_u64;
+  }
+  if size == 2_u64 {
+    set tag = 213_u8;
+    set width = 0_u64;
+  }
+  if size == 4_u64 {
+    set tag = 214_u8;
+    set width = 0_u64;
+  }
+  if size == 8_u64 {
+    set tag = 215_u8;
+    set width = 0_u64;
+  }
+  if size == 16_u64 {
+    set tag = 216_u8;
+    set width = 0_u64;
+  }
+  let true_value = True();
+  return emit(out: out, tag: tag, bits: size, width: width, typed: true_value, kind: kind, bytes: bytes);
+}
+
+fn array(out: &Box<Slots<u8>>, count: u32) -> r: Result<unit, Error> writes(out) {
+  let n = cvt::<u32, u64>(count);
+  let tag = 220_u8;
+  let width = 2_u64;
+  if count <= 15_u32 {
+    let small = cvt.wrap::<u32, u8>(count);
+    set tag = ior(144_u8, small);
+    set width = 0_u64;
+  } else if count > 65535_u32 {
+    set tag = 221_u8;
+    set width = 4_u64;
+  }
+  let false_value = False();
+  return emit(out: out, tag: tag, bits: n, width: width, typed: false_value, kind: 0_i8, bytes: &empty[0_u64..0_u64]);
+}
+
+fn map(out: &Box<Slots<u8>>, count: u32) -> r: Result<unit, Error> writes(out) {
+  let n = cvt::<u32, u64>(count);
+  let tag = 222_u8;
+  let width = 2_u64;
+  if count <= 15_u32 {
+    let small = cvt.wrap::<u32, u8>(count);
+    set tag = ior(128_u8, small);
+    set width = 0_u64;
+  } else if count > 65535_u32 {
+    set tag = 223_u8;
+    set width = 4_u64;
+  }
+  let false_value = False();
+  return emit(out: out, tag: tag, bits: n, width: width, typed: false_value, kind: 0_i8, bytes: &empty[0_u64..0_u64]);
+}
