@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-04 Package bindings
+
+Nodes: language/packages, language/name-resolution, language/standard-library
+
+Owner-approved: In the session of 2026-10-04, written in Chinese: direction A, adding package dependencies first ("I agree with A, adding package dependencies. This probably has to be done first", translated); Q1-Q5 ("Agree to all", translated); Q6, allowing one name to bind different packages in different graphs ("I feel it should perhaps be allowed? After all an alias name only takes effect within its module, right?", translated, taken as the ruling); Q7 ("Q7 agreed", translated); and, after the handoff of PR #214 at `10f5df2a1`, which showed every rule change with its before and after behavior, Q8 and Q9 ("Q8 and Q9 both agreed", translated).
+
+Summary: A new packages node records how a module program reaches other packages: a graph binds them by relative location (Q1), a package is its directory so diamonds share types (Q2), names are the binder's own and visible only in its package (Q3, Q6, Q7), bindings expose public declarations of every registered module and are not transitive (Q4), no versions yet (Q5), packages are read depth first with cycles refused (Q8), and bound packages' modules are checked with the program while their entries are judged for form (Q9). The name-resolution decision on `pkg` and `std` no longer defers other packages, and its refusal of binding the standard library now rests on the library shipping with the compiler; the standard library's container decision no longer rests on bindings being deferred. The design and its refused alternatives are in [the packages investigation](../research/investigations/packages/DESIGN.md).
+
 ## 2026-10-04 Shared state locked by parts: one Shared<T>, keyed tables as fields, entries named in the header
 
 Nodes: language/waiting/shared-objects, language/waiting/shared-objects/keyed-tables, language/waiting/shared-objects/shared-maps, compiler/waiting-contexts, compiler/waiting-contexts/state-locks, compiler/waiting-contexts/concurrent-map, compiler/completion-runtime, compiler/incremental-compilation

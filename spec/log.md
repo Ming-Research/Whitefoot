@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-04 v0.90: package bindings
+
+Rules: added MOD-11; changed FORM-2, FORM-5, GRAM-2, PROG-1, MOD-1, MOD-2, MOD-4, MOD-5, MOD-8, MOD-10, DIAG-1
+
+Owner-approved: In the session of 2026-10-04, written in Chinese: direction A, adding package dependencies first ("I agree with A, adding package dependencies. This probably has to be done first", translated); Q1-Q5 ("Agree to all", translated); Q6, allowing one name to bind different packages in different graphs ("I feel it should perhaps be allowed? After all an alias name only takes effect within its module, right?", translated, taken as the ruling); Q7 ("Q7 agreed", translated); and, after the handoff of PR #214 at `10f5df2a1`, which showed every rule change with its before and after behavior, Q8 and Q9 ("Q8 and Q9 both agreed", translated).
+
+Summary: MOD-11 lets a module graph bind another package with `package name = "location";`, a relative location resolved by the host from the binding graph's directory (Q1). A package is its directory, so bindings that reach one directory share its types (Q2); each graph binds a name and a package once, and the name is visible only in that graph's package, as an alias is in its file, so two graphs may bind one name to different packages (Q3, Q6); a binding exposes every registered module through its public declarations and is not transitive (Q4); no versions (Q5). Packages are read in a depth-first walk from the program in written binding order, and a binding that closes a cycle is refused (Q8); bound packages' modules are checked with the program's own and their entries are judged for form only (Q9). Labels in binding order, suffixed `.2` and on, prefix bound records' logical paths `package/<label>/`. GRAM-2 adds `package_decl` and IDENT roots of module and alias paths, FORM-2 lays bindings out, FORM-5 lets a STRING be a location, PROG-1 admits bound packages, MOD-1 refuses rows and entries rooted at a name, MOD-2 and MOD-10 order the bound unit by package, MOD-4 and MOD-5 admit bound-name roots and refuse a lowercase alias of a bound name (Q7: bound names join no declaration domain), MOD-8 states what a module program's check judges, and DIAG-1 orders graph rejections.
+
 ## 2026-10-04 v0.89: shared state locked by parts
 
 Rules: changed GRAM-4, TYPE-6, TYPE-10, SET-1, REF-1, REF-4, STOR-3, OP-4, OP-9, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1, ENT-2, MSR-1
