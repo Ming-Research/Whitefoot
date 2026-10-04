@@ -419,8 +419,8 @@ jobs:
 
   bench-macos-read:
     if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
-    name: bench-macos-read (macos-14)
-    runs-on: macos-14
+    name: bench-macos-read (macos-15)
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
