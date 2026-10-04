@@ -558,51 +558,24 @@ impl FunctionEmitter<'_, '_> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
-    /// Adds a key with its payload, replacing or adding to a payload the set
-    /// holds.
-    pub(super) fn emit_key_set_put(
+    /// Inserts a key, defining the index of its first insertion.
+    pub(super) fn emit_key_set_insert(
         &mut self,
         result: IrValueId,
         set: IrValueId,
         key: IrValueId,
-        payload: IrValueId,
-        add: bool,
     ) -> Result<(), BackendFailure> {
         if self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet)) {
             return Err(BackendFailure::InvalidIr);
         }
         let bare = self.bare(result);
         self.key_parts(&bare, key)?;
-        let entry = if add {
-            "wf__key_set_add"
-        } else {
-            "wf__key_set_put"
-        };
-        let arguments = format!(
-            "ptr {}, ptr %{bare}.key, i64 %{bare}.length, i64 {}",
-            self.value_name(set),
-            self.value_name(payload)
-        );
-        self.emit_unit_call(result, entry, &arguments)
-    }
-
-    /// The payload of one key of a set.
-    pub(super) fn emit_key_set_payload(
-        &mut self,
-        result: IrValueId,
-        set: IrValueId,
-        index: IrValueId,
-    ) -> Result<(), BackendFailure> {
-        if self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet)) {
-            return Err(BackendFailure::InvalidIr);
-        }
-        self.names(&["wf__key_set_payload"]);
+        self.names(&["wf__key_set_insert"]);
         writeln!(
             self.output,
-            "  {} = call i64 @wf__key_set_payload(ptr {}, i64 {})",
+            "  {} = call i64 @wf__key_set_insert(ptr {}, ptr %{bare}.key, i64 %{bare}.length)",
             self.value_name(result),
             self.value_name(set),
-            self.value_name(index),
         )
         .map_err(|_| BackendFailure::TextEmission)
     }
