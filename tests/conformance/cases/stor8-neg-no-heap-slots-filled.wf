@@ -1,0 +1,7 @@
+program no_heap;
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The allocating row is unavailable in a no-heap program without any separately written heap type.";
+  let cells = box_slots_filled::<u64>(count: 0_u64, value: 7_u64);
+  return std::process::exit_status(code: 0_u8);
+}

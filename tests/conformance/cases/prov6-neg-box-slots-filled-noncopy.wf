@@ -1,0 +1,11 @@
+fn fill(value: Box<u64>) -> result: unit pure {
+  doc "Even zero count requires the fill element to satisfy Copy.";
+  let cells = box_slots_filled::<Box<u64>>(count: 0_u64, value: move value);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let value = box_new::<u64>(value: 7_u64);
+  fill(value: move value);
+  return std::process::exit_status(code: 0_u8);
+}
