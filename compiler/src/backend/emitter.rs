@@ -1025,6 +1025,10 @@ enum FunctionSlot {
 /// which for a register-returned result is its public entry's frame slot.
 const RESULT_POINTER: &str = "%wf.result";
 
+/// The comment prefix of a dispatch ledger line in an emitted module, which
+/// `whitefootc --dispatch-ledger` prints (compiler/match-dispatch-lowering).
+pub const DISPATCH_LEDGER_PREFIX: &str = "; dispatch: ";
+
 /// The internal symbol a register-returned definition's destination-form
 /// body is emitted under, beside the public entry that keeps `symbol`.
 ///
@@ -1404,6 +1408,9 @@ struct FunctionEmitter<'program, 'state> {
     /// The frame slots the part being emitted has asked for, which decides
     /// which slots a split function's parts share.
     slot_uses: std::cell::RefCell<HashSet<FunctionSlot>>,
+    /// What the dispatch lowering did with this function's loops around a
+    /// `match`, for the developer ledger (compiler/match-dispatch-lowering).
+    dispatch_ledger: Vec<String>,
 }
 
 /// What one function's emission shares with the rest of its module, and the
@@ -1513,6 +1520,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             grain_next: None,
             dispatch: None,
             slot_uses: std::cell::RefCell::new(HashSet::new()),
+            dispatch_ledger: Vec::new(),
         })
     }
 
@@ -1891,6 +1899,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         if let Some(public_entry) = public_entry {
             module.append(public_entry);
+        }
+        for line in std::mem::take(&mut self.dispatch_ledger) {
+            module.text(format!("{DISPATCH_LEDGER_PREFIX}{line}\n"));
         }
         Ok(module)
     }

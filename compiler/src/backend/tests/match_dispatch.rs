@@ -216,7 +216,17 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     // Seven parts' parameters: code, pc, acc, count, the code length and the
     // cell's address from the header, and the frame.
     let (convention, registers) = host_convention();
+    let verdict = module
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{}wf_run: ", crate::DISPATCH_LEDGER_PREFIX)))
+        .expect("the ledger has a line for run's loop");
     if registers >= 7 {
+        assert!(
+            verdict.starts_with(
+                "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
+            ),
+            "{verdict}"
+        );
         assert_interpreter_split(&module, "wf_run");
         let enclosing = emitted_body(&module, "run");
         assert!(
@@ -225,6 +235,10 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
             "the enclosing function calls the dispatch function once and returns its result: {enclosing}"
         );
     } else {
+        assert!(
+            verdict.starts_with("not split: the loop over Op: its parts need 7 integer"),
+            "{verdict}"
+        );
         assert!(!module.contains("@wf_run.dispatch"), "{module}");
     }
     let output = compile_and_run(&module);
@@ -411,6 +425,13 @@ fn run(code: &Box<Slots<Op>>"#,
     );
     let module = emit(source.as_bytes());
     assert!(!module.contains("@wf_count.dispatch"), "{module}");
+    assert!(
+        module.contains(&format!(
+            "{}wf_count: not split: the loop over Op: the loop is entered other than at its match, which is therefore not its header\n",
+            crate::DISPATCH_LEDGER_PREFIX
+        )),
+        "the ledger names the condition the loop failed: {module}"
+    );
     // The interpreter in the same module still splits where its seven
     // parameters fit, so the absence above is the recogniser's verdict.
     let (_, registers) = host_convention();

@@ -59,10 +59,10 @@ enum ArgumentRegisters {
 }
 
 impl ArgumentRegisters {
-    /// Whether parameters of these LLVM types all arrive in registers; a
-    /// type other than a pointer, an integer, a float or a range's
-    /// `{ ptr, i64 }` pair counts as not fitting.
-    fn admit(self, types: &[String]) -> bool {
+    /// The integer and floating-point argument registers parameters of these
+    /// LLVM types take, or the first type that is not a pointer, an integer,
+    /// a float or a range's `{ ptr, i64 }` pair.
+    fn demand(types: &[String]) -> Result<(usize, usize), String> {
         let (mut integer, mut float) = (0_usize, 0_usize);
         for ty in types {
             match ty.as_str() {
@@ -76,9 +76,13 @@ impl ArgumentRegisters {
                 {
                     integer += 1;
                 }
-                _ => return false,
+                other => return Err(other.to_owned()),
             }
         }
+        Ok((integer, float))
+    }
+
+    fn fits(self, (integer, float): (usize, usize)) -> bool {
         match self {
             Self::Separate {
                 integer: integers,
@@ -87,11 +91,20 @@ impl ArgumentRegisters {
             Self::Shared(positions) => integer + float <= positions,
         }
     }
+
+    fn describe(self) -> String {
+        match self {
+            Self::Separate { integer, float } => format!("{integer} integer and {float} floating"),
+            Self::Shared(positions) => format!("{positions} shared"),
+        }
+    }
 }
 
 /// One recognised dispatch loop of a function.
 pub(super) struct DispatchLoop {
     pub(super) header: IrBlockId,
+    /// The enum the header's `match` takes apart.
+    pub(super) matched: crate::IrNominalId,
     /// The loop's blocks other than the header.
     pub(super) region: Vec<bool>,
     /// One arm per distinct match target, in the order of the header's
@@ -146,30 +159,44 @@ fn used_values(block: &IrBlock, into: &mut BTreeSet<IrValueId>) {
     into.extend(block.terminator().operands());
 }
 
-/// The first block, in block order, that heads a dispatch loop: it ends in
-/// a `match` over a nominal enum with at least two targets, none of which
+/// Why a loop around a `match` is not a dispatch loop, or why a dispatch loop
+/// is not split, for the dispatch ledger (compiler/match-dispatch-lowering).
+pub(super) struct Rejection {
+    /// The enum the loop's `match` takes apart.
+    pub(super) matched: crate::IrNominalId,
+    pub(super) reason: String,
+}
+
+/// The loops of a function whose `match` over a nominal enum with at least
+/// two targets lies on a cycle through it: the first, in block order, that
+/// heads a dispatch loop, and every other with the first condition it fails.
+/// A `match` inside the loop of a `match` considered before it, such as one
+/// in an arm, is not a loop of its own.
+/// A dispatch loop's header ends in that `match`, none of whose targets
 /// takes parameters; the blocks reachable from its targets without passing
 /// through it are entered only from it and leave only by returning or by
-/// jumping back to it; and at least one of them jumps back.
-pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<DispatchLoop> {
+/// jumping back to it.
+pub(super) fn find(
+    function: &IrFunction,
+    reachable: &[bool],
+) -> (Option<DispatchLoop>, Vec<Rejection>) {
     let blocks = function.blocks();
+    let mut found = None;
+    let mut rejections = Vec::new();
+    let mut covered = vec![false; blocks.len()];
     for (header, block) in blocks.iter().enumerate() {
         if header == 0 || !reachable[header] {
             continue;
         }
         let IrTerminator::Match {
-            enum_type: IrEnumType::Nominal(_),
+            enum_type: IrEnumType::Nominal(matched),
             targets,
             ..
         } = block.terminator()
         else {
             continue;
         };
-        if targets.len() < 2
-            || targets
-                .iter()
-                .any(|target| !blocks[target.block().index()].parameters().is_empty())
-        {
+        if targets.len() < 2 {
             continue;
         }
         let starts: Vec<usize> = targets
@@ -177,32 +204,73 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             .map(|target| target.block().index())
             .collect();
         let region = reach(function, &starts, header);
-        if region[0] {
+        let cyclic = blocks
+            .iter()
+            .enumerate()
+            .any(|(index, member)| region[index] && successors(member).contains(&header));
+        if !cyclic || covered[header] {
             continue;
         }
-        let mut closed = true;
-        let mut backedge = false;
+        for (index, member) in region.iter().enumerate() {
+            covered[index] |= *member;
+        }
+        let reject = |reason: String| Rejection {
+            matched: *matched,
+            reason,
+        };
+        if found.is_some() {
+            rejections.push(reject(
+                "only the function's first dispatch loop is split".to_owned(),
+            ));
+            continue;
+        }
+        if targets
+            .iter()
+            .any(|target| !blocks[target.block().index()].parameters().is_empty())
+        {
+            rejections.push(reject("a target of its match takes parameters".to_owned()));
+            continue;
+        }
+        if region[0] {
+            rejections.push(reject("the loop contains the function's entry".to_owned()));
+            continue;
+        }
+        let mut problem = None;
         for (index, candidate) in blocks.iter().enumerate() {
-            if !reachable[index] {
+            if !reachable[index] || problem.is_some() {
                 continue;
             }
             for successor in successors(candidate) {
-                if region[index] {
-                    // An edge back to the header must be a jump, which the
-                    // emitter turns into a tail call.
-                    let jump = matches!(candidate.terminator(), IrTerminator::Jump { .. });
-                    closed &= region[successor] || (successor == header && jump);
-                    backedge |= successor == header;
-                } else if index != header {
-                    closed &= !region[successor];
+                if region[index] && successor == header {
+                    if !matches!(candidate.terminator(), IrTerminator::Jump { .. }) {
+                        problem = Some("an edge back to its match is not a jump".to_owned());
+                    }
+                } else if region[index] && !region[successor] {
+                    // The arm whose blocks reach this exit.
+                    let arm = targets
+                        .iter()
+                        .find(|target| reach(function, &[target.block().index()], header)[index])
+                        .map_or(0, |target| target.tag());
+                    problem = Some(format!(
+                        "the arm for tag {arm} leaves the loop other than by returning"
+                    ));
+                } else if !region[index] && index != header && region[successor] {
+                    problem = Some(
+                        "the loop is entered other than at its match, which is therefore not its header"
+                            .to_owned(),
+                    );
+                }
+                if problem.is_some() {
+                    break;
                 }
             }
         }
-        if !closed || !backedge {
+        if let Some(problem) = problem {
+            rejections.push(reject(problem));
             continue;
         }
         let mut arms: Vec<(IrBlockId, Vec<bool>)> = Vec::new();
-        let max_tag = targets.iter().map(|target| target.tag()).max()?;
+        let max_tag = targets.iter().map(|target| target.tag()).max().unwrap_or(0);
         let mut table = vec![usize::MAX; max_tag as usize + 1];
         for target in targets {
             let arm = match arms.iter().position(|(block, _)| *block == target.block()) {
@@ -216,6 +284,7 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             table[target.tag() as usize] = arm;
         }
         if table.contains(&usize::MAX) {
+            rejections.push(reject("its match leaves a tag without a target".to_owned()));
             continue;
         }
         let mut loop_defined = HashSet::new();
@@ -244,8 +313,12 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             .copied()
             .filter(|value| !loop_defined.contains(value))
             .collect();
-        return Some(DispatchLoop {
-            header: IrBlockId::from_index(header)?,
+        let Some(header) = IrBlockId::from_index(header) else {
+            continue;
+        };
+        found = Some(DispatchLoop {
+            header,
+            matched: *matched,
             region,
             arms,
             table,
@@ -253,7 +326,7 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             invariants,
         });
     }
-    None
+    (found, rejections)
 }
 
 /// Which part of a split function is being emitted.
@@ -356,19 +429,44 @@ impl FunctionEmitter<'_, '_> {
         destination: bool,
         result: &str,
     ) -> Result<Option<DispatchEmission>, BackendFailure> {
-        if self.function.waits()
-            || self.grain.is_some()
-            || self.sequential_clones.is_some()
-            || !self.function.overlaps().is_empty()
-            || self.function.synthesis().is_some()
-            || !super::contexts::context_group_prelude(self.function).is_empty()
-            || !super::shared::record_prelude(self.function).is_empty()
-        {
-            return Ok(None);
-        }
-        let Some(plan) = find(self.function, reachable) else {
+        let (found, rejections) = find(self.function, reachable);
+        let over = |matched: crate::IrNominalId| {
+            let name = self
+                .program
+                .nominal(matched)
+                .map_or("an enum", |nominal| nominal.name.as_str());
+            format!("{body_symbol}: not split: the loop over {name}")
+        };
+        let mut ledger: Vec<String> = rejections
+            .iter()
+            .map(|rejection| format!("{}: {}", over(rejection.matched), rejection.reason))
+            .collect();
+        let Some(plan) = found else {
+            self.dispatch_ledger.extend(ledger);
             return Ok(None);
         };
+        let kind = if self.function.waits() {
+            Some("the function waits")
+        } else if self.grain.is_some() {
+            Some("it is a recursion-budget variant")
+        } else if self.sequential_clones.is_some() {
+            Some("it is a sequential clone")
+        } else if !self.function.overlaps().is_empty() {
+            Some("the function has overlap groups")
+        } else if self.function.synthesis().is_some() {
+            Some("the function is compiler-synthesized")
+        } else if !super::contexts::context_group_prelude(self.function).is_empty()
+            || !super::shared::record_prelude(self.function).is_empty()
+        {
+            Some("the function has a context or shared-record prelude")
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            ledger.push(format!("{}: {kind}", over(plan.matched)));
+            self.dispatch_ledger.extend(ledger);
+            return Ok(None);
+        }
         let header = self.block(plan.header)?;
         let mut parameters = Vec::new();
         for (value, ty) in header.parameters() {
@@ -409,9 +507,49 @@ impl FunctionEmitter<'_, '_> {
         if !self.frame.target.is_empty() {
             types.push("ptr".to_owned());
         }
-        if !registers.admit(&types) {
+        let triple = self.target.triple();
+        let name = if convention.is_empty() {
+            "C"
+        } else {
+            "preserve_none"
+        };
+        let demand = match ArgumentRegisters::demand(&types) {
+            Ok(demand) => demand,
+            Err(ty) => {
+                ledger.push(format!(
+                    "{}: a part's parameter of type {ty} has no argument register class",
+                    over(plan.matched)
+                ));
+                self.dispatch_ledger.extend(ledger);
+                return Ok(None);
+            }
+        };
+        if !registers.fits(demand) {
+            ledger.push(format!(
+                "{}: its parts need {} integer and {} floating argument registers, over the {} that {name} has on {triple}",
+                over(plan.matched),
+                demand.0,
+                demand.1,
+                registers.describe()
+            ));
+            self.dispatch_ledger.extend(ledger);
             return Ok(None);
         }
+        let matched = self
+            .program
+            .nominal(plan.matched)
+            .map_or("an enum", |nominal| nominal.name.as_str());
+        ledger.insert(
+            0,
+            format!(
+                "{body_symbol}: split: the loop over {matched} into {} arms, taking {} integer and {} floating of the {} argument registers that {name} has on {triple}",
+                plan.arms.len(),
+                demand.0,
+                demand.1,
+                registers.describe()
+            ),
+        );
+        self.dispatch_ledger.extend(ledger);
         let enclosing = self.frame.render_split(
             self.program,
             &mut self.output.references,
