@@ -1215,6 +1215,7 @@ fn validate_target_obligation(
             nominal,
             capacity: length,
             obligations,
+            ..
         }
         | IrOperation::WindowGrow {
             nominal,
@@ -1230,6 +1231,24 @@ fn validate_target_obligation(
                 return Err(TargetLayoutFailure::InvalidIr);
             };
             runtime_capacity_allocation_layout(layouts, *referent, obligations.layout_ceiling)?;
+            if let IrOperation::WindowBlockNew {
+                fill: Some(value), ..
+            } = operation
+            {
+                let IrType::Window {
+                    shape: crate::IrWindowShape::Slots,
+                    element,
+                    capacity: None,
+                } = referent
+                else {
+                    return Err(TargetLayoutFailure::InvalidIr);
+                };
+                if result_type != IrType::Nominal(*nominal)
+                    || function.value_type(*value) != program.element(*element)
+                {
+                    return Err(TargetLayoutFailure::InvalidIr);
+                }
+            }
             if function.value_type(*length)
                 != Some(IrType::Integer {
                     width: 64,

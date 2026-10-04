@@ -167,7 +167,9 @@ macro_rules! operation_operands {
             } => {
                 vec![$value(destination), $value(source), $value(index)]
             }
-            IrOperation::WindowBlockNew { capacity, .. } => vec![$value(capacity)],
+            IrOperation::WindowBlockNew { capacity, fill, .. } => std::iter::once($value(capacity))
+                .chain(fill.$iter().map($value))
+                .collect(),
             IrOperation::WindowGrow { cell, capacity, .. } => vec![$value(cell), $value(capacity)],
             IrOperation::CellFree { value, .. } => vec![$value(value)],
             IrOperation::SliceRange { slice, start, end } => {

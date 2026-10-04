@@ -976,11 +976,13 @@ pub enum IrOperation {
         index: IrValueId,
     },
     /// [OP-13] one runtime-capacity window block and the cell that owns it:
-    /// `[len | cap | head? | slots]` with an empty window
-    /// (compiler/storage-representation). The value is the cell pointer.
+    /// `[len | cap | head? | slots]`, empty without a fill value or fully
+    /// initialized with that Copy value (compiler/storage-representation).
+    /// The value is the cell pointer; a fill is admitted on Slots alone.
     WindowBlockNew {
         nominal: IrNominalId,
         capacity: IrValueId,
+        fill: Option<IrValueId>,
         obligations: IrAllocationObligations,
     },
     /// [OP-10] `grow`: the cell's content is remade whole at the new

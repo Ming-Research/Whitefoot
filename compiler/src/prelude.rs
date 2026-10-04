@@ -166,6 +166,16 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/box_slots_filled.wf",
+        PreludeSource::Function,
+        r#"fn box_slots_filled<T: copy>(count: u64, value: T) -> result: Box<Slots<T>> pure contract {
+  ensures result.inner.len == count;
+  ensures result.inner.cap == count;
+  ensures forall filled(k in 0_u64..result.inner.len): result.inner[k] == value;
+};
+"#,
+    ),
+    (
         "prelude/box_ring_new.wf",
         PreludeSource::Function,
         r#"fn box_ring_new<T>(capacity: u64) -> result: Box<Ring<T>> pure contract {
@@ -386,11 +396,8 @@ mod tests {
             .filter(|function| function.body.is_none())
             .count();
         // [PRE-1] keeps no host record: the host signatures are the standard
-        // library's [PRE-2], which this unit names none of. The twenty-two
-        // compiler-owned rows — the nine construction functions [OP-13], the
-        // nine window operations [OP-10], `swap` [OP-11], `free_empty`
-        // [OP-14], `shared_new` and `shared_share` [SHARE-1] — are every one
-        // of them generic, so [FN-2] gives them a
+        // library's [PRE-2], which this unit names none of. The
+        // compiler-owned rows are generic, so [FN-2] gives them an
         // ordinary checked function only per concrete instance and this unit, which
         // calls none of them, has no instance of any.
         assert_eq!(signatures, 0);

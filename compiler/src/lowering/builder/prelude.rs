@@ -1,6 +1,6 @@
 //! The bodies of the [PRE-1] records the compiler itself owns.
 //!
-//! Ten construction functions [OP-13], nine window operations [OP-10],
+//! The construction functions [OP-13], window operations [OP-10],
 //! `swap` [OP-11], `free_empty` [OP-14] and the two shared-object functions
 //! [SHARE-1] are declared body-less exactly as
 //! a host function is [PRE-2], but no trusted-base object defines them: the compiler emits
@@ -46,7 +46,8 @@ impl IrBuilder<'_> {
             "slots_from_array" | "slots_into_array" => self.row_full_array_conversion(),
             "box_array_filled" => self.row_box_array_filled(),
             "box_segments_filled" => self.row_box_segments_filled(),
-            "box_slots_new" | "box_ring_new" => self.row_box_window_new(),
+            "box_slots_new" | "box_ring_new" => self.row_box_window_new(false),
+            "box_slots_filled" => self.row_box_window_new(true),
             "grow" => self.row_grow(),
             "place_back" => self.row_place(IrBoundary::PlaceBack),
             "place_front" => self.row_place(IrBoundary::PlaceFront),
@@ -310,10 +311,17 @@ impl IrBuilder<'_> {
     }
 
     /// `box_slots_new<T>(capacity)` and `box_ring_new<T>(capacity)`: one
-    /// heap block `[len | cap | head? | slots]` whose window is empty
-    /// (compiler/storage-representation).
-    fn row_box_window_new(&mut self) -> Result<(), LoweringFailure> {
-        let [capacity] = self.row_parameters()?;
+    /// heap block `[len | cap | head? | slots]` whose window is empty;
+    /// `box_slots_filled<T>(count, value)` initializes the entire prefix
+    /// through the same allocation (compiler/storage-representation).
+    fn row_box_window_new(&mut self, filled: bool) -> Result<(), LoweringFailure> {
+        let (capacity, fill) = if filled {
+            let [count, value] = self.row_parameters()?;
+            (count, Some(value))
+        } else {
+            let [capacity] = self.row_parameters()?;
+            (capacity, None)
+        };
         if self.value_type(capacity)? != U64 {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
@@ -343,6 +351,7 @@ impl IrBuilder<'_> {
             IrOperation::WindowBlockNew {
                 nominal,
                 capacity,
+                fill,
                 obligations,
             },
         )?;

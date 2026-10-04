@@ -586,9 +586,19 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         run: IrValueId,
         physical: &str,
     ) -> Result<String, BackendFailure> {
+        let slot = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
+        self.window_element_pointer_at(shape, run_type, &slot, physical)
+    }
+
+    fn window_element_pointer_at(
+        &mut self,
+        shape: RunShape,
+        run_type: IrType,
+        slot: &str,
+        physical: &str,
+    ) -> Result<String, BackendFailure> {
         let physical = self.element_address_index(shape.element_type(self.program)?, physical)?;
         let llvm = self.output.type_name(self.program, run_type)?;
-        let slot = self.run_storage(run)?.ok_or(BackendFailure::InvalidIr)?;
         let pointer = self.next_temporary()?;
         if self.window_address_facts == WindowAddressFacts::Emit {
             // For positive stride S, the qualified complete object or
@@ -977,6 +987,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         ty: IrType,
         nominal: IrNominalId,
         capacity: IrValueId,
+        fill: Option<IrValueId>,
         obligations: crate::IrAllocationObligations,
     ) -> Result<(), BackendFailure> {
         if !obligations.target_domains.is_complete() || ty != IrType::Nominal(nominal) {
@@ -995,6 +1006,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     width: 64,
                     signed: false,
                 })
+        {
+            return Err(BackendFailure::InvalidIr);
+        }
+        if let Some(value) = fill
+            && (shape.shape != IrWindowShape::Slots
+                || self.value_type(value) != Some(shape.element_type(self.program)?))
         {
             return Err(BackendFailure::InvalidIr);
         }
@@ -1033,7 +1050,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             &block_address,
             shape.length_field() as usize,
         )?;
-        writeln!(self.output, "  store i64 0, ptr {length_address}")
+        let length = fill.map_or_else(|| "0".to_owned(), |_| self.value_name(capacity));
+        writeln!(self.output, "  store i64 {length}, ptr {length_address}")
             .map_err(|_| BackendFailure::TextEmission)?;
         let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
         let capacity_address =
@@ -1051,6 +1069,55 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .map_err(|_| BackendFailure::TextEmission)?;
         }
         let _ = block;
+        if let Some(value) = fill {
+            self.emit_window_fill(result, block_type, shape, capacity, value)?;
+        }
+        Ok(())
+    }
+
+    /// Fill an already allocated prefix without changing its boundary per
+    /// element. The constructor exposes no partially initialized value.
+    fn emit_window_fill(
+        &mut self,
+        result: IrValueId,
+        block: IrType,
+        shape: RunShape,
+        count: IrValueId,
+        value: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if crate::target::element_has_zero_stride(
+            self.target,
+            self.program,
+            shape.element_type(self.program)?,
+        )
+        .map_err(BackendFailure::TargetLayout)?
+        {
+            // The logical count still lives in len/cap. A zero-byte Copy
+            // value has no stored payload to write at any of those indices.
+            return Ok(());
+        }
+        let init = window_block_ready_label(result);
+        let head = format!("window.fill.head.v{}", result.ordinal());
+        let body = format!("window.fill.body.v{}", result.ordinal());
+        let done = format!("window.fill.done.v{}", result.ordinal());
+        let index = self.next_temporary()?;
+        let in_range = self.next_temporary()?;
+        let next_index = self.next_temporary()?;
+        let length = self.value_name(count);
+        writeln!(self.output, "  br label %{head}").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(head.to_string());
+        write!(self.output, "  %{index} = phi i64 [ 0, %{init} ], [ %{next_index}, %{body} ]\n  %{in_range} = icmp ult i64 %{index}, {length}\n  br i1 %{in_range}, label %{body}, label %{done}\n")
+            .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(body.to_string());
+        let address = self.value_name(result);
+        let slot = self.window_element_pointer_at(shape, block, &address, &format!("%{index}"))?;
+        self.store_value_at(value, &slot)?;
+        write!(
+            self.output,
+            "  %{next_index} = add i64 %{index}, 1\n  br label %{head}\n"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(done.to_string());
         Ok(())
     }
 

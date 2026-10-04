@@ -2152,6 +2152,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::BufferFill { length, .. } => {
                 self.materialize_operands([*length])?;
             }
+            IrOperation::WindowBlockNew { capacity, .. } => {
+                self.materialize_operands([*capacity])?;
+            }
             IrOperation::RunInsert { run, index, .. } => {
                 self.materialize_operands([*run, *index])?;
             }
@@ -2341,8 +2344,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::WindowBlockNew {
                 nominal,
                 capacity,
+                fill,
                 obligations,
-            } => self.emit_window_block_new(result, ty, *nominal, *capacity, *obligations),
+            } => self.emit_window_block_new(result, ty, *nominal, *capacity, *fill, *obligations),
             IrOperation::WindowGrow {
                 nominal,
                 cell,
