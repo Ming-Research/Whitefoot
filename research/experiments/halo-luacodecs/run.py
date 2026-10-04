@@ -110,6 +110,20 @@ def corpus():
             add('struct',f'return struct.pack("{fmt}",{val})')
     for n in (4000,4001):
         add('cmsgpack',f'local t={{}}; for i=1,{n} do t[i]=1 end return #cmsgpack.pack(unpack(t))')
+    for case in ('cmsgpack-binary','struct-integers','struct-strings-floats'):
+        source=(HERE.parent/'halo-oracle/scripts/libs'/(case+'.lua')).read_text()
+        lines=[]
+        replaced=False
+        for line in source.splitlines():
+            if line.startswith('local hex=string.gsub('):
+                assert not replaced
+                variable='packed' if case=='cmsgpack-binary' else 'p'
+                lines.append('local parts={}; for i=1,#'+variable+' do parts[i]=string.format("%02x",string.byte('+variable+',i)) end; local hex=table.concat(parts)')
+                replaced=True
+            else:
+                lines.append(line)
+        assert replaced
+        add('cmsgpack' if case=='cmsgpack-binary' else 'struct','\n'.join(lines))
     return rows
 
 REFERENCE = r"""
@@ -190,7 +204,7 @@ def main():
                 failures.append((name,source,expected,actual));print('FAIL',name,repr(source),repr(expected)[:400],repr(actual)[:400],flush=True)
             if args.actual:
                 args.actual.mkdir(parents=True,exist_ok=True);(args.actual/(name.replace('/','-')+'.json')).write_text(json.dumps({'source':source,'expected':expected,'actual':actual},ensure_ascii=True,indent=2))
-        report=['# Redis Lua library compatibility results','',f'Local revision: `{revision}`. Host: `{__import__("platform").platform()}`.',f'Reference: Redis 7.0.15 bundled sources, all four libraries explicitly registered; `{versions}`.',f'Reference build {seconds:.3f}s. Halo build {build_seconds:.3f}s. Budget 7.',f'Compiler SHA-256: `{hashlib.sha256(Path(args.compiler).read_bytes()).hexdigest()}`.',f'Executable SHA-256: `{hashlib.sha256(binary.read_bytes()).hexdigest()}`.','', '| Library | Snippets | Matches | Mismatches |','| --- | ---: | ---: | ---: |']
+        report=['# Redis Lua library compatibility results','',f'Local revision: `{revision}`. Host: `{__import__("platform").platform()}`.',f'Reference: Redis 7.0.15 bundled sources, all four libraries explicitly registered; `{versions}`.',f'Reference build {seconds:.3f}s. '+('Halo executable reused; no build performed during comparison.' if args.binary else f'Halo build {build_seconds:.3f}s.')+' Budget 7.',f'Compiler SHA-256: `{hashlib.sha256(Path(args.compiler).read_bytes()).hexdigest()}`.',f'Executable SHA-256: `{hashlib.sha256(binary.read_bytes()).hexdigest()}`.','', '| Library | Snippets | Matches | Mismatches |','| --- | ---: | ---: | ---: |']
         for group in sorted({n.split('/')[0] for n,_ in rows}):
             yes,no=counts[(group,True)],counts[(group,False)];report.append(f'| {group} | {yes+no} | {yes} | {no} |')
         report += ['',f'Total: {len(rows)} snippets; {len(rows)-len(failures)} matches; {len(failures)} mismatches.','', 'The comparator checks typed replies, binary bytes, and exact error text. Its fault sensitivity controls come from the existing end-to-end runner. The first return value is converted as Redis RESP2; snippets wrap multiple results where needed. No oracle fixtures were changed. Local libc is not Linux glibc: glibc-dependent behavior remains unqualified by this run.','', '## Mismatches','']
