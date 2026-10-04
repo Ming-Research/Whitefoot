@@ -503,7 +503,7 @@ fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, form
                 let local_magnitude_144 = 0_i64 -wrap local_int_143;
                 set local_number_141 = cvt.wrap::<i64, u64>(local_magnitude_144);
               } else {
-                set local_number_141 = cvt::<i64, u64>(local_int_143);
+                set local_number_141 = cvt.wrap::<i64, u64>(local_int_143);
               }
             } else if cvt.defined::<f64, u64>(local_truncated_140) {
               set local_number_141 = cvt::<f64, u64>(local_truncated_140);

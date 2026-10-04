@@ -78,6 +78,7 @@ fn xpcall_continue<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slot
       let local_error_18 = vm^.error;
       set vm^.library_contexts.inner[index].saved_error = local_error_18;
       let local_nil_19 = Value::Nil();
+      library_plan(vm: vm, index: index);
       let local_ok_20 = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: local_destination_15, f: local_context_13.comparator, b: local_error_18, c: local_nil_19, third: local_nil_19, argc: 1_u64, wanted: 1_i64, mode: 0_u8);
       if vm^.suspended {
         return HostOutcome::Raised();
@@ -148,4 +149,13 @@ fn resume_library<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots
     }
   }
   return Step::Error();
+}
+
+fn library_plan(vm: &Vm, index: u64) -> r: unit writes(vm) {
+  if index < vm^.library_contexts.inner.len {
+    let frame = vm^.library_contexts.inner[index].frame;
+    let expected = False();
+    set vm^.callback_plan = CallbackPlan(pc: frame.return_pc, base: frame.base, kbase: frame.kbase, kind: 4_u8, dest: frame.func, first: index, index: 0_u64, target: 0_u64, expected: expected);
+  }
+  return unit;
 }
