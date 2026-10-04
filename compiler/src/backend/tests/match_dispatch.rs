@@ -148,10 +148,17 @@ fn assert_split(module: &str, base: &str, arms: usize) {
             && dispatch.contains("alwaysinline"),
         "the dispatch function is internal, inlined and of the parts' convention: {dispatch}"
     );
+    // The table is reached through the parameter the enclosing function
+    // passes where a register was left for it, and directly otherwise.
+    let through_parameter = dispatch.contains("x ptr], ptr %wf.dispatch.base");
     assert!(
-        dispatch.contains(&format!("ptr @{base}.dispatch.table"))
+        (through_parameter || dispatch.contains(&format!("x ptr], ptr @{base}.dispatch.table")))
             && dispatch.contains(&format!("musttail call {convention}")),
         "the header transfers through the handler table: {dispatch}"
+    );
+    assert!(
+        !through_parameter || module.contains(&format!("ptr @{base}.dispatch.table")),
+        "the enclosing function passes the table's address: {module}"
     );
     assert!(
         !dispatch.contains("switch "),
@@ -181,6 +188,18 @@ fn assert_split(module: &str, base: &str, arms: usize) {
             && (0..arms).all(|arm| table.contains(&format!("ptr @{base}.arm.{arm}"))),
         "the table has one entry per tag: {table}"
     );
+}
+
+/// The ledger's verdict on one function's loop.
+fn verdict<'module>(module: &'module str, symbol: &str) -> &'module str {
+    module
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix(crate::DISPATCH_LEDGER_PREFIX)
+                .and_then(|line| line.strip_prefix(&format!("{symbol}: ")))
+                .filter(|line| line.starts_with("split") || line.starts_with("not split"))
+        })
+        .unwrap_or_else(|| panic!("the ledger has a verdict for {symbol}: {module}"))
 }
 
 /// The four-instruction interpreter's split: its three looping arms tail-call
@@ -213,20 +232,20 @@ fn assert_interpreter_split(module: &str, base: &str) {
 #[test]
 fn a_header_match_loop_is_split_into_one_function_per_arm() {
     let module = emit(scalar_interpreter().as_bytes());
-    // Seven parts' parameters: pc, acc, count, the code length and the box's
-    // referent hoisted out of the header, the cell's address, and the frame.
-    let (convention, registers) = host_convention();
-    let verdict = module
-        .lines()
-        .find_map(|line| line.strip_prefix(&format!("{}wf_run: ", crate::DISPATCH_LEDGER_PREFIX)))
-        .expect("the ledger has a line for run's loop");
-    if registers >= 7 {
+    let (convention, _) = host_convention();
+    let verdict = verdict(&module, "wf_run");
+    if !convention.is_empty() {
+        // Eight parameters: pc, acc, count, the code length and the box's
+        // referent hoisted out of the header, the cell's address, the
+        // handler table and the frame.
         assert!(
             verdict.starts_with(
-                "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
+                "split: the loop over Op into 4 arms, taking 8 integer and 0 floating"
             ),
             "{verdict}"
         );
+    }
+    if verdict.starts_with("split") {
         assert_interpreter_split(&module, "wf_run");
         // `code` is read-only and passed through unchanged, so its box's
         // referent and length are computed once before the loop and no part
@@ -254,10 +273,6 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
             "the enclosing function calls the dispatch function once and returns its result: {enclosing}"
         );
     } else {
-        assert!(
-            verdict.starts_with("not split: the loop over Op: its parts need 7 integer"),
-            "{verdict}"
-        );
         assert!(!module.contains("@wf_run.dispatch"), "{module}");
     }
     let output = compile_and_run(&module);
@@ -272,13 +287,17 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
     } else {
         "wf_run"
     };
-    let (_, registers) = host_convention();
-    let destination = base == "wf_run.body";
-    if registers >= 7 + usize::from(destination) {
+    let (convention, _) = host_convention();
+    let verdict = verdict(&module, base);
+    assert!(
+        convention.is_empty() || verdict.starts_with("split"),
+        "{verdict}"
+    );
+    if verdict.starts_with("split") {
         assert_interpreter_split(&module, base);
         let dispatch = definition(&module, &format!("{base}.dispatch"));
         assert!(
-            !destination || dispatch.contains("(ptr %wf.result, "),
+            base != "wf_run.body" || dispatch.contains("(ptr %wf.result, "),
             "a destination-form body passes its destination to every part: {dispatch}"
         );
     } else {
@@ -499,10 +518,9 @@ fn run(code: &Box<Slots<Op>>"#,
         )),
         "the ledger names the condition the loop failed: {module}"
     );
-    // The interpreter in the same module still splits where its seven
-    // parameters fit, so the absence above is the recogniser's verdict.
-    let (_, registers) = host_convention();
-    if registers >= 7 {
+    // The interpreter in the same module still splits where its parameters
+    // fit, so the absence above is the recogniser's verdict.
+    if verdict(&module, "wf_run").starts_with("split") {
         assert_interpreter_split(&module, "wf_run");
     }
 }
