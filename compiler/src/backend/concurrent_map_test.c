@@ -27,7 +27,7 @@
  *   race; and statements over the whole map that hold it in the order they
  *   asked, each after the keyed statements the hold before it kept
  *   waiting;
- * - key sets, in byte order whatever order their keys come in, and holds of
+ * - key sets, in the order their keys are first inserted, and holds of
  *   several entries kept in a statement's frame: positions with repeats,
  *   the order they lock in, the release at each tag width, holds of two
  *   maps at once, holds of the whole map, a hold waiting out a move under
@@ -1622,7 +1622,7 @@ enum { SET_KEYS = 8 };
 /* One thread's holds of up to eight keys, some of them repeated, against a
  * plain reference: each key's position is the order it was added in,
  * repeated keys share one slot and different keys do not, the keys are
- * ranked in byte order, an entry is fresh exactly when the reference lacks
+ * ranked in the hold's lock order, an entry is fresh exactly when the reference lacks
  * it and holds the reference's value otherwise, and what a release keeps
  * and removes is what the next hold finds. The map starts with one cell, so
  * the holds cross many moves. */
@@ -1658,7 +1658,7 @@ static void holds_sequential(void) {
         wf_cmap_held *held = held_keys(&hold);
         for (unsigned j = 1; j < count; j++)
             if (held_order(ranked(held, j - 1), ranked(held, j)) > 0)
-                fail("a hold's keys are not ranked in byte order", j, i);
+                fail("a hold's keys are not ranked in its lock order", j, i);
         for (unsigned j = 0; j < count; j++) {
             unsigned k = keys[j];
             uint64_t *slot = wf_cmap_hold_slot(&hold, j);
@@ -1709,14 +1709,14 @@ static void holds_sequential(void) {
 }
 
 /* Two keys absent from map whose hashes differ, the first before the second
- * in byte order. */
+ * in a hold's lock order. */
 static void ordered_pair(unsigned char first[16], unsigned char second[16]) {
     uint64_t k = 0;
     counted_key(k++, first);
     do
         counted_key(k++, second);
     while (tag_of(first, 12) == tag_of(second, 12));
-    if (compare_keys(first, 12, second, 12) > 0) {
+    if (tag_of(first, 12) > tag_of(second, 12)) {
         unsigned char swap[16];
         memcpy(swap, first, 16);
         memcpy(first, second, 16);
@@ -2055,7 +2055,7 @@ static void holds_move_amounts(uint64_t capacity, uint64_t patient) {
 }
 
 /* Two threads whose holds name the same two keys in opposite orders, with
- * patience that never runs out: each locks them in byte order, so neither
+ * patience that never runs out: each locks them in the hold's order, so neither
  * waits for the other while it holds a key the other waits for, and each
  * key's slot is at the position it was added at. Holds locking their keys
  * in the order they were added would stop here until the alarm. */

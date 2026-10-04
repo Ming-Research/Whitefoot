@@ -1546,8 +1546,8 @@ void wf_cmap_key_set_release(wf_key_set *set) {
 
 /* Holds of several entries: a statement whose keys are values when it
  * begins holds their entries and no others, so statements on other keys go
- * on beside it. A hold's keys are locked in increasing byte order, a proper
- * prefix first, the same order in every table and a key set's own order, so
+ * on beside it. A hold's keys are locked in increasing order of their tags,
+ * then lengths, then bytes, the same order in every table, so
  * a statement waits for a key's entry only while it holds entries of keys
  * before it: holds never wait for each other in a cycle, and a keyed
  * statement holds one entry and waits for none [WAIT-2]. A probe locks every
@@ -1711,10 +1711,13 @@ static void sift_ranks(wf_cmap_held *keys, uint64_t root, uint64_t end) {
     }
 }
 
-/* Ranks the added keys in byte order, without memory of its own, and marks
- * the first of each run of equal keys, which locks the run's entry; answers
- * how many lead. Keys added in increasing order, as a key set's are, are
- * ranked as they stand. */
+/* The most keys a hold orders by insertion rather than by the heap. */
+#define HOLD_INSERTION_SORT 32u
+
+/* Ranks the added keys in the hold's lock order, without memory of its own,
+ * and marks the first of each run of equal keys, which locks the run's
+ * entry; answers how many lead. Keys added in that order are ranked as they
+ * stand. */
 static uint64_t order_hold(wf_cmap_holding *hold) {
     wf_cmap_held *keys = held_keys(hold);
     uint64_t added = hold->count;
@@ -1727,7 +1730,19 @@ static uint64_t order_hold(wf_cmap_holding *hold) {
     }
     if (hold->order == KEYS_INCREASING)
         return added;
-    if (hold->order == KEYS_SHUFFLED) {
+    if (hold->order == KEYS_SHUFFLED && added <= HOLD_INSERTION_SORT) {
+        /* A statement's few keys: insertion into the ranks, comparing tags
+         * first, costs less than the heap's sifts. */
+        for (uint64_t i = 1; i < added; i++) {
+            uint64_t moving = keys[i].rank;
+            uint64_t j = i;
+            while (j > 0 && held_order(&keys[moving], &keys[keys[j - 1].rank]) < 0) {
+                keys[j].rank = keys[j - 1].rank;
+                j--;
+            }
+            keys[j].rank = moving;
+        }
+    } else if (hold->order == KEYS_SHUFFLED) {
         for (uint64_t i = added / 2; i-- > 0;)
             sift_ranks(keys, i, added);
         for (uint64_t end = added; end-- > 1;) {
