@@ -427,16 +427,6 @@ rarely insert at the same place.
   opaque-struct repair; reopen with the next diagnostics change or when an
   agent follows an unpinned repair that fails.
 
-- **A table-grant repair needs a state-layout change for hidden tables.**
-  SHARE-2's pinned place repair says to add a whole header binding, but
-  tables behind Box content or enum payloads are not tables of that state
-  and cannot receive one. The rejection is required; the prescribed repair
-  alone cannot be carried out for `share-neg-table-reached-through-a-box`
-  or `share-neg-table-state-payload-alias`. Add a repair that moves the table
-  to a field reached without Box or payload steps, and pin that transformed
-  state and all its accesses. Keep amendment A's requested repair text for
-  now; reopen when the owner selects the repair wording for these paths.
-
 - **A cell taken apart with no binder is repaired by removing the
   statement, even when its content is linear.** TYPE-2's repair for
   `let Box(..) = move cell;` is "remove this statement", and so is the
@@ -3429,19 +3419,6 @@ condition under which it is taken up.
   compilers' native builds, and make the two agree or state the exception.
   Reopen when an executable built for a measurement or a check must match
   the release compiler's byte for byte.
-
-- **Attribute the native corpus stage's macOS budget overrun.**
-  The amendment-A full gate took 214.25 s in `compiler/test-corpus` against
-  its 125 s budget, with 1,729 conformance passes and one listener failure
-  (status 13), consistent with the observed sandbox bind refusals; ten
-  program tests also had loopback binds refused and two
-  deadline reads failed. The change adds nine native-positive cases and
-  twenty-one rejection cases, but their contribution to this overrun is
-  unmeasured. Use the existing phase timing support and slow-case records
-  to separate source checking, native build and execution, then compare
-  unchanged and added cases on the same host before attributing the loss
-  or proposing a budget change. Reopen at the next unrestricted macOS gate;
-  retain the complete corpus and select any budget raise with the owner.
 
 ## firn
 

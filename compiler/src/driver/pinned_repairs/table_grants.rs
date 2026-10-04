@@ -4,6 +4,58 @@ use super::RepairPair;
 
 pub(super) const TABLE_GRANTS: &[RepairPair] = &[
     RepairPair {
+        name: "table-reached-through-a-box.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-table-reached-through-a-box.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicTableNotGranted\n",
+            "\n  mechanical_fix: move the table to a state field reached through no `Box` and no enum payload, then bind it whole as `t = &s^.field` in the header and reach it through `t`\n",
+        ],
+        repaired: &[br#"struct Store {
+  map: KeyedTable<u8>;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let state = Store(map: move table);
+  let store = shared_new::<Store>(value: move state);
+  let counted = 0_u64;
+  atomic s = &store, t = &s^.map {
+    set counted = keyed_table_count::<u8>(table: t);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
+        name: "table-state-payload-alias.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-table-state-payload-alias.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "]: AtomicTableNotGranted\n",
+            "\n  mechanical_fix: move the table to a state field reached through no `Box` and no enum payload, then bind it whole as `t = &s^.field` in the header and reach it through `t`\n",
+        ],
+        repaired: &[br#"struct Store {
+  map: KeyedTable<u8>;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let state = Store(map: move table);
+  let store = shared_new::<Store>(value: move state);
+  let counted = 0_u64;
+  atomic s = &store, t = &s^.map {
+    set counted = keyed_table_count::<u8>(table: t);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    RepairPair {
         name: "table-whole-binding-through-a-box.wf",
         rejected: include_bytes!(
             "../../../../tests/conformance/cases/share-neg-table-whole-binding-through-a-box.wf"

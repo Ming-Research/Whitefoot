@@ -27,6 +27,7 @@ pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a
 /// The repair for an entry binding whose place is not an entry of a keyed
 /// table reached through the statement's binding [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_NAME_A_TABLE_ENTRY: &str = "write a table binding as `name = &s^.table[key]` for one entry, `name = &s^.table[keys]` for the entries under a key set, or `name = &s^.table` for the table whole, where `s` is the statement's binding and `table` a field of type `KeyedTable<V>` reached through no `Box`";
+pub(in crate::semantic::check) const SHARE2_MOVE_HIDDEN_TABLE: &str = "move the table to a state field reached through no `Box` and no enum payload, then bind it whole as `t = &s^.field` in the header and reach it through `t`";
 /// The repair for an index atom that is neither a byte range nor a key set
 /// [SHARE-2].
 pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`";
@@ -951,9 +952,13 @@ impl Checker<'_, '_> {
                 table: grant.names[index].clone(), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
             }));
         } else if reaches_table {
-            grant.refusals.push((node, SemanticIssueKind::AtomicTableNotGranted {
-                table: "a table reached through the state binding".to_owned(), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
-            }));
+            grant.refusals.push((
+                node,
+                SemanticIssueKind::AtomicTableNotGranted {
+                    table: "a table reached through the state binding".to_owned(),
+                    mechanical_fix: SHARE2_MOVE_HIDDEN_TABLE,
+                },
+            ));
         }
         Ok(())
     }
