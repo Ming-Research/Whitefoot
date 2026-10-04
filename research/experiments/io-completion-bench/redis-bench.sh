@@ -520,6 +520,10 @@ if [ "$MODE" = compare ]; then
     reversed=$(echo $names | tr ' ' '\n' | awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) printf "%s ", a[i] }')
     echo 'line,pass,cpus,test,depth,requests,rps,server_cpu_us_per_request,p50_ms,p99_ms' >"$OUT/compare.csv"
     for n in ${COMPARE_CPUS:-1 2}; do
+        if [ "$n" -ge "$total" ]; then
+            echo "skip,$n server CPUs,only $total on this host"
+            continue
+        fi
         SERVER_CPUS=$(seq -s, 0 $((n - 1)))
         CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
         CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))

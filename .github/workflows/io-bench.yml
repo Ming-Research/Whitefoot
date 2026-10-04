@@ -29,7 +29,7 @@ on:
         type: string
         default: "base=cea9188d4 main=HEAD main-twin=HEAD"
       compare_runner:
-        description: Where the firn comparison runs, a GitHub runner or the owner's i9-14900K under WSL2 (self-hosted, label 14900k)
+        description: Where the firn comparison runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
         type: choice
         options: [github, 14900k]
         default: github
@@ -121,6 +121,10 @@ jobs:
             echo "kernel: $(uname -srvmo)"
             echo "cpus: $(nproc)"
             echo "model: $(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)"
+            echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT)"
+            for tool in clang ld.lld cargo redis-benchmark redis-cli taskset perl python3; do
+              echo "$tool: $(command -v "$tool" || echo missing)"
+            done
           } | tee "$OUT/host.txt"
           if [ "$PROFILE" = true ]; then
             PERF=${PERF:-$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)}
