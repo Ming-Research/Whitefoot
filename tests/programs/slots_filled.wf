@@ -15,7 +15,11 @@ fn restore(expected: &[u64]) -> code: u8 reads(expected) {
     set restored.inner[index] = expected^[index];
   }
   let capacity = count +sat 2_u64;
-  grow(cell: &restored, capacity: capacity);
+  if capacity >= restored.inner.cap {
+    grow(cell: &restored, capacity: capacity);
+  } else {
+    return 18_u8;
+  }
   if restored.inner.len != count {
     return 3_u8;
   }
