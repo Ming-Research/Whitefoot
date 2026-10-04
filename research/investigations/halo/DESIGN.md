@@ -184,10 +184,19 @@ fn run(code: &Code, regs: &Box<Slots<Value>>, base: u64)
 
 ## Planned experiments
 
-- **E1, the heap.** A slab-and-handle heap with a mark-and-sweep collector,
-  measured on allocation-heavy Lua-shaped workloads (tables of tables,
-  string building, closures) against Redis's Lua. Start with a short probe
-  and extend only if the spread is too wide.
+- **E1, the heap.** Question: does a heap of generational slab handles
+  with a stop-the-world mark-and-sweep collector cost too much for Lua-shaped
+  allocation? First workload: binary-trees (build and check complete trees
+  of two-field tables, discard them), the standard allocation benchmark.
+  Three programs run the same algorithm: C with `malloc`/`free` (the floor),
+  Whitefoot over the handle heap with its collector, and the same algorithm
+  as a Lua script run by Redis 7.0.15's own Lua 5.1. Criterion, stated
+  before measuring: the handle heap is viable for Halo if the Whitefoot
+  program takes at most 3 times the C program's time at depths 14 to 16 and
+  less time than Redis's Lua; above 3 times, the cost of each handle check
+  is attributed before the design proceeds. Short runs first; more
+  repetitions only if the spread across three runs exceeds 10%.
+  ([experiments/halo-heap](../../experiments/halo-heap/))
 - **E2, dispatch.** With the match-dispatch work: the Halo instruction set as
   the benchmark VM.
 - **E3, checked operands.** The same loop with checked and with `u8`-bounded
