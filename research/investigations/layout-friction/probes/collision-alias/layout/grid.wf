@@ -1,0 +1,7 @@
+alias Track = pkg::layout::Span;
+
+fn grid_width(width: u32) -> result: u32 pure {
+  doc "A grid track width.";
+  let half = width / 2_u32;
+  return half;
+}

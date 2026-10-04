@@ -2430,10 +2430,19 @@ fn a_loop_whose_frame_is_too_wide_declines_and_says_so() {
                 );
             }
             assert!(
-                parent
-                    .source_calls()
+                parent.source_calls().iter().any(|call| parent
+                    .blocks()
                     .iter()
-                    .any(|call| call.allocation().is_some())
+                    .flat_map(|block| block.instructions())
+                    .any(
+                        |instruction| matches!(instruction, crate::IrInstruction::Define {
+                            result, operation: crate::IrOperation::Call { function, .. }, ..
+                        } if *result == call.result()
+                            && program.functions()[*function as usize]
+                                .name()
+                                .starts_with("box_array_filled"))
+                    )),
+                "the allocating call keeps its source-call metadata"
             );
             assert_eq!(
                 rows.iter()

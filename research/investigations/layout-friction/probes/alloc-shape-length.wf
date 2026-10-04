@@ -1,0 +1,15 @@
+fn from_a_shape(source: &Box<Array<u64>>) -> result: Box<Array<u8>> reads(source) {
+  doc "A flag per element of a boxed array, sized by its length with no clamp.";
+  let count = source^.inner.len;
+  let flags = box_array_filled::<u8>(count: count, value: 0_u8);
+  return move flags;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let source = box_array_filled::<u64>(count: 3_u64, value: 0_u64);
+  let flags = from_a_shape(source: &source);
+  if flags.inner.len != 3_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1116,7 +1116,8 @@ pub enum ResolutionIssueKind {
         paired_field: String,
         /// Earlier equal binder in this arm, if any.
         earlier_binder: Option<SourceOrigin>,
-        /// Live lexical-IDENT declarations at arm entry.
+        /// Live lexical-IDENT declarations at arm entry the binder competes
+        /// with [TYPE-6].
         arm_entry_conflicts: Vec<SourceOrigin>,
     },
     /// A PRE-1 collision, duplicate, redeclaration, or live shadow.

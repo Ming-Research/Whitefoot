@@ -1546,8 +1546,7 @@ impl Reasoning<'_, '_, '_> {
     }
 
     /// The one normalization authority attached to any goal family that has
-    /// a fixed L0 interpretation. Integer domains may use a small DNF;
-    /// AllocationFit is one conjunction containing its ceiling comparison.
+    /// a fixed L0 interpretation. Integer domains may use a small DNF.
     pub(super) fn goal_normalization(
         &mut self,
         expression: &GoalExpression,
@@ -1555,32 +1554,8 @@ impl Reasoning<'_, '_, '_> {
         if let Some(normalization) = self.conversion_goal_normalization(expression) {
             return Some(normalization);
         }
-        if let Some(plan) = self.goal_integer_domain_plan(expression) {
-            return Some(plan.normalization());
-        }
-        let GoalExpression::Operation {
-            row: GoalOperation::BufferFits { maximum_length, .. },
-            arguments,
-            result: CheckedType::Bool,
-            ..
-        } = expression
-        else {
-            return None;
-        };
-        let [length] = arguments.as_slice() else {
-            return None;
-        };
-        let threshold = self
-            .vocabulary
-            .terms
-            .intern(TermKind::Constant(i128::from(*maximum_length)));
-        Some(GoalNormalization::conjunction(vec![
-            self.goal_operand(length).map(|length| Relation::Bound {
-                left: length,
-                right: threshold,
-                bound: 0,
-            }),
-        ]))
+        self.goal_integer_domain_plan(expression)
+            .map(|plan| plan.normalization())
     }
 
     pub(super) fn goal_integer_domain_plan(

@@ -1,0 +1,8 @@
+struct Track {
+  size: u32;
+}
+
+fn table_size(track: Track) -> result: u32 pure {
+  doc "A table track's size.";
+  return track.size;
+}

@@ -1,0 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const grow: u8 = 4_u8;
+
+fn main() -> status: ExitStatus pure {
+  doc "A module-level named const takes the spelling of the prelude function grow: the prelude is no module inventory, so the two compete only by use class, and a value and a callable share none [TYPE-6, PRE-1].";
+  if grow != 4_u8 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

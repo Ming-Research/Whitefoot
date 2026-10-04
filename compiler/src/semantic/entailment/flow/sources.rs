@@ -2807,6 +2807,7 @@ impl Analyzer<'_, '_> {
             // receiver's value separately.
             affine: AffineFlowState::default(),
             written: source.written.clone(),
+            measure_kills: source.measure_kills.clone(),
             continuing: Vec::new(),
         };
         // The forward substitution happens above before the ordinary edge

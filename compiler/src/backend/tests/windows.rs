@@ -13,10 +13,10 @@
 //!   total in the source - it never returns a failure, no allocating
 //!   operation carries a `Result`, and exhaustion terminates from the trusted
 //!   base outside the language - so there is no arm left and no second
-//!   surface to contrast. What refuses an unproved count now is [OP-9] at the
-//!   source, which `op9_overflow_is_rejected_before_lowering` and
-//!   `a_runtime_capacity_window_op9_overflow_is_rejected_before_lowering`
-//!   below keep.
+//!   surface to contrast. A count whose size the target cannot allocate is
+//!   heap exhaustion at run time [OP-9], which
+//!   `exhaustion::an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allocator`
+//!   keeps.
 //! - `affine_element_buffers_construct_replace_vacate_and_drop_per_element`
 //!   retired with [BLK-2] and [SET-2]: `buffer_vacant` built an all-`None`
 //!   run and `let x = replace slots[i] = e;` exchanged one slot with it.
@@ -28,12 +28,17 @@
 //!   and by `resource_enums`; `trivially_droppable_affine_elements_keep_the_single_free`
 //!   below keeps the empty-action contrast.
 //!
+//! - `affine_invariant_ceiling_controls_the_exact_selected_target_boundary`
+//!   retired with v0.87's [OP-9]: its subject was that a count bound proved
+//!   by an affine invariant, multiplied by the actual stride and added to the
+//!   header, stopped target compilation one byte short. A count carries no
+//!   static bound now, and the same exact-byte boundary is observed at run
+//!   time by the exhaustion case named above.
+//!
 //! The remaining cases keep their subject and were retargeted onto the [OP-13]
 //! construction functions over the one heap [STOR-8].
 
-use crate::backend::emitter::{
-    BackendFailure, WindowAddressFacts, emit_llvm_with_window_address_facts,
-};
+use crate::backend::emitter::{WindowAddressFacts, emit_llvm_with_window_address_facts};
 use crate::target::{
     TargetLayout, TargetLayoutFailure, TargetObject, TargetStorageType, validate_program,
     validate_static_storage,
@@ -58,24 +63,6 @@ fn assert_empty_window_zeroed(module: &str, row: &str, header_fields: usize) {
         "the zero aggregate includes every descriptor word before its slots: {body}"
     );
 }
-
-const AFFINE_INVARIANT_BOUNDED_ALLOCATION: &[u8] =
-    br#"fn allocate(n: u64, half: u64) -> result: unit pure contract {
-  requires half <= 500_u64;
-} {
-  let doubled = half * 2_u64;
-  let within = n <= doubled;
-  if within {
-    invariant tight: n <= 1000_u64;
-    let values = box_array_filled::<u16>(count: n, value: 0_u16);
-  }
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
 
 const U64_RUNTIME_WINDOW: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   doc "One eight-byte slot in a runtime-capacity window, whose actual alignment the selected allocator has to promise.";
@@ -387,21 +374,11 @@ fn main() -> status: std::process::ExitStatus pure {
         // header, with no alignment inherited from the absent handles.
         let exact = host.with_runtime_allocation_limits_for_test(64, 8);
         assert_eq!(validate_program(exact, program), Ok(()));
-        // One byte short admits no slot, and the Ring asks for one.
+        // One byte short still qualifies: the Ring's count carries no static
+        // bound, and its one slot is checked where the emitted operation
+        // computes its size [OP-9].
         let short = host.with_runtime_allocation_limits_for_test(63, 8);
-        assert_eq!(
-            validate_program(short, program)
-                .err()
-                .and_then(TargetLayoutFailure::count_excess),
-            Some((1, 0))
-        );
-        for facts in [WindowAddressFacts::Emit, WindowAddressFacts::Withhold] {
-            assert!(matches!(
-                emit_llvm_with_window_address_facts(program, short, facts),
-                Err(BackendFailure::TargetLayout(failure))
-                    if failure.count_excess() == Some((1, 0))
-            ));
-        }
+        assert_eq!(validate_program(short, program), Ok(()));
         let mut module = crate::backend::emitter::emit_llvm_with_layout(program, exact)
             .expect("the exact allocation boundary emits")
             .into_string();
@@ -431,9 +408,9 @@ void *wf_observe_window_allocate(uint64_t size) {
     assert!(output.stderr.is_empty(), "{output:?}");
 }
 
-/// OP-9 admits zero even when the mathematical language ceiling exceeds
-/// u64. Lowering must preserve that result so STOR-6, rather than an internal
-/// compiler failure, reports the unrepresentable concrete element layout.
+/// A stored type whose language ceiling exceeds u64 reaches target
+/// qualification, which reports its unrepresentable concrete element layout
+/// [STOR-6], rather than an internal compiler failure.
 #[test]
 fn an_above_u64_zero_count_reaches_target_qualification() {
     for generic in ["", "<T>"] {
@@ -450,35 +427,6 @@ fn an_above_u64_zero_count_reaches_target_qualification() {
             );
         });
     }
-}
-
-/// [STOR-6] multiplies the retained source bound for a runtime-capacity
-/// construction by the actual target stride, adds its emitted header, and
-/// requires the result to fit the
-/// allocator-parameter domain. The affine invariant supplies that bound, and
-/// the boundary is pinned from both sides at the exact byte.
-///
-/// There is one allocation surface in v0.60 and it is total [STOR-8], so this
-/// byte ceiling is the only place a proved count can sit just inside and just
-/// outside a target limit; the retired store take's `None` arm [BLK-2] is not
-/// a second surface to contrast it against.
-#[test]
-fn affine_invariant_ceiling_controls_the_exact_selected_target_boundary() {
-    with_ir(AFFINE_INVARIANT_BOUNDED_ALLOCATION, |program| {
-        let host = TargetLayout::host().expect("the backend test runs on a supported host layout");
-
-        // Array<u16> has one u64 header followed by 1000 two-byte elements.
-        let exact = host.with_runtime_allocation_limits_for_test(2008, 8);
-        assert_eq!(validate_program(exact, program), Ok(()));
-
-        let one_byte_short = host.with_runtime_allocation_limits_for_test(2007, 8);
-        assert_eq!(
-            validate_program(one_byte_short, program)
-                .err()
-                .and_then(TargetLayoutFailure::count_excess),
-            Some((1_000, 999))
-        );
-    });
 }
 
 /// The heap's own alignment boundary, for the window and for the cell.
@@ -744,19 +692,31 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.stderr.is_empty());
 }
 
+/// Ends the run of `source` and requires that it ended as heap exhaustion:
+/// the abort with the heap record and nothing else [STOR-8].
+fn assert_runs_to_heap_exhaustion(source: &[u8]) {
+    let output = compile_and_run(&compile(source));
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&output.status),
+        Some(6),
+        "{output:?}"
+    );
+    assert!(output.stdout.is_empty(), "{output:?}");
+    super::exhaustion::assert_resource_record(&output.stderr, "heap");
+}
+
+/// [OP-9] a count whose size wraps `u64` is accepted, and the construction
+/// ends the run as heap exhaustion: the size is checked as it is computed,
+/// so the allocator never receives the wrapped byte count. This program was
+/// the static OP-9 rejection before v0.87.
 #[test]
-fn op9_overflow_is_rejected_before_lowering() {
-    let source = br#"fn main() -> status: std::process::ExitStatus pure {
+fn an_array_count_whose_size_wraps_is_heap_exhaustion() {
+    assert_runs_to_heap_exhaustion(
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let values = box_array_filled::<u64>(count: 18446744073709551615_u64, value: 0_u64);
   return std::process::exit_status(code: 0_u8);
 }
-"#;
-    let failure = compile_rejection(source);
-    assert_eq!(failure.rule_id(), Some("OP-9"));
-    assert!(
-        failure
-            .to_string()
-            .contains("]: UndischargedAllocationFitObligation\n")
+"#,
     );
 }
 
@@ -1377,25 +1337,22 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.stderr.is_empty());
 }
 
+/// [OP-9] the same for a runtime-capacity window over a payload enum, whose
+/// block takes a different emitted construction from the filled `Array`.
 #[test]
-fn a_runtime_capacity_window_op9_overflow_is_rejected_before_lowering() {
-    let source = br#"fn main() -> status: std::process::ExitStatus pure {
+fn a_window_capacity_whose_size_wraps_is_heap_exhaustion() {
+    assert_runs_to_heap_exhaustion(
+        br#"fn main() -> status: std::process::ExitStatus pure {
   let slots = box_slots_new::<Option<u32>>(capacity: 18446744073709551615_u64);
   return std::process::exit_status(code: 0_u8);
 }
-"#;
-    let failure = compile_rejection(source);
-    assert_eq!(failure.rule_id(), Some("OP-9"));
-    assert!(
-        failure
-            .to_string()
-            .contains("]: UndischargedAllocationFitObligation\n")
+"#,
     );
 }
 
-/// [FN-2, OP-9, STOR-3] a concrete instance discovered through a second
-/// generic caller retains the source-proved allocation bound, stores and
-/// retrieves the element, and releases the now-empty allocation.
+/// [FN-2, STOR-3] a concrete instance discovered through a second generic
+/// caller allocates, stores and retrieves the element, and releases the
+/// now-empty allocation.
 #[test]
 fn a_transitive_generic_allocation_executes_and_releases_its_concrete_value() {
     let source = br#"fn store<T>(value: T) -> result: T pure {

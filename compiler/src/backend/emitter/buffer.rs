@@ -189,13 +189,51 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         self.emit_buffer_block(result, block, element, length, Some(value))
     }
 
-    /// One allocation of `header + count * stride` bytes, the `len` word, and
-    /// the element loop.
+    /// [OP-9] the byte size `count * stride + header` of one runtime-capacity
+    /// allocation, computed with checked arithmetic.
     ///
-    /// The count's product with the stride is representable: [OP-9]'s
-    /// accepted site proved `n <= floor((2^64 - 1) / stride_ceiling(T))` and
-    /// target qualification proved the actual stride no larger than that
-    /// ceiling, so neither the product nor the header's addition wraps.
+    /// A size that wraps, or that exceeds the selected target's
+    /// runtime-allocation byte maximum, branches to `exhausted`, the
+    /// operation's heap-exhaustion block [STOR-8], before any allocator call,
+    /// so every size `malloc` receives fits the allocator-parameter and
+    /// address-index domains [STOR-6]. Emission continues in `allocate`, and
+    /// the size's SSA name is returned.
+    pub(super) fn emit_allocation_size(
+        &mut self,
+        count: &str,
+        stride: &str,
+        header: &str,
+        exhausted: &str,
+        allocate: &str,
+    ) -> Result<String, BackendFailure> {
+        for name in ["llvm.umul.with.overflow.i64", "llvm.uadd.with.overflow.i64"] {
+            self.intrinsics.insert(IntrinsicDeclaration::Overflow {
+                name: name.to_owned(),
+                ty: "i64".to_owned(),
+            });
+            self.output.symbol(name);
+        }
+        let product = self.next_temporary()?;
+        let elements = self.next_temporary()?;
+        let wrapped = self.next_temporary()?;
+        let sum = self.next_temporary()?;
+        let bytes = self.next_temporary()?;
+        let carried = self.next_temporary()?;
+        let above = self.next_temporary()?;
+        let overflowed = self.next_temporary()?;
+        let unservable = self.next_temporary()?;
+        let maximum = self.target.runtime_allocation_max();
+        write!(
+            self.output,
+            "  %{product} = call {{ i64, i1 }} @llvm.umul.with.overflow.i64(i64 {count}, i64 {stride})\n  %{elements} = extractvalue {{ i64, i1 }} %{product}, 0\n  %{wrapped} = extractvalue {{ i64, i1 }} %{product}, 1\n  %{sum} = call {{ i64, i1 }} @llvm.uadd.with.overflow.i64(i64 %{elements}, i64 {header})\n  %{bytes} = extractvalue {{ i64, i1 }} %{sum}, 0\n  %{carried} = extractvalue {{ i64, i1 }} %{sum}, 1\n  %{above} = icmp ugt i64 %{bytes}, {maximum}\n  %{overflowed} = or i1 %{wrapped}, %{carried}\n  %{unservable} = or i1 %{overflowed}, %{above}\n  br i1 %{unservable}, label %{exhausted}, label %{allocate}\n"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(allocate.to_owned());
+        Ok(format!("%{bytes}"))
+    }
+
+    /// One allocation of `header + count * stride` bytes, the `len` word, and
+    /// the element loop. The size is checked as it is computed [OP-9].
     fn emit_buffer_block(
         &mut self,
         result: IrValueId,
@@ -212,8 +250,6 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         )?;
         let stride = self.buffer_element_stride(element)?;
         let header = self.buffer_header_size(block)?;
-        let element_bytes = self.next_temporary()?;
-        let bytes = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
         let allocate = buffer_fill_allocate_label(result);
         let oom = buffer_fill_oom_label(result);
@@ -224,13 +260,12 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         let count = self.value_name(length);
         let address = self.value_name(result);
         {
-            write!(self.output, "  %{element_bytes} = mul nuw i64 {count}, {stride}\n  %{bytes} = add nuw i64 %{element_bytes}, {header}\n  br label %{allocate}\n").map_err(|_| BackendFailure::TextEmission)?;
-            self.output.open_block(allocate.to_string());
+            let bytes = self.emit_allocation_size(&count, &stride, &header, &oom, &allocate)?;
             {
                 self.output.symbol("malloc");
                 write!(
                     self.output,
-                    "  {address} = call ptr @malloc(i64 %{bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}\n"
+                    "  {address} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
