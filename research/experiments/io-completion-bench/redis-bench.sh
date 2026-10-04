@@ -670,8 +670,10 @@ if [ "$MODE" = scale ]; then
             continue
         fi
         SERVER_CPUS=$(seq -s, 0 $((n - 1)))
-        CLIENT_CPUS=$(seq -s, "$n" $((total - 1)))
         CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
+        # quick_client starts one process per client CPU and counts
+        # CLIENT_THREADS of them, so the two must name the same CPUs.
+        CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))
         lines="reference valkey-io dragonfly-$n garnet-$n firn-$n firn-base-$n"
         for line in $lines; do
             if available "$line"; then
