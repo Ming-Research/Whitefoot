@@ -1982,6 +1982,14 @@ fn firn_reads_count_and_length_lines_as_redis_does() {
             &b"*1\r\n$-1\r\n"[..],
             &b"-ERR Protocol error: invalid bulk length\r\n"[..],
         ),
+        (
+            &b"*01\r\n"[..],
+            &b"-ERR Protocol error: invalid multibulk length\r\n"[..],
+        ),
+        (
+            &b"*1\r\n$04\r\n"[..],
+            &b"-ERR Protocol error: invalid bulk length\r\n"[..],
+        ),
     ] {
         let what = format!("{:?}", String::from_utf8_lossy(line));
         let mut client = connect_when_ready(port);
@@ -1996,6 +2004,10 @@ fn firn_reads_count_and_length_lines_as_redis_does() {
         ),
         (
             &b"*1\r\n$4\x00\r\n"[..],
+            &b"-ERR Protocol error: too big bulk count string\r\n"[..],
+        ),
+        (
+            &b"*1\r\n\x004\r\n"[..],
             &b"-ERR Protocol error: too big bulk count string\r\n"[..],
         ),
     ] {

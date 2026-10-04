@@ -50,12 +50,15 @@ struct Line {
 }
 
 fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
-  doc "Reads a count or length line as read_line_full does, first trying the common line of one to nine digits without a sign or leading zero, whose carriage return and the byte after it are held. A zero byte at the marker ends the line there, as strchr ends it, so that line is left to read_line_full.";
+  doc "Reads a count or length line as read_line_full does, first trying the common line of one to nine digits without a sign or leading zero, whose carriage return and the byte after it are held. A marker byte that is a zero byte or a carriage return ends the line at the marker, as strchr ends it, so that line is left to read_line_full.";
   let position = marker +wrap 1_u64;
   let value = 0_u64;
   if marker < held {
     let mark = byte_at(input: input, index: marker);
-    if mark == 0_u8 {
+    let zero = mark == 0_u8;
+    let ends = mark == 13_u8;
+    let at_marker = bor(zero, ends);
+    if at_marker {
       let line = read_line_full(input: input, marker: marker, held: held);
       return line;
     }
@@ -105,12 +108,8 @@ fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
 }
 
 fn read_line_full(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
-  doc "Reads a count or length line whose marker byte, * or $, is at marker, as Redis 7.0 reads one. The line ends at the first carriage return from the marker on, found as strchr finds it, so that a zero byte, like the end of the bytes held, leaves the line incomplete; the byte after the carriage return must be held too and is skipped unread. State 1 is a complete line whose bytes after the marker read as a number, as string2ll reads one, into value; 2 is a complete line that does not read as one; 0 is an incomplete line; and 3 is a line still incomplete with more than 65,536 bytes held from its marker. end is the carriage return's position. Digits without a sign or leading zero, at most nine of them, are summed as they are scanned; any other line is read again by read_integer.";
+  doc "Reads a count or length line whose marker byte, * or $, is at marker, as Redis 7.0 reads one. The line ends at the first carriage return from the marker on, found as strchr finds it, so that a zero byte, like the end of the bytes held, leaves the line incomplete; the byte after the carriage return must be held too and is skipped unread. State 1 is a complete line whose bytes after the marker read as a number, as string2ll reads one, into value; 2 is a complete line that does not read as one; 0 is an incomplete line; and 3 is a line still incomplete with more than 65,536 bytes held from its marker. end is the carriage return's position.";
   let position = marker;
-  let digits = 0_u64;
-  let plain = True();
-  let leading = 0_u8;
-  let value = 0_u64;
   loop @find {
     if position >= held {
       break @find;
@@ -120,18 +119,6 @@ fn read_line_full(input: &[u8], marker: u64, held: u64) -> line: Line reads(inpu
       let after = position +wrap 1_u64;
       if after >= held {
         return Line(value: 0_i64, end: position, state: 0_u64);
-      }
-      let some = digits >= 1_u64;
-      let short = digits <= 9_u64;
-      let lone = digits == 1_u64;
-      let unpadded = leading != 48_u8;
-      let canonical = bor(lone, unpadded);
-      let counted = band(some, short);
-      let simple = band(plain, counted);
-      let quick = band(simple, canonical);
-      if quick {
-        let summed = cvt.wrap::<u64, i64>(value);
-        return Line(value: summed, end: position, state: 1_u64);
       }
       if position > marker {
         let first = marker +wrap 1_u64;
@@ -145,23 +132,6 @@ fn read_line_full(input: &[u8], marker: u64, held: u64) -> line: Line reads(inpu
     }
     if byte == 0_u8 {
       break @find;
-    }
-    if position > marker {
-      let low = byte >= 48_u8;
-      let high = byte <= 57_u8;
-      let digit = band(low, high);
-      if digit {
-        if digits == 0_u64 {
-          set leading = byte;
-        }
-        set digits = digits +wrap 1_u64;
-        let offset = byte -wrap 48_u8;
-        let wide = cvt::<u8, u64>(offset);
-        let scaled = value *wrap 10_u64;
-        set value = scaled +wrap wide;
-      } else {
-        set plain = False();
-      }
     }
     set position = position +wrap 1_u64;
   }
