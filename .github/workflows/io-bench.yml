@@ -127,6 +127,10 @@ jobs:
               continue
             fi
             tree="$RUNNER_TEMP/tree-$name"
+            # A self-hosted runner keeps the checkout, and with it the
+            # registration of a previous run's worktree under a cleaned temp.
+            git worktree prune
+            rm -rf "$tree"
             git worktree add --detach "$tree" "${pair#*=}"
             echo "revision,$name,$(git -C "$tree" rev-parse HEAD)" | tee -a "$RUNNER_TEMP/compare/revisions.csv"
             cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
