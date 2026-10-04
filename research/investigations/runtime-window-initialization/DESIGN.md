@@ -110,8 +110,9 @@ of this proposal. No Snowghost pin change follows from this record.
 ## Results
 
 The implementation and focused cases are present on the work branch. The
-recommended interface remains unapproved. The compiler has not yet been
-built with this change, and no semantic or native result is claimed.
+recommended interface remains unapproved. Focused semantic and native
+validation passes; the complete gate and Snowghost integration remain
+unverified.
 
 Six focused Rust tests cover lowering operands and allocation obligations,
 fill facts and invalidation, independent-loop permission and shared-write
@@ -122,14 +123,27 @@ program exercises zero/one/multiple lengths and grow/push/pop against stated
 values. The huge zero-byte native witness uses the existing harness's
 five-second deadline so a mistaken element loop fails promptly.
 
+At 7abe0da41b07e136e43e47a23603daa06fb50bef on an Apple M1 Pro running
+macOS 26.6.2, the six-test `filled_runtime_slots` filter passed (22.66 seconds
+including 20.19 seconds rebuilding the test binary; tests took 1.71 seconds).
+The run used the identical source tree ecc92cb643d8c8865f11336e7bff934f5d5ac00b
+before a commit-message-only amendment. The existing window backend group
+then passed all 25 tests in 5.59 seconds including startup. Both used the
+ordinary gate profile, with its assertions and overflow checks enabled,
+and separate bounded host-lock acquisitions.
+
+The initial focused run failed three of six tests in 67.07 seconds. It
+exposed a missing SSA operand prefix in the new element-fill store and an
+excess effect declaration in the proof-only test consumer. The repairs
+preserve the pointer helper's existing convention and the same range-fact
+acceptance/rejection expectations. The failed log remains alongside the
+successful runs in `compiler/target/filled-window-validation/`; earlier
+lock-busy attempts remain recorded and are not passing tests.
+
 `make spec-prose-integrity design-lint` passed at
 67202ea37a1db58f8123d1536438bd195f528233. This is a prose/design check, not
-compiler validation. Focused Cargo attempts at the later integrated source
-returned lock-busy status 75 before compilation; the logs remain under
-`compiler/target/filled-window-validation/`. They provide no passing test
-result. The next execution is the six-test `filled_runtime_slots` filter,
-using an isolated dependency cache and one bounded host-lock acquisition.
-The canonical gate and independent review remain unrun.
+compiler validation. The four new conformance rows have not yet run through
+the compiler. The canonical gate and independent review remain unrun.
 
 ## Found along the way
 
