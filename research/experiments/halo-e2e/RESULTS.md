@@ -306,3 +306,13 @@ cross-script closures and callback-time pinning. This is a first correctness
 comparison, not evidence of full Redis compatibility or the VM's remaining
 memory-limit/kill/restart falsifiers. The user explicitly requested local
 commits and forbade publication, so there is no PR or remote revision.
+
+## After merging the library (2026-10-04)
+
+With the slice-1 library merged and installed by `new_engine` (the lead wired
+`pkg::vm::install_libraries`, which the parallel embedding had not yet
+called), 183 of 240 runs pass: per budget, apps 6/6, lua-core 43/48,
+redis-api 12/16, libs 0/10, equal across budgets 1, 7 and 1000. The
+remaining failures: Lua patterns (string.find, match, gmatch, gsub; five
+scripts), Redis's error text with script SHA and location (three), and
+`redis.sha1hex` (one); the libs group awaits cjson, cmsgpack, bit and struct.

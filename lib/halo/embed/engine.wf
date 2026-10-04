@@ -75,6 +75,7 @@ fn new_engine(limit: u64) -> r: Engine pure {
   let no = False();
   let engine = Engine(vm: move vm, stack: move stack, scripts: move scripts, constant_lengths: move lengths, pins: move pins, generation: 0_u64, active: active, result_count: 0_u64, resumable: no);
   install_core(engine: &engine);
+  pkg::vm::install_libraries(vm: &engine.vm);
   return move engine;
 }
 
