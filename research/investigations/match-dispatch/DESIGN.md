@@ -203,6 +203,26 @@ dispatch shape is the smaller lever; reaching Silverfir-nano needs the
 interpreter's hot values carried as loop state, which the per-arm lowering
 keeps in registers.
 
+## E1 outcome
+
+E1 adds Silverfir-nano's accumulator and two pinned locals to E0's
+interpreter ([results](../../experiments/match-dispatch/RESULTS.md#e1-silverfir-nanos-register-residency-in-the-same-interpreter)):
+
+- With both, the unchecked C form reaches 1.16-1.37x of Silverfir-nano's
+  cycles on the same work, and the WF-expressible `u8` form 1.26-1.79x.
+- Passing the handler base along the chain brings the unchecked form's
+  instruction count to Silverfir-nano's on `loop` while its cycles stay 1.37x;
+  the residue is the dispatch's latency structure (a writeback load of the
+  next cell, no early load of the next handler), which LLVM chooses.
+- Three consequences for the lowering. The handler base travels as a hidden
+  parameter rather than being rematerialised per handler. A loop-carried
+  index whose every use addresses one array (`code[pc]`, `regs[base + a]`)
+  is the largest remaining cost of the expressible form, 10-30% over
+  pointers, so carrying the derived address beside or instead of the index
+  is the next lowering candidate. And the accumulator and pinned locals are
+  the interpreter writer's loop-carried values, which the per-arm lowering
+  keeps in registers only if the register budget admits them.
+
 ## Later stages
 
 1. Lower the loop in the compiler to the shape E0 selects, with the

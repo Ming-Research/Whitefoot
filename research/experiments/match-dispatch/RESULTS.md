@@ -150,6 +150,54 @@ keeping interpreter values out of frame memory, which in Whitefoot is the
 writer's choice of loop-carried state that the per-arm lowering then passes
 in registers.
 
+## E1: Silverfir-nano's register residency in the same interpreter
+
+`vm1.c` is `vm.c` with Silverfir-nano's two residency mechanisms, chosen by
+a link pass and selectable at run time: an accumulator (`acc`, and `facc`
+for floats) that every producer sets and that the next instruction in the
+same region and domain reads instead of the frame slot; two pinned locals
+per function (`accpin`), the most-referenced slots of one domain, held in
+registers with write-through and reloaded at calls and returns; and `full`,
+which also leaves a slot unstored where liveness over slot reads shows it
+dead, as Silverfir-nano leaves a stack temporary unstored. Handlers are
+specialised by operand residency class, 64 variants per opcode. Every
+variant and mode returns `vm.c`'s checksums. `-DHANDLER_BASE_PARAM` passes
+the handler table's or base handler's address along the chain instead of
+letting each handler rematerialise it. Same M1 Pro, same Silverfir-nano
+build, interleaved: `run-e1.tsv` (five launches; its `full` rows predate a
+liveness fix and repeat `accpin`, so they are not reported) and
+`run-e1-base.tsv` (six launches).
+
+Cycles against Silverfir-nano on the same work (loop, fib, sieve, mandel):
+
+| variant | loop | fib | sieve | mandel |
+|---|---:|---:|---:|---:|
+| `tailpn-u8`, none | 2.33x | 1.91x | 1.89x | 1.67x |
+| `tailpn-u8`, acc | 1.85x | 1.83x | 1.80x | 1.33x |
+| `tailpn-u8`, accpin | 1.79x | 1.77x | 1.67x | 1.26x |
+| `tailpn-u8`, full, base parameter | 1.68x | 1.75x | 1.60x | 1.28x |
+| `tailpn-u8v`, full, base parameter | 1.58x | 1.73x | 1.54x | 1.25x |
+| `cellpn-raw`, accpin | 1.38x | 1.38x | 1.36x | 1.13x |
+| `cellpn-raw`, full, base parameter | 1.37x | 1.35x | 1.34x | 1.16x |
+
+- The accumulator and the pinned locals take the WF-expressible `u8` form
+  from 1.67-2.33x to 1.26-1.79x of Silverfir-nano; the accumulator gives
+  most of it on `loop`, `fib` and `mandel`, the pinned locals most on `sieve`.
+- Leaving dead slots unstored removes 8% of `loop`'s instructions and no
+  cycles, consistent with Silverfir-nano's measured 0.023 cycles per store.
+- Passing the handler base as a parameter removes the two instructions that
+  rematerialise it in every handler (`adrp`, `add`): the raw form's `loop`
+  handler falls to 6.8 instructions per dispatch against Silverfir-nano's
+  6.2, yet its cycles stay at 2.34 per dispatch against 2.03. What remains
+  is not instruction count; the visible differences are LLVM's pre-indexed
+  writeback load of the next cell, which Silverfir-nano measured as
+  serialising, and Silverfir-nano's load of the next handler at handler
+  entry. `fib` also pays for a call protocol that saves and reloads pin
+  words.
+- The `u8` form stays 1.1-1.3x above the raw form with every mechanism on,
+  of which the fetch comparison is 1-6% (`u8v`) and the rest is computing
+  `code[pc]` and `regs[base + a]` from indices in every handler.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

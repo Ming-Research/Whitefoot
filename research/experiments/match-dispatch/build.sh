@@ -30,3 +30,22 @@ for access in 1 2 4 3; do
 done
 build "tailpn-checked-pad64" -DDISPATCH=3 -DPRESERVE_NONE -DACCESS=1 -DPAD=64
 build "tailpn-checked-pad2048" -DDISPATCH=3 -DPRESERVE_NONE -DACCESS=1 -DPAD=2048
+
+# E1 (vm1.c): accumulator and pinned locals; the mode is a run-time argument.
+build1() { # name, extra flags...
+    name=$1; shift
+    $cc $flags "$@" -o "$out/$name" "$here/vm1.c"
+}
+for access in 2 4 3; do
+    case $access in 2) a=u8 ;; 4) a=u8v ;; 3) a=raw ;; esac
+    build1 "e1-switch-$a" -DDISPATCH=1 -DACCESS=$access
+    build1 "e1-goto-$a" -DDISPATCH=2 -DACCESS=$access
+    build1 "e1-tailpn-$a" -DDISPATCH=3 -DACCESS=$access
+    build1 "e1-cellpn-$a" -DDISPATCH=4 -DACCESS=$access
+done
+build1 "e1-count" -DDISPATCH=1 -DACCESS=2 -DCOUNT
+for access in 2 4 3; do
+    case $access in 2) a=u8 ;; 4) a=u8v ;; 3) a=raw ;; esac
+    build1 "e1hb-tailpn-$a" -DDISPATCH=3 -DACCESS=$access -DHANDLER_BASE_PARAM
+    build1 "e1hb-cellpn-$a" -DDISPATCH=4 -DACCESS=$access -DHANDLER_BASE_PARAM
+done
