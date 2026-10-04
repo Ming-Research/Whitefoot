@@ -335,14 +335,12 @@ void wf__shared_seen(unsigned moment);
  * given stays as it is until the hold is taken. */
 #define WF_TABLE_ENTRY_SIZE 40u
 #define WF_TABLE_ENTRY_ALIGN 8u
-#define WF_TABLE_HOLD_SIZE 248u
+#define WF_TABLE_HOLD_SIZE 280u
 #define WF_TABLE_HOLD_ALIGN 8u
 struct wf_key_set;
 struct wf_table_entry;
 void wf__key_set_new(struct wf_key_set *out, uint64_t capacity);
-void wf__key_set_put(struct wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload);
-void wf__key_set_add(struct wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount);
-uint64_t wf__key_set_payload(const struct wf_key_set *set, uint64_t index);
+uint64_t wf__key_set_insert(struct wf_key_set *set, const unsigned char *key, uint64_t length);
 /* Gives a set's memory back, taking the set's `store` alone, NULL for none,
  * as the emitted code holds a set in two registers. */
 void wf__key_set_free(void *store);

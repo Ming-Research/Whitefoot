@@ -2452,15 +2452,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 set,
             } => self.emit_keyed_entries_fill(result, *entries, *hold, *position, *set),
             IrOperation::KeySetNew { capacity } => self.emit_key_set_new(result, ty, *capacity),
-            IrOperation::KeySetPut {
-                set,
-                key,
-                payload,
-                add,
-            } => self.emit_key_set_put(result, *set, *key, *payload, *add),
-            IrOperation::KeySetPayload { set, index } => {
-                self.emit_key_set_payload(result, *set, *index)
-            }
+            IrOperation::KeySetInsert { set, key } => self.emit_key_set_insert(result, *set, *key),
             IrOperation::WatchBegin { record } => {
                 self.emit_watch_call(result, *record, None, "wf__watch_begin")
             }

@@ -1311,15 +1311,17 @@ void wf_cmap_unhold(wf_cmap_user *u) {
 
 int wf_cmap_holds_whole(const wf_cmap_user *u) { return u->holding; }
 
-/* Key sets: an array of items in the keys' order, each naming its key's
- * bytes in an arena of the set's own, so that adding a key moves items and
- * never bytes. A key, or the place an absent one goes, is found by binary
- * search. */
-
+/* Key sets: an array of items in the order their keys were first inserted,
+ * each naming its key's bytes in an arena of the set's own and carrying the
+ * key's tag, and an index of 2 * room slots after the items, each 0 or one
+ * more than an item's index, probed from the tag, so that inserting a key
+ * finds an earlier insertion of it without comparing keys in order and
+ * never moves an item. The order a hold locks entries in is the hold's own
+ * (order_hold), not the set's. */
 typedef struct {
     uint64_t offset;
     uint64_t length;
-    uint64_t payload;
+    uint64_t tag;
 } key_item;
 
 typedef struct {
@@ -1354,10 +1356,21 @@ static int compare_keys(const unsigned char *a, uint64_t a_length, const unsigne
     return a_length < b_length ? -1 : a_length > b_length ? 1 : 0;
 }
 
+/* The index after a store's items: 2 * room slots of 32 bits. */
+static uint32_t *store_index(const key_store *s) { return (uint32_t *)(void *)&s->items[s->room]; }
+
 static size_t store_bytes(uint64_t room) {
-    if (room > (SIZE_MAX - sizeof(key_store)) / sizeof(key_item))
+    if (room > (SIZE_MAX - sizeof(key_store)) / (sizeof(key_item) + 2 * sizeof(uint32_t)) || room > UINT32_MAX / 2)
         WF_CMAP_EXHAUSTED();
-    return sizeof(key_store) + (size_t)room * sizeof(key_item);
+    return sizeof(key_store) + (size_t)room * (sizeof(key_item) + 2 * sizeof(uint32_t));
+}
+
+/* A store's room is a power of two, so that its index's mask is room * 2 - 1. */
+static uint64_t store_room(uint64_t keys) {
+    uint64_t room = KEY_SET_MIN_ROOM;
+    while (room < keys)
+        room *= 2;
+    return room;
 }
 
 static key_store *new_store(uint64_t room) {
@@ -1366,6 +1379,7 @@ static key_store *new_store(uint64_t room) {
     s->bytes_used = 0;
     s->bytes_room = 0;
     s->bytes = NULL;
+    memset(store_index(s), 0, (size_t)room * 2 * sizeof(uint32_t));
     return s;
 }
 
@@ -1381,6 +1395,7 @@ static key_store *first_store(uint64_t room) {
     if (spare != NULL && spare->room >= room) {
         WF_CMAP_SPARE_KEYS() = NULL;
         spare->bytes_used = 0;
+        memset(store_index(spare), 0, (size_t)spare->room * 2 * sizeof(uint32_t));
         return spare;
     }
 #endif
@@ -1393,42 +1408,31 @@ static const unsigned char *item_bytes(const key_store *s, const key_item *item)
     return item->length == 0 ? no_bytes : s->bytes + item->offset;
 }
 
-/* The index of key in set, *found set, or else of the first key after it. */
-static uint64_t find_key(const wf_key_set *set, const unsigned char *key, uint64_t length, int *found) {
-    const key_store *s = set->store;
-    uint64_t low = 0, high = set->len;
-    while (low < high) {
-        uint64_t middle = low + (high - low) / 2;
-        const key_item *item = &s->items[middle];
-        int order = compare_keys(item_bytes(s, item), item->length, key, length);
-        if (order == 0) {
-            *found = 1;
-            return middle;
+/* Puts item index at the first free slot of its tag's probe. */
+static void index_item(key_store *s, uint64_t index) {
+    uint32_t *slots = store_index(s);
+    uint64_t mask = s->room * 2 - 1;
+    for (uint64_t i = s->items[index].tag & mask;; i = (i + 1) & mask)
+        if (slots[i] == 0) {
+            slots[i] = (uint32_t)(index + 1);
+            return;
         }
-        if (order < 0)
-            low = middle + 1;
-        else
-            high = middle;
-    }
-    *found = 0;
-    return low;
 }
 
-/* Inserts key with payload at index at, growing the items and the arena as
- * they need. */
-static void insert_key(wf_key_set *set, uint64_t at, const unsigned char *key, uint64_t length,
-                       uint64_t payload) {
+/* Makes room for one more key and length more bytes. */
+static key_store *room_for(wf_key_set *set, uint64_t length) {
     key_store *s = set->store;
     if (s == NULL) {
         s = first_store(KEY_SET_MIN_ROOM);
         set->store = s;
     } else if (set->len == s->room) {
-        uint64_t room = s->room < KEY_SET_MIN_ROOM / 2 ? KEY_SET_MIN_ROOM : s->room * 2;
-        key_store *grown = new_store(room);
+        key_store *grown = new_store(s->room * 2);
         grown->bytes_used = s->bytes_used;
         grown->bytes_room = s->bytes_room;
         grown->bytes = s->bytes;
         memcpy(grown->items, s->items, (size_t)set->len * sizeof(key_item));
+        for (uint64_t i = 0; i < set->len; i++)
+            index_item(grown, i);
         WF_CMAP_GIVE(s, store_bytes(s->room));
         s = grown;
         set->store = s;
@@ -1448,37 +1452,38 @@ static void insert_key(wf_key_set *set, uint64_t at, const unsigned char *key, u
         s->bytes = bytes;
         s->bytes_room = room;
     }
-    if (length != 0)
-        memcpy(s->bytes + s->bytes_used, key, (size_t)length);
-    memmove(&s->items[at + 1], &s->items[at], (size_t)(set->len - at) * sizeof(key_item));
-    s->items[at].offset = s->bytes_used;
-    s->items[at].length = length;
-    s->items[at].payload = payload;
-    s->bytes_used += length;
-    set->len += 1;
+    return s;
 }
 
 void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity) {
     set->len = 0;
-    set->store = capacity == 0 ? NULL : first_store(capacity < KEY_SET_FIRST_LIMIT ? capacity : KEY_SET_FIRST_LIMIT);
+    set->store = capacity == 0 ? NULL
+                               : first_store(store_room(capacity < KEY_SET_FIRST_LIMIT ? capacity : KEY_SET_FIRST_LIMIT));
 }
 
-void wf_cmap_key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload) {
-    int found;
-    uint64_t at = find_key(set, key, length, &found);
-    if (found)
-        ((key_store *)set->store)->items[at].payload = payload;
-    else
-        insert_key(set, at, key, length, payload);
-}
-
-void wf_cmap_key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount) {
-    int found;
-    uint64_t at = find_key(set, key, length, &found);
-    if (found)
-        ((key_store *)set->store)->items[at].payload += amount;
-    else
-        insert_key(set, at, key, length, amount);
+uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length) {
+    uint64_t tag = tag_of(key, length);
+    key_store *s = set->store;
+    if (s != NULL) {
+        const uint32_t *slots = store_index(s);
+        uint64_t mask = s->room * 2 - 1;
+        for (uint64_t i = tag & mask; slots[i] != 0; i = (i + 1) & mask) {
+            const key_item *item = &s->items[slots[i] - 1];
+            if (item->tag == tag && compare_keys(item_bytes(s, item), item->length, key, length) == 0)
+                return slots[i] - 1u;
+        }
+    }
+    s = room_for(set, length);
+    uint64_t index = set->len;
+    if (length != 0)
+        memcpy(s->bytes + s->bytes_used, key, (size_t)length);
+    s->items[index].offset = s->bytes_used;
+    s->items[index].length = length;
+    s->items[index].tag = tag;
+    s->bytes_used += length;
+    set->len = index + 1;
+    index_item(s, index);
+    return index;
 }
 
 /* The item at index. An index past the set's keys is one the compiler's own
@@ -1489,7 +1494,6 @@ static const key_item *item_at(const wf_key_set *set, uint64_t index) {
     return &((const key_store *)set->store)->items[index];
 }
 
-uint64_t wf_cmap_key_set_payload(const wf_key_set *set, uint64_t index) { return item_at(set, index)->payload; }
 
 const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length) {
     const key_item *item = item_at(set, index);
@@ -1568,7 +1572,11 @@ static wf_cmap_held *held_keys(wf_cmap_holding *hold) { return hold->keys != NUL
 /* The key that is rank-th in byte order. */
 static inline wf_cmap_held *ranked(wf_cmap_held *keys, uint64_t rank) { return &keys[keys[rank].rank]; }
 
+/* A hold's lock order: by tag, then length, then bytes, so that ordering
+ * compares integers and reads key bytes only for keys of one tag. */
 static int held_order(const wf_cmap_held *a, const wf_cmap_held *b) {
+    if (a->tag != b->tag)
+        return a->tag < b->tag ? -1 : 1;
     return compare_keys(a->key, a->length, b->key, b->length);
 }
 
@@ -1639,19 +1647,20 @@ void wf_cmap_hold_begin(wf_cmap_holding *hold, wf_cmap *map) {
 void wf_cmap_hold_whole(wf_cmap_holding *hold) { hold->wants = 1; }
 
 /* Notes where a key added after last stands. */
-static void note_order(wf_cmap_holding *hold, const wf_cmap_held *last, const unsigned char *key, uint64_t length) {
+static void note_order(wf_cmap_holding *hold, const wf_cmap_held *last, const wf_cmap_held *next) {
     if (hold->order == KEYS_SHUFFLED)
         return;
-    int order = compare_keys(last->key, last->length, key, length);
+    int order = held_order(last, next);
     if (order > 0)
         hold->order = KEYS_SHUFFLED;
     else if (order == 0)
         hold->order = KEYS_NONDECREASING;
 }
 
-static void set_held(wf_cmap_held *e, const unsigned char *key, uint64_t length) {
+static void set_held(wf_cmap_held *e, const unsigned char *key, uint64_t length, uint64_t tag) {
     e->key = key;
     e->length = length;
+    e->tag = tag;
     e->cell = NULL;
     e->slot = NULL;
     e->rank = 0;
@@ -1662,9 +1671,9 @@ static void set_held(wf_cmap_held *e, const unsigned char *key, uint64_t length)
 uint64_t wf_cmap_hold_key(wf_cmap_holding *hold, const unsigned char *key, uint64_t length) {
     wf_cmap_held *keys = reserve_keys(hold, 1);
     uint64_t position = hold->count;
+    set_held(&keys[position], key, length, tag_of(key, length));
     if (position != 0)
-        note_order(hold, &keys[position - 1], key, length);
-    set_held(&keys[position], key, length);
+        note_order(hold, &keys[position - 1], &keys[position]);
     hold->count = position + 1;
     return position;
 }
@@ -1675,12 +1684,12 @@ uint64_t wf_cmap_hold_keys(wf_cmap_holding *hold, const wf_key_set *set) {
         return first;
     wf_cmap_held *keys = reserve_keys(hold, set->len);
     const key_store *s = set->store;
-    for (uint64_t i = 0; i < set->len; i++)
-        set_held(&keys[first + i], item_bytes(s, &s->items[i]), s->items[i].length);
-    /* The set's keys increase, so only its first may stand at or before an
-     * earlier key. */
-    if (first != 0)
-        note_order(hold, &keys[first - 1], keys[first].key, keys[first].length);
+    for (uint64_t i = 0; i < set->len; i++) {
+        const key_item *item = &s->items[i];
+        set_held(&keys[first + i], item_bytes(s, item), item->length, item->tag);
+        if (first + i != 0)
+            note_order(hold, &keys[first + i - 1], &keys[first + i]);
+    }
     hold->count = first + set->len;
     return first;
 }
@@ -1807,7 +1816,7 @@ static int lock_set(wf_cmap_user *u, wf_cmap_holding *hold) {
                 wf_cmap_held *e = ranked(keys, i);
                 if (!e->leads)
                     continue;
-                uint64_t tag = tag_of(e->key, e->length);
+                uint64_t tag = e->tag;
                 cell *c;
                 int r = acquire_entry(u, t, tag, e->key, e->length, &c);
                 if (r == IMPATIENT || r == FULL || r == SHARED) {
@@ -1924,7 +1933,7 @@ static void lock_whole(wf_cmap_user *u, wf_cmap_holding *hold, uint64_t leaders)
                 wf_cmap_held *e = ranked(keys, i);
                 if (!e->leads)
                     continue;
-                uint64_t tag = tag_of(e->key, e->length);
+                uint64_t tag = e->tag;
                 cell *c;
                 int r = acquire_whole(hold, t, tag, e->key, e->length, &c);
                 if (r == FULL) {
