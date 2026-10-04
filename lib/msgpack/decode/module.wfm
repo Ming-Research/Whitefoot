@@ -1,0 +1,4 @@
+alias Token = pkg::types::Token;
+alias Error = pkg::types::Error;
+
+public fn next(source: &[u8], offset: u64) -> r: Result<Option<Token>, Error> reads(source) doc "One token at offset, None at exact EOF. Headers do not consume children. Payloads are half-open source ranges. No state is mutated on failure; retry with the same offset and a longer source.";

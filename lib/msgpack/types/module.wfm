@@ -1,0 +1,27 @@
+public enum Event {
+  Nil();
+  False();
+  True();
+  Unsigned(public value: u64);
+  Signed(public value: i64);
+  Float32(public value: f32);
+  Float64(public value: f64);
+  String(public start: u64, public end: u64);
+  Binary(public start: u64, public end: u64);
+  Array(public count: u32);
+  Map(public count: u32);
+  Extension(public kind: i8, public start: u64, public end: u64);
+}
+
+public struct Token {
+  public tag: u8;
+  public start: u64;
+  public next: u64;
+  public event: Event;
+}
+
+public enum Error {
+  Truncated(public start: u64, public offset: u64, public needed: u64, public available: u64);
+  Reserved(public offset: u64);
+  Offset(public offset: u64);
+}
