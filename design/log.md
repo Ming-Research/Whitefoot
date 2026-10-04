@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-04 Shared state locked by parts: one Shared<T>, keyed tables as fields, entries named in the header
+
+Nodes: language/waiting/shared-objects, language/waiting/shared-objects/keyed-tables, language/waiting/shared-objects/shared-maps, compiler/waiting-contexts, compiler/waiting-contexts/state-locks, compiler/waiting-contexts/concurrent-map, compiler/completion-runtime, compiler/incremental-compilation
+
+Owner-approved: The redesign's direction and Q1-Q18 were settled with the owner in the sessions of 2026-10-02 and 2026-10-03; on 2026-10-03, in conversation, written in Chinese: "Q19-Q26 approved as recommended (option A where options were given)", recorded on PR #208; on 2026-10-04, in the session, written in Chinese, after the handoff of PR #208 at `cb05ed6ae`, which showed every rule change with its before and after behavior: "I approve it again now. These are the exact words." (translated), and Q35 A ("No problem, do it this way", translated).
+
+Summary: The shared-maps node is retired. `Shared<T>` is the one sharing primitive, and `KeyedTable<V>` is a value held as a field of a shared state instead of a separate `SharedMap` handle with nested keyed statements, because one primitive gives `atomic` one meaning, exclusive access to the whole state at one point, while the implementation locks only the parts a statement touches. An atomic statement names a table's entries in its header, by one key or by a `KeySet`, so every key is a value when the statement begins and the lock set is known before the guard. The compiler takes a state's lock units, each table field and one unit for the other fields, in declaration order, every table with header entries before the guard (Q26), and releases them at every exit; a guard that reads false registers its watch while still holding what it read (Q20); writing or swapping a table exchanges its entries in place (Q19). The runtime holds a key set's entries in the statement's frame in byte order (Q23), counts a whole hold's own entries (Q21), and sets SO_REUSEADDR on POSIX listening sockets (Q24). The design, firn's statements mapped onto it and the refused alternatives are in [the shared-state investigation](../research/investigations/shared-state/DESIGN.md).
+
 ## 2026-10-03 Firn's standalone deployment and Whitefoot Lua direction
 
 Nodes: language/firn
