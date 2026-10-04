@@ -1236,6 +1236,8 @@ pub enum IrOperation {
         table: IrValueId,
         set: IrValueId,
         record: IrRecord,
+        /// A private frame descriptor for a read selection; None materializes.
+        read_record: Option<IrRecord>,
         element: IrElement,
     },
     /// Begins the hold `record` of entries of the table `table`. Defines `Unit`.

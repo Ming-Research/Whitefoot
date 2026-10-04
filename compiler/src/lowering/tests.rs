@@ -1715,3 +1715,182 @@ fn third_of(outer: &Outer) -> result: u64 reads(outer) {{
         assert_eq!(field_loads, 1, "one load, of the field itself");
     });
 }
+
+#[test]
+fn table_borrows_materialize_only_writable_roots() {
+    let source =
+        include_bytes!("../../../tests/conformance/cases/share-pos-table-nested-readers.wf");
+    with_ir(source, |program| {
+        let reader = function(program, "read");
+        let selections = reader
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| {
+                if let IrInstruction::Define {
+                    operation: IrOperation::TableHeldEntry { write, .. },
+                    ..
+                } = instruction
+                {
+                    Some(*write)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            selections,
+            [false, false],
+            "shared outer readers must never materialize inner cells"
+        );
+        assert!(
+            reader
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .any(|instruction| matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::TableHeldEntries {
+                            read_record: Some(_),
+                            ..
+                        },
+                        ..
+                    }
+                ))
+        );
+        let writer = function(program, "main");
+        assert!(
+            writer
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .any(|instruction| matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::TableHeldEntry { write: true, .. },
+                        ..
+                    }
+                ))
+        );
+    });
+}
+
+#[test]
+fn table_borrows_follow_parameter_rows_and_local_ownership() {
+    let source = br#"struct Store {
+  map: KeyedTable<u8>;
+  count: u8;
+}
+
+const names: Array<u8, 1> =[97_u8];
+
+fn reader(env: &Store, key: &[u8]) -> result: unit reads(env), reads(key) {
+  let copied = env;
+  let t = &copied^.map;
+  let slot = &t^[key];
+  match slot^ {
+    Some(value: n) => {
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn writer(env: &Store, key: &[u8]) -> result: unit reads(key), writes(env.map) {
+  let copied = env;
+  let t = &copied^.map;
+  let slot = &t^[key];
+  set slot^ = Some<u8>(value: 7_u8);
+  return unit;
+}
+
+fn other_writer(env: &Store, key: &[u8]) -> result: unit reads(env.map), reads(key), writes(env.count) {
+  let t = &env^.map;
+  let slot = &t^[key];
+  match slot^ {
+    Some(value: n) => {
+    }
+    None() => {
+    }
+  }
+  set env^.count = 1_u8;
+  return unit;
+}
+
+fn rebound(table: &KeyedTable<u8>, key: &[u8]) -> result: unit reads(table), reads(key) {
+  let old = &table^[key];
+  match old^ {
+    Some(value: n) => {
+    }
+    None() => {
+    }
+  }
+  let local = keyed_table_new::<u8>(capacity: 1_u64);
+  set table = &local;
+  let slot = &table^[key];
+  set slot^ = Some<u8>(value: 4_u8);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let map = keyed_table_new::<u8>(capacity: 1_u64);
+  let local = Store(map: move map, count: 0_u8);
+  let key = &names[0_u64..1_u64];
+  let t = &local.map;
+  let slot = &t^[key];
+  set slot^ = Some<u8>(value: 3_u8);
+  reader(env: &local, key: key);
+  writer(env: &local, key: key);
+  other_writer(env: &local, key: key);
+  rebound(table: &local.map, key: key);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        for (name, expected) in [
+            ("reader", vec![false]),
+            ("writer", vec![true]),
+            ("other_writer", vec![false]),
+            ("rebound", vec![false, true]),
+            ("main", vec![true]),
+        ] {
+            let selections = function(program, name)
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| {
+                    if let IrInstruction::Define {
+                        operation: IrOperation::TableHeldEntry { write, .. },
+                        ..
+                    } = instruction
+                    {
+                        Some(*write)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selections, expected,
+                "{name}: materialization follows the selection root"
+            );
+        }
+    });
+    let source = String::from_utf8(source.to_vec()).unwrap();
+    let readonly_write = source.replace("reads(key), writes(env.map)", "reads(env), reads(key)");
+    assert_ne!(readonly_write, source);
+    assert_eq!(
+        crate::compile(
+            &[SourceInput::new(
+                "readonly-write.wf",
+                readonly_write.as_bytes()
+            )],
+            crate::CompilerLimits::default()
+        )
+        .expect_err("a reads row cannot authorize a write through its borrowed entry")
+        .rule_id(),
+        Some("SET-1")
+    );
+}

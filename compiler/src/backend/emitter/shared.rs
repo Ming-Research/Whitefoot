@@ -62,6 +62,13 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
         else {
             continue;
         };
+        if let IrOperation::TableHeldEntries {
+            read_record: Some(record),
+            ..
+        } = operation
+        {
+            records.insert(record.index(), *record);
+        }
         let record = match operation {
             IrOperation::TableLockEntry { record, .. }
             | IrOperation::TableEntrySlot { record, .. }
@@ -299,9 +306,13 @@ impl FunctionEmitter<'_, '_> {
         table: IrValueId,
         set: IrValueId,
         record: IrRecord,
+        read_record: Option<IrRecord>,
     ) -> Result<(), BackendFailure> {
         self.names(&["wf__table_held_entries"]);
-        writeln!(self.output, "  call void @wf__table_held_entries(ptr {}, ptr {}, ptr {})\n  {} = getelementptr i8, ptr {}, i64 0", self.value_name(table), self.value_name(set), record_name(record), self.value_name(result), record_name(record)).map_err(|_| BackendFailure::TextEmission)
+        let read_record = read_record
+            .map(record_name)
+            .unwrap_or_else(|| "null".to_owned());
+        writeln!(self.output, "  call void @wf__table_held_entries(ptr {}, ptr {}, ptr {}, ptr {})\n  {} = getelementptr i8, ptr {}, i64 0", self.value_name(table), self.value_name(set), record_name(record), read_record, self.value_name(result), record_name(record)).map_err(|_| BackendFailure::TextEmission)
     }
 
     /// Locks one key's entry, keeping the lock in its record and the slot's

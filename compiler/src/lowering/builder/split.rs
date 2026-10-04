@@ -586,6 +586,9 @@ impl IrBuilder<'_> {
             self.overlap,
             self.function_name,
         )?;
+        builder
+            .readonly_atomic_sources
+            .clone_from(&self.readonly_atomic_sources);
         let seed = builder.new_parameter(result_type)?;
         let lower = builder.new_parameter(U64)?;
         let upper = builder.new_parameter(U64)?;

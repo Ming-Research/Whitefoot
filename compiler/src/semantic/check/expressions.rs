@@ -1307,7 +1307,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// [SET-1], and a reference-parameter root needs this callable's declared
     /// row to carry `writes` of the path, which is the same fact [EFF-5]
     /// substitutes at every call.
-    fn reference_row_writes(
+    pub(in crate::semantic::check) fn reference_row_writes(
         &self,
         function: &FunctionSignature,
         place: &ResolvedPlace,

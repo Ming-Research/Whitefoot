@@ -222,7 +222,11 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
         ("wf__table_prepare_shared", "void", &["ptr"]),
         ("wf__table_held_entry", "ptr", &["ptr", "ptr", "i64", "i32"]),
-        ("wf__table_held_entries", "void", &["ptr", "ptr", "ptr"]),
+        (
+            "wf__table_held_entries",
+            "void",
+            &["ptr", "ptr", "ptr", "ptr"],
+        ),
         ("wf__table_hold_begin", "void", &["ptr", "ptr"]),
         ("wf__table_hold_key", "i64", &["ptr", "ptr", "i64"]),
         ("wf__table_hold_keys", "i64", &["ptr", "ptr"]),

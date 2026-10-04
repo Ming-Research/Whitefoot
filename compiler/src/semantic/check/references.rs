@@ -1237,9 +1237,18 @@ impl<'unit> Checker<'_, 'unit> {
                 }));
         }
         let kind = ReferenceKind::Single;
+        // Retain the point-current ownership judgment, not the function-wide
+        // union of a rebound holder's origins. Lowering only refines atomic
+        // sources once their complete statements have classified shared reads.
+        let writable = places.iter().try_fold(true, |writable, place| {
+            self.reference_row_writes(context.function, place, bindings)
+                .map(|allowed| writable && allowed)
+        })?;
         let expression = CheckedExpression::BorrowAddressed {
             carrier: self.types.declarations.tree.path(carrier)?.clone(),
             root: CheckedContainerRoot { root, path, ty },
+            writable,
+            atomic_sources: reference.atomic_sources.clone(),
         };
         let mut accesses = carried
             .accesses

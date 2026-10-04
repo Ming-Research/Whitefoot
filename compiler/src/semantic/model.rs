@@ -2408,6 +2408,11 @@ pub(crate) enum CheckedExpression {
     BorrowAddressed {
         carrier: NodePath,
         root: CheckedContainerRoot,
+        /// Whether ordinary ownership and the function's row permit writes
+        /// through every resolved target at this formation [SET-1, EFF-2].
+        /// Atomic sources are refined by their statement's completed write set.
+        writable: bool,
+        atomic_sources: Vec<BindingId>,
     },
     /// The referent value read through such a holder [TYPE-7]. The holder
     /// itself stays a distinct expression, so lowering never has to guess

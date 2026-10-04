@@ -2479,8 +2479,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 write,
             } => self.emit_table_held_entry(result, *nominal, *table, *key, *write),
             IrOperation::TableHeldEntries {
-                table, set, record, ..
-            } => self.emit_table_held_entries(result, *table, *set, *record),
+                table,
+                set,
+                record,
+                read_record,
+                ..
+            } => self.emit_table_held_entries(result, *table, *set, *record, *read_record),
             IrOperation::TableHoldBegin { record, table } => {
                 self.emit_table_hold_begin(result, *record, *table)
             }

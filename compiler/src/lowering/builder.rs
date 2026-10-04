@@ -706,6 +706,8 @@ struct IrBuilder<'program> {
     /// [SHARE-2] the atomic statements whose blocks enclose the statement
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
+    /// Atomic entry roots whose completed statements permit concurrent readers.
+    readonly_atomic_sources: std::collections::HashSet<BindingId>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -769,6 +771,7 @@ impl<'program> IrBuilder<'program> {
             context_awaits: Vec::new(),
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
+            readonly_atomic_sources: std::collections::HashSet::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -1991,7 +1994,15 @@ impl<'program> IrBuilder<'program> {
                 }
                 Ok(selected)
             }
-            CheckedExpression::BorrowAddressed { root, .. } => self.lower_place_address(root),
+            CheckedExpression::BorrowAddressed {
+                root,
+                writable,
+                atomic_sources,
+                ..
+            } => {
+                let write = self.borrow_may_write(*writable, atomic_sources);
+                self.lower_place_address_access(root, write)
+            }
             CheckedExpression::DerefAddressed { binding, ty, .. } => {
                 let value = self.binding_value(*binding)?;
                 if self.value_type(value)? != lower_type(self.erasure, *ty)? {

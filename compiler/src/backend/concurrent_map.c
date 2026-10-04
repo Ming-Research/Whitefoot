@@ -2123,13 +2123,13 @@ static int settle_entries(wf_cmap_user *u, wf_cmap_holding *hold, uint64_t tag_o
     return fresh;
 }
 
-/* Select under exclusive whole-table ownership. Only writes claim cells;
- * held descriptors retain nodes' copied keys rather than caller storage. */
+/* The enclosing ownership or shared outer hold keeps this index stable.
+ * Reads touch neither the table nor a hold, even if local writes retained one.
+ * Only writes claim cells and change the exclusive whole hold's descriptors. */
 void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length, int write) {
-    wf_cmap_holding *hold = map->whole_hold;
-    if (hold == NULL && !write) {
-        /* A local table has one user. A read takes no hold and allocates
-         * nothing, including on the first absent probe. */
+    if (!write) {
+        /* Several readers may share an outer entry containing this table.
+         * No user publication, hold update or allocation occurs here. */
         table *t = atomic_load_explicit(&map->current, memory_order_relaxed);
         uint64_t tag = tag_of(key, length), at = start_of(t, tag), left = t->capacity;
         while (left-- != 0) {
@@ -2142,6 +2142,7 @@ void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length
         }
         return NULL;
     }
+    wf_cmap_holding *hold = map->whole_hold;
     if (hold == NULL) {
         map->local_hold = take(sizeof(wf_cmap_holding));
         wf_cmap_hold_begin(map->local_hold, map);
@@ -2158,19 +2159,6 @@ void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length
         if (e->cell != NULL && e->tag == tag && same_key(node_at(e->cell), key, length))
             return e->slot;
     }
-    uint64_t at = start_of(t, tag), left = t->capacity;
-    while (left-- != 0) {
-        cell *c = &t->cells[at];
-        uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed);
-        uint64_t bare = k & ~(LOCKED | PENDING);
-        if (bare == EMPTY) break;
-        if (bare == tag && same_key(node_at(c), key, length)) {
-            if (!write) return slot_of(map, node_at(c));
-            break;
-        }
-        at = (at + 1) & t->mask;
-    }
-    if (!write) return NULL;
     cell *c;
     int r;
     for (;;) {

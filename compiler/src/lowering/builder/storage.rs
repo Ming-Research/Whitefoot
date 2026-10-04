@@ -330,6 +330,13 @@ impl IrBuilder<'_> {
         Ok(address)
     }
 
+    pub(super) fn borrow_may_write(&self, writable: bool, sources: &[BindingId]) -> bool {
+        writable
+            && sources
+                .iter()
+                .all(|source| !self.readonly_atomic_sources.contains(source))
+    }
+
     /// Lowers the address carried by a checked borrowed-place expression.
     ///
     /// In particular, dereferencing a Box owner slot follows the stored Box
@@ -346,7 +353,15 @@ impl IrBuilder<'_> {
             | CheckedExpression::DerefAddressed { binding, .. } => {
                 self.lower_addressed_borrow(*binding, ty)?
             }
-            CheckedExpression::BorrowAddressed { root, .. } => self.lower_place_address(root)?,
+            CheckedExpression::BorrowAddressed {
+                root,
+                writable,
+                atomic_sources,
+                ..
+            } => {
+                let write = self.borrow_may_write(*writable, atomic_sources);
+                self.lower_place_address_access(root, write)?
+            }
             CheckedExpression::BorrowRangeIndex { place, .. } => self.lower_range_address(
                 &place.root,
                 &place.offset,
@@ -499,12 +514,18 @@ impl IrBuilder<'_> {
                             IrAddressed::of(ty).ok_or(LoweringFailure::InvalidCheckedProgram)?;
                         if let IrType::KeyedEntries { element } = ty {
                             let record = self.record(IrRecordKind::KeyedEntries)?;
+                            let read_record = if write {
+                                None
+                            } else {
+                                Some(self.record(IrRecordKind::TableHold)?)
+                            };
                             address = self.define(
                                 IrType::Address(referent),
                                 IrOperation::TableHeldEntries {
                                     table,
                                     set: offset,
                                     record,
+                                    read_record,
                                     element,
                                 },
                             )?;

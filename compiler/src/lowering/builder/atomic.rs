@@ -277,6 +277,9 @@ impl IrBuilder<'_> {
         // the statement begins [SHARE-2].
         let mut headers = Vec::with_capacity(entries.len());
         for entry in entries {
+            if entry.reads {
+                self.readonly_atomic_sources.insert(entry.binding);
+            }
             let fields = table_fields(&entry.table, binding)?;
             let unit = shapes
                 .iter()

@@ -57,6 +57,10 @@ _Static_assert(sizeof(wf_cmap_holding) == WF_TABLE_HOLD_SIZE, "WF_TABLE_HOLD_SIZ
 _Static_assert(_Alignof(wf_cmap_holding) == WF_TABLE_HOLD_ALIGN, "WF_TABLE_HOLD_ALIGN is a hold's alignment");
 _Static_assert(sizeof(wf_key_set) == 16 && _Alignof(wf_key_set) == 8, "a key set is its count and its memory");
 
+/* A selection descriptor uses the hold's frame layout without becoming a
+ * table hold. Its mode is private to this unit and it owns no table records. */
+enum { WF_TABLE_READ_SELECTION = 2 };
+
 /* A statement that may have written the table ends: the table's watches are
  * woken when it has any, which costs a statement that finds none one load of
  * a word only a guard's registration and wake write. */
@@ -93,8 +97,20 @@ void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t lengt
     return wf_cmap_held_entry(map, key, length, write != 0);
 }
 
-void wf__table_held_entries(void *table, const wf_key_set *set, uint64_t *entries) {
+void wf__table_held_entries(void *table, const wf_key_set *set, uint64_t *entries, void *read_record) {
     wf_cmap *map = table;
+    if (read_record != NULL) {
+        /* A private frame descriptor, never registered with the map or
+         * released as a hold. Each selected slot probes the stable index. */
+        wf_cmap_holding *selection = read_record;
+        wf_cmap_hold_begin(selection, map);
+        selection->wants = WF_TABLE_READ_SELECTION;
+        selection->table = (void *)set;
+        entries[0] = (uint64_t)(uintptr_t)selection;
+        entries[1] = 0;
+        entries[2] = set->len;
+        return;
+    }
     if (map->whole_hold == NULL) {
         map->local_hold = take(sizeof(wf_cmap_holding));
         wf_cmap_hold_begin(map->local_hold, map);
@@ -176,7 +192,14 @@ void wf__table_hold_take(void *hold) {
 }
 
 void *wf__table_hold_slot(void *hold, uint64_t position) {
-    return wf_cmap_hold_slot((const wf_cmap_holding *)hold, position);
+    const wf_cmap_holding *selection = hold;
+    if (selection->wants == WF_TABLE_READ_SELECTION) {
+        uint64_t length;
+        const unsigned char *key = wf_cmap_key_set_key(selection->table, position, &length);
+        void *slot = wf_cmap_held_entry(selection->map, key, length, 0);
+        return slot != NULL ? slot : selection->map->none;
+    }
+    return wf_cmap_hold_slot(selection, position);
 }
 
 void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
