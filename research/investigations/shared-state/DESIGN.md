@@ -482,3 +482,13 @@ other settings as before. The criteria, fixed before the run:
   controls, and a control off by more than 0.03 makes the comparison suspect;
 - the profiles at one server CPU, where no other driver contends for a cell,
   attribute a loss as Measurement 1 states.
+
+Measurement 2's first run on a GitHub runner (37187368625) stopped at 33
+minutes when the runner received a shutdown signal, before any sample was
+kept; samples are now printed as they are taken. Its repeat (37189513763)
+runs there, and the owner's i9-14900K, a 32-CPU Hyper-V Linux machine, runs
+the same images as a self-hosted runner. There, before any sample was read,
+the matrix was narrowed to depth 16, `MSET` with `SET` as the control, and
+1, 4 and 16 server CPUs, about 25 minutes instead of two hours: depth 1 is
+bound by the client, `GET` and `SET` control the same thing, and 1 and 16
+CPUs bound the range; the criteria are unchanged.
