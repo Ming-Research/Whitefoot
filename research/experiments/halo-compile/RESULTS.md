@@ -1,7 +1,8 @@
 # Halo compiler comparison results
 
+Tested commit: `646c585ba2429aba62b25035262db11e5d7386e3`.
 Worktree base: `999b64f9743f5b1c31026bd2d1b513971a2b68ec`. The tested implementation identity is
-`cbbe306efbc6511638ac7929441e4b050d4c44e8e558fe4036225ce1072d1ac3` (SHA-256 over the compile directory and the
+`a0165c390452e10d3151b2fda4b18144fdfa2ed5141ef227bfb0e82497ac4ed4` (SHA-256 over the compile directory and the
 value interface, calculated by `run.py`). The native candidate was rebuilt
 with the existing Whitefoot compiler; PUC `luac` was built from Redis Lua C
 sources and headers copied into scratch outside the repository.
@@ -10,27 +11,37 @@ sources and headers copied into scratch outside the repository.
 
 | Observation | Result |
 | --- | --- |
-| Lua sources compared | 593 |
+| Lua sources compared | 600 |
 | Existing Halo oracle scripts | 80, all matched |
-| Generated valid programs | 438, 436 matched |
-| Malformed programs | 75, all messages matched |
-| Candidate/oracle cells compared | 32220, all matched |
-| Oracle cells across every valid program | 33045 |
+| Generated valid programs | 444, 442 matched |
+| Malformed programs | 76, all messages matched |
+| Candidate/oracle cells compared | 32246, all matched |
+| Oracle cells across every valid program | 33071 |
 | Comparison mutation controls detected | 10 |
-| Registered module check | All five modules accepted |
+| Interning exhaustion checks | 6, all matched the required memory error |
+| Registered module check | All five modules accepted in 1.41 seconds |
 
 The comparison exits **1**, preserving the two unsupported-program failures.
 It is not a full acceptance pass. Each successful program also compares all
 constants, prototype metadata, absolute targets, capture pseudo-cells and
 per-cell line information; the final 256 Nil padding entries are included.
 
-The preliminary three-case sample compared 133 cells in 7.6–15.7 ms per
-case. The final rebuilt dump took 2.65 seconds using the modular cache;
-the scratch PUC build took 1.198 seconds after a 0.149-second
-single-C-file sample. The expanded comparison took 5.84 seconds including
-the PUC build. These are run-sizing observations, not compiler performance
-claims. The comparisons were run on the supplied macOS host; Linux/glibc
-qualification and VM execution were not run.
+The direct `whitefootc --graph lib/halo/modules.wfg --check-modules`
+check exited 0, with 1.28 seconds user and 0.09 seconds system time. No module
+in this worktree took minutes on this run. The native dump rebuild exited 0
+in 3.65 seconds using the modular cache. The preliminary three-case sample
+exited 0 and compared 133 cells in 10.0–665.5 ms per case. This sample's large
+spread prompted the full short comparison: its slowest case took 178.2 ms;
+the complete run took 6.99 seconds, including a 1.493-second scratch PUC build
+following a 0.186-second single-C-file sample. These are run-sizing
+observations, not compiler performance claims. The comparisons were run on
+the supplied macOS host; Linux/glibc qualification and VM execution were
+not run.
+
+Reproduce with the commands in README.md. The full runner's SHA-256 was
+`a9d2a41ef00db70cf3d5db60d6d1152e2e0fe31d07fb932c038cb7073869f9cc`.
+The implementation hash covers the compile directory and value interface;
+the driver hash separately identifies fixture generation and normalization.
 
 ## Every remaining mismatch
 
@@ -46,8 +57,8 @@ limitation instead of narrowing the index or misreporting Lua syntax.
 | `globals-over-256` | Main prototype: 514 constants, 515 cells; includes global name indexes above 255 | No Script; line 1, `compiler cannot represent a global constant index above 255` |
 | `globals-after-many-constants` | Main prototype: 301 constants, 310 cells; GETGLOBAL indexes constant 300 | No Script; line 1, the same compiler limitation |
 
-Those 825 missing cells account for the difference between 33,045 expected
-cells and 32,220 cells actually compared. Every other cell compared equal.
+Those 825 missing cells account for the difference between 33,071 expected
+cells and 32,246 cells actually compared. Every other cell compared equal.
 Rerun either case with `--filter` and `--output` to obtain its complete
 normalized listing diff. Supporting wide globals requires a value-interface
 change beyond the permitted Script addition, so it was not made.
