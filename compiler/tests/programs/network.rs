@@ -1948,9 +1948,10 @@ fn firn_splits_quoted_inline_arguments_as_redis_does() {
 /// carriage return ends a line whatever byte follows it, which is skipped
 /// unread; a negative count is skipped; and an array of 2,147,483,647
 /// elements is a request still arriving, the most Redis takes, while
-/// 2,147,483,648 elements, a count that is not a number and a negative length
-/// are malformed and close the connection. A zero byte before a line's
-/// carriage return leaves the line incomplete, because Redis finds the
+/// 2,147,483,648 elements, a count that is not a number, a negative length
+/// and a count or length with a leading zero are malformed and close the
+/// connection. A zero byte before a line's carriage return, its marker byte
+/// among them, leaves the line incomplete, because Redis finds the
 /// carriage return with strchr: with 65,536 bytes held from the line's first
 /// byte the connection waits, and one more byte is answered as a count, or a
 /// length, line too big before the connection closes. The expected bytes are
@@ -1961,7 +1962,7 @@ fn firn_reads_count_and_length_lines_as_redis_does() {
     let program = firn();
     let port = free_port();
     let text = port.to_string();
-    let child = program.spawn_on_route(true, &[text.as_bytes(), b"6"]);
+    let child = program.spawn_on_route(true, &[text.as_bytes(), b"9"]);
     let mut client = connect_when_ready(port);
     client
         .write_all(b"*1\r\n$4\rXPING\r\n*1\rX$4\r\nPING\r\n*-1\r\n*2147483647\r\n")
@@ -1982,6 +1983,14 @@ fn firn_reads_count_and_length_lines_as_redis_does() {
             &b"*1\r\n$-1\r\n"[..],
             &b"-ERR Protocol error: invalid bulk length\r\n"[..],
         ),
+        (
+            &b"*01\r\n"[..],
+            &b"-ERR Protocol error: invalid multibulk length\r\n"[..],
+        ),
+        (
+            &b"*1\r\n$04\r\n"[..],
+            &b"-ERR Protocol error: invalid bulk length\r\n"[..],
+        ),
     ] {
         let what = format!("{:?}", String::from_utf8_lossy(line));
         let mut client = connect_when_ready(port);
@@ -1996,6 +2005,10 @@ fn firn_reads_count_and_length_lines_as_redis_does() {
         ),
         (
             &b"*1\r\n$4\x00\r\n"[..],
+            &b"-ERR Protocol error: too big bulk count string\r\n"[..],
+        ),
+        (
+            &b"*1\r\n\x004\r\n"[..],
             &b"-ERR Protocol error: too big bulk count string\r\n"[..],
         ),
     ] {
