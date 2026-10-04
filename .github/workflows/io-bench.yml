@@ -20,6 +20,51 @@ on:
         description: Compare full worker count with the primary count on one Windows VM
         type: boolean
         default: false
+      compare_firn:
+        description: Compare firn images built from the revisions compare_revisions names on one Linux host
+        type: boolean
+        default: false
+      compare_revisions:
+        description: "name=revision pairs; a name ending in -twin measures the same image as its stem, a noise control"
+        type: string
+        default: "base=cea9188d4 main=HEAD main-twin=HEAD"
+      compare_runner:
+        description: Where the firn comparison runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
+        type: choice
+        options: [github, 14900k]
+        default: github
+      compare_cpus:
+        description: Server CPUs for the firn comparison
+        type: string
+        default: "1 2"
+      compare_tests:
+        description: redis-benchmark tests for the firn comparison
+        type: string
+        default: "mset set get"
+      compare_depths:
+        description: Pipeline depths for the firn comparison
+        type: string
+        default: "16 1"
+      compare_passes:
+        description: Passes for the firn comparison; probe with 2 first
+        type: string
+        default: "2"
+      compare_seconds:
+        description: Seconds per measured run; probe with 5 first
+        type: string
+        default: "5"
+      compare_profile:
+        description: Record a perf profile of each image under MSET at depth 16
+        type: boolean
+        default: true
+      compare_annotate:
+        description: Symbols whose instructions each profile annotates, space-separated
+        type: string
+        default: ""
+      compare_callers:
+        description: Give each profile sample its DWARF-unwound callers
+        type: boolean
+        default: false
 
 # Every shell step runs under `bash -eo pipefail`, so a protocol that fails
 # behind `| tee` fails the step. Before this, the compiler rejecting a bench
@@ -30,7 +75,7 @@ defaults:
     shell: bash
 
 concurrency:
-  group: io-bench-${{ github.ref }}
+  group: io-bench-${{ github.ref }}-${{ inputs.compare_runner }}
   cancel-in-progress: true
 
 env:
@@ -39,8 +84,144 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # firn images of several revisions, each built by its own compiler, measured
+  # interleaved on one runner by redis-bench.sh's compare mode, with a flat
+  # profile of each. An investigation names its revisions and copies the
+  # tables it relies on into its record.
+  compare-firn:
+    if: ${{ inputs.compare_firn }}
+    name: compare-firn (${{ inputs.compare_runner }})
+    runs-on: ${{ inputs.compare_runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The self-hosted machine keeps these installed; its owner has no
+      # passwordless sudo to give a job.
+      - name: Install the host toolchain, redis-benchmark and perf
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld redis-tools
+          sudo apt-get install -y --no-install-recommends linux-tools-common \
+            linux-tools-generic "linux-tools-$(uname -r)" || true
+          rustup default stable
+          redis-benchmark --version
+
+      # A runner service starts without the login shell's PATH, where rustup
+      # puts cargo; the step stops on the first missing tool and names it.
+      - name: Check the host's tools
+        run: |
+          # A cancelled run on a self-hosted machine can leave its servers,
+          # clients and the host-wide lock behind; they would load the host
+          # this run measures, so stop them first and say what was stopped.
+          if [ "$RUNNER_ENVIRONMENT" != github-hosted ]; then
+            ps -eo pid,args | grep -E 'redis-bench\.sh compare|_temp/compare/|redis-benchmark|run-check\.pl firn/compare' |
+              grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
+            awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
+            sleep 2
+            lock=/tmp/whitefoot-check-$(id -u).lock
+            if [ -e "$lock" ]; then
+              owner=$(head -1 "$lock/pid" 2>/dev/null)
+              if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+                echo "removing stale lock of $owner"
+                rm -rf "$lock"
+              fi
+            fi
+          fi
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          missing=
+          for tool in clang ld.lld cargo rustc redis-benchmark redis-cli taskset perl python3 git make; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          echo "cpus: $(nproc)"
+          echo "perf: $(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)"
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+
+      - name: Build each revision's firn with its own compiler
+        env:
+          REVISIONS: ${{ inputs.compare_revisions }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/compare"
+          images=
+          for pair in $REVISIONS; do
+            name=${pair%%=*}
+            stem=${name%-twin}
+            if [ "$stem" != "$name" ]; then
+              images="$images $name=$RUNNER_TEMP/compare/$stem"
+              continue
+            fi
+            tree="$RUNNER_TEMP/tree-$name"
+            # A self-hosted runner keeps the checkout, and with it the
+            # registration of a previous run's worktree under a cleaned temp.
+            git worktree prune
+            rm -rf "$tree"
+            git worktree add --detach "$tree" "${pair#*=}"
+            echo "revision,$name,$(git -C "$tree" rev-parse HEAD)" | tee -a "$RUNNER_TEMP/compare/revisions.csv"
+            cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+            make -C "$tree/compiler" build
+            "$tree/compiler/target/gate/whitefootc" --full-lto \
+              --graph "$tree/apps/firn/modules.wfg" --entry firn -o "$RUNNER_TEMP/compare/$name"
+            images="$images $name=$RUNNER_TEMP/compare/$name"
+          done
+          echo "IMAGES=$images" >> "$GITHUB_ENV"
+
+      - name: Measure the images interleaved
+        env:
+          OUT: ${{ runner.temp }}/compare
+          COMPARE_CPUS: ${{ inputs.compare_cpus }}
+          COMPARE_TESTS: ${{ inputs.compare_tests }}
+          COMPARE_DEPTHS: ${{ inputs.compare_depths }}
+          COMPARE_PASSES: ${{ inputs.compare_passes }}
+          COMPARE_SECONDS: ${{ inputs.compare_seconds }}
+          PROFILE: ${{ inputs.compare_profile }}
+          PERF_ANNOTATE: ${{ inputs.compare_annotate }}
+          PERF_CALLERS: ${{ inputs.compare_callers && '1' || '' }}
+          PERF_FREQUENCY: ${{ inputs.compare_callers && '999' || '4999' }}
+          WHITEFOOT_CHECK_TIMEOUT: "6000"
+        run: |
+          {
+            echo "kernel: $(uname -srvmo)"
+            echo "cpus: $(nproc)"
+            echo "model: $(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)"
+            echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT)"
+            for tool in clang ld.lld cargo redis-benchmark redis-cli taskset perl python3; do
+              echo "$tool: $(command -v "$tool" || echo missing)"
+            done
+          } | tee "$OUT/host.txt"
+          if [ "$PROFILE" = true ]; then
+            PERF=${PERF:-$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)}
+            if [ -n "$PERF" ]; then
+              if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+                sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+              fi
+              export PERF
+            else
+              echo "no perf for this kernel; profiles skipped" | tee -a "$OUT/host.txt"
+            fi
+          fi
+          perl .github/run-check.pl firn/compare \
+            sh research/experiments/io-completion-bench/redis-bench.sh compare \
+            2>&1 | tee "$OUT/bench.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compare-firn-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/compare/*.csv
+            ${{ runner.temp }}/compare/*.txt
+
   bench-linux:
-    if: ${{ !inputs.compare_windows_workers }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
     name: bench-linux (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -156,7 +337,7 @@ jobs:
   # not known in advance; a table whose probe refused the label says so on its
   # own label line.
   bench-linux-read:
-    if: ${{ !inputs.compare_windows_workers }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
     name: bench-linux-read (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -235,7 +416,7 @@ jobs:
             bench-read.txt
 
   bench-macos-read:
-    if: ${{ !inputs.compare_windows_workers }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
     name: bench-macos-read (macos-14)
     runs-on: macos-14
     timeout-minutes: 120
@@ -333,6 +514,7 @@ jobs:
   # worker and a used, fully reaped IOCP path. C2 has ordinary synchronous call
   # boundaries; no cross-call completion overlap or speed threshold is required.
   bench-windows:
+    if: ${{ !inputs.compare_firn }}
     name: bench-windows-measured (windows-latest)
     runs-on: windows-latest
     timeout-minutes: 120
