@@ -305,6 +305,72 @@ fn embed_probe() -> r: u8 pure {
   if bnot(at_ok) {
     return 40_u8;
   }
+  let nested = halo::embed::compile(engine: &engine, chunk_name: &probe_text_4[0_u64..12_u64], source: &nested_stop_source[0_u64..139_u64]);
+  let nested_id = halo::embed::ScriptId(slot: 0_u64, generation: engine.generation);
+  match move nested {
+    Err(..) => {
+      return 41_u8;
+    }
+    Ok(value: id) => {
+      set nested_id = id;
+    }
+  }
+  let enabled = True();
+  halo::embed::set_gc_stress(engine: &engine, enabled: enabled);
+  set env.mode = 2_u8;
+  let nested_outcome = probe_run(engine: &engine, env: &env, script: nested_id);
+  match nested_outcome {
+    HostStopped() => {
+    }
+    Done(..) => {
+      return 42_u8;
+    }
+    Error() => {
+      return 43_u8;
+    }
+    Budget() => {
+      return 44_u8;
+    }
+  }
+  if engine.stack.inner.len < 256_u64 {
+    return 45_u8;
+  }
+  let before_reset = halo::embed::collection_count(engine: &engine);
+  halo::embed::reset(engine: &engine);
+  if engine.vm.stopped_stack.inner.len != 0_u64 {
+    return 46_u8;
+  }
+  let after_reset = halo::embed::collection_count(engine: &engine);
+  if after_reset != before_reset {
+    return 47_u8;
+  }
+  let follow = halo::embed::compile(engine: &engine, chunk_name: &probe_text_4[0_u64..12_u64], source: &stop_recovery_source[0_u64..9_u64]);
+  match move follow {
+    Err(..) => {
+      return 48_u8;
+    }
+    Ok(value: id) => {
+      set env.mode = 0_u8;
+      let recovered = probe_run(engine: &engine, env: &env, script: id);
+      match recovered {
+        Done(..) => {
+        }
+        Error() => {
+          return 49_u8;
+        }
+        Budget() => {
+          return 50_u8;
+        }
+        HostStopped() => {
+          return 51_u8;
+        }
+      }
+      let right_reply = returned(engine: &engine, expected: 73.0_f64);
+      if bnot(right_reply) {
+        return 52_u8;
+      }
+    }
+  }
   return 0_u8;
 }
 
@@ -353,3 +419,7 @@ fn format_matches(engine: &Engine, line: u64, want: &[u8]) -> r: Bool reads(engi
   }
   return True();
 }
+
+const nested_stop_source: Array<u8, 139> = "return tostring(setmetatable({}, {__tostring=function() return tostring(setmetatable({}, {__tostring=function() return host() end})) end}))";
+
+const stop_recovery_source: Array<u8, 9> = "return 73";

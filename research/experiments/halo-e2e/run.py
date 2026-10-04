@@ -113,7 +113,7 @@ def run(command, **kwargs):
     return result, time.monotonic() - start
 
 
-def verify_errors(binary):
+def verify_errors(binary, stress=False):
     """Redis 7 source-grounded replies, independent script identities/locations."""
     wrong = 'ERR Wrong number of args calling Redis command from script'
     missing = "Script attempted to access nonexistent global variable 'missing_global'"
@@ -134,24 +134,24 @@ def verify_errors(binary):
         expected = {'type': 'error', 'bytes': message + ' script: ' + hashlib.sha1(source).hexdigest()
                     + f', on @user_script:{line}.'}
         for extra in (['one'], ['seven', 'seven'], []):
-            result, _ = run([str(binary)] + extra, input=fixture(source))
+            result, _ = run([str(binary)] + extra + (['--gc-stress'] if stress else []), input=fixture(source))
             if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
                 raise AssertionError(f'error probe {source!r}, args {extra}: {result.stdout!r}, expected {expected}')
     protected = b'return {pcall(function() return redis.call("GET","key","extra") end)}'
     expected = {'type': 'array', 'items': [{'type': 'nil', 'kind': 'bulk'},
                                          {'type': 'bulk', 'bytes': wrong}]}
-    result, _ = run([str(binary)], input=fixture(protected))
+    result, _ = run([str(binary)] + (['--gc-stress'] if stress else []), input=fixture(protected))
     if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
         raise AssertionError(f'protected command error: {result.stdout!r}')
     protected = b'return {pcall(function() return missing_global end)}'
     expected['items'][1]['bytes'] = 'user_script:1: ' + missing
-    result, _ = run([str(binary)], input=fixture(protected))
+    result, _ = run([str(binary)] + (['--gc-stress'] if stress else []), input=fixture(protected))
     if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
         raise AssertionError(f'protected global error: {result.stdout!r}')
     print('Redis errors: 10 source/location/value probes at each budget + 2 protected-error probes pass', flush=True)
 
 
-def verify_sha1(binary):
+def verify_sha1(binary, stress=False):
     """Independent binary vectors; no expected digest comes from Halo."""
     rng = random.Random(0x51A115)
     samples = [b'', b'abc', b'a\0b']
@@ -163,7 +163,7 @@ def verify_sha1(binary):
     for index, data in enumerate(samples):
         escaped = ''.join('\\%03d' % b for b in data).encode('ascii')
         source = b'return redis.sha1hex("' + escaped + b'")'
-        result, seconds = run([str(binary)], input=fixture(source))
+        result, seconds = run([str(binary)] + (['--gc-stress'] if stress else []), input=fixture(source))
         times.append(seconds)
         if result.returncode:
             raise AssertionError(f'SHA-1 vector {index}: native exit {result.returncode}')
@@ -253,9 +253,9 @@ def main():
         if args.verify_memory:
             verify_memory(binary, args.gc_stress, budgets)
         if args.verify_sha1:
-            verify_sha1(binary)
+            verify_sha1(binary, args.gc_stress)
         if args.verify_errors:
-            verify_errors(binary)
+            verify_errors(binary, args.gc_stress)
         rows = []
         summary = defaultdict(Counter)
         observed = {}

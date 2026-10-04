@@ -2245,8 +2245,7 @@ rarely insert at the same place.
   self-tail call; this halved the vm module's check time (about 60 s for the
   package on an M1 Pro) but gives the match-dispatch lowering one shared
   dispatch point instead of a tail jump per arm. Globals always take the slow
-  executor, and `TODO(number)` coercions and numeric `^` await the number
-  library. Change: once a lowering and a benchmark exist (VM.md P1, P2),
+  executor; coercion and numeric power already use `lib/halo/number`. Change: once a lowering and a benchmark exist (VM.md P1, P2),
   measure, then move the epilogue into each arm or inline the handlers, and
   add fast paths where the census shows them hot. Reopen with the first Halo
   performance measurement.
@@ -2268,6 +2267,17 @@ rarely insert at the same place.
   builds. Rerun both comparisons on the x86-64 Linux runner against a glibc
   build of Redis 7.0.15 and its Lua, and adopt glibc's behavior wherever they
   differ. Reopen before Halo's first release or when firn's EVAL lands.
+- **Reconcile the Halo embedding boundary record with current work.**
+  `research/experiments/halo-e2e/GAPS.md` presents the first comparison's
+  retired file-permission boundary as a current constraint ("this task
+  permits no changes to the VM or project TODO"), while the current F4
+  experiment changes both. Impact: readers can confuse an old editing
+  restriction with a technical limitation. Change: remove historical task
+  scope narration and retain the reproducing semantic witnesses and actual
+  boundaries. Reopen when that boundary record is next updated, before
+  using it as current integration guidance; verify its witnesses against
+  the then-current compiler and Halo revision.
+
 - **Library capacity ceilings that existed for OP-9.**
   `GrowVector<T, const ceiling: u64>` in `lib/std/collections/vector`, the
   deque and slab constructors' ceilings, and `tests/programs/wfgrep.wf`'s
