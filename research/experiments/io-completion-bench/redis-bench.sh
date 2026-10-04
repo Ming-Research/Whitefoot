@@ -565,7 +565,10 @@ if [ "$MODE" = compare ]; then
             requests=$(awk -v t="$1" -v d="$2" '$1 == t && $2 == d { print $3 }' "$sizes")
             for name in $names; do
                 start "image-$name"
-                "$PERF" record -F 4999 -p "$server" -o "$OUT/perf-$name-$n.data" >/dev/null 2>&1 &
+                # With PERF_CALLERS set, each sample carries a DWARF-unwound
+                # stack, since firn keeps no frame pointers.
+                "$PERF" record ${PERF_CALLERS:+--call-graph dwarf,16384} -F "${PERF_FREQUENCY:-4999}" \
+                    -p "$server" -o "$OUT/perf-$name-$n.data" >/dev/null 2>&1 &
                 recorder=$!
                 sleep 1
                 compare_client "$1" "$2" "$requests" | sed "s/^/profiled,$name,$n,/"
@@ -573,7 +576,14 @@ if [ "$MODE" = compare ]; then
                 wait "$recorder" || true
                 stop
                 "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
-                    --sort dso,symbol --percent-limit 0.3 >"$OUT/profile-$name-$n.txt" 2>/dev/null
+                    --sort dso,symbol --percent-limit 0.3 -g none >"$OUT/profile-$name-$n.txt" 2>/dev/null
+                if [ -n "$PERF_CALLERS" ]; then
+                    "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
+                        --sort dso,symbol --percent-limit 1 -g caller,0.5,callee,function,percent \
+                        >"$OUT/callers-$name-$n.txt" 2>/dev/null
+                    "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --children \
+                        --sort symbol --percent-limit 1 -g none >"$OUT/inclusive-$name-$n.txt" 2>/dev/null
+                fi
             done
         fi
     done
