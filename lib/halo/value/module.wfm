@@ -1,0 +1,114 @@
+public enum Value {
+  Nil();
+  False();
+  True();
+  Num(n: f64);
+  Str(h: u32);
+  Tab(h: u32);
+  Fun(h: u32);
+  Builtin(id: u32);
+}
+
+public enum Cell {
+  Move(a: u8, b: u8);
+  LoadK(a: u8, k: u8);
+  LoadKx(a: u8, k: u32);
+  LoadBool(a: u8, b: u8, skip: u8);
+  LoadNil(a: u8, b: u8);
+  GetUpval(a: u8, u: u8);
+  SetUpval(a: u8, u: u8);
+  GetGlobal(a: u8, k: u8);
+  SetGlobal(a: u8, k: u8);
+  GetTableR(a: u8, t: u8, c: u8);
+  GetTableK(a: u8, t: u8, k: u8);
+  SetTableRR(t: u8, key: u8, val: u8);
+  SetTableRK(t: u8, key: u8, val: u8);
+  SetTableKR(t: u8, key: u8, val: u8);
+  SetTableKK(t: u8, key: u8, val: u8);
+  NewTable(a: u8, asize: u8, hsize: u8);
+  SelfR(a: u8, b: u8, c: u8);
+  SelfK(a: u8, b: u8, k: u8);
+  AddRR(a: u8, b: u8, c: u8);
+  AddRK(a: u8, b: u8, c: u8);
+  AddKR(a: u8, b: u8, c: u8);
+  AddKK(a: u8, b: u8, c: u8);
+  SubRR(a: u8, b: u8, c: u8);
+  SubRK(a: u8, b: u8, c: u8);
+  SubKR(a: u8, b: u8, c: u8);
+  SubKK(a: u8, b: u8, c: u8);
+  MulRR(a: u8, b: u8, c: u8);
+  MulRK(a: u8, b: u8, c: u8);
+  MulKR(a: u8, b: u8, c: u8);
+  MulKK(a: u8, b: u8, c: u8);
+  DivRR(a: u8, b: u8, c: u8);
+  DivRK(a: u8, b: u8, c: u8);
+  DivKR(a: u8, b: u8, c: u8);
+  DivKK(a: u8, b: u8, c: u8);
+  ModRR(a: u8, b: u8, c: u8);
+  ModRK(a: u8, b: u8, c: u8);
+  ModKR(a: u8, b: u8, c: u8);
+  ModKK(a: u8, b: u8, c: u8);
+  PowRR(a: u8, b: u8, c: u8);
+  PowRK(a: u8, b: u8, c: u8);
+  PowKR(a: u8, b: u8, c: u8);
+  PowKK(a: u8, b: u8, c: u8);
+  Unm(a: u8, b: u8);
+  Not(a: u8, b: u8);
+  Len(a: u8, b: u8);
+  Concat(a: u8, b: u8, c: u8);
+  Jmp(target: u32);
+  EqJmpRR(a: u8, b: u8, c: u8, target: u32);
+  EqJmpRK(a: u8, b: u8, c: u8, target: u32);
+  EqJmpKR(a: u8, b: u8, c: u8, target: u32);
+  EqJmpKK(a: u8, b: u8, c: u8, target: u32);
+  LtJmpRR(a: u8, b: u8, c: u8, target: u32);
+  LtJmpRK(a: u8, b: u8, c: u8, target: u32);
+  LtJmpKR(a: u8, b: u8, c: u8, target: u32);
+  LtJmpKK(a: u8, b: u8, c: u8, target: u32);
+  LeJmpRR(a: u8, b: u8, c: u8, target: u32);
+  LeJmpRK(a: u8, b: u8, c: u8, target: u32);
+  LeJmpKR(a: u8, b: u8, c: u8, target: u32);
+  LeJmpKK(a: u8, b: u8, c: u8, target: u32);
+  TestJmp(a: u8, c: u8, target: u32);
+  TestSetJmp(a: u8, b: u8, c: u8, target: u32);
+  Call(a: u8, b: u8, c: u8);
+  TailCall(a: u8, b: u8, c: u8);
+  Return(a: u8, b: u8);
+  ForLoop(a: u8, target: u32);
+  ForPrep(a: u8, target: u32);
+  TForLoop(a: u8, c: u8, target: u32);
+  SetList(a: u8, b: u8, c: u32);
+  Close(a: u8);
+  Closure(a: u8, proto: u32);
+  VarArg(a: u8, b: u8);
+}
+
+public enum NumView {
+  Is(x: f64);
+  Not();
+}
+
+public enum HandleView {
+  Handle(h: u32);
+  NoHandle();
+}
+
+public struct Proto {
+  public start: u32;
+  public kbase: u32;
+  public nk: u32;
+  public numparams: u8;
+  public is_vararg: Bool;
+  public maxstack: u8;
+  public nups: u8;
+}
+
+public const builtin_host_base: u32 = 4096_u32;
+
+public fn num_of(v: Value) -> r: NumView pure doc "The number a value holds, or Not for every other kind.";
+
+public fn str_of(v: Value) -> r: HandleView pure doc "The string handle a value holds, or NoHandle for every other kind.";
+
+public fn tab_of(v: Value) -> r: HandleView pure doc "The table handle a value holds, or NoHandle for every other kind.";
+
+public fn truthy(v: Value) -> r: Bool pure doc "Lua truth: every value except nil and false is true.";

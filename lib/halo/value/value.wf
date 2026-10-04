@@ -1,0 +1,119 @@
+fn num_of(v: Value) -> r: NumView pure {
+  doc "Selects the Num variant.";
+  match v {
+    Nil() => {
+      return NumView::Not();
+    }
+    False() => {
+      return NumView::Not();
+    }
+    True() => {
+      return NumView::Not();
+    }
+    Num(n: x) => {
+      return NumView::Is(x: x);
+    }
+    Str(h: hv) => {
+      return NumView::Not();
+    }
+    Tab(h: hv) => {
+      return NumView::Not();
+    }
+    Fun(h: hv) => {
+      return NumView::Not();
+    }
+    Builtin(id: hid) => {
+      return NumView::Not();
+    }
+  }
+}
+
+fn str_of(v: Value) -> r: HandleView pure {
+  doc "Selects the Str variant.";
+  match v {
+    Nil() => {
+      return HandleView::NoHandle();
+    }
+    False() => {
+      return HandleView::NoHandle();
+    }
+    True() => {
+      return HandleView::NoHandle();
+    }
+    Num(n: x) => {
+      return HandleView::NoHandle();
+    }
+    Str(h: hv) => {
+      return HandleView::Handle(h: hv);
+    }
+    Tab(h: hv) => {
+      return HandleView::NoHandle();
+    }
+    Fun(h: hv) => {
+      return HandleView::NoHandle();
+    }
+    Builtin(id: hid) => {
+      return HandleView::NoHandle();
+    }
+  }
+}
+
+fn tab_of(v: Value) -> r: HandleView pure {
+  doc "Selects the Tab variant.";
+  match v {
+    Nil() => {
+      return HandleView::NoHandle();
+    }
+    False() => {
+      return HandleView::NoHandle();
+    }
+    True() => {
+      return HandleView::NoHandle();
+    }
+    Num(n: x) => {
+      return HandleView::NoHandle();
+    }
+    Str(h: hv) => {
+      return HandleView::NoHandle();
+    }
+    Tab(h: hv) => {
+      return HandleView::Handle(h: hv);
+    }
+    Fun(h: hv) => {
+      return HandleView::NoHandle();
+    }
+    Builtin(id: hid) => {
+      return HandleView::NoHandle();
+    }
+  }
+}
+
+fn truthy(v: Value) -> r: Bool pure {
+  doc "Nil and False are false; every other value is true.";
+  match v {
+    Nil() => {
+      return False();
+    }
+    False() => {
+      return False();
+    }
+    True() => {
+      return True();
+    }
+    Num(n: x) => {
+      return True();
+    }
+    Str(h: hv) => {
+      return True();
+    }
+    Tab(h: hv) => {
+      return True();
+    }
+    Fun(h: hv) => {
+      return True();
+    }
+    Builtin(id: hid) => {
+      return True();
+    }
+  }
+}
