@@ -2210,6 +2210,16 @@ rarely insert at the same place.
   exceed it. Reopen immediately for F4; verify an unbounded case and a
   following script on the same engine/store, and remove when fixed.
 
+- **Halo stress reveals incomplete live-stack bounds and saved-stack retention.**
+  F4's `lua-core/unpack-select-varargs` loses its last array value at every
+  budget: the collector clears dynamic arguments beyond `frame_top` even
+  though `Vm.top` keeps them live. Also, `restore_stopped_stack` leaves the
+  consumed snapshot rooted indefinitely, retaining dead callback values
+  across scripts. Change: include the dynamic top in the collector's stack
+  limit, and release a snapshot once restored. Reopen immediately for F4;
+  verify the unchanged varargs oracle, suspended callbacks and heap recovery,
+  then remove this item when both fixes pass.
+
 - **Halo codec error names need Lua debug metadata.** The library comparison
   in `research/experiments/halo-luacodecs/RESULTS.md` includes
   `local f=bit.tobit; return f(false)` and operations on `cjson.null`.

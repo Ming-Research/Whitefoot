@@ -626,6 +626,8 @@ fn reset(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit writes(stack), writes(vm
   set vm^.top = 0_u64;
   set vm^.activation = 0_u32;
   set vm^.host_stopped = False();
+  let empty = box_slots_new::<Value>(capacity: 0_u64);
+  set vm^.stopped_stack = move empty;
   set vm^.error = Value::Nil();
   return unit;
 }
@@ -700,11 +702,15 @@ fn park_stopped_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit reads(stack
   return unit;
 }
 
-fn restore_stopped_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit reads(vm), writes(stack) {
+fn restore_stopped_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit writes(vm), writes(stack) {
   let count = vm^.stopped_stack.inner.len;
   resize_stack(stack: stack, size: count);
   for (i in 0_u64..count) {
     set stack^.inner[i] = vm^.stopped_stack.inner[i];
+  }
+  if bnot(vm^.host_stopped) {
+    let empty = box_slots_new::<Value>(capacity: 0_u64);
+    set vm^.stopped_stack = move empty;
   }
   return unit;
 }

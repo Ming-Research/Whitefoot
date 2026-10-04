@@ -175,12 +175,37 @@ def verify_sha1(binary):
           f'total {sum(times):.3f}s, range {min(times):.4f}..{max(times):.4f}s', flush=True)
 
 
+def verify_memory(binary, stress, budgets):
+    source = (HERE.parent / 'halo-gc/memory-limit.lua').read_bytes()
+    following = (HERE.parent / 'halo-gc/memory-recovery.lua').read_bytes()
+    for budget in budgets:
+        extra = [] if budget == 1000 else ['one'] if budget == 1 else ['seven', 'seven']
+        extra += ['--memory-recovery'] + (['--gc-stress'] if stress else [])
+        result, seconds = run([str(binary)] + extra, input=fixture(source) + b'\0' + following)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        if result.returncode or len(replies) != 2:
+            raise AssertionError(f'memory/recovery transport exit {result.returncode}: {result.stdout!r}')
+        canonical(replies[0])
+        if replies[0]['type'] != 'error' or 'not enough memory' not in replies[0]['bytes']:
+            raise AssertionError(f'memory did not return Lua memory error: {replies[0]}')
+        if canonical(replies[1]) != canonical({'type': 'bulk', 'bytes': 'alive'}):
+            raise AssertionError(f'same-engine/store recovery failed: {replies[1]}')
+        stats = json.loads(result.stderr)
+        if stats['collections'] <= 0 or stats['bytes'] > 67108864:
+            raise AssertionError(f'memory/recovery accounting failed: {stats}')
+        print(f'Memory/recovery budget={budget} stress={stress}: exit 0, {seconds:.6f}s, '
+              f'collections={stats["collections"]}, bytes={stats["bytes"]}, replies={replies}', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--compiler', required=True)
     parser.add_argument('--verify-errors', action='store_true', help='check source-grounded Redis error/location probes')
     parser.add_argument('--verify-sha1', action='store_true', help='compare 1000 random binary inputs with hashlib')
     parser.add_argument('--binary', type=Path, help='reuse an already built test executable')
+    parser.add_argument('--verify-memory', action='store_true', help='check 64 MiB exhaustion and a following script on the same engine')
+    parser.add_argument('--isolate-frames', action='store_true', help='remove redundant frame function-slot aliases at budget checkpoints for sole-root testing')
+    parser.add_argument('--collect-suspended', action='store_true', help='probe collection while callback stack is parked, before resume')
     parser.add_argument('--gc-stress', action='store_true', help='force full collection at every collector safepoint')
     parser.add_argument('--cases', type=Path, default=ORACLE, help='case root with scripts/GROUP/*.lua and expected/GROUP/*.txt')
     parser.add_argument('--filter', default='')
@@ -205,13 +230,14 @@ def main():
     source_files = sorted((ROOT / 'lib/halo').rglob('*.wf')) + sorted((ROOT / 'lib/halo').rglob('*.wfm'))
     source_files += [ROOT / 'lib/halo/modules.wfg', HERE / 'modules.wfg', HERE / 'run.py']
     source_files += sorted((HERE / 'test').glob('*'))
+    source_files += cases + [case_root / 'expected' / p.relative_to(case_root / 'scripts').with_suffix('.txt') for p in cases]
     digest = hashlib.sha256()
     for p in source_files:
         digest.update(str(p.relative_to(ROOT)).encode() + b'\0' + p.read_bytes())
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True, capture_output=True, check=True).stdout.strip()
     report = ['# Halo end-to-end comparison', '',
               f'Local parent revision: `{revision}`. Source digest: `{digest.hexdigest()}`.',
-              f'GC stress: {args.gc_stress}.',
+              f'GC stress: {args.gc_stress}; suspended checkpoint probe: {args.collect_suspended}; frame alias isolation: {args.isolate_frames}.',
               'The digest includes every Halo module, the graph, host and runner; it identifies uncommitted source bytes too.', '']
     with tempfile.TemporaryDirectory(prefix='halo-e2e-', dir='/private/tmp') as temporary:
         scratch = Path(temporary)
@@ -224,6 +250,8 @@ def main():
                 return 2
         report += [f'Executable SHA-256: `{hashlib.sha256(binary.read_bytes()).hexdigest()}`.',
                    f'Compiler SHA-256: `{hashlib.sha256(Path(args.compiler).read_bytes()).hexdigest()}`.', '']
+        if args.verify_memory:
+            verify_memory(binary, args.gc_stress, budgets)
         if args.verify_sha1:
             verify_sha1(binary)
         if args.verify_errors:
@@ -243,6 +271,10 @@ def main():
                 extra = [] if budget == 1000 else ['one'] if budget == 1 else ['seven', 'seven']
                 if args.gc_stress:
                     extra += ['--gc-stress']
+                if args.isolate_frames:
+                    extra += ['--isolate-frames']
+                if args.collect_suspended:
+                    extra += ['--collect-suspended']
                 collections = None
                 try:
                     result, seconds = run([str(binary)] + extra, input=fixture(source))
@@ -257,6 +289,8 @@ def main():
                         actual_bytes = canonical(actual)
                         status = 'PASS' if actual_bytes == expected_bytes else 'FAIL'
                         why = '' if status == 'PASS' else reason(actual, expected)
+                        if args.gc_stress and collections == 0:
+                            status, why = 'FAIL', 'stress performed no collection'
                         if args.actual:
                             output = args.actual / str(budget) / relative.with_suffix('.txt')
                             output.parent.mkdir(parents=True, exist_ok=True)
@@ -272,11 +306,16 @@ def main():
         report += ['| Group | Budget | Passed | Failed |', '| --- | --- | ---: | ---: |']
         for (group, budget), count in sorted(summary.items()):
             report += [f'| {group} | {budget} | {count["PASS"]} | {count["FAIL"]} |']
+        report += ['', '| Budget | Collections | Execution seconds | Zero-collection scripts |', '| ---: | ---: | ---: | ---: |']
+        for budget in budgets:
+            selected = [row for row in rows if row[1] == budget]
+            report += [f'| {budget} | {sum(row[4] or 0 for row in selected)} | {sum(row[3] for row in selected):.6f} | {sum(row[4] == 0 for row in selected)} |']
         report += ['', '| Case | Budget | Result | Seconds | Collections | Failure reason |', '| --- | ---: | --- | ---: | ---: | --- |']
         for case, budget, status, seconds, collections, why in rows:
             report += [f'| {case} | {budget} | {status} | {seconds:.4f} | {collections} | {why.replace("|", "&#124;").replace(chr(0), "<NUL>")} |']
         report += ['', 'No scripts or expected replies were changed. No network or Redis server was used.',
-                   'The reference is the stored Redis 7.0.15 RESP2 corpus. All cases are executed, including unavailable library cases.',
+                   ('The reference is the stored Redis 7.0.15 RESP2 corpus.' if case_root == ORACLE.resolve()
+                    else 'The reference is the selected local cases and their independently stated expected replies.'),
                    'Budget comparisons use fresh stores. They compare replies; atomic kill/restart and host Stop store preservation require separate checks.', '']
         text = '\n'.join(report)
         if args.report:

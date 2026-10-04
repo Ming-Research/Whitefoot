@@ -68,3 +68,13 @@ reported on stderr as JSON and included in each comparison row. The reply on
 stdout keeps the original typed RESP2 schema. The switch defaults off.
 See [the F4 experiment](../halo-gc/README.md#vm-stress-experiment-f4) for
 missing-root mutation and memory-limit evidence.
+
+`--cases PATH` runs paired local `scripts/GROUP/*.lua` and
+`expected/GROUP/*.txt` files with the same comparator. `--verify-memory`
+adds F4's unbounded allocator and then a recovery script in the same engine
+and store; a second NUL separates that following script. `--collect-suspended`
+adds one synthetic collector back-edge while a callback stack is parked,
+before resume. `--isolate-frames` clears dead function-slot aliases at budget
+checkpoints, leaving frame records to root executing closures. These last two
+are explicit root-isolation probes; both default off. Their use and limits
+are recorded in the F4 experiment.

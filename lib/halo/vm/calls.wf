@@ -443,6 +443,10 @@ fn start<interface Host<E>>(script: &Script, stack: &Box<Slots<Value>>, vm: &Vm,
   if stack^.inner.len > 0_u64 {
     set stack^.inner[0_u64] = cl;
   }
+  let collected = collect_if_due(vm: vm, stack: stack, consts: &script^.consts);
+  if bnot(collected) {
+    return Outcome::Error();
+  }
   let atom0 = False();
   let step = prepare::<Host<E>>(code: &script^.code, consts: &script^.consts, vm: vm, stack: stack, env: env, func: 0_u64, argc: argc, wanted: -1_i64, return_pc: 0_u64, base: 0_u64, kbase: 0_u64, tail: atom0);
   return dispatch_step::<Host<E>>(code: &script^.code, consts: &script^.consts, stack: stack, vm: vm, env: env, step: step);

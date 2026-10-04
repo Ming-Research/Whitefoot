@@ -82,7 +82,7 @@ public struct UpvalCell {
 }
 
 public struct Heap {
-  doc "Slab indices are collector handles; no_handle terminates every free list. Logical accounting estimates: strings 24 plus byte capacity, tables 48 plus 16 per array slot and 32 per node, closures 24 plus 4 per upvalue, upvalues 32. Slab and intern reserve are excluded. limit is retained for the future collector allocation policy.";
+  doc "Slab indices are collector handles; no_handle terminates every free list. Logical accounting estimates: strings 24 plus byte capacity, tables 48 plus 16 per array slot and 32 per node, closures 24 plus 4 per upvalue, upvalues 32. Slab and intern reserve are excluded. limit bounds live logical bytes after a full VM safepoint collection; zero is unlimited.";
   public strings: Box<Slots<StringCell>>;
   public tables: Box<Slots<TableCell>>;
   public closures: Box<Slots<ClosureCell>>;
@@ -113,7 +113,7 @@ public fn gc_propagate(heap: &Heap) -> r: unit writes(heap) doc "Marks everythin
 
 public fn gc_sweep(heap: &Heap) -> r: u64 writes(heap) doc "Frees every live cell not marked in the current epoch, dead strings leaving the intern table, and returns how many cells were freed; resets bytes_since_gc and sets threshold to the larger of 1 MiB and the bytes still live, Lua 5.1's pause of 200%.";
 
-public fn gc_due(heap: &Heap) -> r: Bool reads(heap) doc "Whether stress is enabled or the bytes allocated since the last collection exceed the threshold.";
+public fn gc_due(heap: &Heap) -> r: Bool reads(heap) doc "Whether stress is enabled, a nonzero logical byte limit is exceeded, or allocation since collection exceeds the threshold.";
 
 public fn heap_new(limit: u64) -> r: Heap pure doc "Constructs empty, iteration-friendly slabs and an empty weak intern table.";
 

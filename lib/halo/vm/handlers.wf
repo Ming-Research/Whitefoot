@@ -2318,7 +2318,10 @@ fn instruction_jmp<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slot
     if bnot(atom113) {
       return Step::Budget();
     }
-    collect_if_due(vm: vm, stack: stack, consts: consts);
+    let collected = collect_if_due(vm: vm, stack: stack, consts: consts);
+    if bnot(collected) {
+      return unwind(vm: vm, stack: stack);
+    }
   }
   set next = target;
   if vm^.suspended {
@@ -3205,7 +3208,10 @@ fn instruction_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slo
   if bnot(atom144) {
     return Step::Budget();
   }
-  collect_if_due(vm: vm, stack: stack, consts: consts);
+  let collected = collect_if_due(vm: vm, stack: stack, consts: consts);
+  if bnot(collected) {
+    return unwind(vm: vm, stack: stack);
+  }
   let argc = 0_u64;
   if b == 0_u64 {
     let first = ra + 1_u64;
@@ -3255,7 +3261,10 @@ fn instruction_tail_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Bo
   if bnot(atom147) {
     return Step::Budget();
   }
-  collect_if_due(vm: vm, stack: stack, consts: consts);
+  let collected = collect_if_due(vm: vm, stack: stack, consts: consts);
+  if bnot(collected) {
+    return unwind(vm: vm, stack: stack);
+  }
   let argc = 0_u64;
   if b == 0_u64 {
     let first = ra + 1_u64;
@@ -3331,7 +3340,10 @@ fn instruction_for_loop<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box
   if bnot(atom152) {
     return Step::Budget();
   }
-  collect_if_due(vm: vm, stack: stack, consts: consts);
+  let collected = collect_if_due(vm: vm, stack: stack, consts: consts);
+  if bnot(collected) {
+    return unwind(vm: vm, stack: stack);
+  }
   if a <= 252_u64 {
     let rlimit = ra + 1_u64;
     let rstep = ra + 2_u64;
@@ -3472,7 +3484,10 @@ fn instruction_tfor_loop<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Bo
   if bnot(atom157) {
     return Step::Budget();
   }
-  collect_if_due(vm: vm, stack: stack, consts: consts);
+  let collected = collect_if_due(vm: vm, stack: stack, consts: consts);
+  if bnot(collected) {
+    return unwind(vm: vm, stack: stack);
+  }
   if a <= 252_u64 {
     let s1 = ra + 1_u64;
     let s2 = ra + 2_u64;

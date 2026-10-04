@@ -5,6 +5,7 @@ alias InputStream = std::io::InputStream;
 alias OutputStream = std::io::OutputStream;
 alias Value = halo::value::Value;
 alias Vm = halo::vm::Vm;
+alias no_handle = halo::heap::no_handle;
 alias Engine = halo::embed::Engine;
 alias ScriptId = halo::embed::ScriptId;
 alias Outcome = halo::vm::Outcome;
@@ -288,7 +289,7 @@ fn callback_line(vm: &Vm) -> r: u64 reads(vm) {
   return 0_u64;
 }
 
-fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64) -> r: Outcome writes(engine), writes(env) {
+fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64, collect_suspended: Bool, isolate_frames: Bool) -> r: Outcome writes(engine), writes(env) {
   let out_v62 = halo::embed::start::<TestHost>(engine: engine, env: env, script: id, budget: budget);
   let steps_v63 = 0_u64;
   loop {
@@ -305,6 +306,14 @@ fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64) -> r: Outco
       Budget() => {
         if steps_v63 >= 1000000_u64 {
           return out_v62;
+        }
+        if isolate_frames {
+          isolate_frame_roots(engine: engine);
+        }
+        if collect_suspended {
+          if engine^.vm.suspended {
+            collect_checkpoint(engine: engine, env: env, id: id);
+          }
         }
         set out_v62 = halo::embed::resume::<TestHost>(engine: engine, env: env, budget: budget);
         set steps_v63 = steps_v63 + 1_u64;
@@ -408,10 +417,19 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   std::fs::close_directory_write(factory: &factory_v103, directory: move cwd_write_v108);
   let modes = std::text::args_count(args: &args_v99);
   let stress = False();
+  let collect_suspended = False();
+  let isolate_frames = False();
+  let recover = False();
   let positional = 0_u64;
   for (index in 1_u64..modes) {
     if argument_is(args: &args_v99, index: index, text: &stress_option[0_u64..11_u64]) {
       set stress = True();
+    } else if argument_is(args: &args_v99, index: index, text: &suspended_option[0_u64..19_u64]) {
+      set collect_suspended = True();
+    } else if argument_is(args: &args_v99, index: index, text: &frames_option[0_u64..16_u64]) {
+      set isolate_frames = True();
+    } else if argument_is(args: &args_v99, index: index, text: &recovery_option[0_u64..17_u64]) {
+      set recover = True();
     } else {
       set positional = positional +sat 1_u64;
     }
@@ -456,7 +474,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       return std::process::exit_status(code: 3_u8);
     }
     Ok(value: id_v122) => {
-      let outcome_v123 = run_script(engine: &engine_v114, env: &env_v117, id: id_v122, budget: budget_v119);
+      let outcome_v123 = run_script(engine: &engine_v114, env: &env_v117, id: id_v122, budget: budget_v119, collect_suspended: collect_suspended, isolate_frames: isolate_frames);
       match outcome_v123 {
         Done(..) => {
         }
@@ -473,55 +491,85 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     }
   }
   protect(engine: &engine_v114);
-  let start_v124 = split_v112 + 1_u64;
-  let collections_before = halo::embed::collection_count(engine: &engine_v114);
-  let compiled_v125 = halo::embed::compile(engine: &engine_v114, chunk_name: &s_52[0_u64..12_u64], source: &source_v109.inner[start_v124..n_v111]);
-  match move compiled_v125 {
-    Err(error: problem_v126) => {
-      text_bytes(out: &out_v118, bytes: &s_39[0_u64..24_u64]);
-      let len_v127 = problem_v126.message.inner.len;
-      json_string(out: &out_v118, bytes: &problem_v126.message.inner[0_u64..len_v127]);
-      push(out: &out_v118, byte: 125_u8);
+  let primary_start = split_v112 + 1_u64;
+  let primary_end = n_v111;
+  let passes = 1_u64;
+  if recover {
+    for (i in primary_start..n_v111) {
+      if source_v109.inner[i] == 0_u8 {
+        set primary_end = i;
+        set passes = 2_u64;
+        break;
+      }
     }
-    Ok(value: id_v128) => {
-      let outcome_v129 = run_script(engine: &engine_v114, env: &env_v117, id: id_v128, budget: budget_v119);
-      match outcome_v129 {
-        Done(count: count_v130) => {
-          let v_v131 = Value::Nil();
-          if count_v130 > 0_u64 {
-            match halo::embed::result(engine: &engine_v114, index: 0_u64) {
-              None() => {
+    if passes != 2_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+  }
+  let collections_before = halo::embed::collection_count(engine: &engine_v114);
+  for (pass in 0_u64..passes) {
+    let start_v124 = primary_start;
+    let end_v124 = primary_end;
+    if pass == 1_u64 {
+      set start_v124 = primary_end +sat 1_u64;
+      set end_v124 = n_v111;
+    }
+    if start_v124 <= end_v124 {
+      if end_v124 <= source_v109.inner.len {
+        let compiled_v125 = halo::embed::compile(engine: &engine_v114, chunk_name: &s_52[0_u64..12_u64], source: &source_v109.inner[start_v124..end_v124]);
+        match move compiled_v125 {
+          Err(error: problem_v126) => {
+            text_bytes(out: &out_v118, bytes: &s_39[0_u64..24_u64]);
+            let len_v127 = problem_v126.message.inner.len;
+            json_string(out: &out_v118, bytes: &problem_v126.message.inner[0_u64..len_v127]);
+            push(out: &out_v118, byte: 125_u8);
+          }
+          Ok(value: id_v128) => {
+            let outcome_v129 = run_script(engine: &engine_v114, env: &env_v117, id: id_v128, budget: budget_v119, collect_suspended: collect_suspended, isolate_frames: isolate_frames);
+            match outcome_v129 {
+              Done(count: count_v130) => {
+                let v_v131 = Value::Nil();
+                if count_v130 > 0_u64 {
+                  match halo::embed::result(engine: &engine_v114, index: 0_u64) {
+                    None() => {
+                    }
+                    Some(value: first_v132) => {
+                      set v_v131 = first_v132;
+                    }
+                  }
+                }
+                reply(vm: &engine_v114.vm, value: v_v131, out: &out_v118, depth: 0_u64);
               }
-              Some(value: first_v132) => {
-                set v_v131 = first_v132;
+              Error() => {
+                let line = callback_line(vm: &engine_v114.vm);
+                let error_v133 = halo::embed::error_value(engine: &engine_v114);
+                let locate = readonly_message(vm: &engine_v114.vm, value: error_v133);
+                let formatted = halo::embed::format_redis_error(engine: &engine_v114, source: &source_v109.inner[start_v124..end_v124], line: line, locate: locate);
+                let formatted_len = formatted.inner.len;
+                let error_reply = literal(vm: &engine_v114.vm, text: &formatted.inner[0_u64..formatted_len]);
+                text_bytes(out: &out_v118, bytes: &s_39[0_u64..24_u64]);
+                let yes_v134 = True();
+                let no_prefix = False();
+                json_bytes(vm: &engine_v114.vm, value: error_reply, out: &out_v118, sanitize: yes_v134, error: no_prefix);
+                push(out: &out_v118, byte: 125_u8);
+              }
+              Budget() => {
+                return std::process::exit_status(code: 5_u8);
+              }
+              HostStopped() => {
+                return std::process::exit_status(code: 6_u8);
               }
             }
           }
-          reply(vm: &engine_v114.vm, value: v_v131, out: &out_v118, depth: 0_u64);
         }
-        Error() => {
-          let line = callback_line(vm: &engine_v114.vm);
-          let error_v133 = halo::embed::error_value(engine: &engine_v114);
-          let locate = readonly_message(vm: &engine_v114.vm, value: error_v133);
-          let formatted = halo::embed::format_redis_error(engine: &engine_v114, source: &source_v109.inner[start_v124..n_v111], line: line, locate: locate);
-          let formatted_len = formatted.inner.len;
-          let error_reply = literal(vm: &engine_v114.vm, text: &formatted.inner[0_u64..formatted_len]);
-          text_bytes(out: &out_v118, bytes: &s_39[0_u64..24_u64]);
-          let yes_v134 = True();
-          let no_prefix = False();
-          json_bytes(vm: &engine_v114.vm, value: error_reply, out: &out_v118, sanitize: yes_v134, error: no_prefix);
-          push(out: &out_v118, byte: 125_u8);
-        }
-        Budget() => {
-          return std::process::exit_status(code: 5_u8);
-        }
-        HostStopped() => {
-          return std::process::exit_status(code: 6_u8);
-        }
+      } else {
+        return std::process::exit_status(code: 2_u8);
       }
+    } else {
+      return std::process::exit_status(code: 2_u8);
     }
+    push(out: &out_v118, byte: 10_u8);
   }
-  push(out: &out_v118, byte: 10_u8);
   let wrote = write_bytes(factory: &factory_v103, output: &output_v101, bytes: &out_v118);
   if bnot(wrote) {
     return std::process::exit_status(code: 2_u8);
@@ -541,6 +589,12 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   }
   return std::process::exit_status(code: 0_u8);
 }
+
+const frames_option: Array<u8, 16> = "--isolate-frames";
+
+const suspended_option: Array<u8, 19> = "--collect-suspended";
+
+const recovery_option: Array<u8, 17> = "--memory-recovery";
 
 const stress_option: Array<u8, 11> = "--gc-stress";
 
@@ -612,4 +666,62 @@ fn write_bytes(factory: &HandleFactory, output: &OutputStream, bytes: &Box<Slots
     }
   }
   return False();
+}
+
+fn collect_checkpoint(engine: &Engine, env: &Env, id: ScriptId) -> r: unit writes(engine), writes(env) {
+  doc "Runs one synthetic back-edge on the parked VM before resume, preserving its saved continuation and using the active pool's mirrored roots. This is an explicitly selected research probe.";
+  let slot = id.slot;
+  let code = box_slots_new::<halo::value::Cell>(capacity: 1_u64);
+  let jump = halo::value::Cell::Jmp(target: 0_u32);
+  if code.inner.len < code.inner.cap {
+    place_back(window: &code.inner, value: jump);
+  }
+  let budget = engine^.vm.budget;
+  set engine^.vm.budget = 1_u64;
+  if code.inner.len > 0_u64 {
+    if slot < engine^.scripts.inner.len {
+      if engine^.scripts.inner[slot].consts.inner.len >= 256_u64 {
+        if engine^.stack.inner.len >= 256_u64 {
+          let outcome = halo::vm::run::<TestHost>(code: &code, consts: &engine^.scripts.inner[slot].consts, stack: &engine^.stack, vm: &engine^.vm, env: env, pc: 0_u64, base: 0_u64, kbase: 0_u64);
+        }
+      }
+    }
+  }
+  set engine^.vm.budget = budget;
+  return unit;
+}
+
+fn isolate_frame_roots(engine: &Engine) -> r: unit reads(engine.vm.frames), writes(engine.stack) {
+  doc "At a budget checkpoint, remove the frame's dead function-slot alias when it still equals the recorded closure. Return results will replace this slot; the frame record remains the owner used by upvalue access.";
+  let count = engine^.vm.frames.inner.len;
+  for (i in 0_u64..count) {
+    let frame = engine^.vm.frames.inner[i];
+    if frame.closure != no_handle {
+      let slot = frame.func;
+      if slot < engine^.stack.inner.len {
+        match engine^.stack.inner[slot] {
+          Fun(h: handle) => {
+            if handle^ == frame.closure {
+              set engine^.stack.inner[slot] = Value::Nil();
+            }
+          }
+          Nil() => {
+          }
+          False() => {
+          }
+          True() => {
+          }
+          Num(..) => {
+          }
+          Str(..) => {
+          }
+          Tab(..) => {
+          }
+          Builtin(..) => {
+          }
+        }
+      }
+    }
+  }
+  return unit;
 }

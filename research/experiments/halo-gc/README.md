@@ -53,3 +53,48 @@ probe exited 0 in 0.363477 s, returning 70 with 74,462,693 logical heap
 bytes under a 67,108,864-byte limit. This is the negative control for the
 missing memory-limit enforcement; it does not run an unbounded allocator
 against the defective engine.
+
+`memory-limit.lua` is the unbounded F4 witness; `memory-recovery.lua` runs
+next on the same engine/store and independently expects bulk `alive` from
+the key written before exhaustion. `run.py --verify-memory` owns their
+execution. These local cases live here for F4 and are removed when a
+maintained embedding test takes over their observations or Halo is retired.
+`--cases PATH` selects a local root with `scripts/GROUP/*.lua` and paired
+canonical `expected/GROUP/*.txt` files through the unchanged comparison.
+
+Local root witnesses in `cases/` are consumed by `run.py --cases
+research/experiments/halo-gc/cases`. Their expected replies follow directly
+from their Lua source: `kept`, `zzz`, and `qqq`. The open-upvalue case leaves an abandoned
+open cell ahead of a retained middle local, then captures a lower local;
+recycling the abandoned cell can corrupt the sorted open list and prevent
+the middle local from closing before its register is reused. They serve F4's
+coverage gaps and are removed with this research probe or superseded by
+maintained root tests. The suspended-stack case requires
+`--collect-suspended` at budget 1: a synthetic back-edge collects before
+resume, while the callback's stack extension is still parked. Local-variable
+padding places `held` beyond the caller's stack length, making the snapshot
+its sole root during that collection. It uses the
+existing public VM dispatch and original cached constants; it does not
+copy or reimplement root marking. Ordinary corpus execution does not enable
+this extra checkpoint.
+
+The frame-closure witness at budget 1 uses `--isolate-frames`: at budget
+checkpoints the harness clears a frame's function-slot alias only when it
+still equals that frame's closure. The function slot is the destination for
+return results; the executing function's upvalue access uses the frame
+record. This makes the frame the sole closure owner without changing the
+Lua reply. The ordinary stack otherwise keeps that same closure reachable,
+so a corpus pass alone cannot establish the separate frame-root path.
+This isolation is an experiment condition, never the default harness mode.
+
+The corrected comparison (source digest recorded by the runner) passed
+240/240 replies, with 20,450 collections per budget and no zero-count
+script. Memory exhaustion/recovery passed at all three budgets; the sampled
+budget-7 run took 0.763994 s, then the three-budget run took 0.358477,
+0.356014 and 0.349269 s. These are correctness timings, not a performance
+comparison. The cached corrected build took 418.89 s and the root-probe
+build 210.21 s, both exit 0. The original embedding smoke exited 0.
+Consumed suspended snapshots are released after restoration; a host-stopped
+snapshot stays available through nested stop unwinding and is released on
+reset. Final validation below includes that retention guard, added after
+this preliminary comparison.

@@ -285,5 +285,10 @@ fn gc_due(heap: &Heap) -> r: Bool reads(heap) {
   if heap^.gc_stress {
     return True();
   }
+  if heap^.limit > 0_u64 {
+    if heap^.bytes > heap^.limit {
+      return True();
+    }
+  }
   return heap^.bytes_since_gc > heap^.threshold;
 }
