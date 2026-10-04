@@ -1194,7 +1194,7 @@ fn run_smove(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, c
           if source < slots^.len {
             if client^.items.inner.len > 0_u64 {
               let keys_env = client^.keys;
-              let held = entry_holds(slot: &slots^[source], member: &client^.items.inner[0_u64], keys: &key_marks_env, now: now);
+              let held = entry_holds(slot: &slots^[source], member: &client^.items.inner[0_u64], keys: &keys_env, now: now);
               if held {
                 set client^.number = 1_u64;
               }
@@ -1214,7 +1214,7 @@ fn run_smove(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, c
               }
               let keys_env = client^.keys;
               if destination < slots^.len {
-                place_member(slot: &slots^[destination], member: move moving, keys: &key_marks_env);
+                place_member(slot: &slots^[destination], member: move moving, keys: &keys_env);
               } else {
                 let dropped = move moving;
               }
