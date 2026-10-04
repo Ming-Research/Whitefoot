@@ -175,3 +175,29 @@ fixtures. They identify uncommitted overlays too; the later smoke additions
 are included in frame/constants builds. Every root was restored by copying
 the saved original collector, then checking that its diff from the local
 GC-fix milestone was empty, before creating the next mutant.
+
+The stopped-stack mutation removes only the loop marking `vm.stopped_stack`.
+Its native build exited 0 in 5.80 s (user 5.53 s, system 0.27 s), using
+the existing module cache. Three `counter-closure`, budget-7 stress samples
+matched with 8 collections in 0.004917, 0.005512 and 0.005808 s.
+The isolated suspended witness at budget 1 returned
+`ERR user_script:5: attempt to index a function value` instead of `zzz`,
+after 5 collections (runner exit 1, native exit 0, 0.304898 s).
+Without the extra suspended checkpoint, the unchanged ordinary corpus
+passed 240/240 runs at budgets 1, 7 and 1000 (runner exit 0, wall 2.39 s).
+Thus the ordinary corpus also misses this root category. The collector was
+restored byte-for-byte and `git diff --exit-code -- lib/halo/vm/collect.wf`
+exited 0 before the final build.
+
+| Removed root | Ordinary stress corpus | Discriminating witness | Detected |
+| --- | --- | --- | --- |
+| Open upvalues | 240/240 pass | `open-upvalues`, budgets 1/7/1000: `wrong`, expected `kept` | Yes |
+| Frame closures | 240/240 pass | `frame-closure`, budget 1, `--isolate-frames`: invalid upvalue, expected `qqq` | Yes |
+| Constants | 90/240 pass | 50 corpus failures per budget | Yes |
+| Stopped stack | 240/240 pass | `suspended-stack`, budget 1, `--collect-suspended`: function-index error, expected `zzz` | Yes |
+
+Stopped mutant parent: `9e7554bd1cec7354770c3f887a0447f44a537cfe`;
+selected-witness runner/source digest:
+`48583609fb048d599bcf506d0209e1dd8e516d06f2bcc00024c51586c820fb1e`;
+executable SHA-256:
+`d45e7b68c21b50141a8283bb32f42e34372f542948b4c53bad56788e94b6b681`.
