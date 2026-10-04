@@ -1,5 +1,41 @@
 # firn: a Redis-compatible server written in Whitefoot
 
+## One x87 implementation
+
+The integrated string and hash increment commands select the same x87 format:
+64 significand bits, nearest-even rounding, and a result formatted to seventeen
+digits after the decimal point with trailing zeros removed. The `extended`
+module owns this arithmetic. Its sign/kind/exponent/significand representation
+distinguishes zero, finite values, signed infinity and NaN; finite value is
+significand times two to the exponent. Its formatter stays private behind the
+sum's finite-result check. The command module's existing `text_sum` adapts
+stored Bytes to the input slice, without another public arithmetic API.
+
+The duplicate extended-precision implementation in `scores` is removed, while
+that module's binary64 parser and formatter remain. The two finite encodings
+used different exponent offsets but represent the same selected format.
+Their non-finite addition differed internally: the removed implementation
+returned positive infinity for any infinite operand, whereas the retained
+one preserves the sign and produces NaN for opposite infinities. Both command
+boundaries reject non-finite sums. This is a representation ground for the
+canonical owner, not an executed equivalence claim.
+
+Hash increments continue to reject malformed or infinite increments before
+reading the key. String increments retain their different WRONGTYPE
+precedence. Both keep their independent Redis-derived reply and persistence
+tests; agreement between the two commands is not the oracle. Additional exact
+integer witnesses use the selected format directly: at 2^64 the spacing is
+2, so (2^64 + 2) - 2^64 is 2 and (2^64 + 2) + 1 rounds to the even endpoint
+2^64 + 4, or 18446744073709551620. These expectations are integer derivations,
+not claims that native Redis was executed for them. An ARM macOS Redis uses a
+different long-double format and cannot establish x87 edge behavior.
+
+Run the string, hash and binary64 score oracle batches after the integration;
+any changed literal reply, error precedence, or failure-path mutation rejects
+the consolidation until explained against the selected contract. The linked
+verification decision belongs beside the compiler's maintained real-program
+oracles and retires if this numeric witness is retired.
+
 ## The question
 
 Can a server written in Whitefoot run Redis's own benchmark and lead Redis and
@@ -169,9 +205,7 @@ Redis's observable behavior on the suite's commands and says what it refused.
 - **The append-only file records each change as Redis 7 records it**: a
   command as it was sent or in the form Redis 7.0.15 propagates it, an expiry
   as `PEXPIREAT`, a `SET` with an expiry as `SET` with `PXAT`, `INCRBYFLOAT`
-  as `SET` with `KEEPTTL`; the removal of a key found expired as `DEL`,
-  except on the write paths [docs/todo.md](../../../docs/todo.md) lists under
-  firn;
+  as `SET` with `KEEPTTL`; the removal of a key found expired as `DEL`;
   and an `SPOP` as the `SREM` of the members it chose, so that a replay
   removes the same members. `SPOP` draws from a generator
   seeded by the clock when the server starts, as Redis seeds its own.

@@ -3419,16 +3419,16 @@ condition under which it is taken up.
   with Redis's but for both. The change: write each where Redis does. Reopen
   when firn answers `MULTI` and `EXEC`, or `SELECT` with more than one
   database.
-- **`DEL`, `UNLINK`, `EXISTS`, `TOUCH` and `MSET` record the keys they find
-  expired in byte order.** Redis 7.0.15 looks the keys up, and propagates
-  each expired one's removal, in the order the command names them; these
-  statements walk their key set, whose order is the keys' bytes, so the file
-  records the removals in that order, which replays to the same state but is
-  not Redis's file. `MGET` and `MSETNX` walk their arguments in order through
-  `key_ranks` (`apps/firn/commands/strings.wf`). The change: walk the
-  arguments the same way where these record, and add such a command to
-  `firn_records_its_writes_as_redis_propagates_them`. Reopen with the next
-  change to those commands.
+- **The prepared-key expiry-record ordering change still needs its check
+  and falsifier.** `DEL`, `UNLINK`, `EXISTS`, `TOUCH` and `MSET` now walk
+  distinct keys in first-occurrence order, as Redis 7.0.15 propagates expired
+  removals, rather than the old key set's byte order. The maintained
+  `firn_records_its_writes_as_redis_propagates_them` batch names reverse-sorted
+  keys twice and expects literal `DEL` records in request order for each
+  command. Run it on the integrated source, then make its old byte-order
+  walk fail that expectation before removing this entry. Reopen with the
+  coordinated integrated Firn checks.
+
 - **No case checks that the expiring context keeps a key through its
   expiry's millisecond.** `take_due` (`apps/firn/store/store.wf`) leaves a
   queued expiry equal to the time in the queue, so that the expiring context
@@ -3588,15 +3588,17 @@ condition under which it is taken up.
   `memory_value`, `c_space` and `save_token_valid`, firn's readings of
   Redis's memtoull and strtoll, sit in `apps/firn/commands/server.wf`, where
   the README's layout puts such readings in `bytes`, beside `read_integer`
-  and `glob_match`. No case gives `CONFIG SET port` a value that does not
-  parse, so that branch of `run_config_set` is unchecked. The idle case in
+  and `glob_match`. The new malformed `CONFIG SET port` cases exercise
+  its parse error and refusal to apply an earlier timeout value, using
+  Redis 7.0.15's numeric configuration parser and error form as their
+  oracle; their native run and falsifier remain pending. The idle case in
   `compiler/tests/programs/network.rs` pins a sending client's
   once-a-second reading of the limit only loosely: its pings end about 1.9
   seconds after the client's last reading, so a period up to that passes.
   And its waits make it firn's longest case, about 20 seconds with the
   build, where the whole group took 11.2 seconds at `51bc58e13`, while the
   corpus stage is over its budget on ubuntu. Moving the readings to
-  `bytes`, adding the case, ending the pings 1.2 seconds after the last
+  `bytes`, running and breaking the case, ending the pings 1.2 seconds after the last
   reading, and running the first route's checks beside the second's would
   settle them. Reopen with the next change to `CONFIG SET` or the idle
   limit, or when the corpus stage needs the time back.

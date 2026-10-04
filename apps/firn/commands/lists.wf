@@ -1499,115 +1499,162 @@ fn end_named(input: &[u8], span: Span) -> end: u64 reads(input) {
   return 0_u64;
 }
 
-fn run_lmove_named(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+fn run_lmove_named(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(time), writes(client) waits {
   doc "LMOVE source destination LEFT|RIGHT LEFT|RIGHT: reads the two ends, the source's first, refusing anything but LEFT or RIGHT as a syntax error before any key is looked up, and moves the element as run_lmove does.";
+  let length = input.inner.len;
+  let bytes = &input.inner[0_u64..length];
   let from_span = arg(args: args, index: 3_u64);
-  let from = end_named(input: input, span: from_span);
+  let from = end_named(input: bytes, span: from_span);
   if from == 0_u64 {
     reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
-    return unit;
+    return move input;
   }
   let to_span = arg(args: args, index: 4_u64);
-  let to = end_named(input: input, span: to_span);
+  let to = end_named(input: bytes, span: to_span);
   if to == 0_u64 {
     reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
-    return unit;
+    return move input;
   }
   let from_head = from == 1_u64;
   let to_head = to == 1_u64;
-  run_lmove(store: store, input: input, args: args, client: client, env: env, time: time, from_head: from_head, to_head: to_head);
-  return unit;
+  let restored = run_lmove(input: move input, store: store, args: args, client: client, env: env, time: time, from_head: from_head, to_head: to_head);
+  return move restored;
 }
 
-fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, from_head: Bool, to_head: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "LMOVE source destination LEFT|RIGHT LEFT|RIGHT and RPOPLPUSH source destination, which moves from the tail to the head: removes the element at the source list's head (from_head) or tail, pushes it onto the destination list's head (to_head) or tail, creating the destination for an absent key and removing the source when it is left empty, and answers the element; a source equal to the destination rotates the list. One statement holds both keys' entries through a key set whose payloads mark the source with 1 and the destination with 2, so that the move takes effect at one point. As in Redis, an absent source answers the null bulk string without the destination being looked at, a key holding another kind is refused, and a key found expired is removed, its removal recorded before the move.";
-  let source_place = key_bounds(input: input, args: args, index: 1_u64);
-  let source_key = &input^[source_place.start..source_place.end];
-  let destination_place = key_bounds(input: input, args: args, index: 2_u64);
-  let destination_key = &input^[destination_place.start..destination_place.end];
-  let keys = key_set_new(capacity: 2_u64);
-  key_set_add(keys: &keys, key: source_key, amount: 1_u64);
-  key_set_add(keys: &keys, key: destination_key, amount: 2_u64);
-  let now = time^.check;
-  set client^.state = state_absent;
-  atomic s = &store^.state, slots = &s^.map[keys] {
-    let source = keys.len;
-    let destination = keys.len;
-    for @roles (at in 0_u64..keys.len) {
-      let role = key_set_payload(keys: &keys, index: at);
-      let from = iand(role, 1_u64);
-      if from != 0_u64 {
-        set source = at;
-      }
-      let to = iand(role, 2_u64);
-      if to != 0_u64 {
-        set destination = at;
-      }
-    }
-    let found = entry_none;
-    if source < keys.len {
-      set found = list_kind(slot: &slots^[source], now: now);
-    }
-    if found == entry_lapsed {
-      if source < keys.len {
-        set slots^[source] = None<Entry>();
-      }
-      if store^.logging {
-        log_removal(log: &s^.meta.log, key: source_key);
-      }
-    }
-    if found == entry_other {
-      set client^.state = state_wrong;
-    }
-    if found == entry_wanted {
-      let target = entry_none;
-      if destination < keys.len {
-        set target = list_kind(slot: &slots^[destination], now: now);
-      }
-      if target == entry_lapsed {
-        if destination < keys.len {
-          set slots^[destination] = None<Entry>();
+fn run_lmove(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, from_head: Bool, to_head: Bool) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(time), writes(client) waits {
+  doc "LMOVE source destination LEFT|RIGHT LEFT|RIGHT and RPOPLPUSH source destination, which moves from the tail to the head: removes the element at the source list's head (from_head) or tail, pushes it onto the destination list's head (to_head) or tail, creating the destination for an absent key and removing the source when it is left empty, and answers the element; a source equal to the destination rotates the list. One statement holds both keys' entries through prepared keys whose application marks identify the source with 1 and the destination with 2, so that the move takes effect at one point. As in Redis, an absent source answers the null bulk string without the destination being looked at, a key holding another kind is refused, and a key found expired is removed, its removal recorded before the move.";
+  let request_length = input.inner.len;
+  let request_bytes = &input.inner[0_u64..request_length];
+  let adding_roles = True();
+  let empty_key = SpanKey(hash: 0_u64, start: 0_u64, end: 0_u64);
+  let empty_candidate = KeyCandidate(key: empty_key, mark: 0_u64, add: adding_roles);
+  let candidates = box_array_filled::<KeyCandidate>(count: 2_u64, value: empty_candidate);
+  for @candidate (position in 0_u64..2_u64) {
+    let index = position +wrap 1_u64;
+    let candidate = key_candidate(input: request_bytes, args: args, index: index, mark: index, add: adding_roles);
+    set candidates.inner[position] = candidate;
+  }
+  let keep_ranks = False();
+  let planned = dedup_candidates(input: &input, candidates: &candidates, ranked: keep_ranks);
+  let NamedKeys(spans: key_spans, marks: key_marks, ranks: unused_ranks, valid: plan_valid) = move planned;
+  if plan_valid {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  let prepared_source = KeySource(bytes: move input, spans: move key_spans);
+  match key_prepare(source: move prepared_source) {
+    Err(error: failure) => {
+      key_prepare_failed(client: client);
+      match move failure {
+        InvalidSpan(source: returned, index: failed_index) => {
+          return move returned.bytes;
         }
-        if store^.logging {
-          log_removal(log: &s^.meta.log, key: destination_key);
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+          return move returned.bytes;
         }
       }
-      if target == entry_other {
-        set client^.state = state_wrong;
-      } else if source < keys.len {
-        let popped = take_element(slot: &slots^[source], from_head: from_head, client: client);
-        let left = client^.number;
-        match move popped {
-          Some(value: element) => {
-            reply_bulk(client: client, stored: &element);
-            if destination < keys.len {
-              place_element(slot: &slots^[destination], element: move element, to_head: to_head);
-            } else {
-              let dropped = move element;
+    }
+    Ok(value: keys) => {
+      let length = keys.source.bytes.inner.len;
+      let bytes = &keys.source.bytes.inner[0_u64..length];
+      if key_marks.inner.len == keys.source.spans.inner.len {
+      } else {
+        key_prepare_failed(client: client);
+        let returned = move keys.source;
+        return move returned.bytes;
+      }
+      let source_place = key_bounds(input: bytes, args: args, index: 1_u64);
+      let source_key = &bytes^[source_place.start..source_place.end];
+      let destination_place = key_bounds(input: bytes, args: args, index: 2_u64);
+      let destination_key = &bytes^[destination_place.start..destination_place.end];
+      let now = time^.check;
+      set client^.state = state_absent;
+      atomic s = &store^.state, slots = &s^.map[keys] {
+        let source = slots^.len;
+        let destination = slots^.len;
+        for @roles (at in 0_u64..slots^.len) {
+          if at < key_marks.inner.len {
+            let role = key_marks.inner[at];
+            let from = iand(role, 1_u64);
+            if from != 0_u64 {
+              set source = at;
             }
-            if left == 0_u64 {
-              if source != destination {
-                set slots^[source] = None<Entry>();
+            let to = iand(role, 2_u64);
+            if to != 0_u64 {
+              set destination = at;
+            }
+          }
+        }
+        let found = entry_none;
+        if source < slots^.len {
+          set found = list_kind(slot: &slots^[source], now: now);
+        }
+        if found == entry_lapsed {
+          if source < slots^.len {
+            set slots^[source] = None<Entry>();
+          }
+          if store^.logging {
+            log_removal(log: &s^.meta.log, key: source_key);
+          }
+        }
+        if found == entry_other {
+          set client^.state = state_wrong;
+        }
+        if found == entry_wanted {
+          let target = entry_none;
+          if destination < slots^.len {
+            set target = list_kind(slot: &slots^[destination], now: now);
+          }
+          if target == entry_lapsed {
+            if destination < slots^.len {
+              set slots^[destination] = None<Entry>();
+            }
+            if store^.logging {
+              log_removal(log: &s^.meta.log, key: destination_key);
+            }
+          }
+          if target == entry_other {
+            set client^.state = state_wrong;
+          } else if source < slots^.len {
+            let popped = take_element(slot: &slots^[source], from_head: from_head, client: client);
+            let left = client^.number;
+            match move popped {
+              Some(value: element) => {
+                reply_bulk(client: client, stored: &element);
+                if destination < slots^.len {
+                  place_element(slot: &slots^[destination], element: move element, to_head: to_head);
+                } else {
+                  let dropped = move element;
+                }
+                if left == 0_u64 {
+                  if source != destination {
+                    set slots^[source] = None<Entry>();
+                  }
+                }
+                set client^.state = state_done;
+                if store^.logging {
+                  log_command(log: &s^.meta.log, input: bytes, args: args);
+                }
+              }
+              None() => {
               }
             }
-            set client^.state = state_done;
-            if store^.logging {
-              log_command(log: &s^.meta.log, input: input, args: args);
-            }
-          }
-          None() => {
           }
         }
       }
+      if client^.state == state_done {
+        let returned = move keys.source;
+        return move returned.bytes;
+      }
+      if client^.state == state_wrong {
+        reply_wrong_type(client: client);
+        let returned = move keys.source;
+        return move returned.bytes;
+      }
+      reply_nil(client: client);
+      let returned = move keys.source;
+      return move returned.bytes;
     }
   }
-  if client^.state == state_done {
-    return unit;
-  }
-  if client^.state == state_wrong {
-    reply_wrong_type(client: client);
-    return unit;
-  }
-  reply_nil(client: client);
-  return unit;
 }

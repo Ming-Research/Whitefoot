@@ -1,3 +1,5 @@
+alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
+alias HashMapKey = std::collections::hash_map::HashMapKey;
 alias Client = pkg::protocol::Client;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias Span = pkg::protocol::Span;
@@ -63,10 +65,6 @@ const state_wrong: u64 = 3_u64;
 
 const state_emptied: u64 = 4_u64;
 
-const count_unit: u64 = 4294967296_u64;
-
-const index_mask: u64 = 4294967295_u64;
-
 const expire_nx: u64 = 1_u64;
 
 const expire_xx: u64 = 2_u64;
@@ -84,8 +82,6 @@ const text_expire_nx: Array<u8, 67> =[69_u8, 82_u8, 82_u8, 32_u8, 78_u8, 88_u8, 
 const text_expire_gt: Array<u8, 57> =[69_u8, 82_u8, 82_u8, 32_u8, 71_u8, 84_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 76_u8, 84_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 115_u8, 32_u8, 97_u8, 116_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 115_u8, 97_u8, 109_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 97_u8, 114_u8, 101_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 99_u8, 111_u8, 109_u8, 112_u8, 97_u8, 116_u8, 105_u8, 98_u8, 108_u8, 101_u8];
 
 const text_expire_expireat: Array<u8, 45> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 97_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
-
-const text_crlf: Array<u8, 2> =[13_u8, 10_u8];
 
 const rename_missing: u64 = 0_u64;
 
@@ -281,91 +277,342 @@ fn prepare_keys(input: &[u8], args: &Box<Slots<Span>>, client: &Client, first: u
   return unit;
 }
 
-fn named_keys(input: &[u8], args: &Box<Slots<Span>>) -> keys: KeySet reads(input), reads(args) {
-  doc "The keys the arguments from the second on name, each carrying in the low 32 bits of its payload the index of the first argument naming it, which a request of at most 2^31 arguments leaves room for, and above them how many arguments name it.";
-  let count = args^.inner.len;
-  let keys = key_set_new(capacity: count);
-  for @named (index in 1_u64..count) {
-    let place = key_bounds(input: input, args: args, index: index);
-    let key = &input^[place.start..place.end];
-    let before = keys.len;
-    key_set_add(keys: &keys, key: key, amount: count_unit);
-    if keys.len > before {
-      let first = count_unit +wrap index;
-      key_set_put(keys: &keys, key: key, payload: first);
-    }
-  }
-  return move keys;
+const text_key_prepare: Array<u8, 26> =[69_u8, 82_u8, 82_u8, 32_u8, 99_u8, 111_u8, 117_u8, 108_u8, 100_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 112_u8, 114_u8, 101_u8, 112_u8, 97_u8, 114_u8, 101_u8, 32_u8, 107_u8, 101_u8, 121_u8, 115_u8];
+
+struct SpanKey {
+  hash: u64;
+  start: u64;
+  end: u64;
 }
 
-fn named_bounds(input: &[u8], args: &Box<Slots<Span>>, payload: u64) -> bounds: Bounds reads(input), reads(args) contract {
+struct KeyCandidate {
+  key: SpanKey;
+  mark: u64;
+  add: Bool;
+}
+
+struct NamedKeys {
+  spans: Box<Slots<KeySpan>>;
+  marks: Box<Slots<u64>>;
+  ranks: Option<Box<Slots<u64>>>;
+  valid: Bool;
+}
+
+fn span_hash(env: &Box<Slots<u8>>, key: &SpanKey) -> hash: u64 reads(key) {
+  return key^.hash;
+}
+
+fn span_equal(env: &Box<Slots<u8>>, left: &SpanKey, right: &SpanKey) -> same: Bool reads(env), reads(left), reads(right) {
+  doc "Compares two cached-hash spans against the unchanged caller's buffer, without owning copies of their bytes.";
+  if left^.hash != right^.hash {
+    return False();
+  }
+  let left_length = left^.end -sat left^.start;
+  let right_length = right^.end -sat right^.start;
+  if left_length != right_length {
+    return False();
+  }
+  for @compare (offset in 0_u64..left_length) {
+    let first = left^.start +wrap offset;
+    let second = right^.start +wrap offset;
+    if first < env^.inner.len {
+      if second < env^.inner.len {
+        if env^.inner[first] != env^.inner[second] {
+          return False();
+        }
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+binding SpanHash : HashMapKey<SpanKey, Box<Slots<u8>>> {
+  hash = span_hash;
+  equal = span_equal;
+}
+
+fn span_index(env: &unit, key: &SpanKey, value: &u64) -> index: u64 reads(value) {
+  return value^;
+}
+
+fn key_candidate(input: &[u8], args: &Box<Slots<Span>>, index: u64, mark: u64, add: Bool) -> candidate: KeyCandidate reads(input), reads(args) {
+  doc "Hashes one argument's span independently of all other arguments.";
+  let place = key_bounds(input: input, args: args, index: index);
+  let hash = 14695981039346656037_u64;
+  for @hash (at in place.start..place.end) {
+    let byte = byte_at(input: input, index: at);
+    let wide = cvt::<u8, u64>(byte);
+    let folded = ixor(hash, wide);
+    set hash = folded *wrap 1099511628211_u64;
+  }
+  let key = SpanKey(hash: hash, start: place.start, end: place.end);
+  return KeyCandidate(key: key, mark: mark, add: add);
+}
+
+fn record_rank(ranks: &Option<Box<Slots<u64>>>, index: u64) -> recorded: Bool writes(ranks) {
+  match ranks^ {
+    None() => {
+      return True();
+    }
+    Some(value: values) => {
+      if values^.inner.len < values^.inner.cap {
+        place_back(window: &values^.inner, value: index);
+        return True();
+      }
+      return False();
+    }
+  }
+}
+
+fn dedup_candidates(input: &Box<Slots<u8>>, candidates: &Box<Array<KeyCandidate>>, ranked: Bool) -> planned: NamedKeys reads(input), reads(candidates) {
+  doc "Folds cached-hash candidates in their application order, storing only hash/start/end identity in the deduplication map. A repeated key adds its mark modulo 2^64 or replaces it as that candidate specifies. Only consumers that need occurrence-to-entry indices request ranks. The map probes depend on preceding candidates; hash construction is independent and belongs before this fold.";
+  let invalid = False();
+  let valid = True();
+  let many = candidates^.inner.len;
+  let spans = box_slots_new::<KeySpan>(capacity: many);
+  let marks = box_slots_new::<u64>(capacity: many);
+  let ranks = None<Box<Slots<u64>>>();
+  if ranked {
+    let values = box_slots_new::<u64>(capacity: many);
+    set ranks = Some<Box<Slots<u64>>>(value: move values);
+  }
+  let reserve = many *sat 2_u64;
+  if reserve > ceiling {
+    set reserve = ceiling;
+  }
+  let indices = hash_map_new::<SpanKey, u64, ceiling>(capacity: reserve);
+  let nothing = unit;
+  for @named (position in 0_u64..many) {
+    let candidate = candidates^.inner[position];
+    let key = candidate.key;
+    let selected = spans.inner.len;
+    match hash_map_lookup::<SpanHash, u64, unit, u64, fn span_index, ceiling>(map: &indices, key: &key, key_env: input, visit_env: &nothing) {
+      Ok(value: at) => {
+        if at < marks.inner.len {
+          set selected = at;
+          if candidate.add {
+            let current = marks.inner[at];
+            set marks.inner[at] = current +wrap candidate.mark;
+          } else {
+            set marks.inner[at] = candidate.mark;
+          }
+        } else {
+          return NamedKeys(spans: move spans, marks: move marks, ranks: move ranks, valid: invalid);
+        }
+      }
+      Err(error: absent) => {
+        let at = spans.inner.len;
+        match hash_map_put::<SpanHash, u64, ceiling>(map: &indices, key: key, value: at, env: input) {
+          HashMapInserted() => {
+            if spans.inner.len < spans.inner.cap {
+              if marks.inner.len < marks.inner.cap {
+                let span = KeySpan(start: key.start, end: key.end);
+                place_back(window: &spans.inner, value: span);
+                place_back(window: &marks.inner, value: candidate.mark);
+              } else {
+                return NamedKeys(spans: move spans, marks: move marks, ranks: move ranks, valid: invalid);
+              }
+            } else {
+              return NamedKeys(spans: move spans, marks: move marks, ranks: move ranks, valid: invalid);
+            }
+          }
+          HashMapReturned(reason: rejected, pair: returned) => {
+            return NamedKeys(spans: move spans, marks: move marks, ranks: move ranks, valid: invalid);
+          }
+        }
+      }
+    }
+    let recorded = record_rank(ranks: &ranks, index: selected);
+    if recorded {
+    } else {
+      return NamedKeys(spans: move spans, marks: move marks, ranks: move ranks, valid: invalid);
+    }
+  }
+  return NamedKeys(spans: move spans, marks: move marks, ranks: move ranks, valid: valid);
+}
+
+fn named_keys(input: &Box<Slots<u8>>, args: &Box<Slots<Span>>, pairs: Bool, ranked: Bool) -> planned: NamedKeys reads(input), reads(args) {
+  doc "Hashes every key argument independently, then deduplicates in first-occurrence order. A mark is the occurrence count, or the last value argument index for key-value pairs. Occurrence ranks are constructed only when requested.";
+  let count = args^.inner.len;
+  let many = count -sat 1_u64;
+  if pairs {
+    set many = count / 2_u64;
+  }
+  let length = input^.inner.len;
+  let bytes = &input^.inner[0_u64..length];
+  let add = True();
+  let empty_key = SpanKey(hash: 0_u64, start: 0_u64, end: 0_u64);
+  let empty_candidate = KeyCandidate(key: empty_key, mark: 0_u64, add: add);
+  let candidates = box_array_filled::<KeyCandidate>(count: many, value: empty_candidate);
+  for @candidate (position in 0_u64..many) {
+    let index = position +wrap 1_u64;
+    let mark = 1_u64;
+    let adding = True();
+    if pairs {
+      let doubled = position *wrap 2_u64;
+      set index = doubled +wrap 1_u64;
+      set mark = index +wrap 1_u64;
+      set adding = False();
+    }
+    let candidate = key_candidate(input: bytes, args: args, index: index, mark: mark, add: adding);
+    set candidates.inner[position] = candidate;
+  }
+  return dedup_candidates(input: input, candidates: &candidates, ranked: ranked);
+}
+
+fn prepared_bounds(input: &[u8], span: KeySpan) -> bounds: Bounds reads(input) contract {
   define input_length = input^.len;
   ensures bounds.start <= bounds.end;
   ensures bounds.end <= input_length;
 } {
-  doc "Where the key named_keys gave a payload lies in the input, as key_bounds places the argument whose index the payload carries.";
-  let index = iand(payload, index_mask);
-  let bounds = key_bounds(input: input, args: args, index: index);
-  return bounds;
+  let within = span.end <= input^.len;
+  let ordered = span.start <= span.end;
+  let fits = band(within, ordered);
+  if fits {
+    return Bounds(start: span.start, end: span.end);
+  }
+  return Bounds(start: 0_u64, end: 0_u64);
 }
 
-fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+fn key_prepare_failed(client: &Client) -> result: unit writes(client) {
+  doc "Reports failed key preparation without applying a partial multi-key command.";
+  reply_error(client: client, word: &text_key_prepare[0_u64..26_u64]);
+  return unit;
+}
+
+fn run_del(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(time), writes(client) waits {
   doc "DEL key [key ...] and UNLINK key [key ...]: removes every key named, in one statement on their entries, and answers how many were live; a key named twice is removed and counted once. The file records a key found expired as log_removal does, then the command as it was sent when it removed a live key, as Redis propagates them.";
-  let keys = named_keys(input: input, args: args);
-  let removed = 0_u64;
-  let logged = store^.logging;
-  atomic s = &store^.state, slots = &s^.map[keys] {
-    for @named (at in 0_u64..keys.len) {
-      let found = remove_live(slot: &slots^[at], now: time^.check);
-      if found == 1_u64 {
-        set removed = removed +wrap 1_u64;
-      }
-      if found == 2_u64 {
-        if logged {
-          let payload = key_set_payload(keys: &keys, index: at);
-          let place = named_bounds(input: input, args: args, payload: payload);
-          let key = &input^[place.start..place.end];
-          log_removal(log: &s^.meta.log, key: key);
+  let key_pairs = False();
+  let keep_ranks = False();
+  let planned = named_keys(input: &input, args: args, pairs: key_pairs, ranked: keep_ranks);
+  let NamedKeys(spans: key_spans, marks: key_marks, ranks: requested_ranks, valid: ready) = move planned;
+  if ready {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  if key_marks.inner.len == key_spans.inner.len {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  let prepared_source = KeySource(bytes: move input, spans: move key_spans);
+  match key_prepare(source: move prepared_source) {
+    Err(error: failure) => {
+      key_prepare_failed(client: client);
+      match move failure {
+        InvalidSpan(source: returned, index: invalid_index) => {
+          return move returned.bytes;
+        }
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+          return move returned.bytes;
         }
       }
     }
-    if removed > 0_u64 {
-      if logged {
-        log_command(log: &s^.meta.log, input: input, args: args);
+    Ok(value: keys) => {
+      let length = keys.source.bytes.inner.len;
+      let bytes = &keys.source.bytes.inner[0_u64..length];
+      let removed = 0_u64;
+      let logged = store^.logging;
+      atomic s = &store^.state, slots = &s^.map[keys] {
+        for @named (at in 0_u64..keys.source.spans.inner.len) {
+          let found = remove_live(slot: &slots^[at], now: time^.check);
+          if found == 1_u64 {
+            set removed = removed +wrap 1_u64;
+          }
+          if found == 2_u64 {
+            if logged {
+              let span = keys.source.spans.inner[at];
+              let place = prepared_bounds(input: bytes, span: span);
+              let key = &bytes^[place.start..place.end];
+              log_removal(log: &s^.meta.log, key: key);
+            }
+          }
+        }
+        if removed > 0_u64 {
+          if logged {
+            log_command(log: &s^.meta.log, input: bytes, args: args);
+          }
+        }
       }
+      let answer = cvt.wrap::<u64, i64>(removed);
+      reply_integer(client: client, value: answer);
+      let returned = move keys.source;
+      return move returned.bytes;
     }
   }
-  let answer = cvt.wrap::<u64, i64>(removed);
-  reply_integer(client: client, value: answer);
-  return unit;
 }
 
-fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+fn run_exists(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(time), writes(client) waits {
   doc "EXISTS key [key ...] and TOUCH key [key ...]: answers how many of the keys named are live, a key named twice counted twice, in one statement on their entries, removing a key found expired, which the file records as log_removal does.";
-  let keys = named_keys(input: input, args: args);
-  set client^.now = time^.check;
-  let live = 0_u64;
-  let logged = store^.logging;
-  atomic s = &store^.state, slots = &s^.map[keys] {
-    for @named (at in 0_u64..keys.len) {
-      let kind = entry_kind(slot: &slots^[at], client: client);
-      let payload = key_set_payload(keys: &keys, index: at);
-      if kind != 0_u64 {
-        let occurrences = ishr.wrap(payload, 32_u32);
-        set live = live +wrap occurrences;
-      }
-      if client^.state == state_expired {
-        if logged {
-          let place = named_bounds(input: input, args: args, payload: payload);
-          let key = &input^[place.start..place.end];
-          log_removal(log: &s^.meta.log, key: key);
+  let key_pairs = False();
+  let keep_ranks = False();
+  let planned = named_keys(input: &input, args: args, pairs: key_pairs, ranked: keep_ranks);
+  let NamedKeys(spans: key_spans, marks: key_marks, ranks: requested_ranks, valid: ready) = move planned;
+  if ready {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  if key_marks.inner.len == key_spans.inner.len {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  let prepared_source = KeySource(bytes: move input, spans: move key_spans);
+  match key_prepare(source: move prepared_source) {
+    Err(error: failure) => {
+      key_prepare_failed(client: client);
+      match move failure {
+        InvalidSpan(source: returned, index: invalid_index) => {
+          return move returned.bytes;
+        }
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+          return move returned.bytes;
         }
       }
     }
+    Ok(value: keys) => {
+      let length = keys.source.bytes.inner.len;
+      let bytes = &keys.source.bytes.inner[0_u64..length];
+      set client^.now = time^.check;
+      let live = 0_u64;
+      let logged = store^.logging;
+      let complete = False();
+      atomic s = &store^.state, slots = &s^.map[keys] {
+        if key_marks.inner.len == slots^.len {
+          set complete = True();
+          for @named (at in 0_u64..keys.source.spans.inner.len) {
+            let kind = entry_kind(slot: &slots^[at], client: client);
+            let occurrences = key_marks.inner[at];
+            if kind != 0_u64 {
+              set live = live +wrap occurrences;
+            }
+            if client^.state == state_expired {
+              if logged {
+                let span = keys.source.spans.inner[at];
+                let place = prepared_bounds(input: bytes, span: span);
+                let key = &bytes^[place.start..place.end];
+                log_removal(log: &s^.meta.log, key: key);
+              }
+            }
+          }
+        }
+      }
+      if complete {
+        let answer = cvt.wrap::<u64, i64>(live);
+        reply_integer(client: client, value: answer);
+      } else {
+        key_prepare_failed(client: client);
+      }
+      let returned = move keys.source;
+      return move returned.bytes;
+    }
   }
-  let answer = cvt.wrap::<u64, i64>(live);
-  reply_integer(client: client, value: answer);
-  return unit;
 }
 
 fn run_type(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
@@ -915,97 +1162,134 @@ fn held_copy(slot: &Option<Entry>) -> made: Option<Entry> reads(slot) {
   }
 }
 
-fn pair_keys(input: &[u8], args: &Box<Slots<Span>>) -> keys: KeySet reads(input), reads(args) {
-  doc "The key set of a command's source, the second argument, and destination, the third, the source's payload carrying 1 and the destination's 2, so that one key named as both carries 3.";
-  let keys = key_set_new(capacity: 2_u64);
-  let source = key_bounds(input: input, args: args, index: 1_u64);
-  let source_key = &input^[source.start..source.end];
-  key_set_add(keys: &keys, key: source_key, amount: 1_u64);
-  let target = key_bounds(input: input, args: args, index: 2_u64);
-  let target_key = &input^[target.start..target.end];
-  key_set_add(keys: &keys, key: target_key, amount: 2_u64);
-  return move keys;
+fn pair_keys(input: &Box<Slots<u8>>, args: &Box<Slots<Span>>) -> planned: NamedKeys reads(input), reads(args) {
+  doc "Plans source and destination in first-distinct argument order, adding role 1 for the source and role 2 for the destination; a repeated key carries both roles.";
+  let length = input^.inner.len;
+  let bytes = &input^.inner[0_u64..length];
+  let adding_roles = True();
+  let empty_key = SpanKey(hash: 0_u64, start: 0_u64, end: 0_u64);
+  let empty_candidate = KeyCandidate(key: empty_key, mark: 0_u64, add: adding_roles);
+  let candidates = box_array_filled::<KeyCandidate>(count: 2_u64, value: empty_candidate);
+  for @roles (position in 0_u64..2_u64) {
+    let index = position +wrap 1_u64;
+    set candidates.inner[position] = key_candidate(input: bytes, args: args, index: index, mark: index, add: adding_roles);
+  }
+  let keep_ranks = False();
+  let planned = dedup_candidates(input: input, candidates: &candidates, ranked: keep_ranks);
+  return move planned;
 }
 
-fn run_rename(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, fresh: Bool) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_rename(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, fresh: Bool) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(env), reads(time), writes(client) waits {
   doc "RENAME key newkey and RENAMENX key newkey (fresh): moves a live key's value and expiry to newkey, replacing any value newkey held, or for RENAMENX only when newkey is absent, in one statement on both keys' entries, as Redis 7.0.15's renameGenericCommand does: an absent source is refused as no such key, one key named as both is left as it is, answering OK or 0, and RENAMENX over a live key answers 0. The file records the command as it was sent when it moved the value, after each key found expired as log_removal records it, and the expiry is queued under the new name.";
-  let keys = pair_keys(input: input, args: args);
-  let source_place = key_bounds(input: input, args: args, index: 1_u64);
-  let source_key = &input^[source_place.start..source_place.end];
-  let target_place = key_bounds(input: input, args: args, index: 2_u64);
-  let target_key = &input^[target_place.start..target_place.end];
-  set client^.now = time^.check;
-  let logged = store^.logging;
-  let outcome = rename_missing;
-  atomic s = &store^.state, slots = &s^.map[keys] {
-    let source = 0_u64;
-    let target = 0_u64;
-    for @find (at in 0_u64..keys.len) {
-      let payload = key_set_payload(keys: &keys, index: at);
-      let named_source = iand(payload, 1_u64);
-      if named_source != 0_u64 {
-        set source = at;
-      }
-      let named_target = iand(payload, 2_u64);
-      if named_target != 0_u64 {
-        set target = at;
+  let planned = pair_keys(input: &input, args: args);
+  let NamedKeys(spans: key_spans, marks: key_marks, ranks: requested_ranks, valid: ready) = move planned;
+  if ready {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  if key_marks.inner.len == key_spans.inner.len {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  let prepared_source = KeySource(bytes: move input, spans: move key_spans);
+  match key_prepare(source: move prepared_source) {
+    Err(error: failure) => {
+      key_prepare_failed(client: client);
+      match move failure {
+        InvalidSpan(source: returned, index: invalid_index) => {
+          return move returned.bytes;
+        }
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+          return move returned.bytes;
+        }
       }
     }
-    if source < slots^.len {
-      let kind = entry_kind(slot: &slots^[source], client: client);
-      if client^.state == state_expired {
-        if logged {
-          log_removal(log: &s^.meta.log, key: source_key);
-        }
-      }
-      if kind == 0_u64 {
-      } else if keys.len == 1_u64 {
-        set outcome = rename_same;
-      } else if target < slots^.len {
-        let held = entry_kind(slot: &slots^[target], client: client);
-        if client^.state == state_expired {
-          if logged {
-            log_removal(log: &s^.meta.log, key: target_key);
+    Ok(value: keys) => {
+      let length = keys.source.bytes.inner.len;
+      let bytes = &keys.source.bytes.inner[0_u64..length];
+      let source_place = key_bounds(input: bytes, args: args, index: 1_u64);
+      let source_key = &bytes^[source_place.start..source_place.end];
+      let target_place = key_bounds(input: bytes, args: args, index: 2_u64);
+      let target_key = &bytes^[target_place.start..target_place.end];
+      set client^.now = time^.check;
+      let logged = store^.logging;
+      let outcome = rename_missing;
+      atomic s = &store^.state, slots = &s^.map[keys] {
+        let source = 0_u64;
+        let target = 0_u64;
+        for @find (at in 0_u64..key_marks.inner.len) {
+          let payload = key_marks.inner[at];
+          let named_source = iand(payload, 1_u64);
+          if named_source != 0_u64 {
+            set source = at;
+          }
+          let named_target = iand(payload, 2_u64);
+          if named_target != 0_u64 {
+            set target = at;
           }
         }
-        let occupied = held != 0_u64;
-        let refused = band(fresh, occupied);
-        if refused {
-          set outcome = rename_occupied;
+        if source < slots^.len {
+          let kind = entry_kind(slot: &slots^[source], client: client);
+          if client^.state == state_expired {
+            if logged {
+              log_removal(log: &s^.meta.log, key: source_key);
+            }
+          }
+          if kind == 0_u64 {
+          } else if keys.source.spans.inner.len == 1_u64 {
+            set outcome = rename_same;
+          } else if target < slots^.len {
+            let held = entry_kind(slot: &slots^[target], client: client);
+            if client^.state == state_expired {
+              if logged {
+                log_removal(log: &s^.meta.log, key: target_key);
+              }
+            }
+            let occupied = held != 0_u64;
+            let refused = band(fresh, occupied);
+            if refused {
+              set outcome = rename_occupied;
+            } else {
+              let moved = None<Entry>();
+              swap(first: &slots^[source], second: &moved);
+              let at = held_expiry(slot: &moved);
+              set slots^[target] = move moved;
+              if at != 0_u64 {
+                queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+              }
+              if logged {
+                log_command(log: &s^.meta.log, input: bytes, args: args);
+              }
+              set outcome = rename_done;
+            }
+          }
+        }
+      }
+      let returned = move keys.source;
+      if outcome == rename_missing {
+        reply_error(client: client, word: &text_no_key[0_u64..15_u64]);
+        return move returned.bytes;
+      }
+      if fresh {
+        if outcome == rename_done {
+          reply_word(client: client, word: &reply_one[0_u64..4_u64]);
         } else {
-          let moved = None<Entry>();
-          swap(first: &slots^[source], second: &moved);
-          let at = held_expiry(slot: &moved);
-          set slots^[target] = move moved;
-          if at != 0_u64 {
-            queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
-          }
-          if logged {
-            log_command(log: &s^.meta.log, input: input, args: args);
-          }
-          set outcome = rename_done;
+          reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
         }
+        return move returned.bytes;
       }
+      reply_ok(client: client);
+      return move returned.bytes;
     }
   }
-  if outcome == rename_missing {
-    reply_error(client: client, word: &text_no_key[0_u64..15_u64]);
-    return unit;
-  }
-  if fresh {
-    if outcome == rename_done {
-      reply_word(client: client, word: &reply_one[0_u64..4_u64]);
-    } else {
-      reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
-    }
-    return unit;
-  }
-  reply_ok(client: client);
-  return unit;
 }
 
-fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+fn run_copy(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(env), reads(time), writes(client) waits {
   doc "COPY source destination [DB destination-db] [REPLACE]: copies a live key's value and expiry to destination, answering 1, unless destination is live and REPLACE is absent, answering 0, as does an absent source, in one statement on both keys' entries, as Redis 7.0.15's copyCommand does with one database. The options are read in order, each word compared in either case up to a zero byte: REPLACE, and DB followed by an integer of the int range, of which only 0, the one database, is in range; any other word, DB with nothing after it, and one key named as both are refused. The file records the command as it was sent when it copied, after each key found expired as log_removal records it, and the expiry is queued under the destination.";
+  let request_length = input.inner.len;
+  let request_bytes = &input.inner[0_u64..request_length];
   let count = args^.inner.len;
   let replace = False();
   let index = 3_u64;
@@ -1014,7 +1298,7 @@ fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       break @options;
     }
     let span = arg(args: args, index: index);
-    let code = option_code(input: input, span: span);
+    let code = option_code(input: request_bytes, span: span);
     let following = index +wrap 1_u64;
     let more = following < count;
     let named_database = code == code_db;
@@ -1023,93 +1307,127 @@ fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       set replace = True();
     } else if database {
       let amount = arg(args: args, index: following);
-      let number = read_integer(input: input, start: amount.start, length: amount.length);
+      let number = read_integer(input: request_bytes, start: amount.start, length: amount.length);
       if number.state != 1_u64 {
         reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
-        return unit;
+        return move input;
       }
       let above = number.value > 2147483647_i64;
       let below = number.value < -2147483648_i64;
       let outside = bor(above, below);
       if outside {
         reply_error(client: client, word: &text_int_range[0_u64..72_u64]);
-        return unit;
+        return move input;
       }
       if number.value != 0_i64 {
         reply_error(client: client, word: &text_db_range[0_u64..28_u64]);
-        return unit;
+        return move input;
       }
       set index = following;
     } else {
       reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
-      return unit;
+      return move input;
     }
     set index = index +wrap 1_u64;
   }
-  let source_place = key_bounds(input: input, args: args, index: 1_u64);
-  let source_key = &input^[source_place.start..source_place.end];
-  let target_place = key_bounds(input: input, args: args, index: 2_u64);
-  let target_key = &input^[target_place.start..target_place.end];
-  let same = windows_order(left: source_key, right: target_key);
+  let request_source_place = key_bounds(input: request_bytes, args: args, index: 1_u64);
+  let request_source_key = &request_bytes^[request_source_place.start..request_source_place.end];
+  let request_target_place = key_bounds(input: request_bytes, args: args, index: 2_u64);
+  let request_target_key = &request_bytes^[request_target_place.start..request_target_place.end];
+  let same = windows_order(left: request_source_key, right: request_target_key);
   if same == 0_i32 {
     reply_error(client: client, word: &text_same_object[0_u64..47_u64]);
-    return unit;
+    return move input;
   }
-  let keys = pair_keys(input: input, args: args);
-  set client^.now = time^.check;
-  let logged = store^.logging;
-  let done = False();
-  atomic s = &store^.state, slots = &s^.map[keys] {
-    let source = 0_u64;
-    let target = 0_u64;
-    for @find (at in 0_u64..keys.len) {
-      let payload = key_set_payload(keys: &keys, index: at);
-      let named_source = iand(payload, 1_u64);
-      if named_source != 0_u64 {
-        set source = at;
-      }
-      let named_target = iand(payload, 2_u64);
-      if named_target != 0_u64 {
-        set target = at;
-      }
-    }
-    if source < slots^.len {
-      let kind = entry_kind(slot: &slots^[source], client: client);
-      if client^.state == state_expired {
-        if logged {
-          log_removal(log: &s^.meta.log, key: source_key);
+  let planned = pair_keys(input: &input, args: args);
+  let NamedKeys(spans: key_spans, marks: key_marks, ranks: requested_ranks, valid: ready) = move planned;
+  if ready {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  if key_marks.inner.len == key_spans.inner.len {
+  } else {
+    key_prepare_failed(client: client);
+    return move input;
+  }
+  let prepared_source = KeySource(bytes: move input, spans: move key_spans);
+  match key_prepare(source: move prepared_source) {
+    Err(error: failure) => {
+      key_prepare_failed(client: client);
+      match move failure {
+        InvalidSpan(source: returned, index: invalid_index) => {
+          return move returned.bytes;
+        }
+        Duplicate(source: returned, first: first_index, second: second_index) => {
+          return move returned.bytes;
         }
       }
-      if kind != 0_u64 {
-        if target < slots^.len {
-          let held = entry_kind(slot: &slots^[target], client: client);
+    }
+    Ok(value: keys) => {
+      let length = keys.source.bytes.inner.len;
+      let bytes = &keys.source.bytes.inner[0_u64..length];
+      let source_place = key_bounds(input: bytes, args: args, index: 1_u64);
+      let source_key = &bytes^[source_place.start..source_place.end];
+      let target_place = key_bounds(input: bytes, args: args, index: 2_u64);
+      let target_key = &bytes^[target_place.start..target_place.end];
+      set client^.now = time^.check;
+      let logged = store^.logging;
+      let done = False();
+      atomic s = &store^.state, slots = &s^.map[keys] {
+        let source = 0_u64;
+        let target = 0_u64;
+        for @find (at in 0_u64..key_marks.inner.len) {
+          let payload = key_marks.inner[at];
+          let named_source = iand(payload, 1_u64);
+          if named_source != 0_u64 {
+            set source = at;
+          }
+          let named_target = iand(payload, 2_u64);
+          if named_target != 0_u64 {
+            set target = at;
+          }
+        }
+        if source < slots^.len {
+          let kind = entry_kind(slot: &slots^[source], client: client);
           if client^.state == state_expired {
             if logged {
-              log_removal(log: &s^.meta.log, key: target_key);
+              log_removal(log: &s^.meta.log, key: source_key);
             }
           }
-          let vacant = held == 0_u64;
-          let allowed = bor(vacant, replace);
-          if allowed {
-            let copied = held_copy(slot: &slots^[source]);
-            let at = held_expiry(slot: &copied);
-            set slots^[target] = move copied;
-            if at != 0_u64 {
-              queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+          if kind != 0_u64 {
+            if target < slots^.len {
+              let held = entry_kind(slot: &slots^[target], client: client);
+              if client^.state == state_expired {
+                if logged {
+                  log_removal(log: &s^.meta.log, key: target_key);
+                }
+              }
+              let vacant = held == 0_u64;
+              let allowed = bor(vacant, replace);
+              if allowed {
+                let copied = held_copy(slot: &slots^[source]);
+                let at = held_expiry(slot: &copied);
+                set slots^[target] = move copied;
+                if at != 0_u64 {
+                  queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+                }
+                if logged {
+                  log_command(log: &s^.meta.log, input: bytes, args: args);
+                }
+                set done = True();
+              }
             }
-            if logged {
-              log_command(log: &s^.meta.log, input: input, args: args);
-            }
-            set done = True();
           }
         }
       }
+      let returned = move keys.source;
+      if done {
+        reply_word(client: client, word: &reply_one[0_u64..4_u64]);
+        return move returned.bytes;
+      }
+      reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
+      return move returned.bytes;
     }
   }
-  if done {
-    reply_word(client: client, word: &reply_one[0_u64..4_u64]);
-    return unit;
-  }
-  reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
-  return unit;
 }

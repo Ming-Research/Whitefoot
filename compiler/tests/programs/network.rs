@@ -1914,7 +1914,9 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes_with_lists_a
 /// [PRE-2] firn records its writes in its append-only file as Redis 7.0.15
 /// propagates them, which a replay does not show where two forms replay to the
 /// same state: a key `MSET` or `GET` finds expired is recorded as its `DEL`
-/// before the command, and so is each key `MSETNX` finds expired before its
+/// before the command, in request order for reverse-sorted duplicate arguments
+/// of `DEL`, `UNLINK`, `EXISTS`, `TOUCH` and `MSET`; so is each key `MSETNX`
+/// finds expired before its
 /// first live one, in the order named; `GETDEL` is recorded as `DEL`,
 /// `GETSET` as `SET`, `INCRBYFLOAT` as `SET` with `KEEPTTL`, `GETEX` as
 /// `PEXPIREAT` or `PERSIST`, `EXAT` as `PXAT` and `EXPIREAT` as `PEXPIREAT`,
@@ -1923,8 +1925,8 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes_with_lists_a
 /// 7.0.15's for the same requests but for the `SELECT 0` it writes first and
 /// the `MULTI` and `EXEC` it brackets one command's records in. The expiring
 /// context, which records the same `DEL` when it removes an expired key
-/// first, could change the file only by removing `zz` or `aa` between their
-/// `SET` and `MSETNX`, a window of microseconds.
+/// first, could change the file by removing a key between its expired `SET`
+/// and the following command, a window of microseconds.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_records_its_writes_as_redis_propagates_them() {
@@ -1965,13 +1967,28 @@ fn firn_records_its_writes_as_redis_propagates_them() {
             vec!["RENAME", "m1", "m3"],
             vec!["COPY", "m3", "m4"],
             vec!["UNLINK", "m4"],
+            vec!["SET", "zz:d", "old", "PXAT", "1"],
+            vec!["SET", "aa:d", "old", "PXAT", "1"],
+            vec!["DEL", "zz:d", "aa:d", "zz:d"],
+            vec!["SET", "zz:u", "old", "PXAT", "1"],
+            vec!["SET", "aa:u", "old", "PXAT", "1"],
+            vec!["UNLINK", "zz:u", "aa:u", "zz:u"],
+            vec!["SET", "zz:e", "old", "PXAT", "1"],
+            vec!["SET", "aa:e", "old", "PXAT", "1"],
+            vec!["EXISTS", "zz:e", "aa:e", "zz:e"],
+            vec!["SET", "zz:t", "old", "PXAT", "1"],
+            vec!["SET", "aa:t", "old", "PXAT", "1"],
+            vec!["TOUCH", "zz:t", "aa:t", "zz:t"],
+            vec!["SET", "zz:m", "old", "PXAT", "1"],
+            vec!["SET", "aa:m", "old", "PXAT", "1"],
+            vec!["MSET", "zz:m", "first", "aa:m", "other", "zz:m", "last"],
         ] {
             batch.extend(resp(&request));
         }
         client.write_all(&batch).expect("send the writes");
         expect_replies(
             &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nv\r\n+OK\r\n$1\r\na\r\n+OK\r\n$4\r\n10.6\r\n+OK\r\n$1\r\nv\r\n$1\r\nv\r\n+OK\r\n:1\r\n:0\r\n:1\r\n:1\r\n:4\r\n:5\r\n:4\r\n+OK\r\n+OK\r\n+OK\r\n:0\r\n:1\r\n+OK\r\n:1\r\n:1\r\n",
+            b"+OK\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nv\r\n+OK\r\n$1\r\na\r\n+OK\r\n$4\r\n10.6\r\n+OK\r\n$1\r\nv\r\n$1\r\nv\r\n+OK\r\n:1\r\n:0\r\n:1\r\n:1\r\n:4\r\n:5\r\n:4\r\n+OK\r\n+OK\r\n+OK\r\n:0\r\n:1\r\n+OK\r\n:1\r\n:1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n+OK\r\n",
             "the writes",
         );
     });
@@ -1982,7 +1999,7 @@ fn firn_records_its_writes_as_redis_propagates_them() {
     assert_eq!(
         String::from_utf8_lossy(&file),
         String::from_utf8_lossy(
-            b"*5\r\n$3\r\nSET\r\n$6\r\nmset:k\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$6\r\nmset:k\r\n*3\r\n$4\r\nMSET\r\n$6\r\nmset:k\r\n$3\r\nnew\r\n*5\r\n$3\r\nSET\r\n$4\r\nread\r\n$1\r\nv\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$4\r\nread\r\n*3\r\n$3\r\nSET\r\n$2\r\ngd\r\n$1\r\nv\r\n*2\r\n$3\r\nDEL\r\n$2\r\ngd\r\n*3\r\n$3\r\nSET\r\n$2\r\ngs\r\n$1\r\na\r\n*3\r\n$3\r\nSET\r\n$2\r\ngs\r\n$1\r\nb\r\n*3\r\n$3\r\nSET\r\n$1\r\nf\r\n$4\r\n10.5\r\n*4\r\n$3\r\nSET\r\n$1\r\nf\r\n$4\r\n10.6\r\n$7\r\nKEEPTTL\r\n*3\r\n$3\r\nSET\r\n$2\r\nge\r\n$1\r\nv\r\n*3\r\n$9\r\nPEXPIREAT\r\n$2\r\nge\r\n$14\r\n99999999999999\r\n*2\r\n$7\r\nPERSIST\r\n$2\r\nge\r\n*5\r\n$3\r\nSET\r\n$2\r\nat\r\n$1\r\nv\r\n$4\r\nPXAT\r\n$14\r\n99999999999000\r\n*3\r\n$9\r\nPEXPIREAT\r\n$2\r\nat\r\n$14\r\n99999999998000\r\n*3\r\n$5\r\nSETNX\r\n$2\r\nnx\r\n$1\r\nv\r\n*3\r\n$6\r\nAPPEND\r\n$2\r\nap\r\n$1\r\nx\r\n*4\r\n$8\r\nSETRANGE\r\n$2\r\nap\r\n$1\r\n3\r\n$1\r\ny\r\n*3\r\n$6\r\nINCRBY\r\n$2\r\nib\r\n$1\r\n5\r\n*2\r\n$4\r\nDECR\r\n$2\r\nib\r\n*5\r\n$3\r\nSET\r\n$2\r\nzz\r\n$1\r\n1\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*5\r\n$3\r\nSET\r\n$2\r\naa\r\n$1\r\n1\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*3\r\n$3\r\nSET\r\n$4\r\nlive\r\n$1\r\nv\r\n*2\r\n$3\r\nDEL\r\n$2\r\nzz\r\n*2\r\n$3\r\nDEL\r\n$2\r\naa\r\n*5\r\n$6\r\nMSETNX\r\n$2\r\nm1\r\n$1\r\na\r\n$2\r\nm2\r\n$1\r\nb\r\n*3\r\n$6\r\nRENAME\r\n$2\r\nm1\r\n$2\r\nm3\r\n*3\r\n$4\r\nCOPY\r\n$2\r\nm3\r\n$2\r\nm4\r\n*2\r\n$6\r\nUNLINK\r\n$2\r\nm4\r\n"
+            b"*5\r\n$3\r\nSET\r\n$6\r\nmset:k\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$6\r\nmset:k\r\n*3\r\n$4\r\nMSET\r\n$6\r\nmset:k\r\n$3\r\nnew\r\n*5\r\n$3\r\nSET\r\n$4\r\nread\r\n$1\r\nv\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$4\r\nread\r\n*3\r\n$3\r\nSET\r\n$2\r\ngd\r\n$1\r\nv\r\n*2\r\n$3\r\nDEL\r\n$2\r\ngd\r\n*3\r\n$3\r\nSET\r\n$2\r\ngs\r\n$1\r\na\r\n*3\r\n$3\r\nSET\r\n$2\r\ngs\r\n$1\r\nb\r\n*3\r\n$3\r\nSET\r\n$1\r\nf\r\n$4\r\n10.5\r\n*4\r\n$3\r\nSET\r\n$1\r\nf\r\n$4\r\n10.6\r\n$7\r\nKEEPTTL\r\n*3\r\n$3\r\nSET\r\n$2\r\nge\r\n$1\r\nv\r\n*3\r\n$9\r\nPEXPIREAT\r\n$2\r\nge\r\n$14\r\n99999999999999\r\n*2\r\n$7\r\nPERSIST\r\n$2\r\nge\r\n*5\r\n$3\r\nSET\r\n$2\r\nat\r\n$1\r\nv\r\n$4\r\nPXAT\r\n$14\r\n99999999999000\r\n*3\r\n$9\r\nPEXPIREAT\r\n$2\r\nat\r\n$14\r\n99999999998000\r\n*3\r\n$5\r\nSETNX\r\n$2\r\nnx\r\n$1\r\nv\r\n*3\r\n$6\r\nAPPEND\r\n$2\r\nap\r\n$1\r\nx\r\n*4\r\n$8\r\nSETRANGE\r\n$2\r\nap\r\n$1\r\n3\r\n$1\r\ny\r\n*3\r\n$6\r\nINCRBY\r\n$2\r\nib\r\n$1\r\n5\r\n*2\r\n$4\r\nDECR\r\n$2\r\nib\r\n*5\r\n$3\r\nSET\r\n$2\r\nzz\r\n$1\r\n1\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*5\r\n$3\r\nSET\r\n$2\r\naa\r\n$1\r\n1\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*3\r\n$3\r\nSET\r\n$4\r\nlive\r\n$1\r\nv\r\n*2\r\n$3\r\nDEL\r\n$2\r\nzz\r\n*2\r\n$3\r\nDEL\r\n$2\r\naa\r\n*5\r\n$6\r\nMSETNX\r\n$2\r\nm1\r\n$1\r\na\r\n$2\r\nm2\r\n$1\r\nb\r\n*3\r\n$6\r\nRENAME\r\n$2\r\nm1\r\n$2\r\nm3\r\n*3\r\n$4\r\nCOPY\r\n$2\r\nm3\r\n$2\r\nm4\r\n*2\r\n$6\r\nUNLINK\r\n$2\r\nm4\r\n*5\r\n$3\r\nSET\r\n$4\r\nzz:d\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*5\r\n$3\r\nSET\r\n$4\r\naa:d\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$4\r\nzz:d\r\n*2\r\n$3\r\nDEL\r\n$4\r\naa:d\r\n*5\r\n$3\r\nSET\r\n$4\r\nzz:u\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*5\r\n$3\r\nSET\r\n$4\r\naa:u\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$4\r\nzz:u\r\n*2\r\n$3\r\nDEL\r\n$4\r\naa:u\r\n*5\r\n$3\r\nSET\r\n$4\r\nzz:e\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*5\r\n$3\r\nSET\r\n$4\r\naa:e\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$4\r\nzz:e\r\n*2\r\n$3\r\nDEL\r\n$4\r\naa:e\r\n*5\r\n$3\r\nSET\r\n$4\r\nzz:t\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*5\r\n$3\r\nSET\r\n$4\r\naa:t\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$4\r\nzz:t\r\n*2\r\n$3\r\nDEL\r\n$4\r\naa:t\r\n*5\r\n$3\r\nSET\r\n$4\r\nzz:m\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*5\r\n$3\r\nSET\r\n$4\r\naa:m\r\n$3\r\nold\r\n$4\r\nPXAT\r\n$1\r\n1\r\n*2\r\n$3\r\nDEL\r\n$4\r\nzz:m\r\n*2\r\n$3\r\nDEL\r\n$4\r\naa:m\r\n*7\r\n$4\r\nMSET\r\n$4\r\nzz:m\r\n$5\r\nfirst\r\n$4\r\naa:m\r\n$5\r\nother\r\n$4\r\nzz:m\r\n$4\r\nlast\r\n"
         ),
         "firn's append-only file"
     );
@@ -3148,18 +3165,40 @@ fn firn_answers_string_commands_as_redis_does() {
         b"+OK\r\n$1\r\nv\r\n+OK\r\n:20\r\n-ERR syntax error\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n:20\r\n+OK\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'set' command\r\n$2\r\nv6\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+list\r\n$-1\r\n$1\r\nx\r\n$-1\r\n$-1\r\n:0\r\n+OK\r\n-ERR syntax error\r\n-ERR syntax error\r\n+OK\r\n$-1\r\n+OK\r\n$1\r\nx\r\n:1\r\n:0\r\n+OK\r\n:100\r\n-ERR invalid expire time in 'setex' command\r\n-ERR value is not an integer or out of range\r\n-ERR invalid expire time in 'psetex' command\r\n+OK\r\n:100\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$1\r\nw\r\n$-1\r\n+OK\r\n$3\r\nval\r\n$3\r\nval\r\n:100\r\n$3\r\nval\r\n:-1\r\n-ERR syntax error\r\n-ERR value is not an integer or out of range\r\n$-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR invalid expire time in 'getex' command\r\n-ERR syntax error\r\n$3\r\nval\r\n:5\r\n$-1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:0\r\n:1\r\n:0\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n$3\r\nllo\r\n$0\r\n\r\n$0\r\n\r\n$1\r\nh\r\n$5\r\nhello\r\n$0\r\n\r\n-ERR value is not an integer or out of range\r\n-ERR value is not an integer or out of range\r\n$0\r\n\r\n-ERR value is not an integer or out of range\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n$0\r\n\r\n$1\r\nh\r\n$3\r\nell\r\n-ERR offset is out of range\r\n-ERR value is not an integer or out of range\r\n:0\r\n:0\r\n:5\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-ERR string exceeds maximum allowed size (proto-max-bulk-len)\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$5\r\nhello\r\n:5\r\n-ERR value is not an integer or out of range\r\n:-5\r\n:-6\r\n:-1\r\n-ERR decrement would overflow\r\n:-9223372036854775808\r\n-ERR increment or decrement would overflow\r\n-ERR increment or decrement would overflow\r\n:-1\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR decrement would overflow\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n:7\r\n:4\r\n:99999999999999\r\n-ERR value is not an integer or out of range\r\n+OK\r\n$4\r\n10.6\r\n$1\r\n0\r\n+OK\r\n$4\r\n4000\r\n+OK\r\n$2\r\n11\r\n+OK\r\n$19\r\n0.00000381469726562\r\n+OK\r\n$19\r\n0.00001144409179688\r\n$1\r\n0\r\n$1\r\n0\r\n+OK\r\n$1\r\n0\r\n-ERR increment would produce NaN or Infinity\r\n-ERR value is not a valid float\r\n-ERR value is not a valid float\r\n-ERR value is not a valid float\r\n+OK\r\n-ERR value is not a valid float\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n-ERR increment would produce NaN or Infinity\r\n+OK\r\n$3\r\n6.5\r\n:99999999999999\r\n+OK\r\n$309\r\n179769313486231569995921046774104434048386446944329178485314420765176628523124396354701868608387085564428793419425520689308708363451136055357897278026477617073498977686288394835618163294045594434929537447290627480669417384648879122776218333598953852832103282504751611691208117720159985926376802466863339536384\r\n$20\r\n18446744073709551616\r\n$20\r\n18446744073709551620\r\n$20\r\n18446744073709551618\r\n",
         "the string batch",
     );
+    // Independent integer oracle for a 64-bit significand rounded to nearest
+    // even: at 2^64 the spacing is 2. The hex base is exactly 2^64 + 2;
+    // subtracting 2^64 gives 2, and adding 1 ties upward to 2^64 + 4.
+    // These additions were derived mathematically, not observed on native
+    // macOS Redis, whose long double does not provide this x87 contract.
+    let mut batch = Vec::new();
+    for request in [
+        vec!["SET", "x87:cancel", "0x1.0000000000000002p64"],
+        vec!["INCRBYFLOAT", "x87:cancel", "-0x1p64"],
+        vec!["SET", "x87:up", "0x1.0000000000000002p64"],
+        vec!["INCRBYFLOAT", "x87:up", "1"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client
+        .write_all(&batch)
+        .expect("send the integer x87 oracle");
+    expect_replies(
+        &mut client,
+        b"+OK\r\n$1\r\n2\r\n+OK\r\n$20\r\n18446744073709551620\r\n",
+        "the integer x87 oracle",
+    );
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0);
 }
 
 /// [SHARE-1, SHARE-2] firn answers `DEL`, `EXISTS` and `MSET` naming a key
-/// more than once as Redis does, each holding its keys' entries through a key
-/// set, which keeps one element per key: `DEL` removes and counts such a key
+/// more than once as Redis does, each holding its keys' entries through
+/// prepared spans in first-distinct request order: `DEL` removes and counts such a key
 /// once, `EXISTS` counts a live key once for each time it is named and an
 /// absent one not at all, and `MSET` keeps the last value named for a key.
-/// `MGET` answers a key named twice twice, in the order named, though its key
-/// set holds the keys in byte order, and nil for an absent key or one of
+/// `MGET` uses occurrence ranks to answer a key named twice twice, in the
+/// order named, and nil for an absent key or one of
 /// another kind; `MSETNX` keeps the last value named for a key and stores
 /// nothing when any key is live, of any kind, looking its keys up in the
 /// order named and stopping at the first live one, as Redis does: a key
@@ -3379,6 +3418,8 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
         vec!["CONFIG", "SET", "bind", addresses.as_str()],
         vec!["CONFIG", "SET", "timeout", "9", "port", "70000"],
         vec!["CONFIG", "SET", "port", "70000", "timeout", "abc"],
+        vec!["CONFIG", "SET", "port", "abc"],
+        vec!["CONFIG", "SET", "timeout", "9", "port", "abc"],
         vec!["CONFIG", "SET", "appendonly", "yes", "timeout", "abc"],
         vec!["CONFIG", "SET", "port", text.as_str(), "bind", "127.0.0.1"],
         vec!["CONFIG", "GET", "timeout"],
@@ -3445,6 +3486,8 @@ fn firn_answers_config_and_echoes_client_bytes_as_redis_does() {
              {failed} 'bind') - Too many bind addresses specified.\r\n\
              {failed} 'port') - argument must be between 0 and 65535 inclusive\r\n\
              {failed} 'port') - argument must be between 0 and 65535 inclusive\r\n\
+             {failed} 'port') - argument couldn't be parsed into an integer\r\n\
+             {failed} 'port') - argument couldn't be parsed into an integer\r\n\
              {failed} 'timeout') - argument couldn't be parsed into an integer\r\n\
              +OK\r\n\
              *2\r\n$7\r\ntimeout\r\n$1\r\n0\r\n\
@@ -4840,6 +4883,28 @@ fn firn_answers_the_value_types_as_redis_does_with_hashes_and_sorted_sets() {
         &mut client,
         b":2\r\n+OK\r\n-ERR wrong number of arguments for 'hmset' command\r\n-ERR wrong number of arguments for 'hset' command\r\n*3\r\n$1\r\nv\r\n$-1\r\n$1\r\n1\r\n*2\r\n$-1\r\n$-1\r\n:2\r\n:1\r\n:0\r\n:1\r\n:0\r\n:2\r\n:0\r\n:42\r\n-ERR hash value is not an integer\r\n-ERR increment or decrement would overflow\r\n-ERR value is not an integer or out of range\r\n:-5\r\n$3\r\n0.1\r\n$3\r\n0.3\r\n$19\r\n0.00000381469726562\r\n$1\r\n0\r\n-ERR value is not a valid float\r\n$20\r\n18446744073709551615\r\n$20\r\n18446744073709551616\r\n-ERR hash value is not a float\r\n-ERR value is NaN or Infinity\r\n-ERR value is not a valid float\r\n-ERR value is not a valid float\r\n-ERR value is not a valid float\r\n$401\r\n10000000000000000000281880683947586514586453433629052038625910693539685534008629862039363994848324160522094053927317616200295822777259255734023828976593340661017797447434546173917862448116674971723778943824391593338047470675026246684401359237513603830343735485505244955964979021825038280091068414947402456898653040951017512658092615827588920183472511643316591362664138176309734806343732497430221946880\r\n$1\r\n0\r\n$1\r\n0\r\n:1\r\n-ERR increment would produce NaN or Infinity\r\n:0\r\n:1\r\n:1\r\n:1\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n*1\r\n$1\r\na\r\n*1\r\n$1\r\nb\r\n*0\r\n:1\r\n:0\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n-ERR value is not a valid float\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n$-1\r\n*0\r\n-ERR syntax error\r\n-ERR value is out of range\r\n-ERR value is out of range, value must between -9223372036854775807 and 9223372036854775807\r\n",
         "the hash batch",
+    );
+    // Independent integer oracle for a 64-bit significand rounded to nearest
+    // even: at 2^64 the spacing is 2. The hex base is exactly 2^64 + 2;
+    // subtracting 2^64 gives 2, and adding 1 ties upward to 2^64 + 4.
+    // These additions were derived mathematically, not observed on native
+    // macOS Redis, whose long double does not provide this x87 contract.
+    let mut batch = Vec::new();
+    for request in [
+        vec!["HSET", "x87:hash", "cancel", "0x1.0000000000000002p64"],
+        vec!["HINCRBYFLOAT", "x87:hash", "cancel", "-0x1p64"],
+        vec!["HSET", "x87:hash", "up", "0x1.0000000000000002p64"],
+        vec!["HINCRBYFLOAT", "x87:hash", "up", "1"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client
+        .write_all(&batch)
+        .expect("send the integer x87 oracle");
+    expect_replies(
+        &mut client,
+        b":1\r\n$1\r\n2\r\n:1\r\n$20\r\n18446744073709551620\r\n",
+        "the integer x87 oracle",
     );
     let mut batch = Vec::new();
     for request in [

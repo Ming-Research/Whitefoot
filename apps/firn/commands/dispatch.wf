@@ -199,11 +199,13 @@ fn admitted(client: &Client, input: &[u8], name: Span, fits: Bool) -> go: Bool r
   return True();
 }
 
-fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "Answers one command, whose arguments are spans of the input, by appending its reply to the client's. A command that changes the keyspace does so in one atomic statement, which also appends the change to the append-only file's pending bytes when the keyspace keeps them. As in Redis, an unknown command or a known one outside its command-table arity is answered so whether or not the connection has authenticated, and every other command but AUTH, HELLO and QUIT from a connection that must authenticate first is answered NOAUTH.";
+fn execute(input: Box<Slots<u8>>, store: &Keyspace, args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> restored: Box<Slots<u8>> reads(store), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "Answers one command, whose arguments are spans of the bytes, by appending its reply to the client's. A command that changes the keyspace does so in one atomic statement, which also appends the change to the append-only file's pending bytes when the keyspace keeps them. As in Redis, an unknown command or a known one outside its command-table arity is answered so whether or not the connection has authenticated, and every other command but AUTH, HELLO and QUIT from a connection that must authenticate first is answered NOAUTH.";
+  let length = input.inner.len;
+  let bytes = &input.inner[0_u64..length];
   let count = args^.inner.len;
   let name = arg(args: args, index: 0_u64);
-  let code = name_code(input: input, start: name.start, length: name.length);
+  let code = name_code(input: bytes, start: name.start, length: name.length);
   let relative = False();
   let calendar = True();
   let whole_seconds = True();
@@ -212,750 +214,770 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let tail = False();
   if code == code_ping {
     let fits = count <= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_ping(input: input, args: args, client: client);
+      run_ping(input: bytes, args: args, client: client);
     }
-    return unit;
+    return move input;
   }
   if code == code_echo {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_echo(input: input, args: args, client: client);
+      run_echo(input: bytes, args: args, client: client);
     }
-    return unit;
+    return move input;
   }
   if code == code_get {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_get(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_get(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_set {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_set(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_set(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_setnx {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_setnx(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_setnx(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_setex {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, invalid: &text_expire_setex[0_u64..42_u64]);
+      run_setex(store: store, input: bytes, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, invalid: &text_expire_setex[0_u64..42_u64]);
     }
-    return unit;
+    return move input;
   }
   if code == code_psetex {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, invalid: &text_expire_psetex[0_u64..43_u64]);
+      run_setex(store: store, input: bytes, args: args, client: client, env: env, time: time, in_seconds: milliseconds, invalid: &text_expire_psetex[0_u64..43_u64]);
     }
-    return unit;
+    return move input;
   }
   if code == code_getset {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_getset(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_getset(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_getdel {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_getdel(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_getdel(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_getex {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_getex(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_getex(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_append {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_append(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_append(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_strlen {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_strlen(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_strlen(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   let ranged = code == code_getrange;
   let substring = code == code_substr;
   let read_range = bor(ranged, substring);
   if read_range {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_getrange(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_getrange(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_setrange {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_setrange(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_setrange(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_del {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_del(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_del(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_unlink {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_del(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_del(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_exists {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_exists(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_touch {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_exists(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_rename {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let fresh = False();
-      run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
+      let restored = run_rename(input: move input, store: store, args: args, client: client, env: env, time: time, fresh: fresh);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_renamenx {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let fresh = True();
-      run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
+      let restored = run_rename(input: move input, store: store, args: args, client: client, env: env, time: time, fresh: fresh);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_copy {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_copy(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_copy(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_type {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_type(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_type(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_incr {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: 1_i64);
+      run_incr(store: store, input: bytes, args: args, client: client, env: env, time: time, delta: 1_i64);
     }
-    return unit;
+    return move input;
   }
   if code == code_decr {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: -1_i64);
+      run_incr(store: store, input: bytes, args: args, client: client, env: env, time: time, delta: -1_i64);
     }
-    return unit;
+    return move input;
   }
   if code == code_incrby {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let negate = False();
-      run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
+      run_incrby(store: store, input: bytes, args: args, client: client, env: env, time: time, negate: negate);
     }
-    return unit;
+    return move input;
   }
   if code == code_decrby {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let negate = True();
-      run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
+      run_incrby(store: store, input: bytes, args: args, client: client, env: env, time: time, negate: negate);
     }
-    return unit;
+    return move input;
   }
   if code == code_incrbyfloat {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_incrbyfloat[0_u64..11_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_incrbyfloat[0_u64..11_u64]);
     if spelled {
       let fits = count == 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
-        run_incrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+        run_incrbyfloat(store: store, input: bytes, args: args, client: client, env: env, time: time);
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_mset {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let parity = count % 2_u64;
       if parity == 0_u64 {
-        reply_arity(client: client, input: input, name: name);
-        return unit;
+        reply_arity(client: client, input: bytes, name: name);
+        return move input;
       }
-      run_mset(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_mset(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_mget {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_mget(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_mget(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_msetnx {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let parity = count % 2_u64;
       if parity == 0_u64 {
-        reply_arity(client: client, input: input, name: name);
-        return unit;
+        reply_arity(client: client, input: bytes, name: name);
+        return move input;
       }
-      run_msetnx(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_msetnx(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_expire {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: relative, invalid: &text_expire_expire[0_u64..43_u64]);
+      run_expire(store: store, input: bytes, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: relative, invalid: &text_expire_expire[0_u64..43_u64]);
     }
-    return unit;
+    return move input;
   }
   if code == code_pexpire {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: relative, invalid: &text_expire_pexpire[0_u64..44_u64]);
+      run_expire(store: store, input: bytes, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: relative, invalid: &text_expire_pexpire[0_u64..44_u64]);
     }
-    return unit;
+    return move input;
   }
   if code == code_expireat {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: calendar, invalid: &text_expire_expireat[0_u64..45_u64]);
+      run_expire(store: store, input: bytes, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: calendar, invalid: &text_expire_expireat[0_u64..45_u64]);
     }
-    return unit;
+    return move input;
   }
   if code == code_pexpireat {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_pexpireat[0_u64..9_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_pexpireat[0_u64..9_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
-        run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &text_expire_pexpireat[0_u64..46_u64]);
+        run_expire(store: store, input: bytes, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &text_expire_pexpireat[0_u64..46_u64]);
       }
-      return unit;
+      return move input;
     }
-    let timed = name_is(input: input, start: name.start, length: name.length, word: &word_pexpiretime[0_u64..11_u64]);
+    let timed = name_is(input: bytes, start: name.start, length: name.length, word: &word_pexpiretime[0_u64..11_u64]);
     if timed {
       let fits = count == 2_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
-        run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: calendar);
+        run_ttl(store: store, input: bytes, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: calendar);
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_expiretime {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_expiretime[0_u64..10_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_expiretime[0_u64..10_u64]);
     if spelled {
       let fits = count == 2_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
-        run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: calendar);
+        run_ttl(store: store, input: bytes, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: calendar);
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_ttl {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: relative);
+      run_ttl(store: store, input: bytes, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: relative);
     }
-    return unit;
+    return move input;
   }
   if code == code_pttl {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: relative);
+      run_ttl(store: store, input: bytes, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: relative);
     }
-    return unit;
+    return move input;
   }
   if code == code_persist {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_persist(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_persist(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_dbsize {
     let fits = count == 1_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       run_dbsize(store: store, client: client);
     }
-    return unit;
+    return move input;
   }
   if code == code_config {
     let fits = count >= 2_u64;
     if fits {
-      run_config(store: store, input: input, args: args, client: client);
+      run_config(store: store, input: bytes, args: args, client: client);
     } else {
-      reply_arity(client: client, input: input, name: name);
+      reply_arity(client: client, input: bytes, name: name);
     }
-    return unit;
+    return move input;
   }
   let flushing_all = code == code_flushall;
   let flushing_one = code == code_flushdb;
   let flushing = bor(flushing_all, flushing_one);
   if flushing {
     let fits = count >= 1_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_flush(store: store, input: input, args: args, client: client);
+      run_flush(store: store, input: bytes, args: args, client: client);
     }
-    return unit;
+    return move input;
   }
   if code == code_function {
     let fits = count >= 2_u64;
     if fits {
-      run_function(store: store, input: input, args: args, client: client);
+      run_function(store: store, input: bytes, args: args, client: client);
     } else {
-      reply_arity(client: client, input: input, name: name);
+      reply_arity(client: client, input: bytes, name: name);
     }
-    return unit;
+    return move input;
   }
   if code == code_debug {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_debug(input: input, args: args, client: client);
+      run_debug(input: bytes, args: args, client: client);
     }
-    return unit;
+    return move input;
   }
   if code == code_info {
     let fits = count >= 1_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_info(store: store, input: input, args: args, client: client, time: time);
+      run_info(store: store, input: bytes, args: args, client: client, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_lpush {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let creating = False();
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: creating);
+      run_push(store: store, input: bytes, args: args, client: client, env: env, time: time, front: head, existing: creating);
     }
-    return unit;
+    return move input;
   }
   if code == code_rpush {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let creating = False();
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: creating);
+      run_push(store: store, input: bytes, args: args, client: client, env: env, time: time, front: tail, existing: creating);
     }
-    return unit;
+    return move input;
   }
   if code == code_lpop {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       if count > 3_u64 {
-        reply_arity(client: client, input: input, name: name);
-        return unit;
+        reply_arity(client: client, input: bytes, name: name);
+        return move input;
       }
-      run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: head);
+      run_pop(store: store, input: bytes, args: args, client: client, env: env, time: time, front: head);
     }
-    return unit;
+    return move input;
   }
   if code == code_rpop {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       if count > 3_u64 {
-        reply_arity(client: client, input: input, name: name);
-        return unit;
+        reply_arity(client: client, input: bytes, name: name);
+        return move input;
       }
-      run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: tail);
+      run_pop(store: store, input: bytes, args: args, client: client, env: env, time: time, front: tail);
     }
-    return unit;
+    return move input;
   }
   if code == code_lrange {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_lrange(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_lrange(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_llen {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_llen(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_llen(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_lindex {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_lindex(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_lindex(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_lset {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_lset(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_lset(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_lrem {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_lrem(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_lrem(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_ltrim {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_ltrim(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_ltrim(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_linsert {
     let fits = count == 5_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_linsert(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_linsert(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_lpos {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_lpos(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_lpos(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_lpushx {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let existing = True();
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: existing);
+      run_push(store: store, input: bytes, args: args, client: client, env: env, time: time, front: head, existing: existing);
     }
-    return unit;
+    return move input;
   }
   if code == code_rpushx {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let existing = True();
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: existing);
+      run_push(store: store, input: bytes, args: args, client: client, env: env, time: time, front: tail, existing: existing);
     }
-    return unit;
+    return move input;
   }
   if code == code_lmove {
     let fits = count == 5_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_lmove_named(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_lmove_named(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_rpoplpush {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_rpoplpush[0_u64..9_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_rpoplpush[0_u64..9_u64]);
     if spelled {
       let fits = count == 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
-        run_lmove(store: store, input: input, args: args, client: client, env: env, time: time, from_head: tail, to_head: head);
+        let restored = run_lmove(input: move input, store: store, args: args, client: client, env: env, time: time, from_head: tail, to_head: head);
+        return move restored;
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_sadd {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_sadd(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_sadd(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_srem {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_srem(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_srem(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_spop {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_spop(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_spop(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_scard {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_scard(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_scard(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_smembers {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_smembers(store: store, input: input, args: args, client: client, env: env, time: time);
+      run_smembers(store: store, input: bytes, args: args, client: client, env: env, time: time);
     }
-    return unit;
+    return move input;
   }
   if code == code_sismember {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sismember[0_u64..9_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_sismember[0_u64..9_u64]);
     if spelled {
       let fits = count == 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
         let one = False();
-        run_sismember(store: store, input: input, args: args, client: client, env: env, time: time, many: one);
+        run_sismember(store: store, input: bytes, args: args, client: client, env: env, time: time, many: one);
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_smismember {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_smismember[0_u64..10_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_smismember[0_u64..10_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
         let many = True();
-        run_sismember(store: store, input: input, args: args, client: client, env: env, time: time, many: many);
+        run_sismember(store: store, input: bytes, args: args, client: client, env: env, time: time, many: many);
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_srandmember {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_srandmember[0_u64..11_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_srandmember[0_u64..11_u64]);
     if spelled {
       let fits = count >= 2_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
-        run_srandmember(store: store, input: input, args: args, client: client, env: env, time: time);
+        run_srandmember(store: store, input: bytes, args: args, client: client, env: env, time: time);
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_smove {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_smove(store: store, input: input, args: args, client: client, env: env, time: time);
+      let restored = run_smove(input: move input, store: store, args: args, client: client, env: env, time: time);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_sinter {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let reading = False();
-      run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_inter, storing: reading);
+      let restored = run_combine(input: move input, store: store, args: args, client: client, env: env, time: time, operation: operation_inter, storing: reading);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_sunion {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let reading = False();
-      run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_union, storing: reading);
+      let restored = run_combine(input: move input, store: store, args: args, client: client, env: env, time: time, operation: operation_union, storing: reading);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_sdiff {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       let reading = False();
-      run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_diff, storing: reading);
+      let restored = run_combine(input: move input, store: store, args: args, client: client, env: env, time: time, operation: operation_diff, storing: reading);
+      return move restored;
     }
-    return unit;
+    return move input;
   }
   if code == code_sintercard {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sintercard[0_u64..10_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_sintercard[0_u64..10_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
-        run_sintercard(store: store, input: input, args: args, client: client, env: env, time: time);
+        let restored = run_sintercard(input: move input, store: store, args: args, client: client, env: env, time: time);
+        return move restored;
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_sinterstore {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sinterstore[0_u64..11_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_sinterstore[0_u64..11_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
         let storing = True();
-        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_inter, storing: storing);
+        let restored = run_combine(input: move input, store: store, args: args, client: client, env: env, time: time, operation: operation_inter, storing: storing);
+        return move restored;
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_sunionstore {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sunionstore[0_u64..11_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_sunionstore[0_u64..11_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
         let storing = True();
-        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_union, storing: storing);
+        let restored = run_combine(input: move input, store: store, args: args, client: client, env: env, time: time, operation: operation_union, storing: storing);
+        return move restored;
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_sdiffstore {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sdiffstore[0_u64..10_u64]);
+    let spelled = name_is(input: bytes, start: name.start, length: name.length, word: &word_sdiffstore[0_u64..10_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = admitted(client: client, input: bytes, name: name, fits: fits);
       if go {
         let storing = True();
-        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_diff, storing: storing);
+        let restored = run_combine(input: move input, store: store, args: args, client: client, env: env, time: time, operation: operation_diff, storing: storing);
+        return move restored;
       }
-      return unit;
+      return move input;
     }
   }
   if code == code_auth {
     let fits = count >= 2_u64;
     if fits {
-      run_auth(store: store, input: input, args: args, client: client);
+      run_auth(store: store, input: bytes, args: args, client: client);
     } else {
-      reply_arity(client: client, input: input, name: name);
+      reply_arity(client: client, input: bytes, name: name);
     }
-    return unit;
+    return move input;
   }
   if code == code_hello {
-    run_hello(store: store, input: input, args: args, client: client);
-    return unit;
+    run_hello(store: store, input: bytes, args: args, client: client);
+    return move input;
   }
   if code == code_quit {
     run_quit(client: client);
-    return unit;
+    return move input;
   }
   if code == code_client {
     let fits = count >= 2_u64;
     if fits {
-      run_client(input: input, args: args, client: client);
+      run_client(input: bytes, args: args, client: client);
     } else {
-      reply_arity(client: client, input: input, name: name);
+      reply_arity(client: client, input: bytes, name: name);
     }
-    return unit;
+    return move input;
   }
   if code == code_select {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
-      run_select(input: input, args: args, client: client);
+      run_select(input: bytes, args: args, client: client);
     }
-    return unit;
+    return move input;
   }
   if code == code_time {
     let fits = count == 1_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = admitted(client: client, input: bytes, name: name, fits: fits);
     if go {
       run_time(client: client);
     }
-    return unit;
+    return move input;
   }
   if code == code_command {
-    run_command(input: input, args: args, client: client);
-    return unit;
+    run_command(input: bytes, args: args, client: client);
+    return move input;
   }
-  let hashed = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+  let hashed = hash_command(store: store, input: bytes, args: args, client: client, env: env, time: time, code: code, name: name);
   if hashed {
-    return unit;
+    return move input;
   }
-  let ranked = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+  let ranked = sorted_command(store: store, input: bytes, args: args, client: client, env: env, time: time, code: code, name: name);
   if ranked {
-    return unit;
+    return move input;
   }
-  reply_unknown(client: client, input: input, args: args);
-  return unit;
+  reply_unknown(client: client, input: bytes, args: args);
+  return move input;
 }

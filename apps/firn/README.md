@@ -177,11 +177,10 @@ default.
   settings;
 - `scores`: sorted-set scores and the ends of score ranges read as Redis's
   `strtod` reads them, to the nearest double, and written as its `%.17g`
-  writes them, and the long double `HINCRBYFLOAT` computes in, read as
-  `strtold` reads it, added as x87 adds it and written as `%.17Lf` writes it;
+  writes them;
 - `extended`: numbers of x86-64's 80-bit long double, read as glibc's
   `strtold` reads them, added, and written as `%.17Lf` writes them, the
-  arithmetic of `INCRBYFLOAT`;
+  arithmetic of `INCRBYFLOAT` and `HINCRBYFLOAT`;
 - `store`: the keyspace, one shared state holding a keyed table of entries
   and, after it, the queued expiries, the append-only file's pending bytes
   and the server's counts

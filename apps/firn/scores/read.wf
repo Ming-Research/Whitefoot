@@ -1,6 +1,17 @@
 alias byte_at = pkg::bytes::byte_at;
 alias name_is = pkg::bytes::name_is;
 
+fn space(byte: u8) -> result: Bool pure {
+  doc "Whether a byte is white space as C's isspace reads it in the C locale: space, tab, line feed, vertical tab, form feed or carriage return.";
+  if byte == 32_u8 {
+    return True();
+  }
+  let low = byte >= 9_u8;
+  let high = byte <= 13_u8;
+  let within = band(low, high);
+  return within;
+}
+
 const word_inf: Array<u8, 3> = "INF";
 
 const word_infinity: Array<u8, 8> = "INFINITY";

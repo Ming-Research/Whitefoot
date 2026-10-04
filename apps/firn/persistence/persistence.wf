@@ -130,7 +130,7 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
             break @commands;
           }
           if parsed.state == 1_u64 {
-            execute(store: store, input: bytes, args: &args, client: &client, env: &env, time: time);
+            set input = execute(input: move input, store: store, args: &args, client: &client, env: &env, time: time);
             set client.at = 0_u64;
             set applied = applied +wrap 1_u64;
           } else if parsed.state != 6_u64 {
