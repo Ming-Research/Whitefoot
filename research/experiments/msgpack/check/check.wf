@@ -1,0 +1,356 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+
+fn read_exact(factory: &HandleFactory, input: &InputStream, bytes: &[u8], count: u64) -> complete: Bool writes(factory), writes(input), writes(bytes) waits contract {
+  requires count <= bytes^.len;
+} {
+  let position = 0_u64;
+  loop @read {
+    if position >= count {
+      return True();
+    }
+    let deadline = None<std::time::Instant>();
+    match std::io::read_next(factory: factory, input: input, destination: bytes, start: position, end: count, deadline: deadline) {
+      Ok(value: next) => {
+        if next == position {
+          return False();
+        }
+        set position = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn word(bytes: &[u8], start: u64) -> value: u64 reads(bytes) {
+  let value = 0_u64;
+  for (offset in 0_u64..8_u64) {
+    let index = start +wrap offset;
+    if index < bytes^.len {
+      let byte = bytes^[index];
+      let wide = cvt::<u8, u64>(byte);
+      let distance = offset *wrap 8_u64;
+      let shift = cvt.wrap::<u64, u32>(distance);
+      let part = ishl.wrap(wide, shift);
+      set value = ior(value, part);
+    }
+  }
+  return value;
+}
+
+fn emit(factory: &HandleFactory, output: &OutputStream, bytes: &[u8], count: u64) -> complete: Bool reads(bytes), writes(factory), writes(output) waits contract {
+  requires count <= bytes^.len;
+} {
+  let position = 0_u64;
+  loop @write {
+    if position >= count {
+      return True();
+    }
+    let deadline = None<std::time::Instant>();
+    match std::io::write_once(factory: factory, output: output, source: bytes, start: position, end: count, deadline: deadline) {
+      Ok(value: next) => {
+        if next == position {
+          return False();
+        }
+        set position = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn byte(out: &Box<Slots<u8>>, value: u8) -> r: unit writes(out) {
+  if out^.inner.len == out^.inner.cap {
+    let capacity = out^.inner.cap +sat 64_u64;
+    grow(cell: out, capacity: capacity);
+  }
+  if out^.inner.len < out^.inner.cap {
+    place_back(window: &out^.inner, value: value);
+  }
+  return unit;
+}
+
+fn put_word(out: &Box<Slots<u8>>, value: u64) -> r: unit writes(out) {
+  for (i in 0_u64..8_u64) {
+    let shift = i * 8_u64;
+    let k = cvt.wrap::<u64, u32>(shift);
+    let n = ishr.wrap(value, k);
+    let b = cvt.wrap::<u64, u8>(n);
+    byte(out: out, value: b);
+  }
+  return unit;
+}
+
+fn decode(source: &[u8], offset: u64, out: &Box<Slots<u8>>) -> r: unit reads(source), writes(out) {
+  match msgpack::decode::next(source: source, offset: offset) {
+    Ok(value: item) => {
+      match item {
+        None() => {
+          byte(out: out, value: 1_u8);
+        }
+        Some(value: token) => {
+          byte(out: out, value: 0_u8);
+          byte(out: out, value: token.tag);
+          put_word(out: out, value: token.start);
+          put_word(out: out, value: token.next);
+          let code = 0_u8;
+          let value = 0_u64;
+          let first = 0_u64;
+          let last = 0_u64;
+          match token.event {
+            Nil() => {
+              set code = 0_u8;
+            }
+            False() => {
+              set code = 1_u8;
+            }
+            True() => {
+              set code = 2_u8;
+            }
+            Unsigned(value: n) => {
+              set code = 3_u8;
+              set value = n;
+            }
+            Signed(value: n) => {
+              set code = 4_u8;
+              set value = reinterpret::<i64, u64>(n);
+            }
+            Float32(value: n) => {
+              set code = 5_u8;
+              let b = reinterpret::<f32, u32>(n);
+              set value = cvt::<u32, u64>(b);
+            }
+            Float64(value: n) => {
+              set code = 6_u8;
+              set value = reinterpret::<f64, u64>(n);
+            }
+            String(start: a, end: b) => {
+              set code = 7_u8;
+              set first = a;
+              set last = b;
+            }
+            Binary(start: a, end: b) => {
+              set code = 8_u8;
+              set first = a;
+              set last = b;
+            }
+            Array(count: n) => {
+              set code = 9_u8;
+              set value = cvt::<u32, u64>(n);
+            }
+            Map(count: n) => {
+              set code = 10_u8;
+              set value = cvt::<u32, u64>(n);
+            }
+            Extension(kind: t, start: a, end: b) => {
+              set code = 11_u8;
+              let btype = reinterpret::<i8, u8>(t);
+              set value = cvt::<u8, u64>(btype);
+              set first = a;
+              set last = b;
+            }
+          }
+          byte(out: out, value: code);
+          put_word(out: out, value: value);
+          put_word(out: out, value: first);
+          put_word(out: out, value: last);
+        }
+      }
+    }
+    Err(error: failure) => {
+      match failure {
+        Truncated(start: beginning, offset: at, needed: need, available: have) => {
+          byte(out: out, value: 2_u8);
+          put_word(out: out, value: beginning);
+          put_word(out: out, value: at);
+          put_word(out: out, value: need);
+          put_word(out: out, value: have);
+        }
+        Reserved(offset: at) => {
+          byte(out: out, value: 3_u8);
+          put_word(out: out, value: at);
+        }
+        Offset(offset: at) => {
+          byte(out: out, value: 4_u8);
+          put_word(out: out, value: at);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn encode(op: u8, bits: u64, payload: &[u8], out: &Box<Slots<u8>>) -> r: Result<unit, msgpack::encode::Error> reads(payload), writes(out) {
+  if op == 1_u8 {
+    return msgpack::encode::nil(out: out);
+  }
+  if op == 2_u8 {
+    let v = bits != 0_u64;
+    return msgpack::encode::boolean(out: out, value: v);
+  }
+  if op == 3_u8 {
+    return msgpack::encode::unsigned(out: out, value: bits);
+  }
+  if op == 4_u8 {
+    let v = reinterpret::<u64, i64>(bits);
+    return msgpack::encode::signed(out: out, value: v);
+  }
+  if op == 5_u8 {
+    let v = reinterpret::<u64, f64>(bits);
+    return msgpack::encode::number(out: out, value: v);
+  }
+  if op == 6_u8 {
+    let n = cvt.wrap::<u64, u32>(bits);
+    let v = reinterpret::<u32, f32>(n);
+    return msgpack::encode::float32(out: out, value: v);
+  }
+  if op == 7_u8 {
+    let v = reinterpret::<u64, f64>(bits);
+    return msgpack::encode::float64(out: out, value: v);
+  }
+  if op == 8_u8 {
+    return msgpack::encode::string(out: out, bytes: payload);
+  }
+  if op == 9_u8 {
+    return msgpack::encode::binary(out: out, bytes: payload);
+  }
+  if op == 10_u8 {
+    let v = cvt.wrap::<u64, i8>(bits);
+    return msgpack::encode::extension(out: out, kind: v, bytes: payload);
+  }
+  if op == 11_u8 {
+    let v = cvt.wrap::<u64, u32>(bits);
+    return msgpack::encode::array(out: out, count: v);
+  }
+  if op == 12_u8 {
+    let v = cvt.wrap::<u64, u32>(bits);
+    return msgpack::encode::map(out: out, count: v);
+  }
+  if op == 13_u8 {
+    let yes = True();
+    let no = False();
+    match msgpack::encode::array(out: out, count: 2_u32) {
+      Ok(value: done) => {
+      }
+      Err(error: failure) => {
+        return Err<unit, msgpack::encode::Error>(error: failure);
+      }
+    }
+    match msgpack::encode::map(out: out, count: 1_u32) {
+      Ok(value: done) => {
+      }
+      Err(error: failure) => {
+        return Err<unit, msgpack::encode::Error>(error: failure);
+      }
+    }
+    match msgpack::encode::string(out: out, bytes: payload) {
+      Ok(value: done) => {
+      }
+      Err(error: failure) => {
+        return Err<unit, msgpack::encode::Error>(error: failure);
+      }
+    }
+    match msgpack::encode::array(out: out, count: 2_u32) {
+      Ok(value: done) => {
+      }
+      Err(error: failure) => {
+        return Err<unit, msgpack::encode::Error>(error: failure);
+      }
+    }
+    match msgpack::encode::unsigned(out: out, value: 42_u64) {
+      Ok(value: done) => {
+      }
+      Err(error: failure) => {
+        return Err<unit, msgpack::encode::Error>(error: failure);
+      }
+    }
+    match msgpack::encode::boolean(out: out, value: yes) {
+      Ok(value: done) => {
+      }
+      Err(error: failure) => {
+        return Err<unit, msgpack::encode::Error>(error: failure);
+      }
+    }
+    match msgpack::encode::boolean(out: out, value: no) {
+      Ok(value: done) => {
+      }
+      Err(error: failure) => {
+        return Err<unit, msgpack::encode::Error>(error: failure);
+      }
+    }
+    return Ok<unit, msgpack::encode::Error>(value: unit);
+  }
+  let e = msgpack::encode::Error::Length();
+  return Err<unit, msgpack::encode::Error>(error: e);
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: directory, write: writable) = move cwd;
+  std::fs::close_directory_write(factory: &factory, directory: move writable);
+  std::fs::close_directory(factory: &factory, directory: move directory);
+  let header = array_filled::<u8, 17>(value: 0_u8);
+  let prefix = array_filled::<u8, 8>(value: 0_u8);
+  loop @records {
+    let received = read_exact(factory: &factory, input: &input, bytes: &header[0_u64..17_u64], count: 17_u64);
+    if received {
+    } else {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let op = header[0_u64];
+    if op == 0_u8 {
+      return std::process::exit_status(code: 0_u8);
+    }
+    let bits = word(bytes: &header[0_u64..17_u64], start: 1_u64);
+    let size = word(bytes: &header[0_u64..17_u64], start: 9_u64);
+    if size > 1048576_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    let payload = box_array_filled::<u8>(count: size, value: 0_u8);
+    let got = read_exact(factory: &factory, input: &input, bytes: &payload.inner[0_u64..size], count: size);
+    if got {
+    } else {
+      return std::process::exit_status(code: 1_u8);
+    }
+    let result = box_slots_new::<u8>(capacity: 0_u64);
+    if op == 20_u8 {
+      decode(source: &payload.inner[0_u64..size], offset: bits, out: &result);
+    } else {
+      byte(out: &result, value: 85_u8);
+      match encode(op: op, bits: bits, payload: &payload.inner[0_u64..size], out: &result) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return std::process::exit_status(code: 3_u8);
+        }
+      }
+    }
+    let count = result.inner.len;
+    for (i in 0_u64..8_u64) {
+      let shift = i * 8_u64;
+      let k = cvt.wrap::<u64, u32>(shift);
+      let n = ishr.wrap(count, k);
+      set prefix[i] = cvt.wrap::<u64, u8>(n);
+    }
+    let first = emit(factory: &factory, output: &out, bytes: &prefix[0_u64..8_u64], count: 8_u64);
+    let sent = emit(factory: &factory, output: &out, bytes: &result.inner[0_u64..count], count: count);
+    if first {
+      if sent {
+      } else {
+        return std::process::exit_status(code: 1_u8);
+      }
+    } else {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}

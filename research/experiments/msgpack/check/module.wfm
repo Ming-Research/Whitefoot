@@ -1,0 +1,4 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+
+public fn main(inputs: Inputs) -> status: ExitStatus pure waits doc "Binary MessagePack test adapter; run via run.py.";

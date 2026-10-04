@@ -1,0 +1,5 @@
+package msgpack = "../../../lib/msgpack";
+
+pkg::check: [msgpack::types, msgpack::decode, msgpack::encode, std::process, std::io, std::fs, std::time];
+
+entry check = pkg::check::main;

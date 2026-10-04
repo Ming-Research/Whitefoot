@@ -16,12 +16,18 @@ fn emit(out: &Box<Slots<u8>>, tag: u8, bits: u64, width: u64, typed: Bool, kind:
     let b = cvt.wrap::<u64, u8>(word);
     if header.len < header.cap {
       place_back(window: &header, value: b);
+    } else {
+      let e = Error::Capacity();
+      return Err<unit, Error>(error: e);
     }
   }
   if typed {
     let b = reinterpret::<i8, u8>(kind);
     if header.len < header.cap {
       place_back(window: &header, value: b);
+    } else {
+      let e = Error::Capacity();
+      return Err<unit, Error>(error: e);
     }
   }
   let size = bytes^.len;
@@ -40,12 +46,18 @@ fn emit(out: &Box<Slots<u8>>, tag: u8, bits: u64, width: u64, typed: Bool, kind:
         let b = header[i];
         if out^.inner.len < out^.inner.cap {
           place_back(window: &out^.inner, value: b);
+        } else {
+          let e = Error::Capacity();
+          return Err<unit, Error>(error: e);
         }
       }
       for (i in 0_u64..size) {
         let b = bytes^[i];
         if out^.inner.len < out^.inner.cap {
           place_back(window: &out^.inner, value: b);
+        } else {
+          let e = Error::Capacity();
+          return Err<unit, Error>(error: e);
         }
       }
       return Ok<unit, Error>(value: unit);
