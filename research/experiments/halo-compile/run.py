@@ -73,6 +73,7 @@ def programs():
         'constructor-hash-mixed': 'return {a=1,2,b=3,4,[f()]=g(),h()}',
         'numbers-over-256': 'local t={' + ','.join(str(i) for i in range(300)) + '}; return t[299]+300',
         'strings-over-256': 'local t={' + ','.join(f'"s{i}"' for i in range(300)) + '}; return t["s299"]',
+        'method-after-many-constants': 'local t={' + ','.join(str(i) for i in range(300)) + '}; return t:m()',
         'globals-over-256': ';'.join(f'g{i}={i}' for i in range(257)),
         'globals-after-many-constants': 'local t={' + ','.join(str(i) for i in range(300)) + '}; return g',
         'setlist-extension': 'return {' + ','.join(['1'] * 25601) + '}',
@@ -117,6 +118,7 @@ def malformed():
         ','.join('g'+str(i) for i in range(202))+'=1',
         'while x do\n'+ 'x=1;\n'*65538+'end',
         'while x do local t={' + ','.join(['1']*128000) + '} end',
+        'g=function() end; ' * 262144,
     ]
     return {f'error-{i:03}': s.encode() for i, s in enumerate(cases)}
 
@@ -316,7 +318,7 @@ def main():
         actual = parse_halo(candidate.stdout)
         if actual != expected:raise AssertionError(f'{name}: expected {expected}, got {actual}')
         report['intern_exhaustion_checks'].append(name)
-    assert digest()==d,'implementation changed during comparison' 
+    assert digest()==d,'implementation changed during comparison'
     report['mutation_controls_detected']=controls
     if a.output:a.output.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({k:v for k,v in report.items() if k not in ('mismatches','case_seconds','cases')},indent=2))

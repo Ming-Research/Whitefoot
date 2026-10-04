@@ -75,6 +75,14 @@ fn body(p: &Parser, heap: &Heap, needself: Bool, line: u64) -> result_value: Exp
   let final = k_emit(p: p, op: 30_u8, a: 0_i64, b: 1_i64, c: 0_i64);
   checkbad(p: p);
   set p^.current = parent;
+  if parent < p^.funcs.inner.len {
+    let count = p^.funcs.inner[parent].nchildren;
+    if count >= 262143_u64 {
+      raw_error(p: p, kind: 11_u8);
+      return empty_exp(k: 0_u8, info: 0_i64);
+    }
+    set p^.funcs.inner[parent].nchildren = count + 1_u64;
+  }
   let arg_144 = cvt.wrap::<u64, i64>(child);
   let i = k_emit(p: p, op: 36_u8, a: 0_i64, b: arg_144, c: 0_i64);
   if child < p^.funcs.inner.len {
