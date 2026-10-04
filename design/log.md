@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-04 Interpreter dispatch through match
+
+Nodes: compiler/match-dispatch-lowering, compiler/backend-facts
+
+Owner-approved: In the session of 2026-10-04, written in Chinese: Q3, the unreachable default of an enum-tag switch ("Change 3", translated); and, after the handoff of PR #217 at `9a09561d9`, which presented decision cards Q4-Q8 and the backend-facts ground edit, "Agree to all" (translated).
+
+Summary: A loop whose header ends in a `match` over a nominal enum, entered only through the header and left only by returning or jumping back, is emitted as an enclosing function that calls an always-inline dispatch function once, plus one function per arm chained by guaranteed tail calls through a per-loop handler table (Q4), all parts sharing one parameter list (Q5), under `preserve_none` where a build-time probe finds it and the C convention otherwise, with a loop that needs more argument registers than the convention has emitted whole (Q6); the enclosing frame is shared by pointer and a slot only one part uses is that part's own (Q7); waiting, budgeted, cloned, overlapped, synthesized and prelude-carrying functions stay whole and the table holds function addresses (Q8, which closes Q2 provisionally). The default of every enum-tag switch is `unreachable` (Q3), its ground now naming the runtime's linked bodies. The owner's direction for values beyond the registers, a spill block in the enclosing frame (Q1), is deferred to `docs/todo.md`. Measurements and refused alternatives are in [the match-dispatch investigation](../research/investigations/match-dispatch/DESIGN.md) and [its results](../research/experiments/match-dispatch/RESULTS.md).
 ## 2026-10-04 Package bindings
 
 Nodes: language/packages, language/name-resolution, language/standard-library
