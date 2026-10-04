@@ -14,7 +14,7 @@ perl .github/run-check.pl halo-vm-smoke-build "$WHITEFOOTC" --cache "$scratch/ca
 printf '%s\n' 'PASS smoke'
 perl .github/run-check.pl halo-vm-suite-build "$WHITEFOOTC" --cache "$scratch/cache" --graph research/experiments/halo-vm/modules.wfg --entry suite -o "$scratch/suite"
 if "$scratch/suite"; then
-  printf '%s\n' 'PASS fib numeric_for counter tables meta meta_budget_one protected_error vararg tail budget_one budget_seven host_return host_raise host_stop metamethod_host_stop'
+  printf '%s\n' 'PASS fib numeric_for counter tables meta meta_budget_one protected_error vararg tail budget_one budget_seven host_return host_raise host_stop metamethod_host_stop error_levels_0_to_3 error_add_callback error_concat_callback'
 else
   status=$?
   printf 'FAIL suite: fixture index %s (see suite in test/cases.wf)\n' "$status"

@@ -6,3 +6,9 @@ meta	17
 protected_error	false	3	false
 vararg	4
 tail	100000
+error_level_0	false	oops
+error_level_1	false	user_script:2: oops
+error_level_2	false	oops
+error_level_3	false	user_script:3: oops
+error_callback	false	user_script:2: oops
+error_concat	false	user_script:2: oops

@@ -1031,6 +1031,30 @@ fn suite() -> r: ExitStatus pure {
   if bnot(meta_stop) {
     return exit_status(code: 16_u8);
   }
+  let level0 = fixture_error_level(level: 0_u8, callback: 0_u8);
+  if bnot(level0) {
+    return exit_status(code: 17_u8);
+  }
+  let level1 = fixture_error_level(level: 1_u8, callback: 0_u8);
+  if bnot(level1) {
+    return exit_status(code: 18_u8);
+  }
+  let level2 = fixture_error_level(level: 2_u8, callback: 0_u8);
+  if bnot(level2) {
+    return exit_status(code: 19_u8);
+  }
+  let level3 = fixture_error_level(level: 3_u8, callback: 0_u8);
+  if bnot(level3) {
+    return exit_status(code: 20_u8);
+  }
+  let callback_level = fixture_error_level(level: 2_u8, callback: 1_u8);
+  if bnot(callback_level) {
+    return exit_status(code: 21_u8);
+  }
+  let concat_level = fixture_error_level(level: 2_u8, callback: 2_u8);
+  if bnot(concat_level) {
+    return exit_status(code: 22_u8);
+  }
   return exit_status(code: 0_u8);
 }
 
@@ -1137,4 +1161,146 @@ fn fixture_host(mode: u8, metamethod: Bool) -> r: Bool pure {
       return number_is(stack: &stack, slot: env.last_func, expected: 73.0_f64);
     }
   }
+}
+
+const error_bare: Array<u8, 4> = "oops";
+
+const error_child: Array<u8, 19> = "user_script:2: oops";
+
+const error_parent: Array<u8, 19> = "user_script:3: oops";
+
+const error_concat: Array<u8, 8> = "__concat";
+
+fn fixture_error_level(level: u8, callback: u8) -> r: Bool pure {
+  let vm = halo::vm::vm_new(limit: 67108864_u64);
+  let stack = halo::vm::stack_new(size: 1024_u64);
+  let no = False();
+  let env = Env(stopped: no, mode: 0_u8, calls: 0_u64, last_func: 0_u64, last_len: 0_u64);
+  let code = box_slots_new::<Cell>(capacity: 16_u64);
+  let consts = box_slots_new::<Value>(capacity: 512_u64);
+  let protos = box_slots_new::<Proto>(capacity: 3_u64);
+  let lines = box_slots_new::<u32>(capacity: 16_u64);
+  let msg = halo::heap::intern(heap: &vm.heap, bytes: &error_bare[0_u64..4_u64]);
+  let expected = msg;
+  let local_level = level == 1_u8;
+  let is_callback = callback > 0_u8;
+  let callback_start = 7_u32;
+  if callback == 2_u8 {
+    set callback_start = 8_u32;
+  }
+  if bor(local_level, is_callback) {
+    set expected = halo::heap::intern(heap: &vm.heap, bytes: &error_child[0_u64..19_u64]);
+  }
+  if level == 3_u8 {
+    set expected = halo::heap::intern(heap: &vm.heap, bytes: &error_parent[0_u64..19_u64]);
+  }
+  let pcall_value = Value::Builtin(id: 0_u32);
+  let error_value = Value::Builtin(id: 1_u32);
+  let number = cvt::<u8, f64>(level);
+  let level_value = Value::Num(n: number);
+  put_const(consts: &consts, value: pcall_value);
+  put_const(consts: &consts, value: error_value);
+  put_const(consts: &consts, value: msg);
+  put_const(consts: &consts, value: level_value);
+  if is_callback {
+    let table = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 2_u32);
+    let meta = halo::heap::new_table(heap: &vm.heap, asize: 0_u32, hsize: 2_u32);
+    let upvals = array_filled::<u32, 0>(value: 0_u32);
+    let handler = halo::heap::new_closure(heap: &vm.heap, proto: 2_u32, upvals: &upvals[0_u64..0_u64]);
+    let key = halo::heap::intern(heap: &vm.heap, bytes: &text_5[0_u64..5_u64]);
+    if callback == 2_u8 {
+      set key = halo::heap::intern(heap: &vm.heap, bytes: &error_concat[0_u64..8_u64]);
+    }
+    raw(vm: &vm, t: meta, key: key, val: handler);
+    attach(vm: &vm, t: table, mt: meta);
+    put_const(consts: &consts, value: table);
+  }
+  pad(consts: &consts);
+  let c0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+  let c1 = Cell::Closure(a: 1_u8, proto: 1_u32);
+  let c2 = Cell::Call(a: 0_u8, b: 2_u8, c: 3_u8);
+  let c3 = Cell::Return(a: 0_u8, b: 3_u8);
+  let c4 = Cell::LoadK(a: 0_u8, k: 1_u8);
+  let c5 = Cell::LoadK(a: 1_u8, k: 2_u8);
+  let c6 = Cell::LoadK(a: 2_u8, k: 3_u8);
+  let c7 = Cell::Call(a: 0_u8, b: 3_u8, c: 1_u8);
+  let c8 = Cell::Return(a: 0_u8, b: 1_u8);
+  put_code(code: &code, cell: c0);
+  put_code(code: &code, cell: c1);
+  put_code(code: &code, cell: c2);
+  put_code(code: &code, cell: c3);
+  if is_callback {
+    let m4 = Cell::LoadK(a: 0_u8, k: 4_u8);
+    let m5 = Cell::AddRR(a: 2_u8, b: 0_u8, c: 0_u8);
+    let m6 = Cell::Return(a: 2_u8, b: 2_u8);
+    put_code(code: &code, cell: m4);
+    if callback == 2_u8 {
+      let load = Cell::LoadK(a: 1_u8, k: 4_u8);
+      put_code(code: &code, cell: load);
+      set m5 = Cell::Concat(a: 2_u8, b: 0_u8, c: 1_u8);
+    }
+    put_code(code: &code, cell: m5);
+    put_code(code: &code, cell: m6);
+  }
+  put_code(code: &code, cell: c4);
+  put_code(code: &code, cell: c5);
+  put_code(code: &code, cell: c6);
+  put_code(code: &code, cell: c7);
+  put_code(code: &code, cell: c8);
+  for (i in 0_u64..code.inner.len) {
+    if lines.inner.len < lines.inner.cap {
+      let line = 2_u32;
+      if i < 4_u64 {
+        set line = 3_u32;
+      } else if is_callback {
+        let handler_start = cvt::<u32, u64>(callback_start);
+        if i >= handler_start {
+          set line = 4_u32;
+        } else if callback == 2_u8 {
+          if i < 6_u64 {
+            set line = 1_u32;
+          }
+        }
+      }
+      place_back(window: &lines.inner, value: line);
+    }
+  }
+  put_proto(protos: &protos, start: 0_u32, params: 0_u8, vararg: no, ups: 0_u8, maxstack: 2_u8);
+  put_proto(protos: &protos, start: 4_u32, params: 0_u8, vararg: no, ups: 0_u8, maxstack: 3_u8);
+  if is_callback {
+    put_proto(protos: &protos, start: callback_start, params: 2_u8, vararg: no, ups: 0_u8, maxstack: 3_u8);
+  }
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lines);
+  let out = halo::vm::start::<TestHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: unlimited);
+  match out {
+    Done(count: got) => {
+      if got == 2_u64 {
+        let failed = false_is(stack: &stack, slot: 0_u64);
+        if failed {
+          if stack.inner.len > 1_u64 {
+            match halo::value::str_of(v: stack.inner[1_u64]) {
+              Handle(h: actual) => {
+                match halo::value::str_of(v: expected) {
+                  Handle(h: wanted) => {
+                    return actual == wanted;
+                  }
+                  NoHandle() => {
+                  }
+                }
+              }
+              NoHandle() => {
+              }
+            }
+          }
+        }
+      }
+    }
+    Error() => {
+    }
+    Budget() => {
+    }
+    HostStopped() => {
+    }
+  }
+  return False();
 }

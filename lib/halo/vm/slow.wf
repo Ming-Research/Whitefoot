@@ -220,7 +220,11 @@ fn callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value
   }
   set vm^.activation = depth + 1_u32;
   let atom4 = False();
-  let step = prepare::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: scratch, argc: argc, wanted: wanted, return_pc: 0_u64, base: 0_u64, kbase: 0_u64, tail: atom4);
+  let return_pc = plan.pc;
+  if plan.kind == 2_u8 {
+    set return_pc = return_pc +sat 1_u64;
+  }
+  let step = prepare::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: scratch, argc: argc, wanted: wanted, return_pc: return_pc, base: 0_u64, kbase: 0_u64, tail: atom4);
   let out = dispatch_step::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, step: step);
   let ok = False();
   match out {

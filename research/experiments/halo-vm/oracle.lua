@@ -16,3 +16,10 @@ local function vararg(...) return select('#',...) end
 print('vararg',vararg(1,2,3,4))
 local function loop(n,acc) if n<1 then return acc end return loop(n-1,acc+1) end
 print('tail',loop(100000,0))
+
+local errors=assert(loadstring("return function(level)\n local function child() error('oops',level) end\n return pcall(child)\nend",'@user_script'))()
+for level=0,3 do print('error_level_'..level,errors(level)) end
+local metamethod_error=assert(loadstring("return function() local mt\n local function child() local t=setmetatable({},mt); return t+t end\n mt={__add=function()\n error('oops',2) end}\n return pcall(child)\nend",'@user_script'))()
+print('error_callback',metamethod_error())
+local concat_error=assert(loadstring("return function() local mt\n local function child() local t=setmetatable({},mt); return t..t end\n mt={__concat=function()\n error('oops',2) end}\n return pcall(child)\nend",'@user_script'))()
+print('error_concat',concat_error())

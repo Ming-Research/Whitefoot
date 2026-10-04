@@ -145,7 +145,12 @@ fn error_location(vm: &Vm, pc: u64, level: u64, message: Value) -> r: Value writ
     set index = index - 1_u64;
     if index < vm^.frames.inner.len {
       let frame = vm^.frames.inner[index];
-      if frame.flags != protected_flag {
+      if frame.flags == protected_flag {
+        if remaining == 1_u64 {
+          return message;
+        }
+        set remaining = remaining -sat 1_u64;
+      } else {
         if remaining == 1_u64 {
           break;
         }

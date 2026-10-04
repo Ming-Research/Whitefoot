@@ -24,9 +24,12 @@ an equivalent maintained Halo program suite takes ownership of these observation
 | tail recursion, depth 100000, unlimited | 100000 | PASS |
 | same tail recursion, budget 1 | 100000 | PASS |
 | same tail recursion, budget 7 | 100000 | PASS |
+| error levels 0, 1, 2, 3 through pcall | bare, child line 2, bare, parent line 3 | PASS |
+| __add calling error at level 2 | caller line 2 | PASS |
+| __concat calling error at level 2 | caller line 2 | pending final verification |
 
 The Lua reference run completed successfully; its exact output is
-`oracle.expected`. All package modules accept; the native smoke entry passes; the combined suite passes.
+`oracle.expected`. All package modules accept; the native smoke entry passes; the twenty-one-case native suite passes; the final twenty-two-case run is pending.
 
 ## Reproduction
 
@@ -41,7 +44,8 @@ combined short suite. It invokes no Cargo and uses the host-wide check wrapper.
 The suite's exit status identifies its first failed fixture: 1 smoke, 2 fib,
 3 numeric for, 4 counter, 5 tables, 6 metatable, 7 protected error, 8 varargs,
 9 tail unlimited, 10 tail budget 1, 11 tail budget 7, 12 metatable budget 1,
-13 host return, 14 host raise, 15 host stop, 16 metamethod host stop.
+13 host return, 14 host raise, 15 host stop, 16 metamethod host stop,
+17–20 error levels 0–3, 21 __add error location, 22 __concat error location.
 
 ## Checker cost
 
@@ -120,3 +124,69 @@ including host return/raise/stop and preservation of the stopped stack inside
 a metamethod. The equivalent Lua reference was also executed and compared with
 `oracle.expected` successfully. These short runs are correctness observations,
 not performance comparisons.
+
+## Review and implementation limits
+
+A separate read-only review checked groups A, D, C, M and V, with R limited to
+the opcode split, against base `17a96f98694a9787b8c178717a7f099bd7944c5d`.
+It read the local PUC sources and did not rerun green suites. Its findings were:
+missing error-level locations, incomplete fixture coverage documentation,
+callback frame PCs that lost the calling instruction's location, and the
+concat continuation's distinct PC convention. The code and fixtures now address
+these paths; final verification is recorded below. The opcode split remains an
+implementation deviation from the single inline match described in VM.md.
+There is one eight-parameter guaranteed self-tail dispatcher, private opcode
+handlers with inline numeric/table operations, and one shared slow executor.
+No native inlining or performance claim follows from the short correctness runs.
+
+All 71 Cell variants have handlers: moves and loads; globals and upvalues;
+tables, Self and SetList; arithmetic and unary operations; length and concat;
+fused comparisons/tests and jumps; Call, TailCall, Return and VarArg; numeric
+and generic for loops; Closure and Close. Builtins 0–7 and host IDs >=4096 are
+wired. The compiler conventions are matched: exact Script field shape, closure
+capture descriptors following Closure, and fused jumps taken when comparison
+or truthiness equals the encoded flag.
+
+`TODO(number)` remains explicit in `number_coercion_pending`,
+`concat_coercion_pending` and `power_pending`. Arithmetic on numeric strings,
+number-to-string concat, numeric-string for-loop/select/error-level inputs,
+and numeric error-message formatting are incomplete. Numeric Pow also remains
+unavailable: pkg::number is empty here and the current language has no pow
+intrinsic; the stub raises an explicit unavailable error, which differs from
+Lua's result. The __pow metamethod path is present. The other implemented
+arithmetic paths operate on f64 values. No pkg::number function is called.
+
+Source identity is fixed to Halo's documented `@user_script` chunk name because
+Script has no source-name field. Missing or zero line information leaves a string
+error unchanged. Runtime-generated errors currently retain generic text without
+source-location decoration. Tail-call traceback levels have not been validated
+and Frame does not retain a count of eliminated frames. String ordering is byte
+lexicographic; locale-sensitive PUC ordering is unverified. Heap GC/limits remain
+the heap module's responsibility. These limits mean this result is not full Lua
+5.1 conformance, and fixtures do not exercise every opcode or metamethod branch.
+
+The protected-error register repair, comparison callback bound repair, and the
+error-location findings were fixed in the allowed files. No compiler, heap,
+specification, design tree, or repository gate was changed. No network, Cargo,
+push, or PR operation was performed. `make check` was not run because the task
+prohibits Cargo; `make static` passed in 32.22 seconds (exit 0). The smallest
+static sample, `make design-lint`, passed in 8.04 seconds before that full run.
+
+## Error-location verification
+
+The twenty-case suite (including error levels 0–3) built in 120.18 seconds and
+ran in 0.54 seconds, both exit 0. Adding the __add callback location observation
+gave twenty-one cases: build 117.64 seconds and execution 0.53 seconds, exit 0.
+The equivalent Lua probes distinguish level 1's child location, level 2's
+line-less native pcall frame, and level 3's parent location.
+
+The __concat fixture places its caller's concat at line 2 and the immediately
+preceding load at line 1. With only concat PC normalization deliberately removed,
+the suite built in 117.92 seconds (exit 0), then returned fixture index 22 in
+0.54 seconds. Thus this observation detects the incorrect preceding-instruction
+location while all prior cases pass. The correction was restored before final
+validation. No deliberately failing version was committed.
+
+The corrected VM module (6,761 lines / 240,433 bytes) accepted with the requested
+all-module command in 57.18 seconds (exit 0; compiler 57.17 real, 53.24 user,
+3.80 system). The corrected twenty-two-case native build follows.
