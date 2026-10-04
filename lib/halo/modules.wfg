@@ -1,3 +1,4 @@
 pkg::value: [];
 pkg::number: [pkg::value];
 pkg::lex: [pkg::value, pkg::number];
+pkg::heap: [pkg::value];
