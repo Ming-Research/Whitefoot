@@ -105,7 +105,16 @@ fn main() -> status: std::process::ExitStatus pure {
         .replace("@malloc(", "@wf_test_allocate(")
         .replace("@free(", "@wf_test_release(");
     let observer = super::owned_places::allocation_observer(3, 0);
-    let output = compile_link_and_run(&module, Some(&observer), &[]);
+    let directory = test_directory();
+    let executable = build_linked_executable(&module, Some(&observer), &[], &directory);
+    // A mistaken element loop over the zero-byte extent must fail promptly,
+    // rather than spending the shared native harness's full minute here.
+    let observed = crate::native_test_support::output_within(
+        &mut Command::new(&executable),
+        std::time::Duration::from_secs(5),
+    );
+    std::fs::remove_dir_all(directory).expect("remove filled-window ownership oracle");
+    let output = observed.expect("run bounded zero-byte filled-window oracle");
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(output.stdout, b"A1;A2;A3;F3;F2;F1;");
     assert!(output.stderr.is_empty(), "{output:?}");

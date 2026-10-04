@@ -979,8 +979,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// The block is `[len | cap | head? | slots]` in one allocation, so the
     /// cell pointer is the block pointer and every later access reaches the
     /// header and the slots through one address
-    /// (compiler/storage-representation). The window starts empty, which is
-    /// exactly what the row's `ensures` publishes.
+    /// (compiler/storage-representation). An absent fill value leaves the
+    /// window empty; a fill value initializes every slot before the completed
+    /// window reaches the caller, with length equal to capacity.
     pub(super) fn emit_window_block_new(
         &mut self,
         result: IrValueId,
