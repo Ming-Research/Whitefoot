@@ -1,0 +1,112 @@
+# Runtime window initialization
+
+## Question and scope
+
+Can an independently restored Copy stack use the language's initialized
+prefix window directly, without ordering all restored elements through one
+length update? This is the Q82 dependency discovered in Snowghost X5.
+The example is a runtime-length range of Copy values, independent indexed
+initialization, and subsequent push/pop operations; it does not depend on
+renderer types or an input page.
+
+This investigation owns the selection and validation record for a full
+runtime Slots constructor. Keep it with the decision it supports; supersede
+it in place if its scope changes. The compiler implementation and normative
+cases belong in their existing source and test directories.
+
+## Existing boundary
+
+At base c61498f8a9bd916c30f0edfc3350a0732ee580b8, TYPE-9 confines runtime
+Array and Slots storage to a Box and forbids moving that content into an
+inline binding. PRE-1's slots_from_array and slots_into_array accept only
+fixed-capacity values. An empty Slots window cannot be indexed beyond its
+initialized prefix, and source cannot set its readonly length.
+
+A sequential append loop can express restoration but adds a shared-length
+chain. An application can also keep Copy values in a full Array with its own
+logical length, but then it implements a different storage abstraction.
+Neither observation means the complete stack program is inexpressible.
+
+## Proposed direction, pending owner approval
+
+Add box_slots_filled<T: copy>(count, value), returning one owned
+Box<Slots<T>> whose length and capacity equal count and whose initialized
+values equal value. Calls write the element type explicitly. The prelude row
+publishes the ordinary measure and generic range postconditions.
+
+The dependency chain is allocation and initialization, independent indexed
+writes, then consumption of the completed window. Initialization does not
+publish elements one by one through a shared length. The runtime cost of
+filling and overwriting Copy values remains real and unmeasured.
+
+A boxed full-Array/full-Slots conversion would also preserve independent
+initialization and could transfer non-Copy elements. It is the stronger fit
+when the producer already owns a full array. This witness can construct the
+final window directly, avoiding that intermediate representation and its
+conversion stage. Array and Slots have different descriptor layouts under
+the current compiler representation; zero-cost conversion is not presumed.
+The boxed conversion question stays open for a consumer requiring it.
+
+An application-defined length over a full Array admits this Copy workload,
+but its unused capacity still owns initialized values and its pop does not
+transfer storage ownership. It would replace the existing window boundary
+and effects rather than supply the missing constructor.
+
+The existing operations also express parallel restoration by making one
+owned window per leaf, recursively constructing disjoint halves, growing the
+left result and appending the right result. Each level is independent across
+siblings, but parents wait for both results. This adds logarithmically many
+merge levels and, for ordinary balanced merges, n log n element transfers
+through append plus any copying grow needs. There are linearly many leaf
+allocations and merges. These are structural deductions for that algorithm,
+not measured costs or a claim that its execution span is logarithmic: a
+serial bulk copy on the root path can still total linear work.
+
+The existing append contract gives two lower bounds on the destination's
+length, not their sum. A recursive implementation can prove its operation
+domains from capacities and read the final length; an exact length result
+contract needs an additional check or a separately justified contract
+change. This proposal does not change append. Direct filled construction
+avoids the intermediate windows, merge dependencies and repeated transfers.
+No measurement has selected this proposal.
+
+## Rule delta
+
+PRE-1 adds the explicit Copy constructor and its length, capacity and fill
+contracts. OP-13 includes it among construction functions and states full
+initialization. STOR-8 includes it in the allocating operations unavailable
+to no-heap programs. TYPE-9, ownership and release, initialized-prefix
+semantics, subscript bounds, push/pop domains, explicit generic arguments,
+measure derivation and range derivation remain unchanged.
+
+The constructor uses the current allocation-size and heap-exhaustion rules.
+Those rules already differ from Snowghost's compiler pin; they are not part
+of this proposal. No Snowghost pin change follows from this record.
+
+## Validation criteria, written before implementation or execution
+
+- Restore independently stated u64 sequences at zero, one and multiple
+  lengths, consume them in the expected order, then exercise grow/push/pop.
+  Do not compare a transformation only against its own round trip.
+- Require the independent indexed initialization loop to receive parallel
+  permission and the same expected result with one and four workers.
+  Changing it to shared append or writes to one common element must fail
+  the independence expectation; do not change any safety verdict.
+- Check precise length/capacity facts and integer fill facts. Writing one
+  slot must invalidate the affected content fact. Non-Copy fill, missing
+  explicit type arguments, empty pop, full push, index at len and no-heap
+  construction must reject for their owning rules, with each failure
+  independently witnessed rather than hidden behind an earlier rejection.
+- Cover zero count and zero-byte element storage without element access
+  outside the initialized extent. Verify allocation/release through the
+  existing runtime ownership checks without introducing a second owner.
+- Reuse maintained test harnesses and inspect existing coverage before
+  adding cases. Run focused checks first, coordinate host-lock use, and do
+  not queue autonomous build or benchmark matrices. Cache reuse preserves
+  every source judgment; timeouts and lock contention are not passing tests.
+- The canonical gate and independent completion review remain necessary.
+  No performance speedup is claimed without a separate prior comparison.
+
+## Results
+
+Not implemented or executed. The recommended interface remains unapproved.
