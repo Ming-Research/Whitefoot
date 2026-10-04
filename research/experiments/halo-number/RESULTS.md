@@ -253,3 +253,11 @@ Independent comparison with the original local musl C FMA path (same power input
   ]
 }
 ```
+
+## Later change
+
+After these results, `format_number` was changed to print a negative NaN as `-nan`,
+as glibc does on Linux, the platform reference firn and Halo share (VM.md, H4).
+The macOS oracle above prints `nan` for that bit pattern, so a rerun on macOS
+now reports those NaN cases as mismatches; the Linux rerun is recorded in
+docs/todo.md.
