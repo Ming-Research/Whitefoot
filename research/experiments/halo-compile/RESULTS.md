@@ -1,8 +1,8 @@
 # Halo compiler comparison results
 
-Tested commit: `646c585ba2429aba62b25035262db11e5d7386e3`.
+Tested commit: `5391dc7b1b3f256bf415a924d08901da39054b8c`.
 Worktree base: `999b64f9743f5b1c31026bd2d1b513971a2b68ec`. The tested implementation identity is
-`a0165c390452e10d3151b2fda4b18144fdfa2ed5141ef227bfb0e82497ac4ed4` (SHA-256 over the compile directory and the
+`4a5f263e012595e3db50d35dc9f23355572560791f58c0c56f146ddaa8a5a813` (SHA-256 over the compile directory and the
 value interface, calculated by `run.py`). The native candidate was rebuilt
 with the existing Whitefoot compiler; PUC `luac` was built from Redis Lua C
 sources and headers copied into scratch outside the repository.
@@ -11,35 +11,42 @@ sources and headers copied into scratch outside the repository.
 
 | Observation | Result |
 | --- | --- |
-| Lua sources compared | 600 |
+| Lua sources compared | 602 |
 | Existing Halo oracle scripts | 80, all matched |
-| Generated valid programs | 444, 442 matched |
-| Malformed programs | 76, all messages matched |
-| Candidate/oracle cells compared | 32246, all matched |
-| Oracle cells across every valid program | 33071 |
+| Generated valid programs | 445, 443 matched |
+| Malformed programs | 77, all messages matched |
+| Candidate/oracle cells compared | 32558, all matched |
+| Oracle cells across every valid program | 33383 |
 | Comparison mutation controls detected | 10 |
 | Interning exhaustion checks | 6, all matched the required memory error |
-| Registered module check | All five modules accepted in 1.41 seconds |
+| Registered module check | All five modules accepted in 1.37 seconds |
 
 The comparison exits **1**, preserving the two unsupported-program failures.
 It is not a full acceptance pass. Each successful program also compares all
 constants, prototype metadata, absolute targets, capture pseudo-cells and
 per-cell line information; the final 256 Nil padding entries are included.
 
-The direct `whitefootc --graph lib/halo/modules.wfg --check-modules`
-check exited 0, with 1.28 seconds user and 0.09 seconds system time. No module
-in this worktree took minutes on this run. The native dump rebuild exited 0
-in 3.65 seconds using the modular cache. The preliminary three-case sample
-exited 0 and compared 133 cells in 10.0–665.5 ms per case. This sample's large
-spread prompted the full short comparison: its slowest case took 178.2 ms;
-the complete run took 6.99 seconds, including a 1.493-second scratch PUC build
-following a 0.186-second single-C-file sample. These are run-sizing
-observations, not compiler performance claims. The comparisons were run on
-the supplied macOS host; Linux/glibc qualification and VM execution were
-not run.
+The final direct `whitefootc --graph lib/halo/modules.wfg --check-modules`
+check exited 0 in 1.37 seconds, with 1.27 seconds user and 0.08 seconds system
+time. No module in this worktree took minutes on this run. The native dump
+rebuild exited 0 in 2.79 seconds using the modular cache. Before the local
+review repair, the preliminary three-case sample exited 0 and compared 133
+cells in 10.0–665.5 ms per case. This sample's large spread prompted the full
+short comparison. That first comparison built PUC in scratch: 0.186 seconds
+for its single-C-file sizing sample, then 1.493 seconds for the remaining
+build. After the repair, the final comparison reused a scratch PUC build and
+took 4.71 seconds; its slowest case was the new child-prototype overflow
+witness at 353.6 ms. These are run-sizing observations, not compiler
+performance claims. The comparisons were run on the supplied macOS host;
+Linux/glibc qualification and VM execution were not run.
+
+`git diff --check` passed. The focused static guidance sample through
+`run-check.pl` exited 75 before running because another worktree held the
+host-wide check lock. Static checks and the full `make check` gate are
+unverified; no Cargo invocation was made.
 
 Reproduce with the commands in README.md. The full runner's SHA-256 was
-`a9d2a41ef00db70cf3d5db60d6d1152e2e0fe31d07fb932c038cb7073869f9cc`.
+`bbe0230d4ba4eafb4f830a1020e03993b80006569c51803df6260ca9b912f300`.
 The implementation hash covers the compile directory and value interface;
 the driver hash separately identifies fixture generation and normalization.
 
@@ -57,8 +64,8 @@ limitation instead of narrowing the index or misreporting Lua syntax.
 | `globals-over-256` | Main prototype: 514 constants, 515 cells; includes global name indexes above 255 | No Script; line 1, `compiler cannot represent a global constant index above 255` |
 | `globals-after-many-constants` | Main prototype: 301 constants, 310 cells; GETGLOBAL indexes constant 300 | No Script; line 1, the same compiler limitation |
 
-Those 825 missing cells account for the difference between 33,071 expected
-cells and 32,246 cells actually compared. Every other cell compared equal.
+Those 825 missing cells account for the difference between 33,383 expected
+cells and 32,558 cells actually compared. Every other cell compared equal.
 Rerun either case with `--filter` and `--output` to obtain its complete
 normalized listing diff. Supporting wide globals requires a value-interface
 change beyond the permitted Script addition, so it was not made.
@@ -93,9 +100,38 @@ change beyond the permitted Script addition, so it was not made.
 - Added PUC’s total 32,767-local limit, independently witnessed by 32,768
   successive `do local x end` blocks; its raw growth-error text now matches.
 - Matched luac’s initial C-call depth when checking assignment/syntax depth.
+- Fixed the missing PUC per-parent 262,143-child-prototype limit exposed by
+  the independent review. The malformed fixture `error-076` creates 262,144
+  direct children and now returns raw `constant table overflow`.
+- Added `method-after-many-constants` to observe LoadKx followed by SelfR.
 - Kept the wide-global interface gap visible as the two failures above.
   Its reopening condition is authorization to add a wide global cell.
 
 ## Review
 
-The independent correspondence/code review is recorded here after it finishes.
+A separate read-only `gpt-6.1-sol` reviewer checked
+`999b64f9743f5b1c31026bd2d1b513971a2b68ec` through
+`6c85f46f3b50f940da372e2abe5059796b53c52f`, plus the trailing-space repair,
+against checklist groups A, D, C, M and V. Groups T and R were not applicable:
+no specification, gate or material design selection changed. The review read
+the changed files, VM.md, applicable design guidance, recorded comparison JSON
+and PUC parser/code-generator sources. It found one defect (C1/C3/DC4): the
+missing per-parent child-prototype limit. No other finding was reported.
+
+The implementer rechecked this local repair against PUC; the reviewer did
+not review the repair itself. Before rebuilding, the exact witness
+`b"g=function() end; " * 262144` made PUC exit 1 with `constant table overflow`
+while Halo returned a Script; after rebuilding, `--filter error-076` exited 0
+and compared the complete error bytes. The final full comparison includes it.
+Two adjacent positive observations also passed with both compilers: exactly
+262,143 direct children, and a script with two parents each containing
+131,072 children. The latter distinguishes a per-parent limit from a mistaken
+script-wide limit. Those positive checks used the same repeated Lua statement,
+PUC without `-l`, and Halo's public dump, checking PUC acceptance and a Script
+result rather than comparing their large listings. PUC took 0.251 and 0.245
+seconds; Halo took 0.365 and 0.367 seconds. These observations do not certify
+VM execution.
+
+No specification rule or design-tree decision changed, and no owner decision
+is open. The explicit task limits keep this delivery local and its deferred
+interface findings here, rather than changing the tree, TODO or PR.
