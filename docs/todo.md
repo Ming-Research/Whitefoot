@@ -3287,11 +3287,10 @@ condition under which it is taken up.
   Complete the following work and remove this item when the deployment
   evidence meets that boundary:
   - Integrate and validate the existing command work before adding another
-    implementation. [PR #208](https://github.com/mbbill/Whitefoot/pull/208)
-    and [PR #212](https://github.com/mbbill/Whitefoot/pull/212) carry shared
-    state, connection and command changes not yet on this item's main-line
-    baseline; their presence is not evidence that the integrated result
-    passes. Refresh this inventory when they land.
+    implementation. [PR #212](https://github.com/mbbill/Whitefoot/pull/212)
+    carries command changes not yet on this item's main-line baseline; its
+    presence is not evidence that the integrated result passes. Refresh this
+    inventory when it lands.
   - Complete the selected clients' connection behavior, RESP3, command
     metadata, ordinary pipelines, scans and application command gaps. Add
     `MULTI`/`EXEC`/`DISCARD` and `WATCH`/`UNWATCH`, including queue-time and
@@ -3362,9 +3361,10 @@ condition under which it is taken up.
   Reopen with that vertical slice; remove this item only when the selected
   Redis scripting surface and application workloads have correctness and
   performance evidence, recording any remaining incompatibilities separately.
-- **Close the current main-line Redis compatibility gaps.** The benchmark
-  stage left the following gaps; reconcile them with the command PRs above
-  as those changes land, retaining any still-observable mismatch. Missing, among
+- **Close the current main-line Redis compatibility gaps.** The following
+  gaps remain after the shared-state redesign's connection and server
+  commands; reconcile them with the command PR above as it lands, retaining
+  any still-observable mismatch. Missing, among
   others: `SET`'s `NX`, `XX`, `GET`, `KEEPTTL`, `EXAT` and `PXAT`, which
   firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
   `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an

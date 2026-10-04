@@ -364,6 +364,15 @@ the slowest ubuntu run, 11.8 s, rounded up to 5 s, is 15 s, the next step
 above 10 s, which the owner approved on 2026-10-03 as a slight raise; macOS
 stays at 15 s.
 
+**`compiler/test-corpus` on ubuntu, raised to 145 s.** The stage took
+114.2 s of its 110 s on ubuntu at `5d641c49d`, the shared-state redesign
+merged with main, with all 22 and 128 tests passing, against 102.9 s for
+22 and 115 tests on main at `a1de2b1ba`: the redesign adds 13 corpus tests,
+among them firn's connection and server command cases. 1.25 times that
+run, rounded up
+to 5 s, is 145 s, which the owner approved on 2026-10-03 and confirmed on
+2026-10-04 as a slight raise; macOS stays at 125 s.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases

@@ -36,7 +36,7 @@ compiler/test-unit              105    100    -
 # then their cases
 check/corpus                    200    255    -
 compiler/test-build-corpus      95     135    -
-compiler/test-corpus            110    125    -
+compiler/test-corpus            145    125    -
 
 # gate.yml, runtime group
 check/runtime                   15     15     -
