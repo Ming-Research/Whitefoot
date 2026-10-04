@@ -7,16 +7,25 @@ fn at(source: &[u8], index: u64) -> byte: u16 reads(source) {
 }
 
 fn space(byte: u16) -> yes: Bool pure {
-  if byte == 32_u16 { return True(); }
-  if byte == 9_u16 { return True(); }
-  if byte == 10_u16 { return True(); }
+  if byte == 32_u16 {
+    return True();
+  }
+  if byte == 9_u16 {
+    return True();
+  }
+  if byte == 10_u16 {
+    return True();
+  }
   return byte == 13_u16;
 }
 
 fn clear(buffer: &Box<Slots<u8>>) -> result: unit writes(buffer) {
   loop {
-    if buffer^.inner.len > 0_u64 { let dropped = take_back(window: &buffer^.inner); }
-    else { break; }
+    if buffer^.inner.len > 0_u64 {
+      let dropped = take_back(window: &buffer^.inner);
+    } else {
+      break;
+    }
   }
   return unit;
 }
@@ -25,10 +34,14 @@ fn put(buffer: &Box<Slots<u8>>, byte: u8) -> result: Bool writes(buffer) {
   let n = buffer^.inner.len;
   let cap = buffer^.inner.cap;
   if n == cap {
-    if cap == 18446744073709551615_u64 { return False(); }
+    if cap == 18446744073709551615_u64 {
+      return False();
+    }
     let doubled = cap +sat cap;
     let target = imax(doubled, 32_u64);
-    if target >= cap { grow(cell: buffer, capacity: target); }
+    if target >= cap {
+      grow(cell: buffer, capacity: target);
+    }
   }
   if buffer^.inner.len < buffer^.inner.cap {
     place_back(window: &buffer^.inner, value: byte);

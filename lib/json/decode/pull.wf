@@ -1,0 +1,289 @@
+alias Error = pkg::text::Error;
+
+fn new(max_depth: u64) -> result: Decoder pure {
+  let stack = box_slots_new::<u8>(capacity: 0_u64);
+  let no = False();
+  return Decoder(offset: 0_u64, limit: max_depth, stack: move stack, root_done: no, failed: 0_u8, error_offset: 0_u64);
+}
+
+fn failure(decoder: &Decoder, code: u8, offset: u64) -> result: Result<Event, Error> writes(decoder) {
+  set decoder^.failed = code;
+  set decoder^.error_offset = offset;
+  let e = pkg::text::error(code: code, offset: offset);
+  return Err<Event, Error>(error: move e);
+}
+
+fn relay(decoder: &Decoder, error: Error) -> result: Result<Event, Error> writes(decoder) {
+  set decoder^.failed = error.code;
+  set decoder^.error_offset = error.offset;
+  return Err<Event, Error>(error: move error);
+}
+
+fn mark_value(decoder: &Decoder) -> result: unit writes(decoder) {
+  let n = decoder^.stack.inner.len;
+  if n > 0_u64 {
+    let i = n - 1_u64;
+    if i < decoder^.stack.inner.len {
+      let phase = decoder^.stack.inner[i];
+      if phase <= 2_u8 {
+        set decoder^.stack.inner[i] = 1_u8;
+      } else {
+        set decoder^.stack.inner[i] = 7_u8;
+      }
+    }
+  } else {
+    set decoder^.root_done = True();
+  }
+  return unit;
+}
+
+fn delimiter(byte: u16) -> yes: Bool pure {
+  if pkg::text::space(byte: byte) {
+    return True();
+  }
+  if byte == 44_u16 {
+    return True();
+  }
+  if byte == 93_u16 {
+    return True();
+  }
+  if byte == 125_u16 {
+    return True();
+  }
+  return byte == 256_u16;
+}
+
+const true_word: Array<u8, 4> = "true";
+
+const false_word: Array<u8, 5> = "false";
+
+const null_word: Array<u8, 4> = "null";
+
+fn literal(source: &[u8], decoder: &Decoder, word: &[u8], kind: u8) -> result: Result<Event, Error> reads(source), reads(word), writes(decoder) {
+  let start = decoder^.offset;
+  for (i in 0_u64..word^.len) {
+    let p = start +sat i;
+    let c = pkg::text::at(source: source, index: p);
+    let b = word^[i];
+    let expected = cvt::<u8, u16>(b);
+    if c != expected {
+      let offset = imin(p, source^.len);
+      return failure(decoder: decoder, code: 14_u8, offset: offset);
+    }
+  }
+  let end = start +sat word^.len;
+  let next = pkg::text::at(source: source, index: end);
+  if delimiter(byte: next) {
+  } else {
+    return failure(decoder: decoder, code: 14_u8, offset: end);
+  }
+  set decoder^.offset = end;
+  mark_value(decoder: decoder);
+  if kind == 0_u8 {
+    let event = Event::True();
+    return Ok<Event, Error>(value: event);
+  }
+  if kind == 1_u8 {
+    let event = Event::False();
+    return Ok<Event, Error>(value: event);
+  }
+  let event = Event::Null();
+  return Ok<Event, Error>(value: event);
+}
+
+fn next(source: &[u8], decoder: &Decoder, decoded: &Box<Slots<u8>>) -> result: Result<Event, Error> reads(source), writes(decoder), writes(decoded) {
+  let failed = decoder^.failed;
+  if failed != 0_u8 {
+    let e = pkg::text::error(code: failed, offset: decoder^.error_offset);
+    return Err<Event, Error>(error: move e);
+  }
+  loop @punctuation {
+    loop @spaces {
+      let p = decoder^.offset;
+      let c = pkg::text::at(source: source, index: p);
+      if pkg::text::space(byte: c) {
+        set decoder^.offset = p +sat 1_u64;
+      } else {
+        break @spaces;
+      }
+    }
+    let p = decoder^.offset;
+    let c = pkg::text::at(source: source, index: p);
+    let n = decoder^.stack.inner.len;
+    if n == 0_u64 {
+      if decoder^.root_done {
+        if c != 256_u16 {
+          return failure(decoder: decoder, code: 5_u8, offset: p);
+        }
+        let event = Event::End();
+        return Ok<Event, Error>(value: event);
+      }
+      break @punctuation;
+    }
+    if n > 0_u64 {
+      let i = n - 1_u64;
+      if i < decoder^.stack.inner.len {
+        let phase = decoder^.stack.inner[i];
+        if phase == 0_u8 {
+          if c == 93_u16 {
+            let dropped = take_back(window: &decoder^.stack.inner);
+            set decoder^.offset = p +sat 1_u64;
+            let event = Event::ArrayEnd();
+            return Ok<Event, Error>(value: event);
+          }
+          break @punctuation;
+        }
+        if phase == 2_u8 {
+          break @punctuation;
+        }
+        if phase == 6_u8 {
+          break @punctuation;
+        }
+        if phase == 1_u8 {
+          if c == 93_u16 {
+            let dropped = take_back(window: &decoder^.stack.inner);
+            set decoder^.offset = p +sat 1_u64;
+            let event = Event::ArrayEnd();
+            return Ok<Event, Error>(value: event);
+          }
+          if c != 44_u16 {
+            return failure(decoder: decoder, code: 4_u8, offset: p);
+          }
+          set decoder^.stack.inner[i] = 2_u8;
+          set decoder^.offset = p +sat 1_u64;
+        } else if phase == 7_u8 {
+          if c == 125_u16 {
+            let dropped = take_back(window: &decoder^.stack.inner);
+            set decoder^.offset = p +sat 1_u64;
+            let event = Event::ObjectEnd();
+            return Ok<Event, Error>(value: event);
+          }
+          if c != 44_u16 {
+            return failure(decoder: decoder, code: 4_u8, offset: p);
+          }
+          set decoder^.stack.inner[i] = 4_u8;
+          set decoder^.offset = p +sat 1_u64;
+        } else if phase == 5_u8 {
+          if c != 58_u16 {
+            return failure(decoder: decoder, code: 3_u8, offset: p);
+          }
+          set decoder^.stack.inner[i] = 6_u8;
+          set decoder^.offset = p +sat 1_u64;
+        } else {
+          if phase == 3_u8 {
+            if c == 125_u16 {
+              let dropped = take_back(window: &decoder^.stack.inner);
+              set decoder^.offset = p +sat 1_u64;
+              let event = Event::ObjectEnd();
+              return Ok<Event, Error>(value: event);
+            }
+          }
+          if c != 34_u16 {
+            return failure(decoder: decoder, code: 2_u8, offset: p);
+          }
+          match pkg::text::string(source: source, start: p, decoded: decoded) {
+            Ok(value: end) => {
+              set decoder^.offset = end;
+              if i < decoder^.stack.inner.len {
+                set decoder^.stack.inner[i] = 5_u8;
+              }
+              let event = Event::Key();
+              return Ok<Event, Error>(value: event);
+            }
+            Err(error: e) => {
+              return relay(decoder: decoder, error: move e);
+            }
+          }
+        }
+      }
+    }
+  }
+  let p = decoder^.offset;
+  let c = pkg::text::at(source: source, index: p);
+  if c == 123_u16 {
+    let depth = decoder^.stack.inner.len;
+    if depth >= decoder^.limit {
+      return failure(decoder: decoder, code: 6_u8, offset: p);
+    }
+    mark_value(decoder: decoder);
+    if pkg::text::put(buffer: &decoder^.stack, byte: 3_u8) {
+    } else {
+      return failure(decoder: decoder, code: 20_u8, offset: p);
+    }
+    set decoder^.offset = p +sat 1_u64;
+    let event = Event::ObjectBegin();
+    return Ok<Event, Error>(value: event);
+  }
+  if c == 91_u16 {
+    let depth = decoder^.stack.inner.len;
+    if depth >= decoder^.limit {
+      return failure(decoder: decoder, code: 6_u8, offset: p);
+    }
+    mark_value(decoder: decoder);
+    if pkg::text::put(buffer: &decoder^.stack, byte: 0_u8) {
+    } else {
+      return failure(decoder: decoder, code: 20_u8, offset: p);
+    }
+    set decoder^.offset = p +sat 1_u64;
+    let event = Event::ArrayBegin();
+    return Ok<Event, Error>(value: event);
+  }
+  if c == 34_u16 {
+    match pkg::text::string(source: source, start: p, decoded: decoded) {
+      Ok(value: end) => {
+        set decoder^.offset = end;
+        mark_value(decoder: decoder);
+        let event = Event::String();
+        return Ok<Event, Error>(value: event);
+      }
+      Err(error: e) => {
+        return relay(decoder: decoder, error: move e);
+      }
+    }
+  }
+  if c == 116_u16 {
+    return literal(source: source, decoder: decoder, word: &true_word[0_u64..4_u64], kind: 0_u8);
+  }
+  if c == 102_u16 {
+    return literal(source: source, decoder: decoder, word: &false_word[0_u64..5_u64], kind: 1_u8);
+  }
+  if c == 110_u16 {
+    return literal(source: source, decoder: decoder, word: &null_word[0_u64..4_u64], kind: 2_u8);
+  }
+  let is_digit = False();
+  if c >= 48_u16 {
+    if c <= 57_u16 {
+      set is_digit = True();
+    }
+  }
+  let minus = c == 45_u16;
+  if bor(is_digit, minus) {
+    let scanned = pkg::number::scan(source: source, start: p);
+    if scanned.valid {
+    } else {
+      return failure(decoder: decoder, code: 13_u8, offset: scanned.error);
+    }
+    let end = scanned.end;
+    let after = pkg::text::at(source: source, index: end);
+    if delimiter(byte: after) {
+    } else {
+      return failure(decoder: decoder, code: 13_u8, offset: end);
+    }
+    if p <= end {
+      if end <= source^.len {
+        match pkg::number::convert(source: &source^[p..end]) {
+          Some(value: number) => {
+            set decoder^.offset = end;
+            mark_value(decoder: decoder);
+            let event = Event::Number(start: p, end: end, value: number);
+            return Ok<Event, Error>(value: event);
+          }
+          None() => {
+            return failure(decoder: decoder, code: 13_u8, offset: p);
+          }
+        }
+      }
+    }
+  }
+  return failure(decoder: decoder, code: 1_u8, offset: p);
+}

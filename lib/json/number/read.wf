@@ -24,7 +24,6 @@ struct Exponent {
   valid: Bool;
 }
 
-
 fn refused() -> result: NumberBits pure {
   doc "Invalid decimal text.";
   let invalid = False();
@@ -226,4 +225,3 @@ fn read_decimal(input: &[u8], start: u64, end: u64) -> read: NumberBits reads(in
   let converted = decimal_bits(decimal: &decimal);
   return accepted(bits: converted);
 }
-

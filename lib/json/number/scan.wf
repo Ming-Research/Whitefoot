@@ -7,21 +7,35 @@ fn scan(source: &[u8], start: u64) -> result: Scan reads(source) {
   let p = start;
   let c = byte_at(input: source, index: p);
   if c == 45_u8 {
-    if p < source^.len { set p = p + 1_u64; }
+    if p < source^.len {
+      set p = p + 1_u64;
+    }
   }
-  if p >= source^.len { return scan_bad(position: p); }
+  if p >= source^.len {
+    return scan_bad(position: p);
+  }
   let first = byte_at(input: source, index: p);
   let d = decimal_digit(byte: first);
-  if d >= 10_u8 { return scan_bad(position: p); }
+  if d >= 10_u8 {
+    return scan_bad(position: p);
+  }
   set p = p +wrap 1_u64;
   if d == 0_u8 {
     let next = byte_at(input: source, index: p);
-    if decimal_digit(byte: next) < 10_u8 { return scan_bad(position: p); }
+    let digit = decimal_digit(byte: next);
+    if digit < 10_u8 {
+      return scan_bad(position: p);
+    }
   } else {
     loop @whole {
-      if p >= source^.len { break @whole; }
+      if p >= source^.len {
+        break @whole;
+      }
       let b = byte_at(input: source, index: p);
-      if decimal_digit(byte: b) >= 10_u8 { break @whole; }
+      let digit = decimal_digit(byte: b);
+      if digit >= 10_u8 {
+        break @whole;
+      }
       set p = p + 1_u64;
     }
   }
@@ -30,12 +44,19 @@ fn scan(source: &[u8], start: u64) -> result: Scan reads(source) {
     set p = p +wrap 1_u64;
     let begin = p;
     loop @fraction {
-      if p >= source^.len { break @fraction; }
+      if p >= source^.len {
+        break @fraction;
+      }
       let b = byte_at(input: source, index: p);
-      if decimal_digit(byte: b) >= 10_u8 { break @fraction; }
+      let digit = decimal_digit(byte: b);
+      if digit >= 10_u8 {
+        break @fraction;
+      }
       set p = p + 1_u64;
     }
-    if p == begin { return scan_bad(position: p); }
+    if p == begin {
+      return scan_bad(position: p);
+    }
   }
   let marker = byte_at(input: source, index: p);
   let lower = marker == 101_u8;
@@ -45,15 +66,24 @@ fn scan(source: &[u8], start: u64) -> result: Scan reads(source) {
     let sign = byte_at(input: source, index: p);
     let minus = sign == 45_u8;
     let plus = sign == 43_u8;
-    if bor(minus, plus) { set p = p +wrap 1_u64; }
+    if bor(minus, plus) {
+      set p = p +wrap 1_u64;
+    }
     let begin = p;
     loop @exponent {
-      if p >= source^.len { break @exponent; }
+      if p >= source^.len {
+        break @exponent;
+      }
       let b = byte_at(input: source, index: p);
-      if decimal_digit(byte: b) >= 10_u8 { break @exponent; }
+      let digit = decimal_digit(byte: b);
+      if digit >= 10_u8 {
+        break @exponent;
+      }
       set p = p + 1_u64;
     }
-    if p == begin { return scan_bad(position: p); }
+    if p == begin {
+      return scan_bad(position: p);
+    }
   }
   let yes = True();
   return Scan(end: p, error: p, valid: yes);
@@ -61,16 +91,25 @@ fn scan(source: &[u8], start: u64) -> result: Scan reads(source) {
 
 fn convert(source: &[u8]) -> result: Option<f64> reads(source) {
   let scanned = scan(source: source, start: 0_u64);
-  if scanned.valid {} else { return None<f64>(); }
-  if scanned.end != source^.len { return None<f64>(); }
+  if scanned.valid {
+  } else {
+    return None<f64>();
+  }
+  if scanned.end != source^.len {
+    return None<f64>();
+  }
   let first = byte_at(input: source, index: 0_u64);
   let negative = first == 45_u8;
   let start = 0_u64;
-  if negative { set start = 1_u64; }
+  if negative {
+    set start = 1_u64;
+  }
   let read = read_decimal(input: source, start: start, end: source^.len);
   if read.valid {
     let bits = read.bits;
-    if negative { set bits = ior(bits, sign_bit); }
+    if negative {
+      set bits = ior(bits, sign_bit);
+    }
     let value = reinterpret::<u64, f64>(bits);
     return Some<f64>(value: value);
   }

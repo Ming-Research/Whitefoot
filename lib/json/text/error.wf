@@ -43,121 +43,161 @@ fn error(code: u8, offset: u64) -> result: Error pure {
   if code == 1_u8 {
     for (i in 0_u64..14_u64) {
       let b = msg_1[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 2_u8 {
     for (i in 0_u64..19_u64) {
       let b = msg_2[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 3_u8 {
     for (i in 0_u64..14_u64) {
       let b = msg_3[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 4_u8 {
     for (i in 0_u64..21_u64) {
       let b = msg_4[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 5_u8 {
     for (i in 0_u64..14_u64) {
       let b = msg_5[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 6_u8 {
     for (i in 0_u64..22_u64) {
       let b = msg_6[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 7_u8 {
     for (i in 0_u64..19_u64) {
       let b = msg_7[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 8_u8 {
     for (i in 0_u64..27_u64) {
       let b = msg_8[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 9_u8 {
     for (i in 0_u64..14_u64) {
       let b = msg_9[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 10_u8 {
     for (i in 0_u64..22_u64) {
       let b = msg_10[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 11_u8 {
     for (i in 0_u64..14_u64) {
       let b = msg_11[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 12_u8 {
     for (i in 0_u64..13_u64) {
       let b = msg_12[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 13_u8 {
     for (i in 0_u64..14_u64) {
       let b = msg_13[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 14_u8 {
     for (i in 0_u64..15_u64) {
       let b = msg_14[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 15_u8 {
     for (i in 0_u64..14_u64) {
       let b = msg_15[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 16_u8 {
     for (i in 0_u64..19_u64) {
       let b = msg_16[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 17_u8 {
     for (i in 0_u64..21_u64) {
       let b = msg_17[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 18_u8 {
     for (i in 0_u64..24_u64) {
       let b = msg_18[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 19_u8 {
     for (i in 0_u64..17_u64) {
       let b = msg_19[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   if code == 20_u8 {
     for (i in 0_u64..25_u64) {
       let b = msg_20[i];
-      if message.len < message.cap { place_back(window: &message, value: b); }
+      if message.len < message.cap {
+        place_back(window: &message, value: b);
+      }
     }
   }
   return Error(offset: offset, code: code, message: move message);
