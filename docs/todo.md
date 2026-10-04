@@ -3112,10 +3112,94 @@ condition under which it is taken up.
 
 ## firn
 
-- **firn lacks what a deployment needs beyond the benchmark's commands.**
-  The owner set this stage's features to the commands `redis-benchmark`'s
-  default suite sends ([firn](../research/investigations/firn/DESIGN.md#the-owners-rulings));
-  a server someone deploys in place of Redis needs more. Missing, among
+- **Complete firn's standalone deployment workloads.** The
+  [deployment direction](../research/investigations/firn/DESIGN.md#deployment-direction)
+  requires usable cache/session storage and scripted conditional updates,
+  with an existing application using its ordinary client and unchanged
+  business logic. Select the consumers and their required command behavior
+  before treating a feature inventory as release coverage; a leaderboard or
+  queue is a candidate additional scenario, not yet a selected dependency.
+  Complete the following work and remove this item when the deployment
+  evidence meets that boundary:
+  - Integrate and validate the existing command work before adding another
+    implementation. [PR #208](https://github.com/mbbill/Whitefoot/pull/208)
+    and [PR #212](https://github.com/mbbill/Whitefoot/pull/212) carry shared
+    state, connection and command changes not yet on this item's main-line
+    baseline; their presence is not evidence that the integrated result
+    passes. Refresh this inventory when they land.
+  - Complete the selected clients' connection behavior, RESP3, command
+    metadata, ordinary pipelines, scans and application command gaps. Add
+    `MULTI`/`EXEC`/`DISCARD` and `WATCH`/`UNWATCH`, including queue-time and
+    execution-time errors, expiry/eviction invalidation and Redis's lack of
+    transaction rollback. Provide command semantics that transactions and
+    the Lua work below can compose without separately committing each call.
+  - Make AOF persistence usable through write/sync error handling, rewrite,
+    interrupted-write recovery and orderly `SHUTDOWN`/signal handling; verify
+    a practical data migration path. File replacement and signal delivery
+    may require Whitefoot library/runtime work; AOF presence alone is not
+    durable-recovery evidence. RDB compatibility is not assumed by this item.
+  - Add memory accounting, `maxmemory` and the eviction behavior the selected
+    deployments need, including large-value reclamation and slow-client
+    pressure. Complete authentication, configuration, logs, connection limits,
+    core `INFO` metrics and build/run/recovery instructions for that scope.
+  - Validate with independent Redis behavior and tests, real applications,
+    concurrent histories, restart/crash cases and sustained memory-bounded
+    runs. Measure throughput, tail latency, memory and scaling with matched
+    durability settings, including scripts and AOF-enabled operation. Report
+    compiler/runtime support separately from Whitefoot implementation and
+    record language gaps as minimal witnesses. Neither the benchmark nor an
+    aggregate compatibility pass count replaces these observations.
+  Replication, Sentinel, Cluster, modules and unused feature families such
+  as Streams, GEO and HyperLogLog remain outside the first release. Blocking
+  lists and Pub/Sub are needed if the selected application requires them;
+  select them with that consumer rather than promising a partial queue.
+  Reopen now with the command integration and Lua vertical slice, and revisit
+  deferred families when a real consumer makes them necessary.
+- **Implement firn's Redis-compatible Lua interpreter in Whitefoot.** Missing
+  scripting prevents applications from composing conditional multi-command
+  operations through `EVAL` and `EVALSHA`. Target the Redis Lua 5.1 execution
+  environment ([Lua semantics](https://www.lua.org/manual/5.1/manual.html),
+  [Redis Lua API](https://redis.io/docs/latest/develop/programmability/lua-api/)),
+  pinning the Redis reference version for tests; this is not a JIT, a native
+  Lua embedding, or a recognizer for selected script templates. Important
+  work, with representation and algorithms still to be investigated:
+  - Parse and compile scripts to an executable form; implement dynamic
+    values, tables, lexical scopes, closures/upvalues, multiple returns,
+    varargs, calls/tail calls, metatables and protected error propagation.
+    Implement the library behavior Redis exposes, including strings/patterns,
+    tables, math, bit operations, JSON and MessagePack, rather than importing
+    the standalone interpreter's host I/O or native-module facilities.
+  - Establish object identity, roots, cyclic-object reclamation and bounded
+    resource behavior within Whitefoot's checked ownership and access rules.
+    Compare viable VM/GC representations and their dependent accesses before
+    selecting one; do not assume reference counting alone collects cycles.
+  - Add `KEYS`/`ARGV`, `redis.call`/`redis.pcall`, Lua/RESP conversions,
+    script caching and `NOSCRIPT`, `SCRIPT LOAD`/`EXISTS`/`FLUSH`/`KILL`, and
+    the sandbox and busy-script behavior of the pinned reference. Distinguish
+    script errors and allowed termination from rollback; compare the state
+    left by an error after a write. Persistent `FUNCTION`/`FCALL` support is
+    later work unless the selected consumer requires it.
+  - Execute each script with Redis-compatible atomic visibility, expiry
+    behavior and AOF effects. Share command semantics with transactions;
+    identify the true conflicting key/state dependencies, retain independent
+    work where semantics permit it, and investigate key discovery rather
+    than silently restricting scripts to make locking convenient.
+  - Start with a vertical slice spanning compilation, closures/tables,
+    reclamation and real command calls. State its falsifiers before measuring;
+    use Lua/Redis differential cases and representative application scripts,
+    including pure computation, command-heavy work, disjoint keys and hot
+    keys. Measure execution, GC, memory, command and waiting costs separately.
+    Redis's interpreter is the primary compatibility/performance reference;
+    LuaJIT is an additional comparison with JIT mode and warmup reported.
+    Expose a Whitefoot limitation as a language/library/compiler requirement
+    rather than excluding a failing workload or claiming foreign-engine work
+    as Whitefoot's result.
+  Reopen with that vertical slice; remove this item only when the selected
+  Redis scripting surface and application workloads have correctness and
+  performance evidence, recording any remaining incompatibilities separately.
+- **Close the current main-line Redis compatibility gaps.** The benchmark
+  stage left the following gaps; reconcile them with the command PRs above
+  as those changes land, retaining any still-observable mismatch. Missing, among
   others: `SET`'s `NX`, `XX`, `GET`, `KEEPTTL`, `EXAT` and `PXAT`, which
   firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
   `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
@@ -3135,9 +3219,9 @@ condition under which it is taken up.
   `MULTI` and `EXEC`, publish and subscribe, a random hash seed, and a
   listener that a restarted server can bind while the stopped one's
   connections wait out TIME_WAIT, which needs the runtime's `tcp_listen` to
-  set `SO_REUSEADDR` as Redis does. The owner
-  sets the list for the deployment stage; reopen when this stage's
-  measurement is handed back.
+  set `SO_REUSEADDR` as Redis does. Reopen during deployment command
+  integration; remove each gap only after independent behavior checks on
+  the integrated implementation, or record its explicit release exclusion.
 - **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
   picks the first filled bucket from a random position, and a hash map keeps
   its buckets after its members are removed, so after most of a large set is
