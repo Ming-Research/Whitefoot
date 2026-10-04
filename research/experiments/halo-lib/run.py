@@ -33,6 +33,16 @@ def controls():
     assert not compare(b'one\ntwo\n', b'two\none\n')
 
 
+def observation_controls(expected):
+    assert expected, 'a corpus script produced no observations'
+    changed = bytes([expected[0] ^ 1]) + expected[1:]
+    assert not compare(expected, changed)
+    lines = expected.splitlines(keepends=True)
+    assert len(lines) >= 2
+    assert not compare(expected, b''.join(lines[1:]))
+    assert not compare(expected, b''.join(reversed(lines)))
+
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -80,6 +90,7 @@ def main():
             source = (HERE / f'{name}.lua').read_bytes()
             oracle = reference if name == 'random' else a.lua
             expected = run([oracle, HERE / 'reference.lua'], input=source, capture_output=True).stdout
+            observation_controls(expected)
             if name != 'random':
                 control = run([reference, HERE / 'reference.lua'], input=source, capture_output=True).stdout
                 assert compare(expected, control), 'relinked Lua changed a non-random observation'

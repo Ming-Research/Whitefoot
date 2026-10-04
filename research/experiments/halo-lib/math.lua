@@ -8,3 +8,7 @@ print('trig',math.sin(1),math.cos(1),math.tan(1),math.sin(1e100),math.cos(-1e200
 print('inverse',math.asin(0.5),math.acos(0.5),math.atan(1),math.atan2(-1,-1))
 print('hyperbolic',math.sinh(1),math.cosh(1),math.tanh(1),math.sinh(1e-8),math.cosh(1e-8),math.tanh(1e-8))
 print('angles',math.deg(math.pi),math.rad(180))
+print('domains',math.sqrt(-1),math.log(-1),math.asin(2),math.acos(2),math.sin(math.huge),math.cos(math.huge),math.tan(math.huge))
+print('expedge',math.exp(math.huge),math.exp(-math.huge),math.sinh(710),math.cosh(710),math.tanh(math.huge))
+print('signedzero',math.sin(-0),math.tan(-0),math.asin(-0),math.atan(-0),math.atan2(-0,-1),math.sinh(-0),math.tanh(-0))
+print('decompedge',math.modf(math.huge)); print('small',math.frexp(5e-324));print('roundsmall',math.ldexp(0.5,-1073),math.log(5e-324))
