@@ -38,7 +38,7 @@ const library_lib_text_13: Array<u8, 7> = "__index";
 
 fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
   if index == 0_u64 {
-    let local_name_1 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_1 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_1[0_u64] = 112_u8;
     set local_name_1[1_u64] = 99_u8;
     set local_name_1[2_u64] = 97_u8;
@@ -48,7 +48,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_2);
   }
   if index == 1_u64 {
-    let local_name_3 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_3 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_3[0_u64] = 101_u8;
     set local_name_3[1_u64] = 114_u8;
     set local_name_3[2_u64] = 114_u8;
@@ -58,7 +58,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_4);
   }
   if index == 2_u64 {
-    let local_name_5 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_5 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_5[0_u64] = 115_u8;
     set local_name_5[1_u64] = 101_u8;
     set local_name_5[2_u64] = 108_u8;
@@ -69,7 +69,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_6);
   }
   if index == 3_u64 {
-    let local_name_7 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_7 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_7[0_u64] = 116_u8;
     set local_name_7[1_u64] = 121_u8;
     set local_name_7[2_u64] = 112_u8;
@@ -78,7 +78,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_8);
   }
   if index == 4_u64 {
-    let local_name_9 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_9 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_9[0_u64] = 114_u8;
     set local_name_9[1_u64] = 97_u8;
     set local_name_9[2_u64] = 119_u8;
@@ -89,7 +89,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_10);
   }
   if index == 5_u64 {
-    let local_name_11 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_11 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_11[0_u64] = 114_u8;
     set local_name_11[1_u64] = 97_u8;
     set local_name_11[2_u64] = 119_u8;
@@ -100,7 +100,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_12);
   }
   if index == 6_u64 {
-    let local_name_13 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_13 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_13[0_u64] = 115_u8;
     set local_name_13[1_u64] = 101_u8;
     set local_name_13[2_u64] = 116_u8;
@@ -117,7 +117,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_14);
   }
   if index == 7_u64 {
-    let local_name_15 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_15 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_15[0_u64] = 103_u8;
     set local_name_15[1_u64] = 101_u8;
     set local_name_15[2_u64] = 116_u8;
@@ -134,7 +134,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_16);
   }
   if index == 8_u64 {
-    let local_name_17 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_17 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_17[0_u64] = 97_u8;
     set local_name_17[1_u64] = 115_u8;
     set local_name_17[2_u64] = 115_u8;
@@ -145,7 +145,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_18);
   }
   if index == 9_u64 {
-    let local_name_19 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_19 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_19[0_u64] = 105_u8;
     set local_name_19[1_u64] = 112_u8;
     set local_name_19[2_u64] = 97_u8;
@@ -156,7 +156,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_20);
   }
   if index == 10_u64 {
-    let local_name_21 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_21 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_21[0_u64] = 112_u8;
     set local_name_21[1_u64] = 97_u8;
     set local_name_21[2_u64] = 105_u8;
@@ -166,7 +166,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_22);
   }
   if index == 11_u64 {
-    let local_name_23 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_23 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_23[0_u64] = 110_u8;
     set local_name_23[1_u64] = 101_u8;
     set local_name_23[2_u64] = 120_u8;
@@ -175,7 +175,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_24);
   }
   if index == 12_u64 {
-    let local_name_25 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_25 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_25[0_u64] = 120_u8;
     set local_name_25[1_u64] = 112_u8;
     set local_name_25[2_u64] = 99_u8;
@@ -186,7 +186,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_26);
   }
   if index == 13_u64 {
-    let local_name_27 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_27 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_27[0_u64] = 114_u8;
     set local_name_27[1_u64] = 97_u8;
     set local_name_27[2_u64] = 119_u8;
@@ -199,7 +199,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_28);
   }
   if index == 14_u64 {
-    let local_name_29 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_29 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_29[0_u64] = 116_u8;
     set local_name_29[1_u64] = 111_u8;
     set local_name_29[2_u64] = 110_u8;
@@ -212,7 +212,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_30);
   }
   if index == 15_u64 {
-    let local_name_31 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_31 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_31[0_u64] = 116_u8;
     set local_name_31[1_u64] = 111_u8;
     set local_name_31[2_u64] = 115_u8;
@@ -225,7 +225,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_32);
   }
   if index == 16_u64 {
-    let local_name_33 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_33 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_33[0_u64] = 117_u8;
     set local_name_33[1_u64] = 110_u8;
     set local_name_33[2_u64] = 112_u8;
@@ -236,7 +236,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_34);
   }
   if index == 17_u64 {
-    let local_name_35 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_35 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_35[0_u64] = 105_u8;
     set local_name_35[1_u64] = 112_u8;
     set local_name_35[2_u64] = 97_u8;
@@ -250,7 +250,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_36);
   }
   if index == 18_u64 {
-    let local_name_37 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_37 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_37[0_u64] = 108_u8;
     set local_name_37[1_u64] = 101_u8;
     set local_name_37[2_u64] = 110_u8;
@@ -258,7 +258,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_38);
   }
   if index == 19_u64 {
-    let local_name_39 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_39 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_39[0_u64] = 115_u8;
     set local_name_39[1_u64] = 117_u8;
     set local_name_39[2_u64] = 98_u8;
@@ -266,7 +266,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_40);
   }
   if index == 20_u64 {
-    let local_name_41 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_41 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_41[0_u64] = 117_u8;
     set local_name_41[1_u64] = 112_u8;
     set local_name_41[2_u64] = 112_u8;
@@ -276,7 +276,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_42);
   }
   if index == 21_u64 {
-    let local_name_43 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_43 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_43[0_u64] = 108_u8;
     set local_name_43[1_u64] = 111_u8;
     set local_name_43[2_u64] = 119_u8;
@@ -286,7 +286,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_44);
   }
   if index == 22_u64 {
-    let local_name_45 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_45 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_45[0_u64] = 114_u8;
     set local_name_45[1_u64] = 101_u8;
     set local_name_45[2_u64] = 112_u8;
@@ -294,7 +294,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_46);
   }
   if index == 23_u64 {
-    let local_name_47 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_47 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_47[0_u64] = 114_u8;
     set local_name_47[1_u64] = 101_u8;
     set local_name_47[2_u64] = 118_u8;
@@ -306,7 +306,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_48);
   }
   if index == 24_u64 {
-    let local_name_49 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_49 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_49[0_u64] = 98_u8;
     set local_name_49[1_u64] = 121_u8;
     set local_name_49[2_u64] = 116_u8;
@@ -315,7 +315,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_50);
   }
   if index == 25_u64 {
-    let local_name_51 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_51 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_51[0_u64] = 99_u8;
     set local_name_51[1_u64] = 104_u8;
     set local_name_51[2_u64] = 97_u8;
@@ -324,7 +324,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_52);
   }
   if index == 26_u64 {
-    let local_name_53 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_53 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_53[0_u64] = 102_u8;
     set local_name_53[1_u64] = 111_u8;
     set local_name_53[2_u64] = 114_u8;
@@ -335,7 +335,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_54);
   }
   if index == 27_u64 {
-    let local_name_55 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_55 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_55[0_u64] = 105_u8;
     set local_name_55[1_u64] = 110_u8;
     set local_name_55[2_u64] = 115_u8;
@@ -346,7 +346,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_56);
   }
   if index == 28_u64 {
-    let local_name_57 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_57 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_57[0_u64] = 114_u8;
     set local_name_57[1_u64] = 101_u8;
     set local_name_57[2_u64] = 109_u8;
@@ -357,7 +357,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_58);
   }
   if index == 29_u64 {
-    let local_name_59 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_59 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_59[0_u64] = 99_u8;
     set local_name_59[1_u64] = 111_u8;
     set local_name_59[2_u64] = 110_u8;
@@ -368,7 +368,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_60);
   }
   if index == 30_u64 {
-    let local_name_61 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_61 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_61[0_u64] = 103_u8;
     set local_name_61[1_u64] = 101_u8;
     set local_name_61[2_u64] = 116_u8;
@@ -377,7 +377,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_62);
   }
   if index == 31_u64 {
-    let local_name_63 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_63 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_63[0_u64] = 109_u8;
     set local_name_63[1_u64] = 97_u8;
     set local_name_63[2_u64] = 120_u8;
@@ -386,7 +386,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_64);
   }
   if index == 32_u64 {
-    let local_name_65 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_65 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_65[0_u64] = 115_u8;
     set local_name_65[1_u64] = 111_u8;
     set local_name_65[2_u64] = 114_u8;
@@ -395,7 +395,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_66);
   }
   if index == 33_u64 {
-    let local_name_67 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_67 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_67[0_u64] = 97_u8;
     set local_name_67[1_u64] = 98_u8;
     set local_name_67[2_u64] = 115_u8;
@@ -403,7 +403,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_68);
   }
   if index == 34_u64 {
-    let local_name_69 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_69 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_69[0_u64] = 99_u8;
     set local_name_69[1_u64] = 101_u8;
     set local_name_69[2_u64] = 105_u8;
@@ -412,7 +412,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_70);
   }
   if index == 35_u64 {
-    let local_name_71 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_71 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_71[0_u64] = 102_u8;
     set local_name_71[1_u64] = 108_u8;
     set local_name_71[2_u64] = 111_u8;
@@ -422,7 +422,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_72);
   }
   if index == 36_u64 {
-    let local_name_73 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_73 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_73[0_u64] = 102_u8;
     set local_name_73[1_u64] = 109_u8;
     set local_name_73[2_u64] = 111_u8;
@@ -431,7 +431,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_74);
   }
   if index == 37_u64 {
-    let local_name_75 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_75 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_75[0_u64] = 109_u8;
     set local_name_75[1_u64] = 111_u8;
     set local_name_75[2_u64] = 100_u8;
@@ -440,7 +440,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_76);
   }
   if index == 38_u64 {
-    let local_name_77 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_77 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_77[0_u64] = 115_u8;
     set local_name_77[1_u64] = 113_u8;
     set local_name_77[2_u64] = 114_u8;
@@ -449,7 +449,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_78);
   }
   if index == 39_u64 {
-    let local_name_79 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_79 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_79[0_u64] = 112_u8;
     set local_name_79[1_u64] = 111_u8;
     set local_name_79[2_u64] = 119_u8;
@@ -457,7 +457,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_80);
   }
   if index == 40_u64 {
-    let local_name_81 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_81 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_81[0_u64] = 109_u8;
     set local_name_81[1_u64] = 105_u8;
     set local_name_81[2_u64] = 110_u8;
@@ -465,7 +465,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_82);
   }
   if index == 41_u64 {
-    let local_name_83 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_83 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_83[0_u64] = 109_u8;
     set local_name_83[1_u64] = 97_u8;
     set local_name_83[2_u64] = 120_u8;
@@ -473,7 +473,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_84);
   }
   if index == 42_u64 {
-    let local_name_85 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_85 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_85[0_u64] = 102_u8;
     set local_name_85[1_u64] = 114_u8;
     set local_name_85[2_u64] = 101_u8;
@@ -483,7 +483,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_86);
   }
   if index == 43_u64 {
-    let local_name_87 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_87 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_87[0_u64] = 108_u8;
     set local_name_87[1_u64] = 100_u8;
     set local_name_87[2_u64] = 101_u8;
@@ -493,7 +493,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_88);
   }
   if index == 44_u64 {
-    let local_name_89 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_89 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_89[0_u64] = 108_u8;
     set local_name_89[1_u64] = 111_u8;
     set local_name_89[2_u64] = 103_u8;
@@ -501,7 +501,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_90);
   }
   if index == 45_u64 {
-    let local_name_91 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_91 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_91[0_u64] = 108_u8;
     set local_name_91[1_u64] = 111_u8;
     set local_name_91[2_u64] = 103_u8;
@@ -511,7 +511,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_92);
   }
   if index == 46_u64 {
-    let local_name_93 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_93 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_93[0_u64] = 101_u8;
     set local_name_93[1_u64] = 120_u8;
     set local_name_93[2_u64] = 112_u8;
@@ -519,7 +519,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_94);
   }
   if index == 47_u64 {
-    let local_name_95 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_95 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_95[0_u64] = 115_u8;
     set local_name_95[1_u64] = 105_u8;
     set local_name_95[2_u64] = 110_u8;
@@ -527,7 +527,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_96);
   }
   if index == 48_u64 {
-    let local_name_97 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_97 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_97[0_u64] = 99_u8;
     set local_name_97[1_u64] = 111_u8;
     set local_name_97[2_u64] = 115_u8;
@@ -535,7 +535,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_98);
   }
   if index == 49_u64 {
-    let local_name_99 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_99 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_99[0_u64] = 116_u8;
     set local_name_99[1_u64] = 97_u8;
     set local_name_99[2_u64] = 110_u8;
@@ -543,7 +543,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_100);
   }
   if index == 50_u64 {
-    let local_name_101 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_101 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_101[0_u64] = 97_u8;
     set local_name_101[1_u64] = 115_u8;
     set local_name_101[2_u64] = 105_u8;
@@ -552,7 +552,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_102);
   }
   if index == 51_u64 {
-    let local_name_103 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_103 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_103[0_u64] = 97_u8;
     set local_name_103[1_u64] = 99_u8;
     set local_name_103[2_u64] = 111_u8;
@@ -561,7 +561,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_104);
   }
   if index == 52_u64 {
-    let local_name_105 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_105 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_105[0_u64] = 97_u8;
     set local_name_105[1_u64] = 116_u8;
     set local_name_105[2_u64] = 97_u8;
@@ -570,7 +570,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_106);
   }
   if index == 53_u64 {
-    let local_name_107 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_107 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_107[0_u64] = 97_u8;
     set local_name_107[1_u64] = 116_u8;
     set local_name_107[2_u64] = 97_u8;
@@ -580,7 +580,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_108);
   }
   if index == 54_u64 {
-    let local_name_109 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_109 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_109[0_u64] = 115_u8;
     set local_name_109[1_u64] = 105_u8;
     set local_name_109[2_u64] = 110_u8;
@@ -589,7 +589,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_110);
   }
   if index == 55_u64 {
-    let local_name_111 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_111 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_111[0_u64] = 99_u8;
     set local_name_111[1_u64] = 111_u8;
     set local_name_111[2_u64] = 115_u8;
@@ -598,7 +598,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_112);
   }
   if index == 56_u64 {
-    let local_name_113 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_113 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_113[0_u64] = 116_u8;
     set local_name_113[1_u64] = 97_u8;
     set local_name_113[2_u64] = 110_u8;
@@ -607,7 +607,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_114);
   }
   if index == 57_u64 {
-    let local_name_115 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_115 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_115[0_u64] = 100_u8;
     set local_name_115[1_u64] = 101_u8;
     set local_name_115[2_u64] = 103_u8;
@@ -615,7 +615,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_116);
   }
   if index == 58_u64 {
-    let local_name_117 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_117 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_117[0_u64] = 114_u8;
     set local_name_117[1_u64] = 97_u8;
     set local_name_117[2_u64] = 100_u8;
@@ -623,7 +623,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_118);
   }
   if index == 59_u64 {
-    let local_name_119 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_119 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_119[0_u64] = 114_u8;
     set local_name_119[1_u64] = 97_u8;
     set local_name_119[2_u64] = 110_u8;
@@ -634,7 +634,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     return Some<BuiltinBinding>(value: local_row_120);
   }
   if index == 60_u64 {
-    let local_name_121 = array_filled::<u8, 16>(value: 0_u8);
+    let local_name_121 = array_filled::<u8, 32>(value: 0_u8);
     set local_name_121[0_u64] = 114_u8;
     set local_name_121[1_u64] = 97_u8;
     set local_name_121[2_u64] = 110_u8;
@@ -648,7 +648,7 @@ fn library_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
     let local_row_122 = BuiltinBinding(library: 3_u8, name: local_name_121, length: 10_u64, id: 91_u32);
     return Some<BuiltinBinding>(value: local_row_122);
   }
-  return None<BuiltinBinding>();
+  return codec_builtin(index: index);
 }
 
 fn bytes_push(bytes: &Box<Slots<u8>>, byte: u8) -> r: unit writes(bytes) {
@@ -692,6 +692,15 @@ fn bytes_string(vm: &Vm, bytes: &Box<Slots<u8>>, value: Value) -> r: unit reads(
 }
 
 fn library_name(id: u32) -> r: BuiltinBinding pure {
+  let base_id = iand(id, 255_u32);
+  let codec_index = cvt::<u32, u64>(base_id);
+  match codec_builtin(index: codec_index) {
+    Some(value: row) => {
+      return row;
+    }
+    None() => {
+    }
+  }
   for (i in 0_u64..library_builtin_count) {
     match library_builtin(index: i) {
       Some(value: row) => {
@@ -703,7 +712,7 @@ fn library_name(id: u32) -> r: BuiltinBinding pure {
       }
     }
   }
-  let local_name_129 = array_filled::<u8, 16>(value: 0_u8);
+  let local_name_129 = array_filled::<u8, 32>(value: 0_u8);
   return BuiltinBinding(library: 0_u8, name: local_name_129, length: 0_u64, id: id);
 }
 
@@ -771,7 +780,7 @@ fn lib_argerror(vm: &Vm, id: u32, index: u64, argc: u64, value: Value, expected:
   bytes_append(bytes: &local_bytes_134, text: &library_lib_text_1[0_u64..5_u64]);
   let local_row_138 = library_name(id: id);
   let local_length_139 = local_row_138.length;
-  if local_length_139 <= 16_u64 {
+  if local_length_139 <= 32_u64 {
     bytes_append(bytes: &local_bytes_134, text: &local_row_138.name[0_u64..local_length_139]);
   }
   bytes_append(bytes: &local_bytes_134, text: &library_lib_text_2[0_u64..3_u64]);
@@ -798,7 +807,7 @@ fn lib_argtext(vm: &Vm, id: u32, index: u64, text: &[u8]) -> r: HostOutcome read
   bytes_append(bytes: &local_bytes_141, text: &library_lib_text_6[0_u64..5_u64]);
   let local_row_145 = library_name(id: id);
   let local_length_146 = local_row_145.length;
-  if local_length_146 <= 16_u64 {
+  if local_length_146 <= 32_u64 {
     bytes_append(bytes: &local_bytes_141, text: &local_row_145.name[0_u64..local_length_146]);
   }
   bytes_append(bytes: &local_bytes_141, text: &library_lib_text_7[0_u64..3_u64]);
@@ -809,6 +818,7 @@ fn lib_argtext(vm: &Vm, id: u32, index: u64, text: &[u8]) -> r: HostOutcome read
 }
 
 fn install_libraries(vm: &Vm) -> r: unit writes(vm) {
+  install_codecs(vm: vm);
   let local_string_147 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 16_u32);
   let local_table_148 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 8_u32);
   let local_math_149 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 32_u32);
@@ -824,7 +834,7 @@ fn install_libraries(vm: &Vm) -> r: unit writes(vm) {
       Some(value: row) => {
         if row.id != builtin_ipairsaux {
           let local_length_157 = row.length;
-          if local_length_157 <= 16_u64 {
+          if local_length_157 <= 32_u64 {
             let local_key_158 = intern(heap: &vm^.heap, bytes: &row.name[0_u64..local_length_157]);
             let local_target_159 = local_globals_150;
             if row.library == 1_u8 {

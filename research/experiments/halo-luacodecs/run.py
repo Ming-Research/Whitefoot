@@ -94,7 +94,9 @@ if ok then io.write(reply(v,0),'\n') else
 
 
 def build_reference(source, scratch):
-    target = scratch / 'lua'
+    target = scratch / 'redis/deps/lua/src'
+    (scratch / 'redis/src').mkdir(parents=True)
+    shutil.copy2(source / 'src/solarisfixes.h', scratch / 'redis/src/solarisfixes.h')
     shutil.copytree(source / 'deps/lua/src', target, ignore=shutil.ignore_patterns('*.o','*.a','lua','luac'))
     p=target/'linit.c'; s=p.read_text()
     s=s.replace('static const luaL_Reg lualibs[]', 'int luaopen_cjson(lua_State *);\nint luaopen_cmsgpack(lua_State *);\nint luaopen_bit(lua_State *);\nint luaopen_struct(lua_State *);\n\nstatic const luaL_Reg lualibs[]')

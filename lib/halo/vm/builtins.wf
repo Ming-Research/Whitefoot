@@ -76,6 +76,9 @@ const builtin_expected_3_value_expected: Array<u8, 14> = "value expected";
 
 fn kind_name(vm: &Vm, v: Value) -> r: Value writes(vm) {
   let k = kind(v: v);
+  if k == 6_u8 {
+    return intern(heap: &vm^.heap, bytes: &cj_userdata[0_u64..8_u64]);
+  }
   if k == 0_u8 {
     return intern(heap: &vm^.heap, bytes: &builtins_text_0[0_u64..3_u64]);
   }

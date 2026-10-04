@@ -14,6 +14,35 @@ fn library_dispatch<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slo
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
   let local_length_1 = stack^.inner.len;
+  let codec_id = iand(id, 255_u32);
+  if codec_id >= 96_u32 {
+    if codec_id <= 105_u32 {
+      let outcome = library_cjson(vm: vm, stack: stack, func: func, argc: argc, bound: id);
+      resize_stack(stack: stack, size: local_length_1);
+      return outcome;
+    }
+  }
+  if id >= 112_u32 {
+    if id <= 119_u32 {
+      let outcome = library_cmsgpack(vm: vm, stack: stack, func: func, argc: argc, id: id);
+      resize_stack(stack: stack, size: local_length_1);
+      return outcome;
+    }
+  }
+  if id >= 136_u32 {
+    if id <= 143_u32 {
+      let outcome = library_struct(vm: vm, stack: stack, func: func, argc: argc, id: id);
+      resize_stack(stack: stack, size: local_length_1);
+      return outcome;
+    }
+  }
+  if id >= 120_u32 {
+    if id <= 135_u32 {
+      let outcome = library_bit(vm: vm, stack: stack, func: func, argc: argc, id: id);
+      resize_stack(stack: stack, size: local_length_1);
+      return outcome;
+    }
+  }
   if id >= 64_u32 {
     let library_outcome = library_math(vm: vm, stack: stack, func: func, argc: argc, id: id);
     resize_stack(stack: stack, size: local_length_1);

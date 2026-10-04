@@ -270,7 +270,10 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
             ensure_stack(stack: stack, size: room);
           }
           let out = HostOutcome::Raised();
-          if bound_id_1 >= 4096_u32 {
+          let bound_codec = iand(bound_id_1, 2147483648_u32);
+          let host_id = bound_id_1 >= 4096_u32;
+          let unbound = bound_codec == 0_u32;
+          if band(host_id, unbound) {
             set out = Host::call(env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
           } else {
             let call_pc = return_pc -sat 1_u64;
