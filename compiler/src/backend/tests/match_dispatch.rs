@@ -638,11 +638,20 @@ fn some_part_reloads_a_box(module: &str, base: &str, arms: usize) -> bool {
     symbols.iter().any(|symbol| {
         let part = definition(module, symbol);
         let header = part.lines().next().expect("a definition header");
-        header
+        // A reference reaches a part as a parameter or, past the registers,
+        // as a value its prelude loads from the shared frame.
+        let parameters = header
             .split(", ")
             .filter(|parameter| parameter.contains("ptr"))
             .filter_map(|parameter| parameter.rsplit(' ').next())
-            .map(|name| name.trim_end_matches(')').trim_end_matches(" {"))
+            .map(|name| name.trim_end_matches(')').trim_end_matches(" {"));
+        let spilled = part.lines().filter_map(|line| {
+            line.trim()
+                .split_once(" = load ptr, ptr %wf.slot.")
+                .map(|(name, _)| name)
+        });
+        parameters
+            .chain(spilled)
             .any(|name| part.contains(&format!("load ptr, ptr {name}\n")))
     })
 }

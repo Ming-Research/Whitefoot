@@ -985,6 +985,17 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **The cross-map audit test counts on the scheduler.** `holds_across_maps`
+  (`compiler/src/backend/concurrent_map_test.c`) stops its audit thread
+  when the four writers finish and then requires two audits, one holding
+  keys and one holding both maps whole. On the two-CPU `completion-linux`
+  runner the audit thread can be starved for the writers' whole run: it
+  failed with 1 audit on main and 0 on a work branch, both on 2026-10-04,
+  with no change to the map. The change: keep the writers running until the
+  audit has completed both kinds of hold, so the count no longer depends on
+  how threads are scheduled while every audit still overlaps writers.
+  Reopen with the next change to that test or its next `io-hosts.yml`
+  failure.
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
