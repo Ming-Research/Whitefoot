@@ -149,6 +149,7 @@ fn format_error(engine: &Engine, line: u64) -> r: Box<Slots<u8>> reads(engine) {
   let out = box_slots_new::<u8>(capacity: 0_u64);
   let value = engine^.vm.error;
   let located = False();
+  let with_at = False();
   match string_of(engine: engine, value: value) {
     None() => {
     }
@@ -156,6 +157,15 @@ fn format_error(engine: &Engine, line: u64) -> r: Box<Slots<u8>> reads(engine) {
       let h = cvt::<u32, u64>(view.handle);
       if h < engine^.vm.heap.strings.inner.len {
         let n = engine^.vm.heap.strings.inner[h].payload.bytes.inner.len;
+        if n >= 13_u64 {
+          set with_at = True();
+          for (i in 0_u64..13_u64) {
+            let b = engine^.vm.heap.strings.inner[h].payload.bytes.inner[i];
+            if b != location[i] {
+              set with_at = False();
+            }
+          }
+        }
         if n >= 12_u64 {
           set located = True();
           for (i in 0_u64..12_u64) {
@@ -169,8 +179,13 @@ fn format_error(engine: &Engine, line: u64) -> r: Box<Slots<u8>> reads(engine) {
       }
     }
   }
+  if with_at {
+    set located = True();
+  }
   if located {
-    byte(out: &out, b: 64_u8);
+    if bnot(with_at) {
+      byte(out: &out, b: 64_u8);
+    }
   } else if line > 0_u64 {
     text(out: &out, bytes: &location[0_u64..13_u64]);
     decimal(out: &out, number: line);

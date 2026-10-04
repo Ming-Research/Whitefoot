@@ -170,7 +170,6 @@ fn record(engine: &Engine, outcome: Outcome) -> r: Outcome writes(engine.result_
       set engine^.resumable = True();
     }
     HostStopped() => {
-      set engine^.resumable = True();
     }
   }
   return outcome;

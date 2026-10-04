@@ -213,7 +213,8 @@ fn reply(vm: &Vm, value: Value, out: &Box<Slots<u8>>, depth: u64) -> r: unit wri
       if error_v51 {
         text_bytes(out: out, bytes: &s_39[0_u64..24_u64]);
         let yes_v53 = True();
-        json_bytes(vm: vm, value: err_v49, out: out, sanitize: yes_v53, error: yes_v53);
+        let keep = False();
+        json_bytes(vm: vm, value: err_v49, out: out, sanitize: yes_v53, error: keep);
         push(out: out, byte: 125_u8);
       } else if status_v52 {
         text_bytes(out: out, bytes: &s_40[0_u64..25_u64]);
@@ -367,6 +368,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let std::fs::Directory(read: cwd_read_v107, write: cwd_write_v108) = move cwd_v100;
   std::fs::close_directory(factory: &factory_v103, directory: move cwd_read_v107);
   std::fs::close_directory_write(factory: &factory_v103, directory: move cwd_write_v108);
+  let modes = std::text::args_count(args: &args_v99);
+  if modes > 3_u64 {
+    return smoke();
+  }
   let source_v109 = box_slots_new::<u8>(capacity: 0_u64);
   let read_v110 = read_source(factory: &factory_v103, input: &input_v104, source: &source_v109);
   if bnot(read_v110) {

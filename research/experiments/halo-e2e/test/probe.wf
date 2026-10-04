@@ -64,8 +64,8 @@ fn returned(engine: &Engine, expected: f64) -> r: Bool reads(engine) {
     }
     Some(value: v) => {
       match halo::embed::number_of(value: v) {
-        Is(x: x) => {
-          return feq(x, expected);
+        Is(x: observed) => {
+          return feq(observed, expected);
         }
         Not() => {
         }
@@ -195,8 +195,8 @@ fn embed_probe() -> r: u8 pure {
   }
   let error = halo::embed::error_value(engine: &engine);
   match halo::embed::number_of(value: error) {
-    Is(x: x) => {
-      let same = feq(x, 99.0_f64);
+    Is(x: observed) => {
+      let same = feq(observed, 99.0_f64);
       if bnot(same) {
         return 21_u8;
       }
@@ -219,6 +219,24 @@ fn embed_probe() -> r: u8 pure {
     Budget() => {
       return 25_u8;
     }
+  }
+  let calls_before = env.calls;
+  let stop_resume = halo::embed::resume::<ProbeHost>(engine: &engine, env: &env, budget: 1_u64);
+  match stop_resume {
+    Error() => {
+    }
+    Done(..) => {
+      return 34_u8;
+    }
+    Budget() => {
+      return 35_u8;
+    }
+    HostStopped() => {
+      return 36_u8;
+    }
+  }
+  if env.calls != calls_before {
+    return 37_u8;
   }
   halo::embed::reset(engine: &engine);
   match halo::embed::result(engine: &engine, index: 0_u64) {
@@ -269,6 +287,24 @@ fn embed_probe() -> r: u8 pure {
       return 33_u8;
     }
   }
+  let plain_value = halo::embed::intern(engine: &engine, bytes: &format_plain[0_u64..4_u64]);
+  set engine.vm.error = plain_value;
+  let plain_ok = format_matches(engine: &engine, line: 17_u64, want: &expect_plain[0_u64..21_u64]);
+  if bnot(plain_ok) {
+    return 38_u8;
+  }
+  let bare_value = halo::embed::intern(engine: &engine, bytes: &format_bare[0_u64..19_u64]);
+  set engine.vm.error = bare_value;
+  let bare_ok = format_matches(engine: &engine, line: 17_u64, want: &expect_bare[0_u64..20_u64]);
+  if bnot(bare_ok) {
+    return 39_u8;
+  }
+  let at_value = halo::embed::intern(engine: &engine, bytes: &format_at[0_u64..20_u64]);
+  set engine.vm.error = at_value;
+  let at_ok = format_matches(engine: &engine, line: 17_u64, want: &expect_at[0_u64..20_u64]);
+  if bnot(at_ok) {
+    return 40_u8;
+  }
   return 0_u8;
 }
 
@@ -288,3 +324,32 @@ const probe_text_3: Array<u8, 36> = "return 'cached-not-in-active-script'";
 const probe_text_4: Array<u8, 12> = "@user_script";
 
 const probe_text_5: Array<u8, 51> = "local n=0; for i=1,20 do n=n+i end; return host()+n";
+
+const format_plain: Array<u8, 4> = "boom";
+
+const expect_plain: Array<u8, 21> = "@user_script:17: boom";
+
+const format_bare: Array<u8, 19> = "user_script:8: boom";
+
+const expect_bare: Array<u8, 20> = "@user_script:8: boom";
+
+const format_at: Array<u8, 20> = "@user_script:9: boom";
+
+const expect_at: Array<u8, 20> = "@user_script:9: boom";
+
+fn format_matches(engine: &Engine, line: u64, want: &[u8]) -> r: Bool reads(engine), reads(want) {
+  let actual = halo::embed::format_error(engine: engine, line: line);
+  if actual.inner.len != want^.len {
+    return False();
+  }
+  for (i in 0_u64..want^.len) {
+    if i < actual.inner.len {
+      if actual.inner[i] != want^[i] {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}

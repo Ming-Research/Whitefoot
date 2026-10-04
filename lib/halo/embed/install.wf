@@ -1,6 +1,6 @@
 alias Value = pkg::value::Value;
 
-const core: Array<BuiltinName, 8> =[BuiltinName(name: "pcall           ", length: 5_u64, id: 0_u32), BuiltinName(name: "error           ", length: 5_u64, id: 1_u32), BuiltinName(name: "select          ", length: 6_u64, id: 2_u32), BuiltinName(name: "type            ", length: 4_u64, id: 3_u32), BuiltinName(name: "rawget          ", length: 6_u64, id: 4_u32), BuiltinName(name: "rawset          ", length: 6_u64, id: 5_u32), BuiltinName(name: "setmetatable    ", length: 12_u64, id: 6_u32), BuiltinName(name: "getmetatable    ", length: 12_u64, id: 7_u32)];
+const core: Array<BuiltinName, 8> =[BuiltinName(name: "pcall                           ", length: 5_u64, id: 0_u32), BuiltinName(name: "error                           ", length: 5_u64, id: 1_u32), BuiltinName(name: "select                          ", length: 6_u64, id: 2_u32), BuiltinName(name: "type                            ", length: 4_u64, id: 3_u32), BuiltinName(name: "rawget                          ", length: 6_u64, id: 4_u32), BuiltinName(name: "rawset                          ", length: 6_u64, id: 5_u32), BuiltinName(name: "setmetatable                    ", length: 12_u64, id: 6_u32), BuiltinName(name: "getmetatable                    ", length: 12_u64, id: 7_u32)];
 
 const global_name: Array<u8, 2> = "_G";
 
@@ -9,9 +9,31 @@ fn install(engine: &Engine, names: &[BuiltinName]) -> r: Bool reads(names), writ
   for (i in 0_u64..names^.len) {
     let row = names^[i];
     let n = row.length;
-    if n <= 16_u64 {
+    if n <= 32_u64 {
       let v = Value::Builtin(id: row.id);
-      let result = set_global(engine: engine, name: &row.name[0_u64..n], value: v);
+      let dot = n;
+      for (j in 0_u64..n) {
+        if row.name[j] == 46_u8 {
+          set dot = j;
+          break;
+        }
+      }
+      let g = Value::Tab(h: engine^.vm.globals);
+      let target = g;
+      let first = 0_u64;
+      if dot < n {
+        let key = intern(engine: engine, bytes: &row.name[0_u64..dot]);
+        let library = table_get(engine: engine, table: g, key: key);
+        let tag = kind(value: library);
+        if tag == 0_u8 {
+          set library = new_table(engine: engine, asize: 0_u32, hsize: 0_u32);
+          let placed = table_set(engine: engine, table: g, key: key, value: library);
+        }
+        set target = library;
+        set first = dot + 1_u64;
+      }
+      let key = intern(engine: engine, bytes: &row.name[first..n]);
+      let result = table_set(engine: engine, table: target, key: key, value: v);
       match result {
         Ok(..) => {
         }

@@ -16,7 +16,7 @@ ORACLE = ROOT / 'research/experiments/halo-oracle'
 
 def metadata(source):
     result = {'KEYS': [], 'ARGV': [], 'setup': []}
-    for line in source.decode('latin1').splitlines():
+    for line in source.decode('utf8').splitlines():
         if not line.startswith('-- '):
             break
         name, sep, value = line[3:].partition(':')
@@ -31,7 +31,7 @@ def metadata(source):
 
 def lua_string(value):
     return '"' + ''.join(chr(b) if 32 <= b < 127 and b not in (34, 92)
-                         else '\\%03d' % b for b in value.encode('latin1')) + '"'
+                         else '\\%03d' % b for b in value.encode('utf8')) + '"'
 
 
 def fixture(source):
@@ -71,14 +71,14 @@ def canonical(reply):
 def reason(actual, expected):
     if actual.get('type') == 'error':
         error = actual['bytes']
+        if expected.get('type') == 'error':
+            return 'error text/location difference: ' + error
         if 'nonexistent global variable' in error:
             return 'unavailable global/library: ' + error
         if 'unsupported command' in error:
             return 'unsupported test-host command: ' + error
         if 'attempt to call a nil value' in error:
             return 'missing library/host member: ' + error
-        if expected.get('type') == 'error':
-            return 'error text/location difference: ' + error
         return 'runtime/compile error: ' + error
     return 'reply/conversion difference; inspect actual JSON'
 
@@ -150,6 +150,8 @@ def main():
             if build.returncode:
                 print((build.stdout + build.stderr).decode('utf8', 'replace'))
                 return 2
+        report += [f'Executable SHA-256: `{hashlib.sha256(binary.read_bytes()).hexdigest()}`.',
+                   f'Compiler SHA-256: `{hashlib.sha256(Path(args.compiler).read_bytes()).hexdigest()}`.', '']
         rows = []
         summary = defaultdict(Counter)
         observed = {}

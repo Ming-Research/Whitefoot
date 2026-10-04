@@ -27,7 +27,7 @@ public struct Engine {
 }
 
 public struct BuiltinName {
-  public name: Array<u8, 16>;
+  public name: Array<u8, 32>;
   public length: u64;
   public id: u32;
 }
@@ -42,7 +42,7 @@ public fn reset(engine: &Engine) -> r: unit writes(engine) doc "Closes active up
 
 public fn start<interface Host<E>>(engine: &Engine, env: &E, script: ScriptId, budget: u64) -> r: Outcome writes(engine), writes(env) doc "Starts a cached script with zero arguments and returns the VM outcome.";
 
-public fn resume<interface Host<E>>(engine: &Engine, env: &E, budget: u64) -> r: Outcome writes(engine), writes(env) doc "Resumes a suspended script with a fresh safepoint budget.";
+public fn resume<interface Host<E>>(engine: &Engine, env: &E, budget: u64) -> r: Outcome writes(engine), writes(env) doc "Resumes a Budget checkpoint with a fresh safepoint budget. HostStopped is terminal until reset/start.";
 
 public fn result(engine: &Engine, index: u64) -> r: Option<Value> reads(engine) doc "Returns a completed result in stack[0..result_count), or None.";
 
@@ -50,7 +50,7 @@ public fn pin(engine: &Engine, value: Value) -> r: Option<u64> writes(engine) do
 
 public fn unpin(engine: &Engine, token: u64) -> r: unit writes(engine) doc "Releases an idle or suspended host root; unknown tokens do nothing.";
 
-public fn install(engine: &Engine, names: &[BuiltinName]) -> r: Bool reads(names), writes(engine) doc "Installs name/id rows in globals; may extend the current builtin table.";
+public fn install(engine: &Engine, names: &[BuiltinName]) -> r: Bool reads(names), writes(engine) doc "Installs global or library.member name/id rows; may extend the current builtin table.";
 
 public fn intern(engine: &Engine, bytes: &[u8]) -> r: Value reads(bytes), writes(engine) doc "Interns a byte string in the engine heap.";
 

@@ -14,3 +14,31 @@ binding replaces this test host or Halo is retired.
 No compiler, VM, heap or oracle files are changed by this experiment. Unsupported
 commands and library functions are reported as failures rather than silently
 removed from the corpus. See RESULTS.md for the measured coverage and gaps.
+
+Run from the repository root, using an existing compiler (no Cargo):
+
+```sh
+python3 -B research/experiments/halo-e2e/run.py --compiler /path/to/whitefootc --budgets 1,7,1000 --report /private/tmp/halo-e2e-results.md --actual /private/tmp/halo-e2e-replies
+```
+
+The runner builds the Whitefoot test executable once and runs every script with a
+fresh engine/store. `--filter GROUP/NAME` selects a small sample. `--binary PATH`
+reuses an executable; the caller must ensure it was built from the identified
+source bytes. Both sides are parsed as typed reply objects, validated, and
+rendered to the oracle's exact indented ASCII JSON before byte comparison; no
+payload, integer, order, error location or nil kind is normalized. The runner
+exits one for a mismatch and two for a build failure. Expected files remain
+read-only. Python is used for binary transport and JSON comparison independently
+of the Whitefoot implementation, not as a compiler or Lua interpreter.
+
+The preparation chunk installs KEYS/ARGV from the JSON header and executes setup
+commands through the same test host. A NUL separates it from the unchanged script
+bytes on stdin. Global protection is applied afterward: raw host assignment
+bypasses readonly, while script writes raise and absent reads call a rejecting
+`__index`. The initial library functions are installed by name/id rows.
+
+The `smoke` entry and `test` executable with three arguments run the embedding
+probe (stdin is unused): cache, flush, reset, budget resumption, host outcomes,
+and forced collection of pins and cached constants. A nonzero exit is the
+probe's numbered failed observation. [GAPS.md](GAPS.md) names limits and concrete
+reopening conditions. None of these research commands is a compiler gate.
