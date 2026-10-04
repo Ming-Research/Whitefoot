@@ -174,6 +174,25 @@ Criteria, fixed before any measurement:
   access are reported to the Halo investigation for G4; they select nothing
   here.
 
+## E0 outcome
+
+Measured on an M1 Pro ([results](../../experiments/match-dispatch/RESULTS.md)):
+
+- Per-arm functions under `preserve_none` are 15% (checked) and 21% (`u8`)
+  below the switch loop, so the proposed lowering stands; computed goto in
+  one function does not reach it once the checked form's state is live.
+- Passing more state than the convention's argument registers costs 8% with
+  one parameter over and 43% with two, which makes the spill block a
+  requirement of the lowering, not a refinement.
+- Option B stays open: it misses the recorded 3% on the five-kernel test,
+  but the dispatch-floor kernel added afterwards shows a 20% reduction of
+  dispatch cost once no frame round trip hides it. It is re-measured in the
+  wasm interpreter, which has an accumulator and register-resident locals.
+- For Halo's G4: frame-index checks cost 4.0% over `u8` operands, the fetch
+  comparison 2.3%, and the index representation itself 9.0% over pointers;
+  the last is a candidate compiler improvement (carrying a derived address
+  instead of a loop-carried index), to be designed separately.
+
 ## Later stages
 
 1. Lower the loop in the compiler to the shape E0 selects, with the

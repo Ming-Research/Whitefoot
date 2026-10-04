@@ -2,7 +2,8 @@
 # Build every E0 variant of vm.c into OUT (default ./out).
 #   switch, goto, tail (table), tailpn (table, preserve_none),
 #   cell (handler offset in the cell), cellpn
-# each under the three access forms: checked, u8, raw.
+# each under the four access forms: checked, u8, u8v (u8 without the fetch
+# comparison), raw.
 # Plus counting builds (one per access form; dispatch counts do not depend on
 # the dispatch shape) and a padded control of tailpn-checked.
 set -eu
@@ -17,8 +18,8 @@ build() { # name, extra flags...
     $cc $flags "$@" -o "$out/$name" "$here/vm.c"
 }
 
-for access in 1 2 3; do
-    case $access in 1) a=checked ;; 2) a=u8 ;; 3) a=raw ;; esac
+for access in 1 2 4 3; do
+    case $access in 1) a=checked ;; 2) a=u8 ;; 4) a=u8v ;; 3) a=raw ;; esac
     build "switch-$a" -DDISPATCH=1 -DACCESS=$access
     build "goto-$a" -DDISPATCH=2 -DACCESS=$access
     build "tail-$a" -DDISPATCH=3 -DACCESS=$access

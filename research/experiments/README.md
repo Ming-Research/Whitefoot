@@ -267,6 +267,12 @@ completion criterion were refused.
   built without and with `--par`, best of seven under the host lock on a
   four-processor x86-64 host, 0.178 s sequentially and 0.069 s on four
   workers. One input, one size, one host.
+- [match-dispatch/](match-dispatch/RESULTS.md) — E0 of the match-dispatch
+  investigation: one C interpreter compiled as a switch loop, computed goto,
+  and per-opcode `musttail` functions with a handler table or a handler
+  offset in each cell, under four operand-access forms; per-opcode
+  functions under `preserve_none` measured 15-21% below the switch loop on
+  an M1 Pro, and passing state beyond the argument registers up to 43% above.
 
 ## Frozen v0.17 floor studies
 

@@ -18,9 +18,9 @@ import statistics
 import subprocess
 import sys
 
-KERNELS = ["loop", "fib", "sieve", "mandel", "poly"]
+KERNELS = ["loop", "fib", "sieve", "mandel", "poly", "floor"]
 SHAPES = ["switch", "goto", "tail", "tailpn", "cell", "cellpn"]
-ACCESS = ["checked", "u8", "raw"]
+ACCESS = ["checked", "u8", "u8v", "raw"]
 CONTROLS = ["tailpn-checked-pad64", "tailpn-checked-pad2048"]
 
 
@@ -66,14 +66,15 @@ def summarize(args):
     for line in open(args.summarize):
         _, variant, kernel, cycles, insns = line.split("\t")
         samples.setdefault((variant, kernel), []).append((int(cycles), int(insns)))
+    kernels = [k for k in KERNELS if any(kk == k for _, kk in samples)]
     variants = sorted({v for v, _ in samples}, key=lambda v: (v.split("-")[1], v))
     print("cycles per dispatch, median over launches (spread = (max-min)/median)")
-    print(f"{'variant':26}" + "".join(f"{k:>16}" for k in KERNELS) + f"{'geomean':>10}")
+    print(f"{'variant':26}" + "".join(f"{k:>16}" for k in kernels) + f"{'geomean':>10}")
     rows = {}
     for variant in variants:
         access = variant.split("-")[1]
         cells, medians = [], []
-        for kernel in KERNELS:
+        for kernel in kernels:
             cyc = [c for c, _ in samples[(variant, kernel)]]
             d = counts[(access, kernel)]
             med = statistics.median(cyc) / d
@@ -88,7 +89,7 @@ def summarize(args):
     for variant in variants:
         access = variant.split("-")[1]
         vals = [statistics.median([i for _, i in samples[(variant, k)]]) / counts[(access, k)]
-                for k in KERNELS]
+                for k in kernels]
         print(f"{variant:26}" + "".join(f"{v:16.2f}" for v in vals))
     print()
     print("ratio to switch of the same access form (geomean of per-kernel medians)")

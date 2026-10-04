@@ -13,6 +13,7 @@
  *               fetch index pc compared with the code length
  *   -DACCESS=2  u8 operands: base+(u8)a, no check, a call guarantees 256
  *               slots of headroom; fetch index still compared
+ *   -DACCESS=4  u8 operands and no fetch comparison (verified bytecode)
  *   -DACCESS=3  raw: cell and frame pointers, no checks (not expressible in
  *               Whitefoot; the lower bound)
  *   -DCOUNT     count dispatches (a separate build; timing builds omit it)
@@ -89,6 +90,13 @@ static inline uint64_t as_u(double d) { uint64_t v; memcpy(&v, &d, 8); return v;
 #elif ACCESS == 2
 #define SLOT(x) (regs[base + (x)])
 #define FETCHCHK() do { if (UNLIKELY(pc >= ncode)) trap("fetch index"); } while (0)
+#define OPND(f) ((uint8_t)ip->f)
+#elif ACCESS == 4
+/* u8 operands and verified bytecode: the fetch index needs no comparison,
+ * as if the verifier's facts (every jump target and fall-through within the
+ * code) reached the loop. The index forms remain. */
+#define SLOT(x) (regs[base + (x)])
+#define FETCHCHK() ((void)ncode)
 #define OPND(f) ((uint8_t)ip->f)
 #else
 #define SLOT(x) (fp[(x)])
@@ -240,7 +248,7 @@ static uint64_t run(const Cell *code, uint32_t ncode, uint64_t *regs, uint64_t l
 #define PARAMS const Cell *code, uint32_t pc, uint64_t *regs, uint64_t base, uint64_t len, \
                uint8_t *mem, uint64_t memlen, uint32_t ncode, uint64_t rsp, Spill *st
 #define ARGS code, pc, regs, base, len, mem, memlen, ncode, rsp, st
-#elif ACCESS == 2
+#elif ACCESS == 2 || ACCESS == 4
 #define PARAMS const Cell *code, uint32_t pc, uint64_t *regs, uint64_t base, \
                uint8_t *mem, uint64_t memlen, uint32_t ncode, uint64_t rsp, Spill *st
 #define ARGS code, pc, regs, base, mem, memlen, ncode, rsp, st
@@ -270,7 +278,7 @@ CC __attribute__((noinline)) static uint64_t h_base(PARAMS);
 
 #define DISPATCH_NEXT() do { COUNTED(); __attribute__((musttail)) return HANDLER_OF(CUR_IP->op)(ARGS); } while (0)
 
-#if ACCESS == 2
+#if ACCESS == 2 || ACCESS == 4
 #define LEN_FROM_SPILL uint64_t len = (uint64_t)(st->regs_end - regs); (void)len;
 #else
 #define LEN_FROM_SPILL
@@ -304,7 +312,7 @@ static uint64_t run(const Cell *code, uint32_t ncode, uint64_t *regs, uint64_t l
     COUNTED();
 #if ACCESS == 1
     return HANDLER_OF(code[0].op)(code, 0, regs, 0, len, mem, memlen, ncode, 0, &st);
-#elif ACCESS == 2
+#elif ACCESS == 2 || ACCESS == 4
     return HANDLER_OF(code[0].op)(code, 0, regs, 0, mem, memlen, ncode, 0, &st);
 #else
     return HANDLER_OF(code[0].op)(code, code, regs, mem, memlen, 0, &st);
@@ -482,6 +490,33 @@ static void k_poly(Prog *p, uint64_t *regs, int64_t reps) {
     (void)regs;
 }
 
+#define FLOOR_BODY 64
+static void k_floor(Prog *p, uint64_t *regs, int64_t reps) {
+    /* The dispatch floor: a short repeating body (well inside the indirect
+     * predictor's memorisation period) of MOVI into slots 8..15 and ADDI
+     * from slots 0..7, which nothing writes after setup, into slots 16..23,
+     * so no value flows from one dispatch to the next through the frame.
+     * r30 rep, r31 reps; the checksum folds slots 16..23. */
+    for (int r = 0; r < 8; r++)
+        emit(p, OP_MOVI, 0, 0, r, r + 1);
+    emit(p, OP_MOVI, 0, 0, 30, 0);
+    emit(p, OP_MOVI, 0, 0, 31, (int32_t)reps);
+    uint32_t top = here(p);
+    for (int k = 0; k < FLOOR_BODY; k++) {
+        if (k & 1)
+            emit(p, OP_ADDI, k & 7, 0, 16 + (k >> 1 & 7), k);
+        else
+            emit(p, OP_MOVI, 0, 0, 8 + (k >> 1 & 7), k);
+    }
+    emit(p, OP_ADDI, 30, 0, 30, 1);
+    emit(p, OP_LT_BR, 30, 31, 0, (int32_t)top);
+    emit(p, OP_MOVI, 0, 0, 0, 0);
+    for (int r = 16; r < 24; r++)
+        emit(p, OP_XOR, 0, r, 0, 0);
+    emit(p, OP_RET, 0, 0, 0, 0);
+    (void)regs;
+}
+
 typedef struct {
     const char *name;
     void (*build)(Prog *, uint64_t *, int64_t);
@@ -494,6 +529,7 @@ static const Kernel kernels[] = {
     { "sieve", k_sieve, 4000 },
     { "mandel", k_mandel, 600 },
     { "poly", k_poly, 100000 },
+    { "floor", k_floor, 4000000 },
 };
 
 int main(int argc, char **argv) {
