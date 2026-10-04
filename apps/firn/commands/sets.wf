@@ -1,10 +1,3 @@
-alias windows_order = pkg::bytes::windows_order;
-alias OrderedMap = std::collections::ordered_map::OrderedMap;
-alias OrderedKey = std::collections::ordered_map::OrderedKey;
-alias bytes_order = pkg::bytes::bytes_order;
-alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
-alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
-alias ordered_map_each = std::collections::ordered_map::ordered_map_each;
 alias Key = pkg::bytes::Key;
 alias KeyHash = pkg::bytes::KeyHash;
 alias Client = pkg::protocol::Client;
@@ -1247,8 +1240,8 @@ fn operand_argument(payload: u64, first: u64) -> position: u64 pure {
   return 1_u64;
 }
 
-fn survey(slots: &KeyedEntries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, input: &[u8], args: &Box<Slots<Span>>, first: u64, now: u64) -> found: Operands reads(slots), reads(keys), reads(positions), reads(input), reads(args) {
-  doc "What a set operation's keys hold: whether a set holds another kind (wrong), whether one is absent or expired (missing), whether one is expired (lapsed), the position of the smallest live set and its size, ties chosen by key bytes to preserve intersection reply order, the first set's position and whether it is named again (repeated), and the destination's position, each position keys' length when there is none.";
+fn survey(slots: &KeyedEntries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, now: u64) -> found: Operands reads(slots), reads(keys), reads(positions) {
+  doc "What a set operation's keys hold: whether a set holds another kind (wrong), whether one is absent or expired (missing), whether one is expired (lapsed), the position of the smallest live set and its size, ties chosen by first operand occurrence, the first set's position and whether it is named again (repeated), and the destination's position, each position keys' length when there is none.";
   let no = False();
   let found = Operands(wrong: no, missing: no, lapsed: no, smallest: keys^.len, least: 18446744073709551615_u64, first: keys^.len, repeated: no, destination: keys^.len);
   for @entries (at in 0_u64..keys^.len) {
@@ -1279,15 +1272,6 @@ fn survey(slots: &KeyedEntries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>
         } else {
           let size = entry_size(slot: &slots^[at]);
           let smaller = size < found.least;
-          if size == found.least {
-            let index = operand_argument(payload: payload, first: first);
-            let place = key_bounds(input: input, args: args, index: index);
-            let selected = key_position(positions: positions, index: found.smallest);
-            let selected_index = operand_argument(payload: selected, first: first);
-            let selected_place = key_bounds(input: input, args: args, index: selected_index);
-            let order = windows_order(left: &input^[place.start..place.end], right: &input^[selected_place.start..selected_place.end]);
-            set smaller = order < 0_i32;
-          }
           if smaller {
             set found.least = size;
             set found.smallest = at;
@@ -1388,46 +1372,8 @@ fn combine(slots: &KeyedEntries<Entry>, keys: &KeySet, positions: &Box<Slots<u64
   return count;
 }
 
-fn operand_order(env: &KeyEnv, left: &Key, right: &Key) -> order: i32 reads(left), reads(right) {
-  doc "Orders union source keys by bytes to preserve the result hash map's insertion order and reply bytes.";
-  let order = bytes_order(left: &left^.bytes, right: &right^.bytes);
-  return order;
-}
-
-binding UnionOrder : OrderedKey<Key, KeyEnv> {
-  compare = operand_order;
-}
-
-fn append_operand(env: &Box<Slots<u64>>, key: &Key, value: &u64) -> result: unit reads(value), writes(env) {
-  doc "Appends a source entry's insertion index while the ordered map visits source keys by bytes.";
-  if env^.inner.len < env^.inner.cap {
-    place_back(window: &env^.inner, value: value^);
-  }
-  return unit;
-}
-
-fn union_order(input: &[u8], args: &Box<Slots<Span>>, keys: &KeySet, positions: &Box<Slots<u64>>, first: u64, env: &KeyEnv) -> order: Box<Slots<u64>> reads(input), reads(args), reads(keys), reads(positions), reads(env) {
-  doc "Source entry indices in byte order, used only to aggregate a union with its existing hash-map insertion order; entry bindings and expiry records keep first-insertion order.";
-  let ordered = ordered_map_new::<Key, u64, ceiling>();
-  for @sources (at in 0_u64..keys^.len) {
-    let payload = key_position(positions: positions, index: at);
-    let named = iand(payload, operand_named);
-    if named != 0_u64 {
-      let index = operand_argument(payload: payload, first: first);
-      let key = key_at(input: input, args: args, index: index);
-      let put = ordered_map_put::<UnionOrder, u64, ceiling>(map: &ordered, key: move key, value: at, env: env);
-    }
-  }
-  let order = box_slots_new::<u64>(capacity: 0_u64);
-  if keys^.len <= 1073741824_u64 {
-    set order = box_slots_new::<u64>(capacity: keys^.len);
-  }
-  ordered_map_each::<Key, u64, Box<Slots<u64>>, fn append_operand, ceiling>(map: &ordered, env: &order);
-  return move order;
-}
-
-fn gather(slots: &KeyedEntries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, order: &Box<Slots<u64>>, found: Operands, operation: u64, env: &KeyEnv, now: u64, result: &HashMap<Key, unit, ceiling>) -> result_size: u64 reads(slots), reads(keys), reads(positions), reads(order), reads(env), writes(result) {
-  doc "Adds to result a copy of each member of the operation's result: for operation_inter the members of the smallest set every other set holds, empty when a set is missing; for operation_union every member of every live set; for operation_diff the members of the first set no other set holds, empty when the first set is missing or named again. Returns the result's size.";
+fn gather(slots: &KeyedEntries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>>, found: Operands, operation: u64, env: &KeyEnv, now: u64, result: &HashMap<Key, unit, ceiling>) -> result_size: u64 reads(slots), reads(keys), reads(positions), reads(env), writes(result) {
+  doc "Adds to result a copy of each member of the operation's result: for operation_inter the members of the smallest set every other set holds, empty when a set is missing; for operation_union every member of every live set visited in first operand occurrence order; for operation_diff the members of the first set no other set holds, empty when the first set is missing or named again. Returns the result's size.";
   let no_limit = 0_u64;
   let keeping = True();
   if operation == operation_inter {
@@ -1443,8 +1389,7 @@ fn gather(slots: &KeyedEntries<Entry>, keys: &KeySet, positions: &Box<Slots<u64>
     let every = False();
     let filtered = False();
     let total = 0_u64;
-    for @sets (step in 0_u64..order^.inner.len) {
-      let at = order^.inner[step];
+    for @sets (at in 0_u64..keys^.len) {
       let payload = key_position(positions: positions, index: at);
       let named = iand(payload, operand_named);
       if named != 0_u64 {
@@ -1500,17 +1445,13 @@ fn run_combine(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   }
   let positions = key_positions(count: args^.inner.len);
   let keys = operand_keys(input: input, args: args, first: first, end: count, storing: storing, positions: &positions);
-  let order = box_slots_new::<u64>(capacity: 0_u64);
-  if operation == operation_union {
-    set order = union_order(input: input, args: args, keys: &keys, positions: &positions, first: first, env: env);
-  }
   let now = time^.check;
   let result = hash_map_new::<Key, unit, ceiling>(capacity: 0_u64);
   let lapsed = False();
   set client^.state = state_absent;
   set client^.number = 0_u64;
   atomic s = &store^.state, slots = &s^.map[keys] {
-    let found = survey(slots: slots, keys: &keys, positions: &positions, input: input, args: args, first: first, now: now);
+    let found = survey(slots: slots, keys: &keys, positions: &positions, now: now);
     if found.wrong {
       set client^.state = state_wrong;
     } else {
@@ -1537,7 +1478,7 @@ fn run_combine(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
       } else {
         set lapsed = found.lapsed;
       }
-      let size = gather(slots: slots, keys: &keys, positions: &positions, order: &order, found: found, operation: operation, env: env, now: now, result: &result);
+      let size = gather(slots: slots, keys: &keys, positions: &positions, found: found, operation: operation, env: env, now: now, result: &result);
       set client^.number = size;
       if storing {
         let target = found.destination;
@@ -1640,7 +1581,7 @@ fn run_sintercard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
   let size = 0_u64;
   set client^.state = state_done;
   atomic s = &store^.state, slots = &s^.map[keys] {
-    let found = survey(slots: slots, keys: &keys, positions: &positions, input: input, args: args, first: 2_u64, now: now);
+    let found = survey(slots: slots, keys: &keys, positions: &positions, now: now);
     set lapsed = found.lapsed;
     if found.wrong {
       set client^.state = state_wrong;
