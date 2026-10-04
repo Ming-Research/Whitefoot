@@ -33,8 +33,65 @@ alias reply_nil = pkg::protocol::reply_nil;
 alias reply_wrong_type = pkg::protocol::reply_wrong_type;
 alias reply_text = pkg::protocol::reply_text;
 alias log_text = pkg::store::log_text;
+alias hash_map_each = std::collections::hash_map::hash_map_each;
+alias log_removal = pkg::store::log_removal;
 
 const word_srem: Array<u8, 4> =[83_u8, 82_u8, 69_u8, 77_u8];
+
+const word_spop_whole: Array<u8, 3> =[68_u8, 69_u8, 76_u8];
+
+const word_sintercard_limit: Array<u8, 5> =[76_u8, 73_u8, 77_u8, 73_u8, 84_u8];
+
+const word_sismember: Array<u8, 9> =[83_u8, 73_u8, 83_u8, 77_u8, 69_u8, 77_u8, 66_u8, 69_u8, 82_u8];
+
+const word_smismember: Array<u8, 10> =[83_u8, 77_u8, 73_u8, 83_u8, 77_u8, 69_u8, 77_u8, 66_u8, 69_u8, 82_u8];
+
+const word_srandmember: Array<u8, 11> =[83_u8, 82_u8, 65_u8, 78_u8, 68_u8, 77_u8, 69_u8, 77_u8, 66_u8, 69_u8, 82_u8];
+
+const word_sintercard: Array<u8, 10> =[83_u8, 73_u8, 78_u8, 84_u8, 69_u8, 82_u8, 67_u8, 65_u8, 82_u8, 68_u8];
+
+const word_sinterstore: Array<u8, 11> =[83_u8, 73_u8, 78_u8, 84_u8, 69_u8, 82_u8, 83_u8, 84_u8, 79_u8, 82_u8, 69_u8];
+
+const word_sunionstore: Array<u8, 11> =[83_u8, 85_u8, 78_u8, 73_u8, 79_u8, 78_u8, 83_u8, 84_u8, 79_u8, 82_u8, 69_u8];
+
+const word_sdiffstore: Array<u8, 10> =[83_u8, 68_u8, 73_u8, 70_u8, 70_u8, 83_u8, 84_u8, 79_u8, 82_u8, 69_u8];
+
+const text_srandmember_count: Array<u8, 90> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8, 44_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 109_u8, 117_u8, 115_u8, 116_u8, 32_u8, 98_u8, 101_u8, 116_u8, 119_u8, 101_u8, 101_u8, 110_u8, 32_u8, 45_u8, 57_u8, 50_u8, 50_u8, 51_u8, 51_u8, 55_u8, 50_u8, 48_u8, 51_u8, 54_u8, 56_u8, 53_u8, 52_u8, 55_u8, 55_u8, 53_u8, 56_u8, 48_u8, 55_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 57_u8, 50_u8, 50_u8, 51_u8, 51_u8, 55_u8, 50_u8, 48_u8, 51_u8, 54_u8, 56_u8, 53_u8, 52_u8, 55_u8, 55_u8, 53_u8, 56_u8, 48_u8, 55_u8];
+
+const text_sintercard_numkeys: Array<u8, 36> =[69_u8, 82_u8, 82_u8, 32_u8, 110_u8, 117_u8, 109_u8, 107_u8, 101_u8, 121_u8, 115_u8, 32_u8, 115_u8, 104_u8, 111_u8, 117_u8, 108_u8, 100_u8, 32_u8, 98_u8, 101_u8, 32_u8, 103_u8, 114_u8, 101_u8, 97_u8, 116_u8, 101_u8, 114_u8, 32_u8, 116_u8, 104_u8, 97_u8, 110_u8, 32_u8, 48_u8];
+
+const text_sintercard_keys: Array<u8, 55> =[69_u8, 82_u8, 82_u8, 32_u8, 78_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 107_u8, 101_u8, 121_u8, 115_u8, 32_u8, 99_u8, 97_u8, 110_u8, 39_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 103_u8, 114_u8, 101_u8, 97_u8, 116_u8, 101_u8, 114_u8, 32_u8, 116_u8, 104_u8, 97_u8, 110_u8, 32_u8, 110_u8, 117_u8, 109_u8, 98_u8, 101_u8, 114_u8, 32_u8, 111_u8, 102_u8, 32_u8, 97_u8, 114_u8, 103_u8, 115_u8];
+
+const text_sintercard_limit: Array<u8, 27> =[69_u8, 82_u8, 82_u8, 32_u8, 76_u8, 73_u8, 77_u8, 73_u8, 84_u8, 32_u8, 99_u8, 97_u8, 110_u8, 39_u8, 116_u8, 32_u8, 98_u8, 101_u8, 32_u8, 110_u8, 101_u8, 103_u8, 97_u8, 116_u8, 105_u8, 118_u8, 101_u8];
+
+const operand_first: u64 = 4611686018427387904_u64;
+
+const operand_store: u64 = 9223372036854775808_u64;
+
+const operand_position: u64 = 4611686018427387903_u64;
+
+const operand_named: u64 = 9223372036854775807_u64;
+
+const operation_inter: u64 = 0_u64;
+
+const operation_union: u64 = 1_u64;
+
+const operation_diff: u64 = 2_u64;
+
+struct Membership {
+  found: Bool;
+}
+
+struct Operands {
+  wrong: Bool;
+  missing: Bool;
+  lapsed: Bool;
+  smallest: u64;
+  least: u64;
+  first: u64;
+  repeated: Bool;
+  destination: u64;
+}
 
 fn add_all(members: &HashMap<Key, unit, ceiling>, client: &Client) -> added: u64 writes(members), writes(client) {
   doc "Adds every prepared key to the set and returns how many it did not already hold.";
@@ -90,7 +147,7 @@ fn add_members(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(val
 }
 
 fn run_sadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "SADD key member [member ...]: adds the members to the set, creating it for an absent key, and answers how many were new.";
+  doc "SADD key member [member ...]: adds the members to the set, creating it for an absent key, and answers how many were new. A key whose expiry has been reached is removed first, the removal recorded before the addition.";
   prepare_keys(input: input, args: args, client: client, first: 2_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
@@ -109,6 +166,9 @@ fn run_sadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if client^.state == state_expired {
       set slot^ = None<Entry>();
       set create = True();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
     }
     if create {
       let wanted = client^.items.inner.len;
@@ -193,7 +253,7 @@ fn remove_members(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(
 }
 
 fn run_srem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "SREM key member [member ...]: removes the members from the set, removing the key when the set is left empty, and answers how many it held.";
+  doc "SREM key member [member ...]: removes the members from the set, removing the key when the set is left empty, and answers how many it held. A key whose expiry has been reached is removed, its removal recorded.";
   prepare_keys(input: input, args: args, client: client, first: 2_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
@@ -213,6 +273,11 @@ fn run_srem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let removing = bor(emptied, lapsed);
     if removing {
       set slot^ = None<Entry>();
+    }
+    if lapsed {
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
     }
     if client^.number > 0_u64 {
       if store^.logging {
@@ -326,7 +391,11 @@ fn pop_members(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(val
 }
 
 fn run_spop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "SPOP key [count]: removes and answers a member chosen at random, or an array of up to count of them, removing the key when the set is left empty. The file records the members removed as one SREM, as Redis records them, so that a replay removes the same ones.";
+  doc "SPOP key [count]: removes and answers a member chosen at random, or an array of up to count of them, removing the key when the set is left empty; more arguments are a syntax error, as in Redis. The file records the pop as Redis records it, so that a replay removes the same members: the members removed as SREM, one command where Redis writes one SREM per member inside a transaction, and a pop with a count that empties the set as DEL of its key. A key whose expiry has been reached is removed, its removal recorded.";
+  if args^.inner.len > 3_u64 {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
   let counted = args^.inner.len == 3_u64;
   let wanted = 1_u64;
   if counted {
@@ -366,8 +435,20 @@ fn run_spop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if removing {
       set slot^ = None<Entry>();
     }
+    if lapsed {
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
     let popped = client^.items.inner.len;
-    if popped > 0_u64 {
+    let whole = band(emptied, counted);
+    if whole {
+      if store^.logging {
+        log_count(log: &s^.meta.log, count: 2_u64, room: key_span.length);
+        log_word(log: &s^.meta.log, word: &word_spop_whole[0_u64..3_u64]);
+        log_input(log: &s^.meta.log, input: input, span: key_span);
+      }
+    } else if popped > 0_u64 {
       if store^.logging {
         let count = popped +wrap 2_u64;
         log_count(log: &s^.meta.log, count: count, room: key_span.length);
@@ -458,5 +539,1072 @@ fn run_scard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   }
   let size = cvt.wrap::<u64, i64>(client^.number);
   reply_integer(client: client, value: size);
+  return unit;
+}
+
+fn member_out(env: &Client, key: &Key, value: &unit) -> result: unit reads(key.bytes), writes(env) {
+  doc "Writes one set member as a bulk string.";
+  reply_text(client: env, text: &key^.bytes);
+  return unit;
+}
+
+fn members_out(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes every member of a live set as an array reply, in the order of the set's buckets, recording done; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Members(members: set_of) => {
+      let size = hash_map_len::<Key, unit, ceiling>(map: set_of);
+      reply_array(client: env, count: size);
+      hash_map_each::<Key, unit, Client, fn member_out, ceiling>(map: set_of, env: env);
+      set env^.state = state_done;
+      return 3_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_smembers(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "SMEMBERS key: answers the set's members, in no promised order, as in Redis, written into the reply inside the statement that finds the set; an absent key answers an empty array.";
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = members_out(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  reply_array(client: client, count: 0_u64);
+  return unit;
+}
+
+fn member_seen(env: &Membership, key: &Key, value: &unit) -> result: u64 writes(env) {
+  doc "Records that the set looked in holds the member.";
+  set env^.found = True();
+  return 1_u64;
+}
+
+fn set_holds(members: &HashMap<Key, unit, ceiling>, member: &Key, keys: &KeyEnv) -> held: Bool reads(members), reads(member), reads(keys) {
+  doc "Whether a set holds a member.";
+  let absent = False();
+  let probe = Membership(found: absent);
+  let looked = hash_map_lookup::<KeyHash, unit, Membership, u64, fn member_seen, ceiling>(map: members, key: member, key_env: keys, visit_env: &probe);
+  return probe.found;
+}
+
+fn members_known(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Answers for each prepared key, in the order the command named them, 1 when a live set holds it and 0 otherwise: an array of them when high is 1, else the one integer, recording done; records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Members(members: set_of) => {
+      let count = env^.items.inner.len;
+      if env^.high == 1_i64 {
+        reply_array(client: env, count: count);
+      }
+      let keys = env^.keys;
+      loop @members {
+        if env^.items.inner.len > 0_u64 {
+          let member = take_back(window: &env^.items.inner);
+          let held = set_holds(members: set_of, member: &member, keys: &keys);
+          if held {
+            reply_integer(client: env, value: 1_i64);
+          } else {
+            reply_integer(client: env, value: 0_i64);
+          }
+        } else {
+          break @members;
+        }
+      }
+      set env^.state = state_done;
+      return 3_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_sismember(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, many: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "SISMEMBER key member, and SMISMEMBER key member [member ...] (many): answers 1 when the set holds the member and 0 otherwise, for SMISMEMBER an array of them in the order named, zeros for an absent key. The members are hashed before the statement.";
+  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  let count = client^.items.inner.len;
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.high = 0_i64;
+  if many {
+    set client^.high = 1_i64;
+  }
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = members_known(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if many {
+    reply_array(client: client, count: count);
+    for @absent (step in 0_u64..count) {
+      reply_integer(client: client, value: 0_i64);
+    }
+    return unit;
+  }
+  reply_integer(client: client, value: 0_i64);
+  return unit;
+}
+
+fn random_members(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes members of a live set chosen at random, as SRANDMEMBER chooses them, recording done: one bulk string when high is 0; else for the count low an empty array for 0; for a negative count, or 1, an array of that many members drawn each from the whole set, so that one may repeat; for a count of at least the set's size the whole set; and else that many distinct members, chosen by one pass over the buckets that takes each member with the chance still needed, for a count above a third of the set, and otherwise by draws kept in a set of their own until it holds that many. Records wrong for another kind and expired for an expired entry.";
+  let reached = expired(expires: value^.expires, now: env^.now);
+  if reached {
+    set env^.state = state_expired;
+    return 0_u64;
+  }
+  match value^.value {
+    Members(members: set_of) => {
+      set env^.state = state_done;
+      let size = hash_map_len::<Key, unit, ceiling>(map: set_of);
+      if env^.high == 0_i64 {
+        set env^.random = next_random(state: env^.random);
+        let picked = pick_member(members: set_of, start: env^.random);
+        match move picked {
+          Some(value: member) => {
+            reply_text(client: env, text: &member.bytes);
+          }
+          None() => {
+            set env^.state = state_absent;
+          }
+        }
+        return 3_u64;
+      }
+      let wanted = env^.low;
+      if wanted == 0_i64 {
+        reply_array(client: env, count: 0_u64);
+        return 3_u64;
+      }
+      let repeats = wanted < 0_i64;
+      let magnitude = cvt.wrap::<i64, u64>(wanted);
+      if repeats {
+        set magnitude = 0_u64 -wrap magnitude;
+      }
+      let single = magnitude == 1_u64;
+      let drawn = bor(repeats, single);
+      if drawn {
+        reply_array(client: env, count: magnitude);
+        for @draws (step in 0_u64..magnitude) {
+          set env^.random = next_random(state: env^.random);
+          let picked = pick_member(members: set_of, start: env^.random);
+          match move picked {
+            Some(value: member) => {
+              reply_text(client: env, text: &member.bytes);
+            }
+            None() => {
+            }
+          }
+        }
+        return 3_u64;
+      }
+      if magnitude >= size {
+        reply_array(client: env, count: size);
+        hash_map_each::<Key, unit, Client, fn member_out, ceiling>(map: set_of, env: env);
+        return 3_u64;
+      }
+      let tripled = magnitude *wrap 3_u64;
+      if tripled > size {
+        reply_array(client: env, count: magnitude);
+        let needed = magnitude;
+        let remaining = size;
+        let buckets = set_of^.cells.inner.len;
+        for @buckets (index in 0_u64..buckets) {
+          if needed == 0_u64 {
+            break @buckets;
+          }
+          if remaining == 0_u64 {
+            break @buckets;
+          }
+          if index < set_of^.cells.inner.len {
+            let slot = &set_of^.cells.inner[index];
+            match slot^ {
+              HashMapFilled(key: member, value: nothing) => {
+                set env^.random = next_random(state: env^.random);
+                let draw = env^.random % remaining;
+                if draw < needed {
+                  reply_text(client: env, text: &member^.bytes);
+                  set needed = needed -wrap 1_u64;
+                }
+                set remaining = remaining -wrap 1_u64;
+              }
+              HashMapVacant() => {
+              }
+              HashMapDeleted() => {
+              }
+            }
+          }
+        }
+        return 3_u64;
+      }
+      if magnitude <= ceiling {
+        let chosen = hash_map_new::<Key, unit, ceiling>(capacity: magnitude);
+        let keys = env^.keys;
+        loop @draws {
+          let held = hash_map_len::<Key, unit, ceiling>(map: &chosen);
+          if held >= magnitude {
+            break @draws;
+          }
+          set env^.random = next_random(state: env^.random);
+          let picked = pick_member(members: set_of, start: env^.random);
+          match move picked {
+            Some(value: member) => {
+              let put = hash_map_put::<KeyHash, unit, ceiling>(map: &chosen, key: move member, value: unit, env: &keys);
+            }
+            None() => {
+              break @draws;
+            }
+          }
+        }
+        let found = hash_map_len::<Key, unit, ceiling>(map: &chosen);
+        reply_array(client: env, count: found);
+        hash_map_each::<Key, unit, Client, fn member_out, ceiling>(map: &chosen, env: env);
+      }
+      return 3_u64;
+    }
+    Text(bytes: stored) => {
+      set env^.state = state_wrong;
+      return 1_u64;
+    }
+    Items(items: list) => {
+      set env^.state = state_wrong;
+      return 2_u64;
+    }
+    Fields(fields: hash_of) => {
+      set env^.state = state_wrong;
+      return 4_u64;
+    }
+    Ranked(ranked: sorted) => {
+      set env^.state = state_wrong;
+      return 5_u64;
+    }
+  }
+}
+
+fn run_srandmember(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "SRANDMEMBER key [count]: answers a member chosen at random, or with a count the members random_members chooses, written into the reply inside the statement that finds the set; an absent key answers the null bulk string, or an empty array with a count. As in Redis, more arguments are a syntax error, and a count that is no integer, or is -2^63, whose magnitude no 64-bit integer holds, is refused before the key is looked up.";
+  let count = args^.inner.len;
+  if count > 3_u64 {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return unit;
+  }
+  let counted = count == 3_u64;
+  let wanted = 1_i64;
+  if counted {
+    let amount = arg(args: args, index: 2_u64);
+    let number = read_integer(input: input, start: amount.start, length: amount.length);
+    if number.state != 1_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return unit;
+    }
+    if number.value == -9223372036854775808_i64 {
+      reply_error(client: client, word: &text_srandmember_count[0_u64..90_u64]);
+      return unit;
+    }
+    set wanted = number.value;
+  }
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  set client^.low = wanted;
+  set client^.high = 0_i64;
+  if counted {
+    set client^.high = 1_i64;
+  }
+  atomic s = &store^.state, slot = &s^.map[key] {
+    match slot^ {
+      Some(value: held) => {
+        let found = random_members(env: client, value: held);
+      }
+      None() => {
+      }
+    }
+  }
+  if client^.state == state_expired {
+    remove_expired(store: store, key: key, now: client^.now);
+  }
+  if client^.state == state_done {
+    return unit;
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if counted {
+    reply_array(client: client, count: 0_u64);
+    return unit;
+  }
+  reply_nil(client: client);
+  return unit;
+}
+
+fn set_kind(slot: &Option<Entry>, now: u64) -> kind: u64 reads(slot) {
+  doc "What an entry holds for a set command naming several keys: entry_none for no value, entry_lapsed for one whose expiry has been reached at now, entry_wanted for a live set and entry_other for a live value of another kind.";
+  match slot^ {
+    Some(value: held) => {
+      let reached = expired(expires: held^.expires, now: now);
+      if reached {
+        return entry_lapsed;
+      }
+      match held^.value {
+        Members(members: set_of) => {
+          return entry_wanted;
+        }
+        Text(bytes: stored) => {
+          return entry_other;
+        }
+        Items(items: list) => {
+          return entry_other;
+        }
+        Fields(fields: hash_of) => {
+          return entry_other;
+        }
+        Ranked(ranked: sorted) => {
+          return entry_other;
+        }
+      }
+    }
+    None() => {
+      return entry_none;
+    }
+  }
+}
+
+fn entry_present(slot: &Option<Entry>) -> present: Bool reads(slot) {
+  doc "Whether an entry holds a value, its expiry reached or not.";
+  match slot^ {
+    Some(value: held) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn entry_size(slot: &Option<Entry>) -> size: u64 reads(slot) {
+  doc "How many members the set an entry holds has, 0 for an entry holding no set.";
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Members(members: set_of) => {
+          let size = hash_map_len::<Key, unit, ceiling>(map: set_of);
+          return size;
+        }
+        Text(bytes: stored) => {
+          return 0_u64;
+        }
+        Items(items: list) => {
+          return 0_u64;
+        }
+        Fields(fields: hash_of) => {
+          return 0_u64;
+        }
+        Ranked(ranked: sorted) => {
+          return 0_u64;
+        }
+      }
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn entry_holds(slot: &Option<Entry>, member: &Key, keys: &KeyEnv, now: u64) -> held: Bool reads(slot), reads(member), reads(keys) {
+  doc "Whether the live set an entry holds has the member; false for an entry holding no live set.";
+  match slot^ {
+    Some(value: held) => {
+      let reached = expired(expires: held^.expires, now: now);
+      if reached {
+        return False();
+      }
+      match held^.value {
+        Members(members: set_of) => {
+          let found = set_holds(members: set_of, member: member, keys: keys);
+          return found;
+        }
+        Text(bytes: stored) => {
+          return False();
+        }
+        Items(items: list) => {
+          return False();
+        }
+        Fields(fields: hash_of) => {
+          return False();
+        }
+        Ranked(ranked: sorted) => {
+          return False();
+        }
+      }
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn drop_member(slot: &Option<Entry>, member: &Key, client: &Client) -> removed: Bool reads(member), writes(slot), writes(client) {
+  doc "Removes a member from the set an entry holds and returns whether the set held it, leaving how many members the set keeps in the client's number; false for an entry holding no set.";
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Members(members: set_of) => {
+          let keys = client^.keys;
+          let pair = hash_map_remove::<KeyHash, unit, ceiling>(map: set_of, key: member, env: &keys);
+          set client^.number = hash_map_len::<Key, unit, ceiling>(map: set_of);
+          match move pair {
+            Some(value: gone) => {
+              return True();
+            }
+            None() => {
+              return False();
+            }
+          }
+        }
+        Text(bytes: stored) => {
+          return False();
+        }
+        Items(items: list) => {
+          return False();
+        }
+        Fields(fields: hash_of) => {
+          return False();
+        }
+        Ranked(ranked: sorted) => {
+          return False();
+        }
+      }
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn place_member(slot: &Option<Entry>, member: Key, keys: &KeyEnv) -> result: unit reads(keys), writes(slot) {
+  doc "Adds a member to the set an entry holds, creating the set, without an expiry, for an entry holding none; an entry holding another kind, which the caller has refused, drops it.";
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Members(members: set_of) => {
+          let put = hash_map_put::<KeyHash, unit, ceiling>(map: set_of, key: move member, value: unit, env: keys);
+          return unit;
+        }
+        Text(bytes: stored) => {
+          let dropped = move member;
+          return unit;
+        }
+        Items(items: list) => {
+          let dropped = move member;
+          return unit;
+        }
+        Fields(fields: hash_of) => {
+          let dropped = move member;
+          return unit;
+        }
+        Ranked(ranked: sorted) => {
+          let dropped = move member;
+          return unit;
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let members = hash_map_new::<Key, unit, ceiling>(capacity: 4_u64);
+  let put = hash_map_put::<KeyHash, unit, ceiling>(map: &members, key: move member, value: unit, env: keys);
+  let made = Value::Members(members: move members);
+  let fresh = Entry(value: move made, expires: 0_u64);
+  set slot^ = Some<Entry>(value: move fresh);
+  return unit;
+}
+
+fn run_smove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "SMOVE source destination member: moves the member from the source set to the destination set, creating the destination for an absent key and removing the source when it is left empty, and answers 1, or 0 when the source does not hold it. One statement holds both keys' entries through a key set whose payloads mark the source with 1 and the destination with 2, so that the move takes effect at one point. As in Redis, both keys are looked up first, each found expired removed with its removal recorded; an absent source answers 0 whatever the destination holds; a key holding another kind is refused; and a source equal to the destination answers whether it holds the member, changing nothing.";
+  let source_place = key_bounds(input: input, args: args, index: 1_u64);
+  let source_key = &input^[source_place.start..source_place.end];
+  let destination_place = key_bounds(input: input, args: args, index: 2_u64);
+  let destination_key = &input^[destination_place.start..destination_place.end];
+  let keys = key_set_new(capacity: 2_u64);
+  key_set_add(keys: &keys, key: source_key, amount: 1_u64);
+  key_set_add(keys: &keys, key: destination_key, amount: 2_u64);
+  clear_items(client: client);
+  let member = key_at(input: input, args: args, index: 3_u64);
+  push_item(client: client, item: move member);
+  let now = time^.check;
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let source = keys.len;
+    let destination = keys.len;
+    for @roles (at in 0_u64..keys.len) {
+      let role = key_set_payload(keys: &keys, index: at);
+      let from = iand(role, 1_u64);
+      if from != 0_u64 {
+        set source = at;
+      }
+      let to = iand(role, 2_u64);
+      if to != 0_u64 {
+        set destination = at;
+      }
+    }
+    let found = entry_none;
+    if source < keys.len {
+      set found = set_kind(slot: &slots^[source], now: now);
+    }
+    let target = entry_none;
+    if destination < keys.len {
+      set target = set_kind(slot: &slots^[destination], now: now);
+    }
+    if found == entry_lapsed {
+      if source < keys.len {
+        set slots^[source] = None<Entry>();
+      }
+      set found = entry_none;
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: source_key);
+      }
+      if source == destination {
+        set target = entry_none;
+      }
+    }
+    if target == entry_lapsed {
+      if destination < keys.len {
+        set slots^[destination] = None<Entry>();
+      }
+      set target = entry_none;
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: destination_key);
+      }
+    }
+    let wrong_source = found == entry_other;
+    let wrong_target = target == entry_other;
+    let wrong = bor(wrong_source, wrong_target);
+    if found == entry_none {
+      set client^.state = state_done;
+    } else if wrong {
+      set client^.state = state_wrong;
+    } else if source == destination {
+      set client^.state = state_done;
+      if source < keys.len {
+        if client^.items.inner.len > 0_u64 {
+          let keys_env = client^.keys;
+          let held = entry_holds(slot: &slots^[source], member: &client^.items.inner[0_u64], keys: &keys_env, now: now);
+          if held {
+            set client^.number = 1_u64;
+          }
+        }
+      }
+    } else {
+      set client^.state = state_done;
+      let present = source < keys.len;
+      let prepared = client^.items.inner.len > 0_u64;
+      let possible = band(present, prepared);
+      if possible {
+        let moving = take_back(window: &client^.items.inner);
+        let removed = drop_member(slot: &slots^[source], member: &moving, client: client);
+        if removed {
+          if client^.number == 0_u64 {
+            set slots^[source] = None<Entry>();
+          }
+          let keys_env = client^.keys;
+          if destination < keys.len {
+            place_member(slot: &slots^[destination], member: move moving, keys: &keys_env);
+          } else {
+            let dropped = move moving;
+          }
+          set client^.number = 1_u64;
+          if store^.logging {
+            log_command(log: &s^.meta.log, input: input, args: args);
+          }
+        } else {
+          let dropped = move moving;
+          set client^.number = 0_u64;
+        }
+      }
+    }
+  }
+  clear_items(client: client);
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let answer = cvt.wrap::<u64, i64>(client^.number);
+  reply_integer(client: client, value: answer);
+  return unit;
+}
+
+fn operand_keys(input: &[u8], args: &Box<Slots<Span>>, first: u64, end: u64, storing: Bool) -> keys: KeySet reads(input), reads(args) {
+  doc "The keys a set operation names, each carrying where it was named: the arguments from first up to end are its sets, each after the first carrying its position, the last one for a key named more than once, and the first carrying operand_first besides; with storing, the first argument names the key the result is stored at, carrying operand_store besides.";
+  let count = end -sat first;
+  let room = count +wrap 1_u64;
+  let keys = key_set_new(capacity: room);
+  let next = first +wrap 1_u64;
+  if next < end {
+    for @later (index in next..end) {
+      let place = key_bounds(input: input, args: args, index: index);
+      let key = &input^[place.start..place.end];
+      key_set_put(keys: &keys, key: key, payload: index);
+    }
+  }
+  let place = key_bounds(input: input, args: args, index: first);
+  let key = &input^[place.start..place.end];
+  key_set_add(keys: &keys, key: key, amount: operand_first);
+  if storing {
+    let target = key_bounds(input: input, args: args, index: 1_u64);
+    let stored = &input^[target.start..target.end];
+    key_set_add(keys: &keys, key: stored, amount: operand_store);
+  }
+  return move keys;
+}
+
+fn operand_argument(payload: u64, first: u64) -> position: u64 pure {
+  doc "Which argument names the key an operand_keys payload belongs to: its last position as a later set, else the first set's, else the destination's.";
+  let later = iand(payload, operand_position);
+  if later != 0_u64 {
+    return later;
+  }
+  let leading = iand(payload, operand_first);
+  if leading != 0_u64 {
+    return first;
+  }
+  return 1_u64;
+}
+
+fn survey(slots: &KeyedEntries<Entry>, keys: &KeySet, now: u64) -> found: Operands reads(slots), reads(keys) {
+  doc "What a set operation's keys hold: whether a set holds another kind (wrong), whether one is absent or expired (missing), whether one is expired (lapsed), the position of the smallest live set and its size, the first set's position and whether it is named again (repeated), and the destination's position, each position keys' length when there is none.";
+  let no = False();
+  let found = Operands(wrong: no, missing: no, lapsed: no, smallest: keys^.len, least: 18446744073709551615_u64, first: keys^.len, repeated: no, destination: keys^.len);
+  for @entries (at in 0_u64..keys^.len) {
+    let payload = key_set_payload(keys: keys, index: at);
+    let storing = iand(payload, operand_store);
+    if storing != 0_u64 {
+      set found.destination = at;
+    }
+    let named = iand(payload, operand_named);
+    let leading = iand(payload, operand_first);
+    let later = iand(payload, operand_position);
+    if leading != 0_u64 {
+      set found.first = at;
+      if later != 0_u64 {
+        set found.repeated = True();
+      }
+    }
+    if named != 0_u64 {
+      if at < slots^.len {
+        let kind = set_kind(slot: &slots^[at], now: now);
+        if kind == entry_other {
+          set found.wrong = True();
+        } else if kind == entry_lapsed {
+          set found.lapsed = True();
+          set found.missing = True();
+        } else if kind == entry_none {
+          set found.missing = True();
+        } else {
+          let size = entry_size(slot: &slots^[at]);
+          if size < found.least {
+            set found.least = size;
+            set found.smallest = at;
+          }
+        }
+      }
+    }
+  }
+  return found;
+}
+
+fn held_by_others(slots: &KeyedEntries<Entry>, keys: &KeySet, skip: u64, member: &Key, env: &KeyEnv, now: u64, every: Bool) -> held: Bool reads(slots), reads(keys), reads(member), reads(env) {
+  doc "Whether every set the operation names but the one at skip holds the member (every), or else whether any of them does; a key holding no live set holds nothing.";
+  for @others (at in 0_u64..keys^.len) {
+    if at != skip {
+      let payload = key_set_payload(keys: keys, index: at);
+      let named = iand(payload, operand_named);
+      if named != 0_u64 {
+        if at < slots^.len {
+          let held = entry_holds(slot: &slots^[at], member: member, keys: env, now: now);
+          if every {
+            if held {
+            } else {
+              return False();
+            }
+          } else if held {
+            return True();
+          }
+        }
+      }
+    }
+  }
+  return every;
+}
+
+fn combine(slots: &KeyedEntries<Entry>, keys: &KeySet, from: u64, env: &KeyEnv, now: u64, every: Bool, wanted: Bool, limit: u64, keep: Bool, result: &HashMap<Key, unit, ceiling>) -> count: u64 reads(slots), reads(keys), reads(env), writes(result) {
+  doc "Visits the members of the set at from that the other sets the operation names all hold (every) or none holds, when wanted is true, or else the members no set already in result holds, and returns how many it found, stopping at limit when it is not 0; with keep, a copy of each joins result.";
+  let count = 0_u64;
+  if from < slots^.len {
+    let source = &slots^[from];
+    match source^ {
+      Some(value: held) => {
+        match held^.value {
+          Members(members: set_of) => {
+            let buckets = set_of^.cells.inner.len;
+            for @buckets (index in 0_u64..buckets) {
+              if index < set_of^.cells.inner.len {
+                let slot = &set_of^.cells.inner[index];
+                match slot^ {
+                  HashMapFilled(key: member, value: nothing) => {
+                    let taken = False();
+                    if wanted {
+                      let others = held_by_others(slots: slots, keys: keys, skip: from, member: member, env: env, now: now, every: every);
+                      if every {
+                        set taken = others;
+                      } else {
+                        set taken = bnot(others);
+                      }
+                    } else {
+                      let known = set_holds(members: result, member: member, keys: env);
+                      set taken = bnot(known);
+                    }
+                    if taken {
+                      set count = count +wrap 1_u64;
+                      if keep {
+                        let copied = copy_key(key: member);
+                        let put = hash_map_put::<KeyHash, unit, ceiling>(map: result, key: move copied, value: unit, env: env);
+                      }
+                      if limit != 0_u64 {
+                        if count >= limit {
+                          return count;
+                        }
+                      }
+                    }
+                  }
+                  HashMapVacant() => {
+                  }
+                  HashMapDeleted() => {
+                  }
+                }
+              }
+            }
+          }
+          Text(bytes: stored) => {
+          }
+          Items(items: list) => {
+          }
+          Fields(fields: hash_of) => {
+          }
+          Ranked(ranked: sorted) => {
+          }
+        }
+      }
+      None() => {
+      }
+    }
+  }
+  return count;
+}
+
+fn gather(slots: &KeyedEntries<Entry>, keys: &KeySet, found: Operands, operation: u64, env: &KeyEnv, now: u64, result: &HashMap<Key, unit, ceiling>) -> result_size: u64 reads(slots), reads(keys), reads(env), writes(result) {
+  doc "Adds to result a copy of each member of the operation's result: for operation_inter the members of the smallest set every other set holds, empty when a set is missing; for operation_union every member of every live set; for operation_diff the members of the first set no other set holds, empty when the first set is missing or named again. Returns the result's size.";
+  let no_limit = 0_u64;
+  let keeping = True();
+  if operation == operation_inter {
+    if found.missing {
+      return 0_u64;
+    }
+    let every = True();
+    let filtered = True();
+    let count = combine(slots: slots, keys: keys, from: found.smallest, env: env, now: now, every: every, wanted: filtered, limit: no_limit, keep: keeping, result: result);
+    return count;
+  }
+  if operation == operation_union {
+    let every = False();
+    let filtered = False();
+    let total = 0_u64;
+    for @sets (at in 0_u64..keys^.len) {
+      let payload = key_set_payload(keys: keys, index: at);
+      let named = iand(payload, operand_named);
+      if named != 0_u64 {
+        let added = combine(slots: slots, keys: keys, from: at, env: env, now: now, every: every, wanted: filtered, limit: no_limit, keep: keeping, result: result);
+        set total = total +wrap added;
+      }
+    }
+    return total;
+  }
+  if found.repeated {
+    return 0_u64;
+  }
+  let none_other = False();
+  let filtered = True();
+  let count = combine(slots: slots, keys: keys, from: found.first, env: env, now: now, every: none_other, wanted: filtered, limit: no_limit, keep: keeping, result: result);
+  return count;
+}
+
+fn store_members(slot: &Option<Entry>, members: &HashMap<Key, unit, ceiling>) -> result: unit writes(slot), writes(members) {
+  doc "Gives the entry a new set without an expiry, exchanging it with the members, which are left holding the new set's emptiness.";
+  let empty = hash_map_new::<Key, unit, ceiling>(capacity: 0_u64);
+  let made = Value::Members(members: move empty);
+  let fresh = Entry(value: move made, expires: 0_u64);
+  set slot^ = Some<Entry>(value: move fresh);
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Members(members: set_of) => {
+          swap(first: set_of, second: members);
+        }
+        Text(bytes: stored) => {
+        }
+        Items(items: list) => {
+        }
+        Fields(fields: hash_of) => {
+        }
+        Ranked(ranked: sorted) => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn run_combine(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, operation: u64, storing: Bool) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "SINTER, SUNION and SDIFF key [key ...], operation_inter, operation_union and operation_diff, answer the intersection of the sets, their union, or the first set's members no other set holds, in no promised order, as in Redis, an absent key counting as an empty set; with storing, SINTERSTORE, SUNIONSTORE and SDIFFSTORE destination key [key ...] store that result at the destination, without an expiry, whatever it held, removing it for an empty result, and answer the result's size. One statement holds every key named through a key set, the destination among them, so that the operation takes effect at one point; a key holding another kind is refused before anything changes. A storing operation removes each set found expired, recording its removal before its own record, and is recorded only when it changes the destination; the others leave a set found expired to remove_expired after the statement.";
+  let count = args^.inner.len;
+  let first = 1_u64;
+  if storing {
+    set first = 2_u64;
+  }
+  let keys = operand_keys(input: input, args: args, first: first, end: count, storing: storing);
+  let now = time^.check;
+  let result = hash_map_new::<Key, unit, ceiling>(capacity: 0_u64);
+  let lapsed = False();
+  set client^.state = state_absent;
+  set client^.number = 0_u64;
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let found = survey(slots: slots, keys: &keys, now: now);
+    if found.wrong {
+      set client^.state = state_wrong;
+    } else {
+      set client^.state = state_done;
+      if storing {
+        if found.lapsed {
+          for @lapsing (at in 0_u64..keys.len) {
+            let payload = key_set_payload(keys: &keys, index: at);
+            let named = iand(payload, operand_named);
+            if named != 0_u64 {
+              let kind = set_kind(slot: &slots^[at], now: now);
+              if kind == entry_lapsed {
+                set slots^[at] = None<Entry>();
+                if store^.logging {
+                  let position = operand_argument(payload: payload, first: first);
+                  let place = key_bounds(input: input, args: args, index: position);
+                  let key = &input^[place.start..place.end];
+                  log_removal(log: &s^.meta.log, key: key);
+                }
+              }
+            }
+          }
+        }
+      } else {
+        set lapsed = found.lapsed;
+      }
+      let size = gather(slots: slots, keys: &keys, found: found, operation: operation, env: env, now: now, result: &result);
+      set client^.number = size;
+      if storing {
+        let target = found.destination;
+        if target < keys.len {
+          let changed = False();
+          if size > 0_u64 {
+            store_members(slot: &slots^[target], members: &result);
+            set changed = True();
+          } else {
+            let present = entry_present(slot: &slots^[target]);
+            if present {
+              set changed = True();
+              set slots^[target] = None<Entry>();
+            }
+          }
+          if changed {
+            if store^.logging {
+              log_command(log: &s^.meta.log, input: input, args: args);
+            }
+          }
+        }
+      }
+    }
+  }
+  if lapsed {
+    for @lapsing (index in first..count) {
+      let place = key_bounds(input: input, args: args, index: index);
+      let key = &input^[place.start..place.end];
+      remove_expired(store: store, key: key, now: now);
+    }
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  if storing {
+    let answer = cvt.wrap::<u64, i64>(client^.number);
+    reply_integer(client: client, value: answer);
+    return unit;
+  }
+  let size = hash_map_len::<Key, unit, ceiling>(map: &result);
+  reply_array(client: client, count: size);
+  hash_map_each::<Key, unit, Client, fn member_out, ceiling>(map: &result, env: client);
+  return unit;
+}
+
+fn run_sintercard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "SINTERCARD numkeys key [key ...] [LIMIT limit]: answers the size of the sets' intersection, counting no further than the limit when it is not 0, in one statement holding every key named through a key set; an absent key counts as an empty set. As in Redis, before any key is looked up, numkeys must be an integer from 1 to the number of arguments after it, LIMIT, read in either case up to a zero byte, takes an integer that is not negative, a later one replacing an earlier, and anything else after the keys is a syntax error.";
+  let count = args^.inner.len;
+  let numbered = arg(args: args, index: 1_u64);
+  let numkeys = read_integer(input: input, start: numbered.start, length: numbered.length);
+  let invalid = numkeys.state != 1_u64;
+  let small = numkeys.value < 1_i64;
+  let refused = bor(invalid, small);
+  if refused {
+    reply_error(client: client, word: &text_sintercard_numkeys[0_u64..36_u64]);
+    return unit;
+  }
+  let named = cvt.wrap::<i64, u64>(numkeys.value);
+  let available = count -sat 2_u64;
+  if named > available {
+    reply_error(client: client, word: &text_sintercard_keys[0_u64..55_u64]);
+    return unit;
+  }
+  let end = named +wrap 2_u64;
+  let limit = 0_u64;
+  let index = end;
+  loop @options {
+    if index >= count {
+      break @options;
+    }
+    let option = arg(args: args, index: index);
+    let value_index = index +wrap 1_u64;
+    let more = value_index < count;
+    let limiting = word_at(input: input, span: option, word: &word_sintercard_limit[0_u64..5_u64]);
+    let known = band(limiting, more);
+    if known {
+      let value = arg(args: args, index: value_index);
+      let number = read_integer(input: input, start: value.start, length: value.length);
+      let bad = number.state != 1_u64;
+      let negative = number.value < 0_i64;
+      let rejected = bor(bad, negative);
+      if rejected {
+        reply_error(client: client, word: &text_sintercard_limit[0_u64..27_u64]);
+        return unit;
+      }
+      set limit = cvt.wrap::<i64, u64>(number.value);
+    } else {
+      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+      return unit;
+    }
+    set index = index +wrap 2_u64;
+  }
+  let not_storing = False();
+  let keys = operand_keys(input: input, args: args, first: 2_u64, end: end, storing: not_storing);
+  let now = time^.check;
+  let unused = hash_map_new::<Key, unit, ceiling>(capacity: 0_u64);
+  let lapsed = False();
+  let size = 0_u64;
+  set client^.state = state_done;
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let found = survey(slots: slots, keys: &keys, now: now);
+    set lapsed = found.lapsed;
+    if found.wrong {
+      set client^.state = state_wrong;
+    } else if found.missing {
+    } else {
+      let every = True();
+      let filtered = True();
+      let counting = False();
+      set size = combine(slots: slots, keys: &keys, from: found.smallest, env: env, now: now, every: every, wanted: filtered, limit: limit, keep: counting, result: &unused);
+    }
+  }
+  if lapsed {
+    for @lapsing (position in 2_u64..end) {
+      let place = key_bounds(input: input, args: args, index: position);
+      let key = &input^[place.start..place.end];
+      remove_expired(store: store, key: key, now: now);
+    }
+  }
+  if client^.state == state_wrong {
+    reply_wrong_type(client: client);
+    return unit;
+  }
+  let answer = cvt.wrap::<u64, i64>(size);
+  reply_integer(client: client, value: answer);
   return unit;
 }

@@ -10,14 +10,45 @@ alias arg = pkg::protocol::arg;
 alias clear_items = pkg::protocol::clear_items;
 alias push_item = pkg::protocol::push_item;
 alias make_key = pkg::bytes::make_key;
+alias byte_at = pkg::bytes::byte_at;
+alias Bytes = pkg::bytes::Bytes;
+alias DequeVisit = std::collections::deque::DequeVisit;
+alias HashMap = std::collections::hash_map::HashMap;
+alias KeyHash = pkg::bytes::KeyHash;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+alias Rank = pkg::store::Rank;
+alias RankOrder = pkg::store::RankOrder;
+alias Sorted = pkg::store::Sorted;
+alias Value = pkg::store::Value;
+alias bytes_boxed = pkg::bytes::bytes_boxed;
+alias bytes_copy = pkg::bytes::bytes_copy;
+alias bytes_new = pkg::bytes::bytes_new;
+alias ceiling = pkg::store::ceiling;
+alias copy_key = pkg::bytes::copy_key;
+alias deque_new = std::collections::deque::deque_new;
+alias deque_push_back = std::collections::deque::deque_push_back;
+alias deque_visit = std::collections::deque::deque_visit;
+alias hash_map_each = std::collections::hash_map::hash_map_each;
+alias hash_map_len = std::collections::hash_map::hash_map_len;
+alias hash_map_new = std::collections::hash_map::hash_map_new;
+alias hash_map_put = std::collections::hash_map::hash_map_put;
+alias ordered_map_each = std::collections::ordered_map::ordered_map_each;
+alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
+alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias reply_ok = pkg::protocol::reply_ok;
+alias windows_order = pkg::bytes::windows_order;
+alias name_code = pkg::bytes::name_code;
 alias expired = pkg::store::expired;
 alias log_command = pkg::store::log_command;
 alias log_count = pkg::store::log_count;
 alias log_decimal = pkg::store::log_decimal;
 alias log_input = pkg::store::log_input;
+alias log_removal = pkg::store::log_removal;
 alias log_word = pkg::store::log_word;
 alias queue_expiry = pkg::store::queue_expiry;
 alias read_integer = pkg::bytes::read_integer;
+alias reply_byte = pkg::protocol::reply_byte;
+alias reply_echoed = pkg::protocol::reply_echoed;
 alias reply_error = pkg::protocol::reply_error;
 alias reply_integer = pkg::protocol::reply_integer;
 alias reply_word = pkg::protocol::reply_word;
@@ -31,6 +62,48 @@ const state_expired: u64 = 2_u64;
 const state_wrong: u64 = 3_u64;
 
 const state_emptied: u64 = 4_u64;
+
+const count_unit: u64 = 4294967296_u64;
+
+const index_mask: u64 = 4294967295_u64;
+
+const expire_nx: u64 = 1_u64;
+
+const expire_xx: u64 = 2_u64;
+
+const expire_gt: u64 = 4_u64;
+
+const expire_lt: u64 = 8_u64;
+
+const expire_others: u64 = 14_u64;
+
+const text_unsupported: Array<u8, 23> =[69_u8, 82_u8, 82_u8, 32_u8, 85_u8, 110_u8, 115_u8, 117_u8, 112_u8, 112_u8, 111_u8, 114_u8, 116_u8, 101_u8, 100_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8];
+
+const text_expire_nx: Array<u8, 67> =[69_u8, 82_u8, 82_u8, 32_u8, 78_u8, 88_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 88_u8, 88_u8, 44_u8, 32_u8, 71_u8, 84_u8, 32_u8, 111_u8, 114_u8, 32_u8, 76_u8, 84_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 115_u8, 32_u8, 97_u8, 116_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 115_u8, 97_u8, 109_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 97_u8, 114_u8, 101_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 99_u8, 111_u8, 109_u8, 112_u8, 97_u8, 116_u8, 105_u8, 98_u8, 108_u8, 101_u8];
+
+const text_expire_gt: Array<u8, 57> =[69_u8, 82_u8, 82_u8, 32_u8, 71_u8, 84_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 76_u8, 84_u8, 32_u8, 111_u8, 112_u8, 116_u8, 105_u8, 111_u8, 110_u8, 115_u8, 32_u8, 97_u8, 116_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 115_u8, 97_u8, 109_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 97_u8, 114_u8, 101_u8, 32_u8, 110_u8, 111_u8, 116_u8, 32_u8, 99_u8, 111_u8, 109_u8, 112_u8, 97_u8, 116_u8, 105_u8, 98_u8, 108_u8, 101_u8];
+
+const text_expire_expireat: Array<u8, 45> =[69_u8, 82_u8, 82_u8, 32_u8, 105_u8, 110_u8, 118_u8, 97_u8, 108_u8, 105_u8, 100_u8, 32_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 32_u8, 116_u8, 105_u8, 109_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 39_u8, 101_u8, 120_u8, 112_u8, 105_u8, 114_u8, 101_u8, 97_u8, 116_u8, 39_u8, 32_u8, 99_u8, 111_u8, 109_u8, 109_u8, 97_u8, 110_u8, 100_u8];
+
+const text_crlf: Array<u8, 2> =[13_u8, 10_u8];
+
+const rename_missing: u64 = 0_u64;
+
+const rename_same: u64 = 1_u64;
+
+const rename_occupied: u64 = 2_u64;
+
+const rename_done: u64 = 3_u64;
+
+const code_replace: u64 = 19495721125299538_u64;
+
+const code_db: u64 = 16964_u64;
+
+const text_no_key: Array<u8, 15> =[69_u8, 82_u8, 82_u8, 32_u8, 110_u8, 111_u8, 32_u8, 115_u8, 117_u8, 99_u8, 104_u8, 32_u8, 107_u8, 101_u8, 121_u8];
+
+const text_same_object: Array<u8, 47> =[69_u8, 82_u8, 82_u8, 32_u8, 115_u8, 111_u8, 117_u8, 114_u8, 99_u8, 101_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 100_u8, 101_u8, 115_u8, 116_u8, 105_u8, 110_u8, 97_u8, 116_u8, 105_u8, 111_u8, 110_u8, 32_u8, 111_u8, 98_u8, 106_u8, 101_u8, 99_u8, 116_u8, 115_u8, 32_u8, 97_u8, 114_u8, 101_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 115_u8, 97_u8, 109_u8, 101_u8];
+
+const text_int_range: Array<u8, 72> =[69_u8, 82_u8, 82_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 105_u8, 115_u8, 32_u8, 111_u8, 117_u8, 116_u8, 32_u8, 111_u8, 102_u8, 32_u8, 114_u8, 97_u8, 110_u8, 103_u8, 101_u8, 44_u8, 32_u8, 118_u8, 97_u8, 108_u8, 117_u8, 101_u8, 32_u8, 109_u8, 117_u8, 115_u8, 116_u8, 32_u8, 98_u8, 101_u8, 116_u8, 119_u8, 101_u8, 101_u8, 110_u8, 32_u8, 45_u8, 50_u8, 49_u8, 52_u8, 55_u8, 52_u8, 56_u8, 51_u8, 54_u8, 52_u8, 56_u8, 32_u8, 97_u8, 110_u8, 100_u8, 32_u8, 50_u8, 49_u8, 52_u8, 55_u8, 52_u8, 56_u8, 51_u8, 54_u8, 52_u8, 55_u8];
 
 const word_del: Array<u8, 3> =[68_u8, 69_u8, 76_u8];
 
@@ -80,9 +153,15 @@ struct Bounds {
 }
 
 struct Remaining {
-  left: u64;
+  at: u64;
   now: u64;
   state: u64;
+}
+
+struct ExpireOptions {
+  flags: u64;
+  error: u64;
+  at: u64;
 }
 
 fn key_at(input: &[u8], args: &Box<Slots<Span>>, index: u64) -> made: Key reads(input), reads(args) {
@@ -107,6 +186,21 @@ fn key_bounds(input: &[u8], args: &Box<Slots<Span>>, index: u64) -> bounds: Boun
     return Bounds(start: span.start, end: end);
   }
   return Bounds(start: 0_u64, end: 0_u64);
+}
+
+fn option_code(input: &[u8], span: Span) -> code: u64 reads(input) {
+  doc "The number name_code packs from an option word's bytes up to its first zero byte, since Redis compares an option as a C string, with strcasecmp or letter by letter.";
+  let length = span.length;
+  for @bytes (offset in 0_u64..span.length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      set length = offset;
+      break @bytes;
+    }
+  }
+  let code = name_code(input: input, start: span.start, length: length);
+  return code;
 }
 
 fn kind_of(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
@@ -137,7 +231,7 @@ fn kind_of(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
 }
 
 fn entry_kind(slot: &Option<Entry>, client: &Client) -> kind: u64 writes(slot), writes(client) {
-  doc "The kind of the value an entry holds, as kind_of reports it, removing it when its expiry has been reached; 0 for an absent or expired key.";
+  doc "The kind of the value an entry holds, as kind_of reports it, removing it when its expiry has passed; 0 for an absent or expired key.";
   set client^.state = state_absent;
   let kind = 0_u64;
   match slot^ {
@@ -154,22 +248,23 @@ fn entry_kind(slot: &Option<Entry>, client: &Client) -> kind: u64 writes(slot), 
   return kind;
 }
 
-fn remove_live(slot: &Option<Entry>, now: u64) -> removed: Bool writes(slot) {
-  doc "Removes an entry and reports whether it was live.";
-  let live = False();
+fn remove_live(slot: &Option<Entry>, now: u64) -> found: u64 writes(slot) {
+  doc "Removes an entry and reports what it held: 1 a live value, 2 one whose expiry had passed, 0 nothing.";
+  let found = 0_u64;
   match slot^ {
     Some(value: gone) => {
       let reached = expired(expires: gone^.expires, now: now);
       if reached {
+        set found = 2_u64;
       } else {
-        set live = True();
+        set found = 1_u64;
       }
     }
     None() => {
     }
   }
   set slot^ = None<Entry>();
-  return live;
+  return found;
 }
 
 fn prepare_keys(input: &[u8], args: &Box<Slots<Span>>, client: &Client, first: u64) -> result: unit reads(input), reads(args), writes(client) {
@@ -187,30 +282,55 @@ fn prepare_keys(input: &[u8], args: &Box<Slots<Span>>, client: &Client, first: u
 }
 
 fn named_keys(input: &[u8], args: &Box<Slots<Span>>) -> keys: KeySet reads(input), reads(args) {
-  doc "The keys the arguments from the second on name, each carrying how many times it is named.";
+  doc "The keys the arguments from the second on name, each carrying in the low 32 bits of its payload the index of the first argument naming it, which a request of at most 2^31 arguments leaves room for, and above them how many arguments name it.";
   let count = args^.inner.len;
   let keys = key_set_new(capacity: count);
   for @named (index in 1_u64..count) {
     let place = key_bounds(input: input, args: args, index: index);
     let key = &input^[place.start..place.end];
-    key_set_add(keys: &keys, key: key, amount: 1_u64);
+    let before = keys.len;
+    key_set_add(keys: &keys, key: key, amount: count_unit);
+    if keys.len > before {
+      let first = count_unit +wrap index;
+      key_set_put(keys: &keys, key: key, payload: first);
+    }
   }
   return move keys;
 }
 
+fn named_bounds(input: &[u8], args: &Box<Slots<Span>>, payload: u64) -> bounds: Bounds reads(input), reads(args) contract {
+  define input_length = input^.len;
+  ensures bounds.start <= bounds.end;
+  ensures bounds.end <= input_length;
+} {
+  doc "Where the key named_keys gave a payload lies in the input, as key_bounds places the argument whose index the payload carries.";
+  let index = iand(payload, index_mask);
+  let bounds = key_bounds(input: input, args: args, index: index);
+  return bounds;
+}
+
 fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "DEL key [key ...]: removes every key named, in one statement on their entries, and answers how many were live; a key named twice is removed and counted once.";
+  doc "DEL key [key ...] and UNLINK key [key ...]: removes every key named, in one statement on their entries, and answers how many were live; a key named twice is removed and counted once. The file records a key found expired as log_removal does, then the command as it was sent when it removed a live key, as Redis propagates them.";
   let keys = named_keys(input: input, args: args);
   let removed = 0_u64;
+  let logged = store^.logging;
   atomic s = &store^.state, slots = &s^.map[keys] {
     for @named (at in 0_u64..keys.len) {
-      let live = remove_live(slot: &slots^[at], now: time^.check);
-      if live {
+      let found = remove_live(slot: &slots^[at], now: time^.check);
+      if found == 1_u64 {
         set removed = removed +wrap 1_u64;
+      }
+      if found == 2_u64 {
+        if logged {
+          let payload = key_set_payload(keys: &keys, index: at);
+          let place = named_bounds(input: input, args: args, payload: payload);
+          let key = &input^[place.start..place.end];
+          log_removal(log: &s^.meta.log, key: key);
+        }
       }
     }
     if removed > 0_u64 {
-      if store^.logging {
+      if logged {
         log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
@@ -221,16 +341,25 @@ fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
 }
 
 fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "EXISTS key [key ...]: answers how many of the keys named are live, a key named twice counted twice, in one statement on their entries.";
+  doc "EXISTS key [key ...] and TOUCH key [key ...]: answers how many of the keys named are live, a key named twice counted twice, in one statement on their entries, removing a key found expired, which the file records as log_removal does.";
   let keys = named_keys(input: input, args: args);
   set client^.now = time^.check;
   let live = 0_u64;
+  let logged = store^.logging;
   atomic s = &store^.state, slots = &s^.map[keys] {
     for @named (at in 0_u64..keys.len) {
       let kind = entry_kind(slot: &slots^[at], client: client);
+      let payload = key_set_payload(keys: &keys, index: at);
       if kind != 0_u64 {
-        let occurrences = key_set_payload(keys: &keys, index: at);
+        let occurrences = ishr.wrap(payload, 32_u32);
         set live = live +wrap occurrences;
+      }
+      if client^.state == state_expired {
+        if logged {
+          let place = named_bounds(input: input, args: args, payload: payload);
+          let key = &input^[place.start..place.end];
+          log_removal(log: &s^.meta.log, key: key);
+        }
       }
     }
   }
@@ -240,13 +369,19 @@ fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
 }
 
 fn run_type(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "TYPE key: answers the kind of the value a live key holds, or none.";
+  doc "TYPE key: answers the kind of the value a live key holds, or none, removing a key found expired, which the file records as log_removal does.";
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   let kind = 0_u64;
+  let logged = store^.logging;
   atomic s = &store^.state, slot = &s^.map[key] {
     set kind = entry_kind(slot: slot, client: client);
+    if client^.state == state_expired {
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
+      }
+    }
   }
   if kind == 1_u64 {
     reply_word(client: client, word: &reply_type_string[0_u64..9_u64]);
@@ -262,18 +397,6 @@ fn run_type(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     reply_word(client: client, word: &reply_type_none[0_u64..7_u64]);
   }
   return unit;
-}
-
-fn set_expiry(env: &Expiry, value: &Entry) -> result: u64 writes(env), writes(value) {
-  doc "Gives a live entry the expiry env carries. State 1 is done and 2 marks an expired entry.";
-  let reached = expired(expires: value^.expires, now: env^.now);
-  if reached {
-    set env^.state = state_expired;
-    return 2_u64;
-  }
-  set value^.expires = env^.at;
-  set env^.state = state_done;
-  return 1_u64;
 }
 
 fn clear_expiry(env: &Expiry, value: &Entry) -> result: u64 writes(env), writes(value) {
@@ -293,7 +416,7 @@ fn clear_expiry(env: &Expiry, value: &Entry) -> result: u64 writes(env), writes(
 }
 
 fn read_expiry(env: &Remaining, value: &Entry) -> result: u64 reads(value), writes(env) {
-  doc "Reads how long a live entry has left. State 2 has an expiry and its nanoseconds left, 1 has none, and 0 marks an expired entry.";
+  doc "Reads a live entry's expiry. State 2 has one, its calendar milliseconds recorded in at, 1 has none, and 0 marks an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
     set env^.state = 0_u64;
@@ -303,18 +426,34 @@ fn read_expiry(env: &Remaining, value: &Entry) -> result: u64 reads(value), writ
     set env^.state = 1_u64;
     return 1_u64;
   }
-  set env^.left = value^.expires -wrap env^.now;
+  set env^.at = value^.expires;
   set env^.state = 2_u64;
   return 2_u64;
 }
 
 fn log_expire_at(log: &Box<Slots<u8>>, input: &[u8], key: Span, at_ms: u64) -> result: unit reads(input), writes(log) {
-  doc "Appends PEXPIREAT key with the expiry as calendar milliseconds, as Redis 7 writes an expiry EXPIRE, PEXPIRE or PEXPIREAT sets; Redis writes a SET with an expiry as one SET with PXAT, which firn writes as SET followed by PEXPIREAT.";
+  doc "Appends PEXPIREAT key with the expiry as calendar milliseconds, as Redis 7.0.15 propagates an expiry GETEX sets.";
   let room = key.length +wrap 64_u64;
   log_count(log: log, count: 3_u64, room: room);
   log_word(log: log, word: &word_pexpireat[0_u64..9_u64]);
   log_input(log: log, input: input, span: key);
   log_decimal(log: log, value: at_ms);
+  return unit;
+}
+
+fn log_expire_options(log: &Box<Slots<u8>>, input: &[u8], args: &Box<Slots<Span>>, at_ms: u64) -> result: unit reads(input), reads(args), writes(log) {
+  doc "Appends PEXPIREAT key with the expiry as calendar milliseconds, then the command's options as they were sent, the form Redis 7.0.15 propagates EXPIRE, PEXPIRE and EXPIREAT in.";
+  let count = args^.inner.len;
+  let key = arg(args: args, index: 1_u64);
+  let room = key.length +wrap 64_u64;
+  log_count(log: log, count: count, room: room);
+  log_word(log: log, word: &word_pexpireat[0_u64..9_u64]);
+  log_input(log: log, input: input, span: key);
+  log_decimal(log: log, value: at_ms);
+  for @options (index in 3_u64..count) {
+    let span = args^.inner[index];
+    log_input(log: log, input: input, span: span);
+  }
   return unit;
 }
 
@@ -327,8 +466,131 @@ fn log_key_word(log: &Box<Slots<u8>>, word: &[u8], input: &[u8], key: Span) -> r
   return unit;
 }
 
+fn expire_options(input: &[u8], args: &Box<Slots<Span>>) -> options: ExpireOptions reads(input), reads(args) {
+  doc "Reads EXPIRE's options from the fourth argument on as Redis 7.0.15's parseExtendedExpireArgumentsOrReply reads them, each compared with strcasecmp, so in either case and up to a zero byte: NX, XX, GT and LT. Error 1 is a word that is none of them, at the index at records; 2 is NX beside another option and 3 is GT beside LT, judged once every word has been read.";
+  let count = args^.inner.len;
+  let flags = 0_u64;
+  for @options (index in 3_u64..count) {
+    let span = arg(args: args, index: index);
+    let code = option_code(input: input, span: span);
+    if code == code_nx {
+      set flags = ior(flags, expire_nx);
+    } else if code == code_xx {
+      set flags = ior(flags, expire_xx);
+    } else if code == code_gt {
+      set flags = ior(flags, expire_gt);
+    } else if code == code_lt {
+      set flags = ior(flags, expire_lt);
+    } else {
+      return ExpireOptions(flags: 0_u64, error: 1_u64, at: index);
+    }
+  }
+  let fresh = iand(flags, expire_nx);
+  let others = iand(flags, expire_others);
+  let lone = fresh != 0_u64;
+  let crowded = others != 0_u64;
+  let clash = band(lone, crowded);
+  if clash {
+    return ExpireOptions(flags: 0_u64, error: 2_u64, at: 0_u64);
+  }
+  let greater = iand(flags, expire_gt);
+  let less = iand(flags, expire_lt);
+  let above = greater != 0_u64;
+  let below = less != 0_u64;
+  let both = band(above, below);
+  if both {
+    return ExpireOptions(flags: 0_u64, error: 3_u64, at: 0_u64);
+  }
+  return ExpireOptions(flags: flags, error: 0_u64, at: 0_u64);
+}
+
+fn expire_allowed(flags: u64, current: u64, deadline: i64) -> allowed: Bool pure {
+  doc "Whether EXPIRE's options let it give a key whose expiry is current, zero for none, the expiry deadline, as Redis 7.0.15 judges them: NX only a key without one, XX only a key with one, GT only a later expiry than the key's, a key without one counting as never expiring, and LT only an earlier one, a key without one taking any.";
+  let none = current == 0_u64;
+  let held = cvt.wrap::<u64, i64>(current);
+  let fresh = iand(flags, expire_nx);
+  if fresh != 0_u64 {
+    if none {
+    } else {
+      return False();
+    }
+  }
+  let present = iand(flags, expire_xx);
+  if present != 0_u64 {
+    if none {
+      return False();
+    }
+  }
+  let greater = iand(flags, expire_gt);
+  if greater != 0_u64 {
+    if none {
+      return False();
+    }
+    if deadline <= held {
+      return False();
+    }
+  }
+  let less = iand(flags, expire_lt);
+  if less != 0_u64 {
+    if none {
+    } else if deadline >= held {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn reply_unsupported(client: &Client, input: &[u8], span: Span) -> result: unit reads(input), writes(client) {
+  doc "Writes the error Redis 7.0.15 replies to an option of EXPIRE it does not know: the option as a C string, up to a zero byte, with its trailing carriage returns and line feeds dropped and any others written as spaces, as addReplyErrorFormat trims and maps them.";
+  let length = span.length;
+  for @bytes (offset in 0_u64..span.length) {
+    let position = span.start +wrap offset;
+    let byte = byte_at(input: input, index: position);
+    if byte == 0_u8 {
+      set length = offset;
+      break @bytes;
+    }
+  }
+  loop @trailing {
+    if length == 0_u64 {
+      break @trailing;
+    }
+    let back = span.start +wrap length;
+    let position = back -wrap 1_u64;
+    let last = byte_at(input: input, index: position);
+    let carriage = last == 13_u8;
+    let feed = last == 10_u8;
+    let ending = bor(carriage, feed);
+    if ending {
+      set length = length -wrap 1_u64;
+    } else {
+      break @trailing;
+    }
+  }
+  reply_byte(client: client, value: 45_u8);
+  reply_word(client: client, word: &text_unsupported[0_u64..23_u64]);
+  let shown = Span(start: span.start, length: length);
+  let written = reply_echoed(client: client, input: input, span: shown, limit: length);
+  reply_word(client: client, word: &text_crlf[0_u64..2_u64]);
+  return unit;
+}
+
 fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, scale: u64, absolute: Bool, invalid: &[u8]) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), reads(invalid), writes(client) waits {
-  doc "EXPIRE key seconds (scale 1000), PEXPIRE key milliseconds (scale 1) and PEXPIREAT key calendar-milliseconds (absolute): gives a live key an expiry, or removes it when the expiry is zero or already past, and answers 1 when the key was live and 0 otherwise. While a file is replayed an expiry already past is kept as one already reached, as Redis keeps it while loading, so a later PERSIST in the file still finds the key; invalid is the reply to an expiry out of range. A negative expiry is out of range here, where Redis removes the key.";
+  doc "EXPIRE key seconds (scale 1000), PEXPIRE key milliseconds (scale 1), EXPIREAT key unix-seconds (absolute, scale 1000) and PEXPIREAT key unix-milliseconds (absolute), each with NX, XX, GT or LT: gives a live key the expiry at those calendar milliseconds, a relative amount counting from the command's time, when the options allow it, or removes the key when that time has passed, and answers 1 when it did either and 0 otherwise, as Redis 7.0.15's expireGenericCommand does. The options are judged first, then the amount: one whose milliseconds, or their sum with the command's time, leave the range of i64 is answered with invalid. The file records an expiry as PEXPIREAT key at with the options as they were sent, a PEXPIREAT as it was sent, a removal as DEL key, and a key found expired as log_removal does. While a file is replayed an expiry already past is kept as one already reached, as Redis keeps it while loading, so a later PERSIST in the file still finds the key.";
+  let options = expire_options(input: input, args: args);
+  if options.error == 1_u64 {
+    let option = arg(args: args, index: options.at);
+    reply_unsupported(client: client, input: input, span: option);
+    return unit;
+  }
+  if options.error == 2_u64 {
+    reply_error(client: client, word: &text_expire_nx[0_u64..67_u64]);
+    return unit;
+  }
+  if options.error == 3_u64 {
+    reply_error(client: client, word: &text_expire_gt[0_u64..57_u64]);
+    return unit;
+  }
   let key_span = arg(args: args, index: 1_u64);
   let amount = arg(args: args, index: 2_u64);
   let number = read_integer(input: input, start: amount.start, length: amount.length);
@@ -336,77 +598,77 @@ fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
     return unit;
   }
-  if number.value < 0_i64 {
-    reply_error(client: client, word: invalid);
-    return unit;
-  }
-  let value = cvt.wrap::<i64, u64>(number.value);
-  let ttl_ms = 0_u64;
-  let remove_now = False();
-  if absolute {
-    if value <= time^.unix_ms {
-      set remove_now = True();
-    } else {
-      set ttl_ms = value -wrap time^.unix_ms;
-    }
-  } else if value == 0_u64 {
-    set remove_now = True();
-  } else {
-    let limit = 1000000000000_u64;
-    if scale == 1000_u64 {
-      set limit = 1000000000_u64;
-    }
-    if value > limit {
+  let deadline = number.value;
+  if scale == 1000_u64 {
+    let above = deadline > 9223372036854775_i64;
+    let below = deadline < -9223372036854775_i64;
+    let outside = bor(above, below);
+    if outside {
       reply_error(client: client, word: invalid);
       return unit;
     }
-    set ttl_ms = value *wrap scale;
+    set deadline = deadline *wrap 1000_i64;
   }
-  if ttl_ms > 1000000000000_u64 {
+  let now = cvt.wrap::<u64, i64>(time^.unix_ms);
+  let base = now;
+  if absolute {
+    set base = 0_i64;
+  }
+  let room = 9223372036854775807_i64 -wrap base;
+  if deadline > room {
     reply_error(client: client, word: invalid);
     return unit;
   }
+  set deadline = deadline +wrap base;
+  let remove_now = deadline <= now;
+  if time^.loading {
+    set remove_now = False();
+  }
+  let expires = 1_u64;
+  if deadline > 0_i64 {
+    set expires = cvt.wrap::<i64, u64>(deadline);
+  }
+  let as_sent = False();
+  if absolute {
+    set as_sent = scale == 1_u64;
+  }
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  let ttl_ns = ttl_ms *wrap 1000000_u64;
-  let expires = time^.now +wrap ttl_ns;
-  if remove_now {
-    if time^.loading {
-      set remove_now = False();
-      set expires = 1_u64;
-    }
-  }
-  let at_ms = time^.unix_ms +wrap ttl_ms;
-  let expiry = Expiry(at: expires, now: time^.check, state: state_absent);
+  let logged = store^.logging;
+  set client^.now = time^.check;
+  let done = False();
   atomic s = &store^.state, slot = &s^.map[key] {
-    if remove_now {
-      let live = remove_live(slot: slot, now: time^.check);
-      if live {
-        set expiry.state = state_done;
-        if store^.logging {
-          log_key_word(log: &s^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
-        }
+    let kind = entry_kind(slot: slot, client: client);
+    if client^.state == state_expired {
+      if logged {
+        log_removal(log: &s^.meta.log, key: key);
       }
-    } else {
-      match slot^ {
-        Some(value: held) => {
-          let outcome = set_expiry(env: &expiry, value: held);
+    }
+    if kind != 0_u64 {
+      let current = held_expiry(slot: slot);
+      let allowed = expire_allowed(flags: options.flags, current: current, deadline: deadline);
+      if allowed {
+        if remove_now {
+          set slot^ = None<Entry>();
+          if logged {
+            log_key_word(log: &s^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+          }
+        } else {
+          hold_expiry(slot: slot, expires: expires);
+          queue_expiry(meta: &s^.meta, key: key, at: expires, env: env);
+          if logged {
+            if as_sent {
+              log_command(log: &s^.meta.log, input: input, args: args);
+            } else {
+              log_expire_options(log: &s^.meta.log, input: input, args: args, at_ms: expires);
+            }
+          }
         }
-        None() => {
-        }
-      }
-      if expiry.state == state_expired {
-        set slot^ = None<Entry>();
-      }
-      if expiry.state == state_done {
-        queue_expiry(meta: &s^.meta, key: key, at: expires, env: env);
-        if store^.logging {
-          log_expire_at(log: &s^.meta.log, input: input, key: key_span, at_ms: at_ms);
-        }
+        set done = True();
       }
     }
   }
-  if expiry.state == state_done {
+  if done {
     reply_word(client: client, word: &reply_one[0_u64..4_u64]);
     return unit;
   }
@@ -414,9 +676,9 @@ fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   return unit;
 }
 
-fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, in_seconds: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "TTL key and PTTL key: answers the time a live key has left, in seconds rounded as Redis rounds them or in milliseconds, -1 for a key without an expiry and -2 for an absent or expired one.";
-  let remaining = Remaining(left: 0_u64, now: time^.check, state: 3_u64);
+fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, in_seconds: Bool, absolute: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "TTL key and PTTL key: answers the time a live key has left, in seconds rounded as Redis rounds them or in milliseconds; EXPIRETIME key and PEXPIRETIME key (absolute): its expiry's calendar time, in seconds rounded so or in milliseconds; -1 for a key without an expiry and -2 for an absent or expired one, removing an expired key, which the file records as log_removal does.";
+  let remaining = Remaining(at: 0_u64, now: time^.check, state: 3_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   atomic s = &store^.state, slot = &s^.map[key] {
@@ -429,6 +691,9 @@ fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     }
     if remaining.state == 0_u64 {
       set slot^ = None<Entry>();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
     }
   }
   if remaining.state == 1_u64 {
@@ -436,10 +701,12 @@ fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     return unit;
   }
   if remaining.state == 2_u64 {
-    let milliseconds = remaining.left / 1000000_u64;
-    let answer = milliseconds;
+    let answer = remaining.at -wrap time^.check;
+    if absolute {
+      set answer = remaining.at;
+    }
     if in_seconds {
-      let rounded = milliseconds +wrap 500_u64;
+      let rounded = answer +wrap 500_u64;
       set answer = rounded / 1000_u64;
     }
     let signed = cvt.wrap::<u64, i64>(answer);
@@ -451,7 +718,7 @@ fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
 }
 
 fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "PERSIST key: removes a live key's expiry and answers 1 when it had one, 0 otherwise.";
+  doc "PERSIST key: removes a live key's expiry and answers 1 when it had one, 0 otherwise, removing an expired key, which the file records as log_removal does.";
   let expiry = Expiry(at: 0_u64, now: time^.check, state: state_absent);
   let key_span = arg(args: args, index: 1_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
@@ -466,6 +733,9 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
     }
     if expiry.state == state_expired {
       set slot^ = None<Entry>();
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
+      }
     }
     if expiry.state == state_done {
       if store^.logging {
@@ -489,5 +759,357 @@ fn run_dbsize(store: &Keyspace, client: &Client) -> result: unit reads(store), w
   }
   let answer = cvt.wrap::<u64, i64>(size);
   reply_integer(client: client, value: answer);
+  return unit;
+}
+
+struct ListCopy {
+  items: Box<Ring<Box<Slots<u8>>>>;
+}
+
+struct MemberCopy {
+  members: HashMap<Key, unit, ceiling>;
+  keys: KeyEnv;
+}
+
+struct FieldCopy {
+  fields: HashMap<Key, Bytes, ceiling>;
+  keys: KeyEnv;
+}
+
+struct RankCopy {
+  order: OrderedMap<Rank, unit, ceiling>;
+  keys: KeyEnv;
+}
+
+struct ScoreCopy {
+  scores: HashMap<Key, f64, ceiling>;
+  keys: KeyEnv;
+}
+
+fn copy_element(env: &ListCopy, value: &Box<Slots<u8>>) -> result: unit reads(value), writes(env) {
+  doc "Appends a copy of one list element to the copy being built, which was made with room for every element.";
+  let length = value^.inner.len;
+  let window = &value^.inner[0_u64..length];
+  let text = bytes_new(input: window, start: 0_u64, length: length);
+  let copied = bytes_boxed(bytes: move text);
+  if env^.items.inner.len < env^.items.inner.cap {
+    let placed = deque_push_back::<Box<Slots<u8>>>(values: &env^.items, value: move copied);
+  } else {
+    let dropped = move copied;
+  }
+  return unit;
+}
+
+binding ElementCopy : DequeVisit<Box<Slots<u8>>, ListCopy> {
+  accept = copy_element;
+}
+
+fn copy_member(env: &MemberCopy, key: &Key, value: &unit) -> result: unit reads(key), writes(env) {
+  doc "Adds a copy of one set member to the copy being built.";
+  let copied = copy_key(key: key);
+  let keys = env^.keys;
+  let put = hash_map_put::<KeyHash, unit, ceiling>(map: &env^.members, key: move copied, value: unit, env: &keys);
+  return unit;
+}
+
+fn copy_field(env: &FieldCopy, key: &Key, value: &Bytes) -> result: unit reads(key), reads(value), writes(env) {
+  doc "Adds a copy of one hash field and its value to the copy being built.";
+  let copied = copy_key(key: key);
+  let text = bytes_copy(bytes: value);
+  let keys = env^.keys;
+  let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: &env^.fields, key: move copied, value: move text, env: &keys);
+  return unit;
+}
+
+fn copy_rank(env: &RankCopy, key: &Rank, value: &unit) -> result: unit reads(key), writes(env) {
+  doc "Adds a copy of one sorted-set member at its score to the order being built.";
+  let member = copy_key(key: &key^.member);
+  let rank = Rank(score: key^.score, member: move member);
+  let keys = env^.keys;
+  let put = ordered_map_put::<RankOrder, unit, ceiling>(map: &env^.order, key: move rank, value: unit, env: &keys);
+  return unit;
+}
+
+fn copy_score(env: &ScoreCopy, key: &Key, value: &f64) -> result: unit reads(key), reads(value), writes(env) {
+  doc "Adds a copy of one sorted-set member's score to the scores being built.";
+  let copied = copy_key(key: key);
+  let keys = env^.keys;
+  let put = hash_map_put::<KeyHash, f64, ceiling>(map: &env^.scores, key: move copied, value: value^, env: &keys);
+  return unit;
+}
+
+fn copy_value(value: &Value) -> made: Value reads(value) {
+  doc "A copy of a value, every element, member, field and score copied, as COPY duplicates one; a container is made with room for what the original holds, within the ceiling every container of firn keeps.";
+  match value^ {
+    Text(bytes: stored) => {
+      let copied = bytes_copy(bytes: stored);
+      return Value::Text(bytes: move copied);
+    }
+    Items(items: list) => {
+      let length = list^.inner.len;
+      let made = deque_new::<Box<Slots<u8>>, ceiling>(capacity: 0_u64);
+      if length <= ceiling {
+        set made = deque_new::<Box<Slots<u8>>, ceiling>(capacity: length);
+      }
+      let env = ListCopy(items: move made);
+      deque_visit::<ElementCopy>(values: list, env: &env);
+      let ListCopy(items: copied) = move env;
+      return Value::Items(items: move copied);
+    }
+    Members(members: set_of) => {
+      let length = hash_map_len::<Key, unit, ceiling>(map: set_of);
+      let made = hash_map_new::<Key, unit, ceiling>(capacity: 0_u64);
+      if length <= ceiling {
+        set made = hash_map_new::<Key, unit, ceiling>(capacity: length);
+      }
+      let keys = KeyEnv();
+      let env = MemberCopy(members: move made, keys: keys);
+      hash_map_each::<Key, unit, MemberCopy, fn copy_member, ceiling>(map: set_of, env: &env);
+      let MemberCopy(members: copied, keys: unused) = move env;
+      return Value::Members(members: move copied);
+    }
+    Fields(fields: hash_of) => {
+      let length = hash_map_len::<Key, Bytes, ceiling>(map: hash_of);
+      let made = hash_map_new::<Key, Bytes, ceiling>(capacity: 0_u64);
+      if length <= ceiling {
+        set made = hash_map_new::<Key, Bytes, ceiling>(capacity: length);
+      }
+      let keys = KeyEnv();
+      let env = FieldCopy(fields: move made, keys: keys);
+      hash_map_each::<Key, Bytes, FieldCopy, fn copy_field, ceiling>(map: hash_of, env: &env);
+      let FieldCopy(fields: copied, keys: unused) = move env;
+      return Value::Fields(fields: move copied);
+    }
+    Ranked(ranked: sorted) => {
+      let order = ordered_map_new::<Rank, unit, ceiling>();
+      let keys = KeyEnv();
+      let ranks = RankCopy(order: move order, keys: keys);
+      ordered_map_each::<Rank, unit, RankCopy, fn copy_rank, ceiling>(map: &sorted^.order, env: &ranks);
+      let RankCopy(order: copied_order, keys: unused_order) = move ranks;
+      let length = hash_map_len::<Key, f64, ceiling>(map: &sorted^.scores);
+      let made = hash_map_new::<Key, f64, ceiling>(capacity: 0_u64);
+      if length <= ceiling {
+        set made = hash_map_new::<Key, f64, ceiling>(capacity: length);
+      }
+      let score_keys = KeyEnv();
+      let scores = ScoreCopy(scores: move made, keys: score_keys);
+      hash_map_each::<Key, f64, ScoreCopy, fn copy_score, ceiling>(map: &sorted^.scores, env: &scores);
+      let ScoreCopy(scores: copied_scores, keys: unused_scores) = move scores;
+      let copied = Sorted(order: move copied_order, scores: move copied_scores);
+      return Value::Ranked(ranked: move copied);
+    }
+  }
+}
+
+fn held_copy(slot: &Option<Entry>) -> made: Option<Entry> reads(slot) {
+  doc "A copy of the value an entry holds, its expiry kept, as COPY makes one; None for an absent entry.";
+  match slot^ {
+    Some(value: held) => {
+      let copied = copy_value(value: &held^.value);
+      let duplicate = Entry(value: move copied, expires: held^.expires);
+      return Some<Entry>(value: move duplicate);
+    }
+    None() => {
+      return None<Entry>();
+    }
+  }
+}
+
+fn pair_keys(input: &[u8], args: &Box<Slots<Span>>) -> keys: KeySet reads(input), reads(args) {
+  doc "The key set of a command's source, the second argument, and destination, the third, the source's payload carrying 1 and the destination's 2, so that one key named as both carries 3.";
+  let keys = key_set_new(capacity: 2_u64);
+  let source = key_bounds(input: input, args: args, index: 1_u64);
+  let source_key = &input^[source.start..source.end];
+  key_set_add(keys: &keys, key: source_key, amount: 1_u64);
+  let target = key_bounds(input: input, args: args, index: 2_u64);
+  let target_key = &input^[target.start..target.end];
+  key_set_add(keys: &keys, key: target_key, amount: 2_u64);
+  return move keys;
+}
+
+fn run_rename(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, fresh: Bool) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "RENAME key newkey and RENAMENX key newkey (fresh): moves a live key's value and expiry to newkey, replacing any value newkey held, or for RENAMENX only when newkey is absent, in one statement on both keys' entries, as Redis 7.0.15's renameGenericCommand does: an absent source is refused as no such key, one key named as both is left as it is, answering OK or 0, and RENAMENX over a live key answers 0. The file records the command as it was sent when it moved the value, after each key found expired as log_removal records it, and the expiry is queued under the new name.";
+  let keys = pair_keys(input: input, args: args);
+  let source_place = key_bounds(input: input, args: args, index: 1_u64);
+  let source_key = &input^[source_place.start..source_place.end];
+  let target_place = key_bounds(input: input, args: args, index: 2_u64);
+  let target_key = &input^[target_place.start..target_place.end];
+  set client^.now = time^.check;
+  let logged = store^.logging;
+  let outcome = rename_missing;
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let source = 0_u64;
+    let target = 0_u64;
+    for @find (at in 0_u64..keys.len) {
+      let payload = key_set_payload(keys: &keys, index: at);
+      let named_source = iand(payload, 1_u64);
+      if named_source != 0_u64 {
+        set source = at;
+      }
+      let named_target = iand(payload, 2_u64);
+      if named_target != 0_u64 {
+        set target = at;
+      }
+    }
+    if source < slots^.len {
+      let kind = entry_kind(slot: &slots^[source], client: client);
+      if client^.state == state_expired {
+        if logged {
+          log_removal(log: &s^.meta.log, key: source_key);
+        }
+      }
+      if kind == 0_u64 {
+      } else if keys.len == 1_u64 {
+        set outcome = rename_same;
+      } else if target < slots^.len {
+        let held = entry_kind(slot: &slots^[target], client: client);
+        if client^.state == state_expired {
+          if logged {
+            log_removal(log: &s^.meta.log, key: target_key);
+          }
+        }
+        let occupied = held != 0_u64;
+        let refused = band(fresh, occupied);
+        if refused {
+          set outcome = rename_occupied;
+        } else {
+          let moved = None<Entry>();
+          swap(first: &slots^[source], second: &moved);
+          let at = held_expiry(slot: &moved);
+          set slots^[target] = move moved;
+          if at != 0_u64 {
+            queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+          }
+          if logged {
+            log_command(log: &s^.meta.log, input: input, args: args);
+          }
+          set outcome = rename_done;
+        }
+      }
+    }
+  }
+  if outcome == rename_missing {
+    reply_error(client: client, word: &text_no_key[0_u64..15_u64]);
+    return unit;
+  }
+  if fresh {
+    if outcome == rename_done {
+      reply_word(client: client, word: &reply_one[0_u64..4_u64]);
+    } else {
+      reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
+    }
+    return unit;
+  }
+  reply_ok(client: client);
+  return unit;
+}
+
+fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
+  doc "COPY source destination [DB destination-db] [REPLACE]: copies a live key's value and expiry to destination, answering 1, unless destination is live and REPLACE is absent, answering 0, as does an absent source, in one statement on both keys' entries, as Redis 7.0.15's copyCommand does with one database. The options are read in order, each word compared in either case up to a zero byte: REPLACE, and DB followed by an integer of the int range, of which only 0, the one database, is in range; any other word, DB with nothing after it, and one key named as both are refused. The file records the command as it was sent when it copied, after each key found expired as log_removal records it, and the expiry is queued under the destination.";
+  let count = args^.inner.len;
+  let replace = False();
+  let index = 3_u64;
+  loop @options {
+    if index >= count {
+      break @options;
+    }
+    let span = arg(args: args, index: index);
+    let code = option_code(input: input, span: span);
+    let following = index +wrap 1_u64;
+    let more = following < count;
+    let named_database = code == code_db;
+    let database = band(named_database, more);
+    if code == code_replace {
+      set replace = True();
+    } else if database {
+      let amount = arg(args: args, index: following);
+      let number = read_integer(input: input, start: amount.start, length: amount.length);
+      if number.state != 1_u64 {
+        reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+        return unit;
+      }
+      let above = number.value > 2147483647_i64;
+      let below = number.value < -2147483648_i64;
+      let outside = bor(above, below);
+      if outside {
+        reply_error(client: client, word: &text_int_range[0_u64..72_u64]);
+        return unit;
+      }
+      if number.value != 0_i64 {
+        reply_error(client: client, word: &text_db_range[0_u64..28_u64]);
+        return unit;
+      }
+      set index = following;
+    } else {
+      reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+      return unit;
+    }
+    set index = index +wrap 1_u64;
+  }
+  let source_place = key_bounds(input: input, args: args, index: 1_u64);
+  let source_key = &input^[source_place.start..source_place.end];
+  let target_place = key_bounds(input: input, args: args, index: 2_u64);
+  let target_key = &input^[target_place.start..target_place.end];
+  let same = windows_order(left: source_key, right: target_key);
+  if same == 0_i32 {
+    reply_error(client: client, word: &text_same_object[0_u64..47_u64]);
+    return unit;
+  }
+  let keys = pair_keys(input: input, args: args);
+  set client^.now = time^.check;
+  let logged = store^.logging;
+  let done = False();
+  atomic s = &store^.state, slots = &s^.map[keys] {
+    let source = 0_u64;
+    let target = 0_u64;
+    for @find (at in 0_u64..keys.len) {
+      let payload = key_set_payload(keys: &keys, index: at);
+      let named_source = iand(payload, 1_u64);
+      if named_source != 0_u64 {
+        set source = at;
+      }
+      let named_target = iand(payload, 2_u64);
+      if named_target != 0_u64 {
+        set target = at;
+      }
+    }
+    if source < slots^.len {
+      let kind = entry_kind(slot: &slots^[source], client: client);
+      if client^.state == state_expired {
+        if logged {
+          log_removal(log: &s^.meta.log, key: source_key);
+        }
+      }
+      if kind != 0_u64 {
+        if target < slots^.len {
+          let held = entry_kind(slot: &slots^[target], client: client);
+          if client^.state == state_expired {
+            if logged {
+              log_removal(log: &s^.meta.log, key: target_key);
+            }
+          }
+          let vacant = held == 0_u64;
+          let allowed = bor(vacant, replace);
+          if allowed {
+            let copied = held_copy(slot: &slots^[source]);
+            let at = held_expiry(slot: &copied);
+            set slots^[target] = move copied;
+            if at != 0_u64 {
+              queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+            }
+            if logged {
+              log_command(log: &s^.meta.log, input: input, args: args);
+            }
+            set done = True();
+          }
+        }
+      }
+    }
+  }
+  if done {
+    reply_word(client: client, word: &reply_one[0_u64..4_u64]);
+    return unit;
+  }
+  reply_word(client: client, word: &reply_zero[0_u64..4_u64]);
   return unit;
 }

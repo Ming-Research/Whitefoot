@@ -452,6 +452,13 @@ impl CompiledProgram {
         &self.executable
     }
 
+    /// The directory the program runs in, where a file it names relative to
+    /// its working directory lies, so that a case can read what it wrote.
+    #[cfg(target_os = "linux")]
+    pub(super) fn working_directory(&self) -> &Path {
+        &self.directory
+    }
+
     /// Runs the program in `working_directory` with `arguments` as argv[1..].
     ///
     /// Arguments are raw bytes, because the program reads them through the

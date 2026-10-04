@@ -1,8 +1,9 @@
 pkg::bytes: [std::collections::hash_map];
 pkg::protocol: [pkg::bytes];
 pkg::scores: [pkg::bytes, pkg::protocol];
+pkg::extended: [pkg::bytes];
 pkg::store: [pkg::bytes, pkg::protocol, std::collections::hash_map, std::collections::priority_queue, std::collections::ordered_map, std::collections::deque];
-pkg::commands: [pkg::bytes, pkg::protocol, pkg::scores, pkg::store, std::collections::hash_map, std::collections::priority_queue, std::collections::ordered_map, std::collections::deque];
+pkg::commands: [pkg::bytes, pkg::protocol, pkg::scores, pkg::extended, pkg::store, std::collections::hash_map, std::collections::priority_queue, std::collections::ordered_map, std::collections::deque];
 pkg::persistence: [pkg::bytes, pkg::protocol, pkg::store, pkg::commands, std::io, std::fs, std::time];
 pkg::server: [pkg::bytes, pkg::protocol, pkg::store, pkg::commands, pkg::persistence, std::time, std::io, std::fs, std::net, std::text, std::process, std::collections::hash_map, std::collections::priority_queue];
 
