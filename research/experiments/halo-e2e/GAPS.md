@@ -70,6 +70,17 @@ call whose lookup and call have different lines, therefore needs the VM to
 export the actual failing PC; nested protected/callback errors also need
 that information. Reopen with those witnesses before claiming general EVAL
 location parity. The formatter can accept their correct line once exported.
+
+The saved-member witness `local call=redis.call` on line 1, followed by
+`local x=1` on line 2 and `return call("GET","key","extra")` on line 3,
+currently reports `on @user_script:1` instead of the call's line 3.
+`return {pcall(function() missing_global=17 end)}` returns the raw readonly
+message without Lua's `user_script:1:` prefix. Conversely,
+`error("Attempt to modify a readonly table",0)` receives that prefix from
+the test host even though Lua level zero suppresses it. These observed
+witnesses distinguish corpus parity from general failure-location parity;
+they require failure kind/PC information from the VM, outside the permitted
+file boundary of this change.
 The existing corpus's direct command/global errors exercise known locations;
 its pass count alone does not settle this boundary. Command errors caught by
 `pcall` remain plain strings, matching Redis's replacement `pcall`, while
