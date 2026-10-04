@@ -1,0 +1,28 @@
+alias Error = pkg::text::Error;
+
+public enum Event {
+  ObjectBegin();
+  ObjectEnd();
+  ArrayBegin();
+  ArrayEnd();
+  Key();
+  String();
+  Number(public start: u64, public end: u64, public value: f64);
+  True();
+  False();
+  Null();
+  End();
+}
+
+public struct Decoder {
+  public readonly offset: u64;
+  public readonly limit: u64;
+  public readonly stack: Box<Slots<u8>>;
+  public readonly root_done: Bool;
+  public readonly failed: u8;
+  public readonly error_offset: u64;
+}
+
+public fn new(max_depth: u64) -> result: Decoder pure doc "Starts one document. max_depth counts simultaneously open objects and arrays; zero accepts scalars only. The container stack grows on demand, without machine-stack recursion.";
+
+public fn next(source: &[u8], decoder: &Decoder, decoded: &Box<Slots<u8>>) -> result: Result<Event, Error> reads(source), writes(decoder), writes(decoded) doc "Pulls one event. source must be the same immutable byte slice on every call; decoded is caller-owned scratch replaced for Key and String and valid until the next call. Number carries its half-open source range and nearest binary64 conversion; overflow/underflow follow C-locale glibc strtod. Requires exactly one RFC 8259 value and trailing JSON whitespace only. Comments, BOM, leading zeros, trailing commas and nonfinite number spellings are errors. Duplicate keys are emitted unchanged. Invalid UTF-8 and lone surrogate escapes are rejected. End repeats after completion; errors are terminal and repeat the original diagnostic. Destroy/recreate the state to restart.";

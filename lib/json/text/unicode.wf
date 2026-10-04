@@ -1,0 +1,154 @@
+fn continuation(byte: u16) -> yes: Bool pure {
+  if byte >= 128_u16 {
+    return byte <= 191_u16;
+  }
+  return False();
+}
+
+fn utf8_width(source: &[u8], start: u64) -> width: u64 reads(source) {
+  let a = at(source: source, index: start);
+  if a <= 127_u16 {
+    return 1_u64;
+  }
+  let bpos = start +sat 1_u64;
+  let b = at(source: source, index: bpos);
+  if continuation(byte: b) {
+  } else {
+    return 0_u64;
+  }
+  if a >= 194_u16 {
+    if a <= 223_u16 {
+      return 2_u64;
+    }
+  }
+  let cpos = start +sat 2_u64;
+  let c = at(source: source, index: cpos);
+  if continuation(byte: c) {
+  } else {
+    return 0_u64;
+  }
+  if a >= 224_u16 {
+    if a <= 239_u16 {
+      if a == 224_u16 {
+        if b < 160_u16 {
+          return 0_u64;
+        }
+      }
+      if a == 237_u16 {
+        if b >= 160_u16 {
+          return 0_u64;
+        }
+      }
+      return 3_u64;
+    }
+  }
+  let dpos = start +sat 3_u64;
+  let d = at(source: source, index: dpos);
+  if continuation(byte: d) {
+  } else {
+    return 0_u64;
+  }
+  if a >= 240_u16 {
+    if a <= 244_u16 {
+      if a == 240_u16 {
+        if b < 144_u16 {
+          return 0_u64;
+        }
+      }
+      if a == 244_u16 {
+        if b > 143_u16 {
+          return 0_u64;
+        }
+      }
+      return 4_u64;
+    }
+  }
+  return 0_u64;
+}
+
+fn hex(byte: u16) -> digit: u32 pure {
+  let wide = cvt::<u16, u32>(byte);
+  if byte >= 48_u16 {
+    if byte <= 57_u16 {
+      return wide -wrap 48_u32;
+    }
+  }
+  if byte >= 65_u16 {
+    if byte <= 70_u16 {
+      return wide -wrap 55_u32;
+    }
+  }
+  if byte >= 97_u16 {
+    if byte <= 102_u16 {
+      return wide -wrap 87_u32;
+    }
+  }
+  return 16_u32;
+}
+
+fn hex4(source: &[u8], start: u64) -> result: Result<u32, Error> reads(source) {
+  let value = 0_u32;
+  for (i in 0_u64..4_u64) {
+    let p = start +sat i;
+    let b = at(source: source, index: p);
+    let h = hex(byte: b);
+    if h >= 16_u32 {
+      let offset = imin(p, source^.len);
+      let e = error(code: 10_u8, offset: offset);
+      return Err<u32, Error>(error: move e);
+    }
+    let raised = value *wrap 16_u32;
+    set value = raised +wrap h;
+  }
+  return Ok<u32, Error>(value: value);
+}
+
+fn scalar(buffer: &Box<Slots<u8>>, value: u32) -> result: Bool writes(buffer) {
+  if value < 128_u32 {
+    let b = cvt.wrap::<u32, u8>(value);
+    return put(buffer: buffer, byte: b);
+  }
+  let shifts = array_filled::<u32, 4>(value: 0_u32);
+  let length = 0_u64;
+  if value < 2048_u32 {
+    let head = ishr.wrap(value, 6_u32);
+    set shifts[0_u64] = ior(head, 192_u32);
+    set length = 2_u64;
+  } else if value < 65536_u32 {
+    let head = ishr.wrap(value, 12_u32);
+    set shifts[0_u64] = ior(head, 224_u32);
+    let middle = ishr.wrap(value, 6_u32);
+    let low = iand(middle, 63_u32);
+    set shifts[1_u64] = ior(low, 128_u32);
+    set length = 3_u64;
+  } else {
+    let head = ishr.wrap(value, 18_u32);
+    set shifts[0_u64] = ior(head, 240_u32);
+    let middle = ishr.wrap(value, 12_u32);
+    let low = iand(middle, 63_u32);
+    set shifts[1_u64] = ior(low, 128_u32);
+    let lower = ishr.wrap(value, 6_u32);
+    let lower_low = iand(lower, 63_u32);
+    set shifts[2_u64] = ior(lower_low, 128_u32);
+    set length = 4_u64;
+  }
+  let low = iand(value, 63_u32);
+  let last = ior(low, 128_u32);
+  if length > 0_u64 {
+    let tail = length - 1_u64;
+    if tail < 4_u64 {
+      set shifts[tail] = last;
+    }
+  }
+  for (i in 0_u64..length) {
+    if i < 4_u64 {
+      let code = shifts[i];
+      let byte = cvt.wrap::<u32, u8>(code);
+      if put(buffer: buffer, byte: byte) {
+      } else {
+        return False();
+      }
+    }
+  }
+  return True();
+}

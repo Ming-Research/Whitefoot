@@ -1,0 +1,31 @@
+alias Error = pkg::text::Error;
+
+public struct Writer {
+  public readonly stack: Box<Slots<u8>>;
+  public readonly root_done: Bool;
+  public readonly escape_slash: Bool;
+}
+
+public fn new(escape_slash: Bool) -> result: Writer pure doc "Starts one appended JSON document; slash escaping is optional, for callers requiring cjson-style backslash slash. Output belongs to the caller and may already contain a prefix. Keep using the same output until finish; do not mutate Writer fields or output during a document.";
+
+public fn begin_object(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) doc "Begins an object value with automatic comma placement.";
+
+public fn end_object(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) doc "Closes the current object, refusing a key without its value or mismatched nesting.";
+
+public fn begin_array(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) doc "Begins an array value with automatic comma placement.";
+
+public fn end_array(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) doc "Closes the current array, refusing mismatched nesting.";
+
+public fn key(writer: &Writer, output: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, Error> reads(bytes), writes(writer), writes(output) doc "Appends a UTF-8 object key with escaping, comma and colon. Keys are permitted only when the current object expects one. Invalid UTF-8 is refused before any bytes or state change.";
+
+public fn string(writer: &Writer, output: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, Error> reads(bytes), writes(writer), writes(output) doc "Appends a UTF-8 string value, escaping quote, backslash, controls and optionally slash; other Unicode is preserved. Invalid UTF-8 is refused before any bytes or state change.";
+
+public fn number(writer: &Writer, output: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, Error> reads(bytes), writes(writer), writes(output) doc "Appends caller-formatted text, after validating it as exactly one RFC 8259 number. No whitespace, NaN or Infinity text is admitted; no formatting or conversion is performed. Invalid text is refused before any bytes or state change.";
+
+public fn true(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) doc "Appends the raw true literal as a value.";
+
+public fn false(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) doc "Appends the raw false literal as a value.";
+
+public fn null(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) doc "Appends the raw null literal as a value.";
+
+public fn finish(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> reads(writer), reads(output) doc "Verifies exactly one finished value and no unclosed container. Ordinary errors preserve state and output so a call can be corrected. Code 20 capacity exhaustion can leave partial bytes and requires discarding this document.";

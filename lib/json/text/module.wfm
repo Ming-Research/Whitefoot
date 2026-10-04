@@ -1,0 +1,19 @@
+public struct Error {
+  public offset: u64;
+  public code: u8;
+  public message: Slots<u8, 40>;
+}
+
+public fn error(code: u8, offset: u64) -> result: Error pure doc "Owned diagnostic: zero-based byte offset, stable code 1..20 and ASCII message. EOF errors use source length; writer errors use current output length except invalid text, which uses a text-relative offset.";
+
+public fn at(source: &[u8], index: u64) -> byte: u16 reads(source) doc "Byte or 256 at/past EOF.";
+
+public fn space(byte: u16) -> yes: Bool pure doc "RFC 8259 whitespace: space, tab, CR, LF.";
+
+public fn clear(buffer: &Box<Slots<u8>>) -> result: unit writes(buffer) doc "Empties without releasing capacity.";
+
+public fn put(buffer: &Box<Slots<u8>>, byte: u8) -> result: Bool writes(buffer) doc "Appends with geometric growth; false at the u64 capacity ceiling, preserving all existing bytes.";
+
+public fn utf8_width(source: &[u8], start: u64) -> width: u64 reads(source) doc "Valid Unicode scalar encoding length at start, or zero. Rejects overlong sequences, surrogate code points, truncated sequences and values above U+10FFFF.";
+
+public fn string(source: &[u8], start: u64, decoded: &Box<Slots<u8>>) -> result: Result<u64, Error> reads(source), writes(decoded) doc "Reads one quoted JSON string beginning at start, replacing decoded with UTF-8 bytes, and returns the position after its quote. Decodes every JSON escape, including NUL and surrogate pairs. Rejects lone surrogates at the first hex digit of that escape, invalid UTF-8 at its leading byte, bad hex at that byte, and missing input at EOF. A missing opening quote is code 1 at start clamped to source length. On error decoded can contain a partial string.";

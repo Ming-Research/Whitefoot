@@ -1,0 +1,231 @@
+alias Error = json::text::Error;
+
+fn record_byte(buffer: &Box<Slots<u8>>, byte: u8) -> result: unit writes(buffer) {
+  let appended = json::text::put(buffer: buffer, byte: byte);
+  return unit;
+}
+
+fn record_word(buffer: &Box<Slots<u8>>, value: u64) -> result: unit writes(buffer) {
+  for (i in 0_u64..8_u64) {
+    let distance = i *wrap 8_u64;
+    let shift = cvt.wrap::<u64, u32>(distance);
+    let part = ishr.wrap(value, shift);
+    let b = cvt.wrap::<u64, u8>(part);
+    record_byte(buffer: buffer, byte: b);
+  }
+  return unit;
+}
+
+fn record_text(buffer: &Box<Slots<u8>>, decoded: &Box<Slots<u8>>) -> result: unit reads(decoded), writes(buffer) {
+  let n = decoded^.inner.len;
+  record_word(buffer: buffer, value: n);
+  for (i in 0_u64..n) {
+    if i < decoded^.inner.len {
+      let b = decoded^.inner[i];
+      record_byte(buffer: buffer, byte: b);
+    }
+  }
+  return unit;
+}
+
+fn roundtrip(source: &[u8], output: &Box<Slots<u8>>, events: &Box<Slots<u8>>, depth: u64, slash: Bool) -> result: Result<unit, Error> reads(source), writes(output), writes(events) {
+  let decoder = json::decode::new(max_depth: depth);
+  let writer = json::encode::new(escape_slash: slash);
+  let decoded = box_slots_new::<u8>(capacity: 0_u64);
+  loop @events {
+    match json::decode::next(source: source, decoder: &decoder, decoded: &decoded) {
+      Err(error: problem) => {
+        match json::decode::next(source: source, decoder: &decoder, decoded: &decoded) {
+          Err(error: repeated) => {
+            if repeated.code != problem.code {
+              let e = json::text::error(code: 15_u8, offset: 0_u64);
+              return Err<unit, Error>(error: move e);
+            }
+            if repeated.offset != problem.offset {
+              let e = json::text::error(code: 15_u8, offset: 0_u64);
+              return Err<unit, Error>(error: move e);
+            }
+          }
+          Ok(value: unexpected) => {
+            let e = json::text::error(code: 15_u8, offset: 0_u64);
+            return Err<unit, Error>(error: move e);
+          }
+        }
+        return Err<unit, Error>(error: move problem);
+      }
+      Ok(value: event) => {
+        match event {
+          ObjectBegin() => {
+            record_byte(buffer: events, byte: 1_u8);
+            match json::encode::begin_object(writer: &writer, output: output) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          ObjectEnd() => {
+            record_byte(buffer: events, byte: 2_u8);
+            match json::encode::end_object(writer: &writer, output: output) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          ArrayBegin() => {
+            record_byte(buffer: events, byte: 3_u8);
+            match json::encode::begin_array(writer: &writer, output: output) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          ArrayEnd() => {
+            record_byte(buffer: events, byte: 4_u8);
+            match json::encode::end_array(writer: &writer, output: output) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          True() => {
+            record_byte(buffer: events, byte: 8_u8);
+            match json::encode::true(writer: &writer, output: output) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          False() => {
+            record_byte(buffer: events, byte: 9_u8);
+            match json::encode::false(writer: &writer, output: output) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          Null() => {
+            record_byte(buffer: events, byte: 10_u8);
+            match json::encode::null(writer: &writer, output: output) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          Key() => {
+            record_byte(buffer: events, byte: 5_u8);
+            record_text(buffer: events, decoded: &decoded);
+            let n = decoded.inner.len;
+            match json::encode::key(writer: &writer, output: output, bytes: &decoded.inner[0_u64..n]) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          String() => {
+            record_byte(buffer: events, byte: 6_u8);
+            record_text(buffer: events, decoded: &decoded);
+            let n = decoded.inner.len;
+            match json::encode::string(writer: &writer, output: output, bytes: &decoded.inner[0_u64..n]) {
+              Ok(value: done) => {
+              }
+              Err(error: e) => {
+                return Err<unit, Error>(error: move e);
+              }
+            }
+          }
+          Number(start: begin, end: stop, value: number) => {
+            record_byte(buffer: events, byte: 7_u8);
+            record_word(buffer: events, value: begin);
+            record_word(buffer: events, value: stop);
+            let bits = reinterpret::<f64, u64>(number);
+            record_word(buffer: events, value: bits);
+            if begin <= stop {
+              if stop <= source^.len {
+                match json::encode::number(writer: &writer, output: output, bytes: &source^[begin..stop]) {
+                  Ok(value: done) => {
+                  }
+                  Err(error: e) => {
+                    return Err<unit, Error>(error: move e);
+                  }
+                }
+              }
+            }
+          }
+          End() => {
+            record_byte(buffer: events, byte: 11_u8);
+            match json::decode::next(source: source, decoder: &decoder, decoded: &decoded) {
+              Err(error: problem) => {
+                return Err<unit, Error>(error: move problem);
+              }
+              Ok(value: repeat) => {
+                match repeat {
+                  End() => {
+                  }
+                  ObjectBegin() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  ObjectEnd() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  ArrayBegin() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  ArrayEnd() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  Key() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  String() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  True() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  False() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  Null() => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                  Number(start: begin, end: stop, value: number) => {
+                    let e = json::text::error(code: 15_u8, offset: 0_u64);
+                    return Err<unit, Error>(error: move e);
+                  }
+                }
+              }
+            }
+            return json::encode::finish(writer: &writer, output: output);
+          }
+        }
+      }
+    }
+  }
+  let e = json::text::error(code: 19_u8, offset: 0_u64);
+  return Err<unit, Error>(error: move e);
+}

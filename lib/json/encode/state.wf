@@ -1,0 +1,164 @@
+alias Error = pkg::text::Error;
+
+fn new(escape_slash: Bool) -> result: Writer pure {
+  let stack = box_slots_new::<u8>(capacity: 0_u64);
+  let no = False();
+  return Writer(stack: move stack, root_done: no, escape_slash: escape_slash);
+}
+
+fn failure(code: u8, offset: u64) -> result: Result<unit, Error> pure {
+  let e = pkg::text::error(code: code, offset: offset);
+  return Err<unit, Error>(error: move e);
+}
+
+fn emit_byte(output: &Box<Slots<u8>>, byte: u8) -> result: Result<unit, Error> writes(output) {
+  if pkg::text::put(buffer: output, byte: byte) {
+    return Ok<unit, Error>(value: unit);
+  }
+  return failure(code: 20_u8, offset: output^.inner.len);
+}
+
+fn validate(bytes: &[u8]) -> result: Result<unit, Error> reads(bytes) {
+  let p = 0_u64;
+  loop {
+    if p >= bytes^.len {
+      return Ok<unit, Error>(value: unit);
+    }
+    let width = pkg::text::utf8_width(source: bytes, start: p);
+    if width == 0_u64 {
+      return failure(code: 12_u8, offset: p);
+    }
+    set p = p +sat width;
+  }
+  return Ok<unit, Error>(value: unit);
+}
+
+fn prefix(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) {
+  let n = writer^.stack.inner.len;
+  if n == 0_u64 {
+    if writer^.root_done {
+      return failure(code: 5_u8, offset: output^.inner.len);
+    }
+    set writer^.root_done = True();
+    return Ok<unit, Error>(value: unit);
+  }
+  if n > 0_u64 {
+    let i = n - 1_u64;
+    if i < writer^.stack.inner.len {
+      let phase = writer^.stack.inner[i];
+      if phase == 4_u8 {
+        set writer^.stack.inner[i] = 3_u8;
+        return Ok<unit, Error>(value: unit);
+      }
+      if phase >= 2_u8 {
+        return failure(code: 16_u8, offset: output^.inner.len);
+      }
+      if phase == 1_u8 {
+        match emit_byte(output: output, byte: 44_u8) {
+          Ok(value: done) => {
+          }
+          Err(error: e) => {
+            return Err<unit, Error>(error: move e);
+          }
+        }
+      }
+      set writer^.stack.inner[i] = 1_u8;
+      return Ok<unit, Error>(value: unit);
+    }
+  }
+  return failure(code: 19_u8, offset: output^.inner.len);
+}
+
+fn begin(writer: &Writer, output: &Box<Slots<u8>>, object: Bool) -> result: Result<unit, Error> writes(writer), writes(output) {
+  match prefix(writer: writer, output: output) {
+    Ok(value: done) => {
+    }
+    Err(error: e) => {
+      return Err<unit, Error>(error: move e);
+    }
+  }
+  let byte = 91_u8;
+  let phase = 0_u8;
+  if object {
+    set byte = 123_u8;
+    set phase = 2_u8;
+  }
+  match emit_byte(output: output, byte: byte) {
+    Ok(value: done) => {
+    }
+    Err(error: e) => {
+      return Err<unit, Error>(error: move e);
+    }
+  }
+  if pkg::text::put(buffer: &writer^.stack, byte: phase) {
+  } else {
+    return failure(code: 20_u8, offset: output^.inner.len);
+  }
+  return Ok<unit, Error>(value: unit);
+}
+
+fn close(writer: &Writer, output: &Box<Slots<u8>>, object: Bool) -> result: Result<unit, Error> writes(writer), writes(output) {
+  let n = writer^.stack.inner.len;
+  if n == 0_u64 {
+    return failure(code: 18_u8, offset: output^.inner.len);
+  }
+  if n > 0_u64 {
+    let i = n - 1_u64;
+    if i < writer^.stack.inner.len {
+      let phase = writer^.stack.inner[i];
+      let byte = 93_u8;
+      if object {
+        if phase < 2_u8 {
+          return failure(code: 18_u8, offset: output^.inner.len);
+        }
+        if phase == 4_u8 {
+          return failure(code: 17_u8, offset: output^.inner.len);
+        }
+        set byte = 125_u8;
+      } else if phase >= 2_u8 {
+        return failure(code: 18_u8, offset: output^.inner.len);
+      }
+      match emit_byte(output: output, byte: byte) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      let dropped = take_back(window: &writer^.stack.inner);
+      return Ok<unit, Error>(value: unit);
+    }
+  }
+  return failure(code: 18_u8, offset: output^.inner.len);
+}
+
+fn finish(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> reads(writer), reads(output) {
+  if writer^.root_done {
+  } else {
+    return failure(code: 19_u8, offset: output^.inner.len);
+  }
+  if writer^.stack.inner.len != 0_u64 {
+    return failure(code: 19_u8, offset: output^.inner.len);
+  }
+  return Ok<unit, Error>(value: unit);
+}
+
+fn begin_object(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) {
+  let object = True();
+  return begin(writer: writer, output: output, object: object);
+}
+
+fn begin_array(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) {
+  let object = False();
+  return begin(writer: writer, output: output, object: object);
+}
+
+fn end_object(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) {
+  let object = True();
+  return close(writer: writer, output: output, object: object);
+}
+
+fn end_array(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) {
+  let object = False();
+  return close(writer: writer, output: output, object: object);
+}

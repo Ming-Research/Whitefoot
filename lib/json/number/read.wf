@@ -1,0 +1,227 @@
+fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) {
+  doc "Reads one byte, or zero at a position the range does not hold.";
+  if index < input^.len {
+    let value = input^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+const sign_bit: u64 = 9223372036854775808_u64;
+
+const powers_of_ten: Array<f64, 23> =[1.0_f64, 10.0_f64, 1.0e2_f64, 1.0e3_f64, 1.0e4_f64, 1.0e5_f64, 1.0e6_f64, 1.0e7_f64, 1.0e8_f64, 1.0e9_f64, 1.0e10_f64, 1.0e11_f64, 1.0e12_f64, 1.0e13_f64, 1.0e14_f64, 1.0e15_f64, 1.0e16_f64, 1.0e17_f64, 1.0e18_f64, 1.0e19_f64, 1.0e20_f64, 1.0e21_f64, 1.0e22_f64];
+
+struct NumberBits {
+  doc "A number's magnitude as the bits of a double, its sign bit clear, and whether conversion succeeded.";
+  bits: u64;
+  valid: Bool;
+}
+
+struct Exponent {
+  doc "An exponent read after its marker: its value, saturated, the position after its last digit, and whether it had a digit.";
+  value: i64;
+  next: u64;
+  valid: Bool;
+}
+
+fn refused() -> result: NumberBits pure {
+  doc "Invalid decimal text.";
+  let invalid = False();
+  return NumberBits(bits: 0_u64, valid: invalid);
+}
+
+fn accepted(bits: u64) -> result: NumberBits pure {
+  doc "Converted nonnegative magnitude.";
+  let valid = True();
+  return NumberBits(bits: bits, valid: valid);
+}
+
+fn decimal_digit(byte: u8) -> value: u8 pure {
+  doc "A decimal digit's value, or 10 for any other byte.";
+  let low = byte >= 48_u8;
+  let high = byte <= 57_u8;
+  let within = band(low, high);
+  if within {
+    let face = byte -wrap 48_u8;
+    return face;
+  }
+  return 10_u8;
+}
+
+fn read_exponent(input: &[u8], start: u64, end: u64) -> exponent: Exponent reads(input) {
+  doc "Reads an exponent's optional sign and decimal digits from the position after its marker, its value saturating; it is not valid without a digit, since strtod then stops before the marker.";
+  let position = start;
+  let sign = byte_at(input: input, index: position);
+  let sign_inside = position < end;
+  let minus = sign == 45_u8;
+  let plus = sign == 43_u8;
+  let sign_written = bor(minus, plus);
+  let skip_sign = band(sign_inside, sign_written);
+  if skip_sign {
+    set position = position +wrap 1_u64;
+  }
+  let magnitude = 0_i64;
+  let digits = 0_u64;
+  loop @digits {
+    if position >= end {
+      break @digits;
+    }
+    let byte = byte_at(input: input, index: position);
+    let digit = decimal_digit(byte: byte);
+    if digit >= 10_u8 {
+      break @digits;
+    }
+    let wide = cvt::<u8, i64>(digit);
+    let tens = magnitude *sat 10_i64;
+    set magnitude = tens +sat wide;
+    set digits = digits +wrap 1_u64;
+    set position = position +wrap 1_u64;
+  }
+  let negative = band(skip_sign, minus);
+  if negative {
+    set magnitude = 0_i64 -sat magnitude;
+  }
+  let found = digits > 0_u64;
+  return Exponent(value: magnitude, next: position, valid: found);
+}
+
+fn quick_decimal(decimal: &Decimal) -> read: NumberBits reads(decimal) {
+  doc "The double nearest a decimal of at most 19 digits, w times 10^p with p its point less its count, that holds every digit it was read from: for p zero, one conversion of w; for w at most 2^53 and p from -22 to 22, where w and 10^|p| are exact doubles, one IEEE multiplication or division, which rounds the value correctly. Any other decimal is refused here and left to Simple Decimal Conversion, also one whose digits trim to 19 or fewer after a nonzero digit past the 800 held was dropped, since that digit decides a tie the value w times 10^p would round to even.";
+  if decimal^.truncated {
+    return refused();
+  }
+  let count = decimal^.count;
+  if count > 19_u64 {
+    return refused();
+  }
+  let whole = 0_u64;
+  for @digits (index in 0_u64..count) {
+    let digit = digit_at(decimal: decimal, index: index);
+    let wide = cvt::<u8, u64>(digit);
+    let tens = whole *wrap 10_u64;
+    set whole = tens +wrap wide;
+  }
+  let length = cvt.wrap::<u64, i64>(count);
+  let power = decimal^.point -sat length;
+  if power == 0_i64 {
+    let exact = cvt.nearest::<u64, f64>(whole);
+    let exact_bits = reinterpret::<f64, u64>(exact);
+    return accepted(bits: exact_bits);
+  }
+  if whole > 9007199254740992_u64 {
+    return refused();
+  }
+  if power > 22_i64 {
+    return refused();
+  }
+  if power < -22_i64 {
+    return refused();
+  }
+  let base = cvt.nearest::<u64, f64>(whole);
+  if power > 0_i64 {
+    let up_index = cvt.wrap::<i64, u64>(power);
+    if up_index < 23_u64 {
+      let up_scale = powers_of_ten[up_index];
+      let product = fmul.strict(base, up_scale);
+      let product_bits = reinterpret::<f64, u64>(product);
+      return accepted(bits: product_bits);
+    }
+  }
+  let depth = 0_i64 -wrap power;
+  let down_index = cvt.wrap::<i64, u64>(depth);
+  if down_index < 23_u64 {
+    let down_scale = powers_of_ten[down_index];
+    let quotient = fdiv.strict(base, down_scale);
+    let quotient_bits = reinterpret::<f64, u64>(quotient);
+    return accepted(bits: quotient_bits);
+  }
+  return refused();
+}
+
+fn read_decimal(input: &[u8], start: u64, end: u64) -> read: NumberBits reads(input) {
+  doc "Reads a decimal number, digits with an optional point and then an optional exponent, e or E with an optional sign and at least one digit, filling every byte up to end. The double nearest it comes from quick_decimal when that applies and from Simple Decimal Conversion otherwise; range errors produce infinity or zero with IEEE binary64 range semantics.";
+  let digits = array_filled::<u8, 800>(value: 0_u8);
+  let exact = False();
+  let decimal = Decimal(digits: digits, count: 0_u64, point: 0_i64, truncated: exact);
+  let position = start;
+  let seen = 0_u64;
+  let significant = False();
+  loop @integral {
+    if position >= end {
+      break @integral;
+    }
+    let byte = byte_at(input: input, index: position);
+    let digit = decimal_digit(byte: byte);
+    if digit >= 10_u8 {
+      break @integral;
+    }
+    set seen = seen +wrap 1_u64;
+    if digit != 0_u8 {
+      set significant = True();
+    }
+    if significant {
+      add_digit(decimal: &decimal, digit: digit);
+      set decimal.point = decimal.point +sat 1_i64;
+    }
+    set position = position +wrap 1_u64;
+  }
+  let dot = byte_at(input: input, index: position);
+  let dot_inside = position < end;
+  let pointed = dot == 46_u8;
+  let fractional = band(dot_inside, pointed);
+  if fractional {
+    set position = position +wrap 1_u64;
+    loop @fraction {
+      if position >= end {
+        break @fraction;
+      }
+      let fraction_byte = byte_at(input: input, index: position);
+      let fraction_digit = decimal_digit(byte: fraction_byte);
+      if fraction_digit >= 10_u8 {
+        break @fraction;
+      }
+      set seen = seen +wrap 1_u64;
+      if fraction_digit != 0_u8 {
+        set significant = True();
+      }
+      if significant {
+        add_digit(decimal: &decimal, digit: fraction_digit);
+      } else {
+        set decimal.point = decimal.point -sat 1_i64;
+      }
+      set position = position +wrap 1_u64;
+    }
+  }
+  if seen == 0_u64 {
+    return refused();
+  }
+  let marker = byte_at(input: input, index: position);
+  let marker_inside = position < end;
+  let lower_e = marker == 101_u8;
+  let upper_e = marker == 69_u8;
+  let either_e = bor(lower_e, upper_e);
+  let exponential = band(marker_inside, either_e);
+  if exponential {
+    let after_marker = position +wrap 1_u64;
+    let power = read_exponent(input: input, start: after_marker, end: end);
+    if power.valid {
+    } else {
+      return refused();
+    }
+    set position = power.next;
+    set decimal.point = decimal.point +sat power.value;
+  }
+  if position != end {
+    return refused();
+  }
+  trim(decimal: &decimal);
+  if decimal.count == 0_u64 {
+    return accepted(bits: 0_u64);
+  }
+  let quick = quick_decimal(decimal: &decimal);
+  if quick.valid {
+    return quick;
+  }
+  let converted = decimal_bits(decimal: &decimal);
+  return accepted(bits: converted);
+}

@@ -1,0 +1,138 @@
+fn string(source: &[u8], start: u64, decoded: &Box<Slots<u8>>) -> result: Result<u64, Error> reads(source), writes(decoded) {
+  clear(buffer: decoded);
+  let quote = at(source: source, index: start);
+  if quote != 34_u16 {
+    let offset = imin(start, source^.len);
+    let e = error(code: 1_u8, offset: offset);
+    return Err<u64, Error>(error: move e);
+  }
+  let p = start +sat 1_u64;
+  loop @bytes {
+    let c = at(source: source, index: p);
+    if c == 256_u16 {
+      let e = error(code: 7_u8, offset: source^.len);
+      return Err<u64, Error>(error: move e);
+    }
+    if c == 34_u16 {
+      let end = p +sat 1_u64;
+      return Ok<u64, Error>(value: end);
+    }
+    if c < 32_u16 {
+      let e = error(code: 8_u8, offset: p);
+      return Err<u64, Error>(error: move e);
+    }
+    if c == 92_u16 {
+      set p = p +sat 1_u64;
+      let escaped = at(source: source, index: p);
+      if escaped == 117_u16 {
+        let first = p +sat 1_u64;
+        let value = 0_u32;
+        match hex4(source: source, start: first) {
+          Ok(value: code) => {
+            set value = code;
+          }
+          Err(error: e) => {
+            return Err<u64, Error>(error: move e);
+          }
+        }
+        set p = first +sat 4_u64;
+        if value >= 55296_u32 {
+          if value <= 56319_u32 {
+            let slash = at(source: source, index: p);
+            let marker_pos = p +sat 1_u64;
+            let marker = at(source: source, index: marker_pos);
+            let has_slash = slash == 92_u16;
+            let has_u = marker == 117_u16;
+            if band(has_slash, has_u) {
+            } else {
+              let e = error(code: 11_u8, offset: first);
+              return Err<u64, Error>(error: move e);
+            }
+            let second = p +sat 2_u64;
+            let low = 0_u32;
+            match hex4(source: source, start: second) {
+              Ok(value: code) => {
+                set low = code;
+              }
+              Err(error: e) => {
+                return Err<u64, Error>(error: move e);
+              }
+            }
+            if low >= 56320_u32 {
+              if low <= 57343_u32 {
+                let upper = value -wrap 55296_u32;
+                let lower = low -wrap 56320_u32;
+                let scaled = upper *wrap 1024_u32;
+                let joined = scaled +wrap lower;
+                set value = joined +wrap 65536_u32;
+              } else {
+                let e = error(code: 11_u8, offset: second);
+                return Err<u64, Error>(error: move e);
+              }
+            } else {
+              let e = error(code: 11_u8, offset: second);
+              return Err<u64, Error>(error: move e);
+            }
+            set p = second +sat 4_u64;
+          } else if value <= 57343_u32 {
+            let e = error(code: 11_u8, offset: first);
+            return Err<u64, Error>(error: move e);
+          }
+        }
+        if scalar(buffer: decoded, value: value) {
+        } else {
+          let e = error(code: 20_u8, offset: p);
+          return Err<u64, Error>(error: move e);
+        }
+      } else {
+        let byte = 0_u8;
+        if escaped == 34_u16 {
+          set byte = 34_u8;
+        } else if escaped == 92_u16 {
+          set byte = 92_u8;
+        } else if escaped == 47_u16 {
+          set byte = 47_u8;
+        } else if escaped == 98_u16 {
+          set byte = 8_u8;
+        } else if escaped == 102_u16 {
+          set byte = 12_u8;
+        } else if escaped == 110_u16 {
+          set byte = 10_u8;
+        } else if escaped == 114_u16 {
+          set byte = 13_u8;
+        } else if escaped == 116_u16 {
+          set byte = 9_u8;
+        } else {
+          let offset = imin(p, source^.len);
+          let e = error(code: 9_u8, offset: offset);
+          return Err<u64, Error>(error: move e);
+        }
+        if put(buffer: decoded, byte: byte) {
+        } else {
+          let e = error(code: 20_u8, offset: p);
+          return Err<u64, Error>(error: move e);
+        }
+        set p = p +sat 1_u64;
+      }
+    } else {
+      let width = utf8_width(source: source, start: p);
+      if width == 0_u64 {
+        let e = error(code: 12_u8, offset: p);
+        return Err<u64, Error>(error: move e);
+      }
+      for (i in 0_u64..width) {
+        let index = p +sat i;
+        let wide = at(source: source, index: index);
+        let byte = cvt.wrap::<u16, u8>(wide);
+        if put(buffer: decoded, byte: byte) {
+        } else {
+          let e = error(code: 20_u8, offset: index);
+          return Err<u64, Error>(error: move e);
+        }
+      }
+      set p = p +sat width;
+    }
+  }
+  let e = error(code: 7_u8, offset: source^.len);
+  return Err<u64, Error>(error: move e);
+}

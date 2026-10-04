@@ -1,0 +1,250 @@
+alias Error = pkg::text::Error;
+
+fn hex_glyph(value: u8) -> byte: u8 pure {
+  if value < 10_u8 {
+    return value +wrap 48_u8;
+  }
+  return value +wrap 87_u8;
+}
+
+fn quoted(writer: &Writer, output: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, Error> reads(writer), reads(bytes), writes(output) {
+  match emit_byte(output: output, byte: 34_u8) {
+    Ok(value: done) => {
+    }
+    Err(error: e) => {
+      return Err<unit, Error>(error: move e);
+    }
+  }
+  for (i in 0_u64..bytes^.len) {
+    let c = bytes^[i];
+    let escaped = 0_u8;
+    if c == 34_u8 {
+      set escaped = 34_u8;
+    } else if c == 92_u8 {
+      set escaped = 92_u8;
+    } else if c == 47_u8 {
+      if writer^.escape_slash {
+        set escaped = 47_u8;
+      }
+    } else if c == 8_u8 {
+      set escaped = 98_u8;
+    } else if c == 9_u8 {
+      set escaped = 116_u8;
+    } else if c == 10_u8 {
+      set escaped = 110_u8;
+    } else if c == 12_u8 {
+      set escaped = 102_u8;
+    } else if c == 13_u8 {
+      set escaped = 114_u8;
+    }
+    if escaped != 0_u8 {
+      match emit_byte(output: output, byte: 92_u8) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      match emit_byte(output: output, byte: escaped) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+    } else if c < 32_u8 {
+      match emit_byte(output: output, byte: 92_u8) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      match emit_byte(output: output, byte: 117_u8) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      match emit_byte(output: output, byte: 48_u8) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      match emit_byte(output: output, byte: 48_u8) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      let high = ishr.wrap(c, 4_u32);
+      let low = iand(c, 15_u8);
+      let a = hex_glyph(value: high);
+      let b = hex_glyph(value: low);
+      match emit_byte(output: output, byte: a) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      match emit_byte(output: output, byte: b) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+    } else {
+      match emit_byte(output: output, byte: c) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+    }
+  }
+  return emit_byte(output: output, byte: 34_u8);
+}
+
+fn string(writer: &Writer, output: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, Error> reads(bytes), writes(writer), writes(output) {
+  match validate(bytes: bytes) {
+    Ok(value: done) => {
+    }
+    Err(error: e) => {
+      return Err<unit, Error>(error: move e);
+    }
+  }
+  match prefix(writer: writer, output: output) {
+    Ok(value: done) => {
+    }
+    Err(error: e) => {
+      return Err<unit, Error>(error: move e);
+    }
+  }
+  return quoted(writer: writer, output: output, bytes: bytes);
+}
+
+fn key(writer: &Writer, output: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, Error> reads(bytes), writes(writer), writes(output) {
+  match validate(bytes: bytes) {
+    Ok(value: done) => {
+    }
+    Err(error: e) => {
+      return Err<unit, Error>(error: move e);
+    }
+  }
+  let n = writer^.stack.inner.len;
+  if n > 0_u64 {
+    let i = n - 1_u64;
+    if i < writer^.stack.inner.len {
+      let phase = writer^.stack.inner[i];
+      if phase < 2_u8 {
+        return failure(code: 16_u8, offset: output^.inner.len);
+      }
+      if phase == 4_u8 {
+        return failure(code: 17_u8, offset: output^.inner.len);
+      }
+      if phase == 3_u8 {
+        match emit_byte(output: output, byte: 44_u8) {
+          Ok(value: done) => {
+          }
+          Err(error: e) => {
+            return Err<unit, Error>(error: move e);
+          }
+        }
+      }
+      match quoted(writer: writer, output: output, bytes: bytes) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      match emit_byte(output: output, byte: 58_u8) {
+        Ok(value: done) => {
+        }
+        Err(error: e) => {
+          return Err<unit, Error>(error: move e);
+        }
+      }
+      if i < writer^.stack.inner.len {
+        set writer^.stack.inner[i] = 4_u8;
+      }
+      return Ok<unit, Error>(value: unit);
+    }
+  }
+  return failure(code: 16_u8, offset: output^.inner.len);
+}
+
+fn number(writer: &Writer, output: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, Error> reads(bytes), writes(writer), writes(output) {
+  let scanned = pkg::number::scan(source: bytes, start: 0_u64);
+  if scanned.valid {
+  } else {
+    return failure(code: 13_u8, offset: scanned.error);
+  }
+  if scanned.end != bytes^.len {
+    return failure(code: 13_u8, offset: scanned.end);
+  }
+  match prefix(writer: writer, output: output) {
+    Ok(value: done) => {
+    }
+    Err(error: e) => {
+      return Err<unit, Error>(error: move e);
+    }
+  }
+  for (i in 0_u64..bytes^.len) {
+    let b = bytes^[i];
+    match emit_byte(output: output, byte: b) {
+      Ok(value: done) => {
+      }
+      Err(error: e) => {
+        return Err<unit, Error>(error: move e);
+      }
+    }
+  }
+  return Ok<unit, Error>(value: unit);
+}
+
+fn raw(writer: &Writer, output: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, Error> reads(bytes), writes(writer), writes(output) {
+  match prefix(writer: writer, output: output) {
+    Ok(value: done) => {
+    }
+    Err(error: e) => {
+      return Err<unit, Error>(error: move e);
+    }
+  }
+  for (i in 0_u64..bytes^.len) {
+    let b = bytes^[i];
+    match emit_byte(output: output, byte: b) {
+      Ok(value: done) => {
+      }
+      Err(error: e) => {
+        return Err<unit, Error>(error: move e);
+      }
+    }
+  }
+  return Ok<unit, Error>(value: unit);
+}
+
+const true_word: Array<u8, 4> = "true";
+
+fn true(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) {
+  return raw(writer: writer, output: output, bytes: &true_word[0_u64..4_u64]);
+}
+
+const false_word: Array<u8, 5> = "false";
+
+fn false(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) {
+  return raw(writer: writer, output: output, bytes: &false_word[0_u64..5_u64]);
+}
+
+const null_word: Array<u8, 4> = "null";
+
+fn null(writer: &Writer, output: &Box<Slots<u8>>) -> result: Result<unit, Error> writes(writer), writes(output) {
+  return raw(writer: writer, output: output, bytes: &null_word[0_u64..4_u64]);
+}

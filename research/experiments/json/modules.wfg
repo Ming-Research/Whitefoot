@@ -1,0 +1,5 @@
+package json = "../../../lib/json";
+
+pkg::check: [json::decode, json::encode, json::number, json::text, std::process, std::io, std::fs, std::time];
+
+entry check = pkg::check::main;
