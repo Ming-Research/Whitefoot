@@ -284,6 +284,23 @@ fn dump_cell(cell: Cell, out: &Box<Slots<u8>>) -> result: unit writes(out) {
       decimal(out: out, number: w_k);
       push(out: out, byte: 10_u8);
     }
+    GetGlobalX(a: v_a, k: v_k) => {
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_k = cvt::<u32, u64>(v_k);
+      decimal(out: out, number: w_k);
+      push(out: out, byte: 10_u8);
+    }
     SetGlobal(a: v_a, k: v_k) => {
       push(out: out, byte: 83_u8);
       push(out: out, byte: 101_u8);
@@ -298,6 +315,23 @@ fn dump_cell(cell: Cell, out: &Box<Slots<u8>>) -> result: unit writes(out) {
       let w_a = cvt::<u8, u64>(v_a);
       decimal(out: out, number: w_a);
       let w_k = cvt::<u8, u64>(v_k);
+      decimal(out: out, number: w_k);
+      push(out: out, byte: 10_u8);
+    }
+    SetGlobalX(a: v_a, k: v_k) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_k = cvt::<u32, u64>(v_k);
       decimal(out: out, number: w_k);
       push(out: out, byte: 10_u8);
     }

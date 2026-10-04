@@ -19,6 +19,8 @@ public enum Cell {
   SetUpval(public a: u8, public u: u8);
   GetGlobal(public a: u8, public k: u8);
   SetGlobal(public a: u8, public k: u8);
+  GetGlobalX(public a: u8, public k: u32);
+  SetGlobalX(public a: u8, public k: u32);
   GetTableR(public a: u8, public t: u8, public c: u8);
   GetTableK(public a: u8, public t: u8, public k: u8);
   SetTableRR(public t: u8, public key: u8, public val: u8);

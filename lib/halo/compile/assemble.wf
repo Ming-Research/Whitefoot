@@ -89,10 +89,16 @@ fn to_cell(i: &Ins, t: u32) -> result_value: Cell reads(i) {
     return Cell::GetUpval(a: a, u: b);
   }
   if op == 5_u8 {
-    return Cell::GetGlobal(a: a, k: b);
+    if i^.b < 256_i64 {
+      return Cell::GetGlobal(a: a, k: b);
+    }
+    return Cell::GetGlobalX(a: a, k: bx);
   }
   if op == 7_u8 {
-    return Cell::SetGlobal(a: a, k: b);
+    if i^.b < 256_i64 {
+      return Cell::SetGlobal(a: a, k: b);
+    }
+    return Cell::SetGlobalX(a: a, k: bx);
   }
   if op == 8_u8 {
     return Cell::SetUpval(a: a, u: b);
@@ -352,24 +358,6 @@ fn assemble(p: &Parser) -> result_value: Result<Script, CompileError> reads(p) {
         } else if i.op == 32_u8 {
           let arg_196 = i.b;
           set t = target(map: &map, at: arg_196);
-        }
-        if i.op == 5_u8 {
-          if i.b >= 256_i64 {
-            let msg = box_slots_new::<u8>(capacity: 0_u64);
-            text(buf: &msg, s: &msg_15[0_u64..59_u64]);
-            let arg_197 = i.line;
-            let e = CompileError(line: arg_197, message: move msg);
-            return Err<Script, CompileError>(error: move e);
-          }
-        }
-        if i.op == 7_u8 {
-          if i.b >= 256_i64 {
-            let msg = box_slots_new::<u8>(capacity: 0_u64);
-            text(buf: &msg, s: &msg_15[0_u64..59_u64]);
-            let arg_198 = i.line;
-            let e = CompileError(line: arg_198, message: move msg);
-            return Err<Script, CompileError>(error: move e);
-          }
         }
         let cell = to_cell(i: &i, t: t);
         push_cell(buf: &code, v: cell);

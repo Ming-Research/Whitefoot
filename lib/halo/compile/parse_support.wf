@@ -34,8 +34,6 @@ const msg_13: Array<u8, 17> = "not enough memory";
 
 const msg_14: Array<u8, 42> = "compiler instruction cannot be represented";
 
-const msg_15: Array<u8, 59> = "compiler cannot represent a global constant index above 255";
-
 const tok_0: Array<u8, 3> = "and";
 
 const tok_1: Array<u8, 5> = "break";
