@@ -318,6 +318,39 @@ coding agent.
   kernels and 0.8 times on the table and string kernels.
 - P3: the budget costs under 1% on the loop kernel.
 
+## 11. Performance stage candidates
+
+Slice 1 keeps every Lua register in a stack slot and every machine register
+for the eight loop-carried parameters. `a = b + c` is therefore
+
+```
+load  stack[base + b]      tag and 8-byte payload
+load  stack[base + c]      tag and payload
+test both tags for Num
+fadd
+store stack[base + a]      tag and payload
+dispatch
+```
+
+two 16-byte loads and one 16-byte store per arithmetic cell, as in PUC Lua.
+The candidates below are ordered by expected gain, measured in Silverfir-nano
+(silverfir-lessons) and in the match-dispatch experiments (PR #217); none is
+selected, and each is chosen only after P1 and P2 of section 10 measure the
+baseline with the per-arm lowering.
+
+| Candidate | Mechanism | Evidence | Whitefoot constraint | Falsifier |
+|---|---|---|---|---|
+| C1. Epilogue in each arm | Each `match` arm ends in its own `return musttail run(...)` instead of joining one epilogue after the handler call (`dispatch.wf` today) | the per-arm lowering only threads dispatch when each arm jumps itself; a shared epilogue is one dispatch point | the split was made to halve check time (docs/todo.md); inlining handlers into arms must not multiply it | per-arm epilogues not faster than the joined form on P1's kernels by 5% |
+| C2. Accumulator | The compiler marks a producer whose result the next cell consumes; the value travels in a loop-carried parameter instead of the stack slot | Silverfir: +29% with no change in dispatch count | a Lua value is two words; a ninth parameter costs 8% on x86-64 until the lowering spills the coldest one; the slow path and every safepoint write the accumulator back first, so collector roots stay the stack | under 10% on the numeric kernels |
+| C3. Pinned locals | One or two locals chosen by static use count live in loop-carried parameters, written through to their slot | Silverfir: +16% for the first, 4 to 12% for the second; a third about 0 | same parameter budget as C2; write-through keeps the slot authoritative | under 5% per pinned local |
+| C4. Type-specialized cells | A cell that has met numbers is rewritten to a variant that skips the tag test and falls back when the test fails | Lua 5.4 and LuaJIT's interpreter specialize this way | code is read-only during a run (`reads(code)`); rewriting needs the code box writable or a side table, which changes run's row | under 5% after C1 to C3 |
+| C5. Fast path for globals | `GetGlobal` and `SetGlobal` look up the globals table inline when it has no metatable on the key's path | every global read now takes the slow executor | Redis 7's global protection installs a metatable on `_G`, so the fast path must test for it | Redis corpus time not improved by 5% |
+| C6. Index representation | Carry a derived address for `code` and the current frame instead of base + index on every access | match-dispatch E0: 9.0% between u8 operands and raw pointers, all of it representation | a lowering matter, not source: no unsafe access is admitted | belongs to the match-dispatch work |
+
+Each candidate is measured as a same-source pair, interleaved launches, at
+least six runs, Silverfir's handler-placement warning applied (a layout
+change alone can move a micro-kernel by tens of percent).
+
 ## Open rulings
 
 - H4. The platform reference is Redis 7.0.15 on x86-64 Linux with glibc,
