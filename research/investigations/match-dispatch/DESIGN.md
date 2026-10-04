@@ -193,6 +193,16 @@ Measured on an M1 Pro ([results](../../experiments/match-dispatch/RESULTS.md)):
   the last is a candidate compiler improvement (carrying a derived address
   instead of a loop-carried index), to be designed separately.
 
+The same work run on Silverfir-nano's interpreter on the same core
+([comparison](../../experiments/match-dispatch/RESULTS.md#the-same-work-on-silverfir-nanos-interpreter))
+costs about 2.0 to 2.25 cycles per dispatch against E0's 3.6 to 4.5, with
+dispatch counts within 20%: the best `u8` variant takes 1.5 to 2.3 times
+Silverfir-nano's cycles. E0's interpreter keeps every value in frame memory;
+Silverfir-nano keeps an accumulator and its hottest locals in registers. The
+dispatch shape is the smaller lever; reaching Silverfir-nano needs the
+interpreter's hot values carried as loop state, which the per-arm lowering
+keeps in registers.
+
 ## Later stages
 
 1. Lower the loop in the compiler to the shape E0 selects, with the

@@ -112,12 +112,51 @@ outliers that the median absorbs.
   every handler; option B computes the target from a base the same way. A
   base held as a parameter would remove both.
 
+## The same work on Silverfir-nano's interpreter
+
+`wasm/kernels.c` restates four of the kernels in C, step for step with
+`vm.c`'s bytecode; built with wasi-sdk 34.0 at `-O2` it prints the same
+checksums on Silverfir-nano's interpreter as every `vm.c` variant, and the
+runner stops on a mismatch. `poly` is left out because its body, compiled
+from C, folds to constants (1,560 dispatches instead of 154 million), and
+`floor` because compiled C removes its stores. `wasm/compare.py` interleaves
+Silverfir-nano (commit `5f248e44` of its main branch, release build, `--interp`)
+and six `vm.c` variants of run 2 on the same M1 Pro, ten launches each
+(`run-nano.tsv`); Silverfir-nano's start-up, measured as a run that does
+nothing (10.9 million cycles), is subtracted from its kernels. Dispatch counts
+come from a separate Silverfir-nano build with its `interp-count` feature.
+
+| | loop | fib | sieve | mandel |
+|---|---:|---:|---:|---:|
+| Silverfir-nano dispatches | 840.0M | 158.5M | 541.1M | 92.0M |
+| `vm.c` dispatches | 1000.0M | 149.3M | 470.1M | 87.6M |
+| Silverfir-nano, cycles per dispatch | 2.044 | 2.251 | 2.169 | 2.056 |
+| `tailpn-u8`, cycles per dispatch | 4.002 | 3.887 | 4.483 | 3.728 |
+| `tailpn-u8`, cycles against Silverfir-nano | 2.33x | 1.63x | 1.80x | 1.73x |
+| `cellpn-u8` against Silverfir-nano | 2.32x | 1.52x | 1.78x | 1.76x |
+| `tailpn-u8v` against Silverfir-nano | 2.33x | 1.59x | 1.78x | 1.70x |
+| `cellpn-raw` against Silverfir-nano | 2.30x | 1.25x | 1.59x | 1.74x |
+| `switch-u8` against Silverfir-nano | 2.95x | 2.15x | 1.96x | 2.66x |
+
+The dispatch counts are within 20% of each other, so the gap is the cost of
+a dispatch: about 2.0 to 2.25 cycles in Silverfir-nano on this core, close
+to the 2.02 it records for CoreMark on an M4, against 3.6 to 4.5 here. Even
+the unchecked pointer form stays 1.25 to 2.3 times slower. The E0
+interpreter routes every operand through a frame slot, while Silverfir-nano
+keeps a just-produced value in an accumulator register and its hottest
+locals in registers; its own record attributes 29% and 15% to those two
+mechanisms. The dispatch shape is therefore the smaller lever: the larger is
+keeping interpreter values out of frame memory, which in Whitefoot is the
+writer's choice of loop-carried state that the per-arm lowering then passes
+in registers.
+
 ## Limitations
 
-- One core type. Silverfir-nano's figures were taken on an M4, and its
-  1.09-cycle floor on a synthetic four-instruction handler chain is not this
-  experiment's `floor`; the two are not compared here. The comparison with
-  Silverfir-nano is the later wasm interpreter running CoreMark.
+- One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic
+  four-instruction handler chain on an M4, is not this experiment's `floor`
+  and is not compared. The comparison above runs the same work on the same
+  core, but two different instruction sets: wasm compiled by LLVM against
+  hand-assembled `vm.c` bytecode.
 - The interpreter has no accumulator and no register-resident locals, so
   five of the six kernels are bound by values passing through frame memory
   (about four cycles per dispatch whatever the shape), which compresses the
