@@ -502,6 +502,95 @@ fourteen scratch mutants (seven independent failures in each mode) failed
 at their intended oracle. Instrumentation fields in the timing CSV are
 unobserved zeros, not measured zero allocations or copies.
 
+### M1 Pro complete MSET diagnostic
+
+The [eighteen measured samples](../../experiments/io-completion-bench/firn-prepared-m1pro-mset.csv)
+compare the prepared implementation `9f5dc61af74ac7e1767a6ccbecd71b36d3f4ad9b`
+with the original `cea9188d46ae531b3f6eb5ec7d9e1c340c240aaf` and an identical
+candidate control on the same M1 Pro. This bounded diagnostic selected one
+driver, pipeline 16 and ten-key MSET after the short sizing pilot showed a
+possible loss. It used six position-balanced run orders and request counts
+sized for at least twelve seconds at the fastest pilot rate, with fifty
+connections, two client threads, three-byte values and a 100,000-key random
+domain. CPU affinity was unavailable. It is not the full acceptance matrix.
+Each image used its revision's compiler with `--full-lto`, and the client
+was Redis 7.0.15 `redis-benchmark`. Run orders were candidate/control/original,
+control/original/candidate, original/candidate/control,
+candidate/original/control, original/control/candidate, and
+control/candidate/original. SHA-256 identities are:
+
+- candidate image: `1dca252586e7ad36a6da45ae97b3ac369d131f8e267d9837f13ab4be28235ec4`;
+- original image: `5dc6afc4b33ea3a9784b0e786e4e29a04647d3a3fbef80bb3fa085e371b0fbdf`;
+- benchmark client: `137149aac2046a25e3aa433fb41b5a47fb20df708fafc1ee71c573b720666185`;
+- raw CSV: `dc51d78dc77df149499a2936b72fe7baee2aced933bd1994ef13a798420e25b2`.
+
+The candidate/original paired throughput median was 0.7373753902: a
+26.26-percent loss, with all six ratios below one (0.7103 to 0.7942).
+Candidate/identical median was 1.0142812919 with inclusive interquartile
+range 0.0431846030, meeting the declared throughput stability checks.
+The paired p99 ratio median was 1.405104; latency control ratios ranged
+from 0.908 to 1.079. This measured workload fails the owner's requirement
+to preserve the original performance, despite the preparation-only gains.
+
+Separate, unscored five-second stack samples used ten-millisecond intervals.
+Of 452 candidate active-driver observations, 61 were in preparation/sorting
+and 52 in application key collection, including its allocation/free
+descendants. Original acquisition includes its own sorting and cannot be
+compared to only the candidate's acquisition subtree. Socket operations
+remain material in both profiles, and inlining limits attribution. These
+samples identify work to investigate; they do not prove a sole cause or
+measure individual operations' time. Similar resident memory does not
+establish similar transient allocation costs.
+
+### Small-batch caller experiment
+
+Before choosing a caller change, compare the current application hash-map
+deduplication with a bounded inline candidate array for at most sixteen
+input keys. Hash construction for different keys is independent. Each
+key's first occurrence, last value position or total occurrence count can
+then be classified independently against that array, using cached hashes
+and exact byte equality. Packing first occurrences into the owned output
+slots retains source order; each append depends on the preceding output
+length. Larger batches retain the current hash-map path. The classifier
+does quadratic comparison work within the fixed bound but removes the
+candidate-array and dedup-map heap allocations there; the two owned output
+buffers remain. This is a scratch experiment, not a selected implementation.
+
+Keep compiler, runtime, public interfaces, duplicate policy and lock order
+unchanged. Before timing, check first/last duplicate behavior, occurrence
+counts, empty and binary keys, long common prefixes, and batches below,
+at and above the threshold against literal independent expected replies.
+Record allocation sites and actual native image/source identities. Compare
+the caller-only candidate against the current image and the original in
+paired end-to-end runs with an identical-image control. Reproducible loss
+against the current caller rejects this optimization; an improvement that
+still falls below the original remains incomplete recovery. Confirm broader
+workloads before retaining the change, rather than selecting from the one
+diagnostic cell alone.
+
+A separate caller-only experiment may retain the two output buffers per
+client, using an owned optional pair and ordinary `swap`. Limit retained
+capacities to sixteen keys; larger requests use and drop separate buffers,
+so a large request does not set an unbounded per-client high-water mark.
+Checkout removes the cached owner for the whole preparation/atomic lifetime;
+every error and success path returns both buffers after consuming the source.
+No request bytes are retained. Successive commands on one client are already
+ordered, and different clients have independent caches. Compare this change
+separately from the inline classifier before combining them. It trades
+bounded retained per-client storage and length-clearing work for fewer warm
+allocations. Apply the same correctness, paired-control and original-baseline
+criteria, including transitions between small and large requests and replay.
+It adds only Firn module helpers, with no change to the preparation API.
+The isolated caller diagnostic compares five images: the two separate
+caller variants, the unchanged prepared implementation and its identical
+control, and the original. Use ten rounds in two balanced cycles, reversing
+traversal for the second cycle, so every image occupies each of the five
+positions twice. Pilot-size each measured cell for twelve seconds, with a
+twenty-minute command bound. This diagnostic's ten-round schedule is
+declared separately from the six-round full acceptance matrix. Keep all
+observations and identify scratch variants by their source and image hashes;
+neither partial completion nor a failed noise control establishes a win.
+
 ### Small-batch sorting experiment
 
 The first M1 Pro preparation-only comparison, restricted to ten keys, found
