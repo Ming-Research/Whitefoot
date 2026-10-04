@@ -349,40 +349,36 @@ fn math_atan(x: f64) -> r: f64 pure {
     if flt(local_abs_205, 7.450580596923828e-9_f64) {
       return x;
     }
-  } else {
-    if flt(local_abs_205, 1.1875_f64) {
-      if flt(local_abs_205, 0.6875_f64) {
-        let local_fp_44_210 = fmul.strict(2.0_f64, local_abs_205);
-        let local_fp_45_211 = fsub.strict(local_fp_44_210, 1.0_f64);
-        let local_fp_46_212 = fadd.strict(2.0_f64, local_abs_205);
-        let local_fp_47_213 = fdiv.strict(local_fp_45_211, local_fp_46_212);
-        let local_t0_214 = local_fp_47_213;
-        set local_t_207 = local_t0_214;
-        set local_id_208 = 0_i64;
-      } else {
-        let local_fp_48_215 = fsub.strict(local_abs_205, 1.0_f64);
-        let local_fp_49_216 = fadd.strict(local_abs_205, 1.0_f64);
-        let local_fp_50_217 = fdiv.strict(local_fp_48_215, local_fp_49_216);
-        let local_t1_218 = local_fp_50_217;
-        set local_t_207 = local_t1_218;
-        set local_id_208 = 1_i64;
-      }
+  } else if flt(local_abs_205, 1.1875_f64) {
+    if flt(local_abs_205, 0.6875_f64) {
+      let local_fp_44_210 = fmul.strict(2.0_f64, local_abs_205);
+      let local_fp_45_211 = fsub.strict(local_fp_44_210, 1.0_f64);
+      let local_fp_46_212 = fadd.strict(2.0_f64, local_abs_205);
+      let local_fp_47_213 = fdiv.strict(local_fp_45_211, local_fp_46_212);
+      let local_t0_214 = local_fp_47_213;
+      set local_t_207 = local_t0_214;
+      set local_id_208 = 0_i64;
     } else {
-      if flt(local_abs_205, 2.4375_f64) {
-        let local_fp_51_219 = fsub.strict(local_abs_205, 1.5_f64);
-        let local_fp_52_220 = fmul.strict(1.5_f64, local_abs_205);
-        let local_fp_53_221 = fadd.strict(1.0_f64, local_fp_52_220);
-        let local_fp_54_222 = fdiv.strict(local_fp_51_219, local_fp_53_221);
-        let local_t2_223 = local_fp_54_222;
-        set local_t_207 = local_t2_223;
-        set local_id_208 = 2_i64;
-      } else {
-        let local_fp_55_224 = fdiv.strict(-1.0_f64, local_abs_205);
-        let local_t3_225 = local_fp_55_224;
-        set local_t_207 = local_t3_225;
-        set local_id_208 = 3_i64;
-      }
+      let local_fp_48_215 = fsub.strict(local_abs_205, 1.0_f64);
+      let local_fp_49_216 = fadd.strict(local_abs_205, 1.0_f64);
+      let local_fp_50_217 = fdiv.strict(local_fp_48_215, local_fp_49_216);
+      let local_t1_218 = local_fp_50_217;
+      set local_t_207 = local_t1_218;
+      set local_id_208 = 1_i64;
     }
+  } else if flt(local_abs_205, 2.4375_f64) {
+    let local_fp_51_219 = fsub.strict(local_abs_205, 1.5_f64);
+    let local_fp_52_220 = fmul.strict(1.5_f64, local_abs_205);
+    let local_fp_53_221 = fadd.strict(1.0_f64, local_fp_52_220);
+    let local_fp_54_222 = fdiv.strict(local_fp_51_219, local_fp_53_221);
+    let local_t2_223 = local_fp_54_222;
+    set local_t_207 = local_t2_223;
+    set local_id_208 = 2_i64;
+  } else {
+    let local_fp_55_224 = fdiv.strict(-1.0_f64, local_abs_205);
+    let local_t3_225 = local_fp_55_224;
+    set local_t_207 = local_t3_225;
+    set local_id_208 = 3_i64;
   }
   let local_fp_56_226 = fmul.strict(local_t_207, local_t_207);
   let local_z_227 = local_fp_56_226;

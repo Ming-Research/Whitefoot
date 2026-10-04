@@ -1,0 +1,266 @@
+alias Cell = pkg::value::Cell;
+alias Value = pkg::value::Value;
+alias tab_of = pkg::value::tab_of;
+alias str_of = pkg::value::str_of;
+alias table_get = pkg::heap::table_get;
+
+const library_table_lib_text_0: Array<u8, 6> = "number";
+
+const library_table_lib_text_1: Array<u8, 6> = "string";
+
+const library_table_lib_text_2: Array<u8, 5> = "table";
+
+const library_table_lib_text_3: Array<u8, 8> = "function";
+
+const library_table_lib_text_4: Array<u8, 37> = "wrong number of arguments to 'insert'";
+
+const library_table_lib_text_5: Array<u8, 15> = "invalid value (";
+
+const library_table_lib_text_6: Array<u8, 11> = ") at index ";
+
+const library_table_lib_text_7: Array<u8, 22> = " in table for 'concat'";
+
+fn table_at(vm: &Vm, table: Value, index: i64) -> r: Value reads(vm) {
+  let local_key_1 = number_key(index: index);
+  return table_get(heap: &vm^.heap, t: table, key: local_key_1);
+}
+
+fn table_write(vm: &Vm, table: Value, index: i64, value: Value) -> r: Bool writes(vm) {
+  let local_key_2 = number_key(index: index);
+  return raw_assign(vm: vm, t: table, key: local_key_2, v: value);
+}
+
+fn table_swap(vm: &Vm, table: Value, i: i64, j: i64, a: Value, b: Value) -> r: Bool writes(vm) {
+  if table_write(vm: vm, table: table, index: i, value: b) {
+    return table_write(vm: vm, table: table, index: j, value: a);
+  }
+  return False();
+}
+
+fn library_table<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, func: u64, argc: u64, id: u32) -> r: HostOutcome reads(code), reads(consts), writes(vm), writes(stack), writes(env) {
+  let local_a_3 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let local_b_4 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+  let local_c_5 = argument(stack: stack, func: func, argc: argc, index: 2_u64);
+  let local_d_6 = argument(stack: stack, func: func, argc: argc, index: 3_u64);
+  let local_nil_7 = Value::Nil();
+  let local_separator_8 = coerce_string(vm: vm, v: local_b_4);
+  if id == builtin_table_concat {
+    if is_nil(v: local_b_4) {
+      let local_bytes_9 = box_slots_new::<u8>(capacity: 0_u64);
+      set local_separator_8 = bytes_value(vm: vm, bytes: &local_bytes_9);
+    }
+    match str_of(v: local_separator_8) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_4, expected: &library_table_lib_text_1[0_u64..6_u64]);
+      }
+    }
+  }
+  match tab_of(v: local_a_3) {
+    Handle(..) => {
+    }
+    NoHandle() => {
+      return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_3, expected: &library_table_lib_text_2[0_u64..5_u64]);
+    }
+  }
+  let local_border_10 = pkg::heap::table_border(heap: &vm^.heap, t: local_a_3);
+  let local_n_11 = cvt.wrap::<u64, i64>(local_border_10);
+  if id == builtin_table_getn {
+    let local_value_12 = cvt.nearest::<u64, f64>(local_border_10);
+    let local_out_13 = Value::Num(n: local_value_12);
+    return lib_result(stack: stack, func: func, value: local_out_13);
+  }
+  if id == builtin_table_maxn {
+    let local_max_14 = 0.0_f64;
+    let local_key_15 = local_nil_7;
+    loop {
+      match pkg::heap::table_next(heap: &vm^.heap, t: local_a_3, key: local_key_15) {
+        Ok(value: next) => {
+          match next {
+            Some(value: pair) => {
+              set local_key_15 = pair.key;
+              match pkg::value::num_of(v: pair.key) {
+                Is(x: bound_x_1) => {
+                  if fgt(bound_x_1, local_max_14) {
+                    set local_max_14 = bound_x_1;
+                  }
+                }
+                Not() => {
+                }
+              }
+            }
+            None() => {
+              break;
+            }
+          }
+        }
+        Err(..) => {
+          break;
+        }
+      }
+    }
+    let local_value_16 = Value::Num(n: local_max_14);
+    return lib_result(stack: stack, func: func, value: local_value_16);
+  }
+  if id == builtin_table_insert {
+    let local_pos_17 = local_n_11 +wrap 1_i64;
+    let local_end_18 = local_pos_17;
+    let local_value_19 = local_b_4;
+    if argc == 3_u64 {
+      match lib_integer(vm: vm, value: local_b_4) {
+        Some(value: i) => {
+          let local_narrow_20 = cvt.wrap::<i64, i32>(i);
+          set local_pos_17 = cvt::<i32, i64>(local_narrow_20);
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_4, expected: &library_table_lib_text_0[0_u64..6_u64]);
+        }
+      }
+      set local_value_19 = local_c_5;
+      if local_pos_17 > local_end_18 {
+        set local_end_18 = local_pos_17;
+      }
+      let local_i_21 = local_end_18;
+      loop {
+        if local_i_21 <= local_pos_17 {
+          break;
+        }
+        let local_from_22 = local_i_21 -wrap 1_i64;
+        let local_item_23 = table_at(vm: vm, table: local_a_3, index: local_from_22);
+        let local_ok_24 = table_write(vm: vm, table: local_a_3, index: local_i_21, value: local_item_23);
+        if bnot(local_ok_24) {
+          return HostOutcome::Raised();
+        }
+        set local_i_21 = local_from_22;
+      }
+    } else if argc != 2_u64 {
+      return lib_failure(vm: vm, text: &library_table_lib_text_4[0_u64..37_u64]);
+    }
+    let local_ok_25 = table_write(vm: vm, table: local_a_3, index: local_pos_17, value: local_value_19);
+    if bnot(local_ok_25) {
+      return HostOutcome::Raised();
+    }
+    return HostOutcome::Returned(count: 0_u64);
+  }
+  if id == builtin_table_remove {
+    let local_pos_26 = local_n_11;
+    let local_absent_27 = is_nil(v: local_b_4);
+    if bnot(local_absent_27) {
+      match lib_integer(vm: vm, value: local_b_4) {
+        Some(value: i) => {
+          let local_narrow_28 = cvt.wrap::<i64, i32>(i);
+          set local_pos_26 = cvt::<i32, i64>(local_narrow_28);
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_4, expected: &library_table_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+    if local_pos_26 < 1_i64 {
+      return HostOutcome::Returned(count: 0_u64);
+    }
+    if local_pos_26 > local_n_11 {
+      return HostOutcome::Returned(count: 0_u64);
+    }
+    let local_result_29 = table_at(vm: vm, table: local_a_3, index: local_pos_26);
+    let local_i_30 = local_pos_26;
+    loop {
+      if local_i_30 >= local_n_11 {
+        break;
+      }
+      let local_next_31 = local_i_30 +wrap 1_i64;
+      let local_item_32 = table_at(vm: vm, table: local_a_3, index: local_next_31);
+      let local_ok_33 = table_write(vm: vm, table: local_a_3, index: local_i_30, value: local_item_32);
+      if bnot(local_ok_33) {
+        return HostOutcome::Raised();
+      }
+      set local_i_30 = local_next_31;
+    }
+    let local_ok_34 = table_write(vm: vm, table: local_a_3, index: local_n_11, value: local_nil_7);
+    if bnot(local_ok_34) {
+      return HostOutcome::Raised();
+    }
+    return lib_result(stack: stack, func: func, value: local_result_29);
+  }
+  if id == builtin_table_concat {
+    let local_first_35 = 1_i64;
+    let local_last_36 = local_n_11;
+    let local_absent_c_37 = is_nil(v: local_c_5);
+    if bnot(local_absent_c_37) {
+      match lib_integer(vm: vm, value: local_c_5) {
+        Some(value: i) => {
+          set local_first_35 = i;
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 3_u64, argc: argc, value: local_c_5, expected: &library_table_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+    let local_absent_d_38 = is_nil(v: local_d_6);
+    if bnot(local_absent_d_38) {
+      match lib_integer(vm: vm, value: local_d_6) {
+        Some(value: i) => {
+          set local_last_36 = i;
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 4_u64, argc: argc, value: local_d_6, expected: &library_table_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+    let local_bytes_39 = box_slots_new::<u8>(capacity: 64_u64);
+    let local_i_40 = local_first_35;
+    loop {
+      if local_i_40 > local_last_36 {
+        break;
+      }
+      let local_item_41 = table_at(vm: vm, table: local_a_3, index: local_i_40);
+      let local_text_42 = coerce_string(vm: vm, v: local_item_41);
+      match str_of(v: local_text_42) {
+        Handle(..) => {
+        }
+        NoHandle() => {
+          let local_message_43 = box_slots_new::<u8>(capacity: 128_u64);
+          bytes_append(bytes: &local_message_43, text: &library_table_lib_text_5[0_u64..15_u64]);
+          let local_kind_44 = kind_name(vm: vm, v: local_item_41);
+          bytes_string(vm: vm, bytes: &local_message_43, value: local_kind_44);
+          bytes_append(bytes: &local_message_43, text: &library_table_lib_text_6[0_u64..11_u64]);
+          let local_key_45 = number_key(index: local_i_40);
+          let local_number_46 = coerce_string(vm: vm, v: local_key_45);
+          bytes_string(vm: vm, bytes: &local_message_43, value: local_number_46);
+          bytes_append(bytes: &local_message_43, text: &library_table_lib_text_7[0_u64..22_u64]);
+          set vm^.error = bytes_value(vm: vm, bytes: &local_message_43);
+          return HostOutcome::Raised();
+        }
+      }
+      bytes_string(vm: vm, bytes: &local_bytes_39, value: local_text_42);
+      if local_i_40 == local_last_36 {
+        break;
+      }
+      bytes_string(vm: vm, bytes: &local_bytes_39, value: local_separator_8);
+      set local_i_40 = local_i_40 +wrap 1_i64;
+    }
+    let local_value_47 = bytes_value(vm: vm, bytes: &local_bytes_39);
+    return lib_result(stack: stack, func: func, value: local_value_47);
+  }
+  if id == builtin_table_sort {
+    let local_absent_48 = is_nil(v: local_b_4);
+    if bnot(local_absent_48) {
+      match func_of(v: local_b_4) {
+        Lua(..) => {
+        }
+        Native(..) => {
+        }
+        Other() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_4, expected: &library_table_lib_text_3[0_u64..8_u64]);
+        }
+      }
+    }
+    let local_ok_49 = sort_start::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, table: local_a_3, comparator: local_b_4, func: func, upper: local_n_11);
+    if local_ok_49 {
+      return HostOutcome::Returned(count: 0_u64);
+    }
+    return HostOutcome::Raised();
+  }
+  return HostOutcome::Raised();
+}

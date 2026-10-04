@@ -1,0 +1,4 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+
+public fn main(inputs: Inputs) -> r: ExitStatus pure waits doc "Reads an eight-byte little-endian budget and Lua source from stdin, compiles it with pkg::compile, installs slice 1 libraries and runs pkg::vm::start/resume. The print host records text; stdout contains the resulting lines.";

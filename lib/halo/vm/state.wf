@@ -308,7 +308,9 @@ fn vm_new(limit: u64) -> r: Vm pure {
   let callbacks = box_slots_new::<CallbackFrame>(capacity: 0_u64);
   let callback_plan = CallbackPlan(pc: 0_u64, base: 0_u64, kbase: 0_u64, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: atom3);
   let type_metatables = array_filled::<u32, 6>(value: no_handle);
-  return Vm(heap: move heap, frames: move frames, open_upvalues: move opens, protos: move protos, lineinfo: move lineinfo, top: 0_u64, budget: unlimited, saved_pc: 0_u64, saved_base: 0_u64, saved_kbase: 0_u64, error: nil, activation: 0_u32, globals: gh, type_metatables: type_metatables, host_stopped: atom3, stopped_stack: move stopped_stack, callback_plan: callback_plan, callbacks: move callbacks, suspended: atom3);
+  let library_contexts = box_slots_new::<LibraryContext>(capacity: 0_u64);
+  let sort_frames = box_slots_new::<SortFrame>(capacity: 0_u64);
+  return Vm(library_contexts: move library_contexts, sort_frames: move sort_frames, random_state: 20017429951246_u64, heap: move heap, frames: move frames, open_upvalues: move opens, protos: move protos, lineinfo: move lineinfo, top: 0_u64, budget: unlimited, saved_pc: 0_u64, saved_base: 0_u64, saved_kbase: 0_u64, error: nil, activation: 0_u32, globals: gh, type_metatables: type_metatables, host_stopped: atom3, stopped_stack: move stopped_stack, callback_plan: callback_plan, callbacks: move callbacks, suspended: atom3);
 }
 
 fn raise_text(vm: &Vm, text: &[u8]) -> r: Bool reads(text), writes(vm) {
@@ -566,6 +568,18 @@ fn close_upvalues(vm: &Vm, stack: &Box<Slots<Value>>, level: u64) -> r: unit rea
 }
 
 fn reset(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit writes(stack), writes(vm) {
+  loop {
+    if vm^.library_contexts.inner.len == 0_u64 {
+      break;
+    }
+    let discarded = take_back(window: &vm^.library_contexts.inner);
+  }
+  loop {
+    if vm^.sort_frames.inner.len == 0_u64 {
+      break;
+    }
+    let discarded = take_back(window: &vm^.sort_frames.inner);
+  }
   if vm^.suspended {
     restore_stopped_stack(vm: vm, stack: stack);
   }

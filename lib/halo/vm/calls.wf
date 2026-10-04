@@ -261,12 +261,45 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
           set nr = -1_i64;
           set tailing = False();
         } else {
+          let unpack_results = bound_id_1 == builtin_unpack;
+          let byte_results = bound_id_1 == builtin_string_byte;
+          let protected_results = bound_id_1 == builtin_xpcall;
+          let many = bor(unpack_results, byte_results);
+          if bor(many, protected_results) {
+            let room = fslot +sat 8001_u64;
+            ensure_stack(stack: stack, size: room);
+          }
           let out = HostOutcome::Raised();
           if bound_id_1 >= 4096_u32 {
             set out = Host::call(env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
           } else {
             let call_pc = return_pc -sat 1_u64;
+            let context_index = vm^.library_contexts.inner.len;
+            let string_call = bound_id_1 == builtin_tostring;
+            let sort_call = bound_id_1 == builtin_table_sort;
+            let protected_call = bound_id_1 == builtin_xpcall;
+            let ordinary_callback = bor(string_call, sort_call);
+            let library_callback = bor(ordinary_callback, protected_call);
+            if library_callback {
+              let a = argument(stack: stack, func: fslot, argc: nargs, index: 0_u64);
+              let b = argument(stack: stack, func: fslot, argc: nargs, index: 1_u64);
+              let nil = Value::Nil();
+              let frame = Frame(func: fslot, base: base, return_pc: return_pc, kbase: kbase, closure: no_handle, nresults: nr, activation: vm^.activation, flags: 0_u8, varbase: 0_u64, varcount: 0_u64, frame_top: vm^.top);
+              let context = LibraryContext(frame: frame, tail: tailing, id: bound_id_1, phase: 0_u8, count: 0_u64, table: a, comparator: b, saved_error: nil);
+              push_library_context(vm: vm, context: context);
+              let expected = False();
+              set vm^.callback_plan = CallbackPlan(pc: return_pc, base: base, kbase: kbase, kind: 4_u8, dest: fslot, first: context_index, index: 0_u64, target: 0_u64, expected: expected);
+            }
             set out = builtin::<Host<E>>(code: code, consts: consts, env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1, pc: call_pc);
+            if vm^.suspended {
+              return Step::Budget();
+            }
+            if vm^.host_stopped {
+              return Step::Stop();
+            }
+            if library_callback {
+              discard_library_context(vm: vm, index: context_index);
+            }
           }
           match out {
             Raised() => {
@@ -395,7 +428,13 @@ fn resume<interface Host<E>>(script: &Script, stack: &Box<Slots<Value>>, vm: &Vm
         resize_stack(stack: stack, size: frame.length);
         set vm^.activation = frame.activation;
         set vm^.top = frame.top;
-        let raised = unwind(vm: vm, stack: stack);
+        let raised = Step::Error();
+        if frame.plan.kind == 4_u8 {
+          let failed = True();
+          set raised = resume_library::<Host<E>>(code: &script^.code, consts: &script^.consts, stack: stack, vm: vm, env: env, plan: frame.plan, failed: failed);
+        } else {
+          set raised = unwind(vm: vm, stack: stack);
+        }
         set outcome = dispatch_step::<Host<E>>(code: &script^.code, consts: &script^.consts, stack: stack, vm: vm, env: env, step: raised);
       }
     }

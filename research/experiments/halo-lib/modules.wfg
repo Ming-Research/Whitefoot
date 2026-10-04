@@ -1,0 +1,5 @@
+package halo = "../../../lib/halo";
+
+pkg::runner: [halo::value, halo::number, halo::heap, halo::vm, halo::compile, std::process, std::io, std::time, std::fs];
+
+entry run = pkg::runner::main;

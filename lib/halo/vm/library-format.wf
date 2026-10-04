@@ -1,15 +1,650 @@
 alias Value = pkg::value::Value;
-alias Cell = pkg::value::Cell;
 alias str_of = pkg::value::str_of;
-alias tab_of = pkg::value::tab_of;
-alias intern = pkg::heap::intern;
-alias table_get = pkg::heap::table_get;
-alias table_set = pkg::heap::table_set;
-alias new_table = pkg::heap::new_table;
-alias truthy = pkg::value::truthy;
 
-fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, format: Value) -> r: HostOutcome writes(vm), writes(stack) contract {
-  ensures stack^.inner.len == entry(stack)^.inner.len;
+const library_format_lib_text_0: Array<u8, 6> = "number";
+
+const library_format_lib_text_1: Array<u8, 6> = "string";
+
+const library_format_lib_text_2: Array<u8, 8> = "no value";
+
+const library_format_lib_text_3: Array<u8, 31> = "invalid format (repeated flags)";
+
+const library_format_lib_text_4: Array<u8, 44> = "invalid format (width or precision too long)";
+
+const library_format_lib_text_5: Array<u8, 17> = "invalid option '%";
+
+const library_format_lib_text_6: Array<u8, 13> = "' to 'format'";
+
+fn format_unsigned(bytes: &Box<Slots<u8>>, value: u64, radix: u64, upper: Bool) -> r: unit writes(bytes) contract {
+  requires radix >= 2_u64;
 } {
-  return HostOutcome::Raised();
+  let local_digits_1 = array_filled::<u8, 64>(value: 0_u8);
+  let local_n_2 = value;
+  let local_count_3 = 0_u64;
+  loop {
+    let local_digit_4 = local_n_2 % radix;
+    let local_byte_5 = cvt.wrap::<u64, u8>(local_digit_4);
+    let local_glyph_6 = local_byte_5 +wrap 48_u8;
+    if local_digit_4 >= 10_u64 {
+      set local_glyph_6 = local_byte_5 +wrap 87_u8;
+      if upper {
+        set local_glyph_6 = local_byte_5 +wrap 55_u8;
+      }
+    }
+    if local_count_3 < 64_u64 {
+      set local_digits_1[local_count_3] = local_glyph_6;
+      set local_count_3 = local_count_3 + 1_u64;
+    }
+    set local_n_2 = local_n_2 / radix;
+    if local_n_2 == 0_u64 {
+      break;
+    }
+  }
+  let local_ix_7 = local_count_3;
+  loop {
+    if local_ix_7 == 0_u64 {
+      break;
+    }
+    set local_ix_7 = local_ix_7 - 1_u64;
+    if local_ix_7 < 64_u64 {
+      let local_b_8 = local_digits_1[local_ix_7];
+      bytes_push(bytes: bytes, byte: local_b_8);
+    }
+  }
+  return unit;
+}
+
+fn format_exact(value: f64) -> r: FormatDecimal pure {
+  let local_bits_9 = reinterpret::<f64, u64>(value);
+  let local_shifted_10 = ishr.wrap(local_bits_9, 52_u32);
+  let local_biased_11 = iand(local_shifted_10, 2047_u64);
+  let local_fraction_12 = iand(local_bits_9, 4503599627370495_u64);
+  let local_mantissa_13 = local_fraction_12;
+  let local_exponent_14 = -1074_i64;
+  if local_biased_11 != 0_u64 {
+    set local_mantissa_13 = ior(local_fraction_12, 4503599627370496_u64);
+    let local_field_15 = cvt.wrap::<u64, i64>(local_biased_11);
+    set local_exponent_14 = local_field_15 -wrap 1075_i64;
+  }
+  let local_decimal_16 = format_decimal_from(value: local_mantissa_13);
+  loop {
+    if local_exponent_14 <= 0_i64 {
+      break;
+    }
+    let local_up_17 = cvt.wrap::<i64, u64>(local_exponent_14);
+    let local_shift_18 = imin(local_up_17, 60_u64);
+    format_left_shift(decimal: &local_decimal_16, shift: local_shift_18);
+    let local_delta_19 = cvt.wrap::<u64, i64>(local_shift_18);
+    set local_exponent_14 = local_exponent_14 -wrap local_delta_19;
+  }
+  loop {
+    if local_exponent_14 >= 0_i64 {
+      break;
+    }
+    let local_depth_20 = 0_i64 -wrap local_exponent_14;
+    let local_down_21 = cvt.wrap::<i64, u64>(local_depth_20);
+    let local_shift_22 = imin(local_down_21, 60_u64);
+    format_right_shift(decimal: &local_decimal_16, shift: local_shift_22);
+    let local_delta_23 = cvt.wrap::<u64, i64>(local_shift_22);
+    set local_exponent_14 = local_exponent_14 +wrap local_delta_23;
+  }
+  return local_decimal_16;
+}
+
+fn format_round_fixed(decimal: &FormatDecimal, precision: u64) -> r: unit writes(decimal) {
+  let local_p_24 = cvt.wrap::<u64, i64>(precision);
+  let local_kept_25 = decimal^.point +wrap local_p_24;
+  if local_kept_25 > 0_i64 {
+    let local_n_26 = cvt::<i64, u64>(local_kept_25);
+    format_round_significant(decimal: decimal, kept: local_n_26);
+    return unit;
+  }
+  let local_up_27 = False();
+  if local_kept_25 == 0_i64 {
+    let local_first_28 = format_digit_at(decimal: decimal, index: 0_u64);
+    if local_first_28 > 5_u8 {
+      set local_up_27 = True();
+    }
+    if local_first_28 == 5_u8 {
+      if decimal^.count > 1_u64 {
+        set local_up_27 = True();
+      }
+    }
+  }
+  set decimal^.count = 0_u64;
+  set decimal^.point = 0_i64;
+  if local_up_27 {
+    set decimal^.digits[0_u64] = 1_u8;
+    set decimal^.count = 1_u64;
+    set decimal^.point = 1_i64 -wrap local_p_24;
+  }
+  return unit;
+}
+
+fn format_digit(bytes: &Box<Slots<u8>>, decimal: &FormatDecimal, index: i64) -> r: unit reads(decimal), writes(bytes) {
+  let local_digit_29 = 0_u8;
+  if index >= 0_i64 {
+    let local_i_30 = cvt::<i64, u64>(index);
+    set local_digit_29 = format_digit_at(decimal: decimal, index: local_i_30);
+  }
+  let local_glyph_31 = local_digit_29 +wrap 48_u8;
+  bytes_push(bytes: bytes, byte: local_glyph_31);
+  return unit;
+}
+
+fn format_fixed(bytes: &Box<Slots<u8>>, decimal: &FormatDecimal, precision: u64, alternate: Bool) -> r: unit reads(decimal), writes(bytes) {
+  let local_point_32 = decimal^.point;
+  let local_whole_33 = 1_u64;
+  if local_point_32 > 0_i64 {
+    set local_whole_33 = cvt::<i64, u64>(local_point_32);
+  }
+  for (i in 0_u64..local_whole_33) {
+    let local_index_34 = cvt.wrap::<u64, i64>(i);
+    if local_point_32 > 0_i64 {
+      format_digit(bytes: bytes, decimal: decimal, index: local_index_34);
+    } else {
+      bytes_push(bytes: bytes, byte: 48_u8);
+    }
+  }
+  let local_fraction_35 = precision > 0_u64;
+  if bor(local_fraction_35, alternate) {
+    bytes_push(bytes: bytes, byte: 46_u8);
+  }
+  for (i in 0_u64..precision) {
+    let local_offset_36 = cvt.wrap::<u64, i64>(i);
+    let local_index_37 = local_point_32 +wrap local_offset_36;
+    format_digit(bytes: bytes, decimal: decimal, index: local_index_37);
+  }
+  return unit;
+}
+
+fn format_scientific(bytes: &Box<Slots<u8>>, decimal: &FormatDecimal, precision: u64, alternate: Bool, upper: Bool) -> r: unit reads(decimal), writes(bytes) {
+  format_digit(bytes: bytes, decimal: decimal, index: 0_i64);
+  let local_fraction_38 = precision > 0_u64;
+  if bor(local_fraction_38, alternate) {
+    bytes_push(bytes: bytes, byte: 46_u8);
+  }
+  for (i in 0_u64..precision) {
+    let local_index_39 = i +sat 1_u64;
+    let local_offset_40 = cvt.wrap::<u64, i64>(local_index_39);
+    format_digit(bytes: bytes, decimal: decimal, index: local_offset_40);
+  }
+  let local_glyph_41 = 101_u8;
+  if upper {
+    set local_glyph_41 = 69_u8;
+  }
+  bytes_push(bytes: bytes, byte: local_glyph_41);
+  let local_exponent_42 = decimal^.point -wrap 1_i64;
+  if decimal^.count == 0_u64 {
+    set local_exponent_42 = 0_i64;
+  }
+  if local_exponent_42 < 0_i64 {
+    bytes_push(bytes: bytes, byte: 45_u8);
+    set local_exponent_42 = 0_i64 -wrap local_exponent_42;
+  } else {
+    bytes_push(bytes: bytes, byte: 43_u8);
+  }
+  let local_magnitude_43 = cvt.wrap::<i64, u64>(local_exponent_42);
+  if local_magnitude_43 < 10_u64 {
+    bytes_push(bytes: bytes, byte: 48_u8);
+  }
+  let local_no_44 = False();
+  format_unsigned(bytes: bytes, value: local_magnitude_43, radix: 10_u64, upper: local_no_44);
+  return unit;
+}
+
+fn format_float(bytes: &Box<Slots<u8>>, x: f64, specifier: u8, precision: i64, alternate: Bool) -> r: unit writes(bytes) {
+  let local_decimal_45 = format_exact(value: x);
+  let local_prec_46 = 6_u64;
+  if precision >= 0_i64 {
+    set local_prec_46 = cvt::<i64, u64>(precision);
+  }
+  let local_lower_g_47 = specifier == 103_u8;
+  let local_upper_g_48 = specifier == 71_u8;
+  let local_general_49 = bor(local_lower_g_47, local_upper_g_48);
+  let local_lower_e_50 = specifier == 101_u8;
+  let local_upper_e_51 = specifier == 69_u8;
+  let local_sci_52 = bor(local_lower_e_50, local_upper_e_51);
+  let local_upper_53 = bor(local_upper_g_48, local_upper_e_51);
+  if local_general_49 {
+    if local_prec_46 == 0_u64 {
+      set local_prec_46 = 1_u64;
+    }
+    format_round_significant(decimal: &local_decimal_45, kept: local_prec_46);
+    let local_exponent_54 = local_decimal_45.point -wrap 1_i64;
+    if local_decimal_45.count == 0_u64 {
+      set local_exponent_54 = 0_i64;
+    }
+    let local_limit_55 = cvt.wrap::<u64, i64>(local_prec_46);
+    let local_small_56 = local_exponent_54 < -4_i64;
+    let local_large_57 = local_exponent_54 >= local_limit_55;
+    let local_scientific_58 = bor(local_small_56, local_large_57);
+    if local_scientific_58 {
+      let local_count_59 = local_prec_46;
+      if bnot(alternate) {
+        set local_count_59 = imax(local_decimal_45.count, 1_u64);
+      }
+      let local_after_60 = local_count_59 -sat 1_u64;
+      format_scientific(bytes: bytes, decimal: &local_decimal_45, precision: local_after_60, alternate: alternate, upper: local_upper_53);
+    } else {
+      let local_after_61 = local_limit_55 -wrap local_decimal_45.point;
+      if bnot(alternate) {
+        let local_count_62 = cvt.wrap::<u64, i64>(local_decimal_45.count);
+        set local_after_61 = local_count_62 -wrap local_decimal_45.point;
+      }
+      if local_after_61 < 0_i64 {
+        set local_after_61 = 0_i64;
+      }
+      let local_fraction_63 = cvt::<i64, u64>(local_after_61);
+      format_fixed(bytes: bytes, decimal: &local_decimal_45, precision: local_fraction_63, alternate: alternate);
+    }
+  } else if local_sci_52 {
+    let local_kept_64 = local_prec_46 +sat 1_u64;
+    format_round_significant(decimal: &local_decimal_45, kept: local_kept_64);
+    format_scientific(bytes: bytes, decimal: &local_decimal_45, precision: local_prec_46, alternate: alternate, upper: local_upper_53);
+  } else {
+    format_round_fixed(decimal: &local_decimal_45, precision: local_prec_46);
+    format_fixed(bytes: bytes, decimal: &local_decimal_45, precision: local_prec_46, alternate: alternate);
+  }
+  return unit;
+}
+
+fn format_byte(vm: &Vm, handle: u64, index: u64) -> r: u8 reads(vm) {
+  if handle < vm^.heap.strings.inner.len {
+    if index < vm^.heap.strings.inner[handle].payload.bytes.inner.len {
+      return vm^.heap.strings.inner[handle].payload.bytes.inner[index];
+    }
+  }
+  return 0_u8;
+}
+
+fn format_isdigit(byte: u8) -> r: Bool pure {
+  let local_a_65 = byte >= 48_u8;
+  let local_b_66 = byte <= 57_u8;
+  return band(local_a_65, local_b_66);
+}
+
+fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, format: Value) -> r: HostOutcome writes(vm), writes(stack) {
+  let local_id_67 = builtin_string_format;
+  let local_h_68 = 4294967295_u32;
+  match str_of(v: format) {
+    Handle(h: handle) => {
+      set local_h_68 = handle;
+    }
+    NoHandle() => {
+      return HostOutcome::Raised();
+    }
+  }
+  let local_hi_69 = cvt::<u32, u64>(local_h_68);
+  let local_length_70 = 0_u64;
+  if local_hi_69 < vm^.heap.strings.inner.len {
+    set local_length_70 = vm^.heap.strings.inner[local_hi_69].payload.bytes.inner.len;
+  }
+  let local_out_71 = box_slots_new::<u8>(capacity: 128_u64);
+  let local_index_72 = 0_u64;
+  let local_arg_73 = 1_u64;
+  loop {
+    if local_index_72 >= local_length_70 {
+      break;
+    }
+    let local_byte_74 = format_byte(vm: vm, handle: local_hi_69, index: local_index_72);
+    set local_index_72 = local_index_72 +sat 1_u64;
+    if local_byte_74 != 37_u8 {
+      bytes_push(bytes: &local_out_71, byte: local_byte_74);
+    } else {
+      let local_spec_75 = format_byte(vm: vm, handle: local_hi_69, index: local_index_72);
+      if local_spec_75 == 37_u8 {
+        bytes_push(bytes: &local_out_71, byte: 37_u8);
+        set local_index_72 = local_index_72 +sat 1_u64;
+      } else {
+        set local_arg_73 = local_arg_73 +sat 1_u64;
+        if local_arg_73 > argc {
+          return lib_argtext(vm: vm, id: local_id_67, index: local_arg_73, text: &library_format_lib_text_2[0_u64..8_u64]);
+        }
+        let local_minus_76 = False();
+        let local_plus_77 = False();
+        let local_space_78 = False();
+        let local_alternate_79 = False();
+        let local_zero_80 = False();
+        let local_flags_81 = 0_u64;
+        loop {
+          let local_flag_82 = format_byte(vm: vm, handle: local_hi_69, index: local_index_72);
+          if local_flag_82 == 45_u8 {
+            set local_minus_76 = True();
+          } else if local_flag_82 == 43_u8 {
+            set local_plus_77 = True();
+          } else if local_flag_82 == 32_u8 {
+            set local_space_78 = True();
+          } else if local_flag_82 == 35_u8 {
+            set local_alternate_79 = True();
+          } else if local_flag_82 == 48_u8 {
+            set local_zero_80 = True();
+          } else {
+            break;
+          }
+          set local_flags_81 = local_flags_81 +sat 1_u64;
+          set local_index_72 = local_index_72 +sat 1_u64;
+        }
+        if local_flags_81 >= 6_u64 {
+          return lib_failure(vm: vm, text: &library_format_lib_text_3[0_u64..31_u64]);
+        }
+        let local_width_83 = 0_u64;
+        for (i in 0_u64..2_u64) {
+          let local_digit_84 = format_byte(vm: vm, handle: local_hi_69, index: local_index_72);
+          if format_isdigit(byte: local_digit_84) {
+            let local_value_85 = local_digit_84 -wrap 48_u8;
+            let local_wide_86 = cvt.wrap::<u8, u64>(local_value_85);
+            let local_scale_87 = local_width_83 *wrap 10_u64;
+            set local_width_83 = local_scale_87 +wrap local_wide_86;
+            set local_index_72 = local_index_72 +sat 1_u64;
+          }
+        }
+        let local_precision_88 = -1_i64;
+        let local_dot_89 = format_byte(vm: vm, handle: local_hi_69, index: local_index_72);
+        if local_dot_89 == 46_u8 {
+          set local_index_72 = local_index_72 +sat 1_u64;
+          set local_precision_88 = 0_i64;
+          for (i in 0_u64..2_u64) {
+            let local_digit_90 = format_byte(vm: vm, handle: local_hi_69, index: local_index_72);
+            if format_isdigit(byte: local_digit_90) {
+              let local_value_91 = local_digit_90 -wrap 48_u8;
+              let local_wide_92 = cvt::<u8, i64>(local_value_91);
+              let local_scale_93 = local_precision_88 *wrap 10_i64;
+              set local_precision_88 = local_scale_93 +wrap local_wide_92;
+              set local_index_72 = local_index_72 +sat 1_u64;
+            }
+          }
+        }
+        let local_specifier_94 = format_byte(vm: vm, handle: local_hi_69, index: local_index_72);
+        if format_isdigit(byte: local_specifier_94) {
+          return lib_failure(vm: vm, text: &library_format_lib_text_4[0_u64..44_u64]);
+        }
+        set local_index_72 = local_index_72 +sat 1_u64;
+        let local_which_95 = local_arg_73 -sat 1_u64;
+        let local_value_96 = argument(stack: stack, func: func, argc: argc, index: local_which_95);
+        let local_item_97 = box_slots_new::<u8>(capacity: 512_u64);
+        let local_prefix_98 = box_slots_new::<u8>(capacity: 4_u64);
+        let local_integer_99 = False();
+        let local_special_100 = False();
+        let local_q_101 = local_specifier_94 == 113_u8;
+        let local_ss_102 = local_specifier_94 == 115_u8;
+        if bor(local_q_101, local_ss_102) {
+          let local_text_103 = coerce_string(vm: vm, v: local_value_96);
+          let local_handle_104 = 4294967295_u32;
+          match str_of(v: local_text_103) {
+            Handle(h: th) => {
+              set local_handle_104 = th;
+            }
+            NoHandle() => {
+              return lib_argerror(vm: vm, id: local_id_67, index: local_arg_73, argc: argc, value: local_value_96, expected: &library_format_lib_text_1[0_u64..6_u64]);
+            }
+          }
+          let local_shi_105 = cvt::<u32, u64>(local_handle_104);
+          let local_size_106 = 0_u64;
+          if local_shi_105 < vm^.heap.strings.inner.len {
+            set local_size_106 = vm^.heap.strings.inner[local_shi_105].payload.bytes.inner.len;
+          }
+          if local_q_101 {
+            bytes_push(bytes: &local_item_97, byte: 34_u8);
+            for (i in 0_u64..local_size_106) {
+              let local_byte_107 = format_byte(vm: vm, handle: local_shi_105, index: i);
+              if local_byte_107 == 34_u8 {
+                bytes_push(bytes: &local_item_97, byte: 92_u8);
+              }
+              if local_byte_107 == 92_u8 {
+                bytes_push(bytes: &local_item_97, byte: 92_u8);
+              }
+              if local_byte_107 == 10_u8 {
+                bytes_push(bytes: &local_item_97, byte: 92_u8);
+              }
+              if local_byte_107 == 13_u8 {
+                bytes_push(bytes: &local_item_97, byte: 92_u8);
+                bytes_push(bytes: &local_item_97, byte: 114_u8);
+              } else if local_byte_107 == 0_u8 {
+                bytes_push(bytes: &local_item_97, byte: 92_u8);
+                bytes_push(bytes: &local_item_97, byte: 48_u8);
+                bytes_push(bytes: &local_item_97, byte: 48_u8);
+                bytes_push(bytes: &local_item_97, byte: 48_u8);
+              } else {
+                bytes_push(bytes: &local_item_97, byte: local_byte_107);
+              }
+            }
+            bytes_push(bytes: &local_item_97, byte: 34_u8);
+            set local_width_83 = 0_u64;
+          } else {
+            let local_long_108 = local_size_106 >= 100_u64;
+            let local_unbounded_109 = local_precision_88 < 0_i64;
+            let local_shortcut_110 = band(local_long_108, local_unbounded_109);
+            if local_shortcut_110 {
+              set local_width_83 = 0_u64;
+              bytes_string(vm: vm, bytes: &local_item_97, value: local_text_103);
+            } else {
+              let local_end_111 = local_size_106;
+              if local_precision_88 >= 0_i64 {
+                let local_limit_112 = cvt::<i64, u64>(local_precision_88);
+                set local_end_111 = imin(local_end_111, local_limit_112);
+              }
+              for (i in 0_u64..local_end_111) {
+                let local_byte_113 = format_byte(vm: vm, handle: local_shi_105, index: i);
+                if local_byte_113 == 0_u8 {
+                  break;
+                }
+                bytes_push(bytes: &local_item_97, byte: local_byte_113);
+              }
+            }
+          }
+          set local_zero_80 = False();
+        } else {
+          let local_signed_decimal_114 = local_specifier_94 == 100_u8;
+          let local_signed_i_115 = local_specifier_94 == 105_u8;
+          let local_signed_116 = bor(local_signed_decimal_114, local_signed_i_115);
+          let local_unsigned_117 = local_specifier_94 == 117_u8;
+          let local_octal_118 = local_specifier_94 == 111_u8;
+          let local_hx_119 = local_specifier_94 == 120_u8;
+          let local_upper_hx_120 = local_specifier_94 == 88_u8;
+          let local_hex_121 = bor(local_hx_119, local_upper_hx_120);
+          let local_unsigned_int_122 = bor(local_unsigned_117, local_octal_118);
+          let local_ints_123 = bor(local_unsigned_int_122, local_hex_121);
+          let local_numeric_int_124 = bor(local_signed_116, local_ints_123);
+          let local_char_125 = local_specifier_94 == 99_u8;
+          let local_eg_126 = local_specifier_94 == 101_u8;
+          let local_upper_eg_127 = local_specifier_94 == 69_u8;
+          let local_gg_128 = local_specifier_94 == 103_u8;
+          let local_upper_gg_129 = local_specifier_94 == 71_u8;
+          let local_ff_130 = local_specifier_94 == 102_u8;
+          let local_es_131 = bor(local_eg_126, local_upper_eg_127);
+          let local_gs_132 = bor(local_gg_128, local_upper_gg_129);
+          let local_floats_133 = bor(local_es_131, local_gs_132);
+          set local_floats_133 = bor(local_floats_133, local_ff_130);
+          let local_accepted_134 = bor(local_numeric_int_124, local_char_125);
+          set local_accepted_134 = bor(local_accepted_134, local_floats_133);
+          if bnot(local_accepted_134) {
+            let local_message_135 = box_slots_new::<u8>(capacity: 64_u64);
+            bytes_append(bytes: &local_message_135, text: &library_format_lib_text_5[0_u64..17_u64]);
+            if local_specifier_94 != 0_u8 {
+              bytes_push(bytes: &local_message_135, byte: local_specifier_94);
+            }
+            bytes_append(bytes: &local_message_135, text: &library_format_lib_text_6[0_u64..13_u64]);
+            set vm^.error = bytes_value(vm: vm, bytes: &local_message_135);
+            return HostOutcome::Raised();
+          }
+          let local_x_136 = 0.0_f64;
+          match coerce_number(vm: vm, v: local_value_96) {
+            Is(x: number) => {
+              set local_x_136 = number;
+            }
+            Not() => {
+              return lib_argerror(vm: vm, id: local_id_67, index: local_arg_73, argc: argc, value: local_value_96, expected: &library_format_lib_text_0[0_u64..6_u64]);
+            }
+          }
+          if local_char_125 {
+            let local_truncated_137 = ftrunc(local_x_136);
+            let local_code_138 = 0_i64;
+            if cvt.defined::<f64, i64>(local_truncated_137) {
+              set local_code_138 = cvt::<f64, i64>(local_truncated_137);
+            }
+            let local_byte_139 = cvt.wrap::<i64, u8>(local_code_138);
+            if local_byte_139 != 0_u8 {
+              bytes_push(bytes: &local_item_97, byte: local_byte_139);
+            }
+            set local_zero_80 = False();
+          } else if local_numeric_int_124 {
+            set local_integer_99 = True();
+            let local_truncated_140 = ftrunc(local_x_136);
+            let local_number_141 = 9223372036854775808_u64;
+            let local_negative_142 = False();
+            if local_signed_116 {
+              let local_int_143 = -9223372036854775808_i64;
+              if cvt.defined::<f64, i64>(local_truncated_140) {
+                set local_int_143 = cvt::<f64, i64>(local_truncated_140);
+              }
+              set local_negative_142 = local_int_143 < 0_i64;
+              if local_negative_142 {
+                let local_magnitude_144 = 0_i64 -wrap local_int_143;
+                set local_number_141 = cvt.wrap::<i64, u64>(local_magnitude_144);
+              } else {
+                set local_number_141 = cvt::<i64, u64>(local_int_143);
+              }
+            } else if cvt.defined::<f64, u64>(local_truncated_140) {
+              set local_number_141 = cvt::<f64, u64>(local_truncated_140);
+            } else if cvt.defined::<f64, i64>(local_truncated_140) {
+              let local_int_145 = cvt::<f64, i64>(local_truncated_140);
+              set local_number_141 = cvt.wrap::<i64, u64>(local_int_145);
+            }
+            if local_negative_142 {
+              bytes_push(bytes: &local_prefix_98, byte: 45_u8);
+            } else if local_signed_116 {
+              if local_plus_77 {
+                bytes_push(bytes: &local_prefix_98, byte: 43_u8);
+              } else if local_space_78 {
+                bytes_push(bytes: &local_prefix_98, byte: 32_u8);
+              }
+            }
+            let local_radix_146 = 10_u64;
+            if local_hex_121 {
+              set local_radix_146 = 16_u64;
+              if local_alternate_79 {
+                if local_number_141 != 0_u64 {
+                  bytes_push(bytes: &local_prefix_98, byte: 48_u8);
+                  let local_letter_147 = 120_u8;
+                  if local_upper_hx_120 {
+                    set local_letter_147 = 88_u8;
+                  }
+                  bytes_push(bytes: &local_prefix_98, byte: local_letter_147);
+                }
+              }
+            }
+            if local_octal_118 {
+              set local_radix_146 = 8_u64;
+            }
+            let local_nonzero_148 = local_number_141 != 0_u64;
+            let local_nonempty_149 = local_precision_88 != 0_i64;
+            if bor(local_nonzero_148, local_nonempty_149) {
+              format_unsigned(bytes: &local_item_97, value: local_number_141, radix: local_radix_146, upper: local_upper_hx_120);
+            }
+            if local_octal_118 {
+              if local_alternate_79 {
+                let local_first_150 = 0_u8;
+                if local_item_97.inner.len > 0_u64 {
+                  set local_first_150 = local_item_97.inner[0_u64];
+                }
+                if local_first_150 != 48_u8 {
+                  bytes_push(bytes: &local_prefix_98, byte: 48_u8);
+                }
+              }
+            }
+          } else {
+            let local_bits_151 = reinterpret::<f64, u64>(local_x_136);
+            if local_bits_151 >= 9223372036854775808_u64 {
+              bytes_push(bytes: &local_prefix_98, byte: 45_u8);
+            } else if local_plus_77 {
+              bytes_push(bytes: &local_prefix_98, byte: 43_u8);
+            } else if local_space_78 {
+              bytes_push(bytes: &local_prefix_98, byte: 32_u8);
+            }
+            let local_abs_152 = fabs(local_x_136);
+            let local_infinity_153 = finf::<f64>();
+            let local_nan_154 = fne(local_x_136, local_x_136);
+            let local_inf_155 = feq(local_abs_152, local_infinity_153);
+            set local_special_100 = bor(local_nan_154, local_inf_155);
+            if local_special_100 {
+              let local_letter_156 = 105_u8;
+              if local_nan_154 {
+                set local_letter_156 = 110_u8;
+              }
+              let local_upper_157 = bor(local_upper_eg_127, local_upper_gg_129);
+              if local_upper_157 {
+                set local_letter_156 = local_letter_156 - 32_u8;
+              }
+              bytes_push(bytes: &local_item_97, byte: local_letter_156);
+              if local_nan_154 {
+                let local_a_158 = 97_u8;
+                let local_n_159 = 110_u8;
+                if local_upper_157 {
+                  set local_a_158 = 65_u8;
+                  set local_n_159 = 78_u8;
+                }
+                bytes_push(bytes: &local_item_97, byte: local_a_158);
+                bytes_push(bytes: &local_item_97, byte: local_n_159);
+              } else {
+                let local_n_160 = 110_u8;
+                let local_f_161 = 102_u8;
+                if local_upper_157 {
+                  set local_n_160 = 78_u8;
+                  set local_f_161 = 70_u8;
+                }
+                bytes_push(bytes: &local_item_97, byte: local_n_160);
+                bytes_push(bytes: &local_item_97, byte: local_f_161);
+              }
+            } else {
+              format_float(bytes: &local_item_97, x: local_abs_152, specifier: local_specifier_94, precision: local_precision_88, alternate: local_alternate_79);
+            }
+          }
+        }
+        let local_zeros_162 = 0_u64;
+        if local_integer_99 {
+          if local_precision_88 >= 0_i64 {
+            let local_p_163 = cvt::<i64, u64>(local_precision_88);
+            set local_zeros_162 = local_p_163 -sat local_item_97.inner.len;
+            set local_zero_80 = False();
+          }
+        }
+        let local_subtotal_164 = local_prefix_98.inner.len +sat local_item_97.inner.len;
+        let local_total_165 = local_subtotal_164 +sat local_zeros_162;
+        let local_padding_166 = local_width_83 -sat local_total_165;
+        if local_minus_76 {
+          set local_zero_80 = False();
+        }
+        if local_special_100 {
+          set local_zero_80 = False();
+        }
+        if bnot(local_minus_76) {
+          if bnot(local_zero_80) {
+            for (i in 0_u64..local_padding_166) {
+              bytes_push(bytes: &local_out_71, byte: 32_u8);
+            }
+          }
+        }
+        let local_prefix_len_167 = local_prefix_98.inner.len;
+        bytes_append(bytes: &local_out_71, text: &local_prefix_98.inner[0_u64..local_prefix_len_167]);
+        if local_zero_80 {
+          for (i in 0_u64..local_padding_166) {
+            bytes_push(bytes: &local_out_71, byte: 48_u8);
+          }
+        }
+        for (i in 0_u64..local_zeros_162) {
+          bytes_push(bytes: &local_out_71, byte: 48_u8);
+        }
+        let local_item_len_168 = local_item_97.inner.len;
+        bytes_append(bytes: &local_out_71, text: &local_item_97.inner[0_u64..local_item_len_168]);
+        if local_minus_76 {
+          for (i in 0_u64..local_padding_166) {
+            bytes_push(bytes: &local_out_71, byte: 32_u8);
+          }
+        }
+      }
+    }
+  }
+  let local_result_169 = bytes_value(vm: vm, bytes: &local_out_71);
+  return lib_result(stack: stack, func: func, value: local_result_169);
 }

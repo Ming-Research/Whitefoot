@@ -44,14 +44,18 @@ const library_base_lib_text_16: Array<u8, 21> = "invalid key to 'next'";
 
 const library_base_lib_text_17: Array<u8, 26> = "too many results to unpack";
 
-fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, func: u64, argc: u64, id: u32, pc: u64) -> r: HostOutcome reads(code), reads(consts), writes(vm), writes(stack), writes(env) contract {
-  ensures stack^.inner.len == entry(stack)^.inner.len;
-} {
+fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, func: u64, argc: u64, id: u32, pc: u64) -> r: HostOutcome reads(code), reads(consts), writes(vm), writes(stack), writes(env) {
   let local_length_1 = stack^.inner.len;
   let local_a_2 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
   let local_b_3 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
   let local_c_4 = argument(stack: stack, func: func, argc: argc, index: 2_u64);
   let local_nil_5 = Value::Nil();
+  if id == builtin_xpcall {
+    if argc < 2_u64 {
+      return lib_argtext(vm: vm, id: id, index: 2_u64, text: &library_base_lib_text_4[0_u64..14_u64]);
+    }
+    return xpcall_start::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, func: func, argc: argc);
+  }
   if id == builtin_assert {
     if argc == 0_u64 {
       return lib_argtext(vm: vm, id: id, index: 1_u64, text: &library_base_lib_text_4[0_u64..14_u64]);
@@ -319,6 +323,26 @@ fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
       }
       NoHandle() => {
         return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_2, expected: &library_base_lib_text_2[0_u64..5_u64]);
+      }
+    }
+    let b_absent = is_nil(v: local_b_3);
+    if bnot(b_absent) {
+      match lib_integer(vm: vm, value: local_b_3) {
+        Some(..) => {
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_3, expected: &library_base_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+    let c_absent = is_nil(v: local_c_4);
+    if bnot(c_absent) {
+      match lib_integer(vm: vm, value: local_c_4) {
+        Some(..) => {
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 3_u64, argc: argc, value: local_c_4, expected: &library_base_lib_text_0[0_u64..6_u64]);
+        }
       }
     }
     let local_border_51 = pkg::heap::table_border(heap: &vm^.heap, t: local_a_2);

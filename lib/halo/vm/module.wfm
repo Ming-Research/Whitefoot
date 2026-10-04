@@ -41,7 +41,33 @@ public struct CallbackFrame {
   public mode: u8;
 }
 
+public struct LibraryContext {
+  public frame: Frame;
+  public tail: Bool;
+  public id: u32;
+  public phase: u8;
+  public count: u64;
+  public table: Value;
+  public comparator: Value;
+  public saved_error: Value;
+}
+
+public struct SortFrame {
+  public context: u64;
+  public lower: i64;
+  public upper: i64;
+  public i: i64;
+  public j: i64;
+  public phase: u8;
+  public a: Value;
+  public b: Value;
+  public pivot: Value;
+}
+
 public struct Vm {
+  public library_contexts: Box<Slots<LibraryContext>>;
+  public sort_frames: Box<Slots<SortFrame>>;
+  public random_state: u64;
   public heap: Heap;
   public frames: Box<Slots<Frame>>;
   public open_upvalues: Box<Slots<u32>>;

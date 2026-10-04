@@ -55,11 +55,11 @@ fn trig_reduce(x: f64) -> r: TrigReduction pure {
   let local_q0_26 = reduction_bit(product: &local_product_12, index: local_shift_25);
   let local_next_27 = local_shift_25 +wrap 1_i64;
   let local_q1_28 = reduction_bit(product: &local_product_12, index: local_next_27);
-  let local_upper_29 = local_q1_28 * 2_u64;
-  let local_q_30 = local_upper_29 + local_q0_26;
+  let local_upper_29 = local_q1_28 *wrap 2_u64;
+  let local_q_30 = local_upper_29 +wrap local_q0_26;
   let local_half_31 = local_shift_25 -wrap 1_i64;
   let local_up_32 = reduction_bit(product: &local_product_12, index: local_half_31);
-  let local_quadrant_33 = local_q_30 + local_up_32;
+  let local_quadrant_33 = local_q_30 +wrap local_up_32;
   let local_high_34 = 0_u64;
   let local_low_35 = 0_u64;
   for (i in 0_u64..53_u64) {
@@ -100,6 +100,9 @@ fn trig_reduce(x: f64) -> r: TrigReduction pure {
 }
 
 fn math_sin(x: f64) -> r: f64 pure {
+  if fne(x, x) {
+    return x;
+  }
   let local_abs_60 = fabs(x);
   if flt(local_abs_60, 7.450580596923828e-9_f64) {
     return x;
@@ -125,6 +128,9 @@ fn math_sin(x: f64) -> r: f64 pure {
 }
 
 fn math_cos(x: f64) -> r: f64 pure {
+  if fne(x, x) {
+    return x;
+  }
   let local_abs_66 = fabs(x);
   if flt(local_abs_66, 7.450580596923828e-9_f64) {
     return 1.0_f64;
@@ -150,6 +156,9 @@ fn math_cos(x: f64) -> r: f64 pure {
 }
 
 fn math_tan(x: f64) -> r: f64 pure {
+  if fne(x, x) {
+    return x;
+  }
   let local_abs_72 = fabs(x);
   if flt(local_abs_72, 7.450580596923828e-9_f64) {
     return x;

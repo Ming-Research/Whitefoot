@@ -1,0 +1,259 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias num_of = pkg::value::num_of;
+alias str_of = pkg::value::str_of;
+alias truthy = pkg::value::truthy;
+
+const library_sort_sort_order_error: Array<u8, 34> = "invalid order function for sorting";
+
+fn sort_push(vm: &Vm, context: u64, lower: i64, upper: i64) -> r: unit writes(vm) {
+  let local_n_1 = vm^.sort_frames.inner.len;
+  if local_n_1 == vm^.sort_frames.inner.cap {
+    let local_cap_2 = local_n_1 +sat 1_u64;
+    grow(cell: &vm^.sort_frames, capacity: local_cap_2);
+  }
+  let local_nil_3 = Value::Nil();
+  let local_frame_4 = SortFrame(context: context, lower: lower, upper: upper, i: 0_i64, j: 0_i64, phase: 0_u8, a: local_nil_3, b: local_nil_3, pivot: local_nil_3);
+  if vm^.sort_frames.inner.len < vm^.sort_frames.inner.cap {
+    place_back(window: &vm^.sort_frames.inner, value: local_frame_4);
+  }
+  return unit;
+}
+
+fn sort_store(vm: &Vm, index: u64, frame: SortFrame) -> r: unit writes(vm) {
+  if index < vm^.sort_frames.inner.len {
+    set vm^.sort_frames.inner[index] = frame;
+  }
+  return unit;
+}
+
+fn sort_compare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, context: u64, a: Value, b: Value) -> r: Bool reads(code), reads(consts), writes(stack), writes(vm), writes(env) {
+  if context < vm^.library_contexts.inner.len {
+    let local_call_5 = vm^.library_contexts.inner[context];
+    let local_dest_6 = local_call_5.frame.func;
+    let local_nil_7 = Value::Nil();
+    if is_nil(v: local_call_5.comparator) {
+      match num_of(v: a) {
+        Is(x: bound_x_1) => {
+          match num_of(v: b) {
+            Is(x: y) => {
+              let local_less_8 = flt(bound_x_1, y);
+              let local_value_9 = boolean(v: local_less_8);
+              lib_put(stack: stack, at: local_dest_6, value: local_value_9);
+              return True();
+            }
+            Not() => {
+            }
+          }
+        }
+        Not() => {
+        }
+      }
+      match str_of(v: a) {
+        Handle(h: left) => {
+          match str_of(v: b) {
+            Handle(h: right) => {
+              let local_order_10 = string_order(vm: vm, b: left, c: right);
+              let local_less_11 = local_order_10 < 0_i64;
+              let local_value_12 = boolean(v: local_less_11);
+              lib_put(stack: stack, at: local_dest_6, value: local_value_12);
+              return True();
+            }
+            NoHandle() => {
+            }
+          }
+        }
+        NoHandle() => {
+        }
+      }
+      let local_op_13 = SlowOp::Lt();
+      if local_dest_6 < stack^.inner.len {
+        return slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: local_op_13, dest: local_dest_6, b: a, c: b, v: local_nil_7);
+      }
+      return False();
+    }
+    return callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: local_dest_6, f: local_call_5.comparator, b: a, c: b, third: local_nil_7, argc: 2_u64, wanted: 1_i64, mode: 0_u8);
+  }
+  return False();
+}
+
+fn sort_start<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, table: Value, comparator: Value, func: u64, upper: i64) -> r: Bool reads(code), reads(consts), writes(vm), writes(stack), writes(env) {
+  let local_context_14 = vm^.library_contexts.inner.len -sat 1_u64;
+  sort_push(vm: vm, context: local_context_14, lower: 1_i64, upper: upper);
+  return sort_run::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, context: local_context_14);
+}
+
+fn sort_run<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, context: u64) -> r: Bool reads(code), reads(consts), writes(vm), writes(stack), writes(env) {
+  doc "ltablib.c auxsort with its smaller-half recursion represented by SortFrame records. The phases preserve PUC's fetch, compare, swap and invalid-order checks; callback values and the pivot remain collector roots across reentrant Lua calls and budget suspension.";
+  loop {
+    if context >= vm^.library_contexts.inner.len {
+      return False();
+    }
+    if vm^.sort_frames.inner.len == 0_u64 {
+      return True();
+    }
+    let local_index_15 = vm^.sort_frames.inner.len - 1_u64;
+    let local_frame_16 = vm^.sort_frames.inner[local_index_15];
+    if local_frame_16.context != context {
+      return True();
+    }
+    let local_call_17 = vm^.library_contexts.inner[context];
+    let local_table_18 = local_call_17.table;
+    let local_result_19 = argument(stack: stack, func: local_call_17.frame.func, argc: 1_u64, index: 18446744073709551615_u64);
+    let local_dest_20 = local_call_17.frame.func;
+    if local_dest_20 < stack^.inner.len {
+      set local_result_19 = stack^.inner[local_dest_20];
+    }
+    let local_less_21 = truthy(v: local_result_19);
+    let local_l_22 = local_frame_16.lower;
+    let local_u_23 = local_frame_16.upper;
+    let local_gap_24 = local_u_23 -wrap local_l_22;
+    if local_frame_16.phase == 0_u8 {
+      if local_l_22 >= local_u_23 {
+        let local_discarded_25 = take_back(window: &vm^.sort_frames.inner);
+      } else {
+        set local_frame_16.a = table_at(vm: vm, table: local_table_18, index: local_l_22);
+        set local_frame_16.b = table_at(vm: vm, table: local_table_18, index: local_u_23);
+        set local_frame_16.phase = 1_u8;
+        sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+        let local_ok_26 = sort_compare::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, context: context, a: local_frame_16.b, b: local_frame_16.a);
+        if bnot(local_ok_26) {
+          return False();
+        }
+      }
+    } else if local_frame_16.phase == 1_u8 {
+      if local_less_21 {
+        let local_ok_27 = table_swap(vm: vm, table: local_table_18, i: local_l_22, j: local_u_23, a: local_frame_16.a, b: local_frame_16.b);
+        if bnot(local_ok_27) {
+          return False();
+        }
+      }
+      if local_gap_24 == 1_i64 {
+        let local_discarded_28 = take_back(window: &vm^.sort_frames.inner);
+      } else {
+        let local_sum_29 = local_l_22 +wrap local_u_23;
+        set local_frame_16.i = local_sum_29 / 2_i64;
+        set local_frame_16.a = table_at(vm: vm, table: local_table_18, index: local_frame_16.i);
+        set local_frame_16.b = table_at(vm: vm, table: local_table_18, index: local_l_22);
+        set local_frame_16.phase = 3_u8;
+        sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+        let local_ok_30 = sort_compare::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, context: context, a: local_frame_16.a, b: local_frame_16.b);
+        if bnot(local_ok_30) {
+          return False();
+        }
+      }
+    } else if local_frame_16.phase == 3_u8 {
+      if local_less_21 {
+        let local_ok_31 = table_swap(vm: vm, table: local_table_18, i: local_frame_16.i, j: local_l_22, a: local_frame_16.a, b: local_frame_16.b);
+        if bnot(local_ok_31) {
+          return False();
+        }
+        set local_frame_16.phase = 5_u8;
+        sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+      } else {
+        set local_frame_16.b = table_at(vm: vm, table: local_table_18, index: local_u_23);
+        set local_frame_16.phase = 4_u8;
+        sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+        let local_ok_32 = sort_compare::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, context: context, a: local_frame_16.b, b: local_frame_16.a);
+        if bnot(local_ok_32) {
+          return False();
+        }
+      }
+    } else if local_frame_16.phase == 4_u8 {
+      if local_less_21 {
+        let local_ok_33 = table_swap(vm: vm, table: local_table_18, i: local_frame_16.i, j: local_u_23, a: local_frame_16.a, b: local_frame_16.b);
+        if bnot(local_ok_33) {
+          return False();
+        }
+      }
+      set local_frame_16.phase = 5_u8;
+      sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+    } else if local_frame_16.phase == 5_u8 {
+      if local_gap_24 == 2_i64 {
+        let local_discarded_34 = take_back(window: &vm^.sort_frames.inner);
+      } else {
+        set local_frame_16.pivot = table_at(vm: vm, table: local_table_18, index: local_frame_16.i);
+        let local_previous_35 = local_u_23 -wrap 1_i64;
+        let local_value_36 = table_at(vm: vm, table: local_table_18, index: local_previous_35);
+        let local_ok_37 = table_swap(vm: vm, table: local_table_18, i: local_frame_16.i, j: local_previous_35, a: local_frame_16.pivot, b: local_value_36);
+        if bnot(local_ok_37) {
+          return False();
+        }
+        set local_frame_16.i = local_l_22;
+        set local_frame_16.j = local_previous_35;
+        set local_frame_16.phase = 6_u8;
+        sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+      }
+    } else if local_frame_16.phase == 6_u8 {
+      let local_i_38 = local_frame_16.i +wrap 1_i64;
+      set local_frame_16.i = local_i_38;
+      set local_frame_16.a = table_at(vm: vm, table: local_table_18, index: local_i_38);
+      set local_frame_16.phase = 7_u8;
+      sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+      let local_ok_39 = sort_compare::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, context: context, a: local_frame_16.a, b: local_frame_16.pivot);
+      if bnot(local_ok_39) {
+        return False();
+      }
+    } else if local_frame_16.phase == 7_u8 {
+      if local_less_21 {
+        if local_frame_16.i > local_u_23 {
+          return raise_text(vm: vm, text: &library_sort_sort_order_error[0_u64..34_u64]);
+        }
+        set local_frame_16.phase = 6_u8;
+      } else {
+        set local_frame_16.phase = 8_u8;
+      }
+      sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+    } else if local_frame_16.phase == 8_u8 {
+      let local_j_40 = local_frame_16.j -wrap 1_i64;
+      set local_frame_16.j = local_j_40;
+      set local_frame_16.b = table_at(vm: vm, table: local_table_18, index: local_j_40);
+      set local_frame_16.phase = 9_u8;
+      sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+      let local_ok_41 = sort_compare::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, context: context, a: local_frame_16.pivot, b: local_frame_16.b);
+      if bnot(local_ok_41) {
+        return False();
+      }
+    } else if local_frame_16.phase == 9_u8 {
+      if local_less_21 {
+        if local_frame_16.j < local_l_22 {
+          return raise_text(vm: vm, text: &library_sort_sort_order_error[0_u64..34_u64]);
+        }
+        set local_frame_16.phase = 8_u8;
+        sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+      } else if local_frame_16.j < local_frame_16.i {
+        let local_previous_42 = local_u_23 -wrap 1_i64;
+        let local_a_43 = table_at(vm: vm, table: local_table_18, index: local_previous_42);
+        let local_b_44 = table_at(vm: vm, table: local_table_18, index: local_frame_16.i);
+        let local_ok_45 = table_swap(vm: vm, table: local_table_18, i: local_previous_42, j: local_frame_16.i, a: local_a_43, b: local_b_44);
+        if bnot(local_ok_45) {
+          return False();
+        }
+        let local_left_46 = local_frame_16.i -wrap local_l_22;
+        let local_right_47 = local_u_23 -wrap local_frame_16.i;
+        let local_smaller_l_48 = local_l_22;
+        let local_smaller_u_49 = local_frame_16.i -wrap 1_i64;
+        if local_left_46 < local_right_47 {
+          set local_frame_16.lower = local_frame_16.i +wrap 1_i64;
+        } else {
+          set local_smaller_l_48 = local_frame_16.i +wrap 1_i64;
+          set local_smaller_u_49 = local_u_23;
+          set local_frame_16.upper = local_frame_16.i -wrap 1_i64;
+        }
+        set local_frame_16.phase = 0_u8;
+        sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+        sort_push(vm: vm, context: context, lower: local_smaller_l_48, upper: local_smaller_u_49);
+      } else {
+        let local_ok_50 = table_swap(vm: vm, table: local_table_18, i: local_frame_16.i, j: local_frame_16.j, a: local_frame_16.a, b: local_frame_16.b);
+        if bnot(local_ok_50) {
+          return False();
+        }
+        set local_frame_16.phase = 6_u8;
+        sort_store(vm: vm, index: local_index_15, frame: local_frame_16);
+      }
+    } else {
+      return False();
+    }
+  }
+  return False();
+}

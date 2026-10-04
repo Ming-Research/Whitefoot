@@ -1,0 +1,249 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+alias Value = halo::value::Value;
+alias Vm = halo::vm::Vm;
+alias HostOutcome = halo::vm::HostOutcome;
+alias Host = halo::vm::Host;
+
+const print_name: Array<u8, 5> = "print";
+
+const source_name: Array<u8, 12> = "@user_script";
+
+const nil_text: Array<u8, 3> = "nil";
+
+const false_text: Array<u8, 5> = "false";
+
+const true_text: Array<u8, 4> = "true";
+
+const other_text: Array<u8, 6> = "object";
+
+const error_text: Array<u8, 6> = "ERROR\t";
+
+struct Env {
+  bytes: Box<Slots<u8>>;
+}
+
+fn append(out: &Box<Slots<u8>>, byte: u8) -> r: unit writes(out) {
+  if out^.inner.len == out^.inner.cap {
+    let cap = out^.inner.cap +sat 1024_u64;
+    grow(cell: out, capacity: cap);
+  }
+  if out^.inner.len < out^.inner.cap {
+    place_back(window: &out^.inner, value: byte);
+  }
+  return unit;
+}
+
+fn append_text(out: &Box<Slots<u8>>, text: &[u8]) -> r: unit reads(text), writes(out) {
+  for (i in 0_u64..text^.len) {
+    let byte = text^[i];
+    append(out: out, byte: byte);
+  }
+  return unit;
+}
+
+fn append_value(env: &Env, vm: &Vm, v: Value) -> r: unit reads(vm), writes(env) {
+  match v {
+    Nil() => {
+      append_text(out: &env^.bytes, text: &nil_text[0_u64..3_u64]);
+    }
+    False() => {
+      append_text(out: &env^.bytes, text: &false_text[0_u64..5_u64]);
+    }
+    True() => {
+      append_text(out: &env^.bytes, text: &true_text[0_u64..4_u64]);
+    }
+    Num(n: x) => {
+      let bytes = array_filled::<u8, 32>(value: 0_u8);
+      let n = halo::number::format_number(value: x, out: &bytes[0_u64..32_u64]);
+      append_text(out: &env^.bytes, text: &bytes[0_u64..n]);
+    }
+    Str(h: handle) => {
+      let hi = cvt::<u32, u64>(handle);
+      if hi < vm^.heap.strings.inner.len {
+        let n = vm^.heap.strings.inner[hi].payload.bytes.inner.len;
+        for (i in 0_u64..n) {
+          if i < vm^.heap.strings.inner[hi].payload.bytes.inner.len {
+            let byte = vm^.heap.strings.inner[hi].payload.bytes.inner[i];
+            if byte == 0_u8 {
+              break;
+            }
+            append(out: &env^.bytes, byte: byte);
+          }
+        }
+      }
+    }
+    Tab(..) => {
+      append_text(out: &env^.bytes, text: &other_text[0_u64..6_u64]);
+    }
+    Fun(..) => {
+      append_text(out: &env^.bytes, text: &other_text[0_u64..6_u64]);
+    }
+    Builtin(..) => {
+      append_text(out: &env^.bytes, text: &other_text[0_u64..6_u64]);
+    }
+  }
+  return unit;
+}
+
+fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  set vm^.error = Value::Nil();
+  for (i in 0_u64..argc) {
+    if i > 0_u64 {
+      append(out: &env^.bytes, byte: 9_u8);
+    }
+    let first = func +sat 1_u64;
+    let index = first +sat i;
+    if index < stack^.inner.len {
+      let value = stack^.inner[index];
+      append_value(env: env, vm: vm, v: value);
+    }
+  }
+  append(out: &env^.bytes, byte: 10_u8);
+  if func < stack^.inner.len {
+    set stack^.inner[func] = Value::Nil();
+  }
+  return HostOutcome::Returned(count: 0_u64);
+}
+
+binding PrintHost : Host<Env> {
+  call = host_call;
+}
+
+fn read_exact(factory: &HandleFactory, input: &InputStream, bytes: &[u8], count: u64) -> complete: Bool writes(factory), writes(input), writes(bytes) waits contract {
+  requires count <= bytes^.len;
+} {
+  let position = 0_u64;
+  loop @read {
+    if position >= count {
+      return True();
+    }
+    let deadline = None<std::time::Instant>();
+    match std::io::read_next(factory: factory, input: input, destination: bytes, start: position, end: count, deadline: deadline) {
+      Ok(value: next) => {
+        if next == position {
+          return False();
+        }
+        set position = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn emit(factory: &HandleFactory, output: &OutputStream, bytes: &[u8], count: u64) -> complete: Bool reads(bytes), writes(factory), writes(output) waits contract {
+  requires count <= bytes^.len;
+} {
+  let position = 0_u64;
+  loop @write {
+    if position >= count {
+      return True();
+    }
+    let deadline = None<std::time::Instant>();
+    match std::io::write_once(factory: factory, output: output, source: bytes, start: position, end: count, deadline: deadline) {
+      Ok(value: next) => {
+        if next == position {
+          return False();
+        }
+        set position = next;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn main(inputs: Inputs) -> r: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: output, stderr: stderr, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd_read, write: cwd_write) = move cwd;
+  std::fs::close_directory(factory: &factory, directory: move cwd_read);
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
+  let header = array_filled::<u8, 8>(value: 0_u8);
+  let complete = read_exact(factory: &factory, input: &input, bytes: &header[0_u64..8_u64], count: 8_u64);
+  if bnot(complete) {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let budget = 0_u64;
+  for (i in 0_u64..8_u64) {
+    let byte = header[i];
+    let wide = cvt::<u8, u64>(byte);
+    let distance = i * 8_u64;
+    let shift = cvt::<u64, u32>(distance);
+    let part = ishl.wrap(wide, shift);
+    set budget = ior(budget, part);
+  }
+  let source = box_slots_new::<u8>(capacity: 0_u64);
+  let buffer = array_filled::<u8, 4096>(value: 0_u8);
+  loop {
+    let deadline = None<std::time::Instant>();
+    match std::io::read_next(factory: &factory, input: &input, destination: &buffer[0_u64..4096_u64], start: 0_u64, end: 4096_u64, deadline: deadline) {
+      Ok(value: n) => {
+        if n == 0_u64 {
+          break;
+        }
+        if n <= 4096_u64 {
+          append_text(out: &source, text: &buffer[0_u64..n]);
+        }
+      }
+      Err(..) => {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+  }
+  let vm = halo::vm::vm_new(limit: 0_u64);
+  halo::vm::install_libraries(vm: &vm);
+  let name = halo::heap::intern(heap: &vm.heap, bytes: &print_name[0_u64..5_u64]);
+  let globals = Value::Tab(h: vm.globals);
+  let print = Value::Builtin(id: 4096_u32);
+  let ignored = halo::heap::table_set(heap: &vm.heap, t: globals, key: name, val: print);
+  let bytes = box_slots_new::<u8>(capacity: 0_u64);
+  let env = Env(bytes: move bytes);
+  let stack = halo::vm::stack_new(size: 256_u64);
+  let length = source.inner.len;
+  match halo::compile::compile(heap: &vm.heap, chunk_name: &source_name[0_u64..12_u64], source: &source.inner[0_u64..length]) {
+    Err(error: problem) => {
+      let n = problem.message.inner.len;
+      let complete = emit(factory: &factory, output: &stderr, bytes: &problem.message.inner[0_u64..n], count: n);
+      return std::process::exit_status(code: 3_u8);
+    }
+    Ok(value: script) => {
+      let outcome = halo::vm::start::<PrintHost>(script: &script, stack: &stack, vm: &vm, env: &env, proto: 0_u32, argc: 0_u64, budget: budget);
+      loop {
+        match outcome {
+          Budget() => {
+            set outcome = halo::vm::resume::<PrintHost>(script: &script, stack: &stack, vm: &vm, env: &env, budget: budget);
+          }
+          Done(..) => {
+            break;
+          }
+          Error() => {
+            append_text(out: &env.bytes, text: &error_text[0_u64..6_u64]);
+            let error = vm.error;
+            append_value(env: &env, vm: &vm, v: error);
+            append(out: &env.bytes, byte: 10_u8);
+            break;
+          }
+          HostStopped() => {
+            return std::process::exit_status(code: 4_u8);
+          }
+        }
+      }
+    }
+  }
+  let n = env.bytes.inner.len;
+  let sent = emit(factory: &factory, output: &output, bytes: &env.bytes.inner[0_u64..n], count: n);
+  if bnot(sent) {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

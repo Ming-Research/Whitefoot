@@ -1,0 +1,151 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias truthy = pkg::value::truthy;
+
+const library_callbacks_library_callback_error: Array<u8, 23> = "error in error handling";
+
+fn push_library_context(vm: &Vm, context: LibraryContext) -> r: unit writes(vm) {
+  let local_n_1 = vm^.library_contexts.inner.len;
+  if local_n_1 == vm^.library_contexts.inner.cap {
+    let local_cap_2 = local_n_1 +sat 1_u64;
+    grow(cell: &vm^.library_contexts, capacity: local_cap_2);
+  }
+  if vm^.library_contexts.inner.len < vm^.library_contexts.inner.cap {
+    place_back(window: &vm^.library_contexts.inner, value: context);
+  }
+  return unit;
+}
+
+fn discard_library_context(vm: &Vm, index: u64) -> r: unit writes(vm) {
+  loop {
+    if vm^.sort_frames.inner.len == 0_u64 {
+      break;
+    }
+    let local_last_3 = vm^.sort_frames.inner.len - 1_u64;
+    if vm^.sort_frames.inner[local_last_3].context != index {
+      break;
+    }
+    let local_discarded_4 = take_back(window: &vm^.sort_frames.inner);
+  }
+  if index < vm^.library_contexts.inner.len {
+    let local_discarded_5 = take_back(window: &vm^.library_contexts.inner);
+  }
+  return unit;
+}
+
+fn library_callback_count(vm: &Vm, plan: CallbackPlan, count: u64) -> r: unit writes(vm) {
+  if plan.kind == 4_u8 {
+    let local_index_6 = plan.first;
+    if local_index_6 < vm^.library_contexts.inner.len {
+      set vm^.library_contexts.inner[local_index_6].count = count;
+    }
+  }
+  return unit;
+}
+
+fn xpcall_start<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, func: u64, argc: u64) -> r: HostOutcome reads(code), reads(consts), writes(stack), writes(vm), writes(env) {
+  let local_index_7 = vm^.library_contexts.inner.len -sat 1_u64;
+  let local_nil_8 = Value::Nil();
+  if local_index_7 < vm^.library_contexts.inner.len {
+    let local_context_9 = vm^.library_contexts.inner[local_index_7];
+    let local_destination_10 = func +sat 1_u64;
+    let local_ok_11 = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: local_destination_10, f: local_context_9.table, b: local_nil_8, c: local_nil_8, third: local_nil_8, argc: 0_u64, wanted: -1_i64, mode: 0_u8);
+    if vm^.suspended {
+      return HostOutcome::Raised();
+    }
+    if vm^.host_stopped {
+      return HostOutcome::Stop();
+    }
+    let local_failed_12 = bnot(local_ok_11);
+    return xpcall_continue::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, index: local_index_7, failed: local_failed_12);
+  }
+  return HostOutcome::Raised();
+}
+
+fn xpcall_continue<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, index: u64, failed: Bool) -> r: HostOutcome reads(code), reads(consts), writes(stack), writes(vm), writes(env) {
+  if index < vm^.library_contexts.inner.len {
+    let local_context_13 = vm^.library_contexts.inner[index];
+    let local_func_14 = local_context_13.frame.func;
+    let local_destination_15 = local_func_14 +sat 1_u64;
+    if local_context_13.phase == 0_u8 {
+      if bnot(failed) {
+        let local_yes_16 = Value::True();
+        lib_put(stack: stack, at: local_func_14, value: local_yes_16);
+        let local_count_17 = local_context_13.count +sat 1_u64;
+        return HostOutcome::Returned(count: local_count_17);
+      }
+      set vm^.library_contexts.inner[index].phase = 1_u8;
+      let local_error_18 = vm^.error;
+      set vm^.library_contexts.inner[index].saved_error = local_error_18;
+      let local_nil_19 = Value::Nil();
+      let local_ok_20 = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: local_destination_15, f: local_context_13.comparator, b: local_error_18, c: local_nil_19, third: local_nil_19, argc: 1_u64, wanted: 1_i64, mode: 0_u8);
+      if vm^.suspended {
+        return HostOutcome::Raised();
+      }
+      if vm^.host_stopped {
+        return HostOutcome::Stop();
+      }
+      if bnot(local_ok_20) {
+        let local_ignored_21 = raise_text(vm: vm, text: &library_callbacks_library_callback_error[0_u64..23_u64]);
+        let local_value_22 = vm^.error;
+        lib_put(stack: stack, at: local_destination_15, value: local_value_22);
+      }
+    } else if failed {
+      let local_ignored_23 = raise_text(vm: vm, text: &library_callbacks_library_callback_error[0_u64..23_u64]);
+      let local_value_24 = vm^.error;
+      lib_put(stack: stack, at: local_destination_15, value: local_value_24);
+    }
+    let local_no_25 = Value::False();
+    lib_put(stack: stack, at: local_func_14, value: local_no_25);
+    return HostOutcome::Returned(count: 2_u64);
+  }
+  return HostOutcome::Raised();
+}
+
+fn resume_library<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, plan: CallbackPlan, failed: Bool) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) {
+  let local_index_26 = plan.first;
+  if local_index_26 < vm^.library_contexts.inner.len {
+    let local_context_27 = vm^.library_contexts.inner[local_index_26];
+    let local_outcome_28 = HostOutcome::Raised();
+    if local_context_27.id == builtin_xpcall {
+      set vm^.callback_plan = plan;
+      set local_outcome_28 = xpcall_continue::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, index: local_index_26, failed: failed);
+    } else if bnot(failed) {
+      if local_context_27.id == builtin_table_sort {
+        set vm^.callback_plan = plan;
+        let local_ok_29 = sort_run::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, context: local_index_26);
+        if local_ok_29 {
+          set local_outcome_28 = HostOutcome::Returned(count: 0_u64);
+        }
+      } else {
+        set local_outcome_28 = HostOutcome::Returned(count: 1_u64);
+      }
+    }
+    if vm^.suspended {
+      return Step::Budget();
+    }
+    if vm^.host_stopped {
+      return Step::Stop();
+    }
+    discard_library_context(vm: vm, index: local_index_26);
+    match local_outcome_28 {
+      Returned(count: bound_count_1) => {
+        if local_context_27.tail {
+          if vm^.frames.inner.len > 0_u64 {
+            let local_frame_30 = take_back(window: &vm^.frames.inner);
+            close_upvalues(vm: vm, stack: stack, level: local_frame_30.base);
+            return finish(vm: vm, stack: stack, frame: local_frame_30, src: local_context_27.frame.func, count: bound_count_1);
+          }
+        }
+        return finish(vm: vm, stack: stack, frame: local_context_27.frame, src: local_context_27.frame.func, count: bound_count_1);
+      }
+      Raised() => {
+        return unwind(vm: vm, stack: stack);
+      }
+      Stop() => {
+        return Step::Stop();
+      }
+    }
+  }
+  return Step::Error();
+}

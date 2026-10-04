@@ -229,6 +229,7 @@ fn callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value
   let ok = False();
   match out {
     Done(count: n) => {
+      library_callback_count(vm: vm, plan: plan, count: n);
       set ok = True();
       if wanted != 0_i64 {
         let copied = adjust_results(vm: vm, stack: stack, dest: dest, src: scratch, count: n, wanted: wanted);

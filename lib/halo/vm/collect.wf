@@ -90,6 +90,24 @@ fn mark_roots(vm: &Vm, stack: &Box<Slots<Value>>, consts: &Box<Slots<Value>>, li
       break;
     }
   }
+  let library_count = vm^.library_contexts.inner.len;
+  for (index in 0_u64..library_count) {
+    if index < vm^.library_contexts.inner.len {
+      let context = vm^.library_contexts.inner[index];
+      pkg::heap::gc_mark(heap: &vm^.heap, v: context.table);
+      pkg::heap::gc_mark(heap: &vm^.heap, v: context.comparator);
+      pkg::heap::gc_mark(heap: &vm^.heap, v: context.saved_error);
+    }
+  }
+  let sort_count = vm^.sort_frames.inner.len;
+  for (index in 0_u64..sort_count) {
+    if index < vm^.sort_frames.inner.len {
+      let frame = vm^.sort_frames.inner[index];
+      pkg::heap::gc_mark(heap: &vm^.heap, v: frame.a);
+      pkg::heap::gc_mark(heap: &vm^.heap, v: frame.b);
+      pkg::heap::gc_mark(heap: &vm^.heap, v: frame.pivot);
+    }
+  }
   let e = vm^.error;
   pkg::heap::gc_mark(heap: &vm^.heap, v: e);
   set i = 0_u64;

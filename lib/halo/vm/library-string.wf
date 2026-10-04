@@ -35,9 +35,7 @@ fn relative_position(index: i64, length: u64) -> r: i64 pure {
   return local_p_2;
 }
 
-fn library_string(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) contract {
-  ensures stack^.inner.len == entry(stack)^.inner.len;
-} {
+fn library_string(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) {
   let local_a_4 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
   let local_b_5 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
   let local_c_6 = argument(stack: stack, func: func, argc: argc, index: 2_u64);

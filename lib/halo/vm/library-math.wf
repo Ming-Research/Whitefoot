@@ -1,0 +1,265 @@
+alias Value = pkg::value::Value;
+
+const library_math_lib_text_0: Array<u8, 6> = "number";
+
+const library_math_lib_text_1: Array<u8, 25> = "wrong number of arguments";
+
+const library_math_lib_text_2: Array<u8, 17> = "interval is empty";
+
+const library_math_lib_text_3: Array<u8, 17> = "interval is empty";
+
+fn library_math(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) {
+  let local_a_1 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let local_b_2 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+  if id == builtin_math_random {
+    let local_product_3 = vm^.random_state *wrap 25214903917_u64;
+    let local_next_4 = local_product_3 +wrap 11_u64;
+    set vm^.random_state = iand(local_next_4, 281474976710655_u64);
+    let local_result_5 = ishr.wrap(vm^.random_state, 17_u32);
+    let local_fraction_6 = local_result_5 % 2147483647_u64;
+    let local_number_7 = cvt.nearest::<u64, f64>(local_fraction_6);
+    let local_random_8 = fdiv.strict(local_number_7, 2147483647.0_f64);
+    if argc == 0_u64 {
+      let local_value_9 = Value::Num(n: local_random_8);
+      return lib_result(stack: stack, func: func, value: local_value_9);
+    }
+    if argc > 2_u64 {
+      return lib_failure(vm: vm, text: &library_math_lib_text_1[0_u64..25_u64]);
+    }
+    let local_lower_10 = 1_i64;
+    let local_upper_11 = 0_i64;
+    match lib_integer(vm: vm, value: local_a_1) {
+      Some(value: n) => {
+        let local_signed_12 = cvt.wrap::<i64, i32>(n);
+        set local_upper_11 = cvt::<i32, i64>(local_signed_12);
+      }
+      None() => {
+        return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_1, expected: &library_math_lib_text_0[0_u64..6_u64]);
+      }
+    }
+    if argc == 2_u64 {
+      set local_lower_10 = local_upper_11;
+      match lib_integer(vm: vm, value: local_b_2) {
+        Some(value: n) => {
+          let local_signed_13 = cvt.wrap::<i64, i32>(n);
+          set local_upper_11 = cvt::<i32, i64>(local_signed_13);
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_2, expected: &library_math_lib_text_0[0_u64..6_u64]);
+        }
+      }
+      if local_lower_10 > local_upper_11 {
+        return lib_argtext(vm: vm, id: id, index: 2_u64, text: &library_math_lib_text_2[0_u64..17_u64]);
+      }
+    } else if local_upper_11 < 1_i64 {
+      return lib_argtext(vm: vm, id: id, index: 1_u64, text: &library_math_lib_text_3[0_u64..17_u64]);
+    }
+    let local_span_14 = local_upper_11 -wrap local_lower_10;
+    let local_size_15 = local_span_14 +wrap 1_i64;
+    let local_width_16 = cvt.nearest::<i64, f64>(local_size_15);
+    let local_product_17 = fmul.strict(local_random_8, local_width_16);
+    let local_offset_18 = ffloor(local_product_17);
+    let local_origin_19 = cvt.nearest::<i64, f64>(local_lower_10);
+    let local_x_20 = fadd.strict(local_offset_18, local_origin_19);
+    let local_value_21 = Value::Num(n: local_x_20);
+    return lib_result(stack: stack, func: func, value: local_value_21);
+  }
+  let local_x_22 = 0.0_f64;
+  match coerce_number(vm: vm, v: local_a_1) {
+    Is(x: n) => {
+      set local_x_22 = n;
+    }
+    Not() => {
+      return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_1, expected: &library_math_lib_text_0[0_u64..6_u64]);
+    }
+  }
+  if id == builtin_math_randomseed {
+    let local_integral_23 = ftrunc(local_x_22);
+    let local_seed_24 = 0_i64;
+    if cvt.defined::<f64, i64>(local_integral_23) {
+      set local_seed_24 = cvt::<f64, i64>(local_integral_23);
+    }
+    let local_narrowed_25 = cvt.wrap::<i64, u32>(local_seed_24);
+    let local_wide_26 = cvt::<u32, u64>(local_narrowed_25);
+    let local_upper_27 = ishl.wrap(local_wide_26, 16_u32);
+    set vm^.random_state = ior(local_upper_27, 13070_u64);
+    return HostOutcome::Returned(count: 0_u64);
+  }
+  if id == builtin_math_min {
+    for (i in 1_u64..argc) {
+      let local_value_28 = argument(stack: stack, func: func, argc: argc, index: i);
+      match coerce_number(vm: vm, v: local_value_28) {
+        Is(x: n) => {
+          if flt(n, local_x_22) {
+            set local_x_22 = n;
+          }
+        }
+        Not() => {
+          let local_which_29 = i +sat 1_u64;
+          return lib_argerror(vm: vm, id: id, index: local_which_29, argc: argc, value: local_value_28, expected: &library_math_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+  } else if id == builtin_math_max {
+    for (i in 1_u64..argc) {
+      let local_value_30 = argument(stack: stack, func: func, argc: argc, index: i);
+      match coerce_number(vm: vm, v: local_value_30) {
+        Is(x: n) => {
+          if fgt(n, local_x_22) {
+            set local_x_22 = n;
+          }
+        }
+        Not() => {
+          let local_which_31 = i +sat 1_u64;
+          return lib_argerror(vm: vm, id: id, index: local_which_31, argc: argc, value: local_value_30, expected: &library_math_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+  } else if id == builtin_math_modf {
+    let local_integral_32 = ftrunc(local_x_22);
+    let local_fraction_33 = fsub.strict(local_x_22, local_integral_32);
+    let local_abs_34 = fabs(local_x_22);
+    let local_infinity_35 = finf::<f64>();
+    if feq(local_abs_34, local_infinity_35) {
+      set local_fraction_33 = fcopysign(0.0_f64, local_x_22);
+    }
+    if feq(local_fraction_33, 0.0_f64) {
+      set local_fraction_33 = fcopysign(0.0_f64, local_x_22);
+    }
+    let local_first_36 = Value::Num(n: local_integral_32);
+    let local_second_37 = Value::Num(n: local_fraction_33);
+    lib_put(stack: stack, at: func, value: local_first_36);
+    let local_at_38 = func +sat 1_u64;
+    lib_put(stack: stack, at: local_at_38, value: local_second_37);
+    return HostOutcome::Returned(count: 2_u64);
+  } else if id == builtin_math_frexp {
+    let local_bits_39 = reinterpret::<f64, u64>(local_x_22);
+    let local_shifted_40 = ishr.wrap(local_bits_39, 52_u32);
+    let local_field_41 = iand(local_shifted_40, 2047_u64);
+    let local_exponent_42 = 0_i64;
+    if local_field_41 > 0_u64 {
+      if local_field_41 < 2047_u64 {
+        let local_biased_43 = cvt::<u64, i64>(local_field_41);
+        set local_exponent_42 = local_biased_43 - 1022_i64;
+        let local_cleared_44 = iand(local_bits_39, 9227875636482146303_u64);
+        let local_encoded_45 = ior(local_cleared_44, 4602678819172646912_u64);
+        set local_x_22 = reinterpret::<u64, f64>(local_encoded_45);
+      }
+    } else {
+      let local_abs_46 = fabs(local_x_22);
+      if fgt(local_abs_46, 0.0_f64) {
+        let local_normalized_47 = fmul.strict(local_x_22, 18446744073.709551e9_f64);
+        let local_nbits_48 = reinterpret::<f64, u64>(local_normalized_47);
+        let local_shifted_49 = ishr.wrap(local_nbits_48, 52_u32);
+        let local_biased_50 = iand(local_shifted_49, 2047_u64);
+        let local_signed_51 = cvt::<u64, i64>(local_biased_50);
+        set local_exponent_42 = local_signed_51 -wrap 1086_i64;
+        let local_cleared_52 = iand(local_nbits_48, 9227875636482146303_u64);
+        let local_encoded_53 = ior(local_cleared_52, 4602678819172646912_u64);
+        set local_x_22 = reinterpret::<u64, f64>(local_encoded_53);
+      }
+    }
+    let local_first_54 = Value::Num(n: local_x_22);
+    let local_exp_55 = cvt.nearest::<i64, f64>(local_exponent_42);
+    let local_second_56 = Value::Num(n: local_exp_55);
+    lib_put(stack: stack, at: func, value: local_first_54);
+    let local_at_57 = func +sat 1_u64;
+    lib_put(stack: stack, at: local_at_57, value: local_second_56);
+    return HostOutcome::Returned(count: 2_u64);
+  } else {
+    let local_binary_58 = id == builtin_math_fmod;
+    let local_power_59 = id == builtin_math_pow;
+    let local_scale_60 = id == builtin_math_ldexp;
+    let local_angle_61 = id == builtin_math_atan2;
+    let local_bp_62 = bor(local_binary_58, local_power_59);
+    let local_sa_63 = bor(local_scale_60, local_angle_61);
+    let local_two_64 = bor(local_bp_62, local_sa_63);
+    let local_y_65 = 0.0_f64;
+    if local_two_64 {
+      match coerce_number(vm: vm, v: local_b_2) {
+        Is(x: n) => {
+          set local_y_65 = n;
+        }
+        Not() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_2, expected: &library_math_lib_text_0[0_u64..6_u64]);
+        }
+      }
+    }
+    if id == builtin_math_abs {
+      set local_x_22 = fabs(local_x_22);
+    }
+    if id == builtin_math_ceil {
+      set local_x_22 = pkg::number::ceil(value: local_x_22);
+    }
+    if id == builtin_math_floor {
+      set local_x_22 = pkg::number::floor(value: local_x_22);
+    }
+    if id == builtin_math_fmod {
+      set local_x_22 = pkg::number::fmod(a: local_x_22, b: local_y_65);
+    }
+    if id == builtin_math_sqrt {
+      set local_x_22 = fsqrt.strict(local_x_22);
+    }
+    if id == builtin_math_pow {
+      set local_x_22 = pkg::number::pow(a: local_x_22, b: local_y_65);
+    }
+    if id == builtin_math_log {
+      set local_x_22 = math_log(x: local_x_22);
+    }
+    if id == builtin_math_exp {
+      set local_x_22 = math_exp(x: local_x_22);
+    }
+    if id == builtin_math_sin {
+      set local_x_22 = math_sin(x: local_x_22);
+    }
+    if id == builtin_math_cos {
+      set local_x_22 = math_cos(x: local_x_22);
+    }
+    if id == builtin_math_tan {
+      set local_x_22 = math_tan(x: local_x_22);
+    }
+    if id == builtin_math_asin {
+      set local_x_22 = math_asin(x: local_x_22);
+    }
+    if id == builtin_math_acos {
+      set local_x_22 = math_acos(x: local_x_22);
+    }
+    if id == builtin_math_atan {
+      set local_x_22 = math_atan(x: local_x_22);
+    }
+    if id == builtin_math_atan2 {
+      set local_x_22 = math_atan2(y: local_x_22, x: local_y_65);
+    }
+    if id == builtin_math_sinh {
+      set local_x_22 = math_sinh(x: local_x_22);
+    }
+    if id == builtin_math_cosh {
+      set local_x_22 = math_cosh(x: local_x_22);
+    }
+    if id == builtin_math_tanh {
+      set local_x_22 = math_tanh(x: local_x_22);
+    }
+    if id == builtin_math_deg {
+      set local_x_22 = fdiv.strict(local_x_22, 0.017453292519943294_f64);
+    }
+    if id == builtin_math_rad {
+      set local_x_22 = fmul.strict(local_x_22, 0.017453292519943294_f64);
+    }
+    if id == builtin_math_log10 {
+      let local_ln_66 = math_log(x: local_x_22);
+      set local_x_22 = fmul.strict(local_ln_66, 0.4342944819032518_f64);
+    }
+    if id == builtin_math_ldexp {
+      let local_integral_67 = ftrunc(local_y_65);
+      let local_exponent_68 = 0_i64;
+      if cvt.defined::<f64, i64>(local_integral_67) {
+        set local_exponent_68 = cvt::<f64, i64>(local_integral_67);
+      }
+      let local_narrow_69 = cvt.wrap::<i64, i32>(local_exponent_68);
+      let local_n_70 = cvt::<i32, i64>(local_narrow_69);
+      set local_x_22 = math_ldexp(x: local_x_22, n: local_n_70);
+    }
+  }
+  let local_value_71 = Value::Num(n: local_x_22);
+  return lib_result(stack: stack, func: func, value: local_value_71);
+}
