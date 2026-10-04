@@ -237,15 +237,7 @@ fn builtin<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     resize_stack(stack: stack, size: length);
     match outcome {
       Raised() => {
-        let raw = False();
-        let lower = id >= 112_u32;
-        let upper = id <= 119_u32;
-        if band(lower, upper) {
-          set raw = cmsgpack_raw_error(vm: vm);
-        }
-        if bnot(raw) {
-          library_error_location(vm: vm, pc: pc);
-        }
+        library_call_error_location(vm: vm, id: id, pc: pc);
       }
       Returned(..) => {
       }

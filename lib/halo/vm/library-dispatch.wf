@@ -115,3 +115,15 @@ fn library_raw_error(vm: &Vm) -> r: unit writes(vm.library_contexts) {
   }
   return unit;
 }
+
+fn library_call_error_location(vm: &Vm, id: u32, pc: u64) -> r: unit writes(vm) {
+  let lower = id >= 112_u32;
+  let upper = id <= 119_u32;
+  if band(lower, upper) {
+    if cmsgpack_raw_error(vm: vm) {
+      return unit;
+    }
+  }
+  library_error_location(vm: vm, pc: pc);
+  return unit;
+}

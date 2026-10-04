@@ -333,7 +333,7 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
             if bound_id_1 != builtin_error {
               match out {
                 Raised() => {
-                  library_error_location(vm: vm, pc: call_pc);
+                  library_call_error_location(vm: vm, id: bound_id_1, pc: call_pc);
                 }
                 Returned(..) => {
                 }

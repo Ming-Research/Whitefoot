@@ -108,6 +108,8 @@ def corpus():
     for fmt in ('b','B','>i3','<i8','>I8','i16','I32','f','d'):
         for val in ('-1','-123.5','255','256','4294967296','9223372036854775808','18446744073709551616','math.huge','-math.huge','0/0'):
             add('struct',f'return struct.pack("{fmt}",{val})')
+    for n in (4000,4001):
+        add('cmsgpack',f'local t={{}}; for i=1,{n} do t[i]=1 end return #cmsgpack.pack(unpack(t))')
     return rows
 
 REFERENCE = r"""
@@ -185,7 +187,7 @@ def main():
             equal=actual_run.returncode==0 and e2e.canonical(actual)==e2e.canonical(expected)
             counts[(name.split('/')[0],equal)]+=1
             if not equal:
-                failures.append((name,source,expected,actual));print('FAIL',name,repr(source),repr(expected),repr(actual),flush=True)
+                failures.append((name,source,expected,actual));print('FAIL',name,repr(source),repr(expected)[:400],repr(actual)[:400],flush=True)
             if args.actual:
                 args.actual.mkdir(parents=True,exist_ok=True);(args.actual/(name.replace('/','-')+'.json')).write_text(json.dumps({'source':source,'expected':expected,'actual':actual},ensure_ascii=True,indent=2))
         report=['# Redis Lua library compatibility results','',f'Local revision: `{revision}`. Host: `{__import__("platform").platform()}`.',f'Reference: Redis 7.0.15 bundled sources, all four libraries explicitly registered; `{versions}`.',f'Reference build {seconds:.3f}s. Halo build {build_seconds:.3f}s. Budget 7.',f'Compiler SHA-256: `{hashlib.sha256(Path(args.compiler).read_bytes()).hexdigest()}`.',f'Executable SHA-256: `{hashlib.sha256(binary.read_bytes()).hexdigest()}`.','', '| Library | Snippets | Matches | Mismatches |','| --- | ---: | ---: | ---: |']

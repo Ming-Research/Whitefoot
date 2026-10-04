@@ -349,6 +349,9 @@ fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id
     if argc == 0_u64 {
       return lib_argtext(vm: vm, id: id, index: 0_u64, text: &mp_empty[0_u64..29_u64]);
     }
+    if argc > 4000_u64 {
+      return lib_argtext(vm: vm, id: id, index: 0_u64, text: &mp_many_args[0_u64..40_u64]);
+    }
     let out_v77 = box_slots_new::<u8>(capacity: 0_u64);
     for (i_v78 in 0_u64..argc) {
       let v_v79 = argument(stack: stack, func: func, argc: argc, index: i_v78);
@@ -432,6 +435,10 @@ fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id
     codec_value_push(values: &values_v103, value: nil_v104);
   }
   let i_v105 = 0_u64;
+  let decode_argc = argc;
+  if id >= 114_u32 {
+    set decode_argc = 1_u64;
+  }
   loop {
     if cursor_v102.offset >= n_v93 {
       break;
@@ -439,7 +446,7 @@ fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id
     if i_v105 >= count_v101 {
       break;
     }
-    let decode_top = argc +sat i_v105;
+    let decode_top = decode_argc +sat i_v105;
     let value_v106 = mp_read(vm: vm, source: &source_v83.inner[0_u64..n_v93], cursor: &cursor_v102, top: decode_top);
     if cursor_v102.error == 1_u8 {
       return lib_failure(vm: vm, text: &mp_missing[0_u64..23_u64]);
@@ -454,7 +461,7 @@ fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id
     set i_v105 = i_v105 +sat 1_u64;
   }
   if bnot(all_v99) {
-    let offset_top = argc +sat i_v105;
+    let offset_top = decode_argc +sat i_v105;
     if offset_top >= 8000_u64 {
       return lib_failure(vm: vm, text: &mp_stack_full[0_u64..43_u64]);
     }
@@ -534,3 +541,5 @@ const mp_stack_values: Array<u8, 88> = "stack overflow (too many return values a
 const mp_stack_array: Array<u8, 51> = "stack overflow (in function mp_decode_to_lua_array)";
 
 const mp_stack_full: Array<u8, 43> = "stack overflow (in function mp_unpack_full)";
+
+const mp_many_args: Array<u8, 40> = "Too many arguments for MessagePack pack.";
