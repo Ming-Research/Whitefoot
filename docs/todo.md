@@ -2177,16 +2177,19 @@ rarely insert at the same place.
   measure, then move the epilogue into each arm or inline the handlers, and
   add fast paths where the census shows them hot. Reopen with the first Halo
   performance measurement.
-- **Checking Halo's vm module takes about a minute.** The whole lib/halo
-  package checks in roughly 60 s, almost all of it the vm module (about
-  5,000 lines, one match of 73 arms over one function family). Attribute the
+- **Checking Halo's vm module takes minutes.** The whole lib/halo package
+  checked in roughly 60 s with the dispatch core alone and 156 s once the
+  slice-1 library joined it (M1 Pro, 2026-10-04), almost all of it the vm
+  module (one match of 73 arms over one function family, plus the
+  library). Attribute the
   cost by stage (formation, derivation, certificates, propagation) before
   restructuring source for the checker's sake. Reopen when a Halo edit-check
   loop becomes the bottleneck or with the next checker cost work.
 - **Halo's number library and oracle corpus were checked on macOS only.**
   `lib/halo/number` matches Redis 7.0.15's bundled Lua built on macOS
   (research/experiments/halo-number), except that NaN text now follows glibc
-  (`-nan` for a negative NaN), the Linux reference firn uses; its `strtod`
+  (`-nan` for a negative NaN), the Linux reference firn uses, as does
+  `string.format`'s NaN text in `lib/halo/vm`; its `strtod`
   details (NaN payloads, hexadecimal forms, range errors) and the oracle
   corpus (research/experiments/halo-oracle) were produced against macOS
   builds. Rerun both comparisons on the x86-64 Linux runner against a glibc

@@ -562,19 +562,16 @@ fn library_format(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, form
             }
           } else {
             let local_bits_151 = reinterpret::<f64, u64>(local_x_136);
-            let format_nan = fne(local_x_136, local_x_136);
-            if bnot(format_nan) {
-              if local_bits_151 >= 9223372036854775808_u64 {
-                bytes_push(bytes: &local_prefix_98, byte: 45_u8);
-              } else if local_plus_77 {
-                bytes_push(bytes: &local_prefix_98, byte: 43_u8);
-              } else if local_space_78 {
-                bytes_push(bytes: &local_prefix_98, byte: 32_u8);
-              }
+            if local_bits_151 >= 9223372036854775808_u64 {
+              bytes_push(bytes: &local_prefix_98, byte: 45_u8);
+            } else if local_plus_77 {
+              bytes_push(bytes: &local_prefix_98, byte: 43_u8);
+            } else if local_space_78 {
+              bytes_push(bytes: &local_prefix_98, byte: 32_u8);
             }
             let local_abs_152 = fabs(local_x_136);
             let local_infinity_153 = finf::<f64>();
-            let local_nan_154 = format_nan;
+            let local_nan_154 = fne(local_x_136, local_x_136);
             let local_inf_155 = feq(local_abs_152, local_infinity_153);
             set local_special_100 = bor(local_nan_154, local_inf_155);
             if local_special_100 {

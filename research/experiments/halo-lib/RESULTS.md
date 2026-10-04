@@ -307,3 +307,12 @@ review finding remains open within this scope.
 These cross-owner follow-ups are recorded here because `docs/todo.md` and the
 other package owners are outside the permitted files. No specification rule,
 conformance expectation, released archive, or standing project rule changed.
+
+## Later change
+
+After these results the lead reverted `7e04ffb69` ("Match the supplied Lua
+printf NaN flag behavior"), which had made `string.format` drop the sign and
+the `+` and space flags for a NaN as macOS printf does. Halo follows glibc on
+Linux, firn's platform reference (VM.md, H4), which prints `-nan`, `+nan` and
+` nan`; the macOS oracle disagrees there, so the `formatnan` line left the
+corpus and the Linux rerun is recorded in docs/todo.md.
