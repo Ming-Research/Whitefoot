@@ -61,6 +61,10 @@ on:
         description: Symbols whose instructions each profile annotates, space-separated
         type: string
         default: ""
+      compare_competitors:
+        description: Instead of comparing firn images, run redis-bench.sh scale - this branch's firn, the base image as firn-base, and Redis, Valkey, Dragonfly and Garnet - over compare_cpus
+        type: boolean
+        default: false
       compare_callers:
         description: Give each profile sample its DWARF-unwound callers
         type: boolean
@@ -176,7 +180,36 @@ jobs:
           done
           echo "IMAGES=$images" >> "$GITHUB_ENV"
 
+      # The comparators' scale run: this checkout's firn against the image
+      # named base and every comparator installed on the host.
+      - name: Measure firn against the comparators
+        if: ${{ inputs.compare_competitors }}
+        env:
+          OUT: ${{ runner.temp }}/compare
+          SCALE: ${{ inputs.compare_cpus }}
+          SCALE_TESTS: ${{ inputs.compare_tests }}
+          PASSES: ${{ inputs.compare_passes }}
+          SECONDS_PER_RUN: ${{ inputs.compare_seconds }}
+          WHITEFOOT_CHECK_TIMEOUT: "7200"
+        run: |
+          make -C compiler build
+          export FIRN_BASELINE="$OUT/base"
+          {
+            echo "kernel: $(uname -srvmo)"
+            echo "cpus: $(nproc)"
+            echo "model: $(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)"
+            echo "firn: $(git rev-parse HEAD)"
+            for tool in redis-server valkey-server dragonfly garnet-server redis-benchmark; do
+              echo "$tool: $(command -v "$tool" || echo missing)"
+            done
+            redis-server --version; valkey-server --version; dragonfly --version 2>&1 | head -1
+          } | tee "$OUT/host.txt"
+          perl .github/run-check.pl firn/scale \
+            sh research/experiments/io-completion-bench/redis-bench.sh scale \
+            2>&1 | tee "$OUT/scale.txt"
+
       - name: Measure the images interleaved
+        if: ${{ !inputs.compare_competitors }}
         env:
           OUT: ${{ runner.temp }}/compare
           COMPARE_CPUS: ${{ inputs.compare_cpus }}
