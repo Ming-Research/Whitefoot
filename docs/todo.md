@@ -3499,16 +3499,6 @@ condition under which it is taken up.
   with Redis's but for both. The change: write each where Redis does. Reopen
   when firn answers `MULTI` and `EXEC`, or `SELECT` with more than one
   database.
-- **`DEL`, `UNLINK`, `EXISTS`, `TOUCH` and `MSET` record the keys they find
-  expired in byte order.** Redis 7.0.15 looks the keys up, and propagates
-  each expired one's removal, in the order the command names them; these
-  statements walk their key set, whose order is the keys' bytes, so the file
-  records the removals in that order, which replays to the same state but is
-  not Redis's file. `MGET` and `MSETNX` walk their arguments in order through
-  `key_ranks` (`apps/firn/commands/strings.wf`). The change: walk the
-  arguments the same way where these record, and add such a command to
-  `firn_records_its_writes_as_redis_propagates_them`. Reopen with the next
-  change to those commands.
 - **No case checks that the expiring context keeps a key through its
   expiry's millisecond.** `take_due` (`apps/firn/store/store.wf`) leaves a
   queued expiry equal to the time in the queue, so that the expiring context
