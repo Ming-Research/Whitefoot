@@ -88,9 +88,11 @@ file, so halo may call one directory `json` while the program calls another
 directory `json` (`mod11-pos-one-name-two-packages`, where both packages
 declare `make` at their roots).
 
-The compiler labels a package by the name of the binding that first reaches
-it in package order and, when an earlier package already holds that label,
-appends `.2`, `.3` and on. Its records' logical paths are
+The compiler labels each package after the walk, taking bindings in binding
+order: every graph's bindings in package order and, within a graph, in
+written order, so the program's own names are taken first. A package takes
+its first binding's name and, when a package labeled before it already holds
+that name, appends `.2`, `.3` and on. Its records' logical paths are
 `package/<label>/...` and its symbols begin `package.<label>.`: `package` is a
 keyword, so no module directory of a program's own package can have that
 name, `std/` is the standard library's prefix, and a label holding `.` is no
