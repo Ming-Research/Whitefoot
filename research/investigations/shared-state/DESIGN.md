@@ -580,3 +580,22 @@ does cost about 115 ns per `MSET` in libc against the old statement's sort,
 but the redesigned hold saves about 84 ns in its own code, leaving the
 statement about 31 ns dearer; the parser, now explained, adds 39 ns; the
 cell locks 19 ns; the kernel row is within this run's variation.
+
+**Measurement 5: libc named.** With libc's symbols installed on the 14900K,
+the same profile of `base` and `main` (run 37193530245; 1,407 and 1,527 ns
+of CPU per `MSET`) names the libc rows and their callers:
+
+| Function and caller | `base` ns | `main` ns |
+|---|---:|---:|
+| `__memcmp_avx2_movbe` from `try_entry`, the lock's key comparison | 37.6 | 39.4 |
+| `__memcmp_avx2_movbe` from `wf__shared_map_held`, the old sort's comparisons | 35.2 | 0 |
+| `__memcmp_avx2_movbe` from `run_mset`, the key set's binary search, inlined | 0 | 89.5 |
+| `__memmove_avx_unaligned_erms` from `insert_key`, the key's bytes copied and the later items moved | 0 | 52.7 |
+
+So the key set's libc work is its search, 89.5 ns against the old sort's
+35.2 ns of comparisons, and its copy and move, 52.7 ns; the two calls per
+key, a copy of about 16 bytes and a move of the items after it, are one
+function and are not separated. Against that the old statement also paid
+`sift_held`, 100 ns, sorting without libc. Keeping order at every insertion
+therefore costs more than one sort at the hold by roughly the difference of
+those, about 30 to 50 ns, and owning the keys' bytes adds the copy.
