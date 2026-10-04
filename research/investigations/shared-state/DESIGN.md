@@ -599,3 +599,26 @@ function and are not separated. Against that the old statement also paid
 `sift_held`, 100 ns, sorting without libc. Keeping order at every insertion
 therefore costs more than one sort at the hold by roughly the difference of
 those, about 30 to 50 ns, and owning the keys' bytes adds the copy.
+
+**Measurement 6: the cell locks.** Counters in diagnostic copies of both
+runtimes (`research/mset-count-base`, `research/mset-count-main`, not for
+merge), over 4,194,304 `MSET` statements each on one driver: `base` made
+41,941,167 calls of `acquire_entry` and 41,841,167 of `try_entry`, `main`
+41,941,104 and 41,841,104, so the 19 ns are not more calls but about 1 ns
+more in each of the twenty. `perf annotate` of both on the 14900K (run
+37194884311) puts most samples of `acquire_entry` in both on the instruction
+after the load of the probed cell's key word, a cache miss in a table of
+262,144 cells, and those of `try_entry` on the compare-and-swap that locks
+the cell and on the return from comparing the node's key.
+
+The `acquire_entry` row is a moved cost: `cea9188d4` computed each key's
+64-bit hash once while collecting the keys (`wf_cmap_set_add`, under
+`wf__shared_map_key`) and sorted the hold by that hash, then length, then
+bytes (`held_order`), so its sort compared integers and called `memcmp`
+only on equal hashes; `main` sorts the key set by bytes, calling `memcmp`
+for every comparison of the binary search, and computes the hash later, in
+the hold's loop. The `try_entry` row, about 10 ns, stays unexplained; the
+instruction profile agrees with a different cache state of the key bytes it
+compares, now in the key set's store rather than in the request, and
+separating that needs the processor's counters, which this virtual machine
+does not expose.
