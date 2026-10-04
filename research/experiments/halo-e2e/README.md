@@ -52,7 +52,9 @@ checks belong to this explicitly invoked experiment and leave oracle files
 unchanged.
 
 Add `--verify-sha1` to check three fixed and 1,000 seeded random binary
-inputs against `hashlib` before the selected corpus. It exercises the same
+inputs against `hashlib` before the selected corpus. Add `--verify-errors`
+to check command/global error locations, SHA-1 arity errors and protected
+error values against Redis-source-grounded expectations. It exercises the same
 Whitefoot `redis.sha1hex` used by scripts. `lib/halo/embed/sha1.wf` and
 `redis-error.wf` serve digest generation and the EVAL reply formatter in
 this embedding; they are superseded with the embedding if Halo is retired
