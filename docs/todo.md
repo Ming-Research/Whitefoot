@@ -2298,6 +2298,15 @@ rarely insert at the same place.
   against whole emission. Reopen when a consumer's dispatch loop exceeds a
   target's register parameters.
 
+- **Build-time toolchain probes are not rerun when the toolchain changes.**
+  `compiler/build.rs` probes the assembler for the no-capture spelling and
+  for `preserve_none`, but declares no `rerun-if` dependency on the
+  assembler, so after a clang upgrade the recorded answers stay until the
+  build script reruns for another reason. A stale `preserve_none` answer
+  after a downgrade would emit a convention the assembler refuses. Track
+  the assembler's identity (its path and version output) as a rerun input.
+  Reopen when a host's clang changes under an existing build directory.
+
 - **The parts of a split loop carry no reference parameter facts.** The
   enclosing function's reference parameters keep `noalias`, `nonnull` and
   `dereferenceable` (compiler/backend-facts); the same values arrive in the

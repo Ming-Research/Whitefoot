@@ -411,4 +411,10 @@ fn run(code: &Box<Slots<Op>>"#,
     );
     let module = emit(source.as_bytes());
     assert!(!module.contains("@wf_count.dispatch"), "{module}");
+    // The interpreter in the same module still splits where its seven
+    // parameters fit, so the absence above is the recogniser's verdict.
+    let (_, registers) = host_convention();
+    if registers >= 7 {
+        assert_interpreter_split(&module, "wf_run");
+    }
 }
