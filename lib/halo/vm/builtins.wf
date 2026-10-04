@@ -1,0 +1,320 @@
+alias no_handle = pkg::heap::no_handle;
+alias Value = pkg::value::Value;
+alias num_of = pkg::value::num_of;
+alias tab_of = pkg::value::tab_of;
+alias str_of = pkg::value::str_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias table_get = pkg::heap::table_get;
+
+const builtins_msg_1000: Array<u8, 44> = "bad argument #2 to 'error' (number expected)";
+
+const text_0: Array<u8, 34> = "Attempt to modify a readonly table";
+
+const builtins_text_0: Array<u8, 3> = "nil";
+
+const builtins_text_1: Array<u8, 7> = "boolean";
+
+const builtins_text_2: Array<u8, 6> = "number";
+
+const builtins_text_3: Array<u8, 6> = "string";
+
+const builtins_text_4: Array<u8, 5> = "table";
+
+const builtins_text_5: Array<u8, 8> = "function";
+
+const builtins_text_6: Array<u8, 23> = "attempt to compare two ";
+
+const builtins_text_7: Array<u8, 7> = " values";
+
+const builtins_text_8: Array<u8, 19> = "attempt to compare ";
+
+const builtins_text_9: Array<u8, 6> = " with ";
+
+const builtins_text_10: Array<u8, 48> = "bad argument #1 to 'select' (index out of range)";
+
+const builtins_text_11: Array<u8, 45> = "bad argument #1 to 'select' (number expected)";
+
+const builtins_text_12: Array<u8, 42> = "bad argument #1 to 'type' (value expected)";
+
+const builtins_text_13: Array<u8, 44> = "bad argument #1 to 'rawget' (table expected)";
+
+const builtins_text_14: Array<u8, 44> = "bad argument #2 to 'rawget' (value expected)";
+
+const builtins_text_15: Array<u8, 44> = "bad argument #1 to 'rawset' (table expected)";
+
+const builtins_text_16: Array<u8, 44> = "bad argument #2 to 'rawset' (value expected)";
+
+const builtins_text_17: Array<u8, 44> = "bad argument #3 to 'rawset' (value expected)";
+
+const builtins_text_18: Array<u8, 50> = "bad argument #1 to 'setmetatable' (table expected)";
+
+const builtins_text_19: Array<u8, 57> = "bad argument #2 to 'setmetatable' (nil or table expected)";
+
+const builtins_text_20: Array<u8, 57> = "bad argument #2 to 'setmetatable' (nil or table expected)";
+
+const builtins_text_21: Array<u8, 11> = "__metatable";
+
+const builtins_text_22: Array<u8, 35> = "cannot change a protected metatable";
+
+const builtins_text_23: Array<u8, 50> = "bad argument #1 to 'getmetatable' (value expected)";
+
+const builtins_text_24: Array<u8, 11> = "__metatable";
+
+fn kind_name(vm: &Vm, v: Value) -> r: Value writes(vm) {
+  let k = kind(v: v);
+  if k == 0_u8 {
+    return intern(heap: &vm^.heap, bytes: &builtins_text_0[0_u64..3_u64]);
+  }
+  if k == 1_u8 {
+    return intern(heap: &vm^.heap, bytes: &builtins_text_1[0_u64..7_u64]);
+  }
+  if k == 2_u8 {
+    return intern(heap: &vm^.heap, bytes: &builtins_text_2[0_u64..6_u64]);
+  }
+  if k == 3_u8 {
+    return intern(heap: &vm^.heap, bytes: &builtins_text_3[0_u64..6_u64]);
+  }
+  if k == 4_u8 {
+    return intern(heap: &vm^.heap, bytes: &builtins_text_4[0_u64..5_u64]);
+  }
+  return intern(heap: &vm^.heap, bytes: &builtins_text_5[0_u64..8_u64]);
+}
+
+fn join(vm: &Vm, b: Value, c: Value) -> r: Value writes(vm) {
+  match str_of(v: b) {
+    Handle(h: bh) => {
+      match str_of(v: c) {
+        Handle(h: ch) => {
+          return concat_strings(vm: vm, b: bh, c: ch);
+        }
+        NoHandle() => {
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return Value::Nil();
+}
+
+fn order_error(vm: &Vm, b: Value, c: Value) -> r: Bool writes(vm) {
+  let kb = kind(v: b);
+  let kc = kind(v: c);
+  let bn = kind_name(vm: vm, v: b);
+  let cn = kind_name(vm: vm, v: c);
+  let text = Value::Nil();
+  if kb == kc {
+    let p = intern(heap: &vm^.heap, bytes: &builtins_text_6[0_u64..23_u64]);
+    let q = intern(heap: &vm^.heap, bytes: &builtins_text_7[0_u64..7_u64]);
+    let t = join(vm: vm, b: p, c: bn);
+    set text = join(vm: vm, b: t, c: q);
+  } else {
+    let p = intern(heap: &vm^.heap, bytes: &builtins_text_8[0_u64..19_u64]);
+    let q = intern(heap: &vm^.heap, bytes: &builtins_text_9[0_u64..6_u64]);
+    let t = join(vm: vm, b: p, c: bn);
+    let u = join(vm: vm, b: t, c: q);
+    set text = join(vm: vm, b: u, c: cn);
+  }
+  set vm^.error = text;
+  return False();
+}
+
+fn argument(stack: &Box<Slots<Value>>, func: u64, argc: u64, index: u64) -> r: Value reads(stack) {
+  if index < argc {
+    let first = func +sat 1_u64;
+    let i = first +sat index;
+    if i < stack^.inner.len {
+      return stack^.inner[i];
+    }
+  }
+  return Value::Nil();
+}
+
+fn builtin(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let a = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let b = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+  let c = argument(stack: stack, func: func, argc: argc, index: 2_u64);
+  let out = Value::Nil();
+  if id == builtin_error {
+    if argc >= 2_u64 {
+      let absent = is_nil(v: b);
+      if bnot(absent) {
+        match num_of(v: b) {
+          Is(..) => {
+          }
+          Not() => {
+            let ignored = raise_text(vm: vm, text: &builtins_msg_1000[0_u64..44_u64]);
+            return HostOutcome::Raised();
+          }
+        }
+      }
+    }
+    set vm^.error = a;
+    return HostOutcome::Raised();
+  }
+  if id == builtin_select {
+    match pkg::heap::string_of(heap: &vm^.heap, value: a) {
+      Some(value: s) => {
+        let h = cvt::<u32, u64>(s.handle);
+        if h < vm^.heap.strings.inner.len {
+          if vm^.heap.strings.inner[h].payload.bytes.inner.len > 0_u64 {
+            if vm^.heap.strings.inner[h].payload.bytes.inner[0_u64] == 35_u8 {
+              let n = argc -sat 1_u64;
+              let x = cvt.nearest::<u64, f64>(n);
+              set out = Value::Num(n: x);
+              if func < stack^.inner.len {
+                set stack^.inner[func] = out;
+              }
+              return HostOutcome::Returned(count: 1_u64);
+            }
+          }
+        }
+      }
+      None() => {
+      }
+    }
+    match num_of(v: a) {
+      Is(x: bound_x_14) => {
+        let integral = ftrunc(bound_x_14);
+        if cvt.defined::<f64, i64>(integral) {
+          let index = cvt::<f64, i64>(integral);
+          let total = argc -sat 1_u64;
+          if total < 9223372036854775807_u64 {
+            let nt = cvt::<u64, i64>(total);
+            if index < 0_i64 {
+              if index >= -9223372036854775807_i64 {
+                set index = nt + index;
+                if index < 9223372036854775807_i64 {
+                  set index = index + 1_i64;
+                }
+              }
+            }
+            if index > nt {
+              set index = nt + 1_i64;
+            }
+            if index >= 1_i64 {
+              let ix = cvt::<i64, u64>(index);
+              let n = argc -sat ix;
+              let src = func +sat 1_u64;
+              let source = src +sat ix;
+              let copied = adjust_results(vm: vm, stack: stack, dest: func, src: source, count: n, wanted: -1_i64);
+              return HostOutcome::Returned(count: copied);
+            }
+          }
+        }
+        let ignored = raise_text(vm: vm, text: &builtins_text_10[0_u64..48_u64]);
+        return HostOutcome::Raised();
+      }
+      Not() => {
+        let ignored = raise_text(vm: vm, text: &builtins_text_11[0_u64..45_u64]);
+        return HostOutcome::Raised();
+      }
+    }
+  }
+  if id == builtin_type {
+    if argc == 0_u64 {
+      let ignored = raise_text(vm: vm, text: &builtins_text_12[0_u64..42_u64]);
+      return HostOutcome::Raised();
+    }
+    set out = kind_name(vm: vm, v: a);
+  } else if id == builtin_rawget {
+    match tab_of(v: a) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        let ignored = raise_text(vm: vm, text: &builtins_text_13[0_u64..44_u64]);
+        return HostOutcome::Raised();
+      }
+    }
+    if argc < 2_u64 {
+      let ignored = raise_text(vm: vm, text: &builtins_text_14[0_u64..44_u64]);
+      return HostOutcome::Raised();
+    }
+    set out = table_get(heap: &vm^.heap, t: a, key: b);
+  } else if id == builtin_rawset {
+    match tab_of(v: a) {
+      Handle(..) => {
+      }
+      NoHandle() => {
+        let ignored = raise_text(vm: vm, text: &builtins_text_15[0_u64..44_u64]);
+        return HostOutcome::Raised();
+      }
+    }
+    if argc < 2_u64 {
+      let ignored = raise_text(vm: vm, text: &builtins_text_16[0_u64..44_u64]);
+      return HostOutcome::Raised();
+    }
+    if argc < 3_u64 {
+      let ignored = raise_text(vm: vm, text: &builtins_text_17[0_u64..44_u64]);
+      return HostOutcome::Raised();
+    }
+    if raw_assign(vm: vm, t: a, key: b, v: c) {
+      set out = a;
+    } else {
+      return HostOutcome::Raised();
+    }
+  } else if id == builtin_setmetatable {
+    let h = no_handle;
+    match tab_of(v: a) {
+      Handle(h: th) => {
+        set h = th;
+      }
+      NoHandle() => {
+        let ignored = raise_text(vm: vm, text: &builtins_text_18[0_u64..50_u64]);
+        return HostOutcome::Raised();
+      }
+    }
+    let mh = no_handle;
+    match tab_of(v: b) {
+      Handle(h: th) => {
+        set mh = th;
+      }
+      NoHandle() => {
+        let atom11 = is_nil(v: b);
+        if bnot(atom11) {
+          let ignored = raise_text(vm: vm, text: &builtins_text_19[0_u64..57_u64]);
+          return HostOutcome::Raised();
+        }
+      }
+    }
+    if argc < 2_u64 {
+      let ignored = raise_text(vm: vm, text: &builtins_text_20[0_u64..57_u64]);
+      return HostOutcome::Raised();
+    }
+    if is_readonly(vm: vm, v: a) {
+      let ignored = raise_text(vm: vm, text: &text_0[0_u64..34_u64]);
+      return HostOutcome::Raised();
+    }
+    let protected = metamethod(vm: vm, v: a, name: &builtins_text_21[0_u64..11_u64]);
+    let atom12 = is_nil(v: protected);
+    if bnot(atom12) {
+      let ignored = raise_text(vm: vm, text: &builtins_text_22[0_u64..35_u64]);
+      return HostOutcome::Raised();
+    }
+    let i = cvt::<u32, u64>(h);
+    if i < vm^.heap.tables.inner.len {
+      set vm^.heap.tables.inner[i].payload.meta = mh;
+    }
+    set out = a;
+  } else if id == builtin_getmetatable {
+    if argc == 0_u64 {
+      let ignored = raise_text(vm: vm, text: &builtins_text_23[0_u64..50_u64]);
+      return HostOutcome::Raised();
+    }
+    set out = metamethod(vm: vm, v: a, name: &builtins_text_24[0_u64..11_u64]);
+    if is_nil(v: out) {
+      set out = metatable(vm: vm, v: a);
+    }
+  } else {
+    let nil = Value::Nil();
+    let ignored = type_error(vm: vm, v: nil, op: 2_u8);
+    return HostOutcome::Raised();
+  }
+  if func < stack^.inner.len {
+    set stack^.inner[func] = out;
+  }
+  return HostOutcome::Returned(count: 1_u64);
+}

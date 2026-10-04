@@ -1,0 +1,26 @@
+package halo = "../../../lib/halo";
+pkg::test: [halo::value, halo::heap, halo::vm, std::process];
+
+entry smoke = pkg::test::smoke;
+
+entry fib = pkg::test::fib;
+
+entry numeric_for = pkg::test::numeric_for;
+
+entry counter = pkg::test::counter;
+
+entry tables = pkg::test::tables;
+
+entry meta = pkg::test::meta;
+
+entry protected_error = pkg::test::protected_error;
+
+entry vararg = pkg::test::vararg;
+
+entry tail = pkg::test::tail;
+
+entry budget_one = pkg::test::budget_one;
+
+entry budget_seven = pkg::test::budget_seven;
+
+entry suite = pkg::test::suite;

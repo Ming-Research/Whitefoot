@@ -1,1 +1,122 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
 
+public struct Frame {
+  public func: u64;
+  public base: u64;
+  public return_pc: u64;
+  public kbase: u64;
+  public closure: u32;
+  public nresults: i64;
+  public activation: u32;
+  public flags: u8;
+  public varbase: u64;
+  public varcount: u64;
+  public frame_top: u64;
+}
+
+public struct CallbackPlan {
+  public pc: u64;
+  public base: u64;
+  public kbase: u64;
+  public kind: u8;
+  public dest: u64;
+  public first: u64;
+  public index: u64;
+  public target: u64;
+  public expected: Bool;
+}
+
+public struct CallbackFrame {
+  public plan: CallbackPlan;
+  public scratch: u64;
+  public dest: u64;
+  public wanted: i64;
+  public length: u64;
+  public top: u64;
+  public activation: u32;
+  public mode: u8;
+}
+
+public struct Vm {
+  public heap: Heap;
+  public frames: Box<Slots<Frame>>;
+  public open_upvalues: Box<Slots<u32>>;
+  public protos: Box<Slots<Proto>>;
+  public top: u64;
+  public budget: u64;
+  public saved_pc: u64;
+  public saved_base: u64;
+  public saved_kbase: u64;
+  public error: Value;
+  public activation: u32;
+  public globals: u32;
+  public type_metatables: Array<u32, 6>;
+  public host_stopped: Bool;
+  public stopped_stack: Box<Slots<Value>>;
+  public callback_plan: CallbackPlan;
+  public callbacks: Box<Slots<CallbackFrame>>;
+  public suspended: Bool;
+}
+
+public enum Outcome {
+  Done(public count: u64);
+  Error();
+  Budget();
+  HostStopped();
+}
+
+public enum HostOutcome {
+  Returned(public count: u64);
+  Raised();
+  Stop();
+}
+
+public interface Host<E> {
+  fn call(env: &E, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
+    ensures stack^.inner.len == entry(stack)^.inner.len;
+  };
+}
+
+public const protected_flag: u8 = 1_u8;
+
+public const tail_flag: u8 = 2_u8;
+
+public const builtin_pcall: u32 = 0_u32;
+
+public const builtin_error: u32 = 1_u32;
+
+public const builtin_select: u32 = 2_u32;
+
+public const builtin_type: u32 = 3_u32;
+
+public const builtin_rawget: u32 = 4_u32;
+
+public const builtin_rawset: u32 = 5_u32;
+
+public const builtin_setmetatable: u32 = 6_u32;
+
+public const builtin_getmetatable: u32 = 7_u32;
+
+public const unlimited: u64 = 18446744073709551615_u64;
+
+public fn vm_new(limit: u64) -> r: Vm pure doc "An empty VM with an ordinary globals table. start installs script metadata.";
+
+public fn stack_new(size: u64) -> r: Box<Slots<Value>> pure contract {
+  ensures r.inner.len == size;
+} doc "Constructs a Nil-filled stack.";
+
+public fn reset(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit writes(stack), writes(vm) doc "Closes open upvalues and removes active frames.";
+
+public fn start<interface Host<E>>(script: &Script, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, proto: u32, argc: u64, budget: u64) -> r: Outcome reads(script), writes(stack), writes(vm), writes(env) doc "Calls a prototype with arguments at stack[1..1+argc), returning results at slot zero.";
+
+public fn resume<interface Host<E>>(script: &Script, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, budget: u64) -> r: Outcome reads(script), writes(stack), writes(vm), writes(env) doc "Resumes the saved dispatch checkpoint with a fresh budget.";
+
+public fn run<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64) -> r: Outcome reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} doc "Eight-parameter guaranteed self-tail dispatch.";

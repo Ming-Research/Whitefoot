@@ -1,0 +1,672 @@
+alias no_handle = pkg::heap::no_handle;
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias num_of = pkg::value::num_of;
+alias tab_of = pkg::value::tab_of;
+alias str_of = pkg::value::str_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+
+const slow_text_0: Array<u8, 34> = "Attempt to modify a readonly table";
+
+const slow_text_1: Array<u8, 18> = "table index is nil";
+
+const slow_text_2: Array<u8, 18> = "table index is NaN";
+
+const slow_text_3: Array<u8, 21> = "invalid key to 'next'";
+
+const slow_text_4: Array<u8, 17> = "not enough memory";
+
+const slow_text_5: Array<u8, 16> = "C stack overflow";
+
+const slow_text_6: Array<u8, 14> = "stack overflow";
+
+const slow_text_7: Array<u8, 22> = "string length overflow";
+
+const slow_text_8: Array<u8, 7> = "__index";
+
+const slow_text_9: Array<u8, 16> = "loop in gettable";
+
+const slow_text_10: Array<u8, 34> = "Attempt to modify a readonly table";
+
+const slow_text_11: Array<u8, 10> = "__newindex";
+
+const slow_text_12: Array<u8, 18> = "table index is nil";
+
+const slow_text_13: Array<u8, 18> = "table index is NaN";
+
+const slow_text_14: Array<u8, 16> = "loop in settable";
+
+const slow_text_15: Array<u8, 5> = "__add";
+
+const slow_text_16: Array<u8, 5> = "__add";
+
+const slow_text_17: Array<u8, 5> = "__sub";
+
+const slow_text_18: Array<u8, 5> = "__sub";
+
+const slow_text_19: Array<u8, 5> = "__mul";
+
+const slow_text_20: Array<u8, 5> = "__mul";
+
+const slow_text_21: Array<u8, 5> = "__div";
+
+const slow_text_22: Array<u8, 5> = "__div";
+
+const slow_text_23: Array<u8, 5> = "__mod";
+
+const slow_text_24: Array<u8, 5> = "__mod";
+
+const slow_text_25: Array<u8, 5> = "__pow";
+
+const slow_text_26: Array<u8, 5> = "__pow";
+
+const slow_text_27: Array<u8, 5> = "__unm";
+
+const slow_text_28: Array<u8, 8> = "__concat";
+
+const slow_text_29: Array<u8, 8> = "__concat";
+
+const slow_text_30: Array<u8, 5> = "__len";
+
+const slow_text_31: Array<u8, 4> = "__eq";
+
+const slow_text_32: Array<u8, 4> = "__eq";
+
+const slow_text_33: Array<u8, 4> = "__lt";
+
+const slow_text_34: Array<u8, 4> = "__lt";
+
+const slow_text_35: Array<u8, 4> = "__le";
+
+const slow_text_36: Array<u8, 4> = "__le";
+
+const slow_text_37: Array<u8, 4> = "__lt";
+
+const slow_text_38: Array<u8, 4> = "__lt";
+
+enum SlowOp {
+  Get();
+  Set();
+  Add();
+  Sub();
+  Mul();
+  Div();
+  Mod();
+  Pow();
+  Unm();
+  Len();
+  Concat();
+  Eq();
+  Lt();
+  Le();
+}
+
+fn metatable(vm: &Vm, v: Value) -> r: Value reads(vm) {
+  match tab_of(v: v) {
+    Handle(h: bound_h_13) => {
+      let i = cvt::<u32, u64>(bound_h_13);
+      if i < vm^.heap.tables.inner.len {
+        if vm^.heap.tables.inner[i].live {
+          let m = vm^.heap.tables.inner[i].payload.meta;
+          if m != no_handle {
+            return Value::Tab(h: m);
+          }
+        }
+      }
+    }
+    NoHandle() => {
+      let tag = kind(v: v);
+      let index = cvt::<u8, u64>(tag);
+      if index < 6_u64 {
+        let h = vm^.type_metatables[index];
+        if h != no_handle {
+          return Value::Tab(h: h);
+        }
+      }
+    }
+  }
+  return Value::Nil();
+}
+
+fn metamethod(vm: &Vm, v: Value, name: &[u8]) -> r: Value reads(name), writes(vm) {
+  let mt = metatable(vm: vm, v: v);
+  if is_nil(v: mt) {
+    return Value::Nil();
+  }
+  let key = intern(heap: &vm^.heap, bytes: name);
+  return table_get(heap: &vm^.heap, t: mt, key: key);
+}
+
+fn is_readonly(vm: &Vm, v: Value) -> r: Bool reads(vm) {
+  match tab_of(v: v) {
+    Handle(h: bound_h_12) => {
+      let i = cvt::<u32, u64>(bound_h_12);
+      if i < vm^.heap.tables.inner.len {
+        return vm^.heap.tables.inner[i].payload.read_only;
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return False();
+}
+
+fn raw_assign(vm: &Vm, t: Value, key: Value, v: Value) -> r: Bool writes(vm) {
+  if is_readonly(vm: vm, v: t) {
+    return raise_text(vm: vm, text: &slow_text_0[0_u64..34_u64]);
+  }
+  match table_set(heap: &vm^.heap, t: t, key: key, val: v) {
+    Ok(value: done) => {
+      return True();
+    }
+    Err(error: e) => {
+      match e {
+        NilKey() => {
+          return raise_text(vm: vm, text: &slow_text_1[0_u64..18_u64]);
+        }
+        NanKey() => {
+          return raise_text(vm: vm, text: &slow_text_2[0_u64..18_u64]);
+        }
+        InvalidNext() => {
+          return raise_text(vm: vm, text: &slow_text_3[0_u64..21_u64]);
+        }
+        InvalidTable() => {
+          return type_error(vm: vm, v: t, op: 1_u8);
+        }
+        Overflow() => {
+          return raise_text(vm: vm, text: &slow_text_4[0_u64..17_u64]);
+        }
+      }
+    }
+  }
+}
+
+fn callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, dest: u64, f: Value, b: Value, c: Value, third: Value, argc: u64, wanted: i64, mode: u8) -> r: Bool reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "Nested activation with a finite continuation record for budget suspension. Stack storage is restored before returning to the caller.";
+  let depth = vm^.activation;
+  if depth >= 199_u32 {
+    return raise_text(vm: vm, text: &slow_text_5[0_u64..16_u64]);
+  }
+  let length = stack^.inner.len;
+  let scratch = vm^.top;
+  let needed = scratch +sat 260_u64;
+  if needed == unlimited {
+    return raise_text(vm: vm, text: &slow_text_6[0_u64..14_u64]);
+  }
+  let oldtop = vm^.top;
+  let plan = vm^.callback_plan;
+  let saved = CallbackFrame(plan: plan, scratch: scratch, dest: dest, wanted: wanted, length: length, top: oldtop, activation: depth, mode: mode);
+  push_callback(vm: vm, frame: saved);
+  ensure_stack(stack: stack, size: needed);
+  if scratch < stack^.inner.len {
+    set stack^.inner[scratch] = f;
+  }
+  let s1 = scratch +sat 1_u64;
+  let s2 = scratch +sat 2_u64;
+  let s3 = scratch +sat 3_u64;
+  if s1 < stack^.inner.len {
+    set stack^.inner[s1] = b;
+  }
+  if s2 < stack^.inner.len {
+    set stack^.inner[s2] = c;
+  }
+  if s3 < stack^.inner.len {
+    set stack^.inner[s3] = third;
+  }
+  set vm^.activation = depth + 1_u32;
+  let atom4 = False();
+  let step = prepare::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: scratch, argc: argc, wanted: wanted, return_pc: 0_u64, base: 0_u64, kbase: 0_u64, tail: atom4);
+  let out = dispatch_step::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, step: step);
+  let ok = False();
+  match out {
+    Done(count: n) => {
+      set ok = True();
+      if wanted != 0_i64 {
+        let copied = adjust_results(vm: vm, stack: stack, dest: dest, src: scratch, count: n, wanted: wanted);
+      }
+    }
+    Error() => {
+      let ignored = unwind(vm: vm, stack: stack);
+    }
+    Budget() => {
+      park_suspended_stack(vm: vm, stack: stack);
+    }
+    HostStopped() => {
+      park_stopped_stack(vm: vm, stack: stack);
+    }
+  }
+  resize_stack(stack: stack, size: length);
+  if bor(vm^.host_stopped, vm^.suspended) {
+    return False();
+  }
+  if vm^.callbacks.inner.len > 0_u64 {
+    let removed = take_back(window: &vm^.callbacks.inner);
+  }
+  set vm^.activation = depth;
+  set vm^.top = oldtop;
+  return ok;
+}
+
+fn string_order(vm: &Vm, b: u32, c: u32) -> r: i64 reads(vm) {
+  let bi = cvt::<u32, u64>(b);
+  let ci = cvt::<u32, u64>(c);
+  if bi < vm^.heap.strings.inner.len {
+    if ci < vm^.heap.strings.inner.len {
+      let bn = vm^.heap.strings.inner[bi].payload.bytes.inner.len;
+      let cn = vm^.heap.strings.inner[ci].payload.bytes.inner.len;
+      for (i in 0_u64..bn) {
+        if i >= cn {
+          return 1_i64;
+        }
+        if i < vm^.heap.strings.inner[bi].payload.bytes.inner.len {
+          if i < vm^.heap.strings.inner[ci].payload.bytes.inner.len {
+            let x = vm^.heap.strings.inner[bi].payload.bytes.inner[i];
+            let y = vm^.heap.strings.inner[ci].payload.bytes.inner[i];
+            if x < y {
+              return -1_i64;
+            }
+            if x > y {
+              return 1_i64;
+            }
+          }
+        }
+      }
+      if bn < cn {
+        return -1_i64;
+      }
+    }
+  }
+  return 0_i64;
+}
+
+fn concat_strings(vm: &Vm, b: u32, c: u32) -> r: Value writes(vm) {
+  let bi = cvt::<u32, u64>(b);
+  let ci = cvt::<u32, u64>(c);
+  if bi < vm^.heap.strings.inner.len {
+    if ci < vm^.heap.strings.inner.len {
+      let bn = vm^.heap.strings.inner[bi].payload.bytes.inner.len;
+      let cn = vm^.heap.strings.inner[ci].payload.bytes.inner.len;
+      let len = bn +sat cn;
+      if len < unlimited {
+        let bytes = box_slots_new::<u8>(capacity: len);
+        for (i in 0_u64..bn) {
+          if i < vm^.heap.strings.inner[bi].payload.bytes.inner.len {
+            if bytes.inner.len < bytes.inner.cap {
+              let v = vm^.heap.strings.inner[bi].payload.bytes.inner[i];
+              place_back(window: &bytes.inner, value: v);
+            }
+          }
+        }
+        for (i in 0_u64..cn) {
+          if i < vm^.heap.strings.inner[ci].payload.bytes.inner.len {
+            if bytes.inner.len < bytes.inner.cap {
+              let v = vm^.heap.strings.inner[ci].payload.bytes.inner[i];
+              place_back(window: &bytes.inner, value: v);
+            }
+          }
+        }
+        let n = bytes.inner.len;
+        return intern(heap: &vm^.heap, bytes: &bytes.inner[0_u64..n]);
+      }
+    }
+  }
+  let ignored = raise_text(vm: vm, text: &slow_text_7[0_u64..22_u64]);
+  return Value::Nil();
+}
+
+fn slow<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, op: SlowOp, dest: u64, b: Value, c: Value, v: Value) -> r: Bool reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires dest < stack^.inner.len;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "TODO(number): number-to-string conversion for concatenation is pending.";
+  let length = stack^.inner.len;
+  let nil = Value::Nil();
+  let name = 0_u8;
+  match op {
+    Get() => {
+      let t = b;
+      for (i in 0_u64..100_u64) {
+        let result = table_get(heap: &vm^.heap, t: t, key: c);
+        let tm = metamethod(vm: vm, v: t, name: &slow_text_8[0_u64..7_u64]);
+        match tab_of(v: t) {
+          Handle(..) => {
+            let atom5 = is_nil(v: result);
+            let present = bnot(atom5);
+            let absent_tm = is_nil(v: tm);
+            if bor(present, absent_tm) {
+              set stack^.inner[dest] = result;
+              return True();
+            }
+          }
+          NoHandle() => {
+            if is_nil(v: tm) {
+              return type_error(vm: vm, v: t, op: 1_u8);
+            }
+          }
+        }
+        match func_of(v: tm) {
+          Lua(..) => {
+            let outcome = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: t, c: c, third: nil, argc: 2_u64, wanted: 1_i64, mode: 0_u8);
+            resize_stack(stack: stack, size: length);
+            return outcome;
+          }
+          Native(..) => {
+            let outcome = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: t, c: c, third: nil, argc: 2_u64, wanted: 1_i64, mode: 0_u8);
+            resize_stack(stack: stack, size: length);
+            return outcome;
+          }
+          Other() => {
+            set t = tm;
+          }
+        }
+      }
+      return raise_text(vm: vm, text: &slow_text_9[0_u64..16_u64]);
+    }
+    Set() => {
+      let t = b;
+      for (i in 0_u64..100_u64) {
+        if is_readonly(vm: vm, v: t) {
+          return raise_text(vm: vm, text: &slow_text_10[0_u64..34_u64]);
+        }
+        let old = table_get(heap: &vm^.heap, t: t, key: c);
+        let tm = metamethod(vm: vm, v: t, name: &slow_text_11[0_u64..10_u64]);
+        match tab_of(v: t) {
+          Handle(..) => {
+            if is_nil(v: c) {
+              return raise_text(vm: vm, text: &slow_text_12[0_u64..18_u64]);
+            }
+            match num_of(v: c) {
+              Is(x: bound_x_11) => {
+                if fne(bound_x_11, bound_x_11) {
+                  return raise_text(vm: vm, text: &slow_text_13[0_u64..18_u64]);
+                }
+              }
+              Not() => {
+              }
+            }
+            let atom6 = is_nil(v: old);
+            let present = bnot(atom6);
+            let absent_tm = is_nil(v: tm);
+            if bor(present, absent_tm) {
+              return raw_assign(vm: vm, t: t, key: c, v: v);
+            }
+          }
+          NoHandle() => {
+            if is_nil(v: tm) {
+              return type_error(vm: vm, v: t, op: 1_u8);
+            }
+          }
+        }
+        match func_of(v: tm) {
+          Lua(..) => {
+            let outcome = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: t, c: c, third: v, argc: 3_u64, wanted: 0_i64, mode: 0_u8);
+            resize_stack(stack: stack, size: length);
+            return outcome;
+          }
+          Native(..) => {
+            let outcome = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: t, c: c, third: v, argc: 3_u64, wanted: 0_i64, mode: 0_u8);
+            resize_stack(stack: stack, size: length);
+            return outcome;
+          }
+          Other() => {
+            set t = tm;
+          }
+        }
+      }
+      return raise_text(vm: vm, text: &slow_text_14[0_u64..16_u64]);
+    }
+    Add() => {
+      set name = 0_u8;
+    }
+    Sub() => {
+      set name = 1_u8;
+    }
+    Mul() => {
+      set name = 2_u8;
+    }
+    Div() => {
+      set name = 3_u8;
+    }
+    Mod() => {
+      set name = 4_u8;
+    }
+    Pow() => {
+      set name = 5_u8;
+    }
+    Unm() => {
+      set name = 6_u8;
+    }
+    Len() => {
+      match tab_of(v: b) {
+        Handle(..) => {
+          let n = pkg::heap::table_border(heap: &vm^.heap, t: b);
+          let x = cvt.nearest::<u64, f64>(n);
+          set stack^.inner[dest] = Value::Num(n: x);
+          return True();
+        }
+        NoHandle() => {
+        }
+      }
+      match pkg::heap::string_of(heap: &vm^.heap, value: b) {
+        Some(value: s) => {
+          let x = cvt.nearest::<u64, f64>(s.length);
+          set stack^.inner[dest] = Value::Num(n: x);
+          return True();
+        }
+        None() => {
+        }
+      }
+      set name = 8_u8;
+    }
+    Concat() => {
+      match str_of(v: b) {
+        Handle(h: bh) => {
+          match str_of(v: c) {
+            Handle(h: ch) => {
+              let joined = concat_strings(vm: vm, b: bh, c: ch);
+              if is_nil(v: joined) {
+                return False();
+              }
+              set stack^.inner[dest] = joined;
+              return True();
+            }
+            NoHandle() => {
+            }
+          }
+        }
+        NoHandle() => {
+        }
+      }
+      set name = 7_u8;
+    }
+    Eq() => {
+      if raw_equal(a: b, b: c) {
+        set stack^.inner[dest] = Value::True();
+        return True();
+      }
+      let kb = kind(v: b);
+      let kc = kind(v: c);
+      if kb != 4_u8 {
+        set stack^.inner[dest] = Value::False();
+        return True();
+      }
+      if kc != 4_u8 {
+        set stack^.inner[dest] = Value::False();
+        return True();
+      }
+      set name = 9_u8;
+    }
+    Lt() => {
+      set name = 10_u8;
+    }
+    Le() => {
+      set name = 11_u8;
+    }
+  }
+  let tm = Value::Nil();
+  if name == 0_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_15[0_u64..5_u64]);
+    if is_nil(v: tm) {
+      set tm = metamethod(vm: vm, v: c, name: &slow_text_16[0_u64..5_u64]);
+    }
+  }
+  if name == 1_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_17[0_u64..5_u64]);
+    if is_nil(v: tm) {
+      set tm = metamethod(vm: vm, v: c, name: &slow_text_18[0_u64..5_u64]);
+    }
+  }
+  if name == 2_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_19[0_u64..5_u64]);
+    if is_nil(v: tm) {
+      set tm = metamethod(vm: vm, v: c, name: &slow_text_20[0_u64..5_u64]);
+    }
+  }
+  if name == 3_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_21[0_u64..5_u64]);
+    if is_nil(v: tm) {
+      set tm = metamethod(vm: vm, v: c, name: &slow_text_22[0_u64..5_u64]);
+    }
+  }
+  if name == 4_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_23[0_u64..5_u64]);
+    if is_nil(v: tm) {
+      set tm = metamethod(vm: vm, v: c, name: &slow_text_24[0_u64..5_u64]);
+    }
+  }
+  if name == 5_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_25[0_u64..5_u64]);
+    if is_nil(v: tm) {
+      set tm = metamethod(vm: vm, v: c, name: &slow_text_26[0_u64..5_u64]);
+    }
+  }
+  if name == 6_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_27[0_u64..5_u64]);
+  }
+  if name == 7_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_28[0_u64..8_u64]);
+    if is_nil(v: tm) {
+      set tm = metamethod(vm: vm, v: c, name: &slow_text_29[0_u64..8_u64]);
+    }
+  }
+  if name == 8_u8 {
+    set tm = metamethod(vm: vm, v: b, name: &slow_text_30[0_u64..5_u64]);
+  }
+  if name >= 9_u8 {
+    let kb = kind(v: b);
+    let kc = kind(v: c);
+    if name >= 10_u8 {
+      if kb == kc {
+        match str_of(v: b) {
+          Handle(h: bh) => {
+            match str_of(v: c) {
+              Handle(h: ch) => {
+                let order = string_order(vm: vm, b: bh, c: ch);
+                let answer = order < 0_i64;
+                if name == 11_u8 {
+                  set answer = order <= 0_i64;
+                }
+                let value = boolean(v: answer);
+                set stack^.inner[dest] = value;
+                return True();
+              }
+              NoHandle() => {
+              }
+            }
+          }
+          NoHandle() => {
+          }
+        }
+      }
+    }
+    let other = Value::Nil();
+    if name == 9_u8 {
+      set tm = metamethod(vm: vm, v: b, name: &slow_text_31[0_u64..4_u64]);
+      set other = metamethod(vm: vm, v: c, name: &slow_text_32[0_u64..4_u64]);
+    }
+    if name == 10_u8 {
+      set tm = metamethod(vm: vm, v: b, name: &slow_text_33[0_u64..4_u64]);
+      set other = metamethod(vm: vm, v: c, name: &slow_text_34[0_u64..4_u64]);
+    }
+    if name == 11_u8 {
+      set tm = metamethod(vm: vm, v: b, name: &slow_text_35[0_u64..4_u64]);
+      set other = metamethod(vm: vm, v: c, name: &slow_text_36[0_u64..4_u64]);
+    }
+    let same = raw_equal(a: tm, b: other);
+    if kb != kc {
+      set same = False();
+    }
+    if same {
+      let atom7 = is_nil(v: tm);
+      if bnot(atom7) {
+        let ok = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: b, c: c, third: nil, argc: 2_u64, wanted: 1_i64, mode: 1_u8);
+        if ok {
+          let val = stack^.inner[dest];
+          let answer = truthy(v: val);
+          let out = boolean(v: answer);
+          set stack^.inner[dest] = out;
+        }
+        resize_stack(stack: stack, size: length);
+        return ok;
+      }
+    }
+    if name == 9_u8 {
+      set stack^.inner[dest] = Value::False();
+      return True();
+    }
+    if name == 11_u8 {
+      set tm = metamethod(vm: vm, v: c, name: &slow_text_37[0_u64..4_u64]);
+      set other = metamethod(vm: vm, v: b, name: &slow_text_38[0_u64..4_u64]);
+      let same_lt = raw_equal(a: tm, b: other);
+      if kb == kc {
+        if same_lt {
+          let atom8 = is_nil(v: tm);
+          if bnot(atom8) {
+            let ok = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: c, c: b, third: nil, argc: 2_u64, wanted: 1_i64, mode: 2_u8);
+            if ok {
+              let val = stack^.inner[dest];
+              let atom9 = truthy(v: val);
+              let answer = bnot(atom9);
+              let out = boolean(v: answer);
+              set stack^.inner[dest] = out;
+            }
+            resize_stack(stack: stack, size: length);
+            return ok;
+          }
+        }
+      }
+    }
+    return order_error(vm: vm, b: b, c: c);
+  }
+  let atom10 = is_nil(v: tm);
+  if bnot(atom10) {
+    let outcome = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: tm, b: b, c: c, third: nil, argc: 2_u64, wanted: 1_i64, mode: 0_u8);
+    resize_stack(stack: stack, size: length);
+    return outcome;
+  }
+  if name == 7_u8 {
+    let kb = kind(v: b);
+    let bad = b;
+    if kb == 3_u8 {
+      set bad = c;
+    }
+    return concat_coercion_pending(vm: vm, value: bad);
+  }
+  if name == 8_u8 {
+    return type_error(vm: vm, v: b, op: 4_u8);
+  }
+  let bad = b;
+  match num_of(v: b) {
+    Is(..) => {
+      set bad = c;
+    }
+    Not() => {
+    }
+  }
+  return number_coercion_pending(vm: vm, v: bad);
+}

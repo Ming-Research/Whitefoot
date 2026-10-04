@@ -1,0 +1,478 @@
+alias no_handle = pkg::heap::no_handle;
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias num_of = pkg::value::num_of;
+alias tab_of = pkg::value::tab_of;
+alias str_of = pkg::value::str_of;
+alias truthy = pkg::value::truthy;
+
+const calls_text_0: Array<u8, 14> = "stack overflow";
+
+const calls_text_1: Array<u8, 19> = "invalid Lua closure";
+
+const calls_text_2: Array<u8, 14> = "stack overflow";
+
+const calls_text_3: Array<u8, 43> = "bad argument #1 to 'pcall' (value expected)";
+
+const calls_text_4: Array<u8, 6> = "__call";
+
+const calls_text_5: Array<u8, 16> = "invalid bytecode";
+
+fn adjust_results(vm: &Vm, stack: &Box<Slots<Value>>, dest: u64, src: u64, count: u64, wanted: i64) -> r: u64 writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let n = count;
+  if wanted >= 0_i64 {
+    set n = cvt::<i64, u64>(wanted);
+  }
+  for (i in 0_u64..n) {
+    let d = dest +sat i;
+    let s = src +sat i;
+    if d < stack^.inner.len {
+      let v = Value::Nil();
+      if i < count {
+        if s < stack^.inner.len {
+          set v = stack^.inner[s];
+        }
+      }
+      set stack^.inner[d] = v;
+    }
+  }
+  set vm^.top = dest +sat n;
+  return n;
+}
+
+fn finish(vm: &Vm, stack: &Box<Slots<Value>>, frame: Frame, src: u64, count: u64) -> r: Step writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let length = stack^.inner.len;
+  let f = frame;
+  let source = src;
+  let got = count;
+  loop (
+    invariant preserved: stack^.inner.len == length
+  ) {
+    let dest = f.func;
+    let wanted = f.nresults;
+    let n = adjust_results(vm: vm, stack: stack, dest: dest, src: source, count: got, wanted: wanted);
+    if vm^.frames.inner.len > 0_u64 {
+      let i = vm^.frames.inner.len - 1_u64;
+      if vm^.frames.inner[i].flags == protected_flag {
+        let pfunc = vm^.frames.inner[i].func;
+        let inner = pfunc +sat 1_u64;
+        if inner == dest {
+          let p = take_back(window: &vm^.frames.inner);
+          if pfunc < stack^.inner.len {
+            set stack^.inner[pfunc] = Value::True();
+          }
+          set f = p;
+          set source = pfunc;
+          set got = n +sat 1_u64;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  let dest = f.func;
+  let total = vm^.top -sat dest;
+  if vm^.frames.inner.len == 0_u64 {
+    return Step::Done(count: total);
+  }
+  let i = vm^.frames.inner.len - 1_u64;
+  if vm^.frames.inner[i].activation != vm^.activation {
+    return Step::Done(count: total);
+  }
+  let b = vm^.frames.inner[i].base;
+  let kb = vm^.frames.inner[i].kbase;
+  if f.nresults >= 0_i64 {
+    set vm^.top = vm^.frames.inner[i].frame_top;
+  }
+  let pc = f.return_pc;
+  return Step::Jump(pc: pc, base: b, kbase: kb);
+}
+
+fn unwind(vm: &Vm, stack: &Box<Slots<Value>>) -> r: Step writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let length = stack^.inner.len;
+  loop (
+    invariant preserved: stack^.inner.len == length
+  ) {
+    if vm^.frames.inner.len == 0_u64 {
+      return Step::Error();
+    }
+    let i = vm^.frames.inner.len - 1_u64;
+    if vm^.frames.inner[i].activation != vm^.activation {
+      return Step::Error();
+    }
+    let f = take_back(window: &vm^.frames.inner);
+    if f.flags == protected_flag {
+      let dest = f.func;
+      if dest < stack^.inner.len {
+        set stack^.inner[dest] = Value::False();
+      }
+      let err = dest +sat 1_u64;
+      if err < stack^.inner.len {
+        set stack^.inner[err] = vm^.error;
+      }
+      let outcome = finish(vm: vm, stack: stack, frame: f, src: dest, count: 2_u64);
+      resize_stack(stack: stack, size: length);
+      return outcome;
+    }
+    let b = f.base;
+    close_upvalues(vm: vm, stack: stack, level: b);
+  }
+  return Step::Error();
+}
+
+fn enter_lua(vm: &Vm, stack: &Box<Slots<Value>>, h: u32, func: u64, argc: u64, wanted: i64, return_pc: u64, tail: Bool) -> r: Step writes(vm), writes(stack) {
+  let hi = cvt::<u32, u64>(h);
+  if hi < vm^.heap.closures.inner.len {
+    if vm^.heap.closures.inner[hi].live {
+      let pi = cvt::<u32, u64>(vm^.heap.closures.inner[hi].payload.proto);
+      if pi < vm^.protos.inner.len {
+        let p = vm^.protos.inner[pi];
+        let fixed = cvt::<u8, u64>(p.numparams);
+        let dest = func;
+        let results = wanted;
+        let rp = return_pc;
+        let flags = 0_u8;
+        if tail {
+          if vm^.frames.inner.len > 0_u64 {
+            let old = take_back(window: &vm^.frames.inner);
+            let ob = old.base;
+            close_upvalues(vm: vm, stack: stack, level: ob);
+            set dest = old.func;
+            set results = old.nresults;
+            set rp = old.return_pc;
+            set flags = tail_flag;
+          }
+        }
+        let args = dest +sat 1_u64;
+        let actual = argc;
+        if actual < fixed {
+          set actual = fixed;
+        }
+        let b = args;
+        if p.is_vararg {
+          set b = args +sat actual;
+        }
+        let room = b +sat 256_u64;
+        if room == unlimited {
+          let ignored = raise_text(vm: vm, text: &calls_text_0[0_u64..14_u64]);
+          return Step::Error();
+        }
+        ensure_stack(stack: stack, size: room);
+        if tail {
+          let total = argc +sat 1_u64;
+          for (i in 0_u64..total) {
+            let s = func +sat i;
+            let d = dest +sat i;
+            if s < stack^.inner.len {
+              if d < stack^.inner.len {
+                let v = stack^.inner[s];
+                set stack^.inner[d] = v;
+              }
+            }
+          }
+        }
+        for (i in argc..actual) {
+          let j = args +sat i;
+          if j < stack^.inner.len {
+            set stack^.inner[j] = Value::Nil();
+          }
+        }
+        if p.is_vararg {
+          for (i in 0_u64..fixed) {
+            let s = args +sat i;
+            let d = b +sat i;
+            if s < stack^.inner.len {
+              if d < stack^.inner.len {
+                let v = stack^.inner[s];
+                set stack^.inner[d] = v;
+                set stack^.inner[s] = Value::Nil();
+              }
+            }
+          }
+        }
+        let maxstack = cvt::<u8, u64>(p.maxstack);
+        for (i in fixed..maxstack) {
+          let j = b +sat i;
+          if j < stack^.inner.len {
+            set stack^.inner[j] = Value::Nil();
+          }
+        }
+        let top = b +sat maxstack;
+        let vb = args +sat fixed;
+        let vc = 0_u64;
+        if p.is_vararg {
+          set vc = actual -sat fixed;
+        }
+        let kb = cvt::<u32, u64>(p.kbase);
+        let start = cvt::<u32, u64>(p.start);
+        let f = Frame(func: dest, base: b, return_pc: rp, kbase: kb, closure: h, nresults: results, activation: vm^.activation, flags: flags, varbase: vb, varcount: vc, frame_top: top);
+        if push_frame(vm: vm, frame: f) {
+          set vm^.top = top;
+          return Step::Jump(pc: start, base: b, kbase: kb);
+        }
+        return Step::Error();
+      }
+    }
+  }
+  let ignored = raise_text(vm: vm, text: &calls_text_1[0_u64..19_u64]);
+  return Step::Error();
+}
+
+fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, func: u64, argc: u64, wanted: i64, return_pc: u64, base: u64, kbase: u64, tail: Bool) -> r: Step writes(vm), writes(stack), writes(env) {
+  let fslot = func;
+  let nargs = argc;
+  let nr = wanted;
+  let tailing = tail;
+  loop {
+    if fslot >= stack^.inner.len {
+      let ignored = raise_text(vm: vm, text: &calls_text_2[0_u64..14_u64]);
+      return Step::Error();
+    }
+    let v = stack^.inner[fslot];
+    match func_of(v: v) {
+      Lua(h: bound_h_2) => {
+        return enter_lua(vm: vm, stack: stack, h: bound_h_2, func: fslot, argc: nargs, wanted: nr, return_pc: return_pc, tail: tailing);
+      }
+      Native(id: bound_id_1) => {
+        if bound_id_1 == builtin_pcall {
+          if nargs == 0_u64 {
+            let ignored = raise_text(vm: vm, text: &calls_text_3[0_u64..43_u64]);
+            return Step::Error();
+          }
+          let marker = Frame(func: fslot, base: base, return_pc: return_pc, kbase: kbase, closure: no_handle, nresults: nr, activation: vm^.activation, flags: protected_flag, varbase: 0_u64, varcount: 0_u64, frame_top: vm^.top);
+          if push_frame(vm: vm, frame: marker) {
+          } else {
+            return Step::Error();
+          }
+          set fslot = fslot +sat 1_u64;
+          set nargs = nargs - 1_u64;
+          set nr = -1_i64;
+          set tailing = False();
+        } else {
+          let out = HostOutcome::Raised();
+          if bound_id_1 >= 4096_u32 {
+            set out = Host::call(env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
+          } else {
+            set out = builtin(vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
+          }
+          match out {
+            Raised() => {
+              return Step::Error();
+            }
+            Stop() => {
+              return Step::Stop();
+            }
+            Returned(count: n) => {
+              if tailing {
+                if vm^.frames.inner.len > 0_u64 {
+                  let old = take_back(window: &vm^.frames.inner);
+                  let oldbase = old.base;
+                  close_upvalues(vm: vm, stack: stack, level: oldbase);
+                  return finish(vm: vm, stack: stack, frame: old, src: fslot, count: n);
+                }
+              }
+              let frame = Frame(func: fslot, base: base, return_pc: return_pc, kbase: kbase, closure: no_handle, nresults: nr, activation: vm^.activation, flags: 0_u8, varbase: 0_u64, varcount: 0_u64, frame_top: vm^.top);
+              return finish(vm: vm, stack: stack, frame: frame, src: fslot, count: n);
+            }
+          }
+        }
+      }
+      Other() => {
+        let tm = metamethod(vm: vm, v: v, name: &calls_text_4[0_u64..6_u64]);
+        match func_of(v: tm) {
+          Other() => {
+            let ignored = type_error(vm: vm, v: v, op: 2_u8);
+            return Step::Error();
+          }
+          Lua(..) => {
+          }
+          Native(..) => {
+          }
+        }
+        let end = fslot +sat nargs;
+        let room = end +sat 2_u64;
+        if room == unlimited {
+          return Step::Error();
+        }
+        ensure_stack(stack: stack, size: room);
+        let i = end;
+        loop {
+          let d = i +sat 1_u64;
+          if i < stack^.inner.len {
+            if d < stack^.inner.len {
+              let x = stack^.inner[i];
+              set stack^.inner[d] = x;
+            }
+          }
+          if i <= fslot {
+            break;
+          }
+          set i = i - 1_u64;
+        }
+        if fslot < stack^.inner.len {
+          set stack^.inner[fslot] = tm;
+        }
+        set nargs = nargs +sat 1_u64;
+      }
+    }
+  }
+  return Step::Error();
+}
+
+fn start<interface Host<E>>(script: &Script, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, proto: u32, argc: u64, budget: u64) -> r: Outcome reads(script), writes(stack), writes(vm), writes(env) {
+  reset(vm: vm, stack: stack);
+  let ps = box_slots_new::<Proto>(capacity: script^.protos.inner.len);
+  for (i in 0_u64..script^.protos.inner.len) {
+    if ps.inner.len < ps.inner.cap {
+      let p = script^.protos.inner[i];
+      place_back(window: &ps.inner, value: p);
+    }
+  }
+  set vm^.protos = move ps;
+  set vm^.budget = budget;
+  let empty = array_filled::<u32, 0>(value: 0_u32);
+  let cl = pkg::heap::new_closure(heap: &vm^.heap, proto: proto, upvals: &empty[0_u64..0_u64]);
+  ensure_stack(stack: stack, size: 256_u64);
+  if stack^.inner.len > 0_u64 {
+    set stack^.inner[0_u64] = cl;
+  }
+  let atom0 = False();
+  let step = prepare::<Host<E>>(code: &script^.code, consts: &script^.consts, vm: vm, stack: stack, env: env, func: 0_u64, argc: argc, wanted: -1_i64, return_pc: 0_u64, base: 0_u64, kbase: 0_u64, tail: atom0);
+  return dispatch_step::<Host<E>>(code: &script^.code, consts: &script^.consts, stack: stack, vm: vm, env: env, step: step);
+}
+
+fn resume<interface Host<E>>(script: &Script, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, budget: u64) -> r: Outcome reads(script), writes(stack), writes(vm), writes(env) {
+  set vm^.budget = budget;
+  if vm^.suspended {
+    restore_stopped_stack(vm: vm, stack: stack);
+    set vm^.suspended = False();
+  }
+  let step = Step::Jump(pc: vm^.saved_pc, base: vm^.saved_base, kbase: vm^.saved_kbase);
+  let outcome = dispatch_step::<Host<E>>(code: &script^.code, consts: &script^.consts, stack: stack, vm: vm, env: env, step: step);
+  loop {
+    match outcome {
+      Budget() => {
+        return Outcome::Budget();
+      }
+      HostStopped() => {
+        return Outcome::HostStopped();
+      }
+      Done(count: countv) => {
+        if vm^.callbacks.inner.len == 0_u64 {
+          return Outcome::Done(count: countv);
+        }
+        let frame = take_back(window: &vm^.callbacks.inner);
+        complete_callback(vm: vm, stack: stack, frame: frame, count: countv);
+        let continued = continue_callback::<Host<E>>(code: &script^.code, consts: &script^.consts, stack: stack, vm: vm, env: env, plan: frame.plan);
+        set outcome = dispatch_step::<Host<E>>(code: &script^.code, consts: &script^.consts, stack: stack, vm: vm, env: env, step: continued);
+      }
+      Error() => {
+        if vm^.callbacks.inner.len == 0_u64 {
+          return Outcome::Error();
+        }
+        let frame = take_back(window: &vm^.callbacks.inner);
+        resize_stack(stack: stack, size: frame.length);
+        set vm^.activation = frame.activation;
+        set vm^.top = frame.top;
+        let raised = unwind(vm: vm, stack: stack);
+        set outcome = dispatch_step::<Host<E>>(code: &script^.code, consts: &script^.consts, stack: stack, vm: vm, env: env, step: raised);
+      }
+    }
+  }
+  return Outcome::Error();
+}
+
+fn dispatch_step<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, step: Step) -> r: Outcome reads(code), reads(consts), writes(stack), writes(vm), writes(env) {
+  match step {
+    Jump(pc: bound_pc_0, base: b, kbase: kb) => {
+      if b <= 18446744073709551359_u64 {
+        let bound1 = b + 256_u64;
+        if bound1 <= stack^.inner.len {
+          if kb <= 18446744073709551359_u64 {
+            let bound2 = kb + 256_u64;
+            if bound2 <= consts^.inner.len {
+              if bound_pc_0 < code^.inner.len {
+                return run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: bound_pc_0, base: b, kbase: kb);
+              }
+            }
+          }
+        }
+      }
+      let ignored = raise_text(vm: vm, text: &calls_text_5[0_u64..16_u64]);
+      return Outcome::Error();
+    }
+    Done(count: n) => {
+      return Outcome::Done(count: n);
+    }
+    Error() => {
+      return Outcome::Error();
+    }
+    Stop() => {
+      return Outcome::HostStopped();
+    }
+    Budget() => {
+      return Outcome::Budget();
+    }
+  }
+}
+
+struct Cursor {
+  pc: u64;
+  base: u64;
+  kbase: u64;
+}
+
+fn checked_step(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, step: Step) -> r: Result<Cursor, Outcome> reads(code), reads(consts), reads(stack) contract {
+  ensures when Ok(value: cursor): cursor.pc < code^.inner.len;
+  ensures when Ok(value: cursor): cursor.base + 256_u64 <= stack^.inner.len;
+  ensures when Ok(value: cursor): cursor.kbase + 256_u64 <= consts^.inner.len;
+} {
+  match step {
+    Jump(pc: np, base: nb, kbase: nk) => {
+      if nb <= 18446744073709551359_u64 {
+        let blim = nb + 256_u64;
+        if blim <= stack^.inner.len {
+          if nk <= 18446744073709551359_u64 {
+            let klim = nk + 256_u64;
+            if klim <= consts^.inner.len {
+              if np < code^.inner.len {
+                let cursor = Cursor(pc: np, base: nb, kbase: nk);
+                return Ok<Cursor, Outcome>(value: cursor);
+              }
+            }
+          }
+        }
+      }
+      let error = Outcome::Error();
+      return Err<Cursor, Outcome>(error: error);
+    }
+    Done(count: countv) => {
+      let done = Outcome::Done(count: countv);
+      return Err<Cursor, Outcome>(error: done);
+    }
+    Error() => {
+      let error = Outcome::Error();
+      return Err<Cursor, Outcome>(error: error);
+    }
+    Stop() => {
+      let stop = Outcome::HostStopped();
+      return Err<Cursor, Outcome>(error: stop);
+    }
+    Budget() => {
+      let budget = Outcome::Budget();
+      return Err<Cursor, Outcome>(error: budget);
+    }
+  }
+}

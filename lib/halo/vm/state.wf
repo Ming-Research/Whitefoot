@@ -1,0 +1,638 @@
+alias no_handle = pkg::heap::no_handle;
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+alias Upval = pkg::heap::Upval;
+alias num_of = pkg::value::num_of;
+alias tab_of = pkg::value::tab_of;
+alias str_of = pkg::value::str_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+alias new_table = pkg::heap::new_table;
+
+const state_text_0: Array<u8, 44> = "attempt to perform arithmetic on a nil value";
+
+const state_text_1: Array<u8, 48> = "attempt to perform arithmetic on a boolean value";
+
+const state_text_2: Array<u8, 47> = "attempt to perform arithmetic on a string value";
+
+const state_text_3: Array<u8, 46> = "attempt to perform arithmetic on a table value";
+
+const state_text_4: Array<u8, 49> = "attempt to perform arithmetic on a function value";
+
+const state_text_5: Array<u8, 28> = "attempt to index a nil value";
+
+const state_text_6: Array<u8, 32> = "attempt to index a boolean value";
+
+const state_text_7: Array<u8, 31> = "attempt to index a number value";
+
+const state_text_8: Array<u8, 31> = "attempt to index a string value";
+
+const state_text_9: Array<u8, 33> = "attempt to index a function value";
+
+const state_text_10: Array<u8, 27> = "attempt to call a nil value";
+
+const state_text_11: Array<u8, 31> = "attempt to call a boolean value";
+
+const state_text_12: Array<u8, 30> = "attempt to call a number value";
+
+const state_text_13: Array<u8, 30> = "attempt to call a string value";
+
+const state_text_14: Array<u8, 29> = "attempt to call a table value";
+
+const state_text_15: Array<u8, 34> = "attempt to concatenate a nil value";
+
+const state_text_16: Array<u8, 38> = "attempt to concatenate a boolean value";
+
+const state_text_17: Array<u8, 37> = "attempt to concatenate a number value";
+
+const state_text_18: Array<u8, 36> = "attempt to concatenate a table value";
+
+const state_text_19: Array<u8, 39> = "attempt to concatenate a function value";
+
+const state_text_20: Array<u8, 36> = "attempt to get length of a nil value";
+
+const state_text_21: Array<u8, 40> = "attempt to get length of a boolean value";
+
+const state_text_22: Array<u8, 39> = "attempt to get length of a number value";
+
+const state_text_23: Array<u8, 41> = "attempt to get length of a function value";
+
+enum Step {
+  Jump(pc: u64, base: u64, kbase: u64);
+  Done(count: u64);
+  Error();
+  Stop();
+  Budget();
+}
+
+enum FuncView {
+  Lua(h: u32);
+  Native(id: u32);
+  Other();
+}
+
+fn func_of(v: Value) -> r: FuncView pure {
+  match v {
+    Fun(h: bound_h_10) => {
+      return FuncView::Lua(h: bound_h_10);
+    }
+    Builtin(id: bound_id_9) => {
+      return FuncView::Native(id: bound_id_9);
+    }
+    Nil() => {
+    }
+    False() => {
+    }
+    True() => {
+    }
+    Num(..) => {
+    }
+    Str(..) => {
+    }
+    Tab(..) => {
+    }
+  }
+  return FuncView::Other();
+}
+
+fn kind(v: Value) -> r: u8 pure {
+  match v {
+    Nil() => {
+      return 0_u8;
+    }
+    False() => {
+      return 1_u8;
+    }
+    True() => {
+      return 1_u8;
+    }
+    Num(..) => {
+      return 2_u8;
+    }
+    Str(..) => {
+      return 3_u8;
+    }
+    Tab(..) => {
+      return 4_u8;
+    }
+    Fun(..) => {
+      return 5_u8;
+    }
+    Builtin(..) => {
+      return 5_u8;
+    }
+  }
+}
+
+fn is_nil(v: Value) -> r: Bool pure {
+  let k = kind(v: v);
+  return k == 0_u8;
+}
+
+fn boolean(v: Bool) -> r: Value pure {
+  if v {
+    return Value::True();
+  }
+  return Value::False();
+}
+
+fn raw_equal(a: Value, b: Value) -> r: Bool pure {
+  match a {
+    Nil() => {
+      return is_nil(v: b);
+    }
+    False() => {
+      let k = kind(v: b);
+      let t = truthy(v: b);
+      if k == 1_u8 {
+        return bnot(t);
+      }
+      return False();
+    }
+    True() => {
+      let k = kind(v: b);
+      let t = truthy(v: b);
+      if k == 1_u8 {
+        return t;
+      }
+      return False();
+    }
+    Num(n: x) => {
+      match num_of(v: b) {
+        Is(x: y) => {
+          return feq(x, y);
+        }
+        Not() => {
+        }
+      }
+    }
+    Str(h: bound_h_8) => {
+      match str_of(v: b) {
+        Handle(h: j) => {
+          return bound_h_8 == j;
+        }
+        NoHandle() => {
+        }
+      }
+    }
+    Tab(h: bound_h_7) => {
+      match tab_of(v: b) {
+        Handle(h: j) => {
+          return bound_h_7 == j;
+        }
+        NoHandle() => {
+        }
+      }
+    }
+    Fun(h: bound_h_6) => {
+      match func_of(v: b) {
+        Lua(h: j) => {
+          return bound_h_6 == j;
+        }
+        Native(..) => {
+        }
+        Other() => {
+        }
+      }
+    }
+    Builtin(id: bound_id_5) => {
+      match func_of(v: b) {
+        Native(id: j) => {
+          return bound_id_5 == j;
+        }
+        Lua(..) => {
+        }
+        Other() => {
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn stack_new(size: u64) -> r: Box<Slots<Value>> pure contract {
+  ensures r.inner.len == size;
+} {
+  let s = box_slots_new::<Value>(capacity: size);
+  resize_stack(stack: &s, size: size);
+  return move s;
+}
+
+fn resize_stack(stack: &Box<Slots<Value>>, size: u64) -> r: unit writes(stack) contract {
+  ensures stack^.inner.len == size;
+} {
+  if stack^.inner.cap < size {
+    grow(cell: stack, capacity: size);
+  }
+  loop (
+    invariant room: stack^.inner.len <= stack^.inner.cap
+  ) {
+    if stack^.inner.len >= size {
+      break;
+    }
+    if stack^.inner.len < stack^.inner.cap {
+      let nil = Value::Nil();
+      place_back(window: &stack^.inner, value: nil);
+    }
+  }
+  loop (
+    invariant lower: stack^.inner.len >= size
+  ) {
+    if stack^.inner.len <= size {
+      break;
+    }
+    let discarded = take_back(window: &stack^.inner);
+  }
+  return unit;
+}
+
+fn ensure_stack(stack: &Box<Slots<Value>>, size: u64) -> r: unit writes(stack) contract {
+  ensures stack^.inner.len >= size;
+  ensures stack^.inner.len >= entry(stack)^.inner.len;
+} {
+  if stack^.inner.len < size {
+    resize_stack(stack: stack, size: size);
+  }
+  return unit;
+}
+
+fn push_frame(vm: &Vm, frame: Frame) -> r: Bool writes(vm) {
+  let n = vm^.frames.inner.len;
+  if n >= 20000_u64 {
+    return raise_text(vm: vm, text: &calls_text_0[0_u64..14_u64]);
+  }
+  if n < 18446744073709551615_u64 {
+    if n == vm^.frames.inner.cap {
+      let cap = n * 2_u64;
+      if cap < 32_u64 {
+        set cap = 32_u64;
+      }
+      if cap > 20000_u64 {
+        set cap = 20000_u64;
+      }
+      if cap >= vm^.frames.inner.cap {
+        grow(cell: &vm^.frames, capacity: cap);
+      }
+    }
+    if vm^.frames.inner.len < vm^.frames.inner.cap {
+      place_back(window: &vm^.frames.inner, value: frame);
+      return True();
+    }
+  }
+  return False();
+}
+
+fn vm_new(limit: u64) -> r: Vm pure {
+  let heap = pkg::heap::heap_new(limit: limit);
+  let g = new_table(heap: &heap, asize: 0_u32, hsize: 8_u32);
+  let gh = no_handle;
+  match tab_of(v: g) {
+    Handle(h: bound_h_4) => {
+      set gh = bound_h_4;
+    }
+    NoHandle() => {
+    }
+  }
+  let frames = box_slots_new::<Frame>(capacity: 32_u64);
+  let opens = box_slots_new::<u32>(capacity: 0_u64);
+  let protos = box_slots_new::<Proto>(capacity: 0_u64);
+  let nil = Value::Nil();
+  let stopped_stack = box_slots_new::<Value>(capacity: 0_u64);
+  let atom3 = False();
+  let callbacks = box_slots_new::<CallbackFrame>(capacity: 0_u64);
+  let callback_plan = CallbackPlan(pc: 0_u64, base: 0_u64, kbase: 0_u64, kind: 0_u8, dest: 0_u64, first: 0_u64, index: 0_u64, target: 0_u64, expected: atom3);
+  let type_metatables = array_filled::<u32, 6>(value: no_handle);
+  return Vm(heap: move heap, frames: move frames, open_upvalues: move opens, protos: move protos, top: 0_u64, budget: unlimited, saved_pc: 0_u64, saved_base: 0_u64, saved_kbase: 0_u64, error: nil, activation: 0_u32, globals: gh, type_metatables: type_metatables, host_stopped: atom3, stopped_stack: move stopped_stack, callback_plan: callback_plan, callbacks: move callbacks, suspended: atom3);
+}
+
+fn raise_text(vm: &Vm, text: &[u8]) -> r: Bool reads(text), writes(vm) {
+  let v = intern(heap: &vm^.heap, bytes: text);
+  set vm^.error = v;
+  return False();
+}
+
+fn type_error(vm: &Vm, v: Value, op: u8) -> r: Bool writes(vm) {
+  let k = kind(v: v);
+  if op == 0_u8 {
+    if k == 0_u8 {
+      return raise_text(vm: vm, text: &state_text_0[0_u64..44_u64]);
+    }
+    if k == 1_u8 {
+      return raise_text(vm: vm, text: &state_text_1[0_u64..48_u64]);
+    }
+    if k == 3_u8 {
+      return raise_text(vm: vm, text: &state_text_2[0_u64..47_u64]);
+    }
+    if k == 4_u8 {
+      return raise_text(vm: vm, text: &state_text_3[0_u64..46_u64]);
+    }
+    return raise_text(vm: vm, text: &state_text_4[0_u64..49_u64]);
+  }
+  if op == 1_u8 {
+    if k == 0_u8 {
+      return raise_text(vm: vm, text: &state_text_5[0_u64..28_u64]);
+    }
+    if k == 1_u8 {
+      return raise_text(vm: vm, text: &state_text_6[0_u64..32_u64]);
+    }
+    if k == 2_u8 {
+      return raise_text(vm: vm, text: &state_text_7[0_u64..31_u64]);
+    }
+    if k == 3_u8 {
+      return raise_text(vm: vm, text: &state_text_8[0_u64..31_u64]);
+    }
+    return raise_text(vm: vm, text: &state_text_9[0_u64..33_u64]);
+  }
+  if op == 2_u8 {
+    if k == 0_u8 {
+      return raise_text(vm: vm, text: &state_text_10[0_u64..27_u64]);
+    }
+    if k == 1_u8 {
+      return raise_text(vm: vm, text: &state_text_11[0_u64..31_u64]);
+    }
+    if k == 2_u8 {
+      return raise_text(vm: vm, text: &state_text_12[0_u64..30_u64]);
+    }
+    if k == 3_u8 {
+      return raise_text(vm: vm, text: &state_text_13[0_u64..30_u64]);
+    }
+    return raise_text(vm: vm, text: &state_text_14[0_u64..29_u64]);
+  }
+  if op == 3_u8 {
+    if k == 0_u8 {
+      return raise_text(vm: vm, text: &state_text_15[0_u64..34_u64]);
+    }
+    if k == 1_u8 {
+      return raise_text(vm: vm, text: &state_text_16[0_u64..38_u64]);
+    }
+    if k == 2_u8 {
+      return raise_text(vm: vm, text: &state_text_17[0_u64..37_u64]);
+    }
+    if k == 4_u8 {
+      return raise_text(vm: vm, text: &state_text_18[0_u64..36_u64]);
+    }
+    return raise_text(vm: vm, text: &state_text_19[0_u64..39_u64]);
+  }
+  if k == 0_u8 {
+    return raise_text(vm: vm, text: &state_text_20[0_u64..36_u64]);
+  }
+  if k == 1_u8 {
+    return raise_text(vm: vm, text: &state_text_21[0_u64..40_u64]);
+  }
+  if k == 2_u8 {
+    return raise_text(vm: vm, text: &state_text_22[0_u64..39_u64]);
+  }
+  return raise_text(vm: vm, text: &state_text_23[0_u64..41_u64]);
+}
+
+fn number_coercion_pending(vm: &Vm, v: Value) -> r: Bool writes(vm) {
+  doc "TODO(number): replace with pkg::number string-to-number coercion. Until then raise the non-number operand error.";
+  return type_error(vm: vm, v: v, op: 0_u8);
+}
+
+fn upvalue_handle(vm: &Vm, u: u8) -> r: Option<u32> reads(vm) {
+  let n = vm^.frames.inner.len;
+  if n > 0_u64 {
+    let f = n - 1_u64;
+    let cl = cvt::<u32, u64>(vm^.frames.inner[f].closure);
+    if cl < vm^.heap.closures.inner.len {
+      let i = cvt::<u8, u64>(u);
+      if i < vm^.heap.closures.inner[cl].payload.upvals.inner.len {
+        let h = vm^.heap.closures.inner[cl].payload.upvals.inner[i];
+        return Some<u32>(value: h);
+      }
+    }
+  }
+  return None<u32>();
+}
+
+fn read_upvalue(vm: &Vm, stack: &Box<Slots<Value>>, h: u32) -> r: Value reads(vm), reads(stack) {
+  let i = cvt::<u32, u64>(h);
+  if i < vm^.heap.upvalues.inner.len {
+    match vm^.heap.upvalues.inner[i].payload {
+      Open(slot: s) => {
+        let j = s^;
+        if j < stack^.inner.len {
+          return stack^.inner[j];
+        }
+      }
+      Closed(v: bound_v_3) => {
+        return bound_v_3^;
+      }
+    }
+  }
+  return Value::Nil();
+}
+
+fn write_upvalue(vm: &Vm, stack: &Box<Slots<Value>>, h: u32, v: Value) -> r: unit writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let i = cvt::<u32, u64>(h);
+  if i < vm^.heap.upvalues.inner.len {
+    match vm^.heap.upvalues.inner[i].payload {
+      Open(slot: s) => {
+        let j = s^;
+        if j < stack^.inner.len {
+          set stack^.inner[j] = v;
+        }
+      }
+      Closed(..) => {
+        set vm^.heap.upvalues.inner[i].payload = Upval::Closed(v: v);
+      }
+    }
+  }
+  return unit;
+}
+
+fn capture(vm: &Vm, slot: u64) -> r: Option<u32> writes(vm) {
+  let at = vm^.open_upvalues.inner.len;
+  for (i in 0_u64..vm^.open_upvalues.inner.len) {
+    if i < vm^.open_upvalues.inner.len {
+      let h = vm^.open_upvalues.inner[i];
+      let j = cvt::<u32, u64>(h);
+      if j < vm^.heap.upvalues.inner.len {
+        match vm^.heap.upvalues.inner[j].payload {
+          Open(slot: s) => {
+            if s^ == slot {
+              return Some<u32>(value: h);
+            }
+            if s^ < slot {
+              if i < at {
+                set at = i;
+              }
+            }
+          }
+          Closed(..) => {
+          }
+        }
+      }
+    }
+  }
+  let uv = Upval::Open(slot: slot);
+  match pkg::heap::new_upvalue(heap: &vm^.heap, value: uv) {
+    None() => {
+      return None<u32>();
+    }
+    Some(value: h) => {
+      let n = vm^.open_upvalues.inner.len;
+      if n < unlimited {
+        if n == vm^.open_upvalues.inner.cap {
+          let cap = n + 1_u64;
+          grow(cell: &vm^.open_upvalues, capacity: cap);
+        }
+        if at <= vm^.open_upvalues.inner.len {
+          if vm^.open_upvalues.inner.len < vm^.open_upvalues.inner.cap {
+            insert_at(window: &vm^.open_upvalues.inner, index: at, value: h);
+            return Some<u32>(value: h);
+          }
+        }
+      }
+    }
+  }
+  return None<u32>();
+}
+
+fn close_upvalues(vm: &Vm, stack: &Box<Slots<Value>>, level: u64) -> r: unit reads(stack), writes(vm) {
+  loop {
+    if vm^.open_upvalues.inner.len == 0_u64 {
+      break;
+    }
+    let h = vm^.open_upvalues.inner[0_u64];
+    let i = cvt::<u32, u64>(h);
+    if i < vm^.heap.upvalues.inner.len {
+      match vm^.heap.upvalues.inner[i].payload {
+        Open(slot: s) => {
+          let j = s^;
+          if j < level {
+            break;
+          }
+          let v = Value::Nil();
+          if j < stack^.inner.len {
+            set v = stack^.inner[j];
+          }
+          set vm^.heap.upvalues.inner[i].payload = Upval::Closed(v: v);
+        }
+        Closed(..) => {
+        }
+      }
+    }
+    if vm^.open_upvalues.inner.len > 0_u64 {
+      let removed = remove_at(window: &vm^.open_upvalues.inner, index: 0_u64);
+    }
+  }
+  return unit;
+}
+
+fn reset(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit writes(stack), writes(vm) {
+  if vm^.suspended {
+    restore_stopped_stack(vm: vm, stack: stack);
+  }
+  set vm^.suspended = False();
+  loop {
+    if vm^.callbacks.inner.len == 0_u64 {
+      break;
+    }
+    let removed = take_back(window: &vm^.callbacks.inner);
+  }
+  close_upvalues(vm: vm, stack: stack, level: 0_u64);
+  loop {
+    if vm^.frames.inner.len == 0_u64 {
+      break;
+    }
+    let f = take_back(window: &vm^.frames.inner);
+  }
+  set vm^.top = 0_u64;
+  set vm^.activation = 0_u32;
+  set vm^.host_stopped = False();
+  set vm^.error = Value::Nil();
+  return unit;
+}
+
+fn charge_budget(vm: &Vm, pc: u64, base: u64, kbase: u64) -> r: Bool writes(vm) {
+  let b = vm^.budget;
+  if b == 0_u64 {
+    set vm^.saved_pc = pc;
+    set vm^.saved_base = base;
+    set vm^.saved_kbase = kbase;
+    return False();
+  }
+  if b != unlimited {
+    set vm^.budget = b - 1_u64;
+  }
+  return True();
+}
+
+fn register_value(stack: &Box<Slots<Value>>, base: u64, operand: u8) -> r: Value reads(stack) contract {
+  requires base + 256_u64 <= stack^.inner.len;
+} {
+  let offset = cvt::<u8, u64>(operand);
+  let index = base + offset;
+  return stack^.inner[index];
+}
+
+fn constant_value(consts: &Box<Slots<Value>>, kbase: u64, operand: u8) -> r: Value reads(consts) contract {
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let offset = cvt::<u8, u64>(operand);
+  let index = kbase + offset;
+  return consts^.inner[index];
+}
+
+fn checked_frame(stack: &Box<Slots<Value>>, base: u64) -> r: Result<u64, unit> reads(stack) contract {
+  ensures when Ok(value: b): b == base;
+  ensures when Ok(value: b): b + 256_u64 <= stack^.inner.len;
+} {
+  if base <= 18446744073709551359_u64 {
+    let limit = base + 256_u64;
+    if limit <= stack^.inner.len {
+      return Ok<u64, unit>(value: base);
+    }
+  }
+  return Err<u64, unit>(error: unit);
+}
+
+fn register_slot(stack: &Box<Slots<Value>>, base: u64, operand: u8) -> r: u64 reads(stack) contract {
+  requires base + 256_u64 <= stack^.inner.len;
+  ensures r < stack^.inner.len;
+} {
+  let offset = cvt::<u8, u64>(operand);
+  let index = base + offset;
+  let extent = stack^.inner.len;
+  return index;
+}
+
+fn park_stopped_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit reads(stack), writes(vm) {
+  if vm^.host_stopped {
+    return unit;
+  }
+  let count = stack^.inner.len;
+  let saved = box_slots_new::<Value>(capacity: count);
+  for (i in 0_u64..count) {
+    if saved.inner.len < saved.inner.cap {
+      let value = stack^.inner[i];
+      place_back(window: &saved.inner, value: value);
+    }
+  }
+  set vm^.stopped_stack = move saved;
+  set vm^.host_stopped = True();
+  return unit;
+}
+
+fn restore_stopped_stack(vm: &Vm, stack: &Box<Slots<Value>>) -> r: unit reads(vm), writes(stack) {
+  let count = vm^.stopped_stack.inner.len;
+  resize_stack(stack: stack, size: count);
+  for (i in 0_u64..count) {
+    set stack^.inner[i] = vm^.stopped_stack.inner[i];
+  }
+  return unit;
+}
+
+fn concat_coercion_pending(vm: &Vm, value: Value) -> r: Bool writes(vm) {
+  doc "TODO(number): Lua number-to-string concatenation conversion; unavailable conversions raise the Lua operand error.";
+  return type_error(vm: vm, v: value, op: 3_u8);
+}

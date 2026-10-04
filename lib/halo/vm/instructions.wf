@@ -1,0 +1,517 @@
+alias no_handle = pkg::heap::no_handle;
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias num_of = pkg::value::num_of;
+
+const instructions_text_0: Array<u8, 23> = "invalid closure capture";
+
+const instructions_text_1: Array<u8, 23> = "invalid closure capture";
+
+const instructions_text_2: Array<u8, 23> = "invalid closure capture";
+
+const instructions_text_3: Array<u8, 17> = "not enough memory";
+
+const instructions_text_4: Array<u8, 23> = "invalid prototype index";
+
+const instructions_text_5: Array<u8, 20> = "invalid vararg frame";
+
+const instructions_text_6: Array<u8, 14> = "stack overflow";
+
+const instructions_text_7: Array<u8, 40> = "numeric power unavailable (TODO(number))";
+
+enum Created {
+  Ready(pc: u64);
+  Failed();
+}
+
+enum Capture {
+  Slot(register: u8);
+  Up(index: u8);
+  Invalid();
+}
+
+fn create_closure(code: &Box<Slots<Cell>>, vm: &Vm, stack: &Box<Slots<Value>>, dest: u64, proto: u32, pc: u64, base: u64) -> r: Created reads(code), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let pi = cvt::<u32, u64>(proto);
+  if pi < vm^.protos.inner.len {
+    let count = cvt::<u8, u64>(vm^.protos.inner[pi].nups);
+    let ups = box_slots_new::<u32>(capacity: count);
+    for (i in 0_u64..count) {
+      let cp = pc +sat i;
+      if cp < code^.inner.len {
+        let descriptor = capture_descriptor(cell: code^.inner[cp]);
+        let handle = None<u32>();
+        match descriptor {
+          Slot(register: bound_register_18) => {
+            let offset = cvt::<u8, u64>(bound_register_18);
+            let slot = base +sat offset;
+            if slot < stack^.inner.len {
+              set handle = capture(vm: vm, slot: slot);
+            }
+          }
+          Up(index: bound_index_17) => {
+            set handle = upvalue_handle(vm: vm, u: bound_index_17);
+          }
+          Invalid() => {
+            let ignored = raise_text(vm: vm, text: &instructions_text_0[0_u64..23_u64]);
+            return Created::Failed();
+          }
+        }
+        match handle {
+          Some(value: h) => {
+            if ups.inner.len < ups.inner.cap {
+              place_back(window: &ups.inner, value: h);
+            }
+          }
+          None() => {
+            let ignored = raise_text(vm: vm, text: &instructions_text_1[0_u64..23_u64]);
+            return Created::Failed();
+          }
+        }
+      } else {
+        let ignored = raise_text(vm: vm, text: &instructions_text_2[0_u64..23_u64]);
+        return Created::Failed();
+      }
+    }
+    let n = ups.inner.len;
+    let v = pkg::heap::new_closure(heap: &vm^.heap, proto: proto, upvals: &ups.inner[0_u64..n]);
+    if is_nil(v: v) {
+      let ignored = raise_text(vm: vm, text: &instructions_text_3[0_u64..17_u64]);
+      return Created::Failed();
+    }
+    if dest < stack^.inner.len {
+      set stack^.inner[dest] = v;
+    }
+    let next = pc +sat count;
+    return Created::Ready(pc: next);
+  }
+  let ignored = raise_text(vm: vm, text: &instructions_text_4[0_u64..23_u64]);
+  return Created::Failed();
+}
+
+fn varargs(vm: &Vm, stack: &Box<Slots<Value>>, dest: u64, b: u8) -> r: Bool writes(vm), writes(stack) contract {
+  ensures stack^.inner.len >= entry(stack)^.inner.len;
+} {
+  let nframes = vm^.frames.inner.len;
+  if nframes == 0_u64 {
+    return raise_text(vm: vm, text: &instructions_text_5[0_u64..20_u64]);
+  }
+  let fi = nframes - 1_u64;
+  let frame = vm^.frames.inner[fi];
+  let n = frame.varcount;
+  let source = frame.varbase;
+  let count = cvt::<u8, u64>(b);
+  if count > 0_u64 {
+    set count = count - 1_u64;
+  } else {
+    set count = n;
+    set vm^.top = dest +sat count;
+  }
+  let needed = dest +sat count;
+  if needed == unlimited {
+    return raise_text(vm: vm, text: &instructions_text_6[0_u64..14_u64]);
+  }
+  if needed > stack^.inner.len {
+    ensure_stack(stack: stack, size: needed);
+  }
+  for (i in 0_u64..count) {
+    let d = dest +sat i;
+    let s = source +sat i;
+    if d < stack^.inner.len {
+      let v = Value::Nil();
+      if i < n {
+        if s < stack^.inner.len {
+          set v = stack^.inner[s];
+        }
+      }
+      set stack^.inner[d] = v;
+    }
+  }
+  return True();
+}
+
+fn iterator_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, dest: u64, f: Value, state: Value, control: Value, wanted: i64) -> r: Bool reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let length = stack^.inner.len;
+  let nil = Value::Nil();
+  let no = False();
+  let outcome = callback::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: f, b: state, c: control, third: nil, argc: 2_u64, wanted: wanted, mode: 0_u8);
+  resize_stack(stack: stack, size: length);
+  return outcome;
+}
+
+fn fb2int(x: u64) -> r: u32 pure {
+  if x < 8_u64 {
+    return cvt::<u64, u32>(x);
+  }
+  let exponent = x / 8_u64;
+  let e = exponent - 1_u64;
+  let rem = x % 8_u64;
+  let mantissa = rem + 8_u64;
+  let result = mantissa;
+  for (i in 0_u64..e) {
+    set result = result *sat 2_u64;
+  }
+  if result <= 4294967295_u64 {
+    return cvt::<u64, u32>(result);
+  }
+  return 4294967295_u32;
+}
+
+fn power_pending(vm: &Vm, stack: &Box<Slots<Value>>, dest: u64, x: f64, y: f64) -> r: Bool writes(vm) {
+  doc "TODO(number): numeric power awaits pkg::number; do not approximate Lua pow.";
+  return raise_text(vm: vm, text: &instructions_text_7[0_u64..40_u64]);
+}
+
+fn capture_descriptor(cell: Cell) -> r: Capture pure {
+  match cell {
+    Move(b: bound_b_16, ..) => {
+      return Capture::Slot(register: bound_b_16);
+    }
+    LoadK(..) => {
+      return Capture::Invalid();
+    }
+    LoadKx(..) => {
+      return Capture::Invalid();
+    }
+    LoadBool(..) => {
+      return Capture::Invalid();
+    }
+    LoadNil(..) => {
+      return Capture::Invalid();
+    }
+    GetUpval(u: bound_u_15, ..) => {
+      return Capture::Up(index: bound_u_15);
+    }
+    SetUpval(..) => {
+      return Capture::Invalid();
+    }
+    GetGlobal(..) => {
+      return Capture::Invalid();
+    }
+    SetGlobal(..) => {
+      return Capture::Invalid();
+    }
+    GetTableR(..) => {
+      return Capture::Invalid();
+    }
+    GetTableK(..) => {
+      return Capture::Invalid();
+    }
+    SetTableRR(..) => {
+      return Capture::Invalid();
+    }
+    SetTableRK(..) => {
+      return Capture::Invalid();
+    }
+    SetTableKR(..) => {
+      return Capture::Invalid();
+    }
+    SetTableKK(..) => {
+      return Capture::Invalid();
+    }
+    NewTable(..) => {
+      return Capture::Invalid();
+    }
+    SelfR(..) => {
+      return Capture::Invalid();
+    }
+    SelfK(..) => {
+      return Capture::Invalid();
+    }
+    AddRR(..) => {
+      return Capture::Invalid();
+    }
+    AddRK(..) => {
+      return Capture::Invalid();
+    }
+    AddKR(..) => {
+      return Capture::Invalid();
+    }
+    AddKK(..) => {
+      return Capture::Invalid();
+    }
+    SubRR(..) => {
+      return Capture::Invalid();
+    }
+    SubRK(..) => {
+      return Capture::Invalid();
+    }
+    SubKR(..) => {
+      return Capture::Invalid();
+    }
+    SubKK(..) => {
+      return Capture::Invalid();
+    }
+    MulRR(..) => {
+      return Capture::Invalid();
+    }
+    MulRK(..) => {
+      return Capture::Invalid();
+    }
+    MulKR(..) => {
+      return Capture::Invalid();
+    }
+    MulKK(..) => {
+      return Capture::Invalid();
+    }
+    DivRR(..) => {
+      return Capture::Invalid();
+    }
+    DivRK(..) => {
+      return Capture::Invalid();
+    }
+    DivKR(..) => {
+      return Capture::Invalid();
+    }
+    DivKK(..) => {
+      return Capture::Invalid();
+    }
+    ModRR(..) => {
+      return Capture::Invalid();
+    }
+    ModRK(..) => {
+      return Capture::Invalid();
+    }
+    ModKR(..) => {
+      return Capture::Invalid();
+    }
+    ModKK(..) => {
+      return Capture::Invalid();
+    }
+    PowRR(..) => {
+      return Capture::Invalid();
+    }
+    PowRK(..) => {
+      return Capture::Invalid();
+    }
+    PowKR(..) => {
+      return Capture::Invalid();
+    }
+    PowKK(..) => {
+      return Capture::Invalid();
+    }
+    Unm(..) => {
+      return Capture::Invalid();
+    }
+    Not(..) => {
+      return Capture::Invalid();
+    }
+    Len(..) => {
+      return Capture::Invalid();
+    }
+    Concat(..) => {
+      return Capture::Invalid();
+    }
+    Jmp(..) => {
+      return Capture::Invalid();
+    }
+    EqJmpRR(..) => {
+      return Capture::Invalid();
+    }
+    EqJmpRK(..) => {
+      return Capture::Invalid();
+    }
+    EqJmpKR(..) => {
+      return Capture::Invalid();
+    }
+    EqJmpKK(..) => {
+      return Capture::Invalid();
+    }
+    LtJmpRR(..) => {
+      return Capture::Invalid();
+    }
+    LtJmpRK(..) => {
+      return Capture::Invalid();
+    }
+    LtJmpKR(..) => {
+      return Capture::Invalid();
+    }
+    LtJmpKK(..) => {
+      return Capture::Invalid();
+    }
+    LeJmpRR(..) => {
+      return Capture::Invalid();
+    }
+    LeJmpRK(..) => {
+      return Capture::Invalid();
+    }
+    LeJmpKR(..) => {
+      return Capture::Invalid();
+    }
+    LeJmpKK(..) => {
+      return Capture::Invalid();
+    }
+    TestJmp(..) => {
+      return Capture::Invalid();
+    }
+    TestSetJmp(..) => {
+      return Capture::Invalid();
+    }
+    Call(..) => {
+      return Capture::Invalid();
+    }
+    TailCall(..) => {
+      return Capture::Invalid();
+    }
+    Return(..) => {
+      return Capture::Invalid();
+    }
+    ForLoop(..) => {
+      return Capture::Invalid();
+    }
+    ForPrep(..) => {
+      return Capture::Invalid();
+    }
+    TForLoop(..) => {
+      return Capture::Invalid();
+    }
+    SetList(..) => {
+      return Capture::Invalid();
+    }
+    Close(..) => {
+      return Capture::Invalid();
+    }
+    Closure(..) => {
+      return Capture::Invalid();
+    }
+    VarArg(..) => {
+      return Capture::Invalid();
+    }
+  }
+}
+
+enum Arithmetic {
+  Add();
+  Sub();
+  Mul();
+  Div();
+  Mod();
+  Pow();
+}
+
+enum Compare {
+  Eq();
+  Lt();
+  Le();
+}
+
+fn arithmetic<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, op: Arithmetic, dest: u64, b: Value, c: Value, plan: CallbackPlan) -> r: Bool reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires dest < stack^.inner.len;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "Arithmetic family helper bounds the proof inventory across register/constant encodings; every fallback uses slow.";
+  let operation = SlowOp::Add();
+  match op {
+    Add() => {
+      set operation = SlowOp::Add();
+    }
+    Sub() => {
+      set operation = SlowOp::Sub();
+    }
+    Mul() => {
+      set operation = SlowOp::Mul();
+    }
+    Div() => {
+      set operation = SlowOp::Div();
+    }
+    Mod() => {
+      set operation = SlowOp::Mod();
+    }
+    Pow() => {
+      set operation = SlowOp::Pow();
+    }
+  }
+  match num_of(v: b) {
+    Is(x: left) => {
+      match num_of(v: c) {
+        Is(x: y) => {
+          let z = 0.0_f64;
+          match op {
+            Add() => {
+              set z = fadd.strict(left, y);
+            }
+            Sub() => {
+              set z = fsub.strict(left, y);
+            }
+            Mul() => {
+              set z = fmul.strict(left, y);
+            }
+            Div() => {
+              set z = fdiv.strict(left, y);
+            }
+            Mod() => {
+              let quotient = fdiv.strict(left, y);
+              let rounded = ffloor(quotient);
+              let product = fmul.strict(rounded, y);
+              set z = fsub.strict(left, product);
+            }
+            Pow() => {
+              return power_pending(vm: vm, stack: stack, dest: dest, x: left, y: y);
+            }
+          }
+          set stack^.inner[dest] = Value::Num(n: z);
+          return True();
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  set vm^.callback_plan = plan;
+  let nil = Value::Nil();
+  return slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: dest, b: b, c: c, v: nil);
+}
+
+fn compare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, op: Compare, dest: u64, b: Value, c: Value, plan: CallbackPlan) -> r: Bool reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires dest < stack^.inner.len;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let operation = SlowOp::Eq();
+  match op {
+    Eq() => {
+      set operation = SlowOp::Eq();
+    }
+    Lt() => {
+      set operation = SlowOp::Lt();
+    }
+    Le() => {
+      set operation = SlowOp::Le();
+    }
+  }
+  match num_of(v: b) {
+    Is(x: left) => {
+      match num_of(v: c) {
+        Is(x: y) => {
+          let answer = False();
+          match op {
+            Eq() => {
+              set answer = feq(left, y);
+            }
+            Lt() => {
+              set answer = flt(left, y);
+            }
+            Le() => {
+              set answer = fle(left, y);
+            }
+          }
+          let result = boolean(v: answer);
+          set stack^.inner[dest] = result;
+          return True();
+        }
+        Not() => {
+        }
+      }
+    }
+    Not() => {
+    }
+  }
+  set vm^.callback_plan = plan;
+  let nil = Value::Nil();
+  return slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: operation, dest: dest, b: b, c: c, v: nil);
+}
