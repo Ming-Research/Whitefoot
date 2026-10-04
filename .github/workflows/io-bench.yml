@@ -37,6 +37,14 @@ on:
         description: Server CPUs for the firn comparison
         type: string
         default: "1 2"
+      compare_tests:
+        description: redis-benchmark tests for the firn comparison
+        type: string
+        default: "mset set get"
+      compare_depths:
+        description: Pipeline depths for the firn comparison
+        type: string
+        default: "16 1"
       compare_profile:
         description: Record a perf profile of each image under MSET at depth 16
         type: boolean
@@ -133,6 +141,8 @@ jobs:
         env:
           OUT: ${{ runner.temp }}/compare
           COMPARE_CPUS: ${{ inputs.compare_cpus }}
+          COMPARE_TESTS: ${{ inputs.compare_tests }}
+          COMPARE_DEPTHS: ${{ inputs.compare_depths }}
           PROFILE: ${{ inputs.compare_profile }}
           WHITEFOOT_CHECK_TIMEOUT: "6000"
         run: |
