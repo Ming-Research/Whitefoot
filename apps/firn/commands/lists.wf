@@ -1520,30 +1520,17 @@ fn run_lmove_named(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
 }
 
 fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, from_head: Bool, to_head: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "LMOVE source destination LEFT|RIGHT LEFT|RIGHT and RPOPLPUSH source destination, which moves from the tail to the head: removes the element at the source list's head (from_head) or tail, pushes it onto the destination list's head (to_head) or tail, creating the destination for an absent key and removing the source when it is left empty, and answers the element; a source equal to the destination rotates the list. One statement holds both keys' entries through a key set whose payloads mark the source with 1 and the destination with 2, so that the move takes effect at one point. As in Redis, an absent source answers the null bulk string without the destination being looked at, a key holding another kind is refused, and a key found expired is removed, its removal recorded before the move.";
+  doc "LMOVE source destination LEFT|RIGHT LEFT|RIGHT and RPOPLPUSH source destination, which moves from the tail to the head: removes the element at the source list's head (from_head) or tail, pushes it onto the destination list's head (to_head) or tail, creating the destination for an absent key and removing the source when it is left empty, and answers the element; a source equal to the destination rotates the list. One statement holds both keys' entries through a key set whose returned indices identify the source and destination, so that the move takes effect at one point. As in Redis, an absent source answers the null bulk string without the destination being looked at, a key holding another kind is refused, and a key found expired is removed, its removal recorded before the move.";
   let source_place = key_bounds(input: input, args: args, index: 1_u64);
   let source_key = &input^[source_place.start..source_place.end];
   let destination_place = key_bounds(input: input, args: args, index: 2_u64);
   let destination_key = &input^[destination_place.start..destination_place.end];
   let keys = key_set_new(capacity: 2_u64);
-  key_set_add(keys: &keys, key: source_key, amount: 1_u64);
-  key_set_add(keys: &keys, key: destination_key, amount: 2_u64);
+  let source = key_set_insert(keys: &keys, key: source_key);
+  let destination = key_set_insert(keys: &keys, key: destination_key);
   let now = time^.check;
   set client^.state = state_absent;
   atomic s = &store^.state, slots = &s^.map[keys] {
-    let source = keys.len;
-    let destination = keys.len;
-    for @roles (at in 0_u64..keys.len) {
-      let role = key_set_payload(keys: &keys, index: at);
-      let from = iand(role, 1_u64);
-      if from != 0_u64 {
-        set source = at;
-      }
-      let to = iand(role, 2_u64);
-      if to != 0_u64 {
-        set destination = at;
-      }
-    }
     let found = entry_none;
     if source < keys.len {
       set found = list_kind(slot: &slots^[source], now: now);
