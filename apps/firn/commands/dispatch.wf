@@ -171,18 +171,6 @@ const code_sunionstore: u64 = 18398135005177861459_u64;
 
 const code_sdiffstore: u64 = 18398421939007341651_u64;
 
-const code_hset: u64 = 1413829448_u64;
-
-const code_hget: u64 = 1413826376_u64;
-
-const code_zadd: u64 = 1145323866_u64;
-
-const code_zpopmin: u64 = 22035644592115802_u64;
-
-const code_zcard: u64 = 293437784922_u64;
-
-const code_zscore: u64 = 76219819447130_u64;
-
 const code_auth: u64 = 1213486401_u64;
 
 const code_hello: u64 = 340582483272_u64;
@@ -224,11 +212,8 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let tail = False();
   let pairs = count % 2_u64;
   let odd = pairs == 1_u64;
-  let even = pairs == 0_u64;
   let at_least_three = count >= 3_u64;
-  let at_least_four = count >= 4_u64;
   let mset_shape = band(odd, at_least_three);
-  let hset_shape = band(even, at_least_four);
   let one_or_two = count >= 2_u64;
   let at_most_three = count <= 3_u64;
   let pop_shape = band(one_or_two, at_most_three);
@@ -906,54 +891,6 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       return unit;
     }
   }
-  if code == code_hset {
-    let fits = hset_shape;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_hset(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_hget {
-    let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_hget(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_zadd {
-    let fits = count >= 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zadd(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_zpopmin {
-    let fits = pop_shape;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zpopmin(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_zcard {
-    let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zcard(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_zscore {
-    let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zscore(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
   if code == code_auth {
     let fits = count >= 2_u64;
     if fits {
@@ -998,6 +935,14 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_command {
     run_command(input: input, args: args, client: client);
+    return unit;
+  }
+  let hashed = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+  if hashed {
+    return unit;
+  }
+  let ranked = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+  if ranked {
     return unit;
   }
   reply_unknown(client: client, input: input, args: args);

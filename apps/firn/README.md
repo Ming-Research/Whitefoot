@@ -30,9 +30,17 @@ clients send on their own:
   `SUNION`, `SDIFF`, `SINTERCARD` with `LIMIT`, and `SINTERSTORE`,
   `SUNIONSTORE` and `SDIFFSTORE`, each in one statement holding every key
   it names;
-- hashes: `HSET`, `HGET`;
-- sorted sets: `ZADD`, `ZPOPMIN`, `ZCARD`, `ZSCORE`, with scores read and
-  written as Redis 7.0.15 reads and writes them;
+- hashes: `HSET`, `HMSET`, `HSETNX`, `HGET`, `HMGET`, `HDEL`, `HEXISTS`,
+  `HSTRLEN`, `HLEN`, `HGETALL`, `HKEYS`, `HVALS`, `HINCRBY`, `HINCRBYFLOAT`,
+  in the x87 extended precision Redis computes it in on x86-64, and
+  `HRANDFIELD` with a count and `WITHVALUES`;
+- sorted sets: `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH` and `INCR`,
+  `ZINCRBY`, `ZRANGE` with `BYSCORE`, `BYLEX`, `REV`, `LIMIT` and
+  `WITHSCORES`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`,
+  `ZRANGEBYLEX`, `ZREVRANGEBYLEX`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`, `ZREVRANK`,
+  `ZSCORE`, `ZMSCORE`, `ZCARD`, `ZREM`, `ZPOPMIN` and `ZPOPMAX` with a count,
+  `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE` and `ZREMRANGEBYLEX`, with scores
+  read and written as Redis 7.0.15 reads and writes them;
 - connection: `PING`, `ECHO`, `QUIT`, `AUTH`, `HELLO` with no version or
   version 2, version 3 being refused as unsupported, `SELECT 0`, firn
   having one database, and `CLIENT ID`, `CLIENT GETNAME` and
@@ -104,6 +112,11 @@ are 0.
 `HELLO` and `INFO` report the server as `redis` version 7.0.15, the version
 whose replies firn follows.
 
+`HINCRBYFLOAT` computes in the long double of Redis on x86-64 Linux, x87's
+80-bit extended format, and answers as that Redis does. Redis built where
+long double has another format answers it, and `INCRBYFLOAT`, differently:
+in binary128 on aarch64 Linux, and in a double where long double is one.
+
 What is not there yet is listed in [docs/todo.md](../../docs/todo.md) under
 "firn"; the measurements and the design are in
 [research/investigations/firn](../../research/investigations/firn/DESIGN.md).
@@ -162,8 +175,10 @@ default.
   patterns read as Redis reads them;
 - `protocol`: reading requests, writing replies, and a connection's state and
   settings;
-- `scores`: sorted-set scores read as Redis's `strtod` reads them, to the
-  nearest double, and written as its `%.17g` writes them;
+- `scores`: sorted-set scores and the ends of score ranges read as Redis's
+  `strtod` reads them, to the nearest double, and written as its `%.17g`
+  writes them, and the long double `HINCRBYFLOAT` computes in, read as
+  `strtold` reads it, added as x87 adds it and written as `%.17Lf` writes it;
 - `extended`: numbers of x86-64's 80-bit long double, read as glibc's
   `strtold` reads them, added, and written as `%.17Lf` writes them, the
   arithmetic of `INCRBYFLOAT`;
@@ -174,7 +189,7 @@ default.
   and beside it a second shared state, the server's, with what `CONFIG SET`
   changes, the count of accepted connections and the time the server
   started;
-- `commands`: one file per kind of value, the connection and server
-  commands, and the dispatch;
+- `commands`: one file per kind of value, sorted sets' ranges in a second,
+  the connection and server commands, and the dispatch;
 - `persistence`: the append-only file's writer and its replay;
 - `server`: connections, active expiry, the invocation's options and `main`.

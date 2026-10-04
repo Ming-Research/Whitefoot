@@ -1,4 +1,19 @@
+alias Bytes = pkg::bytes::Bytes;
 alias Client = pkg::protocol::Client;
+
+public struct Extended {
+  doc "A value of x87's extended double, the long double Redis 7.0.15 computes HINCRBYFLOAT in on x86-64: its sign, and for a finite value its 64-bit mantissa, whose top bit is set unless the value is below the smallest normal, 2^-16382, and its exponent, from -16382 to 16383, the value being the mantissa times 2^(exponent - 63); a zero has mantissa 0, and infinite marks an infinity, whose mantissa and exponent mean nothing.";
+  public negative: Bool;
+  public mantissa: u64;
+  public exponent: i64;
+  public infinite: Bool;
+}
+
+public struct ExtendedRead {
+  doc "A long double read from text: valid is False for text Redis 7.0.15 refuses, whose value is then zero.";
+  public value: Extended;
+  public valid: Bool;
+}
 
 public struct Score {
   doc "A score read from a request: valid is False for text Redis 7.0.15 refuses as a score, whose value is then zero.";
@@ -8,6 +23,16 @@ public struct Score {
 
 public fn read_score(input: &[u8], start: u64, length: u64) -> score: Score reads(input) doc "Reads bytes of the input as a sorted-set score as Redis 7.0.15 reads one, with C's strtod and nothing after it: an optional sign, then a decimal number with an optional exponent, a C99 hexadecimal one with an optional binary exponent, or inf or infinity in either case, rounded to the nearest double with ties to even. Leading spaces, trailing bytes, NaN, a number that overflows to infinity and a nonzero number that rounds to zero are refused.";
 
+public fn read_bound(input: &[u8], start: u64, length: u64) -> score: Score reads(input) doc "Reads bytes of the input as Redis 7.0.15 reads one end of a score range, with C's strtod over the argument as a C string, up to its first zero byte, accepting only a read that reaches that end: white space before the number, a number past the range of a double, read as infinity, and one that rounds to zero are accepted, and so is an empty string, read as 0; NaN and text of white space alone are refused.";
+
 public fn kept_score(score: f64) -> kept: f64 pure doc "The score a sorted set keeps for one read: negative zero becomes zero, as Redis keeps it in a sorted set it encodes as a listpack, one of at most 128 members of at most 64 bytes, which stores a score equal to an integer as that integer.";
+
+public fn read_extended(input: &[u8], start: u64, length: u64) -> read: ExtendedRead reads(input) doc "Reads bytes of the input as Redis 7.0.15's string2ld reads a long double: fewer than 5,120 bytes, the first not white space, read whole by strtold, so that a zero byte among them refuses it: an optional sign, then a decimal number with an optional exponent, a C99 hexadecimal one with an optional binary exponent, or inf or infinity in either case, rounded to the nearest extended double with ties to even. NaN, a number that overflows to infinity and a nonzero number that rounds to zero are refused.";
+
+public fn read_extended_text(text: &Bytes) -> read: ExtendedRead reads(text) doc "Reads a stored string as read_extended reads bytes of the input.";
+
+public fn extended_add(left: Extended, right: Extended) -> sum: Extended pure doc "The sum of two extended doubles rounded to the nearest one with ties to even, as x87's addition rounds it at extended precision; infinite when either is infinite or the sum overflows.";
+
+public fn extended_text(value: Extended) -> text: Bytes pure doc "An extended double as Redis 7.0.15's ld2string writes one in its human mode: inf or -inf for an infinity; otherwise C's %.17Lf, the exact value rounded to 17 digits after the point with ties to even, its trailing zeros and then a point left last dropped, and -0 written as 0.";
 
 public fn reply_score(client: &Client, score: f64) -> result: unit writes(client) doc "Writes a score as Redis 7.0.15 writes one under RESP2: a bulk string of inf or -inf for an infinity, and otherwise of C's %.17g, the value rounded to 17 significant digits with ties to even, in fixed notation when its decimal exponent is from -4 to 16 and in exponential notation otherwise, trailing zeros dropped.";
