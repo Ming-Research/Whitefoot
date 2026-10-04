@@ -109,7 +109,27 @@ of this proposal. No Snowghost pin change follows from this record.
 
 ## Results
 
-Not implemented or executed. The recommended interface remains unapproved.
+The implementation and focused cases are present on the work branch. The
+recommended interface remains unapproved. The compiler has not yet been
+built with this change, and no semantic or native result is claimed.
+
+Six focused Rust tests cover lowering operands and allocation obligations,
+fill facts and invalidation, independent-loop permission and shared-write
+refusals, one/four-worker known-sequence execution, aggregate/zero-byte
+ownership, and allocator alignment. Four conformance rows cover the positive
+constructor and the non-Copy, implicit-type and no-heap refusals. The shared
+program exercises zero/one/multiple lengths and grow/push/pop against stated
+values. The huge zero-byte native witness uses the existing harness's
+five-second deadline so a mistaken element loop fails promptly.
+
+`make spec-prose-integrity design-lint` passed at
+67202ea37a1db58f8123d1536438bd195f528233. This is a prose/design check, not
+compiler validation. Focused Cargo attempts at the later integrated source
+returned lock-busy status 75 before compilation; the logs remain under
+`compiler/target/filled-window-validation/`. They provide no passing test
+result. The next execution is the six-test `filled_runtime_slots` filter,
+using an isolated dependency cache and one bounded host-lock acquisition.
+The canonical gate and independent review remain unrun.
 
 ## Found along the way
 
