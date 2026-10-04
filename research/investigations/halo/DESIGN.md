@@ -233,6 +233,11 @@ A and B are one amendment of GRAM-4, SHARE-1, SHARE-2, SHARE-3, WAIT-2 and
 OP-4, designed with firn's KeySet redesign (insertion-order keys, lock order
 private to the runtime), which lands first.
 
+## VM core
+
+The engine's design, from values to the work order and its falsifiers, is
+[VM.md](VM.md).
+
 ## Settled without a language change
 
 - Recursive values (`witnesses/x_value.wf`, accepted). Lua tables need

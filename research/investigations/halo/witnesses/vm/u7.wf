@@ -1,0 +1,63 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Op {
+  kind: u8;
+  a: u8;
+  b: u8;
+  target: u64;
+}
+
+fn run(ops: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, base0: u64, room: u64) -> r: u64 reads(ops), writes(regs) contract {
+  requires base0 <= room;
+  requires room + 256_u64 <= regs^.inner.len;
+  requires 1_u64 <= ops^.inner.len;
+} {
+  let n = ops^.inner.len;
+  let pc = 0_u64;
+  let base = base0;
+  loop (
+    invariant inside: pc < n,
+    invariant frame: base <= room
+  ) {
+    let op = ops^.inner[pc];
+    let ai = cvt::<u8, u64>(op.a);
+    let ra = base + ai;
+    if op.kind == 0_u8 {
+      let out = regs^.inner[ra];
+      return out;
+    } else if op.kind == 1_u8 {
+      let t = op.target;
+      if t < n {
+        set pc = t;
+      } else {
+        return 0_u64;
+      }
+      if t <= room {
+        set base = t;
+      } else {
+        return 0_u64;
+      }
+    } else {
+      let bi = cvt::<u8, u64>(op.b);
+      let rb = base + bi;
+      let v = regs^.inner[rb];
+      set regs^.inner[ra] = v;
+      let next = pc + 1_u64;
+      if base <= room {
+        if next < n {
+          set pc = next;
+        } else {
+          return 0_u64;
+        }
+      } else {
+        return 0_u64;
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
