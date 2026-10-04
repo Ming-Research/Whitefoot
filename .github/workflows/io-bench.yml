@@ -94,10 +94,16 @@ jobs:
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
-          for tool in clang ld.lld cargo rustc redis-benchmark redis-cli taskset perl python3; do
-            command -v "$tool" >/dev/null || { echo "missing: $tool"; exit 1; }
+          missing=
+          for tool in clang ld.lld cargo rustc redis-benchmark redis-cli taskset perl python3 git make; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
           done
           echo "cpus: $(nproc)"
+          echo "perf: $(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)"
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
 
       - name: Build each revision's firn with its own compiler
         env:
