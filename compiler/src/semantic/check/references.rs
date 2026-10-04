@@ -1145,9 +1145,7 @@ impl<'unit> Checker<'_, 'unit> {
                 root: keys.root,
                 path: keys.path.iter().map(CheckedPlaceStep::place_step).collect(),
             };
-            let anchors = match root_binding.as_ref() {
-                _ => self.replace_reference_roots_for_entries(key_place, bindings),
-            };
+            let anchors = self.replace_reference_roots_for_entries(key_place, bindings);
             reference.anchors.extend(anchors);
         }
         let kind = ReferenceKind::Single;

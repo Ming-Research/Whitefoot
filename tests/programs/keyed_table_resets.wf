@@ -59,7 +59,7 @@ fn trade(store: Shared<Store>) -> result: unit pure waits {
   let keys = prefixes();
   for @again (index in 0_u64..100_u64) {
     atomic s = &store, t = &s^.map {
-    let all = &t^[keys];
+      let all = &t^[keys];
       let sum = 0_u64;
       for @key (at in 0_u64..all^.len) {
         match all^[at] {
