@@ -42,3 +42,11 @@ probe (stdin is unused): cache, flush, reset, budget resumption, host outcomes,
 and forced collection of pins and cached constants. A nonzero exit is the
 probe's numbered failed observation. [GAPS.md](GAPS.md) names limits and concrete
 reopening conditions. None of these research commands is a compiler gate.
+
+The Redis error/SHA-1 comparison uses Redis 7.0.15's local `script_lua.c`
+and `eval.c` as the formatting reference: command errors are tables, Lua
+errors are strings, and the EVAL wrapper adds source/line and the SHA-1 of
+the unchanged script body. SHA-1 is checked independently against Python's
+`hashlib` on binary inputs, including block and padding boundaries. These
+checks belong to this explicitly invoked experiment and leave oracle files
+unchanged.
