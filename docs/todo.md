@@ -77,6 +77,14 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **A table subscripted in a block is refused without a repair.** `s^.map[k]`
+  in an atomic block is OP-4's type mismatch, "an indexable base", against
+  `KeyedTable<V>`, and names nothing a writer can do instead, where the
+  intended form is an entry binding in the header, `e = &s^.map[k]`
+  [SHARE-2]. The change: give that refusal a repair naming the header form.
+  Found by the adversarial tests of the keyed tables. Reopen with the next
+  change to how a subscript's base is refused.
+
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
   `left == right`, let `make() -> Pair` return `Pair(1, 1)`. A helper
@@ -566,6 +574,18 @@ rarely insert at the same place.
 
 ## Containers and storage lowering
 
+- **The no-heap declaration withdraws no memory the runtime's pool gives.**
+  [STOR-8] withdraws `Box`, the runtime-capacity shapes and `Segments` and
+  the rows that allocate them, while a shared object's state, a keyed
+  table's entries and a key set's store come from the context runtime's
+  pool, which a no-heap bundle may still use through `shared_new`,
+  `keyed_table_new` and `key_set_put`. The checker refused `KeySet` there
+  for a while, which [STOR-8] does not name; it no longer does. The
+  question for the owner: whether the declaration means no allocation at
+  all, which would withdraw those three types and their rows too, or no use
+  of the program's heap, as written. Reopen with the first no-heap bundle
+  that reaches shared state.
+
 - **A hash map offers no sample or bounded visit.**
   `std::collections::hash_map` visits every pair (`hash_map_each`) and
   nothing less, so a program that must look at a few pairs at a time, as
@@ -578,8 +598,10 @@ rarely insert at the same place.
   the next visit resumes at would express sampling and incremental scans,
   as Redis's `SCAN`. Validate with a `SCAN`-style program over a map that
   changes between visits, every pair present throughout reported at least
-  once. Reopen when a program must walk a shared map without holding it for
-  the whole walk.
+  once. A keyed table [SHARE-1] offers no visit at all, so `KEYS`, `SCAN`
+  and `FLUSHALL`'s alternatives wait on the same design. Reopen when a
+  program must walk a hash map, or a keyed table without holding it for the
+  whole walk.
 
 - **A hash map that removes and inserts at its ceiling fills with vacated
   buckets.** `hash_map_put` never rebuilds a map already at its ceiling
@@ -935,14 +957,63 @@ rarely insert at the same place.
   12 microseconds on the 4-CPU measuring host, where a pause took about
   12 ns; pause latency differs several times over between x86 cores, so
   the same counts wait longer elsewhere and the batching that won one-key
-  `update` may cost latency instead. A keyed statement's patience, 2^16
-  pauses before it holds the whole map, is a count of pauses too, 0.77 ms
-  on that host. The change: bound the waits by elapsed time, read from the
-  cycle counter, or let keyed statements park. Reopen when the 14900K
+  `update` may cost latency instead. The patience of a statement on one
+  key, 2^16 pauses before it holds the table whole, is a count of pauses
+  too, 0.77 ms on that host. The change: bound the waits by elapsed time,
+  read from the cycle counter, or let statements on one key park. Reopen when the 14900K
   measures one-key `update`, when waiting writers park, or when holds show
-  in a workload's profile or tail latency.
+  in a workload's profile or tail latency. The 14900K has measured it
+  ([the longest wait](../research/investigations/concurrent-map/DESIGN.md#the-longest-wait-for-a-held-cell)):
+  no one count is best. One-key `update` with a block of a few nanoseconds
+  rises with the count to 4,096 pauses and loses 12% to 43% at 64, while
+  firn's `ZADD`, whose block takes about 0.8 µs, gains 10% at 64 pauses or
+  fewer on four server CPUs. The change that follows from it: wait in
+  proportion to how long the holder has held, which the holder would have
+  to publish. Reopen when a workload's rate on one hot key is within that
+  10% of its criterion.
 
-- **A keyed statement on an absent key allocates a node it then frees.**
+- **The map's test has no gate run that checks memory.** A statement that
+  locked a cell in a table a move had left read the cell's node after a
+  statement in the next table had freed it; the result was always
+  discarded, so no test's outcome differed, and only a build with
+  `-fsanitize=address` saw it. `make -C compiler concurrent-map-test-sanitized`
+  is that build, 7 s on the 14900K, and fails under the mutant that keeps
+  the lock; it is not part of `completion-test`, whose runtime stage has
+  run over its budget on macOS. The decision for the owner: raise the
+  runtime budget and run it in the gate, or run it in a workflow of its
+  own. The change that brought keyed tables, key sets and holds in a
+  statement's frame passed it in 7.0 s, and passed a ThreadSanitizer build
+  of the same test, which no target runs. Reopen with the next change to
+  `concurrent_map.c`.
+
+- **A guard that reads an absent entry through a shared read can miss the
+  insert that makes it true.** A guard's watch is registered while its
+  statement still holds the units the guard read, so a writer that takes
+  such a unit after the release sees the registration; a shared read of an
+  absent key (`wf_cmap_read_entry`) holds no cell, so an insert of that key
+  can end, finding no watch, before the watch is registered. The keyed
+  tables' contract therefore has a guard's entries taken with `read` zero,
+  which claims a cell for an absent key. The change, if guards should keep
+  shared reads: register the watch before the guard's first evaluation and
+  take it off when the guard is true. Reopen when a guarded statement's
+  exclusive take shows in a profile.
+
+- **All guard watches share one lock.** `wf_watch_lock`
+  (`compiler/src/backend/completion/bridge.c`) guards every unit's list of
+  watches, so that a wake can take a watch off all its units at once, and a
+  table's write that finds watches takes it to wake them all, coarse by
+  table as decided. Many contexts blocked on one table's keys would contend
+  on it and each write would wake all of them. Reopen with the blocking pops
+  work, measuring wakes per write.
+
+- **The runtime unit list for native callers lacks the keyed tables.**
+  `compiler/runtime.mk` says its list stays aligned with the compiler's
+  runtime units, but neither `shared_map.c` before nor `keyed_table.c` now is
+  in it, since no native caller reaches a table. The change: add the unit
+  when a native caller needs tables, or say in the comment that the list
+  holds what native callers link. Reopen with the first such caller.
+
+- **A statement on an absent key's entry allocates a node it then frees.**
   `wf_cmap_lock_entry` (`compiler/src/backend/concurrent_map.c`) claims a
   cell for an absent key, reusing the first removed cell its probe passed,
   and allocates the key's node so the block can write `Some`; a block that
@@ -955,37 +1026,48 @@ rarely insert at the same place.
   the user for the next claim of the same size. Reopen when a profile of a
   miss-heavy workload shows the allocation.
 
-- **A keyed statement that waits for its entry spins and does not park.**
-  Its wait is bounded, since one out of patience holds the whole map
+- **A statement that waits for its one entry spins and does not park.**
+  Its wait is bounded, since one out of patience holds the table whole
   ([bounded waits](../research/investigations/concurrent-map/DESIGN.md#bounded-waits)),
-  but the driver it runs on spins instead of running its other contexts:
-  firn spent 15.9 µs of server CPU per `LRANGE mylist 0 599` reply on two
-  drivers against 8.6 µs on one, every statement on the one list holding
-  its entry. The change: let a keyed statement that has not yet locked
-  anything suspend like an object statement, with a mark for waiters (a bit
+  but the driver it runs on spins instead of running its other contexts.
+  Readers of one key no longer wait for each other
+  ([shared reads](../research/investigations/concurrent-map/DESIGN.md#shared-reads-of-one-key):
+  9.72 µs of server CPU per `LRANGE mylist 0 599` reply on two drivers
+  against 8.76 µs on one, where exclusive holds spent 16.4 µs), but writers
+  of one key still do: firn's `ZADD` spent 60% of its server CPU waiting
+  for its one key on four server CPUs. The change: let a statement on one
+  entry that has not yet locked anything suspend, as one whose first unit
+  is the state's other fields does, with a mark for waiters (a bit
   of the hash or a word beside the cell, since the key word's second bit
   marks a pending claim) that the entry's unlock reads to wake it. Validate
-  by the `LRANGE` reply's server CPU on two drivers against one. Reopen when
-  a workload on one key is limited by the server's CPU rather than its
-  client, or with shared reads of one entry (Q37).
+  by `ZADD`'s server CPU per request on four drivers against one. Reopen
+  with the work on `ZADD`'s rate.
 
-- **`SharedMap<unit>` and maps of other payload-free values do not lower.**
-  The unlock reads the entry's `Option` tag as an `i32`
-  (`emit_shared_map_unlock` in `compiler/src/backend/emitter/shared.rs`) and
-  refuses a tag-only enum, which `Option<unit>` may lower to, so a byte-keyed
-  set fails with `InvalidIr` instead of compiling. The change: read the tag
-  at the width the enum's layout gives. Reopen when a program needs a set of
-  byte strings shared between contexts.
+- **`KeyedTable<unit>` and tables of other payload-free values do not
+  lower.** The emitter passes the runtime an entry's `Option` tag as the
+  `i32` at offset 0 (`checked_entry` in
+  `compiler/src/backend/emitter/shared.rs`) and refuses a tag-only enum,
+  which `Option<unit>` may lower to, so a byte-keyed set fails with
+  `InvalidIr` instead of compiling. The runtime reads a tag of 1, 2, 4 or 8
+  bytes at any offset. The change: pass the tag's offset, width and `None`
+  value from the enum's layout. Reopen when a program needs a set of byte
+  strings shared between contexts.
 
-- **Entry nodes over 512 bytes come from the pool under its one lock.**
-  `new_node` takes a large key's node from the context pool, whose free
-  lists sit behind one spin lock (`wf_pool_take` in
+- **Entry nodes over 512 bytes, and large key sets, come from the pool under
+  its one lock.** `new_node` takes a large key's node from the context pool,
+  whose free lists sit behind one spin lock (`wf_pool_take` in
   `compiler/src/backend/completion/bridge.c`), while smaller nodes come from
-  per-user chunks. A workload of long keys from many drivers would contend
-  on it. Reopen when a measured workload's keys exceed 512 bytes.
+  per-user chunks. A key set's memory comes from the same pool; each thread
+  keeps the last set it freed, up to 1,024 keys in 64 KiB, for its next
+  (`first_store` in `compiler/src/backend/concurrent_map.c`), since firn's
+  `MSET` on four drivers answered 0.58 of the rate firn had before key sets
+  while every set took and gave that memory. A workload of long keys, of sets past
+  those bounds, or of statements that each build two sets at once, from many
+  drivers, would contend on the lock. Reopen when a measured workload's keys
+  exceed 512 bytes or its sets exceed the spare's bounds.
 
-- **A keyed statement takes two dependent cache misses where firn's old
-  keyspace took one.** `wf_cmap_lock_entry`
+- **A statement on one key takes two dependent cache misses where firn's
+  old keyspace took one.** `wf_cmap_lock_entry`
   (`compiler/src/backend/concurrent_map.c`) loads the probed cell's key word
   and then the node it points to, both missing the cache under the suite's
   100,000 keys: under `INCR` at depth 16 on one server CPU it took 28.1% of
@@ -1011,20 +1093,6 @@ rarely insert at the same place.
   rates on few cores become a goal, or with the next change to the
   completion wait.
 
-- **Readers of one key take its entry one at a time.** Every keyed
-  statement holds its entry exclusively, so the `LRANGE` tests, which all
-  read one list, write their replies one at a time: on the 14900K firn
-  answered `LRANGE_100` at 0.58, 0.61 and 0.44 of Garnet with 4, 8 and 16
-  server CPUs, flat between 1.24 and 1.55 million a second
-  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
-  The change: let a keyed statement whose block writes nothing through its
-  binding read its entry beside other such statements, counting its readers
-  in the entry's cell, which the shared-maps decision deferred to this
-  workload (Q37); firn's `LRANGE` also removes an expired list in the same
-  statement and would do that in a second one. Validate by `LRANGE_100`
-  against Garnet at 4 server CPUs with no other test slower. Reopen as the
-  next work after PR #202.
-
 - **`ZADD` is held near a million a second by one key's critical section.**
   firn answered 907,000 to 1,127,000 a second at every server CPU count on
   the 14900K, 0.88 of Dragonfly at 2 and 0.95 at 16
@@ -1033,20 +1101,55 @@ rarely insert at the same place.
   copies the member twice, descends the order twice to remove and put it,
   and hashes it again to store the score, inside the one key's statement.
   The change: reuse the removed rank's member, store the score through the
-  first lookup, and profile what remains. Validate by `ZADD` at depth 16
-  against Dragonfly at 2 and 16 server CPUs. Reopen with firn's next
-  performance work.
+  first lookup, and profile what remains. The same session's rerun of the
+  branch with bounded waits (`9d1d5dfcd`, reported in PR #202's comments)
+  answered `ZADD` about 10% lower at 4 and 8 server CPUs (1,011,000 against
+  1,127,000 at 4, two of its three passes lower), so the profile should
+  also say what a waiting statement's patience counting costs on one hot
+  key. Validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
+  CPUs. Reopen with firn's next performance work.
 
-- **A whole-map statement costs more as drivers are added.** firn's `MSET`
-  fell from 1,243,000 a second at 4 server CPUs to 1,103,000 at 8 and
-  802,000 at 16, 0.76 of Garnet there
-  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)):
-  each whole-map statement waits for a keyed statement of every other
-  driver. Whether the client also limits it at 16 was not measured. The
-  change: first measure `MSET` at 16 with two client processes; if the
-  server limits it, a statement over a list of keys taken in an order the
-  runtime fixes (Q35, deferred by the shared-maps decision) holds only its
-  keys. Reopen with firn's next performance work.
+- **A statement that holds a table whole takes turns by ticket.** A block
+  that counts a table or writes it whole holds it whole, and such
+  statements wait in line: firn's `MSET` answered 1,366,000 a second on
+  four server CPUs before the ticketed holds and 587,000 after
+  ([holding only the entries](../research/investigations/concurrent-map/DESIGN.md#holding-only-the-entries-a-statement-reaches)).
+  firn's `MSET`, `DEL` and `EXISTS` name their keys' entries through key
+  sets, so no measured workload waits there; only `DBSIZE` counts. The
+  change, if one does: let the next in line wait without backing off.
+  Reopen with a workload whose statements hold a table whole often.
+
+- **A read of an entry nobody else holds costs `GET` 3% to 4%.** A
+  statement that only reads its entry counts itself in the cell's value
+  word and reads the key word again, a second locked read-modify-write
+  where an exclusive hold makes one, and with no other reader it gains
+  nothing: firn's `GET` answered 2.6% lower than with exclusive holds on
+  four server CPUs and 4.0% lower on one
+  ([shared reads](../research/investigations/concurrent-map/DESIGN.md#shared-reads-of-one-key)).
+  The change to measure: a reader that takes an unheld entry by the
+  writer's one compare-and-swap, in a form later readers can still join.
+  Reopen when `GET`'s rate is within 4% of a criterion.
+
+- **A statement that holds its keys' entries locks each one exclusively.**
+  A block that only reads the entries of a key set holds them alone
+  (`wf_cmap_hold_keys` has no reader's take), where a block that only reads
+  its one entry shares it
+  ([state locks](../design/compiler/waiting-contexts/state-locks.md)). No
+  firn command is such a block: its reads of several keys, `EXISTS`'s
+  among them, remove the expired keys they find. The change: take a set's
+  entries as readers when the block only reads them and the guard reads
+  none of them. Reopen when a workload's readers of several keys contend.
+
+- **A statement that only reads a state's fields outside its tables holds
+  them alone.** The checker classes an entry binding through which the
+  guard and block write nothing as a reader [SHARE-3], and the lowering
+  takes one key's entry so classed beside other readers; the unit of the
+  state's other fields it takes exclusively whatever the block does, since
+  the object runtime has no shared hold. The owner's principle of 2026-10-02 is that the language
+  treats every atomic statement alike; the rule in the specification now
+  does, and a reader's take of that unit, with the object runtime's shared
+  hold, is the change. Reopen with a workload whose readers of one state's
+  fields contend.
 
 - **firn spends more CPU per `SADD` and `HSET` than before the shared map
   on four drivers.** On the 14900K with 4 server CPUs both firn and firn at
@@ -2081,17 +2184,19 @@ rarely insert at the same place.
   library's container interfaces are next revised.
 
 - **The standard library has no decimal conversion of integers.** Two
-  programs now write their own, firn's `read_number` and `put_decimal`
-  (`apps/firn/protocol/protocol.wf`) and `parse_port` in
-  `tests/programs/deadlines.wf`, each with its own handling of digits,
-  length and room. A program that reads a numeric argument or prints
-  a count repeats this, and each copy can differ at the edges (overflow past
-  19 digits, an empty field, no room left). The change: a `std::text` entry
-  that parses a decimal `u64` from a byte range with a result naming a
-  malformed or overlong field, and one that appends a `u64` in decimal into a
-  byte window it reports room for; then the two copies move to them.
-  Reopen when the library's text interfaces are next revised or a third
-  program needs one.
+  programs now write their own: firn reads its options' numbers with
+  `decimal` (`apps/firn/server/server.wf`) and writes replies' numbers with
+  `put_decimal` (`apps/firn/protocol/protocol.wf`), and
+  `tests/programs/deadlines.wf` has `parse_port`, each with its own handling
+  of digits, length and room. A program that reads a numeric argument or
+  prints a count repeats this, and each copy can differ at the edges
+  (overflow past 19 digits, an empty field, no room left). The change: a
+  `std::text` entry that parses a decimal `u64` from a byte range with a
+  result naming a malformed or overlong field, and one that appends a `u64`
+  in decimal into a byte window it reports room for; then those copies move
+  to them, while firn's `read_integer` (`apps/firn/bytes/bytes.wf`) keeps
+  Redis's own rules for a request's numbers over the first. Reopen when the
+  library's text interfaces are next revised or a third program needs one.
 
 - **Complete the vector boundary witness when comparing independent fields.**
   The maintained GrowVector program checks the shipped vector and behavior
@@ -2220,6 +2325,17 @@ rarely insert at the same place.
   measured. Remove each with no behavior change (identical verdicts and LLVM),
   timing the double check before and after. Close when each is removed or kept
   with a stated consumer.
+
+- **The completion bridge has grown past one reader.**
+  `compiler/src/backend/completion/bridge.c` has 4,216 lines: the file
+  submits and joins, the context drivers, their pools and parking, shared
+  objects and, since keyed tables, the guards' watches. The shared objects
+  and the watches touch the contexts only through `wf_context_ready`,
+  `wf_context_pass`, the running context and its parking flag, so they can
+  move to a unit of their own behind a small internal header. The unit lists
+  name each staged source by a constant `lib.rs` re-exports, so the split
+  changes those lists too. Validate by unchanged runtime tests. Split when
+  no open branch edits the bridge heavily.
 
 - **Native construction lives in the CLI and repeats in the harnesses.**
   The runtime-unit inventory, object caches, LTO flags and linking live in
@@ -2971,10 +3087,28 @@ condition under which it is taken up.
 
 ## Verification tooling
 
-- **The trusted runtime is large and growing.** Every program links about
-  20,000 lines of C and LLVM IR in `compiler/src/backend` that no checker
-  reads (the scheduler, the completion bridge at 3,871 lines, the hosts' I/O
-  adapters, the concurrent map at 1,130), and each language feature has
+- **firn's network cases now and then lose their first connection when the
+  whole corpus runs at once on a 32-CPU host.** `cargo test --test corpus` on
+  the 14900K under WSL2, every case at once, failed one of firn's cases in
+  `compiler/tests/programs/network.rs`, a different one each time, with
+  "Connection reset by peer" on the first batch's reply, or once with the
+  server never listening: 1 run of 3 at `cea9188d4`, 3 of 4 at `f8ca277a9`,
+  and 4 of 8 at `a008b01ef` and after; a case run alone passed 6 times of 6.
+  The programs that abort during those runs are the same two in passing and
+  failing runs alike, so firn is not seen to crash, and ports chosen below the
+  ephemeral range, one per case, changed nothing. The gate's hosted runners
+  showed the like once, on macOS at `cea9188d4`
+  (`a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes`). The
+  change: keep a failing case's server output, which the harness drops, and
+  find whether firn closes the connection, exits or never accepts it. Reopen
+  when a hosted run of the corpus fails this way, or before the corpus gates
+  on a large host.
+
+- **The trusted runtime is large and growing.** Every program links from
+  about 27,000 lines of C and LLVM IR in `compiler/src/backend`, its tests
+  and probes aside, that no checker reads (the scheduler, the completion bridge at 4,216
+  lines, the hosts' I/O adapters, the concurrent map at 2,398), and each
+  language feature has
   added to it: the shared map's first claim protocol let one key hold two
   cells until a review found it
   (`research/investigations/concurrent-map/DESIGN.md`, reuse and a key's
@@ -3109,6 +3243,37 @@ condition under which it is taken up.
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.
+- **Worktrees on one host share the completion tests' binaries.**
+  `WHITEFOOT_SCRATCH_ROOT` defaults to one directory for every worktree,
+  `$TMPDIR/whitefoot` or `/tmp/whitefoot`, and make judges the
+  `completion-test` binaries under it fresh by comparing their times with the
+  running worktree's sources, so a binary another worktree built later from
+  other sources counts as up to date and runs. On the 14900K host,
+  `make -C compiler static` in one worktree failed in `concurrent-map-test`
+  with a message that worktree's sources do not hold, from a binary another
+  worktree had built minutes before; with `WHITEFOOT_SCRATCH_ROOT` set to a
+  directory of its own, the same gate built every binary from its own tree
+  and passed. The change: a default of the worktree's own, such as a
+  directory named for the worktree's path, or binaries that record the tree
+  they were built from; setting the variable avoids it meanwhile. Reopen when
+  two worktrees next validate on one host, or with the next change to the
+  check runner.
+- **The gate-profile compiler does not build exactly the release
+  compiler's executable.** At `cea9188d4`, `whitefootc` built with the gate
+  profile and with the release profile emits byte-identical LLVM IR for
+  firn (`--emit-llvm`), and two gate builds of firn are byte-identical, yet
+  the release compiler's firn differs in 21 bytes of `.text` besides the
+  build ID, all in `wf__ctx_start_server.main.0.resume`, where a few vector
+  loads and stores of equal length come in another order or register, with
+  every function's size and place unchanged
+  ([redis-compat](../research/experiments/redis-compat/README.md#limitations)).
+  The difference is harmless here, but AGENTS.md says the gate profile does
+  not change how WF source is compiled, and a gate-built executable is what
+  the checks run. Find which step after IR emission depends on the
+  compiler's profile, by comparing the commands and inputs of both
+  compilers' native builds, and make the two agree or state the exception.
+  Reopen when an executable built for a measurement or a check must match
+  the release compiler's byte for byte.
 
 ## firn
 
@@ -3122,11 +3287,10 @@ condition under which it is taken up.
   Complete the following work and remove this item when the deployment
   evidence meets that boundary:
   - Integrate and validate the existing command work before adding another
-    implementation. [PR #208](https://github.com/mbbill/Whitefoot/pull/208)
-    and [PR #212](https://github.com/mbbill/Whitefoot/pull/212) carry shared
-    state, connection and command changes not yet on this item's main-line
-    baseline; their presence is not evidence that the integrated result
-    passes. Refresh this inventory when they land.
+    implementation. [PR #212](https://github.com/mbbill/Whitefoot/pull/212)
+    carries command changes not yet on this item's main-line baseline; its
+    presence is not evidence that the integrated result passes. Refresh this
+    inventory when it lands.
   - Complete the selected clients' connection behavior, RESP3, command
     metadata, ordinary pipelines, scans and application command gaps. Add
     `MULTI`/`EXEC`/`DISCARD` and `WATCH`/`UNWATCH`, including queue-time and
@@ -3197,31 +3361,67 @@ condition under which it is taken up.
   Reopen with that vertical slice; remove this item only when the selected
   Redis scripting surface and application workloads have correctness and
   performance evidence, recording any remaining incompatibilities separately.
-- **Close the current main-line Redis compatibility gaps.** The benchmark
-  stage left the following gaps; reconcile them with the command PRs above
-  as those changes land, retaining any still-observable mismatch. Missing, among
+- **Close the current main-line Redis compatibility gaps.** The following
+  gaps remain after the shared-state redesign's connection and server
+  commands; reconcile them with the command PR above as it lands, retaining
+  any still-observable mismatch. Missing, among
   others: `SET`'s `NX`, `XX`, `GET`, `KEEPTTL`, `EXAT` and `PXAT`, which
   firn answers as a syntax error where Redis sets the key; `SET`'s `EX` and
   `PX` beyond 10^9 seconds or 10^12 milliseconds, which firn refuses as an
   invalid expire time where Redis accepts them, since firn keeps expiries as
-  nanoseconds; `CONFIG GET` patterns, which firn does not match, and
-  `CONFIG SET`, which firn answers as an unknown option for every parameter
-  where Redis sets those it knows; a zero byte in a request's count or
-  length line, where Redis's search for the line's carriage return stops at
-  the zero byte and waits for more input, answering that the count is too big
-  only past 64 KB, while firn answers the malformed line at once; sorted-set
-  scores that are not integers below 2^52, which need reading a
-  decimal to the nearest double and printing one with 17 significant digits
-  exactly;
-  quoted arguments in inline commands; a listening address other than the
-  loopback and options by name rather than by position; `AUTH`, `SELECT`,
-  `KEYS` and `SCAN`, `INFO`, `HELLO` and RESP3, the blocking list commands,
-  `MULTI` and `EXEC`, publish and subscribe, a random hash seed, and a
-  listener that a restarted server can bind while the stopped one's
-  connections wait out TIME_WAIT, which needs the runtime's `tcp_listen` to
-  set `SO_REUSEADDR` as Redis does. Reopen during deployment command
-  integration; remove each gap only after independent behavior checks on
-  the integrated implementation, or record its explicit release exclusion.
+  nanoseconds; `SET`'s `EX` or `PX` followed by a zero byte and more, which
+  Redis's strcasecmp reads up to the zero byte and firn's `run_set` answers
+  as a syntax error; `CONFIG SET`, which firn answers as an unknown option for
+  every parameter where Redis sets those it knows, and the parameters beyond
+  the eight `CONFIG GET` reports; `ZADD`'s options `NX`, `XX`, `CH`, `INCR`,
+  `GT` and `LT`, which firn answers as a syntax error; a score of negative
+  zero in a sorted set Redis encodes as a skiplist, one of more than 128
+  members or with a member longer than 64 bytes, which Redis keeps and writes
+  as `-0` where firn keeps and writes 0, as Redis does in a smaller set; more
+  than one database, where
+  `SELECT` takes 0 alone; a listening address in IPv6, or several, where
+  `--bind` takes one IPv4 address or `*`, and users other than `default`;
+  `CLIENT` subcommands beyond `ID`, `GETNAME` and `SETNAME`, which firn
+  answers as unknown, and a command table, which `COMMAND` and
+  `COMMAND COUNT` report empty and `COMMAND DOCS`, `INFO`, `LIST` and
+  `GETKEYS` answer as unknown subcommands; `KEYS` and `SCAN`, which can match
+  with `glob_match` (`apps/firn/bytes/bytes.wf`), `INFO`, RESP3, which
+  `HELLO 3` refuses, the blocking list commands, `MULTI` and `EXEC`, publish
+  and subscribe, and a random hash seed. No test of Redis's own suite reaches
+  firn, since the suite's framework sends `FLUSHALL` and `FUNCTION FLUSH`
+  at the start of every block and ends the unit when either fails; with
+  those calls allowed to fail, firn at `cea9188d4` passes 107 of the 1,994
+  tests Redis passes there, 25 of which a server knowing only `PING` passes
+  too, most of the rest stopping at a command firn lacks, and redis-py 8.1.0
+  fails every call made with its defaults, since it opens each connection
+  with `HELLO 3`
+  ([redis-compat](../research/experiments/redis-compat/README.md)). Reopen
+  during deployment command integration; remove each gap only after
+  independent behavior checks on the integrated implementation, or record its
+  explicit release exclusion.
+- **firn reads a slow request again from its start at every read.**
+  `parse_request` keeps no state between reads, so a request arriving in
+  many reads is scanned from its first byte each time: quadratic in its
+  length, and since firn takes arrays of up to 2,147,483,647 elements, as
+  Redis 7.0 does, a client sending a huge array slowly costs the server
+  work out of proportion to its bytes, where Redis resumes at the element it
+  stopped at. Keeping the parse position and the spans found so far in the
+  client between reads would remove it; reopen when firn faces clients it
+  does not trust, or a profile shows parsing past a few percent.
+- **Writing a score far from 1 is slow, and `ZSCORE` and `ZPOPMIN` write it
+  while the key is held.** The `scores` module writes a score from its exact
+  decimal expansion, one digit per byte, so the cost grows with the score's
+  binary exponent; with two drivers and `redis-benchmark -c 50 -P 16 -n
+  200000`, `ZSCORE` answered 3.85M requests per second for a score of 7,
+  2.94M for 0.1, 0.36M for 1e300 and 0.28M for 4.9e-324 on the i9-14900K, in
+  one run of one server. The visitors
+  `member_score` and `pop_lowest` (`apps/firn/commands/sorted.wf`) write the
+  reply inside the key's atomic statement, so that time is also time the key
+  is held. Carrying the scores out in the client, as a command's other
+  results are carried, and writing the reply after the statement would take
+  the cost out of the statement; an exact writer that works in base-10^9
+  words would shrink it. Reopen when those visitors or the atomic statements
+  that call them next change, or when a workload stores scores far from 1.
 - **A set never shrinks, so `SPOP` walks ever sparser buckets.** `SPOP`
   picks the first filled bucket from a random position, and a hash map keeps
   its buckets after its members are removed, so after most of a large set is

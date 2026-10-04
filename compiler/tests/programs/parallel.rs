@@ -421,26 +421,80 @@ fn shared_objects_keep_every_update_on_one_driver_and_on_four() {
     }
 }
 
-/// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
-/// eight keys of one map, and to a shared object inside each keyed
-/// statement, while two others hold the whole map and compare the entries'
-/// sum with that object, reach the counts every order of their statements
-/// gives, on one driver and on four. A keyed statement that did not hold its
-/// entry alone loses increments (status 2), one that ran while the map was
-/// held lets a holder see the sum and the total disagree (status 5), and an
-/// object statement inside a keyed block that did not hold its object loses
-/// increments of the total (status 4).
-#[test]
-fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
-    let program = build_program(&compile_program("shared_maps.wf"));
+/// Runs one program on one driver and on four, `rounds` times each, and
+/// requires status 0, which each program gives only when every count it
+/// checks is the one every order of its atomic statements gives.
+fn run_on_one_driver_and_on_four(name: &str, rounds: usize) {
+    let program = build_program(&compile_program(name));
     for drivers in ["1", "4"] {
-        for round in 0..3 {
+        for round in 0..rounds {
             let output = program.run_with_settings(None, &[("WF_DRIVERS", drivers)]);
             assert_eq!(
                 output.status.code(),
                 Some(0),
-                "drivers {drivers}, round {round}: {output:?}"
+                "{name}: drivers {drivers}, round {round}: {output:?}"
             );
         }
     }
+}
+
+/// [PAR-1, SHARE-1] a pure function builds and releases a key set on every
+/// iteration of a loop the parallel lowering splits over compute workers,
+/// and the sum of the payloads it reads is the sequential one on every
+/// worker count. Key set memory kept per driver number, which every compute
+/// worker shares with driver 0, corrupted the sets and faulted in every run.
+#[test]
+fn key_sets_built_on_compute_workers_keep_their_payloads() {
+    let parallel = build_program(&compile_program_with_overlap("parallel/key_sets.wf"));
+    for workers in [Some("1"), Some("4"), Some("8")] {
+        let output = parallel.run_with_workers(workers);
+        assert!(output.status.success(), "workers={workers:?}: {output:?}");
+    }
+}
+
+/// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
+/// eight keys of a state's table, and to the state's total in the same
+/// statement, while two others hold all eight entries through a key set and
+/// compare their sum with the total, reach the counts every order of their
+/// statements gives, on one driver and on four. An entry not locked alone
+/// loses increments (status 2), a statement that took its entries and the
+/// total apart lets a reader see the sum and the total disagree (status 5),
+/// and a count that did not hold the table whole miscounts (status 1).
+#[test]
+fn keyed_tables_keep_every_update_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("keyed_tables.wf", 3);
+}
+
+/// [SHARE-3] guards that read entries of a table: four pairs pass values
+/// through one entry each, a sender waiting for its entry to be empty and a
+/// taker for it to hold a value, and two contexts wait on a guard reading an
+/// entry and the state's own field together, on one driver and on four. A
+/// guard that missed a write to the table it read would wait for ever, and a
+/// value passed twice or lost leaves the total wrong (status 1).
+#[test]
+fn guards_on_table_entries_wake_on_every_write_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("keyed_table_watch.wf", 2);
+}
+
+/// [SHARE-1, SHARE-3] a state's table replaced whole and exchanged with
+/// another while other statements lock its entries one key at a time keeps
+/// its entries' sum equal to the state's total, on one driver and on four. A
+/// statement that locked the table it read before the replacement would add
+/// to a table no longer the state's (status 1 or 3), and a hold whose
+/// entries an exchange moved away still locked would leave the next
+/// statement on those keys waiting for ever
+/// (compiler/waiting-contexts/state-locks).
+#[test]
+fn a_table_replaced_whole_keeps_its_identity_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("keyed_table_resets.wf", 2);
+}
+
+/// [SHARE-3] statements whose blocks meet a state's units in opposite
+/// orders, and a statement that reaches a unit only on one path, end and
+/// keep every count on one driver and on four: each statement takes the
+/// units in their declared order, so none waits for another in a cycle
+/// (compiler/waiting-contexts/state-locks).
+#[test]
+fn units_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("keyed_table_order.wf", 2);
 }

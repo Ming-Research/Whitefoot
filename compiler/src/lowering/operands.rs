@@ -97,7 +97,15 @@ macro_rules! operation_operands {
             | IrOperation::ConstantAddress { .. }
             | IrOperation::Window
             | IrOperation::ContextJoin
-            | IrOperation::SharedNew { .. } => Vec::new(),
+            | IrOperation::SharedNew { .. }
+            | IrOperation::TableEntrySlot { .. }
+            | IrOperation::TableUnlockEntry { .. }
+            | IrOperation::TableHoldWhole { .. }
+            | IrOperation::TableHoldTake { .. }
+            | IrOperation::TableHoldRelease { .. }
+            | IrOperation::KeyedEntriesRecord { .. }
+            | IrOperation::WatchBegin { .. }
+            | IrOperation::WatchPark { .. } => Vec::new(),
             IrOperation::Call { arguments, .. }
             | IrOperation::ContextStart { arguments, .. }
             | IrOperation::ContextStartBound { arguments, .. }
@@ -122,17 +130,31 @@ macro_rules! operation_operands {
             | IrOperation::SharedWatch { object: value }
             | IrOperation::SharedTake { object: value }
             | IrOperation::SharedUnlock { object: value }
-            | IrOperation::SharedMapNew {
+            | IrOperation::KeyedTableNew {
                 capacity: value, ..
             }
-            | IrOperation::SharedMapState { object: value, .. }
-            | IrOperation::SharedMapHold { object: value }
-            | IrOperation::SharedMapUnhold { object: value }
-            | IrOperation::SharedMapCount { state: value } => vec![$value(value)],
-            IrOperation::SharedMapLock { object, key, .. } => vec![$value(object), $value(key)],
-            IrOperation::SharedMapUnlock { object, entry, .. } => {
-                vec![$value(object), $value(entry)]
+            | IrOperation::KeyedTableCount { table: value }
+            | IrOperation::TableHoldBegin { table: value, .. }
+            | IrOperation::TableHoldKey { key: value, .. }
+            | IrOperation::TableHoldKeys { set: value, .. }
+            | IrOperation::TableHoldSlot {
+                position: value, ..
             }
+            | IrOperation::KeySetNew { capacity: value }
+            | IrOperation::WatchObject { object: value, .. }
+            | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
+            IrOperation::KeyedTableSwap { first, second } => vec![$value(first), $value(second)],
+            IrOperation::TableLockEntry { table, key, .. } => vec![$value(table), $value(key)],
+            IrOperation::KeyedEntriesFill {
+                entries,
+                position,
+                set,
+                ..
+            } => vec![$value(entries), $value(position), $value(set)],
+            IrOperation::KeySetPut {
+                set, key, payload, ..
+            } => vec![$value(set), $value(key), $value(payload)],
+            IrOperation::KeySetPayload { set, index } => vec![$value(set), $value(index)],
             IrOperation::ArrayIndex { root, offset, .. } => match root {
                 IrArrayRoot::Value(value) => vec![$value(value), $value(offset)],
                 IrArrayRoot::Constant(_) => vec![$value(offset)],
@@ -207,7 +229,8 @@ macro_rules! operation_operands {
                 | super::IrPlaceStep::EnumVariant { .. } => vec![$value(address)],
                 super::IrPlaceStep::RunElement { offset, .. }
                 | super::IrPlaceStep::ArrayElement { offset, .. }
-                | super::IrPlaceStep::BufferElement { offset, .. } => {
+                | super::IrPlaceStep::BufferElement { offset, .. }
+                | super::IrPlaceStep::KeyedEntriesElement { offset } => {
                     vec![$value(address), $value(offset)]
                 }
             },

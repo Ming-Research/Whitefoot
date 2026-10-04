@@ -352,6 +352,27 @@ it runs its cases one at a time, and the stage took 5.91 s on ubuntu and
 9.33 s on macOS. 1.25 times those, rounded up to 5 s and not under 10 s,
 gives 10 s and 15 s.
 
+**`check/runtime` on ubuntu, raised to 15 s.** The stage took 11.8 s,
+10.0 s and 10.7 s of its 10 s on ubuntu at the three heads of PR #208 before
+`cea9188d4`, whose halved statements brought it back under. The shared-state
+redesign's runtime (`keyed_table.c`, holds kept in a statement's frame,
+exchanges of two tables' entries, counts under a whole hold and guard
+watches, with their tests in `concurrent_map_test.c` and
+`shared_object_test.c`) took the stage from 25.96 s and 24.06 s to 26.49 s
+and 25.96 s on the 14900K, pinned to four CPUs, about 5% more. 1.25 times
+the slowest ubuntu run, 11.8 s, rounded up to 5 s, is 15 s, the next step
+above 10 s, which the owner approved on 2026-10-03 as a slight raise; macOS
+stays at 15 s.
+
+**`compiler/test-corpus` on ubuntu, raised to 145 s.** The stage took
+114.2 s of its 110 s on ubuntu at `5d641c49d`, the shared-state redesign
+merged with main, with all 22 and 128 tests passing, against 102.9 s for
+22 and 115 tests on main at `a1de2b1ba`: the redesign adds 13 corpus tests,
+among them firn's connection and server command cases. 1.25 times that
+run, rounded up
+to 5 s, is 145 s, which the owner approved on 2026-10-03 and confirmed on
+2026-10-04 as a slight raise; macOS stays at 125 s.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases

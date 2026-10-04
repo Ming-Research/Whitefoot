@@ -57,10 +57,27 @@ impl PhysicalFunctions {
             }
         }
         // With roots, the functions they reach through calls; without, every
-        // checked definition.
+        // checked definition but the compiler-owned [PRE-1] records, which
+        // are emitted where a call reaches them, as a generic one's instance
+        // is: a record's body may name runtime entries a program that never
+        // calls it does not link.
         let mut emitted = vec![false; program.functions.len()];
         let mut pending = Vec::new();
-        for root in roots.unwrap_or(&program.executable_functions) {
+        let every = program
+            .executable_functions
+            .iter()
+            .copied()
+            .filter(|source| {
+                program
+                    .functions
+                    .get(source.0 as usize)
+                    .is_none_or(|function| {
+                        function.body.is_some()
+                            || !super::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str())
+                    })
+            })
+            .collect::<Vec<_>>();
+        for root in roots.unwrap_or(&every) {
             let slot = emitted
                 .get_mut(root.0 as usize)
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?;

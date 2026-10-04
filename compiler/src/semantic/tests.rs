@@ -29,6 +29,7 @@
 mod aggregate_postconditions;
 mod arithmetic_obligations;
 mod arrays;
+mod atomic_reads;
 mod boolean_composition;
 mod cells;
 mod checked_division;

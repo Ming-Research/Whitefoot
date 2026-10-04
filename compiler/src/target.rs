@@ -597,6 +597,8 @@ fn holds_union_enum(
         | IrType::Window { capacity: None, .. }
         | IrType::Range { .. }
         | IrType::RuntimeBoxPayload { .. }
+        | IrType::KeySet
+        | IrType::KeyedEntries { .. }
         | IrType::Address(_) => Ok(false),
     }
 }
@@ -689,6 +691,10 @@ impl<'types> ReturnLeaves<'types> {
             // zero-length element tails have no leaf.
             IrType::Range { .. } => self.integer(copies, 2),
             IrType::Buffer { .. } | IrType::Segments { .. } => self.integer(copies, 1),
+            // `{ i64, ptr }`, and the `{ ptr, i64, i64 }` record an entry
+            // binding names, which is only ever reached by its address.
+            IrType::KeySet => self.integer(copies, 2),
+            IrType::KeyedEntries { .. } => self.integer(copies, 3),
             IrType::Window {
                 shape,
                 element,
@@ -1129,14 +1135,14 @@ fn validate_target_obligation(
                 ));
             }
         }
-        // [SHARE-1] a map keeps each entry's `Option<V>` in a slot of a node
-        // the runtime carves, aligned to at most 16 bytes.
-        IrOperation::SharedMapNew { nominal, .. } => {
+        // [SHARE-1] a table keeps each entry's `Option<V>` in a slot of a
+        // node the runtime carves, aligned to at most 16 bytes.
+        IrOperation::KeyedTableNew { nominal, .. } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }
             let IrNominalKind::Shared {
-                shape: IrShared::Map { entry },
+                shape: IrShared::Table { entry },
                 ..
             } = program
                 .nominal(*nominal)
@@ -1385,6 +1391,15 @@ impl<'types> LayoutComputer<'types> {
             IrType::Range { element } => {
                 self.element(element)?;
                 Ok(Layout { size: 16, align: 8 })
+            }
+            // [SHARE-1] a key set is its count and its store's pointer.
+            IrType::KeySet => Ok(Layout { size: 16, align: 8 }),
+            // [SHARE-2] the statement's record of the entries an entry binding
+            // over a key set names: its hold, the set's first position and
+            // its count.
+            IrType::KeyedEntries { element } => {
+                self.element(element)?;
+                Ok(Layout { size: 24, align: 8 })
             }
             // [TYPE-9] a runtime-capacity block is reached only through the
             // `Box` that owns it, so it never occupies inline storage.

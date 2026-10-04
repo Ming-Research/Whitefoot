@@ -284,7 +284,7 @@ impl Records<'_> {
             CheckedStatement::Atomic {
                 node_path,
                 target,
-                key,
+                entries,
                 guard,
                 body,
                 continues,
@@ -292,7 +292,10 @@ impl Records<'_> {
                 ..
             } => {
                 self.expression(target);
-                if let Some(key) = key {
+                for key in entries
+                    .iter()
+                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                {
                     self.expression(key);
                 }
                 if let Some(guard) = guard {

@@ -46,9 +46,9 @@ pub(crate) use permission::FunctionPermissions;
 pub(crate) use loop_permission::{LoopActualization, LoopCombine, LoopPermission};
 
 pub(crate) use model::{
-    BindingId, CheckedArrayRoot, CheckedAtomicForm, CheckedBodyDisposition,
-    CheckedBooleanOperation, CheckedBufferRoot, CheckedConst, CheckedContainerRoot,
-    CheckedConversionMode, CheckedDrop, CheckedElement, CheckedEnumType, CheckedExpression,
+    BindingId, CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation,
+    CheckedBufferRoot, CheckedConst, CheckedContainerRoot, CheckedConversionMode, CheckedDrop,
+    CheckedElement, CheckedEntryBinding, CheckedEntryIndex, CheckedEnumType, CheckedExpression,
     CheckedFloatOperation, CheckedFunction, CheckedIntegerOperation, CheckedLoopId,
     CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType,
     CheckedOwnedTakeCleanup, CheckedParameter, CheckedPlaceStep, CheckedProgramData,
@@ -895,6 +895,12 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by REF-4.
         mechanical_fix: &'static str,
     },
+    /// [REF-4] a range reference was formed over the keyed entries an entry
+    /// binding names, which are entries of a table and no run of storage.
+    RangeOverKeyedEntries {
+        /// Exact restructuring required by REF-4.
+        mechanical_fix: &'static str,
+    },
     /// [WIN-3] a move out of a window slot or an array element.
     MoveOutOfSlot {
         /// Exact restructuring required by WIN-3.
@@ -1129,16 +1135,27 @@ pub enum SemanticIssueKind {
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
-    /// A keyed atomic statement whose key is not a `&[u8]` range [SHARE-2].
+    /// An entry binding whose index atom is neither a `&[u8]` range nor a
+    /// place of type `KeySet` [SHARE-2].
     AtomicKeyNotBytes {
         /// The key's value.
         found: String,
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },
-    /// A guard on an atomic statement that holds a map's state or an entry,
-    /// or that is inside the block of one [SHARE-2].
-    AtomicGuardOnMap {
+    /// An entry binding whose index atom reads through the statement's
+    /// binding or an earlier entry binding, which the statement reads when
+    /// it begins, before it holds the state [SHARE-2].
+    AtomicKeyReadsTheState {
+        /// The repair [DIAG-1].
+        mechanical_fix: &'static str,
+    },
+    /// An entry binding the guard and block never use, or a statement whose
+    /// guard and block reach nothing of its state through any binding
+    /// [SHARE-2].
+    AtomicBindingUnused {
+        /// The binding's name.
+        binding: String,
         /// The repair [DIAG-1].
         mechanical_fix: &'static str,
     },

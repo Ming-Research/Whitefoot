@@ -860,6 +860,7 @@ impl Report for SemanticIssueKind {
             ReferenceToReferenceVariable { mechanical_fix };
             EscapingReference { mechanical_fix };
             RangeOverRing { mechanical_fix };
+            RangeOverKeyedEntries { mechanical_fix };
             MoveOutOfSlot { mechanical_fix };
             MissingDereference { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
@@ -893,7 +894,8 @@ impl Report for SemanticIssueKind {
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
             AtomicKeyNotBytes { found, mechanical_fix };
-            AtomicGuardOnMap { mechanical_fix };
+            AtomicKeyReadsTheState { mechanical_fix };
+            AtomicBindingUnused { binding, mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
             InvalidSpawn { condition };
             InvalidMusttail { condition, subject };

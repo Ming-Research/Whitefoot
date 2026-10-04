@@ -581,7 +581,7 @@ fn measure_rows() -> Vec<MeasureRow> {
 #[test]
 fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
     let rows = measure_rows();
-    // [MSR-1]'s eight rows are eight identities: the two placements of one
+    // [MSR-1]'s ten rows are ten identities: the two placements of one
     // shape answer `cap` differently, so a constant-capacity row and a
     // runtime-capacity row of the same shape are two rows and two kinds
     // [TYPE-9].
@@ -593,6 +593,8 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         (MeasuredKind::ConstantRing, "Ring<T, N>"),
         (MeasuredKind::RuntimeRing, "Ring<T>"),
         (MeasuredKind::Segments, "Segments<T>"),
+        (MeasuredKind::KeySet, "KeySet"),
+        (MeasuredKind::KeyedEntries, "KeyedEntries<V>"),
         (MeasuredKind::Range, "&[T]"),
     ];
     assert_eq!(
@@ -607,8 +609,8 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         CheckedMeasure::Capacity,
         CheckedMeasure::Head,
     ];
-    // [MSR-1]: exactly one cell class is *bounded* anywhere, and it is the one
-    // cell the two `Ring` rows share.
+    // [MSR-1]: exactly two cell classes are *bounded*: the one cell the two
+    // `Ring` rows share, and a `KeySet`'s `len`.
     let mut bounded = 0_usize;
     for (row, (measured, name)) in rows.iter().zip(expected) {
         for (cell, measure) in row.cells.iter().zip(measures) {
@@ -647,6 +649,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
                             | "initialized slots"
                             | "slots taken"
                             | "segments"
+                            | "named entries"
                             | "range elements"
                     ),
                     "{name}'s {} cell is a runtime quantity of the block, written {written}",
@@ -655,8 +658,13 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
                 MeasureCell::Bounded => {
                     bounded += 1;
                     assert_eq!(
-                        written, "window origin",
-                        "the one bounded cell class is a Ring's window origin"
+                        written,
+                        if measured == MeasuredKind::KeySet {
+                            "keys"
+                        } else {
+                            "window origin"
+                        },
+                        "the bounded cell classes are a Ring's window origin and a key set's keys"
                     );
                 }
                 MeasureCell::Absent => assert_eq!(
@@ -669,7 +677,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         }
     }
     assert_eq!(
-        bounded, 2,
-        "the two Ring rows share the one bounded cell and nothing else is bounded"
+        bounded, 3,
+        "the two Ring rows share one bounded cell, a key set's len is the other, and nothing else is bounded"
     );
 }

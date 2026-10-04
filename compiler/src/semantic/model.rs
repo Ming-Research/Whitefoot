@@ -592,6 +592,17 @@ pub(crate) enum CheckedType {
     Segments {
         element: CheckedElement,
     },
+    /// One `KeySet` [SHARE-1]: distinct byte-string keys in increasing
+    /// lexicographic order, each with a `u64` payload. Its `len` is its key
+    /// count, the one measure of the type and a bounded one [MSR-1].
+    KeySet,
+    /// The `KeyedEntries<V>` an entry binding names over a key set [SHARE-2]:
+    /// one `Option<V>` place per key of the set, `element` being that
+    /// `Option<V>`. It exists only as the binding's referent; its `len` is the
+    /// set's [MSR-1].
+    KeyedEntries {
+        element: CheckedElement,
+    },
 }
 
 /// Which of [TYPE-9]'s two window shapes a [`CheckedType::Window`] is.
@@ -636,10 +647,17 @@ impl CheckedType {
                     .is_some_and(|ty| ty.is_concrete(elements))
                     && capacity.is_none_or(|capacity| capacity.is_concrete())
             }
-            Self::Buffer { element } | Self::Segments { element } => elements
+            Self::Buffer { element }
+            | Self::Segments { element }
+            | Self::KeyedEntries { element } => elements
                 .get(element.index())
                 .is_some_and(|ty| ty.is_concrete(elements)),
-            Self::Unit | Self::Bool | Self::Integer(_) | Self::Float(_) | Self::Nominal(_) => true,
+            Self::Unit
+            | Self::Bool
+            | Self::Integer(_)
+            | Self::Float(_)
+            | Self::Nominal(_)
+            | Self::KeySet => true,
         }
     }
 
@@ -650,6 +668,8 @@ impl CheckedType {
             Self::Array { .. } => Some(MeasuredKind::ConstantArray),
             Self::Buffer { .. } => Some(MeasuredKind::RuntimeArray),
             Self::Segments { .. } => Some(MeasuredKind::Segments),
+            Self::KeySet => Some(MeasuredKind::KeySet),
+            Self::KeyedEntries { .. } => Some(MeasuredKind::KeyedEntries),
             Self::Window {
                 shape: WindowShape::Slots,
                 capacity: Some(_),
@@ -706,8 +726,9 @@ pub(crate) enum MeasureCell {
     /// value's own descriptor: a run's `len` and a runtime-capacity window's
     /// `cap` [WIN-1].
     ExactRuntime,
-    /// The measure is exact but only two-sidedly published by some writing
-    /// operation. A Ring's `head` is the one measure of this class [MSR-1].
+    /// The measure is only two-sidedly published by some writing operation:
+    /// a Ring's `head` and a key set's `len` are the measures of this class
+    /// [MSR-1].
     Bounded,
     /// The type has no such measure.
     Absent,
@@ -774,15 +795,19 @@ impl CheckedMeasure {
             }
             // `&[T]`: the range's element count, and nothing else [MSR-1].
             // `Segments<T>`: the segment count its block stores.
-            (MeasuredKind::Range | MeasuredKind::Segments, Self::Length) => {
-                MeasureCell::ExactRuntime
-            }
-            // The one *bounded* cell of the whole table: the two front-moving
-            // operations publish a `Ring`'s window origin two-sidedly and no
-            // operation re-establishes it exactly [MSR-1, OP-10].
-            (MeasuredKind::ConstantRing | MeasuredKind::RuntimeRing, Self::Head) => {
-                MeasureCell::Bounded
-            }
+            // `KeyedEntries<V>`: the named entries, as many as its set's keys,
+            // which no operation changes while the binding lives.
+            (
+                MeasuredKind::Range | MeasuredKind::Segments | MeasuredKind::KeyedEntries,
+                Self::Length,
+            ) => MeasureCell::ExactRuntime,
+            // The two *bounded* cell classes of the table: the two
+            // front-moving operations publish a `Ring`'s window origin
+            // two-sidedly and no operation re-establishes it exactly
+            // [MSR-1, OP-10], and the key-set additions publish a set's `len`
+            // two-sidedly, a key already held adding none [SHARE-1].
+            (MeasuredKind::ConstantRing | MeasuredKind::RuntimeRing, Self::Head)
+            | (MeasuredKind::KeySet, Self::Length) => MeasureCell::Bounded,
             // `head` is absent on every row but the two `Ring` rows, and
             // neither an `Array` row nor a range has `cap` or `head`.
             (
@@ -796,8 +821,17 @@ impl CheckedMeasure {
                 MeasuredKind::ConstantArray | MeasuredKind::RuntimeArray | MeasuredKind::Range,
                 Self::Capacity,
             )
-            | (MeasuredKind::Range | MeasuredKind::Segments, Self::Head)
-            | (MeasuredKind::Segments, Self::Capacity) => MeasureCell::Absent,
+            | (
+                MeasuredKind::Range
+                | MeasuredKind::Segments
+                | MeasuredKind::KeySet
+                | MeasuredKind::KeyedEntries,
+                Self::Head,
+            )
+            | (
+                MeasuredKind::Segments | MeasuredKind::KeySet | MeasuredKind::KeyedEntries,
+                Self::Capacity,
+            ) => MeasureCell::Absent,
         }
     }
 }
@@ -826,6 +860,10 @@ pub(crate) enum MeasuredKind {
     Range,
     /// `Segments<T>`, whose one measure is its segment count `len`.
     Segments,
+    /// `KeySet`, whose one measure is its bounded key count `len`.
+    KeySet,
+    /// `KeyedEntries<V>`, whose one measure is its entry count `len`.
+    KeyedEntries,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -947,26 +985,74 @@ pub(crate) enum CheckedNominalKind {
     /// An ordinary opaque nominal has no fields or constructor.
     Opaque,
     /// [SHARE-1] a handle to a shared object whose state has type `state`,
-    /// a handle to a shared map whose values have type `state`, or such a
-    /// map's state, as `shape` says. Like `Opaque` it has no fields or
-    /// constructor; unlike it, releasing a handle releases it, and the last
-    /// release releases the state.
+    /// or a keyed table whose values have type `state`, as `shape` says.
+    /// Like `Opaque` it has no fields or constructor; unlike it, releasing a
+    /// handle releases it and the last release releases the state, and
+    /// releasing a table releases every value its entries hold.
     Shared {
         state: CheckedType,
         shape: CheckedShared,
     },
 }
 
-/// [SHARE-2] what an atomic statement holds.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CheckedAtomicForm {
-    /// An object's state, through a `Shared<T>` handle.
-    Object,
-    /// A map's state, through a `SharedMap<V>` handle.
-    Map,
-    /// One entry of a map: through a `SharedMap<V>` handle, or, `held`,
-    /// through the state an enclosing statement holds.
-    Entry { held: bool },
+/// [SHARE-2] one entry binding of an atomic statement's header.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CheckedEntryBinding {
+    /// The `IDENT = &place` the binding is written as, its site.
+    pub(crate) node_path: NodePath,
+    /// The entry binder, a reference variable.
+    pub(crate) binding: BindingId,
+    /// The `&KeyedTable<V>` reference the place's table part forms through
+    /// the statement's binder.
+    pub(crate) table: Box<CheckedExpression>,
+    /// The table's entry type, the prelude's `Option<V>`.
+    pub(crate) entry: CheckedType,
+    /// What the index atom names.
+    pub(crate) index: CheckedEntryIndex,
+    /// The binder's referent type: the entry's `Option<V>` for one key, the
+    /// `KeyedEntries<V>` for a key set.
+    pub(crate) referent: CheckedType,
+    /// Whether the guard and block write no path rooted at this binder, so
+    /// that the statement may read its entries beside others that only read
+    /// them [SHARE-3].
+    pub(crate) reads: bool,
+}
+
+/// [SHARE-2] what an entry binding's index atom names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckedEntryIndex {
+    /// One key: the `&[u8]` the statement reads when it begins.
+    Key(Box<CheckedExpression>),
+    /// Every key of a key set: the `&KeySet` reference the statement forms
+    /// to the set place when it begins.
+    Set(Box<CheckedExpression>),
+}
+
+impl CheckedEntryIndex {
+    /// The expression the statement evaluates for the index when it begins.
+    pub(crate) fn expression(&self) -> &CheckedExpression {
+        match self {
+            Self::Key(expression) | Self::Set(expression) => expression,
+        }
+    }
+}
+
+impl CheckedEntryBinding {
+    /// The expressions the statement evaluates for this binding when it
+    /// begins, in order: the table reference, then the index.
+    pub(crate) fn expressions(&self) -> [&CheckedExpression; 2] {
+        [&self.table, self.index.expression()]
+    }
+
+    /// The same expressions, for a walk that rewrites them in place.
+    pub(crate) fn expressions_mut(&mut self) -> [&mut CheckedExpression; 2] {
+        let index = match &mut self.index {
+            CheckedEntryIndex::Key(expression) | CheckedEntryIndex::Set(expression) => {
+                expression.as_mut()
+            }
+        };
+        [self.table.as_mut(), index]
+    }
 }
 
 /// [SHARE-1] which shared nominal a `Shared` kind is.
@@ -974,11 +1060,9 @@ pub(crate) enum CheckedAtomicForm {
 pub(crate) enum CheckedShared {
     /// `Shared<T>`, a handle to an object.
     Object,
-    /// `SharedMap<V>`, a handle to a map whose every entry is an `entry`,
-    /// the prelude's `Option<V>`.
-    Map { entry: CheckedType },
-    /// `SharedMapState<V>`, a map's state, which only a statement holding it names.
-    State { entry: CheckedType },
+    /// `KeyedTable<V>`, a table whose every entry is an `entry`, the
+    /// prelude's `Option<V>`.
+    Table { entry: CheckedType },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1050,7 +1134,9 @@ pub(crate) fn type_has_copy_capability(
             }
             CheckedType::Buffer { .. }
             | CheckedType::Window { .. }
-            | CheckedType::Segments { .. } => return Some(false),
+            | CheckedType::Segments { .. }
+            | CheckedType::KeySet
+            | CheckedType::KeyedEntries { .. } => return Some(false),
             CheckedType::Nominal(id) => {
                 // A nominal met again is already being judged on this walk,
                 // so it adds no part the walk has not queued.
@@ -1736,7 +1822,8 @@ impl CheckedRangeElementPlace {
             CheckedType::Array { element, .. }
             | CheckedType::Window { element, .. }
             | CheckedType::Buffer { element }
-            | CheckedType::Segments { element } => Some(element),
+            | CheckedType::Segments { element }
+            | CheckedType::KeyedEntries { element } => Some(element),
             _ => None,
         }
     }
@@ -2661,32 +2748,28 @@ pub(crate) enum CheckedStatement {
         target: CheckedLoopId,
         drops: Vec<CheckedDrop>,
     },
-    /// [SHARE-2] `atomic IDENT = &place (when expr)? { stmt* }`: the block
-    /// runs with exclusive access to the state of the shared object the
-    /// target names, at a point where the guard holds [SHARE-3].
+    /// [SHARE-2] `atomic IDENT = &place (, IDENT = &place)* (when expr)?
+    /// { stmt* }`: the guard and block run with exclusive access to the
+    /// state of the shared object the target names, at a point where the
+    /// guard holds [SHARE-3].
     Atomic {
         /// The complete `atomic_stmt`, which the waiting-call record names
         /// [WAIT-1] and which is the statement's own site.
         node_path: NodePath,
-        /// The reference the target place forms: a `&Shared<T>` or a
-        /// `&SharedMap<V>` whose handle the statement reads when it begins,
-        /// or, for an entry of a map an enclosing statement holds, a
-        /// `&SharedMapState<V>` naming that state.
+        /// The reference the target place forms: a `&Shared<T>` whose handle
+        /// the statement reads when it begins.
         target: Box<CheckedExpression>,
-        /// What the statement holds [SHARE-2].
-        form: CheckedAtomicForm,
         /// Whether the handle is reached through a reference parameter whose
         /// declared row writes nothing below it, so that the caller's handle
         /// stays live until the statement completes and the statement needs
         /// no handle of its own [SHARE-2].
         borrowed: bool,
-        /// For an entry, the `&[u8]` key the statement reads when it begins.
-        key: Option<Box<CheckedExpression>>,
-        /// The binder, a reference variable naming what the statement holds.
+        /// The binder, a reference variable naming the object's state.
         binding: BindingId,
-        /// The binder's referent type: the object's state `T`, the map's
-        /// state `SharedMapState<V>`, or an entry's `Option<V>`.
+        /// The binder's referent type: the object's state `T`.
         state: CheckedType,
+        /// The entry bindings, in written order [SHARE-2].
+        entries: Vec<CheckedEntryBinding>,
         /// The guard, an owned `Bool` whose footprint writes no path.
         guard: Option<Box<CheckedExpression>>,
         body: Vec<CheckedStatement>,
@@ -3284,7 +3367,7 @@ impl FunctionMentions {
                 }
                 CheckedStatement::Atomic {
                     target,
-                    key,
+                    entries,
                     state,
                     guard,
                     body,
@@ -3293,7 +3376,10 @@ impl FunctionMentions {
                 } => {
                     self.types.push(*state);
                     self.expression(target);
-                    if let Some(key) = key {
+                    for key in entries
+                        .iter()
+                        .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                    {
                         self.expression(key);
                     }
                     if let Some(guard) = guard {

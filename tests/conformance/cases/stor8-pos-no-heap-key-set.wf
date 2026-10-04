@@ -1,0 +1,17 @@
+program no_heap;
+
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn count(keys: &KeySet) -> result: u64 reads(keys) {
+  return keys^.len;
+}
+
+fn main() -> status: ExitStatus pure {
+  let keys = key_set_new(capacity: 2_u64);
+  let n = count(keys: &keys);
+  if n == 0_u64 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 1_u8);
+}

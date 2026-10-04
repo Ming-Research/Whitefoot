@@ -1,0 +1,27 @@
+struct Store {
+  map: KeyedTable<u8>;
+}
+
+const names: Array<u8, 1> =[97_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let state = Store(map: move table);
+  let store = shared_new::<Store>(value: move state);
+  let name = &names[0_u64..1_u64];
+  atomic s = &store, slot = &s^.map[name] {
+    let same = slot;
+    set same^ = Some<u8>(value: 6_u8);
+  }
+  let seen = 0_u8;
+  atomic s = &store, slot = &s^.map[name] {
+    match slot^ {
+      Some(value: held) => {
+        set seen = held^;
+      }
+      None() => {
+      }
+    }
+  }
+  return std::process::exit_status(code: seen);
+}

@@ -395,10 +395,7 @@ fn lower_nominals(
                     state: lower_type(erasure, *state)?,
                     shape: match shape {
                         CheckedShared::Object => IrShared::Object,
-                        CheckedShared::Map { entry } => IrShared::Map {
-                            entry: lower_type(erasure, *entry)?,
-                        },
-                        CheckedShared::State { entry } => IrShared::State {
+                        CheckedShared::Table { entry } => IrShared::Table {
                             entry: lower_type(erasure, *entry)?,
                         },
                     },
@@ -709,6 +706,9 @@ struct IrBuilder<'program> {
     /// [SHARE-2] the atomic statements whose blocks enclose the statement
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
+    /// How many frame records the function's atomic statements have
+    /// numbered (compiler/waiting-contexts/state-locks).
+    records: u32,
 }
 
 #[derive(Clone)]
@@ -769,6 +769,7 @@ impl<'program> IrBuilder<'program> {
             context_awaits: Vec::new(),
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
+            records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
         if !parameters.is_empty() {
@@ -1039,6 +1040,11 @@ impl<'program> IrBuilder<'program> {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             }
             self.await_contexts_before(outer_pending, index)?;
+            // [SHARE-3] inside an atomic block, the units the statement
+            // reaches are taken before it runs.
+            if !self.atomics.is_empty() {
+                self.take_units_for(statement)?;
+            }
             match statement {
                 // [WAIT-3] a bound spawn: its call runs as a context
                 // and its binding is defined where the plan awaits it.
@@ -1291,22 +1297,20 @@ impl<'program> IrBuilder<'program> {
                 }
                 CheckedStatement::Atomic {
                     target,
-                    form,
                     borrowed,
-                    key,
                     binding,
                     state,
+                    entries,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => self.lower_atomic(
                     target,
-                    *form,
                     *borrowed,
-                    key.as_deref(),
                     *binding,
                     *state,
+                    entries,
                     guard.as_deref(),
                     body,
                     fallthrough_drops,
@@ -2073,6 +2077,19 @@ impl<'program> IrBuilder<'program> {
                 ty,
                 ..
             } => {
+                // A field read through a reference loads that field alone. A
+                // copy of the whole referent made to project one field stays
+                // a copy of every byte once the referent is large: firn's
+                // 280-byte client was copied whole six times inside one
+                // atomic statement's block to read single fields.
+                if self.behind_reference(value)? {
+                    let address = self.lower_borrowed_place_address(expression)?;
+                    let field_value = self.load_storage_value(address)?;
+                    if self.value_type(field_value)? != lower_type(self.erasure, *ty)? {
+                        return Err(LoweringFailure::InvalidCheckedProgram);
+                    }
+                    return Ok(field_value);
+                }
                 let aggregate = self.expression(value)?;
                 let nominal = self.erased(*nominal)?;
                 self.define(
@@ -2085,6 +2102,24 @@ impl<'program> IrBuilder<'program> {
                     },
                 )
             }
+        }
+    }
+
+    /// Whether `expression` is a place behind a reference whose fields have
+    /// addresses: the referent of a reference binding held as the referent's
+    /// address, as `lower_addressed_borrow` requires, or a field of one at
+    /// any depth.
+    fn behind_reference(&self, expression: &CheckedExpression) -> Result<bool, LoweringFailure> {
+        match expression {
+            CheckedExpression::DerefAddressed { binding, ty, .. } => {
+                let Some(storage) = self.bindings.get(binding).copied() else {
+                    return Ok(false);
+                };
+                let referent = self.addressed_referent(lower_type(self.erasure, *ty)?)?;
+                Ok(self.value_type(storage)? == IrType::Address(referent))
+            }
+            CheckedExpression::ProjectValue { value, .. } => self.behind_reference(value),
+            _ => Ok(false),
         }
     }
 
@@ -2161,7 +2196,10 @@ impl<'program> IrBuilder<'program> {
     ) -> Result<(), LoweringFailure> {
         let target = self.prepare_target(target, displaces_live_value)?;
         let value = self.expression(value)?;
-        let displaced = self.displaced_release(&target)?;
+        let (value, displaced) = match self.keep_table_identities(&target, value)? {
+            Some(kept) => kept,
+            None => (value, self.displaced_release(&target)?),
+        };
         self.write_target(&target, value)?;
         if let Some(drop) = displaced {
             self.append_drops(vec![drop])?;

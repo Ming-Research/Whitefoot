@@ -469,3 +469,227 @@ fn name_is(input: &[u8], start: u64, length: u64, word: &[u8]) -> matched: Bool 
   }
   return True();
 }
+
+fn byte_before(input: &[u8], position: u64, end: u64) -> result: u8 reads(input) {
+  doc "One byte of the input at a position before end, or zero at end and past it, where the zero byte ending a C string is read.";
+  if position < end {
+    let byte = byte_at(input: input, index: position);
+    return byte;
+  }
+  return 0_u8;
+}
+
+fn lower(byte: u8) -> result: u8 pure {
+  doc "An upper-case ASCII letter in lower case and any other byte unchanged, as C's tolower folds a byte in the C locale.";
+  let low = byte >= 65_u8;
+  let high = byte <= 90_u8;
+  let letter = band(low, high);
+  if letter {
+    let lowered = byte +wrap 32_u8;
+    return lowered;
+  }
+  return byte;
+}
+
+fn signed_char(byte: u8) -> result: i32 pure {
+  doc "A byte read as a C char on x86-64, where char is signed: 128 and above are negative.";
+  let wide = cvt::<u8, i32>(byte);
+  if byte >= 128_u8 {
+    let shifted = wide -wrap 256_i32;
+    return shifted;
+  }
+  return wide;
+}
+
+fn folded_char(value: i32) -> result: i32 pure {
+  doc "A signed char folded as glibc's tolower folds it in the C locale: an upper-case ASCII letter becomes lower case, -128 to -2 become the unsigned bytes 128 to 254, and every other value stays, -1 among them, since it is EOF.";
+  let low = value >= 65_i32;
+  let high = value <= 90_i32;
+  let letter = band(low, high);
+  if letter {
+    let lowered = value +wrap 32_i32;
+    return lowered;
+  }
+  let negative = value < -1_i32;
+  if negative {
+    let unsigned = value +wrap 256_i32;
+    return unsigned;
+  }
+  return value;
+}
+
+struct ClassMatch {
+  matched: Bool;
+  next: u64;
+}
+
+fn class_match(input: &[u8], open: u64, end: u64, byte: u8) -> result: ClassMatch reads(input) {
+  doc "Matches one byte against the class whose opening bracket is at open in a pattern ending before end, as Redis's stringmatchlen matches one with nocase set, and says where the pattern continues after the class. A leading ^ negates it; a backslash makes the next byte a member, compared without folding case, unlike every other comparison; a - between two bytes makes a range whose bounds are read as signed chars, as on x86-64, swapped when reversed and only then folded as folded_char folds them, so that [Z-a] holds nothing, and so does a range from byte 128 to z; ] closes the class at once, so [] holds nothing; a class with no closing bracket runs to the pattern's end.";
+  let position = open +wrap 1_u64;
+  let negated = False();
+  let first = byte_before(input: input, position: position, end: end);
+  if first == 94_u8 {
+    set negated = True();
+    set position = position +wrap 1_u64;
+  }
+  let matched = False();
+  loop @members {
+    let current = byte_before(input: input, position: position, end: end);
+    let remaining = end -sat position;
+    let following = position +wrap 1_u64;
+    let dash = byte_before(input: input, position: following, end: end);
+    let backslash = current == 92_u8;
+    let two_left = remaining >= 2_u64;
+    let quoted = band(backslash, two_left);
+    let three_left = remaining >= 3_u64;
+    let is_dash = dash == 45_u8;
+    let ranged = band(three_left, is_dash);
+    if quoted {
+      set position = following;
+      let member = byte_before(input: input, position: position, end: end);
+      if member == byte {
+        set matched = True();
+      }
+    } else if current == 93_u8 {
+      break @members;
+    } else if remaining == 0_u64 {
+      set position = position -wrap 1_u64;
+      break @members;
+    } else if ranged {
+      let last = position +wrap 2_u64;
+      let bound = byte_before(input: input, position: last, end: end);
+      let start_raw = signed_char(byte: current);
+      let end_raw = signed_char(byte: bound);
+      let low = start_raw;
+      let high = end_raw;
+      if start_raw > end_raw {
+        set low = end_raw;
+        set high = start_raw;
+      }
+      let low_folded = folded_char(value: low);
+      let high_folded = folded_char(value: high);
+      let target_raw = signed_char(byte: byte);
+      let target = folded_char(value: target_raw);
+      set position = last;
+      let above = target >= low_folded;
+      let below = target <= high_folded;
+      let inside = band(above, below);
+      if inside {
+        set matched = True();
+      }
+    } else {
+      let member_folded = lower(byte: current);
+      let byte_folded = lower(byte: byte);
+      if member_folded == byte_folded {
+        set matched = True();
+      }
+    }
+    set position = position +wrap 1_u64;
+  }
+  if negated {
+    set matched = bnot(matched);
+  }
+  let next = position +wrap 1_u64;
+  return ClassMatch(matched: matched, next: next);
+}
+
+fn glob_match(input: &[u8], start: u64, length: u64, name: &[u8]) -> matched: Bool reads(input), reads(name) {
+  doc "Whether a name matches the glob pattern of length bytes of the input from start, as Redis's stringmatchlen matches one with nocase set: * matches any run of bytes, ? any one byte, [...] one byte as class_match reads a class, a backslash makes the next byte literal, and any other byte matches itself in either case. Where Redis recurses at each *, this returns to the last * passed and lets it take one more byte, which accepts the same names without a recursion as deep as the pattern's stars; as in Redis, a * never takes the name's last byte from the rest of the pattern, which cannot match an empty name, and an empty name matches only an empty pattern.";
+  let end = start +wrap length;
+  let size = name^.len;
+  if size == 0_u64 {
+    let empty = length == 0_u64;
+    return empty;
+  }
+  let position = start;
+  let at = 0_u64;
+  let starred = False();
+  let resume = start;
+  let resume_at = 0_u64;
+  loop @matching {
+    let step = 0_u64;
+    let next = position;
+    if at < size {
+      if position < end {
+        let current = byte_at(input: input, index: position);
+        let byte = byte_at(input: name, index: at);
+        if current == 42_u8 {
+          let last = position;
+          loop @stars {
+            let following = last +wrap 1_u64;
+            let more = byte_before(input: input, position: following, end: end);
+            if more == 42_u8 {
+              set last = following;
+            } else {
+              break @stars;
+            }
+          }
+          let after = last +wrap 1_u64;
+          if after >= end {
+            return True();
+          }
+          set starred = True();
+          set resume = after;
+          set resume_at = at;
+          set next = after;
+          set step = 2_u64;
+        } else if current == 63_u8 {
+          set next = position +wrap 1_u64;
+          set step = 1_u64;
+        } else if current == 91_u8 {
+          let class = class_match(input: input, open: position, end: end, byte: byte);
+          if class.matched {
+            set next = class.next;
+            set step = 1_u64;
+          }
+        } else {
+          let literal = current;
+          set next = position +wrap 1_u64;
+          let left = end -wrap position;
+          let backslash = current == 92_u8;
+          let two_left = left >= 2_u64;
+          let quoted = band(backslash, two_left);
+          if quoted {
+            set literal = byte_at(input: input, index: next);
+            set next = position +wrap 2_u64;
+          }
+          let literal_folded = lower(byte: literal);
+          let byte_folded = lower(byte: byte);
+          if literal_folded == byte_folded {
+            set step = 1_u64;
+          }
+        }
+      }
+    } else {
+      loop @trailing {
+        let current = byte_before(input: input, position: position, end: end);
+        if current == 42_u8 {
+          set position = position +wrap 1_u64;
+        } else {
+          break @trailing;
+        }
+      }
+      if position >= end {
+        return True();
+      }
+    }
+    if step == 1_u64 {
+      set position = next;
+      set at = at +wrap 1_u64;
+    } else if step == 2_u64 {
+      set position = next;
+    } else {
+      if starred {
+      } else {
+        return False();
+      }
+      set resume_at = resume_at +wrap 1_u64;
+      if resume_at >= size {
+        break @matching;
+      }
+      set position = resume;
+      set at = resume_at;
+    }
+  }
+  return False();
+}

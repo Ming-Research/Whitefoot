@@ -730,13 +730,16 @@ impl<'check> Program<'check> {
             }
             CheckedStatement::Atomic {
                 target,
-                key,
+                entries,
                 guard,
                 body,
                 ..
             } => {
                 expression(target)
-                    || key.as_deref().is_some_and(expression)
+                    || entries
+                        .iter()
+                        .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                        .any(expression)
                     || guard.as_deref().is_some_and(expression)
                     || block(body, inner)
             }

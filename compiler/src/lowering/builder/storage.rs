@@ -76,13 +76,16 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
             }
             CheckedStatement::Atomic {
                 target,
-                key,
+                entries,
                 guard,
                 body,
                 ..
             } => {
                 collect_expression(target, bindings);
-                if let Some(key) = key {
+                for key in entries
+                    .iter()
+                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                {
                     collect_expression(key, bindings);
                 }
                 if let Some(guard) = guard {
@@ -476,6 +479,7 @@ impl IrBuilder<'_> {
                             offset,
                             target_domain: subscript.target_domain.into(),
                         },
+                        IrType::KeyedEntries { .. } => IrPlaceStep::KeyedEntriesElement { offset },
                         _ => return Err(LoweringFailure::InvalidCheckedProgram),
                     };
                     (
@@ -534,7 +538,7 @@ impl IrBuilder<'_> {
     ///
     /// A Box borrow addresses its owner's pointer slot, just as aggregate
     /// borrows address their owner's inline storage.
-    fn addressed_referent(&self, ty: IrType) -> Result<IrAddressed, LoweringFailure> {
+    pub(super) fn addressed_referent(&self, ty: IrType) -> Result<IrAddressed, LoweringFailure> {
         let referent = IrAddressed::of(ty).ok_or(LoweringFailure::InvalidCheckedProgram)?;
         if let IrAddressed::Nominal(nominal) = referent
             && !matches!(

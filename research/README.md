@@ -91,6 +91,11 @@ the work-branch and merge boundary.
   keyed concurrent index in the trusted runtime under atomic statements on one
   key, its standalone measurement against other languages' concurrent maps,
   and the criteria fixed before measuring.
+- [Shared state locked by parts](investigations/shared-state/DESIGN.md): one
+  sharing primitive whose atomic statement owns the whole state at one point,
+  a keyed table as a field whose entries are named in the statement's header,
+  locking by parts as an implementation liberty with its order, taking and
+  release, and the forms it replaced.
 - [Repair wording](investigations/repair-wording/DESIGN.md): every repair the
   specification prescribes against the compiler's printed text, refuted and
   unproved probes of each, and whether the words belong to the specification

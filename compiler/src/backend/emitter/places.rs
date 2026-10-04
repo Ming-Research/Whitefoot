@@ -556,6 +556,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     &self.value_name(*offset),
                 )?
             }
+            crate::IrPlaceStep::KeyedEntriesElement { offset } => {
+                let IrType::KeyedEntries { element } = base.ty() else {
+                    return Err(BackendFailure::InvalidIr);
+                };
+                if self.program.element(element) != Some(referent.ty())
+                    || self.value_type(*offset)
+                        != Some(IrType::Integer {
+                            width: 64,
+                            signed: false,
+                        })
+                {
+                    return Err(BackendFailure::InvalidIr);
+                }
+                self.keyed_entries_element_pointer(address, *offset)?
+            }
         };
         Ok(pointer)
     }

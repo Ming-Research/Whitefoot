@@ -100,6 +100,10 @@ fn lower_type(erasure: TypeLowering<'_>, value: CheckedType) -> Result<IrType, L
         CheckedType::Segments { element } => IrType::Segments {
             element: lower_element(erasure, element)?,
         },
+        CheckedType::KeySet => IrType::KeySet,
+        CheckedType::KeyedEntries { element } => IrType::KeyedEntries {
+            element: lower_element(erasure, element)?,
+        },
         CheckedType::Window {
             shape,
             element,
@@ -350,8 +354,9 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 
 /// The [PRE-1] records whose bodies the compiler itself emits: the ten
 /// construction functions [OP-13], the nine window operations [OP-10],
-/// `swap` [OP-11], `free_empty` [OP-14], `shared_new` and `shared_share`, and
-/// `shared_map_new`, `shared_map_share` and `shared_map_count` [SHARE-1].
+/// `swap` [OP-11], `free_empty` [OP-14], `shared_new` and `shared_share`,
+/// `keyed_table_new` and `keyed_table_count`, and the four key-set functions
+/// [SHARE-1].
 ///
 /// The host functions [PRE-2] are deliberately absent: those are body-less
 /// because the trusted base defines them, and calling one emits an ordinary
@@ -359,7 +364,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// build reaches [`LoweringFailure::UnimplementedPreludeRow`], so a row this
 /// version has not built can never become a module that names a symbol
 /// nothing defines.
-pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 26] = [
+pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 29] = [
     // [OP-13] the ten construction functions.
     "box_new",
     "array_filled",
@@ -384,13 +389,16 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 26] = [
     // [OP-11] `swap` and [OP-14] `free_empty`.
     "swap",
     "free_empty",
-    // [SHARE-1] the shared-object handle's two functions, and the shared
-    // map's three.
+    // [SHARE-1] the shared-object handle's two functions, the keyed table's
+    // two and the key set's four.
     "shared_new",
     "shared_share",
-    "shared_map_new",
-    "shared_map_share",
-    "shared_map_count",
+    "keyed_table_new",
+    "keyed_table_count",
+    "key_set_new",
+    "key_set_put",
+    "key_set_add",
+    "key_set_payload",
 ];
 
 mod builder;

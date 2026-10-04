@@ -61,13 +61,14 @@ pub const SCHED_ENTRY_HEADER: &str = include_str!("sched/entry.h");
 pub const SCHED_ENTRY_SOURCE: &str = include_str!("sched/entry.c");
 
 /// The runtime's concurrent map: its interface, its implementation, and the
-/// unit that compiles it in as shared maps over the completion runtime
-/// [SHARE-1].
+/// unit that compiles it in as keyed tables and key sets over the completion
+/// runtime [SHARE-1].
 pub const CONCURRENT_MAP_HEADER: &str = include_str!("concurrent_map.h");
-/// The concurrent map's implementation, which `shared_map.c` includes.
+/// The concurrent map's implementation, which `keyed_table.c` includes.
 pub const CONCURRENT_MAP_SOURCE: &str = include_str!("concurrent_map.c");
-/// The emitted module's `wf__shared_map_*` ABI.
-pub const SHARED_MAP_SOURCE: &str = include_str!("shared_map.c");
+/// `keyed_table.c`, the emitted module's `wf__keyed_table_*`, `wf__table_*`,
+/// `wf__key_set_*` and `wf__watch_table` ABI (`completion/bridge.h`).
+pub const KEYED_TABLE_SOURCE: &str = include_str!("keyed_table.c");
 
 /// Windows host primitives used by ordinary linked function definitions.
 pub const WINDOWS_RUNTIME_HEADER: &str = include_str!("windows_runtime.h");
@@ -137,7 +138,7 @@ mod tests {
             ("windows_runtime.c", WINDOWS_RUNTIME_SOURCE),
             ("concurrent_map.h", CONCURRENT_MAP_HEADER),
             ("concurrent_map.c", CONCURRENT_MAP_SOURCE),
-            ("shared_map.c", SHARED_MAP_SOURCE),
+            ("keyed_table.c", KEYED_TABLE_SOURCE),
             ("wf_floor.c", super::super::emitter::FLOOR_RUNTIME_SOURCE),
             (
                 "wf_floor_windows.c",

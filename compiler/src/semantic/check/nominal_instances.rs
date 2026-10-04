@@ -13,7 +13,7 @@ use super::super::model::{
     CheckedConstructor, CheckedElement, CheckedField, CheckedNominal, CheckedNominalKind,
     CheckedNumericType, CheckedShared, CheckedType, CheckedVariant, NominalId,
 };
-use super::generics::{GenericArgument, GenericSubstitution};
+use super::generics::GenericSubstitution;
 use super::{
     CheckStop, Checker, ConstructorTemplate, NominalInstance, NominalTemplate, PreludeType,
 };
@@ -608,36 +608,6 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(())
     }
 
-    /// [SHARE-2] the prelude's `SharedMapState<V>`, the state of a map whose values
-    /// have type `value`.
-    pub(super) fn keyed_state(
-        &mut self,
-        context: super::FunctionContext<'_, '_>,
-        value: CheckedType,
-    ) -> Result<NominalId, CheckStop> {
-        let mut found = None;
-        for (index, template) in self.types.nominal_templates.iter().enumerate() {
-            if template.name == "SharedMapState"
-                && self
-                    .types
-                    .declarations
-                    .is_prelude_opaque_declaration(template.node)?
-            {
-                found = Some(index);
-                break;
-            }
-        }
-        let index = found.ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        let key = self.types.nominal_templates[index]
-            .generic_parameters
-            .first()
-            .ok_or(SemanticCompilerFailure::InvalidResolution)?
-            .key();
-        let substitution =
-            GenericSubstitution::from_bindings(vec![(key, GenericArgument::Type(value))])?;
-        self.ensure_source_nominal_instance(context.check_context, index, substitution)
-    }
-
     pub(super) fn ensure_source_nominal_instance(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -786,13 +756,11 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
-                    if matches!(
-                        template.name.as_str(),
-                        "Shared" | "SharedMap" | "SharedMapState"
-                    ) && self
-                        .types
-                        .declarations
-                        .is_prelude_opaque_declaration(template.node)? =>
+                    if matches!(template.name.as_str(), "Shared" | "KeyedTable")
+                        && self
+                            .types
+                            .declarations
+                            .is_prelude_opaque_declaration(template.node)? =>
                 {
                     let state = substitution
                         .first_type_argument()
@@ -800,16 +768,12 @@ impl<'unit> Checker<'_, 'unit> {
                     let shape = if template.name == "Shared" {
                         CheckedShared::Object
                     } else {
-                        // A map's entries are the prelude's `Option<V>`.
+                        // A table's entries are the prelude's `Option<V>`.
                         let entry = CheckedType::Nominal(
                             self.types
                                 .intern_prelude_nominal(PreludeType::Option(state))?,
                         );
-                        if template.name == "SharedMap" {
-                            CheckedShared::Map { entry }
-                        } else {
-                            CheckedShared::State { entry }
-                        }
+                        CheckedShared::Table { entry }
                     };
                     CheckedNominalKind::Shared { state, shape }
                 }
@@ -1050,6 +1014,10 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedType::Segments { element } => CheckedType::Segments {
                 element: self.substitute_element_regions(check_context, element, regions)?,
             },
+            CheckedType::KeyedEntries { element } => CheckedType::KeyedEntries {
+                element: self.substitute_element_regions(check_context, element, regions)?,
+            },
+            CheckedType::KeySet => ty,
             CheckedType::Window {
                 shape,
                 element,

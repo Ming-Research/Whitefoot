@@ -1271,9 +1271,10 @@ fn frame_bytes(ty: IrType) -> u64 {
         IrType::Integer { width, .. } | IrType::Float { width } => u64::from(width).div_ceil(8),
         // A descriptor is a pointer and a length; a borrow and a box handle
         // are one pointer each.
-        IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } => {
+        IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } | IrType::KeySet => {
             2 * FRAME_FIELD_ALIGN
         }
+        IrType::KeyedEntries { .. } => 3 * FRAME_FIELD_ALIGN,
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => FRAME_FIELD_ALIGN,
         // Aggregates trigger capture selection and the final exact-layout
         // query; a conservative fit retains its established capture interface.

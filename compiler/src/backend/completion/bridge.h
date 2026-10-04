@@ -306,14 +306,15 @@ void wf__shared_free(void *object);
  * the frame suspends and resumes holding it.  `wf__shared_unlock` ends the
  * hold.  `wf__shared_watch`, called holding the object after a guard read
  * false, ends the hold and waits until a statement that writes the object
- * ends; it returns nonzero, the frame suspends, and on resuming the statement
- * acquires the object again and re-reads its guard. */
+ * ends: it returns zero when one has ended since it registered the wait, and
+ * otherwise nonzero, after which the frame suspends; either way the statement
+ * then acquires the object again and re-reads its guard. */
 int wf__shared_acquire(void *object, uint32_t write, void *frame);
 void wf__shared_unlock(void *object, uint32_t write);
 int wf__shared_watch(void *object, uint32_t write, void *frame);
-/* The acquire of a statement inside the block of a statement holding a
- * map's state or an entry, which keeps its driver and never suspends: it
- * returns once the running context holds the object. */
+/* The acquire of a statement that already holds a keyed table's entries,
+ * which keeps its driver and never suspends: it returns once the running
+ * context holds the object. */
 void wf__shared_take(void *object, uint32_t write);
 /* The moments the shared-object runtime's test observes, which it defines
  * this function to see (shared_object_test.c): an unlock hands a parked
@@ -322,6 +323,112 @@ void wf__shared_take(void *object, uint32_t write);
  * wakes a parked context to try again. */
 enum { WF_SHARED_HANDED = 1, WF_SHARED_LENT, WF_SHARED_RESUMED, WF_SHARED_WOKEN };
 void wf__shared_seen(unsigned moment);
+
+/* Keyed tables and key sets [SHARE-1, SHARE-2], defined in keyed_table.c
+ * over the runtime's concurrent map.  A table value is one pointer, and a
+ * key set a `wf_key_set` (concurrent_map.h): its count of keys, then its
+ * memory, 16 bytes aligned to 8.  An atomic statement reserves in its frame
+ * a `wf_table_entry` for a table it names one key of, and a hold for one it
+ * names several keys of, or takes whole; each stays in the frame from its
+ * take to its release, so one statement may hold entries of several
+ * bindings and several tables at once.  A key, or a key set, a hold is
+ * given stays as it is until the hold is taken. */
+#define WF_TABLE_ENTRY_SIZE 40u
+#define WF_TABLE_ENTRY_ALIGN 8u
+#define WF_TABLE_HOLD_SIZE 248u
+#define WF_TABLE_HOLD_ALIGN 8u
+struct wf_key_set;
+struct wf_table_entry;
+void wf__key_set_new(struct wf_key_set *out, uint64_t capacity);
+void wf__key_set_put(struct wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload);
+void wf__key_set_add(struct wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount);
+uint64_t wf__key_set_payload(const struct wf_key_set *set, uint64_t index);
+/* Gives a set's memory back, taking the set's `store` alone, NULL for none,
+ * as the emitted code holds a set in two registers. */
+void wf__key_set_free(void *store);
+
+/* A table of `Option<V>` slots of `slot_size` bytes aligned to `slot_align`,
+ * at most 16, sized for `capacity` entries; its count of `Some` entries,
+ * exact while the caller holds it whole or no one else reaches it, a hold's
+ * own entries counted as they stood at its take; after its last use, each
+ * live slot in turn, removed, whose value the caller drops before asking
+ * again, then NULL; and its release.  `wf__keyed_table_swap` exchanges the
+ * entries of `a` and `b`, with their count and memory, while each keeps its
+ * identity, which a statement that read either pointer before goes on
+ * using: no other statement may be inside either table, so the caller holds
+ * `a` whole or shares neither, and the entries of a hold of `a` taken whole
+ * before the swap are settled first, each slot's tag read as
+ * `wf__table_hold_release` reads it, and go with the other table. */
+void *wf__keyed_table_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
+uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
+uint64_t *wf__keyed_table_drain(void *table);
+void wf__keyed_table_free(void *table);
+void wf__keyed_table_swap(void *a, void *b, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
+
+/* One key: locks the entry, or reads it beside other readers when `read`
+ * is nonzero, and returns its `Option<V>` slot, filled with zeros, `None`,
+ * when the entry was absent; the unlock keeps the entry when `present`. */
+void *wf__table_lock_entry(
+    void *table,
+    const unsigned char *key,
+    uint64_t length,
+    uint32_t read,
+    struct wf_table_entry *entry
+);
+void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
+
+/* Several keys, or the whole table: begin, ask for the whole table or add
+ * keys, each answering its position (a set's key i at the answer plus i),
+ * take, reach each key's slot by its position, repeated keys sharing one,
+ * and release, which keeps each entry whose slot's tag, the `tag_width`
+ * bytes (1, 2, 4 or 8) at `tag_offset`, differs from `none_tag` and removes
+ * the rest, then reopens a table held whole.  The take locks the keys in
+ * increasing byte order without repeats, or holds the whole table, which
+ * waits out every statement holding its entries and keeps new ones out
+ * until the release.  A released hold is empty; one begun and never taken
+ * is released too, which gives back its memory. */
+void wf__table_hold_begin(void *hold, void *table);
+void wf__table_hold_whole(void *hold);
+uint64_t wf__table_hold_key(void *hold, const unsigned char *key, uint64_t length);
+uint64_t wf__table_hold_keys(void *hold, const struct wf_key_set *set);
+void wf__table_hold_take(void *hold);
+void *wf__table_hold_slot(void *hold, uint64_t position);
+void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
+
+/* A guard that reads a table [SHARE-2, SHARE-3]: after it reads false, its
+ * statement begins a watch reserved in its frame, registers it on each unit
+ * the guard read while still holding that unit, the object's other fields
+ * or a table's entries, releases every unit, and parks.  The park answers 0
+ * when a statement that wrote a registered unit has ended since the
+ * registration, and the statement takes its units again at once; otherwise
+ * the context parks, the frame suspends, and once such a statement ends
+ * the context resumes and the statement takes its units again.  Either way
+ * the watch is then registered nowhere.  A release that follows the
+ * statement's own false guard writes nothing and wakes no one. */
+#define WF_WATCH_SIZE 152u
+#define WF_WATCH_ALIGN 8u
+void wf__watch_begin(void *watch);
+void wf__watch_object(void *watch, void *object);
+void wf__watch_table(void *watch, void *table);
+int wf__watch_park(void *watch, void *frame);
+
+/* What keyed_table.c takes from this runtime for guards: the list of
+ * watches registered on a table, which it keeps in the table, whose count
+ * a statement that wrote the table reads once as it ends, waking the list
+ * through `wf__watch_written` only when the count is nonzero; and
+ * `wf__watch_unit`, which registers a watch on such a list.  The moments
+ * the runtime's tests observe, which they define `wf__watch_seen` to see: a
+ * statement that wrote a watched unit wakes its watches, and a park answers
+ * at once for a wake that came first. */
+struct wf_watch_link;
+typedef struct wf_watch_list {
+    uint32_t count;
+    struct wf_watch_link *links;
+} wf_watch_list;
+void wf__watch_unit(void *watch, wf_watch_list *list);
+void wf__watch_written(wf_watch_list *list);
+enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY };
+void wf__watch_seen(unsigned moment);
 
 /* What the runtime's concurrent maps take from this runtime: the number of
  * the driver running the caller, below WF_CMAP_MAX_USERS, which numbers a

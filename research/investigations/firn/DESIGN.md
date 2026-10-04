@@ -161,7 +161,7 @@ here.
 
 ## Design of the program
 
-`apps/firn` is a module program of six modules and about 5,400 lines;
+`apps/firn` is a module program of seven modules and about 7,700 lines;
 [its README](../../../apps/firn/README.md) lists them. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 
@@ -216,12 +216,31 @@ Redis's observable behavior on the suite's commands and says what it refused.
   `SET` then `PEXPIREAT`, and an `SPOP` as the `SREM` of the members it chose,
   so that a replay removes the same members. `SPOP` draws from a generator
   seeded by the clock when the server starts, as Redis seeds its own.
-- **Sorted-set scores are integers below 2^52 in magnitude.** Every score the
-  suite sends is one, and Redis prints such a score as the integer. A score
-  written as another floating-point number is refused with an error that says
-  so: reading one to the nearest double and printing it with 17 significant
-  digits, as Redis does, needs exact decimal conversion firn does not have
-  yet.
+- **Sorted-set scores are read and written as Redis 7.0.15 reads and writes
+  them** (the `scores` module): read as `strtod` reads them, decimal or
+  hexadecimal text or an infinity, to the nearest double with ties to even,
+  NaN and a result past the double range refused as Redis refuses them; and
+  written as `%.17g` writes them. A decimal is converted exactly by Simple
+  Decimal Conversion, shifts by powers of two over its first 800 digits with
+  a note of any nonzero digit dropped, after two exact fast paths, an integer
+  of at most 19 digits and Clinger's single multiplication or division; a
+  score is written from its exact decimal expansion, an integer below 10^17
+  at once. Eisel and Lemire's multiplication by a table of 128-bit powers of
+  five would read a long decimal faster, but it still needs an exact fallback
+  for the inputs it cannot decide, and no measurement here asks for that
+  speed; a shortest-digits writer such as Ryu answers another question than
+  `%.17g`'s seventeen digits. Negative zero is kept as zero, as Redis's
+  listpack keeps it in a sorted set of at most 128 members of at most 64
+  bytes; a larger set, which Redis keeps as a skiplist, keeps and writes
+  `-0`, and matching both needs the set's encoding, which firn does not
+  track. Hexadecimal text is rounded to the nearest double as decimal text
+  is, where this host's glibc 2.39 (Ubuntu's 2.39-0ubuntu8.9), and so
+  redis-server on it, rounds some hexadecimal subnormals of 14 and 15 digits
+  down by one unit when the dropped part is above half. That is glibc's bug
+  30220, "String to double returns incorrectly rounded value for hexadecimal
+  subnormal", fixed in glibc 2.41, and firn does not reproduce it. The first
+  version accepted only integers below 2^52, the scores the suite sends, and
+  refused others with an error that said so.
 - **A malformed request is answered with Redis's protocol error and the
   connection is closed**, as Redis closes it, where the subset closed it
   without an answer.
@@ -245,7 +264,7 @@ Building firn found four things outside the program, recorded under
 
 ## Correctness
 
-The *Correct* criterion rests on three observations:
+The *Correct* criterion rests on four observations:
 
 - The measurement script's check (`redis-bench.sh`, `verify_suite`) runs all
   20 tests on every line before measuring and fails on an error reply or a
@@ -254,13 +273,33 @@ The *Correct* criterion rests on three observations:
 - firn's tests in `compiler/tests/programs/network.rs` compare its replies
   byte for byte with redis-server 7.0.15's to the same requests: the value
   types, wrong kinds, unknown commands and arity errors, strings at and past
-  the inline length, `CONFIG` and client bytes echoed in errors. Others check
+  the inline length, `CONFIG` and client bytes echoed in errors, and
+  sorted-set scores at the hard cases of decimal conversion. Others check
   requests and replies larger than firn's first windows, expiry, idle
   clients and the append-only file's replay.
 - A differential script of 103 commands sent to firn and to redis-server,
   kept outside the repository, differed only on `SET` with `XX`, one of the
   options listed as missing in [docs/todo.md](../../../docs/todo.md) under
   firn.
+- A randomized script, also kept outside the repository, sent 3,200,000
+  scores to firn and to redis-server 7.0.15 as `ZADD`, `ZSCORE` and
+  `ZPOPMIN`, 200,000 of each of sixteen kinds: shortest and 17-digit
+  spellings of random doubles, exact halfway points between neighboring
+  doubles with a digit added or taken away, subnormals, digit strings up to
+  3,000 digits, hexadecimal text, infinities and NaN, malformed text,
+  doubles whose seventeenth digit is a tie, and halfway points of at most 19
+  digits padded with zeros past the 800th digit, with or without a nonzero
+  digit after them; and 1,000 sets of up to 120 members at such scores, each
+  popped whole. Two replies differed, the `ZSCORE` and `ZPOPMIN` of one
+  hexadecimal subnormal that redis-server rounds down by one unit where the
+  nearest double is above. glibc's `strtod` itself differs from correct
+  rounding (Python's `float.fromhex`) on 110 of 100,000 hexadecimal
+  subnormals of 13 to 15 digits, and firn on none. An earlier run of the
+  first fifteen kinds, 3,000,000 other random scores, against the module's
+  first commit, d30d7808a, differed in no reply. None of those kinds makes
+  the sixteenth kind's scores, and on 5,000 of them d30d7808a, which rounded
+  a padded halfway point to even when a nonzero digit followed the zeros,
+  differs in 3,220 replies.
 
 A build a result names by commit is on the branch. A refused variant's code
 was not kept; its section describes it, and the drivers that ran the rounds

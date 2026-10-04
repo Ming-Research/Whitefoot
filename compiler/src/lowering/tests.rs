@@ -716,8 +716,15 @@ fn main() -> status: std::process::ExitStatus pure {
                 .iter()
                 .filter(|variant| variant.source == function.id)
                 .count();
+            // A compiler-owned [PRE-1] record is emitted where a call reaches
+            // it: a generic one's instance exists only where called, and the
+            // key set's four, which take no type parameter, are not called
+            // here.
+            let record = function.body.is_none()
+                && crate::lowering::COMPILER_OWNED_PRELUDE_ROWS.contains(&function.name.as_str());
+            let expected = usize::from(!record || !function.name.starts_with("key_set_"));
             assert_eq!(
-                variants, 1,
+                variants, expected,
                 "{}: one heap leaves one release environment, and every ordinary \
                  definition is still emitted",
                 function.name
@@ -737,7 +744,16 @@ fn main() -> status: std::process::ExitStatus pure {
                 .iter()
                 .map(|variant| variant.source)
                 .collect::<Vec<_>>(),
-            checked.data.executable_functions,
+            checked
+                .data
+                .executable_functions
+                .iter()
+                .copied()
+                .filter(|source| {
+                    let function = &checked.data.functions[source.0 as usize];
+                    function.body.is_some() || !function.name.starts_with("key_set_")
+                })
+                .collect::<Vec<_>>(),
             "physical order follows ordinary discovery order"
         );
     });
@@ -1647,5 +1663,55 @@ fn a_needle_declared_inside_the_loop_declines_the_wide_probe() {
     let middle = "    let inner_mark = 88_u8;\n    let lead = byte == inner_mark;\n    if lead {\n      set seen = seen +wrap 2_u64;\n    }\n";
     with_ir(&byte_walk_source(middle, "1_u64"), |program| {
         assert_eq!(probe_needle_counts(program), Vec::<usize>::new());
+    });
+}
+
+/// A field read through a reference loads that field alone, never the whole
+/// referent: a copy of a large referent made to project one field stays a
+/// copy of every byte in the optimized program, as firn's client did inside
+/// its atomic statements.
+#[test]
+fn a_field_read_through_a_reference_loads_the_field_alone() {
+    let source = format!(
+        r#"struct Wide {{
+  first: u64;
+  second: u64;
+  third: u64;
+  fourth: u64;
+}}
+
+struct Outer {{
+  stamp: u64;
+  wide: Wide;
+}}
+
+fn third_of(outer: &Outer) -> result: u64 reads(outer) {{
+  return outer^.wide.third;
+}}
+
+{PLAIN_ENTRY}"#
+    );
+    with_ir(source.as_bytes(), |program| {
+        let function = function(program, "third_of");
+        let mut field_loads = 0;
+        for block in function.blocks() {
+            for instruction in block.instructions() {
+                let IrInstruction::Define { operation, .. } = instruction else {
+                    continue;
+                };
+                match operation {
+                    IrOperation::Load {
+                        referent: IrAddressed::Nominal(_),
+                        ..
+                    } => panic!("a field read loaded a whole aggregate: {operation:?}"),
+                    IrOperation::ProjectStruct { .. } => {
+                        panic!("a field read projected a loaded aggregate: {operation:?}")
+                    }
+                    IrOperation::Load { .. } => field_loads += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(field_loads, 1, "one load, of the field itself");
     });
 }

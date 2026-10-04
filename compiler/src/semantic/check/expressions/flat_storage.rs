@@ -1354,9 +1354,9 @@ impl<'unit> Checker<'_, 'unit> {
             // [OP-4] each suffix selects the complete element type of its
             // already-typed base. Array storage can be nested in a run slot.
             let element_type = match ty {
-                CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
-                    self.types.element_type(element)?
-                }
+                CheckedType::Array { element, .. }
+                | CheckedType::Window { element, .. }
+                | CheckedType::KeyedEntries { element } => self.types.element_type(element)?,
                 CheckedType::Buffer { element } => self.types.element_type(element)?,
                 _ => {
                     return self.types.declarations.issue_node(
@@ -1606,8 +1606,11 @@ impl<'unit> Checker<'_, 'unit> {
             }
             // [OP-4] the indexable bases, reached through `^` exactly as
             // an inline one is: a run is one measured place wherever it is
-            // reached from [MSR-1].
-            CheckedType::Array { .. } | CheckedType::Window { .. } => {
+            // reached from [MSR-1]. The `KeyedEntries` an entry binding names
+            // is reached only so [SHARE-2].
+            CheckedType::Array { .. }
+            | CheckedType::Window { .. }
+            | CheckedType::KeyedEntries { .. } => {
                 Ok(CheckedIndexedPlace::Container(CheckedContainerPlace {
                     root: CheckedContainerRoot {
                         root: PlaceRoot::Binding(binding),
@@ -1859,8 +1862,11 @@ impl<'unit> Checker<'_, 'unit> {
                 )
             }
             // [MSR-1] gives each storage shape a measure-table row and [OP-4]
-            // makes it an indexable base.
-            CheckedType::Array { .. } | CheckedType::Window { .. } => {
+            // makes it an indexable base, as it does the `KeyedEntries` an
+            // entry binding names [SHARE-2].
+            CheckedType::Array { .. }
+            | CheckedType::Window { .. }
+            | CheckedType::KeyedEntries { .. } => {
                 let (Some(binding), Some(declaration)) = (binding, declaration) else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };

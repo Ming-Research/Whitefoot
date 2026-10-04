@@ -2147,6 +2147,28 @@ impl<'unit> TypeContext<'unit> {
                     self.checked_type_name(self.element_type(element)?)?
                 )
             }
+            CheckedType::KeySet => "KeySet".to_owned(),
+            // [PRE-1] `KeyedEntries<V>` is written with the value type, and
+            // its element is the `Option<V>` each entry is [SHARE-2].
+            CheckedType::KeyedEntries { element } => {
+                let entry = self.element_type(element)?;
+                let value = match entry {
+                    CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
+                        CheckedNominalKind::Enum { variants } => {
+                            variants
+                                .iter()
+                                .find_map(|variant| match variant.fields.as_slice() {
+                                    [field] => Some(field.ty),
+                                    _ => None,
+                                })
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                }
+                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                format!("KeyedEntries<{}>", self.checked_type_name(value)?)
+            }
             CheckedType::Buffer { element } => {
                 format!(
                     "Array<{}>",

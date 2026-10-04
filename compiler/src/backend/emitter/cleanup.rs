@@ -68,9 +68,9 @@ pub(super) fn emit_resource_drop_helpers(
                 shape: IrShared::Object,
             } => emit_shared_drop_helper(program, &mut module, nominal, *state)?,
             IrNominalKind::Shared {
-                shape: IrShared::Map { entry },
+                shape: IrShared::Table { entry },
                 ..
-            } => emit_shared_map_drop_helper(program, &mut module, nominal, *entry)?,
+            } => emit_keyed_table_drop_helper(program, &mut module, nominal, *entry)?,
             _ => {}
         }
     }
@@ -80,10 +80,10 @@ pub(super) fn emit_resource_drop_helpers(
     Ok(module)
 }
 
-/// [SHARE-1] one map handle's release: the runtime counts the handle out, and
-/// with the last one hands out every entry still holding a value, each of
-/// which is released in place as its `Option<V>`, and then frees the map.
-fn emit_shared_map_drop_helper(
+/// [SHARE-1] one table's release: the runtime hands out every entry still
+/// holding a value, each of which is released in place as its `Option<V>`,
+/// and then frees the table.
+fn emit_keyed_table_drop_helper(
     program: &IrProgram,
     module: &mut Module,
     nominal: &crate::IrNominal,
@@ -94,14 +94,11 @@ fn emit_shared_map_drop_helper(
     let mut signature = Signature::new(symbol, "void", vec![Parameter::named("ptr", "%value")]);
     signature.linkage = Linkage::Private;
     output.open_block("entry".to_owned());
-    output.instructions(
-        "  %last = call i32 @wf__shared_map_release(ptr %value)\n  %is.last = icmp ne i32 %last, 0\n  br i1 %is.last, label %drain, label %done\n",
-        &["wf__shared_map_release"],
-    );
+    output.push_str("  br label %drain\n");
     output.open_block("drain".to_owned());
     output.instructions(
-        "  %slot = call ptr @wf__shared_map_drain(ptr %value)\n  %drained = icmp eq ptr %slot, null\n  br i1 %drained, label %free, label %entry.release\n",
-        &["wf__shared_map_drain"],
+        "  %slot = call ptr @wf__keyed_table_drain(ptr %value)\n  %drained = icmp eq ptr %slot, null\n  br i1 %drained, label %free, label %entry.release\n",
+        &["wf__keyed_table_drain"],
     );
     output.open_block("entry.release".to_owned());
     if type_requires_cleanup(program, entry)? {
@@ -119,11 +116,9 @@ fn emit_shared_map_drop_helper(
     output.push_str("  br label %drain\n");
     output.open_block("free".to_owned());
     output.instructions(
-        "  call void @wf__shared_map_free(ptr %value)\n  br label %done\n",
-        &["wf__shared_map_free"],
+        "  call void @wf__keyed_table_free(ptr %value)\n  ret void\n",
+        &["wf__keyed_table_free"],
     );
-    output.open_block("done".to_owned());
-    output.push_str("  ret void\n");
     signature.references = output.references.clone();
     module.define(signature.define(output, "")?);
     module.text("\n");
@@ -182,20 +177,22 @@ fn emit_shared_drop_helper(
     Ok(())
 }
 
-/// Whether any type of this program is a shared-object handle [SHARE-1], and
-/// so names the runtime's shared-object entries.
+/// Whether any type of this program is a shared-object handle, a keyed table
+/// or a key set [SHARE-1], and so names the runtime's entries for them.
 pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFailure> {
-    Ok(program_types(program)?.into_iter().any(|ty| {
-        matches!(ty, IrType::Nominal(id) if program
+    Ok(program_types(program)?.into_iter().any(|ty| match ty {
+        IrType::KeySet | IrType::KeyedEntries { .. } => true,
+        IrType::Nominal(id) => program
             .nominal(id)
-            .is_some_and(|nominal| matches!(nominal.kind(), IrNominalKind::Shared { .. })))
+            .is_some_and(|nominal| matches!(nominal.kind(), IrNominalKind::Shared { .. })),
+        _ => false,
     }))
 }
 
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 18] = [
+    let declarations: [(&str, &str, &[&str]); 31] = [
         ("wf__shared_new", "ptr", &["i64"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
@@ -204,16 +201,45 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__shared_unlock", "void", &["ptr", "i32"]),
         ("wf__shared_take", "void", &["ptr", "i32"]),
         ("wf__shared_watch", "i32", &["ptr", "i32", "ptr"]),
-        ("wf__shared_map_new", "ptr", &["i64", "i64", "i64"]),
-        ("wf__shared_map_share", "void", &["ptr"]),
-        ("wf__shared_map_release", "i32", &["ptr"]),
-        ("wf__shared_map_drain", "ptr", &["ptr"]),
-        ("wf__shared_map_free", "void", &["ptr"]),
-        ("wf__shared_map_hold", "void", &["ptr"]),
-        ("wf__shared_map_unhold", "void", &["ptr"]),
-        ("wf__shared_map_lock", "ptr", &["ptr", "ptr", "i64", "i32"]),
-        ("wf__shared_map_unlock", "void", &["ptr", "i32", "i32"]),
-        ("wf__shared_map_count", "i64", &["ptr"]),
+        ("wf__keyed_table_new", "ptr", &["i64", "i64", "i64"]),
+        (
+            "wf__keyed_table_count",
+            "i64",
+            &["ptr", "i64", "i32", "i64"],
+        ),
+        ("wf__keyed_table_drain", "ptr", &["ptr"]),
+        ("wf__keyed_table_free", "void", &["ptr"]),
+        (
+            "wf__keyed_table_swap",
+            "void",
+            &["ptr", "ptr", "i64", "i32", "i64"],
+        ),
+        (
+            "wf__table_lock_entry",
+            "ptr",
+            &["ptr", "ptr", "i64", "i32", "ptr"],
+        ),
+        ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
+        ("wf__table_hold_begin", "void", &["ptr", "ptr"]),
+        ("wf__table_hold_key", "i64", &["ptr", "ptr", "i64"]),
+        ("wf__table_hold_keys", "i64", &["ptr", "ptr"]),
+        ("wf__table_hold_whole", "void", &["ptr"]),
+        ("wf__table_hold_take", "void", &["ptr"]),
+        ("wf__table_hold_slot", "ptr", &["ptr", "i64"]),
+        (
+            "wf__table_hold_release",
+            "void",
+            &["ptr", "i64", "i32", "i64"],
+        ),
+        ("wf__key_set_new", "void", &["ptr", "i64"]),
+        ("wf__key_set_put", "void", &["ptr", "ptr", "i64", "i64"]),
+        ("wf__key_set_add", "void", &["ptr", "ptr", "i64", "i64"]),
+        ("wf__key_set_payload", "i64", &["ptr", "i64"]),
+        ("wf__key_set_free", "void", &["ptr"]),
+        ("wf__watch_begin", "void", &["ptr"]),
+        ("wf__watch_object", "void", &["ptr", "ptr"]),
+        ("wf__watch_table", "void", &["ptr", "ptr"]),
+        ("wf__watch_park", "i32", &["ptr", "ptr"]),
     ];
     for (name, result, parameters) in declarations {
         module.declare(Signature::new(
@@ -468,6 +494,8 @@ fn stable_type_spelling(program: &IrProgram, ty: IrType) -> Result<String, Backe
         IrType::Buffer { element: held } => format!("buffer<{}>", element(held)?),
         IrType::Segments { element: held } => format!("segments<{}>", element(held)?),
         IrType::Range { element: held } => format!("range<{}>", element(held)?),
+        IrType::KeySet => "keyset".to_owned(),
+        IrType::KeyedEntries { element: held } => format!("entries<{}>", element(held)?),
         IrType::RuntimeBoxPayload { nominal } => format!(
             "payload<{}>",
             program
@@ -540,10 +568,10 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
             IrType::Buffer { element } | IrType::Segments { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?)
             }
-            IrType::Range { element } => {
+            IrType::Range { element } | IrType::KeyedEntries { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
             }
-            IrType::RuntimeBoxPayload { .. } => {}
+            IrType::RuntimeBoxPayload { .. } | IrType::KeySet => {}
             IrType::Address(referent) => pending.push(referent.ty()),
             IrType::Nominal(id) => {
                 let nominal = program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
@@ -562,7 +590,7 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
                     IrNominalKind::Box { referent, .. } => pending.push(*referent),
                     IrNominalKind::Shared { state, shape } => {
                         pending.push(*state);
-                        if let IrShared::Map { entry } | IrShared::State { entry } = shape {
+                        if let IrShared::Table { entry } = shape {
                             pending.push(*entry);
                         }
                     }
@@ -804,12 +832,25 @@ fn emit_cleanup_jobs(
                 return Err(BackendFailure::InvalidIr);
             }
             CleanupJob::Value { ty, operand } => match ty {
+                // [SHARE-1] a key set's store is the runtime's, released by
+                // its pointer alone.
+                IrType::KeySet => {
+                    let store = next_temporary(temporary)?;
+                    output.symbol("wf__key_set_free");
+                    writeln!(
+                        output,
+                        "  %{store} = extractvalue {{ i64, ptr }} {operand}, 1\n  call void @wf__key_set_free(ptr %{store})"
+                    )
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                }
                 // A runtime-capacity `Array<T>` exists only as `Box` content
                 // [TYPE-9] and is never an owned value of its own, so the
                 // cell arm below is the one route to its release, exactly as
                 // it is for a runtime-capacity window. Reaching here would
                 // mean a value of a type no storage can hold.
-                IrType::Buffer { .. } | IrType::Segments { .. } => {
+                // The entries an entry binding names are its statement's
+                // record and own nothing [SHARE-2].
+                IrType::Buffer { .. } | IrType::Segments { .. } | IrType::KeyedEntries { .. } => {
                     return Err(BackendFailure::InvalidIr);
                 }
                 IrType::Nominal(id) => {

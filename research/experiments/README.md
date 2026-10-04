@@ -223,6 +223,17 @@ completion criterion were refused.
   and the prior compute bundle's grain panel, recursion-frontier evidence and
   two-runtime comparison in
   [`compute-runtime/PRIOR-BUNDLE.md`](../investigations/compute-runtime/PRIOR-BUNDLE.md).
+- [redis-compat/](redis-compat/README.md) — Redis 7.0.15's own test suite run
+  against one server in its external mode, one unit at a time, counting per
+  unit the tests passed, failed, errored, skipped and timed out and the cause
+  of every failure; `run.sh` fetches the suite by version and SHA-256 and is
+  never part of `make check`. Measured 2026-10-03: Redis 7.0.15 passes 1,994
+  of the 1,995 tests external mode runs, the other needing the server's
+  process id; firn at `cea9188d4` passes only two tests that check nothing in
+  external mode, because the suite's framework sends `FLUSHALL` and
+  `FUNCTION FLUSH` at the start of every block, ends the unit when they fail,
+  and firn has neither. It goes when a maintained test of firn's
+  compatibility replaces it.
 - `buffer-initialization-cost/` — the dossier §9.1 initialization-cost row,
   whose control §9.1 requires to be an *uninitialized* native read loop. A
   Whitefoot drain over a language-initialized reused buffer measures at

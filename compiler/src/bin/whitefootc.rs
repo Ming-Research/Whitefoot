@@ -11,14 +11,15 @@ use whitefoot::{
     COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER,
     CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
     CompilerLimits, DiagnosticFormat, FLOOR_STACK_BYTES, FragmentGranularity, GRAPH_FILE_NAME,
-    HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM,
-    ORDINARY_VALUES_SOURCE, OverlapLowering, RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE,
-    SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SHARED_MAP_SOURCE, SourceInput,
-    WINDOWS_RUNTIME_HEADER, build_module_entry, check, check_module_program, check_with_cache,
-    compile_module_program_with_permission_ledger, compile_with_cache, compile_with_overlap,
-    compile_with_permission_ledger, content_digest, discover_module_sources, entry_verdict,
-    form_module_graph, module_verdict, read_graph_record, render_driver_failure,
-    render_module_interface, running_compiler_identity, split_module, stack_ledger,
+    HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry, ORDINARY_VALUES_HEADER,
+    ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE, OverlapLowering, RecursionBudget,
+    SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER, SCHED_ENTRY_SOURCE,
+    SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER, build_module_entry, check,
+    check_module_program, check_with_cache, compile_module_program_with_permission_ledger,
+    compile_with_cache, compile_with_overlap, compile_with_permission_ledger, content_digest,
+    discover_module_sources, entry_verdict, form_module_graph, module_verdict, read_graph_record,
+    render_driver_failure, render_module_interface, running_compiler_identity, split_module,
+    stack_ledger,
 };
 
 // `HOST_LINK_LIBRARIES` is here rather than above because its one reader is
@@ -153,7 +154,7 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("completion/bridge.c", COMPLETION_BRIDGE_SOURCE),
     unit("concurrent_map.h", CONCURRENT_MAP_HEADER),
     unit("concurrent_map.c", CONCURRENT_MAP_SOURCE),
-    unit("shared_map.c", SHARED_MAP_SOURCE),
+    unit("keyed_table.c", KEYED_TABLE_SOURCE),
 ];
 
 #[cfg(not(target_os = "windows"))]
@@ -173,7 +174,7 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_posix.c",
     "completion/bridge.c",
     "completion/linux_io_uring.c",
-    "shared_map.c",
+    "keyed_table.c",
 ];
 
 #[cfg(target_os = "windows")]
@@ -190,7 +191,7 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_windows.c",
     "completion/bridge.c",
     "completion/windows_iocp.c",
-    "shared_map.c",
+    "keyed_table.c",
 ];
 
 /// The arguments this host's link needs beside the dialect and the inputs.

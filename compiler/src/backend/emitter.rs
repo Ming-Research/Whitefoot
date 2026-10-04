@@ -1479,6 +1479,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let mut output = FunctionBody::default();
         let mut entry_prelude = frame.render(program, &mut output.references)?;
         entry_prelude.push_str(&contexts::context_group_prelude(function));
+        entry_prelude.push_str(&shared::record_prelude(function));
         Ok(Self {
             program,
             function,
@@ -2399,27 +2400,77 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
             }
             IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
-            IrOperation::SharedMapNew { nominal, capacity } => {
-                self.emit_shared_map_new(result, ty, *nominal, *capacity)
+            IrOperation::KeyedTableNew { nominal, capacity } => {
+                self.emit_keyed_table_new(result, ty, *nominal, *capacity)
             }
-            IrOperation::SharedMapState { object, .. } => {
-                self.emit_shared_map_state(result, *object)
+            IrOperation::KeyedTableCount { table } => self.emit_keyed_table_count(result, *table),
+            IrOperation::KeyedTableSwap { first, second } => {
+                self.emit_keyed_table_swap(result, *first, *second)
             }
-            IrOperation::SharedMapHold { object } => {
-                self.emit_shared_map_call(result, *object, "wf__shared_map_hold")
+            IrOperation::TableLockEntry {
+                record,
+                table,
+                key,
+                read,
+            } => self.emit_table_lock_entry(result, *record, *table, *key, *read),
+            IrOperation::TableEntrySlot { nominal, record } => {
+                self.emit_table_entry_slot(result, *nominal, *record)
             }
-            IrOperation::SharedMapUnhold { object } => {
-                self.emit_shared_map_call(result, *object, "wf__shared_map_unhold")
+            IrOperation::TableUnlockEntry {
+                nominal, record, ..
+            } => self.emit_table_unlock_entry(result, *nominal, *record),
+            IrOperation::TableHoldBegin { record, table } => {
+                self.emit_table_hold_begin(result, *record, *table)
             }
-            IrOperation::SharedMapLock {
-                object, key, held, ..
-            } => self.emit_shared_map_lock(result, *object, *key, *held),
-            IrOperation::SharedMapUnlock {
-                object,
-                entry,
-                held,
-            } => self.emit_shared_map_unlock(result, *object, *entry, *held),
-            IrOperation::SharedMapCount { state } => self.emit_shared_map_count(result, *state),
+            IrOperation::TableHoldKey { record, key } => {
+                self.emit_table_hold_key(result, *record, *key)
+            }
+            IrOperation::TableHoldKeys { record, set } => {
+                self.emit_table_hold_keys(result, *record, *set)
+            }
+            IrOperation::TableHoldWhole { record } => {
+                self.emit_table_hold_call(result, *record, "wf__table_hold_whole")
+            }
+            IrOperation::TableHoldTake { record } => {
+                self.emit_table_hold_call(result, *record, "wf__table_hold_take")
+            }
+            IrOperation::TableHoldSlot {
+                nominal,
+                record,
+                position,
+            } => self.emit_table_hold_slot(result, *nominal, *record, *position),
+            IrOperation::TableHoldRelease { nominal, record } => {
+                self.emit_table_hold_release(result, *nominal, *record)
+            }
+            IrOperation::KeyedEntriesRecord { record, .. } => {
+                self.emit_keyed_entries_record(result, *record)
+            }
+            IrOperation::KeyedEntriesFill {
+                entries,
+                hold,
+                position,
+                set,
+            } => self.emit_keyed_entries_fill(result, *entries, *hold, *position, *set),
+            IrOperation::KeySetNew { capacity } => self.emit_key_set_new(result, ty, *capacity),
+            IrOperation::KeySetPut {
+                set,
+                key,
+                payload,
+                add,
+            } => self.emit_key_set_put(result, *set, *key, *payload, *add),
+            IrOperation::KeySetPayload { set, index } => {
+                self.emit_key_set_payload(result, *set, *index)
+            }
+            IrOperation::WatchBegin { record } => {
+                self.emit_watch_call(result, *record, None, "wf__watch_begin")
+            }
+            IrOperation::WatchObject { record, object } => {
+                self.emit_watch_call(result, *record, Some(*object), "wf__watch_object")
+            }
+            IrOperation::WatchTable { record, table } => {
+                self.emit_watch_call(result, *record, Some(*table), "wf__watch_table")
+            }
+            IrOperation::WatchPark { record } => self.emit_watch_park(result, *record),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)
             }
@@ -2710,7 +2761,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrType::Array { .. } | IrType::Window { .. } => {
                 type_requires_cleanup(self.program, drop.ty())?
             }
-            IrType::Buffer { .. } => true,
+            // [SHARE-1] a key set's release reads its store's pointer.
+            IrType::Buffer { .. } | IrType::KeySet => true,
             IrType::Nominal(nominal) if !self.nominal(nominal)?.is_tag_only_enum() => {
                 match self.nominal(nominal)?.kind() {
                     // The checker supplied separate component records. The
@@ -2916,6 +2968,12 @@ pub(super) fn llvm_type_with_references(
         // A `&[T]` range reference is a pointer and one count [REF-4]; it is
         // a reference kind, so no storage ever holds one.
         IrType::Range { .. } => Ok("{ ptr, i64 }".to_owned()),
+        // [SHARE-1] a key set is its count, its one measure, and a pointer to
+        // the runtime's store; the entries an entry binding names are the
+        // statement's record of its hold, the set's first position in it and
+        // the set's count [SHARE-2].
+        IrType::KeySet => Ok("{ i64, ptr }".to_owned()),
+        IrType::KeyedEntries { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // compiler/storage-representation: a runtime-capacity `Array<T>` is
         // one block `[len | elements]`, header first, exactly as a boxed
         // window block is. An `Array`'s `len` equals its `cap` [WIN-1], so

@@ -1,8 +1,9 @@
 //! The bodies of the [PRE-1] records the compiler itself owns.
 //!
 //! Ten construction functions [OP-13], nine window operations [OP-10],
-//! `swap` [OP-11], `free_empty` [OP-14] and the two shared-object functions
-//! [SHARE-1] are declared body-less exactly as
+//! `swap` [OP-11], `free_empty` [OP-14], the two shared-object functions and
+//! the keyed table's and key set's six [SHARE-1] are declared body-less
+//! exactly as
 //! a host function is [PRE-2], but no trusted-base object defines them: the compiler emits
 //! their bodies. Each body is built here, at the row's own physical function
 //! instance, so one monomorphized instance serves every call of that row with
@@ -59,9 +60,13 @@ impl IrBuilder<'_> {
             "swap" => self.row_swap(),
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
-            "shared_share" | "shared_map_share" => self.row_shared_share(),
-            "shared_map_new" => self.row_shared_map_new(),
-            "shared_map_count" => self.row_shared_map_count(),
+            "shared_share" => self.row_shared_share(),
+            "keyed_table_new" => self.row_keyed_table_new(),
+            "keyed_table_count" => self.row_keyed_table_count(),
+            "key_set_new" => self.row_key_set_new(),
+            "key_set_put" => self.row_key_set_put(false),
+            "key_set_add" => self.row_key_set_put(true),
+            "key_set_payload" => self.row_key_set_payload(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
                 crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
                     .iter()
@@ -153,28 +158,86 @@ impl IrBuilder<'_> {
         self.return_value(object)
     }
 
-    /// `shared_map_new<V>(capacity: u64) -> SharedMap<V>`: a new map holding
-    /// one handle and no entry, sized for `capacity` values [SHARE-1].
-    fn row_shared_map_new(&mut self) -> Result<(), LoweringFailure> {
+    /// `keyed_table_new<V>(capacity: u64) -> KeyedTable<V>`: a table holding
+    /// no entry, sized for `capacity` keys [SHARE-1].
+    fn row_keyed_table_new(&mut self) -> Result<(), LoweringFailure> {
         let [capacity] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {
             return Err(LoweringFailure::InvalidCheckedProgram);
         };
-        let object = self.define(self.result, IrOperation::SharedMapNew { nominal, capacity })?;
-        self.return_value(object)
+        let table = self.define(
+            self.result,
+            IrOperation::KeyedTableNew { nominal, capacity },
+        )?;
+        self.return_value(table)
     }
 
-    /// `shared_map_count<V>(state: &SharedMapState<V>) -> u64`: how many entries of the
-    /// state the argument names hold `Some` [SHARE-1].
-    fn row_shared_map_count(&mut self) -> Result<(), LoweringFailure> {
-        let [state] = self.row_parameters()?;
-        let count = self.define(self.result, IrOperation::SharedMapCount { state })?;
+    /// `keyed_table_count<V>(table: &KeyedTable<V>) -> u64`: how many entries
+    /// of the table the argument names hold `Some` [SHARE-1].
+    fn row_keyed_table_count(&mut self) -> Result<(), LoweringFailure> {
+        let [table] = self.row_parameters()?;
+        let IrType::Address(referent @ IrAddressed::Nominal(_)) = self.value_type(table)? else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let table = self.define(
+            referent.ty(),
+            IrOperation::Load {
+                address: table,
+                referent,
+            },
+        )?;
+        let count = self.define(self.result, IrOperation::KeyedTableCount { table })?;
         self.return_value(count)
     }
 
-    /// `shared_share<T>(shared: &Shared<T>) -> Shared<T>` and
-    /// `shared_map_share<V>(shared: &SharedMap<V>) -> SharedMap<V>`: a further
-    /// handle to the object or map the argument names [SHARE-1].
+    /// `key_set_new(capacity: u64) -> KeySet`: a set holding no key, with
+    /// room for `capacity` keys [SHARE-1].
+    fn row_key_set_new(&mut self) -> Result<(), LoweringFailure> {
+        let [capacity] = self.row_parameters()?;
+        if self.result != IrType::KeySet {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let set = self.define(IrType::KeySet, IrOperation::KeySetNew { capacity })?;
+        self.return_value(set)
+    }
+
+    /// `key_set_put(set: &KeySet, key: &[u8], payload: u64)` and
+    /// `key_set_add(set: &KeySet, key: &[u8], amount: u64)`: the key with its
+    /// payload, replacing the payload of a key the set holds or, with `add`,
+    /// adding to it [SHARE-1].
+    fn row_key_set_put(&mut self, add: bool) -> Result<(), LoweringFailure> {
+        let [set, key, payload] = self.row_parameters()?;
+        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet)
+            || !matches!(self.value_type(key)?, IrType::Range { .. })
+            || self.value_type(payload)? != U64
+        {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        self.define(
+            IrType::Unit,
+            IrOperation::KeySetPut {
+                set,
+                key,
+                payload,
+                add,
+            },
+        )?;
+        self.return_unit()
+    }
+
+    /// `key_set_payload(set: &KeySet, index: u64) -> u64`: the payload of the
+    /// set's key `index` [SHARE-1].
+    fn row_key_set_payload(&mut self) -> Result<(), LoweringFailure> {
+        let [set, index] = self.row_parameters()?;
+        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let payload = self.define(U64, IrOperation::KeySetPayload { set, index })?;
+        self.return_value(payload)
+    }
+
+    /// `shared_share<T>(shared: &Shared<T>) -> Shared<T>`: a further handle
+    /// to the object the argument names [SHARE-1].
     fn row_shared_share(&mut self) -> Result<(), LoweringFailure> {
         let [shared] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {
@@ -572,8 +635,27 @@ impl IrBuilder<'_> {
                 referent,
             },
         )?;
-        self.store_addressed(first, held_second, referent)?;
-        self.store_addressed(second, held_first, referent)?;
+        // [SHARE-1] a table stays where it is and its entries are exchanged
+        // instead, since a statement on another unit of a shared state reads
+        // a table's address without a lock
+        // (compiler/waiting-contexts/state-locks).
+        let mut stored_first = held_second;
+        let mut stored_second = held_first;
+        for path in self.table_paths(referent.ty())? {
+            let table_first = self.table_at(held_first, &path)?;
+            let table_second = self.table_at(held_second, &path)?;
+            self.define(
+                IrType::Unit,
+                IrOperation::KeyedTableSwap {
+                    first: table_first,
+                    second: table_second,
+                },
+            )?;
+            stored_first = self.with_table_at(stored_first, &path, table_first)?;
+            stored_second = self.with_table_at(stored_second, &path, table_second)?;
+        }
+        self.store_addressed(first, stored_first, referent)?;
+        self.store_addressed(second, stored_second, referent)?;
         self.return_unit()
     }
 
@@ -654,6 +736,10 @@ fn ceiling_pair(
         // A range reference is not a stored type [TYPE-8]; a runtime-capacity
         // `Array<T>` is a pointer and a length.
         IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } => (Finite(16), 8),
+        // A key set is its count and its store's pointer; the entries an
+        // entry binding names are the statement's record [SHARE-1, SHARE-2].
+        IrType::KeySet => (Finite(16), 8),
+        IrType::KeyedEntries { .. } => (Finite(24), 8),
         IrType::Address(_) => (Finite(8), 8),
         // This compiler-only task capture has no source layout ceiling.
         IrType::RuntimeBoxPayload { .. } => return None,

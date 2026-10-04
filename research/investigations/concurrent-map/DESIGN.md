@@ -1,5 +1,11 @@
 # A concurrent hash index under keyed atomic statements
 
+The language forms this record measured, `SharedMap<V>` with its keyed and
+whole-map statements, have since been replaced by one shared state whose
+keyed tables are fields, their entries named in a statement's header
+([shared state](../shared-state/DESIGN.md)); the index this record builds and
+measures is the runtime those tables use.
+
 ## The question
 
 Every client of `apps/firn` reaches its keyspace through one shared object, so
@@ -551,6 +557,416 @@ What the table shows:
   2,509,000, 605,000) where firn holds (6,321,000, 6,597,000, 6,597,000):
   its keyspace was one `Shared` object.
 
+### Shared reads of one key
+
+The shared-maps decision held every keyed statement's entry exclusively
+until a workload whose readers of one key contend (Q37). The many-core run
+is that workload: every `LRANGE` request reads the one list, and firn
+answered `LRANGE_100` at 0.44 to 0.61 of Garnet with 4 to 16 server CPUs.
+
+**The design.** A keyed statement whose guard and block write nothing
+through its binder reads its entry beside the other such statements on its
+key; the source marks nothing.
+
+- *Which statements read.* The checker forms effect paths rooted at an
+  atomic binder, as it does at a reference parameter: for a write through
+  the binder, through a place a match binds inside the entry, and through
+  a call that writes such a place. A statement on an entry none of whose
+  written paths is rooted at its binder reads; the statement then removes
+  the binder's paths before its effects reach the row. Nine writing
+  shapes (a replacement, a payload write, a field write, a write on one
+  branch and in a loop, calls that write the payload or the entry, and
+  writes through a copy of the binder or of a payload reference) and
+  three reading ones are pinned in the checker's tests; forming no paths at
+  the binder classes the first seven as readers, and dropping the call's
+  paths classes the two calls as readers. A statement inside a whole-map
+  statement's block holds its entry alone, as that statement holds the map.
+- *The runtime.* A cell's value word keeps, above the node's 48-bit
+  address, how many reads of its entry are under way. A reader adds one
+  and reads the key word again, leaving if the cell was locked; a writer
+  locks the key word and then waits for the count to fall to zero; all
+  four steps are sequentially consistent, so either the reader sees the
+  lock or the writer waits for it. A reader that finds the cell locked
+  waits as a writer does, and its waits count against the same patience
+  (bounded waits above); a writer's wait for readers counts against none,
+  since a reader's block waits for nothing and no reader begins once the
+  cell is locked. A move waits for a cell's readers before it copies it,
+  and a reader that found its entry in a table a move has begun leaves
+  and reads it in the next table. A read of an absent key gets a slot of
+  zeros, `None`, that the map keeps and no statement writes, instead of a
+  claimed cell and a node. The map test pins a reader beside its writer,
+  a torn or falling value, a read across a move and a move that waits for
+  a read.
+- *firn.* `GET`, `LRANGE`, `LLEN`, `HGET`, `SCARD`, `ZCARD` and `ZSCORE`
+  removed an expired key in the statement that read it. Each now removes
+  it in a second statement on the key, which checks the expiry again, so a
+  key set again in between keeps its value. The emitted program calls the
+  read in those seven statements and the exclusive lock at its 21 other
+  keyed sites.
+
+**One key read from every thread**
+([`make entry-reads`](../../experiments/concurrent-map-bench/Makefile)):
+every thread reads one entry of 100 words, holding it exclusively or beside
+the other reads, writes a reply of 0, 100 or 400 three-byte RESP bulk
+strings from it inside the hold, and runs 0, 100 or 300 rounds of a
+multiply-add chain between reads, on this four-CPU container. Shared reads
+against exclusive holds, medians of five interleaved 0.4 s runs:
+
+| Reply in the hold | Work between | 1 thread | 2 threads | 4 threads |
+|---|---:|---:|---:|---:|
+| none | 0 | 0.80 | 0.60 | 0.52 |
+| none | 100 | 0.93 | 0.85 | 0.81 |
+| none | 300 | 0.98 | 1.16 | 1.16 |
+| 100 elements | 0 | 0.96 | 0.85 | 0.87 |
+| 100 elements | 100 | 0.97 | 0.94 | 1.62 |
+| 100 elements | 300 | 1.00 | 0.97 | 2.01 |
+| 400 elements | 0 | 0.96 | 1.64 | 2.89 |
+| 400 elements | 100 | 1.00 | 1.83 | 2.70 |
+| 400 elements | 300 | 0.99 | 1.62 | 2.72 |
+
+A 100-element reply took about 130 ns here (7.70 million exclusive reads a
+second on one thread) and a 400-element one about 400 ns (2.48 million).
+The gain grows with the hold: shared reads won 1.6 to 2.9 times with the
+400 ns hold, and with the 130 ns hold won only at four threads with work
+between reads. A shared read costs a second locked read-modify-write of the
+cell's line, which an empty hold shows (0.80 on one thread) and which every
+reading thread then contends for. An earlier build of the same loop with
+GCC at `-O2`, whose 100-element reply took about 400 ns, gave 2.65 to 3.14
+at four threads, as the 400-element row does here. How long firn's
+`LRANGE_100` holds its list is not measured; its rate on the 14900K bounds
+a hold and hand-off at about 650 ns (1,548,000 a second on one key).
+
+**Criteria, stated before firn is measured with shared reads:**
+
+1. On this container at depth 16, firn's server CPU per `LRANGE_600`
+   reply on two drivers is within 1.15 times its CPU per reply on one
+   (exclusive holds: 15.9 µs against 8.6 µs, stage (c)), and its rate is
+   not below the exclusive build's by more than one 250 ms clock step.
+2. On this container, `SET`, `GET`, `INCR` and `LPUSH` at depth 16 on one
+   and two drivers stay within one clock step of the exclusive build:
+   `GET` now pays the reader's second read-modify-write.
+3. On the 14900K at four server CPUs, `LRANGE_100` reaches Garnet's
+   2,690,000 a second, 1.74 times firn's exclusive 1,548,000, with no other
+   test more than 3% below the same build's exclusive medians.
+
+If the 14900K misses criterion 3 while criterion 1 holds, the readers'
+shared count is the suspect, and marks a reader sets on its own driver's
+line, which a writer scans, are the next design to measure.
+
+**Criteria 1 and 2 on this container**
+([raw lines](../../experiments/io-completion-bench/shared-reads-samples.csv)):
+firn at `e2b774708` against the same source lowered with exclusive holds
+only, one server process per build and pass, interleaved, three passes on
+one and two server CPUs and five more on one for `SET`, `GET` and `LPUSH`.
+Medians, shared against exclusive:
+
+| Server CPUs | Test | Rate | Server CPU per request |
+|---|---|---:|---:|
+| 1 | `SET` (8 passes) | 0.976 | 1.02 |
+| 1 | `GET` (8 passes) | 0.964 | 1.04 |
+| 1 | `INCR` | 0.976 | 1.03 |
+| 1 | `LPUSH` (8 passes) | 1.000 | 1.00 |
+| 1 | `LRANGE_600` | 1.08 | 0.94 |
+| 2 | `SET` | 1.03 | 0.96 |
+| 2 | `GET` | 1.03 | 1.00 |
+| 2 | `INCR` | 1.03 | 0.99 |
+| 2 | `LPUSH` | 1.00 | 0.98 |
+| 2 | `LRANGE_600` | 1.06 | 0.59 |
+
+- **Criterion 1 is met.** With shared reads firn spent 9.72 µs of server
+  CPU per `LRANGE_600` reply on two drivers and 8.76 µs on one, 1.11 times,
+  where the exclusive build spent 16.4 and 9.28 µs, 1.77 times; its rate on
+  two drivers was 55,340 a second against 52,422.
+- **Criterion 2 is met on two drivers and missed by `GET` on one.** On one
+  server CPU `GET` answered 761,325 a second against 789,540, 3.6% lower
+  over eight passes, more than one 250 ms clock step (2.5% at these run
+  lengths). In the same passes `SET`, whose statements the two builds lower
+  alike, was 2.4% lower, and the first three passes put `LPUSH` 6.5% lower
+  before eight passes put it at 1.000, so differences of about 2.5% here
+  come from the runs rather than the change. A shared read's own cost, one
+  more locked read-modify-write, was 8.6 ns in the entry reads above
+  (23.7 against 29.8 million a second on one thread), 0.7% of a `GET`'s
+  1.23 µs of server CPU. How much of `GET`'s 3.6% the change causes is not
+  settled by these runs.
+
+**Criterion 3 on the 14900K**
+([raw lines](../../experiments/io-completion-bench/shared-reads-14900k-samples.csv)):
+the same two builds at `e2b774708` as `firn` and `firn-base` of the `scale`
+mode, three interleaved passes at depth 16. Medians in thousands of requests
+a second:
+
+| Server CPUs | Test | Garnet | Shared | Exclusive | Shared / Garnet | Shared / exclusive |
+|---|---|---:|---:|---:|---:|---:|
+| 4 | `SET` | 4,215 | 5,835 | 6,069 | 1.38 | 0.96 |
+| 4 | `GET` | 4,231 | 6,093 | 6,093 | 1.44 | 1.00 |
+| 4 | `INCR` | 4,352 | 5,859 | 5,859 | 1.35 | 1.00 |
+| 4 | `LPUSH` | 2,626 | 4,761 | 4,913 | 1.81 | 0.97 |
+| 4 | `RPOP` | 3,174 | 5,859 | 5,859 | 1.85 | 1.00 |
+| 4 | `SADD` | 2,781 | 4,025 | 4,024 | 1.45 | 1.00 |
+| 4 | `HSET` | 2,672 | 3,627 | 3,626 | 1.36 | 1.00 |
+| 4 | `ZADD` | 523 | 1,079 | 1,079 | 2.06 | 1.00 |
+| 4 | `LRANGE_100` | 2,538 | 3,109 | 1,507 | 1.22 | 2.06 |
+| 4 | `MSET` | 1,057 | 576 | 564 | 0.55 | 1.02 |
+| 8 | `GET` | 4,352 | 6,622 | 6,623 | 1.52 | 1.00 |
+| 8 | `LRANGE_100` | 2,720 | 3,311 | 1,347 | 1.22 | 2.46 |
+| 16 | `GET` | 5,640 | 6,347 | 6,348 | 1.13 | 1.00 |
+| 16 | `LRANGE_100` | 2,720 | 3,109 | 1,208 | 1.14 | 2.57 |
+
+- **`LRANGE_100` reaches Garnet** at four server CPUs, 3,109,000 a second
+  against 2,538,000, and stays above it at 8 and 16; each of its three
+  passes at four CPUs was above each of Garnet's.
+- **Six of the nine other tests are within 1% of the exclusive build,
+  `MSET` is 2% above, and `SET` and `LPUSH` are 3.9% and 3.1% below, past
+  the 3% bound.** Neither statement reads, and the two builds lower both
+  alike. `SET`'s passes were 5,835,000 twice and 6,069,000 once against
+  6,069,000 three times, two neighbouring steps of `redis-benchmark`'s
+  clock, so three passes resolve no difference smaller than that step.
+- **The `quick` mode settles them: criterion 3 is met, and `GET` pays for
+  shared reads.** The same two builds, four interleaved rounds of three
+  runs each, medians in thousands a second
+  ([raw lines](../../experiments/io-completion-bench/held-keys-14900k-samples.csv)):
+
+  | Server CPUs | Test | Shared | Exclusive | Shared / exclusive |
+  |---|---|---:|---:|---:|
+  | 4 | `SET` | 6,678 | 6,714 | 0.994 |
+  | 4 | `GET` | 6,712 | 6,889 | 0.974 |
+  | 4 | `INCR` | 6,239 | 6,278 | 0.994 |
+  | 4 | `LPUSH` | 5,140 | 5,102 | 1.008 |
+  | 4 | `LRANGE_100` | 3,320 | 1,542 | 2.152 |
+  | 1 | `SET` | 2,004 | 2,002 | 1.001 |
+  | 1 | `GET` | 1,967 | 2,049 | 0.960 |
+  | 1 | `INCR` | 1,882 | 1,914 | 0.984 |
+  | 1 | `LPUSH` | 2,121 | 2,138 | 0.992 |
+  | 1 | `LRANGE_100` | 966 | 956 | 1.010 |
+
+  `SET`, `INCR` and `LPUSH` are within 1.6% at both counts, so the `scale`
+  mode's 3.9% and 3.1% were its clock. `GET` is 2.6% lower on four CPUs,
+  each of its four shared rounds below each exclusive one, and 4.0% lower
+  on one: the cost criterion 2 could not attribute on the container is
+  real. It is inside criterion 3's 3% on four CPUs and outside criterion
+  2's bound on one. A read of an entry no other statement holds pays the
+  reader's second locked read-modify-write and gains nothing from sharing;
+  `docs/todo.md` records it.
+- **Neither firn nor Garnet answers more `LRANGE_100` past four CPUs.** One
+  threaded `redis-benchmark` was the limit for `SET` at eight CPUs (two
+  processes together answered 1.6 to 2.0 times one), so these runs do not
+  say whether the readers' shared count limits `LRANGE` on many cores.
+- **`MSET` is at half its rate of the many-core run** (576,000 against
+  1,243,000 at `c5cdcfc9f`) in both builds, so shared reads do not cause
+  it.
+
+**Refused alternatives.**
+
+- *A read form the writer marks* (`atomic e = &m[key] reads { ... }`):
+  the outcome is the same either way [SHARE-3], so a mark would ask the
+  writer to choose for a difference no program observes, and the checker
+  already knows the block's writes.
+- *Reads that take no lock and check a version afterwards:* a block runs
+  once, and after a torn read of a value larger than a word it may follow a
+  freed node or prove a false fact; it cannot be run again.
+- *Copying the value out under the hold and writing the reply after it:*
+  the copy of a list's elements is itself held exclusively, so readers
+  still take turns, and the program, not the runtime, would carry the
+  copy.
+- *Per-driver reader marks a writer scans* (a reader-biased lock): every
+  writer of every key would scan every driver's mark; it stays the next
+  design if criterion 3 fails.
+
+### The longest wait for a held cell
+
+A writer that finds its key's cell locked waits 16 pauses and then twice as
+long each time up to 1,024 (`wait_for_cell`). firn's `ZADD` spent 60% of its
+server CPU in that wait on four server CPUs, so the longest wait was swept
+from 1 to 4,096 pauses on the 14900K
+([raw lines](../../experiments/io-completion-bench/held-keys-14900k-samples.csv)),
+over the map's own one-key benchmark, whose block takes a few nanoseconds,
+and firn's tests of one key through `redis-bench.sh quick`. Thousands a
+second:
+
+| Workload | 1 | 4 | 16 | 64 | 256 | 1,024 | 4,096 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| one key `update`, 4 threads | 26,177 | 39,818 | 93,514 | 121,785 | 126,173 | 137,586 | 137,872 |
+| one key `update`, 16 threads | 7,943 | 7,120 | 12,277 | 26,916 | 38,433 | 47,384 | 52,284 |
+| uniform `update`, 16 threads | 561,363 | 566,281 | 528,561 | 545,236 | 548,918 | 550,119 | 538,343 |
+| firn `ZADD`, 4 CPUs | 1,220 | 1,222 | 1,220 | 1,202 | 1,094 | 1,101 | 1,072 |
+| firn `HSET`, 4 CPUs | 3,852 | 3,861 | 4,063 | 4,081 | 3,953 | 3,919 | 3,761 |
+| firn `LPUSH`, 16 CPUs | 2,977 | 3,182 | 4,149 | 4,851 | 3,699 | 5,123 | 5,129 |
+| firn `RPOP`, 16 CPUs | 2,340 | 2,896 | 3,658 | 4,719 | 5,391 | 5,658 | 5,488 |
+| firn `INCR`, 4 CPUs (100,000 keys) | 6,245 | 6,271 | 6,212 | 6,357 | 6,275 | 6,393 | 6,313 |
+
+- **No one count is best.** A block of a few nanoseconds wants the longest
+  wait, since its holder then makes many changes in a row: one-key `update`
+  loses 12% at four threads and 43% at 16 when the longest wait is 64
+  pauses. A block of about 0.8 µs wants a short one: `ZADD` on four CPUs
+  gains 10% at 64 pauses or fewer.
+- **firn's own tests disagree across CPU counts:** 64 pauses is 3% to 5%
+  better on four CPUs for `HSET` and `SADD`, and 1,024 is 6% to 20% better
+  on 16 for `LPUSH` and `RPOP`.
+- **The count stays at 1,024.** The one-key benchmark is the cell of the
+  fourth duel the count was chosen on, and no other count improves firn at
+  every CPU count. A wait in proportion to how long the holder has held is
+  the change this points to; it is recorded in `docs/todo.md`.
+- **The control moved by one measurement:** `INCR` at 16 CPUs read 10,373
+  at 64 pauses against about 14,100 at every other count, while other
+  commands ran on the host; the uniform `update` moved by 6% across counts.
+
+### Holding only the entries a statement reaches
+
+**The gap.** With one client process per client CPU (`redis-bench.sh quick`,
+which the scaling run's one threaded client hid), firn's `MSET` answered
+574,000, 545,000 and 489,000 a second on 4, 8 and 16 server CPUs, 0.35,
+0.19 and 0.11 of Garnet as the table below measures it. Its statement holds the whole map, 74% of the
+server's CPU was in `wf_cmap_hold`, and on one CPU it answered 592,000 to
+729,000, more than Garnet's rate per CPU. Half of it came with the ticketed
+holds of the bounded waits: firn at `c54962d33` answered 1,366,000 on four
+CPUs and at `4fbad0e1c` 587,000.
+
+**The owner's direction** (2026-10-02). The source does not change: `atomic
+s = &m { ... atomic e = &s^[key] { ... } ... }` already says that the block
+takes effect at one point and which entries it reaches. The language states
+what an atomic statement means for every target alike; how narrowly a
+statement holds is for the compiler to compute and for the container to
+provide. A key-list type, an indexed form `&m[i in a..b => key]` and a
+`for` clause on the statement were each shown to the owner and set aside
+for this.
+
+**The design.**
+
+- *The twin.* For a statement holding a map's state, the compiler forms a
+  twin of its block: the counted loops and matches that contain a statement
+  on an entry, the `let`s their keys, bounds and scrutinees read, and each
+  such statement with an empty block (`semantic::key_twins`). Lowering runs
+  the twin first, where each entry statement adds its key, then holds the
+  keys' entries, then runs the block, in which each entry statement reaches
+  an entry already held. A statement without a twin holds the whole map as
+  before.
+- *The runtime.* `wf_cmap_hold_set` sorts the keys by hash and then bytes,
+  drops repeats and locks their cells in that order in the current table,
+  creating the absent ones, so statements holding sets never wait for each
+  other in a cycle; a keyed statement holds one cell and waits for none. A
+  probe locks every cell of its key's hash to compare bytes, so two keys of
+  one hash are the one way a cycle forms: a set that has two holds the
+  whole map instead, and a wait behind another statement's key of the same
+  hash ends with the set's patience, which holds the whole map too. A set
+  that meets a move gives its cells back, helps the move and locks again in
+  the next table, since a mover waits for every locked cell; one that finds
+  the table full holds the whole map, whose statements grow the table. The
+  release keeps or removes each entry as the block left it.
+- *When a twin is answered.* The block names the held state only as an
+  entry's target; no `return`, `break`, `give` or propagating `let` leaves
+  it; no general loop contains an entry statement; every kept expression
+  is a constant, a binding read, a field, an integer operation or
+  conversion that answers for every operand, a float or boolean operation,
+  a range's measure, a range over a range or a constant, or a call with no
+  `requires` to a function that answers the same when called again; and
+  nothing a kept expression reads is written, released, consumed or
+  addressed in the block or written by the function's row. The module's
+  header states each condition.
+
+**Four probes.** Four separate agents were set to break it, each with the
+sources and a compiler but not the reasoning: one the twin's conditions,
+one the runtime's sets under stress and the sanitizers, one the lowering
+and the emitted LLVM, one the claim that holding less is not observable.
+They wrote 100 or so programs and tests. What they found, and what each
+became:
+
+| Found | Witness | Now |
+|---|---|---|
+| A block that runs two object statements, a read and then a write, lost additions when two such blocks on different keys ran together | 0 of 40 runs right on four drivers | A statement holds its keys only when its block runs at most one object statement on any path |
+| A statement that only read its entry and ran two object statements lost them the same way under shared reads | 0 of 40 | Such a statement holds its entry alone |
+| A statement on one entry that raises and lowers a flag in two object statements was seen half done by a whole-map statement on another key | flag read raised on four drivers | No statement holds less than its map in a program where a block holding an entry or a map can run two object statements |
+| A key formed after a guard that leaves by `give`, or never returns, was formed by the twin out of bounds; a division ran by zero | SIGSEGV, SIGFPE | A kept expression owes nothing: total operations, no `requires`, and a range narrowed to its source's bounds in the twin |
+| A key under a call that read the wall clock differed between the twin and the block | abort at the runtime's check | Kept calls reach no body-less function with a `reads` row |
+| That judgment was cached wrongly through mutual recursion | abort | A function met again while judged is taken not to repeat |
+| A twin's match copied `continues: false` | lowering failure | A twin's match continues |
+| A set with more new keys than the table had cells moved to a table as small, again and again, until its patience ended | 16 ms a statement; a hang with unbounded patience | A full table holds the whole map |
+| A statement read a node freed through the next table after it locked a cell of a table a move had left | heap-use-after-free under ASAN; in the single statement's path since stage (b) | The node is read only once no move has begun |
+| Counts were stored after the unlock, where a mover could miss them | cells counted off by one, with a hook | Stored before the unlock |
+| A key of no bytes and no address reached `memcmp` | UBSAN | Guarded |
+
+The runtime probe ran 875 million operations and 470 million set holds in
+its default matrix and found no cycle of waits with unbounded patience, no
+statement seen half done and no race under TSAN other than the full table.
+The lowering probe walked the CFG of every narrowed statement in firn and
+its tests: on each path one hold, each entry reached and left, one release,
+and no suspension between the first key and the release.
+
+**What holding less rests on.** A block that runs at most one object
+statement takes effect as if at that statement's point: what it holds is
+unchanged by others until it ends. When every block of the program that
+holds an entry or a map is such a block, every outcome is one some order of
+whole statements gives, and so one the whole map's exclusion gives. The
+condition is the program's because the block that makes the difference may
+be another statement's.
+
+**Measured** (`redis-bench.sh quick`, medians of three runs of three
+seconds, thousands of requests a second, against the faster of Garnet and
+Dragonfly measured the same way; firn at `b3a18510a`,
+[raw lines](../../experiments/io-completion-bench/held-keys-14900k-samples.csv)):
+
+| Test | 4 CPUs | best other | ratio | 8 CPUs | best other | ratio | 16 CPUs | best other | ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `SET` | 6,701 | 4,890 | 1.37 | 13,211 | 7,177 | 1.84 | 14,600 | 9,830 | 1.49 |
+| `GET` | 6,927 | 4,502 | 1.54 | 13,401 | 7,333 | 1.83 | 14,745 | 8,763 | 1.68 |
+| `INCR` | 6,322 | 4,810 | 1.31 | 12,653 | 6,225 | 2.03 | 14,580 | 10,361 | 1.41 |
+| `LPUSH` | 5,358 | 2,670 | 2.01 | 5,844 | 3,015 | 1.94 | 5,275 | 2,475 | 2.13 |
+| `RPOP` | 6,029 | 3,125 | 1.93 | 6,524 | 3,153 | 2.07 | 5,477 | 2,488 | 2.20 |
+| `SADD` | 4,211 | 2,781 | 1.51 | 4,422 | 3,271 | 1.35 | 3,975 | 2,404 | 1.65 |
+| `HSET` | 3,890 | 2,690 | 1.45 | 3,907 | 2,631 | 1.49 | 3,506 | 2,226 | 1.58 |
+| `ZADD` | 1,104 | 979 | 1.13 | 1,021 | 980 | 1.04 | 841 | 907 | 0.93 |
+| `LRANGE_100` | 3,196 | 2,512 | 1.27 | 3,435 | 2,987 | 1.15 | 3,278 | 2,947 | 1.11 |
+| `MSET` | 2,721 | 1,640 | 1.66 | 5,169 | 2,830 | 1.83 | 7,398 | 4,504 | 1.64 |
+
+- **`MSET` went from 574,000, 545,000 and 489,000 a second to 2,721,000,
+  5,169,000 and 7,398,000**, with no change to firn's source: its `MSET`
+  and its `DEL` and `EXISTS` of several keys are the three statements with
+  a twin, and its count of keys holds the map.
+- **The owner's aim, 1.4 times the best other server on every test, is
+  missed by `ZADD` and `LRANGE_100` at every CPU count, by `SET` and `INCR`
+  at four, and by `SADD` at eight.** `ZADD` and `LRANGE_100` each run on
+  one key; neither waits for the map.
+- **The other servers' rates moved between two measurements of them**:
+  Garnet's `SET` on 16 CPUs read 7,626,000 and then 9,830,000. The table
+  uses the later, higher ones; a ratio near 1.4 is not settled by one
+  measurement of the reference.
+- **Not measured with the `scale` mode,** whose threaded client is the
+  limit on 8 and 16 CPUs; the quick mode verifies nothing, and firn's ten
+  corpus tests ran at the same revision.
+
+**The link and the reply** (four server CPUs, `redis-bench.sh quick`,
+thousands of requests a second; these runs' lines were read from the
+mode's table and not kept, so the figures of this part are unrecorded
+beyond it). firn's module and the runtime's units were compiled apart at
+`-O2`, so each keyed statement called into the runtime:
+
+| Build | `SET` | `GET` | `LPUSH` | `ZADD` | `LRANGE_100` | `MSET` |
+|---|---:|---:|---:|---:|---:|---:|
+| `-O2`, units apart (firn at `da2f198aa`) | 6,504 | 6,493 | 5,008 | 1,114 | 3,192 | 574 |
+| `-O2`, `--full-lto` | 6,720 | 6,733 | 5,437 | 1,079 | 3,276 | 590 |
+| `-O3`, `--full-lto` | 6,720 | 6,759 | 5,483 | 1,098 | 3,284 | 581 |
+| `-O3`, `--full-lto`, `-march=native` | 6,774 | 6,854 | 5,152 | 1,058 | 3,233 | 576 |
+
+- Linking the units together gives about 3% on `SET`, `GET` and
+  `LRANGE_100` and 4% to 8% on `LPUSH`; `-O3` and `-march=native` give
+  nothing two runs can tell from none. `redis-bench.sh` now builds firn
+  with `--full-lto`; the compiler's level stays `-O2`.
+- `reply_bulk` wrote each byte of an element through `put`, which read and
+  stored the reply's position for every byte. Written from one position
+  read once, `LRANGE_100` went from 3,196,000 to 3,384,000 on four CPUs;
+  with the link above, 3,427,000, 1.36 of Garnet, with `SET` at 1.42 and
+  `INCR` at 1.35.
+- **What is left under the aim.** `SET` and `INCR` spend half their server
+  CPU in the kernel's socket calls on four CPUs, so the next gain there is
+  in how the completion runtime batches them. `LRANGE_100` spends a quarter
+  in `reply_bulk`, reading a hundred separately boxed elements, and 6% in
+  the readers' shared count. `ZADD` runs on one key, 60% of its server CPU
+  waiting for it; its block's own work decides its rate. None of the three
+  is measured further here.
+- **`LRANGE_100` on 8 and 16 CPUs is limited by the client:** on eight,
+  24 client processes drew 4,426,000 a second from firn where 16 drew
+  3,421,000. The quick table's `LRANGE_100` ratios at 8 and 16 are
+  therefore not the servers'.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are
@@ -748,8 +1164,8 @@ statement's block runs once with its entry held:
   no value yet, and then reads the value. A cell never holds another key and
   its value is written by one store, so the value read is one the key held
   during the read; entries larger than a word would need a version in their
-  header, and stage (b)'s entries are read only under the cell's lock, since
-  every keyed statement holds its entry (Q37). The runtime's test
+  header, and stage (b)'s entries are read under the cell's lock or a
+  reader's count (shared reads above). The runtime's test
   fails when a read does not wait, and cannot fail when a read checks the
   key word again after the value, so that check was removed.
 - **A removed key stays a removed cell until the table moves,** so a probe

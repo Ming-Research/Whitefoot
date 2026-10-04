@@ -484,14 +484,21 @@ fn assign_atomic_scopes(
     binding: ScopeId,
     body: ScopeId,
 ) -> Result<(), ResolutionCompilerFailure> {
+    let mut target_seen = false;
     for (index, child) in children.iter().enumerate() {
         let production = topology
             .node(*child)
             .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
             .production;
         child_scopes[index] = match production {
-            Production::Place => enclosing,
-            Production::Expr => binding,
+            // The target place stays in the enclosing scope, so it cannot
+            // name a binder; every entry binding's place sees the binders,
+            // since it is reached through the statement's binding [SHARE-2].
+            Production::Place if !target_seen => {
+                target_seen = true;
+                enclosing
+            }
+            Production::Place | Production::Expr => binding,
             Production::Stmt => body,
             _ => return Err(ResolutionCompilerFailure::InvalidCanonicalTree),
         };

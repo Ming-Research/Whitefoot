@@ -1674,13 +1674,16 @@ pub(super) fn collect_statement_calls(
             }
             CheckedStatement::Atomic {
                 target,
-                key,
+                entries,
                 guard,
                 body,
                 ..
             } => {
                 collect_expression_calls(caller, target, calls);
-                if let Some(key) = key {
+                for key in entries
+                    .iter()
+                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                {
                     collect_expression_calls(caller, key, calls);
                 }
                 if let Some(guard) = guard {

@@ -1,0 +1,57 @@
+struct Store {
+  map: KeyedTable<u8>;
+  count: u8;
+}
+
+const names: Array<u8, 1> =[97_u8];
+
+fn bump(store: Shared<Store>) -> result: unit pure waits {
+  let name = &names[0_u64..1_u64];
+  for @round (index in 0_u64..20_u64) {
+    atomic s = &store, slot = &s^.map[name] {
+      match slot^ {
+        Some(value: held) => {
+          let next = held^ +wrap 1_u8;
+          set slot^ = Some<u8>(value: next);
+        }
+        None() => {
+          set slot^ = Some<u8>(value: 1_u8);
+        }
+      }
+      set s^.count = s^.count +wrap 1_u8;
+    }
+  }
+  return unit;
+}
+
+fn bump_four(store: &Shared<Store>) -> result: unit reads(store) waits {
+  for @start (index in 0_u64..4_u64) {
+    let handle = shared_share::<Store>(shared: store);
+    spawn bump(store: move handle);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = keyed_table_new::<u8>(capacity: 0_u64);
+  let state = Store(map: move table, count: 0_u8);
+  let store = shared_new::<Store>(value: move state);
+  bump_four(store: &store);
+  let name = &names[0_u64..1_u64];
+  let value = 0_u8;
+  let total = 1_u8;
+  atomic s = &store, slot = &s^.map[name] {
+    match slot^ {
+      Some(value: held) => {
+        set value = held^;
+      }
+      None() => {
+      }
+    }
+    set total = s^.count;
+  }
+  if value != total {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: value);
+}

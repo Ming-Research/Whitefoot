@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-04 v0.89: shared state locked by parts
+
+Rules: changed GRAM-4, TYPE-6, TYPE-10, SET-1, REF-1, REF-4, STOR-3, OP-4, OP-9, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1, ENT-2, MSR-1
+
+Owner-approved: The redesign's direction and Q1-Q18 were settled with the owner in the sessions of 2026-10-02 and 2026-10-03; on 2026-10-03, in conversation, written in Chinese: "Q19-Q26 approved as recommended (option A where options were given)", recorded on PR #208; on 2026-10-04, in the session, written in Chinese, after the handoff of PR #208 at `cb05ed6ae`, which showed every rule change with its before and after behavior: "I approve it again now. These are the exact words." (translated), and Q35 A ("No problem, do it this way", translated).
+
+Summary: SHARE-1 replaces `SharedMap<V>` and `SharedMapState<V>` with `KeyedTable<V>`, a value that is a field of a shared state or the state itself and no indexable base, and adds `KeySet`, distinct keys in byte order each with a `u64` payload; PRE-1 declares `keyed_table_new`, `keyed_table_count` and the `key_set_*` functions with their contracts (Q22, Q25). GRAM-4 and SHARE-2 give `atomic` one target form with entry bindings `e = &s^.t[k]` in its header, read when the statement begins, binding `&Option<V>` for one key or `&KeyedEntries<V>` for a key set with `e^.len == k.len` at the block's entry; no atomic statement contains another, every one is a waiting call, and the guard and block use every entry binding. SHARE-3 orders the statements on one state and lets an implementation hold less wherever outcomes are those of exclusive access. TYPE-6, TYPE-10, SET-1, REF-1, STOR-3, WAIT-2, OP-4, ENT-2 and MSR-1 follow: entry binders as values, the new readonly `len` fields as measures, entries as an indexable base, paths starting only at an object's state; REF-4 refuses a range over keyed entries. OP-9 states the layout ceilings of `Shared<T>` `(8,8)`, `KeySet` `(16,8)` and `KeyedEntries<V>` `(24,8)`, the representations the compiler gives them (Q35 A). The branch amended v0.85 as v0.86 before main released v0.86 to v0.88; main's v0.88 is archived, and the same rule changes stand over it as v0.89.
+
 ## 2026-10-02 v0.88: box_segments_filled returns its cell
 
 Rules: changed OP-9, OP-13, STOR-6, STOR-8, PRE-1

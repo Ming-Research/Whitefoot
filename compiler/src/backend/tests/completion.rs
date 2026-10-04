@@ -56,7 +56,7 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         ("completion/floor.c", crate::FLOOR_RUNTIME_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
-        ("shared_map.c", crate::SHARED_MAP_SOURCE),
+        ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
     ];
     for staged in ["completion", "sched"] {
         std::fs::create_dir_all(directory.join(staged)).expect("stage runtime directory");
@@ -65,7 +65,7 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         std::fs::write(directory.join(name), source).expect("write compiler-owned C unit");
     }
     for (name, _) in units {
-        // `shared_map.c` compiles the concurrent map in, as its host.
+        // `keyed_table.c` compiles the concurrent map in, as its host.
         if !name.ends_with(".c") || name == "concurrent_map.c" {
             continue;
         }
@@ -546,7 +546,7 @@ fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
     for (name, source) in [
         ("bridge.c", crate::COMPLETION_BRIDGE_SOURCE),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
-        ("shared_map.c", crate::SHARED_MAP_SOURCE),
+        ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),
         ("runtime.c", crate::COMPLETION_RUNTIME_SOURCE),
         ("wait_host.c", crate::COMPLETION_WAIT_HOST_SOURCE),
@@ -581,4 +581,34 @@ fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
             }
         }
     }
+}
+
+/// The frame records a statement keeps for the runtime are reserved at the
+/// sizes the runtime defines and asserts (compiler/waiting-contexts/state-locks),
+/// and a shared object's state begins where the runtime puts it.
+#[test]
+fn frame_record_sizes_are_the_runtime_s_own() {
+    let defined = |name: &str| -> u64 {
+        let line = crate::COMPLETION_BRIDGE_HEADER
+            .lines()
+            .find(|line| line.starts_with(&format!("#define {name} ")))
+            .unwrap_or_else(|| panic!("bridge.h defines {name}"));
+        line.trim_start_matches(&format!("#define {name} "))
+            .trim_end_matches('u')
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} is a number: {line}"))
+    };
+    assert_eq!(
+        defined("WF_TABLE_ENTRY_SIZE"),
+        crate::backend::TABLE_ENTRY_SIZE
+    );
+    assert_eq!(
+        defined("WF_TABLE_HOLD_SIZE"),
+        crate::backend::TABLE_HOLD_SIZE
+    );
+    assert_eq!(defined("WF_WATCH_SIZE"), crate::backend::WATCH_SIZE);
+    assert_eq!(
+        defined("WF_SHARED_STATE_OFFSET"),
+        crate::backend::SHARED_STATE_OFFSET
+    );
 }

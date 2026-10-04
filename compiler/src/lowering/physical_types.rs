@@ -71,7 +71,7 @@ pub(super) fn base_elements(
             CheckedNominalKind::Box { referent, .. } => pending.push(*referent),
             CheckedNominalKind::Shared { state, shape } => {
                 pending.push(*state);
-                if let CheckedShared::Map { entry } | CheckedShared::State { entry } = shape {
+                if let CheckedShared::Table { entry } = shape {
                     pending.push(*entry);
                 }
             }
@@ -82,7 +82,8 @@ pub(super) fn base_elements(
         if let CheckedType::Array { element, .. }
         | CheckedType::Window { element, .. }
         | CheckedType::Buffer { element }
-        | CheckedType::Segments { element } = ty
+        | CheckedType::Segments { element }
+        | CheckedType::KeyedEntries { element } = ty
             && needed.insert(element.index())
         {
             pending.push(
@@ -291,10 +292,7 @@ impl<'a> PhysicalTypes<'a> {
                 state: self.ty(state)?,
                 shape: match shape {
                     CheckedShared::Object => IrShared::Object,
-                    CheckedShared::Map { entry } => IrShared::Map {
-                        entry: self.ty(entry)?,
-                    },
-                    CheckedShared::State { entry } => IrShared::State {
+                    CheckedShared::Table { entry } => IrShared::Table {
                         entry: self.ty(entry)?,
                     },
                 },
@@ -447,12 +445,8 @@ impl<'a> PhysicalTypes<'a> {
                                 pending.push((*left, *right))
                             }
                             (
-                                CheckedShared::Map { entry: left_entry },
-                                CheckedShared::Map { entry: right_entry },
-                            )
-                            | (
-                                CheckedShared::State { entry: left_entry },
-                                CheckedShared::State { entry: right_entry },
+                                CheckedShared::Table { entry: left_entry },
+                                CheckedShared::Table { entry: right_entry },
                             ) => {
                                 pending.push((*left, *right));
                                 pending.push((*left_entry, *right_entry));
