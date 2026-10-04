@@ -357,7 +357,19 @@ PIPELINES=${PIPELINES:-"1 16"}
 
 # One test's rate on the running server at one depth after a given number of
 # requests, the list refill of an LRANGE test left out.
+# The scale run's client: by default one single-threaded redis-benchmark per
+# client CPU (quick_client), since one threaded process stops near 6.7
+# million requests a second, below firn on 16 server CPUs (21 million with
+# the processes, measured on the i9-14900K); SCALE_CLIENT=threads keeps the
+# threaded process, whose rate and latencies redis-benchmark reports itself.
+procs_client() {
+    test "${SCALE_CLIENT:-procs}" != threads && test "$MODE" = scale && test "$2" = 16
+}
 pilot_rate() {
+    if procs_client "$1" "$2"; then
+        quick_client "$3" "$1"
+        return
+    fi
     taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
         --threads "$CLIENT_THREADS" -c 50 -n "$3" -r 100000 -t "$1" -P "$2" \
         --csv 2>/dev/null | grep -v '^"test"' | grep -v '^"LPUSH (needed' |
@@ -400,6 +412,10 @@ suite_run() {
     for pipeline in $PIPELINES; do
         for test in $SUITE_TESTS; do
             requests=$(requests_for "$test" "$pipeline")
+            if procs_client "$test" "$pipeline"; then
+                echo "$1,$2,$3,pipeline $pipeline,\"$test\",\"$(quick_client "$requests" "$test")\",processes"
+                continue
+            fi
             taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
                 --threads "$CLIENT_THREADS" -c 50 -n "$requests" -r 100000 \
                 -t "$test" -P "$pipeline" --csv 2>/dev/null |
