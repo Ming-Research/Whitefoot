@@ -324,6 +324,21 @@ fn raise_text(vm: &Vm, text: &[u8]) -> r: Bool reads(text), writes(vm) {
 }
 
 fn raw_type_error(vm: &Vm, v: Value, op: u8) -> r: Bool writes(vm) {
+  if cjson_isnull(value: v) {
+    if op == 0_u8 {
+      return raise_text(vm: vm, text: &cj_nullarith[0_u64..49_u64]);
+    }
+    if op == 1_u8 {
+      return raise_text(vm: vm, text: &cj_nullindex[0_u64..33_u64]);
+    }
+    if op == 2_u8 {
+      return raise_text(vm: vm, text: &cj_nullcall[0_u64..32_u64]);
+    }
+    if op == 3_u8 {
+      return raise_text(vm: vm, text: &cj_nullconcat[0_u64..39_u64]);
+    }
+    return raise_text(vm: vm, text: &cj_nulllen[0_u64..41_u64]);
+  }
   let k = kind(v: v);
   if op == 0_u8 {
     if k == 0_u8 {
@@ -707,3 +722,13 @@ fn type_error(vm: &Vm, v: Value, op: u8) -> r: Bool writes(vm) {
   set vm^.error = error_location(vm: vm, pc: pc, level: 1_u64, message: message);
   return rejected;
 }
+
+const cj_nullarith: Array<u8, 49> = "attempt to perform arithmetic on a userdata value";
+
+const cj_nullindex: Array<u8, 33> = "attempt to index a userdata value";
+
+const cj_nullcall: Array<u8, 32> = "attempt to call a userdata value";
+
+const cj_nullconcat: Array<u8, 39> = "attempt to concatenate a userdata value";
+
+const cj_nulllen: Array<u8, 41> = "attempt to get length of a userdata value";

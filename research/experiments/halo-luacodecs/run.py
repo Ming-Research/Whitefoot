@@ -62,6 +62,34 @@ def corpus():
             add('struct','return {struct.'+fn+'('+args+')}')
     add('struct', 'return {struct.unpack("Bc0",struct.pack("Bc0",3,"abc"))}')
     add('struct', 'return {struct.unpack("s", "abc") }')
+    for source in (
+        'return {pcall(cjson.encode)}',
+        'return {pcall(cjson.decode, false)}',
+        'local f=cjson.decode; return f(false)',
+        'local f=bit.tobit; return f(false)',
+        'return cjson.null()',
+        'return cjson.null+1',
+        'return cjson.null[1]',
+        'return cjson.null.."x"',
+        'return #cjson.null',
+        'return cjson.encode({[math.huge]=1})',
+        'cjson.encode_invalid_numbers("null"); return cjson.encode({[math.huge]=1})',
+        'cjson.encode_invalid_numbers(true); return cjson.encode({[math.huge]=1})',
+        'return cjson.decode("\\\"\\u0041\\uD800\\\"")',
+        'return cjson.decode("\\\"\\uD834\\uDD1E\\\"")',
+        'return cjson.decode("\\\"\\u0041\\u0042\\\"")',
+        'local j=cjson.new(); local k=j.new(); j.encode_invalid_numbers(true); return {j.encode(math.huge),k.encode_invalid_numbers(),cjson.encode_invalid_numbers()}',
+        'return {cjson.encode_sparse_array()}',
+        'return {cjson.encode_sparse_array("on",3,5)}',
+        'cjson.encode_keep_buffer(false); return {cjson.encode_keep_buffer(),cjson.encode({1}),cjson.encode({2})}',
+    ): add('cjson',source)
+    for tag in (196,197,198,199,200,201,212,213,214,215,216,193):
+        add('cmsgpack',f'return cmsgpack.unpack(string.char({tag}))')
+    add('cmsgpack','return cmsgpack.unpack(string.char(207)..string.rep(string.char(255),8))')
+    add('cmsgpack','return cmsgpack.unpack(string.char(129,192,1))')
+    add('cmsgpack','return cmsgpack.unpack(string.char(129,203,127,248,0,0,0,0,0,0,1))')
+    for source in ('return {struct.unpack("", "", -1)}','return {struct.unpack("c0", "abc")}', 'return struct.pack("c4","abc")', 'return {struct.unpack("!8bd",struct.pack("!8bd",1,1.25))}'):
+        add('struct',source)
     return rows
 
 REFERENCE = r"""

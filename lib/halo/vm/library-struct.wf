@@ -335,17 +335,15 @@ fn library_struct(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: 
           set bits_v62 = reinterpret::<f64, u64>(x_v64);
         } else {
           let integral_v69 = ftrunc(x_v64);
-          if integral_v69 < 0.0_f64 {
+          if flt(integral_v69, 0.0_f64) {
             if cvt.defined::<f64, i64>(integral_v69) {
               let n_v70 = cvt::<f64, i64>(integral_v69);
               set bits_v62 = reinterpret::<i64, u64>(n_v70);
             } else {
               set bits_v62 = 9223372036854775808_u64;
             }
-          } else {
-            if cvt.defined::<f64, u64>(integral_v69) {
-              set bits_v62 = cvt::<f64, u64>(integral_v69);
-            }
+          } else if cvt.defined::<f64, u64>(integral_v69) {
+            set bits_v62 = cvt::<f64, u64>(integral_v69);
           }
         }
         for (i_v71 in 0_u64..size_v47) {
@@ -508,8 +506,9 @@ fn library_struct(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: 
     let value_v113 = Value::Num(n: n_v112);
     return lib_result(stack: stack, func: func, value: value_v113);
   }
-  let next_v114 = pos_v33 +sat 1_u64;
-  let n_v115 = cvt.nearest::<u64, f64>(next_v114);
+  let next_v114 = pos_v33 +wrap 1_u64;
+  let signed_next = reinterpret::<u64, i64>(next_v114);
+  let n_v115 = cvt.nearest::<i64, f64>(signed_next);
   let value_v116 = Value::Num(n: n_v115);
   codec_value_push(values: &results_v43, value: value_v116);
   return codec_results(stack: stack, func: func, values: &results_v43);

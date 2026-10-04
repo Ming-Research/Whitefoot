@@ -595,10 +595,8 @@ fn cjson_decode(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, value:
             if last_v98 < phases_v89.inner.len {
               set phases_v89.inner[last_v98] = 3_u8;
             }
-          } else {
-            if last_v98 < phases_v89.inner.len {
-              set phases_v89.inner[last_v98] = 4_u8;
-            }
+          } else if last_v98 < phases_v89.inner.len {
+            set phases_v89.inner[last_v98] = 4_u8;
           }
         }
       }
@@ -607,7 +605,9 @@ fn cjson_decode(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, value:
       return cj_parse_error(vm: vm, token: token_v96, expected: expected_v99);
     }
     if closing_v103 {
-      let ignored_v106 = take_back(window: &phases_v89.inner);
+      if phases_v89.inner.len > 0_u64 {
+        let ignored_v106 = take_back(window: &phases_v89.inner);
+      }
     }
     if opening_v102 {
       let d_v107 = phases_v89.inner.len +sat 1_u64;

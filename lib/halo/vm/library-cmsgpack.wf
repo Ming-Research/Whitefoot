@@ -71,12 +71,12 @@ fn mp_write(vm: &Vm, out: &Box<Slots<u8>>, value: Value, depth: u64) -> r: unit 
                 match num_of(v: key_v14) {
                   Is(x: n_v20) => {
                     let integer_v21 = ftrunc(n_v20);
-                    let positive_v22 = n_v20 > 0.0_f64;
+                    let positive_v22 = fgt(n_v20, 0.0_f64);
                     let whole_v23 = feq(n_v20, integer_v21);
                     if band(positive_v22, whole_v23) {
                       if cvt.defined::<f64, i32>(n_v20) {
                         let index_v24 = cvt::<f64, i32>(n_v20);
-                        let wide_v25 = cvt::<i32, u64>(index_v24);
+                        let wide_v25 = cvt.wrap::<i32, u64>(index_v24);
                         set max_v16 = imax(max_v16, wide_v25);
                       } else {
                         set array_v17 = False();
@@ -170,6 +170,20 @@ fn mp_read(vm: &Vm, source: &[u8], cursor: &MpCursor) -> r: Value reads(source),
     let count_v45 = 0_u64;
     let container_v46 = False();
     let map_v47 = False();
+    let raw_offset = cursor^.offset;
+    if raw_offset < source^.len {
+      let raw_tag = source^[raw_offset];
+      let low_binary = raw_tag >= 196_u8;
+      let high_binary = raw_tag <= 201_u8;
+      let low_ext = raw_tag >= 212_u8;
+      let high_ext = raw_tag <= 216_u8;
+      let binary_tag = band(low_binary, high_binary);
+      let ext_tag = band(low_ext, high_ext);
+      if bor(binary_tag, ext_tag) {
+        set cursor^.error = 2_u8;
+        return nil_v43;
+      }
+    }
     match msgpack::decode::next(source: source, offset: cursor^.offset) {
       Err(error: e_v48) => {
         match e_v48 {

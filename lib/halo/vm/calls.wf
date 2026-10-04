@@ -246,6 +246,10 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
         return enter_lua(vm: vm, stack: stack, h: bound_h_2, func: fslot, argc: nargs, wanted: nr, return_pc: return_pc, tail: tailing);
       }
       Native(id: bound_id_1) => {
+        if bound_id_1 == 111_u32 {
+          let ignored = type_error(vm: vm, v: v, op: 2_u8);
+          return Step::Error();
+        }
         if bound_id_1 == builtin_pcall {
           if nargs == 0_u64 {
             let ignored = raise_text(vm: vm, text: &calls_text_3[0_u64..43_u64]);

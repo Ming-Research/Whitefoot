@@ -36,8 +36,8 @@ fn cjson_config(vm: &Vm) -> r: u64 writes(vm) {
     let target_v5 = cap_v3 +sat 16_u64;
     grow(cell: &vm^.cjson_configs, capacity: target_v5);
   }
-  let config_v6 = cjson_default();
   if vm^.cjson_configs.inner.len < vm^.cjson_configs.inner.cap {
+    let config_v6 = cjson_default();
     place_back(window: &vm^.cjson_configs.inner, value: move config_v6);
   }
   return index_v4;
@@ -305,11 +305,11 @@ fn cjson_write(vm: &Vm, writer: &json::encode::Writer, out: &Box<Slots<u8>>, val
                   Is(x: n_v75) => {
                     let integral_v76 = ftrunc(n_v75);
                     let whole_v77 = feq(integral_v76, n_v75);
-                    let positive_v78 = n_v75 >= 1.0_f64;
+                    let positive_v78 = fge(n_v75, 1.0_f64);
                     if band(whole_v77, positive_v78) {
                       if cvt.defined::<f64, i32>(n_v75) {
                         let index_v79 = cvt::<f64, i32>(n_v75);
-                        let wide_v80 = cvt::<i32, u64>(index_v79);
+                        let wide_v80 = cvt.wrap::<i32, u64>(index_v79);
                         set max_v71 = imax(max_v71, wide_v80);
                       } else {
                         set array_v72 = False();
@@ -374,8 +374,12 @@ fn cjson_write(vm: &Vm, writer: &json::encode::Writer, out: &Box<Slots<u8>>, val
                   let bytes_v98 = box_slots_new::<u8>(capacity: 32_u64);
                   match num_of(v: key_v69) {
                     Is(x: n_v99) => {
-                      let precision_v100 = settings^[2_u64];
-                      cjson_number(value: n_v99, precision: precision_v100, out: &bytes_v98);
+                      let escape_number = True();
+                      let number_writer = json::encode::new(escape_slash: escape_number);
+                      let encoded_key = cjson_write(vm: vm, writer: &number_writer, out: &bytes_v98, value: key_v69, settings: settings, depth: 0_u64);
+                      if bnot(encoded_key) {
+                        return False();
+                      }
                     }
                     Not() => {
                       match str_of(v: key_v69) {
@@ -430,16 +434,27 @@ fn library_cjson(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, bound
       return cjson_decode(vm: vm, stack: stack, func: func, argc: argc, value: value_v112, settings: &settings_v111);
     }
     let buffer_v113 = box_slots_new::<u8>(capacity: 0_u64);
+    if settings_v111[3_u64] != 0_u64 {
+      if config_v108 < vm^.cjson_configs.inner.len {
+        swap(first: &buffer_v113, second: &vm^.cjson_configs.inner[config_v108].buffer);
+      }
+    }
+    cjson_truncate(out: &buffer_v113, length: 0_u64);
     let yes_v114 = True();
     let writer_v115 = json::encode::new(escape_slash: yes_v114);
     let ok_v116 = cjson_write(vm: vm, writer: &writer_v115, out: &buffer_v113, value: value_v112, settings: &settings_v111, depth: 0_u64);
     if bnot(ok_v116) {
+      if settings_v111[3_u64] != 0_u64 {
+        if config_v108 < vm^.cjson_configs.inner.len {
+          swap(first: &buffer_v113, second: &vm^.cjson_configs.inner[config_v108].buffer);
+        }
+      }
       return HostOutcome::Raised();
     }
     let result_v117 = bytes_value(vm: vm, bytes: &buffer_v113);
     if settings_v111[3_u64] != 0_u64 {
       if config_v108 < vm^.cjson_configs.inner.len {
-        set vm^.cjson_configs.inner[config_v108].buffer = move buffer_v113;
+        swap(first: &buffer_v113, second: &vm^.cjson_configs.inner[config_v108].buffer);
       }
     }
     return lib_result(stack: stack, func: func, value: result_v117);
@@ -597,6 +612,12 @@ fn library_cjson(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, bound
         }
         if config_v108 < vm^.cjson_configs.inner.len {
           set vm^.cjson_configs.inner[config_v108].settings[setting_v122] = chosen_v128;
+          if setting_v122 == 3_u64 {
+            if chosen_v128 == 0_u64 {
+              let empty_buffer = box_slots_new::<u8>(capacity: 0_u64);
+              set vm^.cjson_configs.inner[config_v108].buffer = move empty_buffer;
+            }
+          }
         }
       }
       let result_v154 = Value::Nil();

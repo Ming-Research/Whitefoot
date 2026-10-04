@@ -17,7 +17,8 @@ const bit_upper: Array<u8, 16> = "0123456789ABCDEF";
 fn bit_argument(vm: &Vm, value: Value) -> r: Option<u32> reads(vm) {
   match coerce_number(vm: vm, v: value) {
     Is(x: x_v1) => {
-      let biased_v2 = x_v1 + 6755399441055744.0_f64;
+      let bias = cvt.nearest::<u64, f64>(6755399441055744_u64);
+      let biased_v2 = fadd(x_v1, bias);
       let bits_v3 = reinterpret::<f64, u64>(biased_v2);
       let low_v4 = cvt.wrap::<u64, u32>(bits_v3);
       return Some<u32>(value: low_v4);
