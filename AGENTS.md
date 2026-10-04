@@ -138,6 +138,11 @@ a tool when you write it, and never copy one forward. Another agent's or a
 reviewer's report is a lead to verify, not evidence. A green result reached by
 weakening a requirement does not answer the original question.
 
+**Size a run before starting it.** Before any build, test batch,
+measurement or experiment, run the smallest useful sample, time it and look
+at its spread, then choose the scale; repeat or lengthen only where the
+spread is too large to decide. Never open with a run of hours.
+
 Use a PR as the owner's ongoing review surface from the start, as a Draft
 until rule 1 below lets it become ready. Push coherent progress to the same
 branch and keep its description and actual validation results current;
