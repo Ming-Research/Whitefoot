@@ -26,10 +26,11 @@ an equivalent maintained Halo program suite takes ownership of these observation
 | same tail recursion, budget 7 | 100000 | PASS |
 | error levels 0, 1, 2, 3 through pcall | bare, child line 2, bare, parent line 3 | PASS |
 | __add calling error at level 2 | caller line 2 | PASS |
-| __concat calling error at level 2 | caller line 2 | pending final verification |
+| __concat calling error at level 2 | caller line 2 | PASS |
 
 The Lua reference run completed successfully; its exact output is
-`oracle.expected`. All package modules accept; the native smoke entry passes; the twenty-one-case native suite passes; the final twenty-two-case run is pending.
+`oracle.expected`. All package modules accept; the native smoke entry and final twenty-two-case
+native suite pass.
 
 ## Reproduction
 
@@ -59,7 +60,7 @@ state, builtins, closure captures and the shared slow executor already have
 separate functions. A natural next split, if required, is ending each arm before
 the common fact join, following the accepted self-tail prototype.
 
-The next acceptance attempt factors arithmetic and comparisons by family, leaving
+The second acceptance attempt factored arithmetic and comparisons by family, leaving
 register/constant operand decoding in `run` and the one shared slow executor.
 Before that attempt the criterion is: every module must accept; a shorter check
 would support the hypothesis that the large generic proof inventory caused the
@@ -68,7 +69,7 @@ inlining and dispatch performance have not been measured.
 
 The family-helper attempt was stopped without a verdict after 621.93 seconds
 (wrapper exit 143), at 4,216 lines / 146,585 bytes for the VM. It therefore did
-not demonstrate a shorter check. The next attempt removes the common dispatch
+not demonstrate a shorter check. The third attempt removed the common dispatch
 fact join: each instruction arm ends in its own guaranteed self-tail call, with
 a shared helper for outcome handling. The acceptance and elapsed-time criterion
 is unchanged.
@@ -77,7 +78,7 @@ The per-arm attempt was stopped without a verdict after 368.58 seconds (wrapper
 exit 143); `dispatch.wf` was 2,093 lines / 91,693 bytes. A second one-second
 local stack sample still showed generic-body proof derivation.
 
-The current attempt moves each opcode body into a private handler function,
+The fourth attempt moved each opcode body into a private handler function,
 keeping its numeric/table fast path and shared `slow` fallback together. `run`
 remains the eight-parameter guaranteed self-tail dispatcher. Its `Cell` match
 selects a handler, and one checked continuation feeds the tail call. This bounds
@@ -88,8 +89,8 @@ The first opcode-split run returned a source rejection after 324.13 seconds:
 `slow.wf` read its comparison-result destination after a callback without an
 available stack-length fact. Both comparison paths now restore the entry length
 before reading that slot. At that attempt the VM was 6,647 lines / 236,864 bytes,
-with `run` in a 237-line / 16,456-byte file. The next check must establish full
-acceptance; the elapsed time is a checker-cost finding even if it accepts.
+with `run` in a 237-line / 16,456-byte file. That rejection did not establish full
+acceptance; its elapsed time is a checker-cost finding.
 
 ## Accepted module milestone
 
@@ -101,6 +102,8 @@ and `pkg::vm`. The wrapper reported 57.43 seconds, exit 0 (compiler: 57.36 real,
 The same opcode split that first exposed the callback-bound failure now accepts
 after the length restoration was moved before both comparison result reads.
 This establishes acceptance, not native performance or complete Lua parity.
+These runs used an incremental cache and changed proof bodies; they are not a
+controlled comparison attributing checker time solely to the structural split.
 
 ## Native smoke milestone
 
@@ -189,4 +192,16 @@ validation. No deliberately failing version was committed.
 
 The corrected VM module (6,761 lines / 240,433 bytes) accepted with the requested
 all-module command in 57.18 seconds (exit 0; compiler 57.17 real, 53.24 user,
-3.80 system). The corrected twenty-two-case native build follows.
+3.80 system). The final corrected twenty-two-case result is recorded below.
+
+## Final corrected native result
+
+At revision `fc780072e4b497d053a26ca515ae2ea01a6500db`, the corrected twenty-two-case
+suite built in 117.71 seconds (exit 0; compiler 117.68 real, 108.66 user,
+8.61 system) and executed in 0.54 seconds (exit 0; executable 0.45 real,
+0.04 user, 0.00 system). All required Lua-derived fixtures and the additional
+host, budget/metamethod, and error-location observations pass. The reference
+Lua output matches `oracle.expected`; `sh -n run.sh` and `git diff --check` pass.
+The changed-hunk review reported no remaining concrete logic issue after the
+concat PC normalization. Its stated diagnostic and conversion limits are
+recorded above rather than presented as implemented behavior.
