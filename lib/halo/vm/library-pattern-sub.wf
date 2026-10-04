@@ -1,0 +1,340 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+
+const pattern_replacement_expected: Array<u8, 30> = "string/function/table expected";
+
+const pattern_replacement_bad: Array<u8, 29> = "invalid replacement value (a ";
+
+fn pattern_sub_append(vm: &Vm, index: u64, start: u64, end: u64) -> r: unit reads(vm.heap), writes(vm.pattern_subs) {
+  if index < vm^.pattern_subs.inner.len {
+    let source = vm^.pattern_subs.inner[index].source;
+    match pkg::value::str_of(v: source) {
+      Handle(h: pattern_bound_3) => {
+        let hi = cvt::<u32, u64>(pattern_bound_3);
+        if hi < vm^.heap.strings.inner.len {
+          if start <= end {
+            if end <= vm^.heap.strings.inner[hi].payload.bytes.inner.len {
+              bytes_append(bytes: &vm^.pattern_subs.inner[index].output, text: &vm^.heap.strings.inner[hi].payload.bytes.inner[start..end]);
+            }
+          }
+        }
+      }
+      NoHandle() => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn pattern_sub_value(vm: &Vm, index: u64, value: Value) -> r: unit reads(vm.heap), writes(vm.pattern_subs) {
+  if index < vm^.pattern_subs.inner.len {
+    match pkg::value::str_of(v: value) {
+      Handle(h: pattern_bound_2) => {
+        let hi = cvt::<u32, u64>(pattern_bound_2);
+        if hi < vm^.heap.strings.inner.len {
+          let length = vm^.heap.strings.inner[hi].payload.bytes.inner.len;
+          bytes_append(bytes: &vm^.pattern_subs.inner[index].output, text: &vm^.heap.strings.inner[hi].payload.bytes.inner[0_u64..length]);
+        }
+      }
+      NoHandle() => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn pattern_sub_advance(vm: &Vm, index: u64) -> r: unit reads(vm.heap), writes(vm.pattern_subs) {
+  if index < vm^.pattern_subs.inner.len {
+    let start = vm^.pattern_subs.inner[index].start;
+    let end = vm^.pattern_subs.inner[index].end;
+    let source = vm^.pattern_subs.inner[index].source;
+    let length = pattern_length(vm: vm, text: source);
+    if end > start {
+      set vm^.pattern_subs.inner[index].start = end;
+    } else if start < length {
+      let next = start + 1_u64;
+      pattern_sub_append(vm: vm, index: index, start: start, end: next);
+      if index < vm^.pattern_subs.inner.len {
+        set vm^.pattern_subs.inner[index].start = next;
+      }
+    } else {
+      set vm^.pattern_subs.inner[index].phase = 3_u8;
+    }
+    if index < vm^.pattern_subs.inner.len {
+      if vm^.pattern_subs.inner[index].anchor {
+        set vm^.pattern_subs.inner[index].phase = 3_u8;
+      }
+    }
+  }
+  return unit;
+}
+
+fn pattern_sub_string(vm: &Vm, index: u64, state: PatternMatch) -> r: Bool writes(vm) {
+  if index >= vm^.pattern_subs.inner.len {
+    return False();
+  }
+  let replacement = vm^.pattern_subs.inner[index].replacement;
+  let source = vm^.pattern_subs.inner[index].source;
+  let start = vm^.pattern_subs.inner[index].start;
+  let end = vm^.pattern_subs.inner[index].end;
+  let text = coerce_string(vm: vm, v: replacement);
+  let length = pattern_length(vm: vm, text: text);
+  let i = 0_u64;
+  loop {
+    if i >= length {
+      break;
+    }
+    let byte = pattern_textbyte(vm: vm, text: text, at: i);
+    set i = i +sat 1_u64;
+    if byte != 37_u8 {
+      if index < vm^.pattern_subs.inner.len {
+        bytes_push(bytes: &vm^.pattern_subs.inner[index].output, byte: byte);
+      }
+    } else {
+      let escaped = pattern_textbyte(vm: vm, text: text, at: i);
+      set i = i +sat 1_u64;
+      if escaped == 48_u8 {
+        pattern_sub_append(vm: vm, index: index, start: start, end: end);
+      } else if escaped >= 49_u8 {
+        if escaped <= 57_u8 {
+          let digit = escaped - 49_u8;
+          let cap = cvt::<u8, u64>(digit);
+          match pattern_capture(vm: vm, state: state, source: source, start: start, end: end, index: cap) {
+            Some(value: pattern_bound_1) => {
+              let string = coerce_string(vm: vm, v: pattern_bound_1);
+              pattern_sub_value(vm: vm, index: index, value: string);
+            }
+            None() => {
+              return False();
+            }
+          }
+        } else if index < vm^.pattern_subs.inner.len {
+          bytes_push(bytes: &vm^.pattern_subs.inner[index].output, byte: escaped);
+        }
+      } else if index < vm^.pattern_subs.inner.len {
+        bytes_push(bytes: &vm^.pattern_subs.inner[index].output, byte: escaped);
+      }
+    }
+  }
+  return True();
+}
+
+fn pattern_sub_return(vm: &Vm, index: u64, result: Value) -> r: Bool writes(vm) {
+  if index >= vm^.pattern_subs.inner.len {
+    return False();
+  }
+  let pattern_atom_1 = pkg::value::truthy(v: result);
+  if bnot(pattern_atom_1) {
+    let start = vm^.pattern_subs.inner[index].start;
+    let end = vm^.pattern_subs.inner[index].end;
+    pattern_sub_append(vm: vm, index: index, start: start, end: end);
+    return True();
+  }
+  let text = coerce_string(vm: vm, v: result);
+  match pkg::value::str_of(v: text) {
+    Handle(..) => {
+      pattern_sub_value(vm: vm, index: index, value: text);
+      return True();
+    }
+    NoHandle() => {
+      let bytes = box_slots_new::<u8>(capacity: 64_u64);
+      bytes_append(bytes: &bytes, text: &pattern_replacement_bad[0_u64..29_u64]);
+      let name = kind_name(vm: vm, v: result);
+      bytes_string(vm: vm, bytes: &bytes, value: name);
+      bytes_push(bytes: &bytes, byte: 41_u8);
+      set vm^.error = bytes_value(vm: vm, bytes: &bytes);
+    }
+  }
+  return False();
+}
+
+fn pattern_gsub_start<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, env: &E, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, source: Value, pattern: Value) -> r: HostOutcome reads(code), reads(consts), writes(env), writes(vm), writes(stack) {
+  let replacement = argument(stack: stack, func: func, argc: argc, index: 2_u64);
+  let k = kind(v: replacement);
+  let length = pattern_length(vm: vm, text: source);
+  let max = length +sat 1_u64;
+  let default_max = cvt.wrap::<u64, i32>(max);
+  let maximum = cvt::<i32, i64>(default_max);
+  let n = argument(stack: stack, func: func, argc: argc, index: 3_u64);
+  let pattern_atom_2 = is_nil(v: n);
+  if bnot(pattern_atom_2) {
+    match lib_int32(vm: vm, value: n) {
+      Some(value: integer) => {
+        set maximum = integer;
+      }
+      None() => {
+        return lib_argerror(vm: vm, id: builtin_string_gsub, index: 4_u64, argc: argc, value: n, expected: &pattern_expected_number[0_u64..6_u64]);
+      }
+    }
+  }
+  if k < 2_u8 {
+    return lib_argtext(vm: vm, id: builtin_string_gsub, index: 3_u64, text: &pattern_replacement_expected[0_u64..30_u64]);
+  }
+  let first = pattern_textbyte(vm: vm, text: pattern, at: 0_u64);
+  let anchor = first == 94_u8;
+  let context = vm^.library_contexts.inner.len -sat 1_u64;
+  let output = box_slots_new::<u8>(capacity: 64_u64);
+  let frame = PatternSubFrame(context: context, source: source, pattern: pattern, replacement: replacement, output: move output, start: 0_u64, end: 0_u64, count: 0_u64, maximum: maximum, anchor: anchor, phase: 0_u8);
+  let index = vm^.pattern_subs.inner.len;
+  if index == vm^.pattern_subs.inner.cap {
+    let capacity = index +sat 1_u64;
+    grow(cell: &vm^.pattern_subs, capacity: capacity);
+  }
+  if vm^.pattern_subs.inner.len < vm^.pattern_subs.inner.cap {
+    place_back(window: &vm^.pattern_subs.inner, value: move frame);
+    return pattern_gsub_run::<Host<E>>(code: code, consts: consts, env: env, vm: vm, stack: stack, context: context);
+  }
+  return HostOutcome::Raised();
+}
+
+fn pattern_gsub_run<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, env: &E, vm: &Vm, stack: &Box<Slots<Value>>, context: u64) -> r: HostOutcome reads(code), reads(consts), writes(env), writes(vm), writes(stack) {
+  loop {
+    if context >= vm^.library_contexts.inner.len {
+      return HostOutcome::Raised();
+    }
+    if vm^.pattern_subs.inner.len == 0_u64 {
+      return HostOutcome::Raised();
+    }
+    let index = vm^.pattern_subs.inner.len - 1_u64;
+    if vm^.pattern_subs.inner[index].context != context {
+      return HostOutcome::Raised();
+    }
+    let func = vm^.library_contexts.inner[context].frame.func;
+    let phase = vm^.pattern_subs.inner[index].phase;
+    let source = vm^.pattern_subs.inner[index].source;
+    let pattern = vm^.pattern_subs.inner[index].pattern;
+    let replacement = vm^.pattern_subs.inner[index].replacement;
+    let start = vm^.pattern_subs.inner[index].start;
+    let length = pattern_length(vm: vm, text: source);
+    if phase == 1_u8 {
+      let value = Value::Nil();
+      if func < stack^.inner.len {
+        set value = stack^.inner[func];
+      }
+      let pattern_atom_3 = pattern_sub_return(vm: vm, index: index, result: value);
+      if bnot(pattern_atom_3) {
+        return HostOutcome::Raised();
+      }
+      if index < vm^.pattern_subs.inner.len {
+        set vm^.pattern_subs.inner[index].phase = 0_u8;
+      }
+      pattern_sub_advance(vm: vm, index: index);
+    } else {
+      let count = vm^.pattern_subs.inner[index].count;
+      let maximum = vm^.pattern_subs.inner[index].maximum;
+      let stop = phase == 3_u8;
+      if maximum <= 0_i64 {
+        set stop = True();
+      } else {
+        let limit = cvt::<i64, u64>(maximum);
+        if count >= limit {
+          set stop = True();
+        }
+      }
+      if stop {
+        pattern_sub_append(vm: vm, index: index, start: start, end: length);
+        let result = Value::Nil();
+        if index < vm^.pattern_subs.inner.len {
+          let output_length = vm^.pattern_subs.inner[index].output.inner.len;
+          set result = pkg::heap::intern(heap: &vm^.heap, bytes: &vm^.pattern_subs.inner[index].output.inner[0_u64..output_length]);
+        }
+        let number = cvt.nearest::<u64, f64>(count);
+        let n = Value::Num(n: number);
+        lib_put(stack: stack, at: func, value: result);
+        let second = func +sat 1_u64;
+        lib_put(stack: stack, at: second, value: n);
+        return HostOutcome::Returned(count: 2_u64);
+      }
+      let anchor = vm^.pattern_subs.inner[index].anchor;
+      let pat = 0_u64;
+      if anchor {
+        set pat = 1_u64;
+      }
+      let state = pattern_attempt(vm: vm, source: source, pattern: pattern, start: start, pat: pat);
+      if state.error != 0_u8 {
+        return pattern_error(vm: vm, code: state.error);
+      }
+      if state.found {
+        if index < vm^.pattern_subs.inner.len {
+          set vm^.pattern_subs.inner[index].end = state.finish;
+          set vm^.pattern_subs.inner[index].count = count +sat 1_u64;
+        }
+        let k = kind(v: replacement);
+        if k <= 3_u8 {
+          let pattern_atom_4 = pattern_sub_string(vm: vm, index: index, state: state);
+          if bnot(pattern_atom_4) {
+            return HostOutcome::Raised();
+          }
+          pattern_sub_advance(vm: vm, index: index);
+        } else {
+          if index < vm^.pattern_subs.inner.len {
+            set vm^.pattern_subs.inner[index].phase = 1_u8;
+          }
+          library_plan(vm: vm, index: context);
+          if context < vm^.library_contexts.inner.len {
+            set vm^.library_contexts.inner[context].phase = 0_u8;
+          }
+          let ok = False();
+          if k == 4_u8 {
+            match pattern_capture(vm: vm, state: state, source: source, start: start, end: state.finish, index: 0_u64) {
+              Some(value: key) => {
+                let op = SlowOp::Get();
+                let nil = Value::Nil();
+                if func < stack^.inner.len {
+                  set ok = slow::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, op: op, dest: func, b: replacement, c: key, v: nil);
+                }
+              }
+              None() => {
+                return HostOutcome::Raised();
+              }
+            }
+          } else {
+            let nil = Value::Nil();
+            let args = array_filled::<Value, 32>(value: nil);
+            let argc = state.level;
+            if argc == 0_u64 {
+              set argc = 1_u64;
+            }
+            for (i in 0_u64..argc) {
+              match pattern_capture(vm: vm, state: state, source: source, start: start, end: state.finish, index: i) {
+                Some(value: pattern_bound_0) => {
+                  if i < 32_u64 {
+                    set args[i] = pattern_bound_0;
+                  }
+                }
+                None() => {
+                  return HostOutcome::Raised();
+                }
+              }
+            }
+            if argc <= 32_u64 {
+              set ok = callback_values::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: func, f: replacement, args: &args[0_u64..argc], wanted: 1_i64, mode: 0_u8);
+            }
+          }
+          if vm^.host_stopped {
+            return HostOutcome::Stop();
+          }
+          if bnot(ok) {
+            return HostOutcome::Raised();
+          }
+        }
+      } else {
+        if start < length {
+          let next = start + 1_u64;
+          pattern_sub_append(vm: vm, index: index, start: start, end: next);
+          if index < vm^.pattern_subs.inner.len {
+            set vm^.pattern_subs.inner[index].start = next;
+          }
+        } else if index < vm^.pattern_subs.inner.len {
+          set vm^.pattern_subs.inner[index].phase = 3_u8;
+        }
+        if anchor {
+          if index < vm^.pattern_subs.inner.len {
+            set vm^.pattern_subs.inner[index].phase = 3_u8;
+          }
+        }
+      }
+    }
+  }
+  return HostOutcome::Raised();
+}

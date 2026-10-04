@@ -1,0 +1,485 @@
+struct PatternCapture {
+  start: u64;
+  length: i64;
+}
+
+struct PatternMatch {
+  captures: Array<PatternCapture, 32>;
+  level: u64;
+  error: u8;
+  finish: u64;
+  found: Bool;
+}
+
+fn pattern_state() -> r: PatternMatch pure {
+  let cap = PatternCapture(start: 0_u64, length: -1_i64);
+  let caps = array_filled::<PatternCapture, 32>(value: cap);
+  let no = False();
+  return PatternMatch(captures: caps, level: 0_u64, error: 0_u8, finish: 0_u64, found: no);
+}
+
+fn pattern_byte(text: &[u8], index: u64) -> r: u8 reads(text) {
+  if index < text^.len {
+    return text^[index];
+  }
+  return 0_u8;
+}
+
+fn pattern_class(c: u8, cl: u8) -> r: Bool pure {
+  doc "C-locale ctype, matching Lua's startup locale, including NUL and high bytes.";
+  let lower = cl;
+  if cl >= 65_u8 {
+    if cl <= 90_u8 {
+      set lower = cl + 32_u8;
+    }
+  }
+  let pattern_atom_1 = c <= 122_u8;
+  let pattern_atom_2 = c >= 97_u8;
+  let lo = band(pattern_atom_2, pattern_atom_1);
+  let pattern_atom_3 = c <= 90_u8;
+  let pattern_atom_4 = c >= 65_u8;
+  let up = band(pattern_atom_4, pattern_atom_3);
+  let pattern_atom_5 = c <= 57_u8;
+  let pattern_atom_6 = c >= 48_u8;
+  let digit = band(pattern_atom_6, pattern_atom_5);
+  let alpha = bor(lo, up);
+  let alnum = bor(alpha, digit);
+  let result = False();
+  if lower == 97_u8 {
+    set result = alpha;
+  } else if lower == 99_u8 {
+    let pattern_atom_7 = c == 127_u8;
+    let pattern_atom_8 = c < 32_u8;
+    set result = bor(pattern_atom_8, pattern_atom_7);
+  } else if lower == 100_u8 {
+    set result = digit;
+  } else if lower == 108_u8 {
+    set result = lo;
+  } else if lower == 112_u8 {
+    let pattern_atom_9 = c <= 126_u8;
+    let pattern_atom_10 = c >= 33_u8;
+    let printable = band(pattern_atom_10, pattern_atom_9);
+    let pattern_atom_11 = bnot(alnum);
+    set result = band(printable, pattern_atom_11);
+  } else if lower == 115_u8 {
+    let pattern_atom_12 = c <= 13_u8;
+    let pattern_atom_13 = c >= 9_u8;
+    let control = band(pattern_atom_13, pattern_atom_12);
+    let pattern_atom_14 = c == 32_u8;
+    set result = bor(control, pattern_atom_14);
+  } else if lower == 117_u8 {
+    set result = up;
+  } else if lower == 119_u8 {
+    set result = alnum;
+  } else if lower == 120_u8 {
+    let pattern_atom_15 = c <= 102_u8;
+    let pattern_atom_16 = c >= 97_u8;
+    let hexlo = band(pattern_atom_16, pattern_atom_15);
+    let pattern_atom_17 = c <= 70_u8;
+    let pattern_atom_18 = c >= 65_u8;
+    let hexup = band(pattern_atom_18, pattern_atom_17);
+    let hex = bor(hexlo, hexup);
+    set result = bor(digit, hex);
+  } else if lower == 122_u8 {
+    set result = c == 0_u8;
+  } else {
+    return cl == c;
+  }
+  if cl >= 97_u8 {
+    if cl <= 122_u8 {
+      return result;
+    }
+  }
+  return bnot(result);
+}
+
+fn pattern_classend(pattern: &[u8], p: u64, state: &PatternMatch) -> r: u64 reads(pattern), writes(state.error) {
+  let c = pattern_byte(text: pattern, index: p);
+  let next = p +sat 1_u64;
+  if c == 37_u8 {
+    let escaped = pattern_byte(text: pattern, index: next);
+    if escaped == 0_u8 {
+      set state^.error = 1_u8;
+    }
+    return next +sat 1_u64;
+  }
+  if c == 91_u8 {
+    let i = next;
+    let first = pattern_byte(text: pattern, index: i);
+    if first == 94_u8 {
+      set i = i +sat 1_u64;
+    }
+    loop {
+      let item = pattern_byte(text: pattern, index: i);
+      if item == 0_u8 {
+        set state^.error = 2_u8;
+        return i;
+      }
+      set i = i +sat 1_u64;
+      if item == 37_u8 {
+        let escape = pattern_byte(text: pattern, index: i);
+        if escape != 0_u8 {
+          set i = i +sat 1_u64;
+        }
+      }
+      let end = pattern_byte(text: pattern, index: i);
+      if end == 93_u8 {
+        return i +sat 1_u64;
+      }
+    }
+  }
+  return next;
+}
+
+fn pattern_set(c: u8, pattern: &[u8], p: u64, end: u64) -> r: Bool reads(pattern) {
+  let i = p +sat 1_u64;
+  let sign = True();
+  let first = pattern_byte(text: pattern, index: i);
+  if first == 94_u8 {
+    set sign = False();
+    set i = i +sat 1_u64;
+  }
+  loop {
+    if i >= end {
+      return bnot(sign);
+    }
+    let item = pattern_byte(text: pattern, index: i);
+    let next = i +sat 1_u64;
+    let after = i +sat 2_u64;
+    if item == 37_u8 {
+      let cl = pattern_byte(text: pattern, index: next);
+      if pattern_class(c: c, cl: cl) {
+        return sign;
+      }
+      set i = after;
+    } else {
+      let hyphen = pattern_byte(text: pattern, index: next);
+      let pattern_atom_19 = after < end;
+      let pattern_atom_20 = hyphen == 45_u8;
+      if band(pattern_atom_20, pattern_atom_19) {
+        let upper = pattern_byte(text: pattern, index: after);
+        let pattern_atom_21 = c <= upper;
+        let pattern_atom_22 = item <= c;
+        if band(pattern_atom_22, pattern_atom_21) {
+          return sign;
+        }
+        set i = after +sat 1_u64;
+      } else {
+        if item == c {
+          return sign;
+        }
+        set i = next;
+      }
+    }
+  }
+  return False();
+}
+
+fn pattern_single(c: u8, pattern: &[u8], p: u64, end: u64) -> r: Bool reads(pattern) {
+  let item = pattern_byte(text: pattern, index: p);
+  if item == 46_u8 {
+    return True();
+  }
+  if item == 37_u8 {
+    let next = p +sat 1_u64;
+    let cl = pattern_byte(text: pattern, index: next);
+    return pattern_class(c: c, cl: cl);
+  }
+  if item == 91_u8 {
+    let last = end -sat 1_u64;
+    return pattern_set(c: c, pattern: pattern, p: p, end: last);
+  }
+  return item == c;
+}
+
+fn pattern_match(source: &[u8], pattern: &[u8], start: u64, pat: u64, state: &PatternMatch, depth: u64) -> r: Option<u64> reads(source), reads(pattern), writes(state) {
+  doc "Port of lstrlib.c match and expand/capture helpers. Only genuine non-tail match calls consume depth; goto init is this loop. At most 200 machine match frames are active.";
+  if depth == 0_u64 {
+    set state^.error = 8_u8;
+    return None<u64>();
+  }
+  let remaining = depth - 1_u64;
+  let s = start;
+  let p = pat;
+  loop {
+    let item = pattern_byte(text: pattern, index: p);
+    let next = p +sat 1_u64;
+    let following = pattern_byte(text: pattern, index: next);
+    if item == 0_u8 {
+      return Some<u64>(value: s);
+    }
+    if item == 40_u8 {
+      let level = state^.level;
+      if level >= 32_u64 {
+        set state^.error = 7_u8;
+        return None<u64>();
+      }
+      let length = -1_i64;
+      let after = next;
+      if following == 41_u8 {
+        set length = -2_i64;
+        set after = next +sat 1_u64;
+      }
+      set state^.captures[level] = PatternCapture(start: s, length: length);
+      set state^.level = level + 1_u64;
+      let result = pattern_match(source: source, pattern: pattern, start: s, pat: after, state: state, depth: remaining);
+      match result {
+        Some(..) => {
+          return result;
+        }
+        None() => {
+          set state^.level = level;
+          return result;
+        }
+      }
+    }
+    if item == 41_u8 {
+      let l = state^.level;
+      let close = 32_u64;
+      loop {
+        if l == 0_u64 {
+          break;
+        }
+        set l = l - 1_u64;
+        if l < 32_u64 {
+          if state^.captures[l].length == -1_i64 {
+            set close = l;
+            break;
+          }
+        }
+      }
+      if close >= 32_u64 {
+        set state^.error = 4_u8;
+        return None<u64>();
+      }
+      let begin = state^.captures[close].start;
+      let size = s -sat begin;
+      let length = cvt.wrap::<u64, i64>(size);
+      set state^.captures[close].length = length;
+      let result = pattern_match(source: source, pattern: pattern, start: s, pat: next, state: state, depth: remaining);
+      match result {
+        Some(..) => {
+          return result;
+        }
+        None() => {
+          set state^.captures[close].length = -1_i64;
+          return result;
+        }
+      }
+    }
+    let transitioned = False();
+    if item == 37_u8 {
+      if following == 98_u8 {
+        let bpos = p +sat 2_u64;
+        let epos = p +sat 3_u64;
+        let b = pattern_byte(text: pattern, index: bpos);
+        let e = pattern_byte(text: pattern, index: epos);
+        let pattern_atom_23 = e == 0_u8;
+        let pattern_atom_24 = b == 0_u8;
+        if bor(pattern_atom_24, pattern_atom_23) {
+          set state^.error = 9_u8;
+          return None<u64>();
+        }
+        let c = pattern_byte(text: source, index: s);
+        if c != b {
+          return None<u64>();
+        }
+        let count = 1_u64;
+        let cursor = s +sat 1_u64;
+        let balanced = False();
+        loop {
+          if cursor >= source^.len {
+            break;
+          }
+          let ch = pattern_byte(text: source, index: cursor);
+          set cursor = cursor +sat 1_u64;
+          if ch == e {
+            set count = count -sat 1_u64;
+            if count == 0_u64 {
+              set balanced = True();
+              break;
+            }
+          } else if ch == b {
+            set count = count +sat 1_u64;
+          }
+        }
+        if bnot(balanced) {
+          return None<u64>();
+        }
+        set s = cursor;
+        set p = p +sat 4_u64;
+        set transitioned = True();
+      } else if following == 102_u8 {
+        let setpos = p +sat 2_u64;
+        let open = pattern_byte(text: pattern, index: setpos);
+        if open != 91_u8 {
+          set state^.error = 6_u8;
+          return None<u64>();
+        }
+        let end = pattern_classend(pattern: pattern, p: setpos, state: state);
+        if state^.error != 0_u8 {
+          return None<u64>();
+        }
+        let previous = 0_u8;
+        if s > 0_u64 {
+          let before = s - 1_u64;
+          set previous = pattern_byte(text: source, index: before);
+        }
+        let current = pattern_byte(text: source, index: s);
+        let last = end -sat 1_u64;
+        let prevmatch = pattern_set(c: previous, pattern: pattern, p: setpos, end: last);
+        let curmatch = pattern_set(c: current, pattern: pattern, p: setpos, end: last);
+        let pattern_atom_25 = bnot(curmatch);
+        if bor(prevmatch, pattern_atom_25) {
+          return None<u64>();
+        }
+        set p = end;
+        set transitioned = True();
+      }
+      let pattern_atom_26 = following <= 57_u8;
+      let pattern_atom_27 = following >= 48_u8;
+      if band(pattern_atom_27, pattern_atom_26) {
+        if following < 49_u8 {
+          set state^.error = 3_u8;
+          return None<u64>();
+        }
+        let digit = following - 49_u8;
+        let cap = cvt::<u8, u64>(digit);
+        if cap >= state^.level {
+          set state^.error = 3_u8;
+          return None<u64>();
+        }
+        let capture = state^.captures[cap];
+        if capture.length == -1_i64 {
+          set state^.error = 3_u8;
+          return None<u64>();
+        }
+        if capture.length < 0_i64 {
+          return None<u64>();
+        }
+        let length = cvt::<i64, u64>(capture.length);
+        let room = source^.len -sat s;
+        if length > room {
+          return None<u64>();
+        }
+        for (i in 0_u64..length) {
+          let left = capture.start +sat i;
+          let right = s +sat i;
+          let a = pattern_byte(text: source, index: left);
+          let b = pattern_byte(text: source, index: right);
+          if a != b {
+            return None<u64>();
+          }
+        }
+        set s = s +sat length;
+        set p = p +sat 2_u64;
+        set transitioned = True();
+      }
+    }
+    if bnot(transitioned) {
+      let pattern_atom_28 = following == 0_u8;
+      let pattern_atom_29 = item == 36_u8;
+      if band(pattern_atom_29, pattern_atom_28) {
+        if s == source^.len {
+          return Some<u64>(value: s);
+        }
+        return None<u64>();
+      }
+      let end = pattern_classend(pattern: pattern, p: p, state: state);
+      if state^.error != 0_u8 {
+        return None<u64>();
+      }
+      let c = pattern_byte(text: source, index: s);
+      let one = pattern_single(c: c, pattern: pattern, p: p, end: end);
+      let pattern_atom_30 = s < source^.len;
+      let m = band(pattern_atom_30, one);
+      let suffix = pattern_byte(text: pattern, index: end);
+      let after = end +sat 1_u64;
+      let pattern_atom_31 = suffix == 43_u8;
+      let pattern_atom_32 = suffix == 42_u8;
+      if suffix == 63_u8 {
+        if m {
+          let advance = s +sat 1_u64;
+          let result = pattern_match(source: source, pattern: pattern, start: advance, pat: after, state: state, depth: remaining);
+          if state^.error != 0_u8 {
+            return None<u64>();
+          }
+          match result {
+            Some(..) => {
+              return result;
+            }
+            None() => {
+            }
+          }
+        }
+        set p = after;
+      } else if bor(pattern_atom_32, pattern_atom_31) {
+        if suffix == 43_u8 {
+          if bnot(m) {
+            return None<u64>();
+          }
+          set s = s +sat 1_u64;
+        }
+        let cursor = s;
+        loop {
+          if cursor >= source^.len {
+            break;
+          }
+          let ch = pattern_byte(text: source, index: cursor);
+          let pattern_atom_33 = pattern_single(c: ch, pattern: pattern, p: p, end: end);
+          if bnot(pattern_atom_33) {
+            break;
+          }
+          set cursor = cursor +sat 1_u64;
+        }
+        loop {
+          let result = pattern_match(source: source, pattern: pattern, start: cursor, pat: after, state: state, depth: remaining);
+          if state^.error != 0_u8 {
+            return None<u64>();
+          }
+          match result {
+            Some(..) => {
+              return result;
+            }
+            None() => {
+            }
+          }
+          if cursor <= s {
+            return None<u64>();
+          }
+          set cursor = cursor - 1_u64;
+        }
+      } else if suffix == 45_u8 {
+        loop {
+          let result = pattern_match(source: source, pattern: pattern, start: s, pat: after, state: state, depth: remaining);
+          if state^.error != 0_u8 {
+            return None<u64>();
+          }
+          match result {
+            Some(..) => {
+              return result;
+            }
+            None() => {
+            }
+          }
+          if s >= source^.len {
+            return None<u64>();
+          }
+          let ch = pattern_byte(text: source, index: s);
+          let pattern_atom_34 = pattern_single(c: ch, pattern: pattern, p: p, end: end);
+          if bnot(pattern_atom_34) {
+            return None<u64>();
+          }
+          set s = s +sat 1_u64;
+        }
+      } else {
+        if bnot(m) {
+          return None<u64>();
+        }
+        set s = s +sat 1_u64;
+        set p = end;
+      }
+    }
+  }
+  return None<u64>();
+}

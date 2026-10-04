@@ -187,7 +187,23 @@ fn raw_assign(vm: &Vm, t: Value, key: Value, v: Value) -> r: Bool writes(vm) {
 fn callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, dest: u64, f: Value, b: Value, c: Value, third: Value, argc: u64, wanted: i64, mode: u8) -> r: Bool reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
+  let length = stack^.inner.len;
+  let args = array_filled::<Value, 3>(value: b);
+  set args[1_u64] = c;
+  set args[2_u64] = third;
+  if argc <= 3_u64 {
+    let result = callback_values::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, dest: dest, f: f, args: &args[0_u64..argc], wanted: wanted, mode: mode);
+    resize_stack(stack: stack, size: length);
+    return result;
+  }
+  return False();
+}
+
+fn callback_values<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, dest: u64, f: Value, args: &[Value], wanted: i64, mode: u8) -> r: Bool reads(code), reads(consts), reads(args), writes(stack), writes(vm), writes(env) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
   doc "Nested activation with a finite continuation record for budget suspension. Stack storage is restored before returning to the caller.";
+  let argc = args^.len;
   let depth = vm^.activation;
   if depth >= 199_u32 {
     return raise_text(vm: vm, text: &slow_text_5[0_u64..16_u64]);
@@ -206,17 +222,13 @@ fn callback<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value
   if scratch < stack^.inner.len {
     set stack^.inner[scratch] = f;
   }
-  let s1 = scratch +sat 1_u64;
-  let s2 = scratch +sat 2_u64;
-  let s3 = scratch +sat 3_u64;
-  if s1 < stack^.inner.len {
-    set stack^.inner[s1] = b;
-  }
-  if s2 < stack^.inner.len {
-    set stack^.inner[s2] = c;
-  }
-  if s3 < stack^.inner.len {
-    set stack^.inner[s3] = third;
+  for (i in 0_u64..argc) {
+    let first = scratch +sat 1_u64;
+    let at = first +sat i;
+    if at < stack^.inner.len {
+      let value = args^[i];
+      set stack^.inner[at] = value;
+    }
   }
   set vm^.activation = depth + 1_u32;
   let atom4 = False();
