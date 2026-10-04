@@ -8,15 +8,19 @@ the entries of the keys a command names, so that commands on different keys
 do not wait for each other. It is named for firn, snow that has lasted a
 season: stored and compacted.
 
-Its commands are the ones `redis-benchmark`'s default suite sends, with
-expiry, an append-only file and the connection commands clients send on their
-own:
+Its commands are these, which began as the ones `redis-benchmark`'s default
+suite sends, with expiry, an append-only file and the connection commands
+clients send on their own:
 
-- keys: `DEL`, `EXISTS`, `TYPE`, `EXPIRE`, `PEXPIRE`, `PEXPIREAT`, `TTL`,
-  `PTTL`, `PERSIST`, `DBSIZE`;
+- keys: `DEL`, `UNLINK`, `EXISTS`, `TOUCH`, `TYPE`, `RENAME`, `RENAMENX`,
+  `COPY` with `REPLACE` and `DB 0`, `EXPIRE`, `PEXPIRE`, `EXPIREAT` and
+  `PEXPIREAT` with their options `NX`, `XX`, `GT` and `LT`, `TTL`, `PTTL`,
+  `EXPIRETIME`, `PEXPIRETIME`, `PERSIST`, `DBSIZE`;
 - strings: `GET`, `SET` with its options `NX`, `XX`, `GET`, `KEEPTTL`,
   `EX`, `PX`, `EXAT` and `PXAT`, `SETNX`, `SETEX`, `PSETEX`, `GETSET`,
-  `GETDEL`, `GETEX`, `MSET`, `INCR`;
+  `GETDEL`, `GETEX`, `MGET`, `MSET`, `MSETNX`, `INCR`, `INCRBY`, `DECR`,
+  `DECRBY`, `INCRBYFLOAT`, `APPEND`, `STRLEN`, `GETRANGE`, `SUBSTR`,
+  `SETRANGE`;
 - lists: `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LLEN`;
 - sets: `SADD`, `SREM`, `SPOP`, `SCARD`;
 - hashes: `HSET`, `HGET`;
@@ -153,6 +157,9 @@ default.
   settings;
 - `scores`: sorted-set scores read as Redis's `strtod` reads them, to the
   nearest double, and written as its `%.17g` writes them;
+- `extended`: numbers of x86-64's 80-bit long double, read as glibc's
+  `strtold` reads them, added, and written as `%.17Lf` writes them, the
+  arithmetic of `INCRBYFLOAT`;
 - `store`: the keyspace, one shared state holding a keyed table of entries
   and, after it, the queued expiries, the append-only file's pending bytes
   and the server's counts

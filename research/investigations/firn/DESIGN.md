@@ -116,8 +116,8 @@ slowest there.
 
 ## Design of the program
 
-`apps/firn` is a module program of seven modules and about 9,300 lines;
-[its README](../../../apps/firn/README.md) lists them. Each choice below keeps
+`apps/firn` is a module program;
+[its README](../../../apps/firn/README.md) lists its modules. Each choice below keeps
 Redis's observable behavior on the suite's commands and says what it refused.
 
 - **Keys and values are byte strings of their own length**, where the
@@ -167,9 +167,13 @@ Redis's observable behavior on the suite's commands and says what it refused.
   letters**, compared once per known command, rather than by comparing names
   letter by letter.
 - **The append-only file records each change as Redis 7 records it**: a
-  command as it was sent, an expiry as `PEXPIREAT`, a `SET` with an expiry as
-  `SET` then `PEXPIREAT`, and an `SPOP` as the `SREM` of the members it chose,
-  so that a replay removes the same members. `SPOP` draws from a generator
+  command as it was sent or in the form Redis 7.0.15 propagates it, an expiry
+  as `PEXPIREAT`, a `SET` with an expiry as `SET` with `PXAT`, `INCRBYFLOAT`
+  as `SET` with `KEEPTTL`; the removal of a key found expired as `DEL`,
+  except on the write paths [docs/todo.md](../../../docs/todo.md) lists under
+  firn;
+  and an `SPOP` as the `SREM` of the members it chose, so that a replay
+  removes the same members. `SPOP` draws from a generator
   seeded by the clock when the server starts, as Redis seeds its own.
 - **Sorted-set scores are read and written as Redis 7.0.15 reads and writes
   them** (the `scores` module): read as `strtod` reads them, decimal or

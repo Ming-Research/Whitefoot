@@ -3135,8 +3135,8 @@ condition under which it is taken up.
 
 ## Verification tooling
 
-- **firn's network cases now and then lose their first connection when the
-  whole corpus runs at once on a 32-CPU host.** `cargo test --test corpus` on
+- **firn's network cases now and then lose their first connection when many
+  cases run at once on a 32-CPU host.** `cargo test --test corpus` on
   the 14900K under WSL2, every case at once, failed one of firn's cases in
   `compiler/tests/programs/network.rs`, a different one each time, with
   "Connection reset by peer" on the first batch's reply, or once with the
@@ -3146,11 +3146,47 @@ condition under which it is taken up.
   failing runs alike, so firn is not seen to crash, and ports chosen below the
   ephemeral range, one per case, changed nothing. The gate's hosted runners
   showed the like once, on macOS at `cea9188d4`
-  (`a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes`). The
-  change: keep a failing case's server output, which the harness drops, and
-  find whether firn closes the connection, exits or never accepts it. Reopen
+  (`a_loopback_echo_preserves_all_bytes_and_half_close_on_both_routes`). On
+  branch `firn/strings` the reset came in about 1 group run of 3 with
+  firn's cases alone and in 1 run of the whole corpus at `44f10c449` (the
+  replay case, on the native ring), while 440 servers of that branch and
+  440 of `51bc58e13`, started 20 and 30 at a time outside the harness, each
+  answering the first case's batch, saw no reset and all exited 0. Giving
+  each of `connect_to_when_ready`'s attempts 5 seconds instead of 100
+  milliseconds still left a reset in 1 group run of 8. A scratch patch to
+  `ProgramChild`'s drop that reports the program when its case panics saw
+  7 resets in 78 group runs at `44f10c449`, none in the last 24. Each time
+  firn was running with nothing on its standard error; in the 6 examined
+  further, firn held no socket (2) or no process held one on firn's port
+  (4), and firn was still running a second (2) or ten seconds (4) later,
+  where 1,000 firn servers started 40 at a time outside the harness each
+  accepted a first connection within 62 milliseconds. Three of the four
+  had not reached `tcp_listen`: they still held the working directory
+  `main` closes before it, and 3 of the 96 anonymous descriptors a started
+  firn holds on this host, 3 for each of its 32 drivers; the fourth held
+  30. So firn stalls in its start, and the harness's connection must have
+  reached some other socket on the port meanwhile, which a port
+  `free_port` released allows and the fixed ports above should have ruled
+  out. Run alternately with `51bc58e13`'s group, the branch's longer one
+  failed this way in 3 of 5 runs at `abcb3127d`, once with the server never
+  listening, against none of the base's 5, and in 1 of 4 at `474bb9da3`,
+  against 1 of the base's 4, two cases at once; 8 runs at `abcb3127d` with a
+  monitor that reported any program left more than 1.5 seconds without a
+  socket neither failed nor showed one. The change: keep that report in the
+  harness for a case that panics, and find what stalls firn's start there.
+  Reopen
   when a hosted run of the corpus fails this way, or before the corpus gates
   on a large host.
+- **firn's replay case allows the restart two seconds, which a loaded host
+  exceeds.** `firn_replays_its_append_only_file_after_a_restart_on_both_routes`
+  expects `PTTL` of a key set with `PX 60000` before the restart to answer at
+  least 58,000 after it; with firn's cases running at once on the 14900K
+  under WSL2 it answered 57,830 in 1 run of 8 at `51bc58e13` and 57,532 once
+  on branch `firn/strings`, the first run's stop, the 400-millisecond pause
+  and the second start taking about 2.4 seconds. The case now also compares
+  each expiry's `PEXPIRETIME` before and after the restart, which no load
+  changes; the window could give way to that comparison, or widen. Reopen
+  when the case fails this way in CI.
 
 - **The trusted runtime is large and growing.** Every program links from
   about 27,000 lines of C and LLVM IR in `compiler/src/backend`, its tests
@@ -3388,13 +3424,48 @@ condition under which it is taken up.
   the keyspace's `meta` only on that branch. Reopen with the next change to
   those commands.
 - **firn writes a removal and the command that made it as two records
-  where Redis wraps them in `MULTI` and `EXEC`.** When one command
-  propagates more than one record, a key it found expired and the command
-  itself, or several expired keys, Redis 7.0.15 brackets them in `MULTI`
-  and `EXEC`; firn has no transactions to replay, so it writes the records
-  alone, which replays to the same state. A multi-key command also records
-  its expired keys in byte order where Redis records them in the order the
-  command names them. Reopen when firn answers `MULTI` and `EXEC`.
+  where Redis wraps them in `MULTI` and `EXEC`, and no `SELECT 0`.** When
+  one command propagates more than one record, a key it found expired and
+  the command itself, or several expired keys, Redis 7.0.15 brackets them
+  in `MULTI` and `EXEC`; firn has no transactions to replay, so it writes
+  the records alone, which replays to the same state. Nor does firn, with
+  one database, write the `SELECT 0` Redis writes before its first record.
+  `firn_records_its_writes_as_redis_propagates_them` compares firn's file
+  with Redis's but for both. The change: write each where Redis does. Reopen
+  when firn answers `MULTI` and `EXEC`, or `SELECT` with more than one
+  database.
+- **`DEL`, `UNLINK`, `EXISTS`, `TOUCH` and `MSET` record the keys they find
+  expired in byte order.** Redis 7.0.15 looks the keys up, and propagates
+  each expired one's removal, in the order the command names them; these
+  statements walk their key set, whose order is the keys' bytes, so the file
+  records the removals in that order, which replays to the same state but is
+  not Redis's file. `MGET` and `MSETNX` walk their arguments in order through
+  `key_ranks` (`apps/firn/commands/strings.wf`). The change: walk the
+  arguments the same way where these record, and add such a command to
+  `firn_records_its_writes_as_redis_propagates_them`. Reopen with the next
+  change to those commands.
+- **No case checks that the expiring context keeps a key through its
+  expiry's millisecond.** `take_due` (`apps/firn/store/store.wf`) leaves a
+  queued expiry equal to the time in the queue, so that the expiring context
+  keeps the key through that millisecond, as Redis's
+  `activeExpireCycleTryExpire` does (`now > t`). Were it to take the key,
+  only a command whose reading of the clock falls in that millisecond and
+  that runs after the context's tick would find it absent, and no case can
+  place a command there, since the context ticks when the program chooses;
+  nor does the file show it, recording the removal as `DEL` whichever
+  context makes it. The change: a check entry in firn's module graph that
+  queues an expiry and calls `expire_batch` with `now` equal to it, which
+  `compile_app` can build as a second entry, as module graphs with two
+  entries do (`research/investigations/modular-compilation/demo/modules.wfg`).
+  Reopen when `take_due` changes, or when firn gains such entries.
+- **firn converts decimals to binary twice, by one algorithm.**
+  `apps/firn/scores/decimal.wf` reads a double and
+  `apps/firn/extended/extended.wf` a long double by the same Simple Decimal
+  Conversion, shifts of a decimal by powers of two, each with its own digit
+  room (800 and 12,000 digits), significand width (53 and 64 bits),
+  exponent range and subnormal rounding. One reader taking those as
+  parameters, its decimal generic over the digit room, would serve both.
+  Reopen when either reader next changes, or a third format needs one.
 - **firn reads a slow request again from its start at every read.**
   `parse_request` keeps no state between reads, so a request arriving in
   many reads is scanned from its first byte each time: quadratic in its
