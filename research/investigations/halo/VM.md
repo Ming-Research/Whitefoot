@@ -314,6 +314,12 @@ coding agent.
 
 ## Open rulings
 
+- H4. The platform reference is Redis 7.0.15 on x86-64 Linux with glibc,
+  firn's own reference (it already prints a negative NaN as `-nan`, as
+  glibc does). The number library formats NaN with its sign accordingly;
+  its parser and the oracle corpus were checked against macOS builds and
+  are rechecked on the Linux runner before release (docs/todo.md).
+
 - H1 (revised during implementation). The first heap, open addressing as
   section 2 says, gave a different `#` from Redis's Lua on 68 of 2,336
   traced tables with holes: PUC reuses a nil-valued main position and

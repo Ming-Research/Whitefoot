@@ -118,7 +118,7 @@ fn text_decimal(text: &NumberText, decimal: &Decimal) -> result: unit reads(deci
 }
 
 fn number_text(value: f64) -> text: NumberText pure {
-  doc "Lua 5.1's %.14g text: signed special values and zero, or the exact decimal expansion rounded to 14 significant digits with ties to even.";
+  doc "Lua 5.1's %.14g text as glibc prints it on Linux, Redis 7.0.15's deployment reference: every special value and zero carries its sign, so a negative NaN is -nan; or the exact decimal expansion rounded to 14 significant digits with ties to even.";
   let bytes = array_filled::<u8, 32>(value: 0_u8);
   let written = NumberText(bytes: bytes, length: 0_u64);
   let bits = reinterpret::<f64, u64>(value);
@@ -126,12 +126,6 @@ fn number_text(value: f64) -> text: NumberText pure {
   let shifted = ishr.wrap(bits, 52_u32);
   let biased = iand(shifted, 2047_u64);
   let fraction = iand(bits, fraction_mask);
-  let special = biased == 2047_u64;
-  let payload = fraction != 0_u64;
-  if band(special, payload) {
-    text_word(text: &written, word: &text_nan[0_u64..3_u64]);
-    return written;
-  }
   if sign == 1_u64 {
     text_push(text: &written, byte: 45_u8);
   }

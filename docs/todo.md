@@ -2166,6 +2166,15 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **Halo's number library and oracle corpus were checked on macOS only.**
+  `lib/halo/number` matches Redis 7.0.15's bundled Lua built on macOS
+  (research/experiments/halo-number), except that NaN text now follows glibc
+  (`-nan` for a negative NaN), the Linux reference firn uses; its `strtod`
+  details (NaN payloads, hexadecimal forms, range errors) and the oracle
+  corpus (research/experiments/halo-oracle) were produced against macOS
+  builds. Rerun both comparisons on the x86-64 Linux runner against a glibc
+  build of Redis 7.0.15 and its Lua, and adopt glibc's behavior wherever they
+  differ. Reopen before Halo's first release or when firn's EVAL lands.
 - **Library capacity ceilings that existed for OP-9.**
   `GrowVector<T, const ceiling: u64>` in `lib/std/collections/vector`, the
   deque and slab constructors' ceilings, and `tests/programs/wfgrep.wf`'s
