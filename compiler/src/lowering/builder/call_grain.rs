@@ -23,7 +23,11 @@ use super::{IrFunction, IrInstruction, IrOperation};
 /// `backend/sched/entry.c`), the price a range chunk must reach.
 pub(super) const CALL_OFFER_WORK_UNIT: u64 = 150_000;
 
-/// Every function each function calls, a split counting its splitter and chunk.
+/// Calls relevant to unbounded recursion. A permitted loop reaches its source
+/// body through the chunk. Its synthesized splitter's recursion is bounded by
+/// the range allowance and must not exempt a source-nonrecursive caller from
+/// call grain. Ordinary calls in chunks still expose genuine source recursion.
+/// The splitter itself retains its ordinary self-calls and recursive offers.
 fn callees(function: &IrFunction) -> Vec<usize> {
     let mut called = Vec::new();
     for instruction in function.blocks.iter().flat_map(|block| &block.instructions) {
@@ -33,12 +37,9 @@ fn callees(function: &IrFunction) -> Vec<usize> {
                 ..
             } => called.push(*function as usize),
             IrInstruction::Define {
-                operation:
-                    IrOperation::LoopSplit {
-                        splitter, chunk, ..
-                    },
+                operation: IrOperation::LoopSplit { chunk, .. },
                 ..
-            } => called.extend([*splitter as usize, *chunk as usize]),
+            } => called.push(*chunk as usize),
             _ => {}
         }
     }
