@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Clock = std::time::Clock;
+alias Instant = std::time::Instant;
+
+struct State {
+  count: u64;
+}
+
+fn late(clock: &Clock, deadline: Instant) -> r: Bool writes(clock) {
+  let t = std::time::now(clock: clock);
+  let reached = std::time::instant_reached(deadline: deadline, instant: t);
+  return reached;
+}
+
+fn job(clock: Clock, h: Shared<State>) -> status: u64 pure waits {
+  let start = std::time::now(clock: &clock);
+  let deadline = std::time::instant_after(instant: start, nanoseconds: 5000000_u64);
+  let got = 0_u64;
+  atomic s = &h when late(clock: &clock, deadline: deadline) {
+    set got = s^.count;
+  }
+  return got;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

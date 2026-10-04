@@ -1,0 +1,53 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Entry {
+  value: u64;
+}
+
+struct State {
+  map: KeyedTable<Entry>;
+  log: u64;
+}
+
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Vm {
+  acc: u64;
+  steps: u64;
+}
+
+interface Host<E> {
+  fn call(env: &E, vm: &Vm, op: u64) -> r: u64 writes(env), writes(vm);
+}
+
+fn run<interface Host<E>>(vm: &Vm, env: &E) -> r: u64 writes(vm), writes(env) {
+  let got = Host::call(env: env, vm: vm, op: 1_u64);
+  return got;
+}
+
+fn state_call(env: &State, vm: &Vm, op: u64) -> r: u64 writes(env), writes(vm) {
+  set env^.log = op;
+  set vm^.acc = op;
+  let key = &names[0_u64..1_u64];
+  let e = Entry(value: 1_u64);
+  set env^.map[key] = Some<Entry>(value: e);
+  let n = 0_u64;
+  return n;
+}
+
+binding StateHost : Host<State> {
+  call = state_call;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  let table = keyed_table_new::<Entry>(capacity: 4_u64);
+  let state = State(map: move table, log: 0_u64);
+  let h = shared_new::<State>(value: move state);
+  let vm = Vm(acc: 0_u64, steps: 0_u64);
+  let out = 0_u64;
+  atomic s = &h {
+    set out = run::<StateHost>(vm: &vm, env: s);
+  }
+  return exit_status(code: 0_u8);
+}
