@@ -876,7 +876,11 @@ impl Checker<'_, '_> {
         }
         let mut ty = local.ty;
         let mut fields = Vec::new();
+        let mut reaches_table = self.table_entry_type(ty).is_some();
         for suffix in &suffixes[1..] {
+            if reaches_table {
+                break;
+            }
             if self
                 .types
                 .declarations
@@ -890,11 +894,13 @@ impl Checker<'_, '_> {
                 .types
                 .elaborate_place_member(context.check_context, *suffix, ty)?;
             let step = member.storage_step();
-            let CheckedPlaceStep::Field(field) = step else {
-                break;
-            };
-            fields.push(field);
+            match step {
+                CheckedPlaceStep::Field(field) => fields.push(field),
+                CheckedPlaceStep::BoxReferent(_) => {}
+                CheckedPlaceStep::Subscript(_) => break,
+            }
             ty = member.ty();
+            reaches_table = self.table_entry_type(ty).is_some();
         }
         let grant = self.body.atomic_grant.as_mut().unwrap();
         if let Some(index) = grant
@@ -904,6 +910,10 @@ impl Checker<'_, '_> {
         {
             grant.refusals.push((node, SemanticIssueKind::AtomicTableNotGranted {
                 table: grant.names[index].clone(), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
+            }));
+        } else if reaches_table {
+            grant.refusals.push((node, SemanticIssueKind::AtomicTableNotGranted {
+                table: "a table reached through a Box".to_owned(), mechanical_fix: "add a whole binding `t = &s^.table` to the header and reach the table through `t`; a statement's header names every table its guard and block reach",
             }));
         }
         Ok(())

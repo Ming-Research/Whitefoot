@@ -2944,6 +2944,7 @@ static void entries_huge_capacity(void) {
 /* Whole holds accept block-computed keys. Absent reads allocate nothing;
  * writes survive index growth and are counted before and after release. */
 static void tables_held_selection(void) {
+    wf_cmap_key_set_drop_spare();
     int64_t before = atomic_load(&blocks_out);
     wf_cmap *map = wf__keyed_table_new(16, 8, 1);
     const unsigned char absent[] = "absent";
@@ -3000,6 +3001,9 @@ static void tables_held_selection(void) {
     slot[1] = 44;
     if (wf__keyed_table_count(map, 0, 4, 0) != 258)
         fail("local writes were not counted", wf__keyed_table_count(map, 0, 4, 0), 258);
+    wf__table_prepare_shared(map);
+    if (map->local_hold != NULL)
+        fail("publication retained a local hold", 1, 0);
     wf__table_hold_begin(&hold, map);
     wf__table_hold_whole(&hold);
     wf__table_hold_take(&hold);
@@ -3008,6 +3012,7 @@ static void tables_held_selection(void) {
         fail("a local write did not survive a later header hold", slot[1], 44);
     wf__table_hold_release(&hold, 0, 4, 0);
     wf__keyed_table_free(map);
+    wf_cmap_key_set_drop_spare();
     if (atomic_load(&blocks_out) != before)
         fail("whole-held selection leaked blocks", atomic_load(&blocks_out), before);
 }

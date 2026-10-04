@@ -192,7 +192,7 @@ impl FunctionEmitter<'_, '_> {
 
     /// One call that answers nothing, then the unit value the operation
     /// defines.
-    fn emit_unit_call(
+    pub(super) fn emit_unit_call(
         &mut self,
         result: IrValueId,
         entry: &'static str,

@@ -1180,6 +1180,11 @@ pub enum IrOperation {
         nominal: IrNominalId,
         capacity: IrValueId,
     },
+    /// Settles local selections before publishing the table in shared state.
+    /// Defines `Unit`; no context can reach the table during this transition.
+    KeyedTablePrepareShared {
+        table: IrValueId,
+    },
     /// [SHARE-1] how many entries of the table `table` holds hold `Some`,
     /// exact while the statement holds the table whole or no other context
     /// reaches it. Defines `u64`.
@@ -1219,8 +1224,6 @@ pub enum IrOperation {
         record: IrRecord,
         read: bool,
     },
-    /// Begins the hold `record` of entries of the table `table`. Defines
-    /// `Unit`.
     /// Select an entry under a whole hold, materializing only for a write.
     TableHeldEntry {
         nominal: IrNominalId,
@@ -1235,6 +1238,7 @@ pub enum IrOperation {
         record: IrRecord,
         element: IrElement,
     },
+    /// Begins the hold `record` of entries of the table `table`. Defines `Unit`.
     TableHoldBegin {
         record: IrRecord,
         table: IrValueId,

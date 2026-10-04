@@ -86,6 +86,8 @@ static void table_finish_local(wf_cmap *map) {
     }
 }
 
+void wf__table_prepare_shared(void *table) { table_finish_local(table); }
+
 void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write) {
     wf_cmap *map = table;
     return wf_cmap_held_entry(map, key, length, write != 0);
@@ -133,7 +135,6 @@ void wf__keyed_table_swap(void *a, void *b, uint64_t tag_offset, uint32_t tag_wi
 void *wf__table_lock_entry(void *table, const unsigned char *key, uint64_t length, uint32_t read,
                            wf_table_entry *entry) {
     wf_cmap *map = (wf_cmap *)table;
-    table_finish_local(map);
     wf_cmap_user *u = wf_cmap_user_at(map, wf__driver_index());
     int held = wf_cmap_holds_whole(u);
     entry->user = u;
@@ -155,7 +156,7 @@ void wf__table_unlock_entry(wf_table_entry *entry, uint32_t present) {
     table_written(u->map);
 }
 
-void wf__table_hold_begin(void *hold, void *table) { table_finish_local(table); wf_cmap_hold_begin((wf_cmap_holding *)hold, (wf_cmap *)table); }
+void wf__table_hold_begin(void *hold, void *table) { wf_cmap_hold_begin((wf_cmap_holding *)hold, (wf_cmap *)table); }
 
 void wf__table_hold_whole(void *hold) { wf_cmap_hold_whole((wf_cmap_holding *)hold); }
 

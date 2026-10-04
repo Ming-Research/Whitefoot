@@ -43,8 +43,8 @@ use crate::{
     IrAddressed, IrAllocationObligations, IrArrayRoot, IrBlock, IrBlockId, IrBooleanOperation,
     IrConstant, IrConversionMode, IrDrop, IrDropSubject, IrEnumType, IrFloatOperation, IrFunction,
     IrGlobalValue, IrInstruction, IrIntegerOperation, IrNominal, IrNominalId, IrNominalKind,
-    IrOperation, IrOverlap, IrProgram, IrTargetDomainObligation, IrTerminator, IrType, IrValueId,
-    IrWindowShape,
+    IrOperation, IrOverlap, IrProgram, IrShared, IrTargetDomainObligation, IrTerminator, IrType,
+    IrValueId, IrWindowShape,
 };
 use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
@@ -2451,6 +2451,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
             IrOperation::KeyedTableNew { nominal, capacity } => {
                 self.emit_keyed_table_new(result, ty, *nominal, *capacity)
+            }
+            IrOperation::KeyedTablePrepareShared { table } => {
+                let arguments = format!("ptr {}", self.value_name(*table));
+                self.emit_unit_call(result, "wf__table_prepare_shared", &arguments)
             }
             IrOperation::KeyedTableCount { table } => self.emit_keyed_table_count(result, *table),
             IrOperation::KeyedTableSwap { first, second } => {

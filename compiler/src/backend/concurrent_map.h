@@ -152,6 +152,10 @@ typedef struct wf_cmap_holding {
     wf_cmap_held inline_keys[WF_CMAP_HOLD_INLINE];
 } wf_cmap_holding;
 
+/* Selects a key under the map's whole hold. A read returns NULL for an
+ * absent key; a write materializes None. With no other context reaching a
+ * local map, writes establish a local whole hold until publication or drop. */
+void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length, int write);
 /* Begins an empty hold of map's entries. */
 void wf_cmap_hold_begin(wf_cmap_holding *hold, wf_cmap *map);
 /* Asks the hold, before it is taken, to hold the whole map: the take waits

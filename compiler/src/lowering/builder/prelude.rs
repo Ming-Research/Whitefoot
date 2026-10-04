@@ -147,6 +147,10 @@ impl IrBuilder<'_> {
         };
         let referent = IrAddressed::of(self.value_type(value)?)
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        for path in self.table_paths(self.value_type(value)?)? {
+            let table = self.table_at(value, &path)?;
+            self.define(IrType::Unit, IrOperation::KeyedTablePrepareShared { table })?;
+        }
         let object = self.define(self.result, IrOperation::SharedNew { nominal })?;
         let state = self.define(
             IrType::Address(referent),

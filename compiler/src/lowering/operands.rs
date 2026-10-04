@@ -133,6 +133,7 @@ macro_rules! operation_operands {
             | IrOperation::KeyedTableNew {
                 capacity: value, ..
             }
+            | IrOperation::KeyedTablePrepareShared { table: value }
             | IrOperation::KeyedTableCount { table: value }
             | IrOperation::TableHoldBegin { table: value, .. }
             | IrOperation::TableHoldKey { key: value, .. }

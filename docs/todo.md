@@ -2505,6 +2505,18 @@ rarely insert at the same place.
 
 ## Open language questions
 
+- **Clarify unshared keyed-table access in SHARE-1.** The header-grant
+  amendment says a table's entries are reached only through atomic table
+  bindings, while OP-4 admits a subscript through a `&KeyedTable<V>` and
+  the compiler requirement explicitly includes a local table with no
+  statement holding it. A local reference therefore has specified typing
+  but its relation to SHARE-1's restriction is unclear. State whether
+  SHARE-1 restricts shared-state tables or all tables, and align the
+  representation decision with that boundary. Reopen before approving
+  amendment A; validate an unshared write, an absent read and publication
+  into a shared state against the selected rule. No broader acceptance
+  policy is selected here.
+
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
 
