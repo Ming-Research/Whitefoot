@@ -166,7 +166,7 @@ not automatically used to overwrite this baseline.
 | apps | [sliding-window](scripts/apps/sliding-window.lua) | Sorted-set limiter removes old scores and counts a fixed-time window. |
 | libs | [bit-logical](scripts/libs/bit-logical.lua) | bit.band, bor and bxor use signed 32-bit results. |
 | libs | [bit-shifts-hex](scripts/libs/bit-shifts-hex.lua) | Shifts mask counts and tohex formats signed values as hex. |
-| libs | [cjson-arrays-nested](scripts/libs/cjson-arrays-nested.lua) | JSON arrays and nested objects round-trip without relying on object order. |
+| libs | [cjson-arrays-nested](scripts/libs/cjson-arrays-nested.lua) | JSON arrays encode and nested object values decode without relying on object order. |
 | libs | [cjson-invalid](scripts/libs/cjson-invalid.lua) | Malformed JSON raises an error caught by pcall. |
 | libs | [cjson-numbers](scripts/libs/cjson-numbers.lua) | cjson number formatting is independent of RESP integer conversion. |
 | libs | [cjson-objects](scripts/libs/cjson-objects.lua) | JSON objects, empty table encoding and decoded null/boolean values. |

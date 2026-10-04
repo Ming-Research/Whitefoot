@@ -1,4 +1,4 @@
--- checks: JSON arrays and nested objects round-trip without relying on object order.
+-- checks: JSON arrays encode and nested object values decode without relying on object order.
 -- KEYS: []
 -- ARGV: []
 -- expects: No pre-existing keys.
