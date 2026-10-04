@@ -15,3 +15,5 @@ local t={};for i=1,7999 do t[i]=i end;print('unpackcapacity',pcall(function()ret
 print('nearcapacity',select('#',string.byte(string.rep('x',7997),1,7997)),select('#',unpack(t,1,7997)))
 print('concaterror',pcall(function()return 1 .. {} end))
 print('badmetacall',pcall(function()return tostring(setmetatable({},{__tostring=false}))end))
+ipairsaux=ipairs({'a'});print('baditeratorindex',pcall(function()return ipairsaux({'a'},'bad')end))
+print('iteratoroverflow',ipairsaux({[-2147483648]='overflow'},2147483647))

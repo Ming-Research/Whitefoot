@@ -55,7 +55,9 @@ fn library_math(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u3
       return lib_argtext(vm: vm, id: id, index: 1_u64, text: &library_math_lib_text_3[0_u64..17_u64]);
     }
     let local_span_14 = local_upper_11 -wrap local_lower_10;
-    let local_size_15 = local_span_14 +wrap 1_i64;
+    let span = cvt.wrap::<i64, i32>(local_span_14);
+    let size = span +wrap 1_i32;
+    let local_size_15 = cvt::<i32, i64>(size);
     let local_width_16 = cvt.nearest::<i64, f64>(local_size_15);
     let local_product_17 = fmul.strict(local_random_8, local_width_16);
     let local_offset_18 = ffloor(local_product_17);

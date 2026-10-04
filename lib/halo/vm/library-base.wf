@@ -238,6 +238,15 @@ fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
     }
   }
   if id == builtin_ipairsaux {
+    let local_index_38 = 0_i64;
+    match lib_int32(vm: vm, value: local_b_3) {
+      Some(value: index) => {
+        set local_index_38 = index;
+      }
+      None() => {
+        return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: local_b_3, expected: &library_base_lib_text_0[0_u64..6_u64]);
+      }
+    }
     match tab_of(v: local_a_2) {
       Handle(..) => {
       }
@@ -245,8 +254,9 @@ fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
         return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: local_a_2, expected: &library_base_lib_text_2[0_u64..5_u64]);
       }
     }
-    let local_index_38 = lib_index(vm: vm, value: local_b_3, default_value: 0_i64);
-    let local_next_39 = local_index_38 +wrap 1_i64;
+    let narrowed = cvt.wrap::<i64, i32>(local_index_38);
+    let incremented = narrowed +wrap 1_i32;
+    let local_next_39 = cvt::<i32, i64>(incremented);
     let local_key_40 = number_key(index: local_next_39);
     let local_value_41 = table_get(heap: &vm^.heap, t: local_a_2, key: local_key_40);
     if is_nil(v: local_value_41) {
