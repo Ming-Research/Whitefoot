@@ -76,6 +76,9 @@ const builtin_expected_3_value_expected: Array<u8, 14> = "value expected";
 
 fn kind_name(vm: &Vm, v: Value) -> r: Value writes(vm) {
   let k = kind(v: v);
+  if k == 6_u8 {
+    return intern(heap: &vm^.heap, bytes: &cj_userdata[0_u64..8_u64]);
+  }
   if k == 0_u8 {
     return intern(heap: &vm^.heap, bytes: &builtins_text_0[0_u64..3_u64]);
   }
@@ -234,7 +237,7 @@ fn builtin<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     resize_stack(stack: stack, size: length);
     match outcome {
       Raised() => {
-        library_error_location(vm: vm, pc: pc);
+        library_call_error_location(vm: vm, id: id, pc: pc);
       }
       Returned(..) => {
       }

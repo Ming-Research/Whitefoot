@@ -1,0 +1,776 @@
+alias no_handle = pkg::heap::no_handle;
+alias Value = pkg::value::Value;
+alias num_of = pkg::value::num_of;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias new_table = pkg::heap::new_table;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+
+const cj_number: Array<u8, 6> = "number";
+
+const cj_string: Array<u8, 6> = "string";
+
+const cj_expected: Array<u8, 19> = "expected 1 argument";
+
+const cj_many: Array<u8, 24> = "found too many arguments";
+
+fn cjson_default() -> r: CjsonConfig pure {
+  let settings_v1 = array_filled::<u64, 9>(value: 0_u64);
+  set settings_v1[0_u64] = 1000_u64;
+  set settings_v1[1_u64] = 1000_u64;
+  set settings_v1[2_u64] = 14_u64;
+  set settings_v1[3_u64] = 1_u64;
+  set settings_v1[5_u64] = 1_u64;
+  set settings_v1[7_u64] = 2_u64;
+  set settings_v1[8_u64] = 10_u64;
+  let buffer_v2 = box_slots_new::<u8>(capacity: 0_u64);
+  return CjsonConfig(settings: settings_v1, buffer: move buffer_v2);
+}
+
+fn cjson_config(vm: &Vm) -> r: u64 writes(vm) {
+  let cap_v3 = vm^.cjson_configs.inner.cap;
+  let index_v4 = vm^.cjson_configs.inner.len;
+  if index_v4 == cap_v3 {
+    let target_v5 = cap_v3 +sat 16_u64;
+    grow(cell: &vm^.cjson_configs, capacity: target_v5);
+  }
+  if vm^.cjson_configs.inner.len < vm^.cjson_configs.inner.cap {
+    let config_v6 = cjson_default();
+    place_back(window: &vm^.cjson_configs.inner, value: move config_v6);
+  }
+  return index_v4;
+}
+
+struct CjsonBinding {
+  id: u32;
+  config: u64;
+}
+
+fn cjson_closure(vm: &Vm, id: u32, config: u64) -> r: Value writes(vm) {
+  let captured = array_filled::<u32, 3>(value: no_handle);
+  let words = array_filled::<u32, 3>(value: id);
+  let low = iand(config, 4294967295_u64);
+  let high = ishr.wrap(config, 32_u32);
+  set words[1_u64] = cvt.wrap::<u64, u32>(low);
+  set words[2_u64] = cvt.wrap::<u64, u32>(high);
+  for (i in 0_u64..3_u64) {
+    let number = cvt.nearest::<u32, f64>(words[i]);
+    let value = Value::Num(n: number);
+    let payload = pkg::heap::Upval::Closed(v: value);
+    match pkg::heap::new_upvalue(heap: &vm^.heap, value: payload) {
+      Some(value: handle) => {
+        set captured[i] = handle;
+      }
+      None() => {
+        return Value::Nil();
+      }
+    }
+  }
+  return pkg::heap::new_closure(heap: &vm^.heap, proto: no_handle, upvals: &captured[0_u64..3_u64]);
+}
+
+fn cjson_capture(vm: &Vm, handle: u32) -> r: Option<u32> reads(vm) {
+  let index = cvt::<u32, u64>(handle);
+  if index < vm^.heap.upvalues.inner.len {
+    if vm^.heap.upvalues.inner[index].live {
+      let payload = vm^.heap.upvalues.inner[index].payload;
+      match payload {
+        Open(..) => {
+        }
+        Closed(v: value) => {
+          match num_of(v: value) {
+            Is(x: number) => {
+              let truncated = ftrunc(number);
+              if feq(truncated, number) {
+                if cvt.defined::<f64, u32>(number) {
+                  let word = cvt::<f64, u32>(number);
+                  return Some<u32>(value: word);
+                }
+              }
+            }
+            Not() => {
+            }
+          }
+        }
+      }
+    }
+  }
+  return None<u32>();
+}
+
+fn cjson_binding(vm: &Vm, handle: u32) -> r: Option<CjsonBinding> reads(vm) {
+  let index = cvt::<u32, u64>(handle);
+  if index < vm^.heap.closures.inner.len {
+    if vm^.heap.closures.inner[index].live {
+      if vm^.heap.closures.inner[index].payload.proto == no_handle {
+        if vm^.heap.closures.inner[index].payload.upvals.inner.len == 3_u64 {
+          let words = array_filled::<u32, 3>(value: 0_u32);
+          for (i in 0_u64..3_u64) {
+            let capture_handle = vm^.heap.closures.inner[index].payload.upvals.inner[i];
+            match cjson_capture(vm: vm, handle: capture_handle) {
+              Some(value: word) => {
+                set words[i] = word;
+              }
+              None() => {
+                return None<CjsonBinding>();
+              }
+            }
+          }
+          let id = words[0_u64];
+          let lower = id >= 96_u32;
+          let upper = id <= 105_u32;
+          if band(lower, upper) {
+            let low = cvt::<u32, u64>(words[1_u64]);
+            let high = cvt::<u32, u64>(words[2_u64]);
+            let shifted = ishl.wrap(high, 32_u32);
+            let config = ior(shifted, low);
+            let native_record = CjsonBinding(id: id, config: config);
+            return Some<CjsonBinding>(value: native_record);
+          }
+        }
+      }
+    }
+  }
+  return None<CjsonBinding>();
+}
+
+fn cjson_table(vm: &Vm, config: u64) -> r: Value writes(vm) {
+  let table_v10 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 16_u32);
+  for (i_v11 in 96_u64..106_u64) {
+    match codec_builtin(index: i_v11) {
+      None() => {
+      }
+      Some(value: row_v12) => {
+        let n_v13 = row_v12.length;
+        if n_v13 <= 32_u64 {
+          let key_v14 = intern(heap: &vm^.heap, bytes: &row_v12.name[0_u64..n_v13]);
+          let v_v16 = Value::Builtin(id: row_v12.id);
+          if config > 0_u64 {
+            set v_v16 = cjson_closure(vm: vm, id: row_v12.id, config: config);
+          }
+          let ignored_v17 = table_set(heap: &vm^.heap, t: table_v10, key: key_v14, val: v_v16);
+        }
+      }
+    }
+  }
+  let null_v18 = Value::Builtin(id: 111_u32);
+  codec_field(vm: vm, table: table_v10, key: &cj_null[0_u64..4_u64], value: null_v18);
+  codec_metadata(vm: vm, table: table_v10, key: &codec_name[0_u64..5_u64], text: &codec_lib_4[0_u64..5_u64]);
+  codec_metadata(vm: vm, table: table_v10, key: &codec_version[0_u64..8_u64], text: &cj_version[0_u64..5_u64]);
+  return table_v10;
+}
+
+fn cjson_isnull(value: Value) -> r: Bool pure {
+  match value {
+    Builtin(id: id_v19) => {
+      return id_v19 == 111_u32;
+    }
+    Nil() => {
+      return False();
+    }
+    False() => {
+      return False();
+    }
+    True() => {
+      return False();
+    }
+    Num(..) => {
+      return False();
+    }
+    Str(..) => {
+      return False();
+    }
+    Tab(..) => {
+      return False();
+    }
+    Fun(..) => {
+      return False();
+    }
+  }
+}
+
+fn cjson_serial_error(vm: &Vm, value: Value, reason: &[u8]) -> r: Bool reads(reason), writes(vm) {
+  let bytes_v20 = box_slots_new::<u8>(capacity: 128_u64);
+  bytes_append(bytes: &bytes_v20, text: &cj_serial[0_u64..17_u64]);
+  let name_v21 = kind_name(vm: vm, v: value);
+  bytes_string(vm: vm, bytes: &bytes_v20, value: name_v21);
+  bytes_append(bytes: &bytes_v20, text: &cj_colon[0_u64..2_u64]);
+  bytes_append(bytes: &bytes_v20, text: reason);
+  let n_v22 = bytes_v20.inner.len;
+  return raise_text(vm: vm, text: &bytes_v20.inner[0_u64..n_v22]);
+}
+
+fn cjson_number(value: f64, precision: u64, out: &Box<Slots<u8>>) -> r: unit writes(out) {
+  if precision == 14_u64 {
+    let text_v23 = array_filled::<u8, 32>(value: 0_u8);
+    let length_v24 = pkg::number::format_number(value: value, out: &text_v23[0_u64..32_u64]);
+    bytes_append(bytes: out, text: &text_v23[0_u64..length_v24]);
+  } else {
+    let bits_v25 = reinterpret::<f64, u64>(value);
+    let sign_v26 = ishr.wrap(bits_v25, 63_u32);
+    if sign_v26 != 0_u64 {
+      bytes_push(bytes: out, byte: 45_u8);
+    }
+    let magnitude_v27 = fabs(value);
+    let p_v28 = cvt.wrap::<u64, i64>(precision);
+    let no_v29 = False();
+    format_float(bytes: out, x: magnitude_v27, specifier: 103_u8, precision: p_v28, alternate: no_v29);
+  }
+  return unit;
+}
+
+fn cjson_truncate(out: &Box<Slots<u8>>, length: u64) -> r: unit writes(out) {
+  loop {
+    if out^.inner.len <= length {
+      break;
+    }
+    let ignored_v30 = take_back(window: &out^.inner);
+  }
+  return unit;
+}
+
+fn cjson_quote(writer: &json::encode::Writer, out: &Box<Slots<u8>>, bytes: &[u8], key: Bool) -> r: unit reads(bytes), writes(writer), writes(out) {
+  doc "The general writer owns commas and value state. Redis strings preserve arbitrary bytes: write a valid empty placeholder, then replace its two quote bytes with Redis's byte escaping.";
+  let empty_v31 = array_filled::<u8, 0>(value: 0_u8);
+  if key {
+    let ignored_v32 = json::encode::key(writer: writer, output: out, bytes: &empty_v31[0_u64..0_u64]);
+  } else {
+    let ignored_v33 = json::encode::string(writer: writer, output: out, bytes: &empty_v31[0_u64..0_u64]);
+  }
+  let remove_v34 = 2_u64;
+  if key {
+    set remove_v34 = 3_u64;
+  }
+  let prefix_v35 = out^.inner.len -sat remove_v34;
+  cjson_truncate(out: out, length: prefix_v35);
+  bytes_push(bytes: out, byte: 34_u8);
+  for (i_v36 in 0_u64..bytes^.len) {
+    let b_v37 = bytes^[i_v36];
+    let escape_v38 = 0_u8;
+    if b_v37 == 34_u8 {
+      set escape_v38 = 34_u8;
+    }
+    if b_v37 == 92_u8 {
+      set escape_v38 = 92_u8;
+    }
+    if b_v37 == 47_u8 {
+      set escape_v38 = 47_u8;
+    }
+    if b_v37 == 8_u8 {
+      set escape_v38 = 98_u8;
+    }
+    if b_v37 == 9_u8 {
+      set escape_v38 = 116_u8;
+    }
+    if b_v37 == 10_u8 {
+      set escape_v38 = 110_u8;
+    }
+    if b_v37 == 12_u8 {
+      set escape_v38 = 102_u8;
+    }
+    if b_v37 == 13_u8 {
+      set escape_v38 = 114_u8;
+    }
+    if escape_v38 != 0_u8 {
+      bytes_push(bytes: out, byte: 92_u8);
+      bytes_push(bytes: out, byte: escape_v38);
+    } else if b_v37 < 32_u8 {
+      bytes_append(bytes: out, text: &cj_hex[0_u64..4_u64]);
+      let hi_v39 = b_v37 / 16_u8;
+      let lo_v40 = b_v37 % 16_u8;
+      let high_v41 = cvt::<u8, u64>(hi_v39);
+      let low_v42 = cvt::<u8, u64>(lo_v40);
+      if high_v41 < 16_u64 {
+        let digit_v43 = bit_digits[high_v41];
+        bytes_push(bytes: out, byte: digit_v43);
+      }
+      if low_v42 < 16_u64 {
+        let digit_v44 = bit_digits[low_v42];
+        bytes_push(bytes: out, byte: digit_v44);
+      }
+    } else {
+      bytes_push(bytes: out, byte: b_v37);
+    }
+  }
+  bytes_push(bytes: out, byte: 34_u8);
+  if key {
+    bytes_push(bytes: out, byte: 58_u8);
+  }
+  return unit;
+}
+
+fn cjson_write(vm: &Vm, writer: &json::encode::Writer, out: &Box<Slots<u8>>, value: Value, settings: &Array<u64, 9>, depth: u64) -> r: Bool reads(settings), writes(vm), writes(writer), writes(out) {
+  match value {
+    Nil() => {
+      let ignored_v45 = json::encode::null(writer: writer, output: out);
+    }
+    False() => {
+      let ignored_v46 = json::encode::false(writer: writer, output: out);
+    }
+    True() => {
+      let ignored_v47 = json::encode::true(writer: writer, output: out);
+    }
+    Str(..) => {
+      let bytes_v48 = box_slots_new::<u8>(capacity: 0_u64);
+      bytes_string(vm: vm, bytes: &bytes_v48, value: value);
+      let n_v49 = bytes_v48.inner.len;
+      let no_v50 = False();
+      cjson_quote(writer: writer, out: out, bytes: &bytes_v48.inner[0_u64..n_v49], key: no_v50);
+    }
+    Num(n: n_v51) => {
+      let finite_number_v52 = cjson_finite(value: n_v51);
+      let invalid_v53 = bnot(finite_number_v52);
+      let mode_v54 = settings^[4_u64];
+      if invalid_v53 {
+        if mode_v54 == 0_u64 {
+          return cjson_serial_error(vm: vm, value: value, reason: &cj_invalid_number[0_u64..22_u64]);
+        }
+        let ignored_v55 = json::encode::null(writer: writer, output: out);
+        if mode_v54 == 1_u64 {
+          let prefix_v56 = out^.inner.len -sat 4_u64;
+          cjson_truncate(out: out, length: prefix_v56);
+          if cjson_nan(value: n_v51) {
+            bytes_append(bytes: out, text: &cj_nan[0_u64..3_u64]);
+          } else {
+            cjson_number(value: n_v51, precision: 14_u64, out: out);
+          }
+        }
+      } else {
+        let bytes_v57 = box_slots_new::<u8>(capacity: 32_u64);
+        let precision_v58 = settings^[2_u64];
+        cjson_number(value: n_v51, precision: precision_v58, out: &bytes_v57);
+        let length_v59 = bytes_v57.inner.len;
+        let ignored_v60 = json::encode::number(writer: writer, output: out, bytes: &bytes_v57.inner[0_u64..length_v59]);
+      }
+    }
+    Fun(..) => {
+      return cjson_serial_error(vm: vm, value: value, reason: &cj_unsupported[0_u64..18_u64]);
+    }
+    Builtin(..) => {
+      if cjson_isnull(value: value) {
+        let ignored_v61 = json::encode::null(writer: writer, output: out);
+      } else {
+        return cjson_serial_error(vm: vm, value: value, reason: &cj_unsupported[0_u64..18_u64]);
+      }
+    }
+    Tab(..) => {
+      let d_v62 = depth +sat 1_u64;
+      let max_depth_v63 = settings^[0_u64];
+      if d_v62 > max_depth_v63 {
+        let bytes_v64 = box_slots_new::<u8>(capacity: 80_u64);
+        bytes_append(bytes: &bytes_v64, text: &cj_nesting[0_u64..37_u64]);
+        let n_v65 = cvt.nearest::<u64, f64>(d_v62);
+        let v_v66 = Value::Num(n: n_v65);
+        let s_v67 = coerce_string(vm: vm, v: v_v66);
+        bytes_string(vm: vm, bytes: &bytes_v64, value: s_v67);
+        bytes_push(bytes: &bytes_v64, byte: 41_u8);
+        let length_v68 = bytes_v64.inner.len;
+        return raise_text(vm: vm, text: &bytes_v64.inner[0_u64..length_v68]);
+      }
+      let key_v69 = Value::Nil();
+      let count_v70 = 0_u64;
+      let max_v71 = 0_u64;
+      let array_v72 = True();
+      loop {
+        match pkg::heap::table_next(heap: &vm^.heap, t: value, key: key_v69) {
+          Err(..) => {
+            break;
+          }
+          Ok(value: next_v73) => {
+            match next_v73 {
+              None() => {
+                break;
+              }
+              Some(value: pair_v74) => {
+                set key_v69 = pair_v74.key;
+                set count_v70 = count_v70 +sat 1_u64;
+                match num_of(v: key_v69) {
+                  Is(x: n_v75) => {
+                    let integral_v76 = ftrunc(n_v75);
+                    let whole_v77 = feq(integral_v76, n_v75);
+                    let positive_v78 = fge(n_v75, 1.0_f64);
+                    if band(whole_v77, positive_v78) {
+                      if cvt.defined::<f64, i32>(n_v75) {
+                        let index_v79 = cvt::<f64, i32>(n_v75);
+                        let wide_v80 = cvt.wrap::<i32, u64>(index_v79);
+                        set max_v71 = imax(max_v71, wide_v80);
+                      } else {
+                        set array_v72 = False();
+                      }
+                    } else {
+                      set array_v72 = False();
+                    }
+                  }
+                  Not() => {
+                    set array_v72 = False();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      let ratio_v81 = settings^[7_u64];
+      let safe_v82 = settings^[8_u64];
+      if ratio_v81 > 0_u64 {
+        let allowed_v83 = count_v70 *sat ratio_v81;
+        let sparse_v84 = max_v71 > allowed_v83;
+        let large_v85 = max_v71 > safe_v82;
+        if band(sparse_v84, large_v85) {
+          if array_v72 {
+            if settings^[6_u64] == 0_u64 {
+              return cjson_serial_error(vm: vm, value: value, reason: &cj_sparse[0_u64..24_u64]);
+            }
+            set array_v72 = False();
+          }
+        }
+      }
+      let nonempty_v86 = max_v71 > 0_u64;
+      if band(array_v72, nonempty_v86) {
+        let ignored_v87 = json::encode::begin_array(writer: writer, output: out);
+        for (i_v88 in 0_u64..max_v71) {
+          let next_v89 = i_v88 +sat 1_u64;
+          let n_v90 = cvt.nearest::<u64, f64>(next_v89);
+          let key_v91 = Value::Num(n: n_v90);
+          let item_v92 = table_get(heap: &vm^.heap, t: value, key: key_v91);
+          let ok_v93 = cjson_write(vm: vm, writer: writer, out: out, value: item_v92, settings: settings, depth: d_v62);
+          if bnot(ok_v93) {
+            return False();
+          }
+        }
+        let ignored_v94 = json::encode::end_array(writer: writer, output: out);
+      } else {
+        let ignored_v95 = json::encode::begin_object(writer: writer, output: out);
+        set key_v69 = Value::Nil();
+        loop {
+          match pkg::heap::table_next(heap: &vm^.heap, t: value, key: key_v69) {
+            Err(..) => {
+              break;
+            }
+            Ok(value: next_v96) => {
+              match next_v96 {
+                None() => {
+                  break;
+                }
+                Some(value: pair_v97) => {
+                  set key_v69 = pair_v97.key;
+                  let bytes_v98 = box_slots_new::<u8>(capacity: 32_u64);
+                  match num_of(v: key_v69) {
+                    Is(x: n_v99) => {
+                      let escape_number = True();
+                      let number_writer = json::encode::new(escape_slash: escape_number);
+                      let encoded_key = cjson_write(vm: vm, writer: &number_writer, out: &bytes_v98, value: key_v69, settings: settings, depth: 0_u64);
+                      if bnot(encoded_key) {
+                        return False();
+                      }
+                    }
+                    Not() => {
+                      match str_of(v: key_v69) {
+                        Handle(..) => {
+                          bytes_string(vm: vm, bytes: &bytes_v98, value: key_v69);
+                        }
+                        NoHandle() => {
+                          return cjson_serial_error(vm: vm, value: key_v69, reason: &cj_bad_key[0_u64..36_u64]);
+                        }
+                      }
+                    }
+                  }
+                  let length_v101 = bytes_v98.inner.len;
+                  let yes_v102 = True();
+                  cjson_quote(writer: writer, out: out, bytes: &bytes_v98.inner[0_u64..length_v101], key: yes_v102);
+                  let ok_v103 = cjson_write(vm: vm, writer: writer, out: out, value: pair_v97.val, settings: settings, depth: d_v62);
+                  if bnot(ok_v103) {
+                    return False();
+                  }
+                }
+              }
+            }
+          }
+        }
+        let ignored_v104 = json::encode::end_object(writer: writer, output: out);
+      }
+    }
+  }
+  return True();
+}
+
+fn library_cjson(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, bound: u32) -> r: HostOutcome writes(vm), writes(stack) {
+  let id_v105 = bound;
+  let config_v108 = vm^.cjson_active_config;
+  if id_v105 == 105_u32 {
+    let index_v109 = cjson_config(vm: vm);
+    let table_v110 = cjson_table(vm: vm, config: index_v109);
+    return lib_result(stack: stack, func: func, value: table_v110);
+  }
+  if config_v108 >= vm^.cjson_configs.inner.len {
+    return HostOutcome::Raised();
+  }
+  let settings_v111 = vm^.cjson_configs.inner[config_v108].settings;
+  if id_v105 <= 97_u32 {
+    if argc != 1_u64 {
+      return lib_argtext(vm: vm, id: id_v105, index: 1_u64, text: &cj_expected[0_u64..19_u64]);
+    }
+    let value_v112 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+    if id_v105 == 97_u32 {
+      return cjson_decode(vm: vm, stack: stack, func: func, argc: argc, value: value_v112, settings: &settings_v111);
+    }
+    let buffer_v113 = box_slots_new::<u8>(capacity: 0_u64);
+    if settings_v111[3_u64] != 0_u64 {
+      if config_v108 < vm^.cjson_configs.inner.len {
+        swap(first: &buffer_v113, second: &vm^.cjson_configs.inner[config_v108].buffer);
+      }
+    }
+    cjson_truncate(out: &buffer_v113, length: 0_u64);
+    let yes_v114 = True();
+    let writer_v115 = json::encode::new(escape_slash: yes_v114);
+    let ok_v116 = cjson_write(vm: vm, writer: &writer_v115, out: &buffer_v113, value: value_v112, settings: &settings_v111, depth: 0_u64);
+    if bnot(ok_v116) {
+      if settings_v111[3_u64] != 0_u64 {
+        if config_v108 < vm^.cjson_configs.inner.len {
+          swap(first: &buffer_v113, second: &vm^.cjson_configs.inner[config_v108].buffer);
+        }
+      }
+      return HostOutcome::Raised();
+    }
+    let result_v117 = bytes_value(vm: vm, bytes: &buffer_v113);
+    if settings_v111[3_u64] != 0_u64 {
+      if config_v108 < vm^.cjson_configs.inner.len {
+        swap(first: &buffer_v113, second: &vm^.cjson_configs.inner[config_v108].buffer);
+      }
+    }
+    return lib_result(stack: stack, func: func, value: result_v117);
+  }
+  let nargs_v118 = 1_u64;
+  if id_v105 == 98_u32 {
+    set nargs_v118 = 3_u64;
+  }
+  if argc > nargs_v118 {
+    let index_v119 = nargs_v118 +sat 1_u64;
+    return lib_argtext(vm: vm, id: id_v105, index: index_v119, text: &cj_many[0_u64..24_u64]);
+  }
+  let results_v120 = box_slots_new::<Value>(capacity: 3_u64);
+  for (i_v121 in 0_u64..nargs_v118) {
+    let setting_v122 = 0_u64;
+    let minimum_v123 = 0_u64;
+    let maximum_v124 = 2147483647_u64;
+    let enumeration_v125 = False();
+    if id_v105 == 98_u32 {
+      if i_v121 == 0_u64 {
+        set setting_v122 = 6_u64;
+        set enumeration_v125 = True();
+      }
+      if i_v121 == 1_u64 {
+        set setting_v122 = 7_u64;
+      }
+      if i_v121 == 2_u64 {
+        set setting_v122 = 8_u64;
+      }
+    }
+    if id_v105 == 99_u32 {
+      set setting_v122 = 0_u64;
+      set minimum_v123 = 1_u64;
+    }
+    if id_v105 == 100_u32 {
+      set setting_v122 = 1_u64;
+      set minimum_v123 = 1_u64;
+    }
+    if id_v105 == 101_u32 {
+      set setting_v122 = 2_u64;
+      set minimum_v123 = 1_u64;
+      set maximum_v124 = 14_u64;
+    }
+    if id_v105 == 102_u32 {
+      set setting_v122 = 3_u64;
+      set enumeration_v125 = True();
+    }
+    if id_v105 == 103_u32 {
+      set setting_v122 = 4_u64;
+      set enumeration_v125 = True();
+    }
+    if id_v105 == 104_u32 {
+      set setting_v122 = 5_u64;
+      set enumeration_v125 = True();
+    }
+    let value_v126 = argument(stack: stack, func: func, argc: argc, index: i_v121);
+    if setting_v122 < 9_u64 {
+      let current_v127 = settings_v111[setting_v122];
+      let chosen_v128 = current_v127;
+      let absent_v129 = is_nil(v: value_v126);
+      if bnot(absent_v129) {
+        if enumeration_v125 {
+          let kind_v130 = kind(v: value_v126);
+          if kind_v130 == 1_u8 {
+            set chosen_v128 = 0_u64;
+            if truthy(v: value_v126) {
+              set chosen_v128 = 1_u64;
+            }
+          } else {
+            let string_v131 = coerce_string(vm: vm, v: value_v126);
+            let bytes_v132 = box_slots_new::<u8>(capacity: 0_u64);
+            bytes_string(vm: vm, bytes: &bytes_v132, value: string_v131);
+            let n_v133 = bytes_v132.inner.len;
+            for (option_byte in 0_u64..bytes_v132.inner.len) {
+              if bytes_v132.inner[option_byte] == 0_u8 {
+                set n_v133 = option_byte;
+                break;
+              }
+            }
+            let valid_v134 = False();
+            let two_bytes = bytes_v132.inner.len >= 2_u64;
+            let option_on = n_v133 == 2_u64;
+            if band(two_bytes, option_on) {
+              if bytes_v132.inner[0_u64] == 111_u8 {
+                if bytes_v132.inner[1_u64] == 110_u8 {
+                  set chosen_v128 = 1_u64;
+                  set valid_v134 = True();
+                }
+              }
+            }
+            let three_bytes = bytes_v132.inner.len >= 3_u64;
+            let option_off = n_v133 == 3_u64;
+            if band(three_bytes, option_off) {
+              if bytes_v132.inner[0_u64] == 111_u8 {
+                if bytes_v132.inner[1_u64] == 102_u8 {
+                  if bytes_v132.inner[2_u64] == 102_u8 {
+                    set chosen_v128 = 0_u64;
+                    set valid_v134 = True();
+                  }
+                }
+              }
+            }
+            if id_v105 == 103_u32 {
+              let four_bytes = bytes_v132.inner.len >= 4_u64;
+              let option_null = n_v133 == 4_u64;
+              if band(four_bytes, option_null) {
+                if bytes_v132.inner[0_u64] == 110_u8 {
+                  if bytes_v132.inner[1_u64] == 117_u8 {
+                    if bytes_v132.inner[2_u64] == 108_u8 {
+                      if bytes_v132.inner[3_u64] == 108_u8 {
+                        set chosen_v128 = 2_u64;
+                        set valid_v134 = True();
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            if bnot(valid_v134) {
+              let index_v135 = i_v121 +sat 1_u64;
+              match str_of(v: string_v131) {
+                NoHandle() => {
+                  return lib_argerror(vm: vm, id: id_v105, index: index_v135, argc: argc, value: value_v126, expected: &cj_string[0_u64..6_u64]);
+                }
+                Handle(..) => {
+                }
+              }
+              let message_v136 = box_slots_new::<u8>(capacity: 80_u64);
+              bytes_append(bytes: &message_v136, text: &cj_option[0_u64..16_u64]);
+              if n_v133 <= bytes_v132.inner.len {
+                bytes_append(bytes: &message_v136, text: &bytes_v132.inner[0_u64..n_v133]);
+              }
+              bytes_push(bytes: &message_v136, byte: 39_u8);
+              let length_v137 = message_v136.inner.len;
+              return lib_argtext(vm: vm, id: id_v105, index: index_v135, text: &message_v136.inner[0_u64..length_v137]);
+            }
+          }
+        } else {
+          match lib_integer(vm: vm, value: value_v126) {
+            None() => {
+              let index_v138 = i_v121 +sat 1_u64;
+              return lib_argerror(vm: vm, id: id_v105, index: index_v138, argc: argc, value: value_v126, expected: &cj_number[0_u64..6_u64]);
+            }
+            Some(value: integer_v139) => {
+              let narrowed_v140 = cvt.wrap::<i64, i32>(integer_v139);
+              let n_v141 = cvt::<i32, i64>(narrowed_v140);
+              let min_v142 = cvt.wrap::<u64, i64>(minimum_v123);
+              let max_v143 = cvt.wrap::<u64, i64>(maximum_v124);
+              let below_v144 = n_v141 < min_v142;
+              let above_v145 = n_v141 > max_v143;
+              if bor(below_v144, above_v145) {
+                let message_v146 = box_slots_new::<u8>(capacity: 80_u64);
+                bytes_append(bytes: &message_v146, text: &cj_between[0_u64..25_u64]);
+                let x_v147 = cvt.nearest::<u64, f64>(minimum_v123);
+                let v_v148 = Value::Num(n: x_v147);
+                let s_v149 = coerce_string(vm: vm, v: v_v148);
+                bytes_string(vm: vm, bytes: &message_v146, value: s_v149);
+                bytes_append(bytes: &message_v146, text: &cj_and[0_u64..5_u64]);
+                let x_v150 = cvt.nearest::<u64, f64>(maximum_v124);
+                let v_v151 = Value::Num(n: x_v150);
+                let s_v152 = coerce_string(vm: vm, v: v_v151);
+                bytes_string(vm: vm, bytes: &message_v146, value: s_v152);
+                let length_v153 = message_v146.inner.len;
+                return lib_argtext(vm: vm, id: id_v105, index: 1_u64, text: &message_v146.inner[0_u64..length_v153]);
+              }
+              set chosen_v128 = cvt.wrap::<i64, u64>(n_v141);
+            }
+          }
+        }
+        if config_v108 < vm^.cjson_configs.inner.len {
+          set vm^.cjson_configs.inner[config_v108].settings[setting_v122] = chosen_v128;
+          if setting_v122 == 3_u64 {
+            if chosen_v128 == 0_u64 {
+              let empty_buffer = box_slots_new::<u8>(capacity: 0_u64);
+              set vm^.cjson_configs.inner[config_v108].buffer = move empty_buffer;
+            }
+          }
+        }
+      }
+      let result_v154 = Value::Nil();
+      if enumeration_v125 {
+        if chosen_v128 == 2_u64 {
+          set result_v154 = intern(heap: &vm^.heap, bytes: &cj_null[0_u64..4_u64]);
+        } else {
+          let yes_v155 = chosen_v128 != 0_u64;
+          set result_v154 = boolean(v: yes_v155);
+        }
+      } else {
+        let n_v156 = cvt.nearest::<u64, f64>(chosen_v128);
+        set result_v154 = Value::Num(n: n_v156);
+      }
+      codec_value_push(values: &results_v120, value: result_v154);
+    }
+  }
+  return codec_results(stack: stack, func: func, values: &results_v120);
+}
+
+const cj_null: Array<u8, 4> = "null";
+
+const cj_version: Array<u8, 5> = "2.1.0";
+
+const cj_serial: Array<u8, 17> = "Cannot serialise ";
+
+const cj_colon: Array<u8, 2> = ": ";
+
+const cj_hex: Array<u8, 4> = "\\u00";
+
+const cj_invalid_number: Array<u8, 22> = "must not be NaN or Inf";
+
+const cj_nan: Array<u8, 3> = "nan";
+
+const cj_unsupported: Array<u8, 18> = "type not supported";
+
+const cj_nesting: Array<u8, 37> = "Cannot serialise, excessive nesting (";
+
+const cj_sparse: Array<u8, 24> = "excessively sparse array";
+
+const cj_bad_key: Array<u8, 36> = "table key must be a number or string";
+
+const cj_option: Array<u8, 16> = "invalid option '";
+
+const cj_between: Array<u8, 25> = "expected integer between ";
+
+const cj_and: Array<u8, 5> = " and ";
+
+fn cjson_finite(value: f64) -> r: Bool pure {
+  let bits = reinterpret::<f64, u64>(value);
+  let exp = iand(bits, 9218868437227405312_u64);
+  return exp != 9218868437227405312_u64;
+}
+
+fn cjson_nan(value: f64) -> r: Bool pure {
+  let equal = feq(value, value);
+  return bnot(equal);
+}

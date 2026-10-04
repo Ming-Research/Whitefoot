@@ -86,3 +86,17 @@ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
 CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
+
+The cjson adapter follows Redis's bundled `lua_cjson.c` tokenization,
+configuration, escaping and table classification. The MessagePack adapter
+follows `lua_cmsgpack.c`'s Lua value conversion and stream protocol. BitOp
+follows `lua_bit.c`, including its floating conversion. Struct follows
+`lua_struct.c`'s format grammar and binary layout. The general JSON and
+MessagePack packages retain their own implementations and policies.
+
+Copyright (c) 2010-2012, Mark Pulford <mark@kyne.com.au>.
+Copyright (C) 2012, Salvatore Sanfilippo <antirez@gmail.com>.
+Copyright (C) 2008-2012, Mike Pall.
+Copyright (C) 2010-2018, Lua.org, PUC-Rio.
+
+The MIT permission and disclaimer above apply to these library adaptations.

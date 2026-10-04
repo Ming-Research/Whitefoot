@@ -1,0 +1,551 @@
+alias Value = pkg::value::Value;
+alias num_of = pkg::value::num_of;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias new_table = pkg::heap::new_table;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+
+const struct_string: Array<u8, 6> = "string";
+
+const struct_number: Array<u8, 6> = "number";
+
+const struct_short: Array<u8, 21> = "data string too short";
+
+struct StructFormat {
+  offset: u64;
+  size: u64;
+  option: u8;
+  align: u64;
+  little: Bool;
+  error: u8;
+}
+
+fn struct_byte(bytes: &Box<Slots<u8>>, offset: u64) -> r: u8 reads(bytes) {
+  if offset < bytes^.inner.len {
+    return bytes^.inner[offset];
+  }
+  return 0_u8;
+}
+
+fn struct_num(bytes: &Box<Slots<u8>>, state: &StructFormat, default_value: u64) -> r: u64 reads(bytes), writes(state) {
+  let n_v1 = 0_u64;
+  let has_v2 = False();
+  loop {
+    let b_v3 = struct_byte(bytes: bytes, offset: state^.offset);
+    if b_v3 < 48_u8 {
+      break;
+    }
+    if b_v3 > 57_u8 {
+      break;
+    }
+    set has_v2 = True();
+    let digit_v4 = b_v3 - 48_u8;
+    let wide_v5 = cvt::<u8, u64>(digit_v4);
+    let scaled_v6 = n_v1 *sat 10_u64;
+    set n_v1 = scaled_v6 +sat wide_v5;
+    if n_v1 > 2147483647_u64 {
+      set state^.error = 1_u8;
+    }
+    set state^.offset = state^.offset +sat 1_u64;
+  }
+  if has_v2 {
+    return n_v1;
+  }
+  return default_value;
+}
+
+fn struct_option(bytes: &Box<Slots<u8>>, state: &StructFormat) -> r: unit reads(bytes), writes(state) {
+  let b_v7 = struct_byte(bytes: bytes, offset: state^.offset);
+  set state^.option = b_v7;
+  set state^.offset = state^.offset +sat 1_u64;
+  set state^.size = 0_u64;
+  if b_v7 == 98_u8 {
+    set state^.size = 1_u64;
+  }
+  if b_v7 == 66_u8 {
+    set state^.size = 1_u64;
+  }
+  if b_v7 == 104_u8 {
+    set state^.size = 2_u64;
+  }
+  if b_v7 == 72_u8 {
+    set state^.size = 2_u64;
+  }
+  if b_v7 == 108_u8 {
+    set state^.size = 8_u64;
+  }
+  if b_v7 == 76_u8 {
+    set state^.size = 8_u64;
+  }
+  if b_v7 == 84_u8 {
+    set state^.size = 8_u64;
+  }
+  if b_v7 == 102_u8 {
+    set state^.size = 4_u64;
+  }
+  if b_v7 == 100_u8 {
+    set state^.size = 8_u64;
+  }
+  if b_v7 == 120_u8 {
+    set state^.size = 1_u64;
+  }
+  if b_v7 == 99_u8 {
+    set state^.size = struct_num(bytes: bytes, state: state, default_value: 1_u64);
+  }
+  let low_i_v8 = b_v7 == 105_u8;
+  let big_i_v9 = b_v7 == 73_u8;
+  if bor(low_i_v8, big_i_v9) {
+    let n_v10 = struct_num(bytes: bytes, state: state, default_value: 4_u64);
+    set state^.size = n_v10;
+    let oversized = n_v10 > 32_u64;
+    let valid_size = state^.error == 0_u8;
+    if band(oversized, valid_size) {
+      set state^.error = 2_u8;
+    }
+  }
+  if b_v7 == 62_u8 {
+    set state^.little = False();
+  }
+  if b_v7 == 60_u8 {
+    set state^.little = True();
+  }
+  if b_v7 == 33_u8 {
+    let align_v11 = struct_num(bytes: bytes, state: state, default_value: 8_u64);
+    set state^.align = align_v11;
+    let before_v12 = align_v11 -wrap 1_u64;
+    let nonpower_v13 = iand(align_v11, before_v12);
+    let zero_v14 = align_v11 == 0_u64;
+    let bits_v15 = nonpower_v13 != 0_u64;
+    let invalid_align = bor(zero_v14, bits_v15);
+    let valid_align = state^.error == 0_u8;
+    if band(invalid_align, valid_align) {
+      set state^.error = 3_u8;
+    }
+  }
+  return unit;
+}
+
+fn struct_padding(pos: u64, state: &StructFormat) -> r: u64 reads(state) {
+  if state^.option == 99_u8 {
+    return 0_u64;
+  }
+  let size_v16 = imin(state^.size, state^.align);
+  if size_v16 == 0_u64 {
+    return 0_u64;
+  }
+  let mask_v17 = size_v16 - 1_u64;
+  let low_v18 = iand(pos, mask_v17);
+  let rest_v19 = size_v16 -wrap low_v18;
+  return iand(rest_v19, mask_v17);
+}
+
+fn struct_error(vm: &Vm, state: &StructFormat, id: u32) -> r: HostOutcome reads(state), writes(vm) {
+  let text_v20 = box_slots_new::<u8>(capacity: 80_u64);
+  if state^.error == 1_u8 {
+    bytes_append(bytes: &text_v20, text: &struct_overflow[0_u64..22_u64]);
+  } else if state^.error == 2_u8 {
+    bytes_append(bytes: &text_v20, text: &struct_limit_a[0_u64..14_u64]);
+    let n_v21 = cvt.nearest::<u64, f64>(state^.size);
+    let v_v22 = Value::Num(n: n_v21);
+    let s_v23 = coerce_string(vm: vm, v: v_v22);
+    bytes_string(vm: vm, bytes: &text_v20, value: s_v23);
+    bytes_append(bytes: &text_v20, text: &struct_limit_b[0_u64..27_u64]);
+  } else if state^.error == 3_u8 {
+    bytes_append(bytes: &text_v20, text: &struct_align_a[0_u64..10_u64]);
+    let n_v24 = cvt.nearest::<u64, f64>(state^.align);
+    let v_v25 = Value::Num(n: n_v24);
+    let s_v26 = coerce_string(vm: vm, v: v_v25);
+    bytes_string(vm: vm, bytes: &text_v20, value: s_v26);
+    bytes_append(bytes: &text_v20, text: &struct_align_b[0_u64..20_u64]);
+  } else {
+    bytes_append(bytes: &text_v20, text: &struct_invalid[0_u64..23_u64]);
+    bytes_push(bytes: &text_v20, byte: state^.option);
+    bytes_push(bytes: &text_v20, byte: 39_u8);
+    let n_v27 = text_v20.inner.len;
+    return lib_argtext(vm: vm, id: id, index: 1_u64, text: &text_v20.inner[0_u64..n_v27]);
+  }
+  let n_v28 = text_v20.inner.len;
+  return lib_failure(vm: vm, text: &text_v20.inner[0_u64..n_v28]);
+}
+
+fn struct_integer(option: u8) -> r: Bool pure {
+  if option == 98_u8 {
+    return True();
+  }
+  if option == 66_u8 {
+    return True();
+  }
+  if option == 104_u8 {
+    return True();
+  }
+  if option == 72_u8 {
+    return True();
+  }
+  if option == 108_u8 {
+    return True();
+  }
+  if option == 76_u8 {
+    return True();
+  }
+  if option == 84_u8 {
+    return True();
+  }
+  if option == 105_u8 {
+    return True();
+  }
+  if option == 73_u8 {
+    return True();
+  }
+  return False();
+}
+
+fn struct_control(option: u8) -> r: Bool pure {
+  if option == 32_u8 {
+    return True();
+  }
+  if option == 62_u8 {
+    return True();
+  }
+  if option == 60_u8 {
+    return True();
+  }
+  if option == 33_u8 {
+    return True();
+  }
+  return False();
+}
+
+fn library_struct(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) {
+  let av_v29 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let fmt_v30 = coerce_string(vm: vm, v: av_v29);
+  match str_of(v: fmt_v30) {
+    NoHandle() => {
+      return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: av_v29, expected: &struct_string[0_u64..6_u64]);
+    }
+    Handle(..) => {
+    }
+  }
+  let format_v31 = box_slots_new::<u8>(capacity: 0_u64);
+  bytes_string(vm: vm, bytes: &format_v31, value: fmt_v30);
+  let data_v32 = box_slots_new::<u8>(capacity: 0_u64);
+  let pos_v33 = 0_u64;
+  if id == 137_u32 {
+    let av_v34 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+    let dv_v35 = coerce_string(vm: vm, v: av_v34);
+    match str_of(v: dv_v35) {
+      NoHandle() => {
+        return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: av_v34, expected: &struct_string[0_u64..6_u64]);
+      }
+      Handle(..) => {
+      }
+    }
+    bytes_string(vm: vm, bytes: &data_v32, value: dv_v35);
+    let ov_v36 = argument(stack: stack, func: func, argc: argc, index: 2_u64);
+    let probe_valid_v37 = is_nil(v: ov_v36);
+    if bnot(probe_valid_v37) {
+      match lib_integer(vm: vm, value: ov_v36) {
+        Some(value: n_v38) => {
+          if n_v38 == 0_i64 {
+            return lib_argtext(vm: vm, id: id, index: 3_u64, text: &struct_offset[0_u64..27_u64]);
+          }
+          let wide_v39 = cvt.wrap::<i64, u64>(n_v38);
+          set pos_v33 = wide_v39 -wrap 1_u64;
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 3_u64, argc: argc, value: ov_v36, expected: &struct_number[0_u64..6_u64]);
+        }
+      }
+    }
+  }
+  let yes_v40 = True();
+  let state_v41 = StructFormat(offset: 0_u64, size: 0_u64, option: 0_u8, align: 1_u64, little: yes_v40, error: 0_u8);
+  let arg_v42 = 1_u64;
+  let results_v43 = box_slots_new::<Value>(capacity: 16_u64);
+  loop {
+    let opt_v44 = struct_byte(bytes: &format_v31, offset: state_v41.offset);
+    if opt_v44 == 0_u8 {
+      break;
+    }
+    struct_option(bytes: &format_v31, state: &state_v41);
+    if state_v41.error != 0_u8 {
+      return struct_error(vm: vm, state: &state_v41, id: id);
+    }
+    let pad_v45 = struct_padding(pos: pos_v33, state: &state_v41);
+    set pos_v33 = pos_v33 +sat pad_v45;
+    if id == 136_u32 {
+      for (i_v46 in 0_u64..pad_v45) {
+        bytes_push(bytes: &data_v32, byte: 0_u8);
+      }
+    }
+    let size_v47 = state_v41.size;
+    if id == 137_u32 {
+      let end_v48 = pos_v33 +sat size_v47;
+      if end_v48 > data_v32.inner.len {
+        return lib_argtext(vm: vm, id: id, index: 2_u64, text: &struct_short[0_u64..21_u64]);
+      }
+      let result_top = argc +sat results_v43.inner.len;
+      if result_top > 7998_u64 {
+        return lib_failure(vm: vm, text: &struct_stack_results[0_u64..33_u64]);
+      }
+    }
+    let integer_v49 = struct_integer(option: opt_v44);
+    let float_v50 = opt_v44 == 102_u8;
+    let double_v51 = opt_v44 == 100_u8;
+    let numeric_v52 = bor(integer_v49, float_v50);
+    set numeric_v52 = bor(numeric_v52, double_v51);
+    if id == 138_u32 {
+      if opt_v44 == 115_u8 {
+        return lib_argtext(vm: vm, id: id, index: 1_u64, text: &struct_variable_s[0_u64..28_u64]);
+      }
+      if opt_v44 == 99_u8 {
+        if size_v47 == 0_u64 {
+          return lib_argtext(vm: vm, id: id, index: 1_u64, text: &struct_variable_c[0_u64..29_u64]);
+        }
+      }
+      let alnum_v53 = format_isdigit(byte: opt_v44);
+      let lower_v54 = opt_v44 >= 97_u8;
+      let lower2_v55 = opt_v44 <= 122_u8;
+      let upper_v56 = opt_v44 >= 65_u8;
+      let upper2_v57 = opt_v44 <= 90_u8;
+      let letters1_v58 = band(lower_v54, lower2_v55);
+      let letters2_v59 = band(upper_v56, upper2_v57);
+      let letters_v60 = bor(letters1_v58, letters2_v59);
+      set alnum_v53 = bor(alnum_v53, letters_v60);
+      if bnot(alnum_v53) {
+        let probe_valid_v61 = struct_control(option: opt_v44);
+        if bnot(probe_valid_v61) {
+          return struct_error(vm: vm, state: &state_v41, id: id);
+        }
+      }
+    } else if numeric_v52 {
+      let bits_v62 = 0_u64;
+      if id == 136_u32 {
+        let v_v63 = argument(stack: stack, func: func, argc: argc, index: arg_v42);
+        let x_v64 = 0.0_f64;
+        match coerce_number(vm: vm, v: v_v63) {
+          Is(x: n_v65) => {
+            set x_v64 = n_v65;
+          }
+          Not() => {
+            let index_v66 = arg_v42 +sat 1_u64;
+            let pack_argc = argc +sat 1_u64;
+            return lib_argerror(vm: vm, id: id, index: index_v66, argc: pack_argc, value: v_v63, expected: &struct_number[0_u64..6_u64]);
+          }
+        }
+        set arg_v42 = arg_v42 +sat 1_u64;
+        if float_v50 {
+          let single_v67 = cvt.nearest::<f64, f32>(x_v64);
+          let narrow_v68 = reinterpret::<f32, u32>(single_v67);
+          set bits_v62 = cvt::<u32, u64>(narrow_v68);
+        } else if double_v51 {
+          set bits_v62 = reinterpret::<f64, u64>(x_v64);
+        } else {
+          let integral_v69 = ftrunc(x_v64);
+          if flt(integral_v69, 0.0_f64) {
+            if cvt.defined::<f64, i64>(integral_v69) {
+              let n_v70 = cvt::<f64, i64>(integral_v69);
+              set bits_v62 = reinterpret::<i64, u64>(n_v70);
+            } else {
+              set bits_v62 = 9223372036854775808_u64;
+            }
+          } else if cvt.defined::<f64, u64>(integral_v69) {
+            set bits_v62 = cvt::<f64, u64>(integral_v69);
+          }
+        }
+        for (i_v71 in 0_u64..size_v47) {
+          let j_v72 = i_v71;
+          if bnot(state_v41.little) {
+            set j_v72 = size_v47 -wrap i_v71;
+            set j_v72 = j_v72 -wrap 1_u64;
+          }
+          let byte_v73 = 0_u8;
+          if j_v72 < 8_u64 {
+            let shift_v74 = cvt.wrap::<u64, u32>(j_v72);
+            let amount_v75 = shift_v74 *wrap 8_u32;
+            let shifted_v76 = ishr.wrap(bits_v62, amount_v75);
+            set byte_v73 = cvt.wrap::<u64, u8>(shifted_v76);
+          }
+          bytes_push(bytes: &data_v32, byte: byte_v73);
+        }
+      } else {
+        for (i_v77 in 0_u64..size_v47) {
+          let j_v78 = i_v77;
+          if state_v41.little {
+            set j_v78 = size_v47 -wrap i_v77;
+            set j_v78 = j_v78 -wrap 1_u64;
+          }
+          let at_v79 = pos_v33 +sat j_v78;
+          let byte_v80 = struct_byte(bytes: &data_v32, offset: at_v79);
+          let wide_v81 = cvt::<u8, u64>(byte_v80);
+          let shifted_v82 = ishl.wrap(bits_v62, 8_u32);
+          set bits_v62 = ior(shifted_v82, wide_v81);
+        }
+        let n_v83 = 0.0_f64;
+        if float_v50 {
+          let narrow_v84 = cvt.wrap::<u64, u32>(bits_v62);
+          let single_v85 = reinterpret::<u32, f32>(narrow_v84);
+          set n_v83 = cvt::<f32, f64>(single_v85);
+        } else if double_v51 {
+          set n_v83 = reinterpret::<u64, f64>(bits_v62);
+        } else {
+          let signed_v86 = opt_v44 >= 97_u8;
+          if signed_v86 {
+            let shift_v87 = cvt.wrap::<u64, u32>(size_v47);
+            let width_v88 = shift_v87 *wrap 8_u32;
+            let last_v89 = width_v88 -wrap 1_u32;
+            let mask_v90 = ishl.wrap(18446744073709551615_u64, last_v89);
+            let sign_v91 = iand(bits_v62, mask_v90);
+            if sign_v91 != 0_u64 {
+              set bits_v62 = ior(bits_v62, mask_v90);
+            }
+            let si_v92 = reinterpret::<u64, i64>(bits_v62);
+            set n_v83 = cvt.nearest::<i64, f64>(si_v92);
+          } else {
+            set n_v83 = cvt.nearest::<u64, f64>(bits_v62);
+          }
+        }
+        let v_v93 = Value::Num(n: n_v83);
+        codec_value_push(values: &results_v43, value: v_v93);
+      }
+    } else if opt_v44 == 120_u8 {
+      if id == 136_u32 {
+        bytes_push(bytes: &data_v32, byte: 0_u8);
+      }
+    } else {
+      let chars_v94 = opt_v44 == 99_u8;
+      let zero_string_v95 = opt_v44 == 115_u8;
+      if bor(chars_v94, zero_string_v95) {
+        if id == 136_u32 {
+          let v_v96 = argument(stack: stack, func: func, argc: argc, index: arg_v42);
+          let str_v97 = coerce_string(vm: vm, v: v_v96);
+          match str_of(v: str_v97) {
+            NoHandle() => {
+              let index_v98 = arg_v42 +sat 1_u64;
+              let pack_argc = argc +sat 1_u64;
+              return lib_argerror(vm: vm, id: id, index: index_v98, argc: pack_argc, value: v_v96, expected: &struct_string[0_u64..6_u64]);
+            }
+            Handle(..) => {
+            }
+          }
+          set arg_v42 = arg_v42 +sat 1_u64;
+          let bytes_v99 = box_slots_new::<u8>(capacity: 0_u64);
+          bytes_string(vm: vm, bytes: &bytes_v99, value: str_v97);
+          if size_v47 == 0_u64 {
+            set size_v47 = bytes_v99.inner.len;
+          }
+          if bytes_v99.inner.len < size_v47 {
+            let index_v100 = arg_v42 +sat 1_u64;
+            return lib_argtext(vm: vm, id: id, index: index_v100, text: &struct_string_short[0_u64..16_u64]);
+          }
+          for (i_v101 in 0_u64..size_v47) {
+            if i_v101 < bytes_v99.inner.len {
+              let b_v102 = bytes_v99.inner[i_v101];
+              bytes_push(bytes: &data_v32, byte: b_v102);
+            }
+          }
+          if zero_string_v95 {
+            bytes_push(bytes: &data_v32, byte: 0_u8);
+            set size_v47 = size_v47 +sat 1_u64;
+          }
+        } else {
+          if chars_v94 {
+            if size_v47 == 0_u64 {
+              if results_v43.inner.len == 0_u64 {
+                return lib_failure(vm: vm, text: &struct_previous[0_u64..33_u64]);
+              }
+              let prev_v103 = take_back(window: &results_v43.inner);
+              match coerce_number(vm: vm, v: prev_v103) {
+                Is(x: n_v104) => {
+                  let integral_v105 = ftrunc(n_v104);
+                  set size_v47 = 18446744073709551615_u64;
+                  if cvt.defined::<f64, u64>(integral_v105) {
+                    set size_v47 = cvt::<f64, u64>(integral_v105);
+                  }
+                }
+                Not() => {
+                  return lib_failure(vm: vm, text: &struct_previous[0_u64..33_u64]);
+                }
+              }
+            }
+          } else {
+            let end_v106 = pos_v33;
+            loop {
+              if end_v106 >= data_v32.inner.len {
+                return lib_failure(vm: vm, text: &struct_unfinished[0_u64..25_u64]);
+              }
+              let b_v107 = struct_byte(bytes: &data_v32, offset: end_v106);
+              if b_v107 == 0_u8 {
+                break;
+              }
+              set end_v106 = end_v106 +sat 1_u64;
+            }
+            set size_v47 = end_v106 -wrap pos_v33;
+          }
+          let end_v108 = pos_v33 +sat size_v47;
+          if end_v108 > data_v32.inner.len {
+            return lib_argtext(vm: vm, id: id, index: 2_u64, text: &struct_short[0_u64..21_u64]);
+          }
+          if pos_v33 <= end_v108 {
+            if end_v108 <= data_v32.inner.len {
+              let v_v109 = intern(heap: &vm^.heap, bytes: &data_v32.inner[pos_v33..end_v108]);
+              codec_value_push(values: &results_v43, value: v_v109);
+            }
+          }
+          if zero_string_v95 {
+            set size_v47 = size_v47 +sat 1_u64;
+          }
+        }
+      } else {
+        let probe_valid_v110 = struct_control(option: opt_v44);
+        if bnot(probe_valid_v110) {
+          return struct_error(vm: vm, state: &state_v41, id: id);
+        }
+      }
+    }
+    set pos_v33 = pos_v33 +sat size_v47;
+  }
+  if id == 136_u32 {
+    let value_v111 = bytes_value(vm: vm, bytes: &data_v32);
+    return lib_result(stack: stack, func: func, value: value_v111);
+  }
+  if id == 138_u32 {
+    let n_v112 = cvt.nearest::<u64, f64>(pos_v33);
+    let value_v113 = Value::Num(n: n_v112);
+    return lib_result(stack: stack, func: func, value: value_v113);
+  }
+  let next_v114 = pos_v33 +wrap 1_u64;
+  let signed_next = reinterpret::<u64, i64>(next_v114);
+  let n_v115 = cvt.nearest::<i64, f64>(signed_next);
+  let value_v116 = Value::Num(n: n_v115);
+  codec_value_push(values: &results_v43, value: value_v116);
+  return codec_results(stack: stack, func: func, values: &results_v43);
+}
+
+const struct_overflow: Array<u8, 22> = "integral size overflow";
+
+const struct_limit_a: Array<u8, 14> = "integral size ";
+
+const struct_limit_b: Array<u8, 27> = " is larger than limit of 32";
+
+const struct_align_a: Array<u8, 10> = "alignment ";
+
+const struct_align_b: Array<u8, 20> = " is not a power of 2";
+
+const struct_invalid: Array<u8, 23> = "invalid format option '";
+
+const struct_offset: Array<u8, 27> = "offset must be 1 or greater";
+
+const struct_variable_s: Array<u8, 28> = "option 's' has no fixed size";
+
+const struct_variable_c: Array<u8, 29> = "option 'c0' has no fixed size";
+
+const struct_string_short: Array<u8, 16> = "string too short";
+
+const struct_previous: Array<u8, 33> = "format 'c0' needs a previous size";
+
+const struct_unfinished: Array<u8, 25> = "unfinished string in data";
+
+const struct_stack_results: Array<u8, 33> = "stack overflow (too many results)";

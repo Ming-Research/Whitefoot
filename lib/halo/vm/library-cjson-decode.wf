@@ -1,0 +1,832 @@
+alias Value = pkg::value::Value;
+alias num_of = pkg::value::num_of;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias new_table = pkg::heap::new_table;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+
+struct CjsonToken {
+  tag: u8;
+  value: Value;
+  offset: u64;
+  reason: u8;
+}
+
+struct CjsonScanner {
+  offset: u64;
+}
+
+fn cj_byte(source: &[u8], offset: u64) -> r: u8 reads(source) {
+  if offset < source^.len {
+    return source^[offset];
+  }
+  return 0_u8;
+}
+
+fn cj_string_token(vm: &Vm, source: &[u8], scan: &CjsonScanner, start: u64) -> r: CjsonToken reads(source), writes(vm), writes(scan) {
+  let bytes_v1 = box_slots_new::<u8>(capacity: 32_u64);
+  set scan^.offset = start +sat 1_u64;
+  let nil_v2 = Value::Nil();
+  loop {
+    let at_v3 = scan^.offset;
+    let b_v4 = cj_byte(source: source, offset: at_v3);
+    if b_v4 == 0_u8 {
+      return CjsonToken(tag: 12_u8, value: nil_v2, offset: at_v3, reason: 2_u8);
+    }
+    if b_v4 == 34_u8 {
+      set scan^.offset = at_v3 +sat 1_u64;
+      let v_v5 = bytes_value(vm: vm, bytes: &bytes_v1);
+      return CjsonToken(tag: 4_u8, value: v_v5, offset: start, reason: 0_u8);
+    }
+    if b_v4 == 92_u8 {
+      let next_v6 = at_v3 +sat 1_u64;
+      let c_v7 = cj_byte(source: source, offset: next_v6);
+      if c_v7 == 117_u8 {
+        let unicode_v8 = box_slots_new::<u8>(capacity: 16_u64);
+        bytes_push(bytes: &unicode_v8, byte: 34_u8);
+        let end_v9 = at_v3 +sat 6_u64;
+        for (i_v10 in at_v3..end_v9) {
+          let b_v11 = cj_byte(source: source, offset: i_v10);
+          bytes_push(bytes: &unicode_v8, byte: b_v11);
+        }
+        let after_v12 = cj_byte(source: source, offset: end_v9);
+        let second_v13 = end_v9 +sat 1_u64;
+        let u_v14 = cj_byte(source: source, offset: second_v13);
+        let slash_v15 = after_v12 == 92_u8;
+        let escape_v16 = u_v14 == 117_u8;
+        let pair_v17 = band(slash_v15, escape_v16);
+        let first_hex_at = at_v3 +sat 2_u64;
+        let first_hex = cj_byte(source: source, offset: first_hex_at);
+        let first_lower = ior(first_hex, 32_u8);
+        let second_hex_at = at_v3 +sat 3_u64;
+        let second_hex = cj_byte(source: source, offset: second_hex_at);
+        let second_lower = ior(second_hex, 32_u8);
+        let high_letter = first_lower == 100_u8;
+        let digit_low = second_lower >= 56_u8;
+        let digit_high = second_lower <= 57_u8;
+        let letter_low = second_lower >= 97_u8;
+        let letter_high = second_lower <= 98_u8;
+        let numeric_high = band(digit_low, digit_high);
+        let alpha_high = band(letter_low, letter_high);
+        let high_suffix = bor(numeric_high, alpha_high);
+        let high_surrogate = band(high_letter, high_suffix);
+        set pair_v17 = band(pair_v17, high_surrogate);
+        if pair_v17 {
+          let stop_v18 = end_v9 +sat 6_u64;
+          for (i_v19 in end_v9..stop_v18) {
+            let b_v20 = cj_byte(source: source, offset: i_v19);
+            bytes_push(bytes: &unicode_v8, byte: b_v20);
+          }
+        }
+        bytes_push(bytes: &unicode_v8, byte: 34_u8);
+        let decoded_v21 = box_slots_new::<u8>(capacity: 8_u64);
+        let n_v22 = unicode_v8.inner.len;
+        match json::text::string(source: &unicode_v8.inner[0_u64..n_v22], start: 0_u64, decoded: &decoded_v21) {
+          Err(..) => {
+            return CjsonToken(tag: 12_u8, value: nil_v2, offset: at_v3, reason: 4_u8);
+          }
+          Ok(value: consumed_v23) => {
+            let length_v24 = decoded_v21.inner.len;
+            bytes_append(bytes: &bytes_v1, text: &decoded_v21.inner[0_u64..length_v24]);
+            let skip_v25 = consumed_v23 -sat 2_u64;
+            set scan^.offset = at_v3 +sat skip_v25;
+          }
+        }
+      } else {
+        let decoded_v26 = 0_u8;
+        if c_v7 == 34_u8 {
+          set decoded_v26 = 34_u8;
+        }
+        if c_v7 == 92_u8 {
+          set decoded_v26 = 92_u8;
+        }
+        if c_v7 == 47_u8 {
+          set decoded_v26 = 47_u8;
+        }
+        if c_v7 == 98_u8 {
+          set decoded_v26 = 8_u8;
+        }
+        if c_v7 == 116_u8 {
+          set decoded_v26 = 9_u8;
+        }
+        if c_v7 == 110_u8 {
+          set decoded_v26 = 10_u8;
+        }
+        if c_v7 == 102_u8 {
+          set decoded_v26 = 12_u8;
+        }
+        if c_v7 == 114_u8 {
+          set decoded_v26 = 13_u8;
+        }
+        if decoded_v26 == 0_u8 {
+          return CjsonToken(tag: 12_u8, value: nil_v2, offset: at_v3, reason: 3_u8);
+        }
+        bytes_push(bytes: &bytes_v1, byte: decoded_v26);
+        set scan^.offset = at_v3 +sat 2_u64;
+      }
+    } else {
+      bytes_push(bytes: &bytes_v1, byte: b_v4);
+      set scan^.offset = at_v3 +sat 1_u64;
+    }
+  }
+  return CjsonToken(tag: 12_u8, value: nil_v2, offset: start, reason: 2_u8);
+}
+
+fn cj_word(source: &[u8], offset: u64, word: &[u8]) -> r: Bool reads(source), reads(word) {
+  for (i_v27 in 0_u64..word^.len) {
+    let at_v28 = offset +sat i_v27;
+    let actual_v29 = cj_byte(source: source, offset: at_v28);
+    let wanted_v30 = word^[i_v27];
+    if actual_v29 != wanted_v30 {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn cj_number_extension(source: &[u8], offset: u64) -> r: Bool reads(source) {
+  let at_v31 = offset;
+  let b_v32 = cj_byte(source: source, offset: at_v31);
+  if b_v32 == 43_u8 {
+    return True();
+  }
+  if b_v32 == 45_u8 {
+    set at_v31 = at_v31 +sat 1_u64;
+    set b_v32 = cj_byte(source: source, offset: at_v31);
+  }
+  if b_v32 == 48_u8 {
+    let next_v33 = at_v31 +sat 1_u64;
+    let c_v34 = cj_byte(source: source, offset: next_v33);
+    let lowered_v35 = ior(c_v34, 32_u8);
+    if lowered_v35 == 120_u8 {
+      return True();
+    }
+    let digit_v36 = c_v34 >= 48_u8;
+    let digit2_v37 = c_v34 <= 57_u8;
+    return band(digit_v36, digit2_v37);
+  }
+  if b_v32 <= 57_u8 {
+    return False();
+  }
+  let lower_v38 = ior(b_v32, 32_u8);
+  let next_v39 = at_v31 +sat 1_u64;
+  let c_v40 = cj_byte(source: source, offset: next_v39);
+  let lower2_v41 = ior(c_v40, 32_u8);
+  let next2_v42 = at_v31 +sat 2_u64;
+  let d_v43 = cj_byte(source: source, offset: next2_v42);
+  let lower3_v44 = ior(d_v43, 32_u8);
+  if lower_v38 == 105_u8 {
+    if lower2_v41 == 110_u8 {
+      if lower3_v44 == 102_u8 {
+        return True();
+      }
+    }
+  }
+  if lower_v38 == 110_u8 {
+    if lower2_v41 == 97_u8 {
+      if lower3_v44 == 110_u8 {
+        return True();
+      }
+    }
+  }
+  return False();
+}
+
+fn cj_token(vm: &Vm, source: &[u8], scan: &CjsonScanner, invalid: Bool) -> r: CjsonToken reads(source), writes(vm), writes(scan) {
+  loop {
+    let b_v45 = cj_byte(source: source, offset: scan^.offset);
+    let space_v46 = b_v45 == 32_u8;
+    let tab_v47 = b_v45 == 9_u8;
+    let cr_v48 = b_v45 == 13_u8;
+    let lf_v49 = b_v45 == 10_u8;
+    let a_v50 = bor(space_v46, tab_v47);
+    let c_v51 = bor(cr_v48, lf_v49);
+    let whitespace_v52 = bor(a_v50, c_v51);
+    if bnot(whitespace_v52) {
+      break;
+    }
+    set scan^.offset = scan^.offset +sat 1_u64;
+  }
+  let start_v53 = scan^.offset;
+  let b_v54 = cj_byte(source: source, offset: start_v53);
+  let nil_v55 = Value::Nil();
+  let tag_v56 = 12_u8;
+  if b_v54 == 123_u8 {
+    set tag_v56 = 0_u8;
+  }
+  if b_v54 == 125_u8 {
+    set tag_v56 = 1_u8;
+  }
+  if b_v54 == 91_u8 {
+    set tag_v56 = 2_u8;
+  }
+  if b_v54 == 93_u8 {
+    set tag_v56 = 3_u8;
+  }
+  if b_v54 == 58_u8 {
+    set tag_v56 = 8_u8;
+  }
+  if b_v54 == 44_u8 {
+    set tag_v56 = 9_u8;
+  }
+  if b_v54 == 0_u8 {
+    return CjsonToken(tag: 10_u8, value: nil_v55, offset: start_v53, reason: 0_u8);
+  }
+  if tag_v56 != 12_u8 {
+    set scan^.offset = start_v53 +sat 1_u64;
+    return CjsonToken(tag: tag_v56, value: nil_v55, offset: start_v53, reason: 0_u8);
+  }
+  if b_v54 == 34_u8 {
+    return cj_string_token(vm: vm, source: source, scan: scan, start: start_v53);
+  }
+  let value_v57 = nil_v55;
+  let skip_v58 = 0_u64;
+  if cj_word(source: source, offset: start_v53, word: &cj_true[0_u64..4_u64]) {
+    set value_v57 = Value::True();
+    set tag_v56 = 6_u8;
+    set skip_v58 = 4_u64;
+  }
+  if cj_word(source: source, offset: start_v53, word: &cj_false[0_u64..5_u64]) {
+    set value_v57 = Value::False();
+    set tag_v56 = 6_u8;
+    set skip_v58 = 5_u64;
+  }
+  if cj_word(source: source, offset: start_v53, word: &cj_null[0_u64..4_u64]) {
+    set value_v57 = Value::Builtin(id: 111_u32);
+    set tag_v56 = 7_u8;
+    set skip_v58 = 4_u64;
+  }
+  if skip_v58 != 0_u64 {
+    set scan^.offset = start_v53 +sat skip_v58;
+    return CjsonToken(tag: tag_v56, value: value_v57, offset: start_v53, reason: 0_u8);
+  }
+  let digit_v59 = b_v54 >= 48_u8;
+  let digit2_v60 = b_v54 <= 57_u8;
+  let number_v61 = band(digit_v59, digit2_v60);
+  let minus_v62 = b_v54 == 45_u8;
+  set number_v61 = bor(number_v61, minus_v62);
+  let unusual_v63 = cj_number_extension(source: source, offset: start_v53);
+  if invalid {
+    set number_v61 = bor(number_v61, unusual_v63);
+  }
+  if number_v61 {
+    if bnot(invalid) {
+      if unusual_v63 {
+        return CjsonToken(tag: 12_u8, value: nil_v55, offset: start_v53, reason: 5_u8);
+      }
+    }
+    let end_v64 = start_v53;
+    loop {
+      let c_v65 = cj_byte(source: source, offset: end_v64);
+      if c_v65 == 0_u8 {
+        break;
+      }
+      if c_v65 == 32_u8 {
+        break;
+      }
+      if c_v65 == 9_u8 {
+        break;
+      }
+      if c_v65 == 10_u8 {
+        break;
+      }
+      if c_v65 == 13_u8 {
+        break;
+      }
+      if c_v65 == 11_u8 {
+        break;
+      }
+      if c_v65 == 12_u8 {
+        break;
+      }
+      if c_v65 == 44_u8 {
+        break;
+      }
+      if c_v65 == 93_u8 {
+        break;
+      }
+      if c_v65 == 125_u8 {
+        break;
+      }
+      if c_v65 == 58_u8 {
+        break;
+      }
+      set end_v64 = end_v64 +sat 1_u64;
+    }
+    loop {
+      if end_v64 <= start_v53 {
+        break;
+      }
+      if start_v53 <= end_v64 {
+        if end_v64 <= source^.len {
+          match pkg::number::str2number(bytes: &source^[start_v53..end_v64]) {
+            Some(value: n_v66) => {
+              set scan^.offset = end_v64;
+              let v_v67 = Value::Num(n: n_v66);
+              return CjsonToken(tag: 5_u8, value: v_v67, offset: start_v53, reason: 0_u8);
+            }
+            None() => {
+            }
+          }
+        }
+      }
+      set end_v64 = end_v64 - 1_u64;
+    }
+    return CjsonToken(tag: 12_u8, value: nil_v55, offset: start_v53, reason: 5_u8);
+  }
+  return CjsonToken(tag: 12_u8, value: nil_v55, offset: start_v53, reason: 1_u8);
+}
+
+fn cj_parse_error(vm: &Vm, token: CjsonToken, expected: u8) -> r: HostOutcome writes(vm) {
+  let bytes_v68 = box_slots_new::<u8>(capacity: 128_u64);
+  bytes_append(bytes: &bytes_v68, text: &cj_error_expected[0_u64..9_u64]);
+  if expected == 0_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_expect_value[0_u64..5_u64]);
+  }
+  if expected == 1_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_expect_key[0_u64..17_u64]);
+  }
+  if expected == 2_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_expect_colon[0_u64..5_u64]);
+  }
+  if expected == 3_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_expect_object[0_u64..19_u64]);
+  }
+  if expected == 4_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_expect_array[0_u64..18_u64]);
+  }
+  if expected == 5_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_expect_end[0_u64..7_u64]);
+  }
+  bytes_append(bytes: &bytes_v68, text: &cj_error_found[0_u64..11_u64]);
+  if token.tag == 0_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_0[0_u64..11_u64]);
+  }
+  if token.tag == 1_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_1[0_u64..9_u64]);
+  }
+  if token.tag == 2_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_2[0_u64..11_u64]);
+  }
+  if token.tag == 3_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_3[0_u64..9_u64]);
+  }
+  if token.tag == 4_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_4[0_u64..8_u64]);
+  }
+  if token.tag == 5_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_5[0_u64..8_u64]);
+  }
+  if token.tag == 6_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_6[0_u64..9_u64]);
+  }
+  if token.tag == 7_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_7[0_u64..6_u64]);
+  }
+  if token.tag == 8_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_8[0_u64..7_u64]);
+  }
+  if token.tag == 9_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_9[0_u64..7_u64]);
+  }
+  if token.tag == 10_u8 {
+    bytes_append(bytes: &bytes_v68, text: &cj_tag_10[0_u64..5_u64]);
+  }
+  if token.tag == 12_u8 {
+    if token.reason == 1_u8 {
+      bytes_append(bytes: &bytes_v68, text: &cj_reason_1[0_u64..13_u64]);
+    }
+    if token.reason == 2_u8 {
+      bytes_append(bytes: &bytes_v68, text: &cj_reason_2[0_u64..24_u64]);
+    }
+    if token.reason == 3_u8 {
+      bytes_append(bytes: &bytes_v68, text: &cj_reason_3[0_u64..19_u64]);
+    }
+    if token.reason == 4_u8 {
+      bytes_append(bytes: &bytes_v68, text: &cj_reason_4[0_u64..27_u64]);
+    }
+    if token.reason == 5_u8 {
+      bytes_append(bytes: &bytes_v68, text: &cj_reason_5[0_u64..14_u64]);
+    }
+  }
+  bytes_append(bytes: &bytes_v68, text: &cj_character[0_u64..14_u64]);
+  let at_v69 = token.offset +sat 1_u64;
+  let n_v70 = cvt.nearest::<u64, f64>(at_v69);
+  let v_v71 = Value::Num(n: n_v70);
+  let s_v72 = coerce_string(vm: vm, v: v_v71);
+  bytes_string(vm: vm, bytes: &bytes_v68, value: s_v72);
+  let length_v73 = bytes_v68.inner.len;
+  return lib_failure(vm: vm, text: &bytes_v68.inner[0_u64..length_v73]);
+}
+
+fn cj_depth_error(vm: &Vm, depth: u64, offset: u64) -> r: HostOutcome writes(vm) {
+  let bytes_v74 = box_slots_new::<u8>(capacity: 128_u64);
+  bytes_append(bytes: &bytes_v74, text: &cj_too_deep[0_u64..39_u64]);
+  let n_v75 = cvt.nearest::<u64, f64>(depth);
+  let v_v76 = Value::Num(n: n_v75);
+  let s_v77 = coerce_string(vm: vm, v: v_v76);
+  bytes_string(vm: vm, bytes: &bytes_v74, value: s_v77);
+  bytes_append(bytes: &bytes_v74, text: &cj_close_character[0_u64..15_u64]);
+  let n_v78 = cvt.nearest::<u64, f64>(offset);
+  let v_v79 = Value::Num(n: n_v78);
+  let s_v80 = coerce_string(vm: vm, v: v_v79);
+  bytes_string(vm: vm, bytes: &bytes_v74, value: s_v80);
+  let length_v81 = bytes_v74.inner.len;
+  return lib_failure(vm: vm, text: &bytes_v74.inner[0_u64..length_v81]);
+}
+
+struct CjsonFrame {
+  table: Value;
+  key: Value;
+  index: u64;
+  object: Bool;
+}
+
+fn cj_frame_push(frames: &Box<Slots<CjsonFrame>>, frame: CjsonFrame) -> r: unit writes(frames) {
+  let cap_v82 = frames^.inner.cap;
+  if frames^.inner.len == cap_v82 {
+    let target_v83 = cap_v82 +sat 32_u64;
+    grow(cell: frames, capacity: target_v83);
+  }
+  if frames^.inner.len < frames^.inner.cap {
+    place_back(window: &frames^.inner, value: frame);
+  }
+  return unit;
+}
+
+fn cjson_decode(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, value: Value, settings: &Array<u64, 9>) -> r: HostOutcome reads(settings), writes(vm), writes(stack) {
+  let text_v84 = coerce_string(vm: vm, v: value);
+  match str_of(v: text_v84) {
+    NoHandle() => {
+      return lib_argerror(vm: vm, id: 97_u32, index: 1_u64, argc: argc, value: value, expected: &cj_string[0_u64..6_u64]);
+    }
+    Handle(..) => {
+    }
+  }
+  let source_v85 = box_slots_new::<u8>(capacity: 32_u64);
+  bytes_string(vm: vm, bytes: &source_v85, value: text_v84);
+  let length_v86 = source_v85.inner.len;
+  if length_v86 >= 2_u64 {
+    let a_v87 = source_v85.inner[0_u64] == 0_u8;
+    let b_v88 = source_v85.inner[1_u64] == 0_u8;
+    if bor(a_v87, b_v88) {
+      return lib_failure(vm: vm, text: &cj_utf16[0_u64..45_u64]);
+    }
+  }
+  let phases_v89 = box_slots_new::<u8>(capacity: 16_u64);
+  let originals_v90 = box_slots_new::<Value>(capacity: 16_u64);
+  let normalized_v91 = box_slots_new::<u8>(capacity: 32_u64);
+  let scan_v92 = CjsonScanner(offset: 0_u64);
+  let root_v93 = False();
+  let invalid_v94 = settings^[5_u64] != 0_u64;
+  let max_depth_v95 = settings^[1_u64];
+  loop {
+    let token_v96 = cj_token(vm: vm, source: &source_v85.inner[0_u64..length_v86], scan: &scan_v92, invalid: invalid_v94);
+    let phase_v97 = 0_u8;
+    let last_v98 = 0_u64;
+    if phases_v89.inner.len > 0_u64 {
+      set last_v98 = phases_v89.inner.len - 1_u64;
+      set phase_v97 = phases_v89.inner[last_v98];
+    } else if root_v93 {
+      set phase_v97 = 8_u8;
+    }
+    let expected_v99 = 0_u8;
+    if phase_v97 == 1_u8 {
+      set expected_v99 = 1_u8;
+    }
+    if phase_v97 == 2_u8 {
+      set expected_v99 = 2_u8;
+    }
+    if phase_v97 == 3_u8 {
+      set expected_v99 = 3_u8;
+    }
+    if phase_v97 == 4_u8 {
+      set expected_v99 = 4_u8;
+    }
+    if phase_v97 == 6_u8 {
+      set expected_v99 = 1_u8;
+    }
+    if phase_v97 == 8_u8 {
+      set expected_v99 = 5_u8;
+    }
+    if token_v96.tag == 12_u8 {
+      return cj_parse_error(vm: vm, token: token_v96, expected: expected_v99);
+    }
+    let accept_v100 = False();
+    let scalar_v101 = False();
+    let opening_v102 = False();
+    let closing_v103 = False();
+    if phase_v97 == 8_u8 {
+      if token_v96.tag == 10_u8 {
+        break;
+      }
+    } else if phase_v97 == 1_u8 {
+      if token_v96.tag == 1_u8 {
+        set accept_v100 = True();
+        set closing_v103 = True();
+      }
+      if token_v96.tag == 4_u8 {
+        set accept_v100 = True();
+        set scalar_v101 = True();
+        if last_v98 < phases_v89.inner.len {
+          set phases_v89.inner[last_v98] = 2_u8;
+        }
+      }
+    } else if phase_v97 == 6_u8 {
+      if token_v96.tag == 4_u8 {
+        set accept_v100 = True();
+        set scalar_v101 = True();
+        if last_v98 < phases_v89.inner.len {
+          set phases_v89.inner[last_v98] = 2_u8;
+        }
+      }
+    } else if phase_v97 == 2_u8 {
+      if token_v96.tag == 8_u8 {
+        set accept_v100 = True();
+        if last_v98 < phases_v89.inner.len {
+          set phases_v89.inner[last_v98] = 7_u8;
+        }
+      }
+    } else if phase_v97 == 3_u8 {
+      if token_v96.tag == 1_u8 {
+        set accept_v100 = True();
+        set closing_v103 = True();
+      }
+      if token_v96.tag == 9_u8 {
+        set accept_v100 = True();
+        if last_v98 < phases_v89.inner.len {
+          set phases_v89.inner[last_v98] = 6_u8;
+        }
+      }
+    } else if phase_v97 == 4_u8 {
+      if token_v96.tag == 3_u8 {
+        set accept_v100 = True();
+        set closing_v103 = True();
+      }
+      if token_v96.tag == 9_u8 {
+        set accept_v100 = True();
+        if last_v98 < phases_v89.inner.len {
+          set phases_v89.inner[last_v98] = 0_u8;
+        }
+      }
+    } else {
+      if phase_v97 == 5_u8 {
+        if token_v96.tag == 3_u8 {
+          set accept_v100 = True();
+          set closing_v103 = True();
+        }
+      }
+      if bnot(closing_v103) {
+        let low_v104 = token_v96.tag >= 4_u8;
+        let high_v105 = token_v96.tag <= 7_u8;
+        if band(low_v104, high_v105) {
+          set accept_v100 = True();
+          set scalar_v101 = True();
+        }
+        if token_v96.tag == 0_u8 {
+          set accept_v100 = True();
+          set opening_v102 = True();
+        }
+        if token_v96.tag == 2_u8 {
+          set accept_v100 = True();
+          set opening_v102 = True();
+        }
+        if accept_v100 {
+          if phases_v89.inner.len == 0_u64 {
+            set root_v93 = True();
+          } else if phase_v97 == 7_u8 {
+            if last_v98 < phases_v89.inner.len {
+              set phases_v89.inner[last_v98] = 3_u8;
+            }
+          } else if last_v98 < phases_v89.inner.len {
+            set phases_v89.inner[last_v98] = 4_u8;
+          }
+        }
+      }
+    }
+    if bnot(accept_v100) {
+      return cj_parse_error(vm: vm, token: token_v96, expected: expected_v99);
+    }
+    if closing_v103 {
+      if phases_v89.inner.len > 0_u64 {
+        let ignored_v106 = take_back(window: &phases_v89.inner);
+      }
+    }
+    if opening_v102 {
+      let d_v107 = phases_v89.inner.len +sat 1_u64;
+      if d_v107 > max_depth_v95 {
+        return cj_depth_error(vm: vm, depth: d_v107, offset: scan_v92.offset);
+      }
+      let p_v108 = 5_u8;
+      if token_v96.tag == 0_u8 {
+        set p_v108 = 1_u8;
+      }
+      bytes_push(bytes: &phases_v89, byte: p_v108);
+    }
+    if scalar_v101 {
+      codec_value_push(values: &originals_v90, value: token_v96.value);
+      if token_v96.tag == 4_u8 {
+        bytes_push(bytes: &normalized_v91, byte: 34_u8);
+        bytes_push(bytes: &normalized_v91, byte: 34_u8);
+      }
+      if token_v96.tag == 5_u8 {
+        bytes_push(bytes: &normalized_v91, byte: 48_u8);
+      }
+      if token_v96.tag == 6_u8 {
+        if truthy(v: token_v96.value) {
+          bytes_append(bytes: &normalized_v91, text: &cj_true[0_u64..4_u64]);
+        } else {
+          bytes_append(bytes: &normalized_v91, text: &cj_false[0_u64..5_u64]);
+        }
+      }
+      if token_v96.tag == 7_u8 {
+        bytes_append(bytes: &normalized_v91, text: &cj_null[0_u64..4_u64]);
+      }
+    } else {
+      let byte_v109 = 0_u8;
+      if token_v96.tag == 0_u8 {
+        set byte_v109 = 123_u8;
+      }
+      if token_v96.tag == 1_u8 {
+        set byte_v109 = 125_u8;
+      }
+      if token_v96.tag == 2_u8 {
+        set byte_v109 = 91_u8;
+      }
+      if token_v96.tag == 3_u8 {
+        set byte_v109 = 93_u8;
+      }
+      if token_v96.tag == 8_u8 {
+        set byte_v109 = 58_u8;
+      }
+      if token_v96.tag == 9_u8 {
+        set byte_v109 = 44_u8;
+      }
+      bytes_push(bytes: &normalized_v91, byte: byte_v109);
+    }
+  }
+  let decoder_v110 = json::decode::new(max_depth: max_depth_v95);
+  let scratch_v111 = box_slots_new::<u8>(capacity: 0_u64);
+  let frames_v112 = box_slots_new::<CjsonFrame>(capacity: 16_u64);
+  let result_v113 = Value::Nil();
+  let index_v114 = 0_u64;
+  let n_v115 = normalized_v91.inner.len;
+  loop {
+    let item_v116 = Value::Nil();
+    let attach_v117 = False();
+    match json::decode::next(source: &normalized_v91.inner[0_u64..n_v115], decoder: &decoder_v110, decoded: &scratch_v111) {
+      Err(..) => {
+        return lib_failure(vm: vm, text: &cj_internal[0_u64..36_u64]);
+      }
+      Ok(value: event_v118) => {
+        match event_v118 {
+          End() => {
+            break;
+          }
+          ObjectBegin() => {
+            let t_v119 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
+            let nil_v120 = Value::Nil();
+            let yes_v121 = True();
+            let frame_v122 = CjsonFrame(table: t_v119, key: nil_v120, index: 1_u64, object: yes_v121);
+            cj_frame_push(frames: &frames_v112, frame: frame_v122);
+          }
+          ArrayBegin() => {
+            let t_v123 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
+            let nil_v124 = Value::Nil();
+            let no_v125 = False();
+            let frame_v126 = CjsonFrame(table: t_v123, key: nil_v124, index: 1_u64, object: no_v125);
+            cj_frame_push(frames: &frames_v112, frame: frame_v126);
+          }
+          ObjectEnd() => {
+            if frames_v112.inner.len > 0_u64 {
+              let frame_v127 = take_back(window: &frames_v112.inner);
+              set item_v116 = frame_v127.table;
+              set attach_v117 = True();
+            }
+          }
+          ArrayEnd() => {
+            if frames_v112.inner.len > 0_u64 {
+              let frame_v128 = take_back(window: &frames_v112.inner);
+              set item_v116 = frame_v128.table;
+              set attach_v117 = True();
+            }
+          }
+          Key() => {
+            if index_v114 < originals_v90.inner.len {
+              let key_v129 = originals_v90.inner[index_v114];
+              if frames_v112.inner.len > 0_u64 {
+                let last_v130 = frames_v112.inner.len - 1_u64;
+                set frames_v112.inner[last_v130].key = key_v129;
+              }
+            }
+            set index_v114 = index_v114 +sat 1_u64;
+          }
+          String() => {
+            set attach_v117 = True();
+          }
+          Number(..) => {
+            set attach_v117 = True();
+          }
+          True() => {
+            set attach_v117 = True();
+          }
+          False() => {
+            set attach_v117 = True();
+          }
+          Null() => {
+            set attach_v117 = True();
+          }
+        }
+      }
+    }
+    if attach_v117 {
+      if is_nil(v: item_v116) {
+        if index_v114 < originals_v90.inner.len {
+          set item_v116 = originals_v90.inner[index_v114];
+        }
+        set index_v114 = index_v114 +sat 1_u64;
+      }
+      if frames_v112.inner.len == 0_u64 {
+        set result_v113 = item_v116;
+      } else {
+        let last_v131 = frames_v112.inner.len - 1_u64;
+        let frame_v132 = frames_v112.inner[last_v131];
+        let key_v133 = frame_v132.key;
+        if bnot(frame_v132.object) {
+          let x_v134 = cvt.nearest::<u64, f64>(frame_v132.index);
+          set key_v133 = Value::Num(n: x_v134);
+        }
+        let ignored_v135 = table_set(heap: &vm^.heap, t: frame_v132.table, key: key_v133, val: item_v116);
+        if last_v131 < frames_v112.inner.len {
+          set frames_v112.inner[last_v131].index = frame_v132.index +sat 1_u64;
+        }
+      }
+    }
+  }
+  return lib_result(stack: stack, func: func, value: result_v113);
+}
+
+const cj_true: Array<u8, 4> = "true";
+
+const cj_false: Array<u8, 5> = "false";
+
+const cj_error_expected: Array<u8, 9> = "Expected ";
+
+const cj_error_found: Array<u8, 11> = " but found ";
+
+const cj_expect_value: Array<u8, 5> = "value";
+
+const cj_expect_key: Array<u8, 17> = "object key string";
+
+const cj_expect_colon: Array<u8, 5> = "colon";
+
+const cj_expect_object: Array<u8, 19> = "comma or object end";
+
+const cj_expect_array: Array<u8, 18> = "comma or array end";
+
+const cj_expect_end: Array<u8, 7> = "the end";
+
+const cj_character: Array<u8, 14> = " at character ";
+
+const cj_too_deep: Array<u8, 39> = "Found too many nested data structures (";
+
+const cj_close_character: Array<u8, 15> = ") at character ";
+
+const cj_utf16: Array<u8, 45> = "JSON parser does not support UTF-16 or UTF-32";
+
+const cj_internal: Array<u8, 36> = "CJSON normalized document is invalid";
+
+const cj_reason_1: Array<u8, 13> = "invalid token";
+
+const cj_reason_2: Array<u8, 24> = "unexpected end of string";
+
+const cj_reason_3: Array<u8, 19> = "invalid escape code";
+
+const cj_reason_4: Array<u8, 27> = "invalid unicode escape code";
+
+const cj_reason_5: Array<u8, 14> = "invalid number";
+
+const cj_tag_0: Array<u8, 11> = "T_OBJ_BEGIN";
+
+const cj_tag_1: Array<u8, 9> = "T_OBJ_END";
+
+const cj_tag_2: Array<u8, 11> = "T_ARR_BEGIN";
+
+const cj_tag_3: Array<u8, 9> = "T_ARR_END";
+
+const cj_tag_4: Array<u8, 8> = "T_STRING";
+
+const cj_tag_5: Array<u8, 8> = "T_NUMBER";
+
+const cj_tag_6: Array<u8, 9> = "T_BOOLEAN";
+
+const cj_tag_7: Array<u8, 6> = "T_NULL";
+
+const cj_tag_8: Array<u8, 7> = "T_COLON";
+
+const cj_tag_9: Array<u8, 7> = "T_COMMA";
+
+const cj_tag_10: Array<u8, 5> = "T_END";

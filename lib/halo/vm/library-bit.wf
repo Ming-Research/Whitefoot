@@ -1,0 +1,169 @@
+alias Value = pkg::value::Value;
+alias num_of = pkg::value::num_of;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias new_table = pkg::heap::new_table;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+
+const bit_number: Array<u8, 6> = "number";
+
+const bit_digits: Array<u8, 16> = "0123456789abcdef";
+
+const bit_upper: Array<u8, 16> = "0123456789ABCDEF";
+
+fn bit_argument(vm: &Vm, value: Value) -> r: Option<u32> reads(vm) {
+  match coerce_number(vm: vm, v: value) {
+    Is(x: x_v1) => {
+      let bias = cvt.nearest::<u64, f64>(6755399441055744_u64);
+      let biased_v2 = fadd.strict(x_v1, bias);
+      let bits_v3 = reinterpret::<f64, u64>(biased_v2);
+      let low_v4 = cvt.wrap::<u64, u32>(bits_v3);
+      return Some<u32>(value: low_v4);
+    }
+    Not() => {
+      return None<u32>();
+    }
+  }
+}
+
+fn library_bit(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) {
+  let a_v5 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let b_v6 = 0_u32;
+  match bit_argument(vm: vm, value: a_v5) {
+    Some(value: n_v7) => {
+      set b_v6 = n_v7;
+    }
+    None() => {
+      return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: a_v5, expected: &bit_number[0_u64..6_u64]);
+    }
+  }
+  if id == 121_u32 {
+    set b_v6 = inot(b_v6);
+  }
+  if id >= 122_u32 {
+    if id <= 124_u32 {
+      let i_v8 = argc;
+      loop {
+        if i_v8 <= 1_u64 {
+          break;
+        }
+        set i_v8 = i_v8 - 1_u64;
+        let v_v9 = argument(stack: stack, func: func, argc: argc, index: i_v8);
+        match bit_argument(vm: vm, value: v_v9) {
+          Some(value: n_v10) => {
+            if id == 122_u32 {
+              set b_v6 = iand(b_v6, n_v10);
+            }
+            if id == 123_u32 {
+              set b_v6 = ior(b_v6, n_v10);
+            }
+            if id == 124_u32 {
+              set b_v6 = ixor(b_v6, n_v10);
+            }
+          }
+          None() => {
+            let arg_v11 = i_v8 +sat 1_u64;
+            return lib_argerror(vm: vm, id: id, index: arg_v11, argc: argc, value: v_v9, expected: &bit_number[0_u64..6_u64]);
+          }
+        }
+      }
+    }
+  }
+  if id >= 125_u32 {
+    if id <= 129_u32 {
+      let v_v12 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+      let n_v13 = 0_u32;
+      match bit_argument(vm: vm, value: v_v12) {
+        Some(value: wide_v14) => {
+          set n_v13 = iand(wide_v14, 31_u32);
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: v_v12, expected: &bit_number[0_u64..6_u64]);
+        }
+      }
+      if id == 125_u32 {
+        set b_v6 = ishl.wrap(b_v6, n_v13);
+      }
+      if id == 126_u32 {
+        set b_v6 = ishr.wrap(b_v6, n_v13);
+      }
+      if id == 127_u32 {
+        let signed_v15 = reinterpret::<u32, i32>(b_v6);
+        let shifted_v16 = ishr.wrap(signed_v15, n_v13);
+        set b_v6 = reinterpret::<i32, u32>(shifted_v16);
+      }
+      if id == 128_u32 {
+        let left_v17 = ishl.wrap(b_v6, n_v13);
+        let back_v18 = 32_u32 -wrap n_v13;
+        let right_v19 = ishr.wrap(b_v6, back_v18);
+        set b_v6 = ior(left_v17, right_v19);
+      }
+      if id == 129_u32 {
+        let right_v20 = ishr.wrap(b_v6, n_v13);
+        let back_v21 = 32_u32 -wrap n_v13;
+        let left_v22 = ishl.wrap(b_v6, back_v21);
+        set b_v6 = ior(left_v22, right_v20);
+      }
+    }
+  }
+  if id == 130_u32 {
+    let a_v23 = ishr.wrap(b_v6, 24_u32);
+    let c_v24 = ishr.wrap(b_v6, 8_u32);
+    let d_v25 = iand(c_v24, 65280_u32);
+    let e_v26 = iand(b_v6, 65280_u32);
+    let f_v27 = ishl.wrap(e_v26, 8_u32);
+    let g_v28 = ishl.wrap(b_v6, 24_u32);
+    let h_v29 = ior(a_v23, d_v25);
+    let j_v30 = ior(f_v27, g_v28);
+    set b_v6 = ior(h_v29, j_v30);
+  }
+  if id == 131_u32 {
+    let width_v31 = 8_i64;
+    if argc >= 2_u64 {
+      let v_v32 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+      match bit_argument(vm: vm, value: v_v32) {
+        Some(value: wide_v33) => {
+          let signed_v34 = reinterpret::<u32, i32>(wide_v33);
+          set width_v31 = cvt::<i32, i64>(signed_v34);
+        }
+        None() => {
+          return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: v_v32, expected: &bit_number[0_u64..6_u64]);
+        }
+      }
+    }
+    let upper_v35 = width_v31 < 0_i64;
+    if upper_v35 {
+      set width_v31 = 0_i64 -wrap width_v31;
+    }
+    let count_v36 = cvt.wrap::<i64, u64>(width_v31);
+    set count_v36 = imin(count_v36, 8_u64);
+    let out_v37 = array_filled::<u8, 8>(value: 0_u8);
+    let i_v38 = count_v36;
+    loop {
+      if i_v38 == 0_u64 {
+        break;
+      }
+      set i_v38 = i_v38 - 1_u64;
+      let low_v39 = iand(b_v6, 15_u32);
+      let index_v40 = cvt::<u32, u64>(low_v39);
+      if i_v38 < 8_u64 {
+        if index_v40 < 16_u64 {
+          set out_v37[i_v38] = bit_digits[index_v40];
+          if upper_v35 {
+            set out_v37[i_v38] = bit_upper[index_v40];
+          }
+        }
+      }
+      set b_v6 = ishr.wrap(b_v6, 4_u32);
+    }
+    let result_v41 = intern(heap: &vm^.heap, bytes: &out_v37[0_u64..count_v36]);
+    return lib_result(stack: stack, func: func, value: result_v41);
+  }
+  let signed_v42 = reinterpret::<u32, i32>(b_v6);
+  let n_v43 = cvt.nearest::<i32, f64>(signed_v42);
+  let result_v44 = Value::Num(n: n_v43);
+  return lib_result(stack: stack, func: func, value: result_v44);
+}

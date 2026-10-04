@@ -1,0 +1,526 @@
+alias Value = pkg::value::Value;
+alias num_of = pkg::value::num_of;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias new_table = pkg::heap::new_table;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+
+fn codec_builtin(index: u64) -> r: Option<BuiltinBinding> pure {
+  if index == 96_u64 {
+    let name_v1 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v1[0_u64] = 101_u8;
+    set name_v1[1_u64] = 110_u8;
+    set name_v1[2_u64] = 99_u8;
+    set name_v1[3_u64] = 111_u8;
+    set name_v1[4_u64] = 100_u8;
+    set name_v1[5_u64] = 101_u8;
+    let row_v2 = BuiltinBinding(library: 4_u8, name: name_v1, length: 6_u64, id: 96_u32);
+    return Some<BuiltinBinding>(value: row_v2);
+  }
+  if index == 97_u64 {
+    let name_v3 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v3[0_u64] = 100_u8;
+    set name_v3[1_u64] = 101_u8;
+    set name_v3[2_u64] = 99_u8;
+    set name_v3[3_u64] = 111_u8;
+    set name_v3[4_u64] = 100_u8;
+    set name_v3[5_u64] = 101_u8;
+    let row_v4 = BuiltinBinding(library: 4_u8, name: name_v3, length: 6_u64, id: 97_u32);
+    return Some<BuiltinBinding>(value: row_v4);
+  }
+  if index == 98_u64 {
+    let name_v5 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v5[0_u64] = 101_u8;
+    set name_v5[1_u64] = 110_u8;
+    set name_v5[2_u64] = 99_u8;
+    set name_v5[3_u64] = 111_u8;
+    set name_v5[4_u64] = 100_u8;
+    set name_v5[5_u64] = 101_u8;
+    set name_v5[6_u64] = 95_u8;
+    set name_v5[7_u64] = 115_u8;
+    set name_v5[8_u64] = 112_u8;
+    set name_v5[9_u64] = 97_u8;
+    set name_v5[10_u64] = 114_u8;
+    set name_v5[11_u64] = 115_u8;
+    set name_v5[12_u64] = 101_u8;
+    set name_v5[13_u64] = 95_u8;
+    set name_v5[14_u64] = 97_u8;
+    set name_v5[15_u64] = 114_u8;
+    set name_v5[16_u64] = 114_u8;
+    set name_v5[17_u64] = 97_u8;
+    set name_v5[18_u64] = 121_u8;
+    let row_v6 = BuiltinBinding(library: 4_u8, name: name_v5, length: 19_u64, id: 98_u32);
+    return Some<BuiltinBinding>(value: row_v6);
+  }
+  if index == 99_u64 {
+    let name_v7 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v7[0_u64] = 101_u8;
+    set name_v7[1_u64] = 110_u8;
+    set name_v7[2_u64] = 99_u8;
+    set name_v7[3_u64] = 111_u8;
+    set name_v7[4_u64] = 100_u8;
+    set name_v7[5_u64] = 101_u8;
+    set name_v7[6_u64] = 95_u8;
+    set name_v7[7_u64] = 109_u8;
+    set name_v7[8_u64] = 97_u8;
+    set name_v7[9_u64] = 120_u8;
+    set name_v7[10_u64] = 95_u8;
+    set name_v7[11_u64] = 100_u8;
+    set name_v7[12_u64] = 101_u8;
+    set name_v7[13_u64] = 112_u8;
+    set name_v7[14_u64] = 116_u8;
+    set name_v7[15_u64] = 104_u8;
+    let row_v8 = BuiltinBinding(library: 4_u8, name: name_v7, length: 16_u64, id: 99_u32);
+    return Some<BuiltinBinding>(value: row_v8);
+  }
+  if index == 100_u64 {
+    let name_v9 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v9[0_u64] = 100_u8;
+    set name_v9[1_u64] = 101_u8;
+    set name_v9[2_u64] = 99_u8;
+    set name_v9[3_u64] = 111_u8;
+    set name_v9[4_u64] = 100_u8;
+    set name_v9[5_u64] = 101_u8;
+    set name_v9[6_u64] = 95_u8;
+    set name_v9[7_u64] = 109_u8;
+    set name_v9[8_u64] = 97_u8;
+    set name_v9[9_u64] = 120_u8;
+    set name_v9[10_u64] = 95_u8;
+    set name_v9[11_u64] = 100_u8;
+    set name_v9[12_u64] = 101_u8;
+    set name_v9[13_u64] = 112_u8;
+    set name_v9[14_u64] = 116_u8;
+    set name_v9[15_u64] = 104_u8;
+    let row_v10 = BuiltinBinding(library: 4_u8, name: name_v9, length: 16_u64, id: 100_u32);
+    return Some<BuiltinBinding>(value: row_v10);
+  }
+  if index == 101_u64 {
+    let name_v11 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v11[0_u64] = 101_u8;
+    set name_v11[1_u64] = 110_u8;
+    set name_v11[2_u64] = 99_u8;
+    set name_v11[3_u64] = 111_u8;
+    set name_v11[4_u64] = 100_u8;
+    set name_v11[5_u64] = 101_u8;
+    set name_v11[6_u64] = 95_u8;
+    set name_v11[7_u64] = 110_u8;
+    set name_v11[8_u64] = 117_u8;
+    set name_v11[9_u64] = 109_u8;
+    set name_v11[10_u64] = 98_u8;
+    set name_v11[11_u64] = 101_u8;
+    set name_v11[12_u64] = 114_u8;
+    set name_v11[13_u64] = 95_u8;
+    set name_v11[14_u64] = 112_u8;
+    set name_v11[15_u64] = 114_u8;
+    set name_v11[16_u64] = 101_u8;
+    set name_v11[17_u64] = 99_u8;
+    set name_v11[18_u64] = 105_u8;
+    set name_v11[19_u64] = 115_u8;
+    set name_v11[20_u64] = 105_u8;
+    set name_v11[21_u64] = 111_u8;
+    set name_v11[22_u64] = 110_u8;
+    let row_v12 = BuiltinBinding(library: 4_u8, name: name_v11, length: 23_u64, id: 101_u32);
+    return Some<BuiltinBinding>(value: row_v12);
+  }
+  if index == 102_u64 {
+    let name_v13 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v13[0_u64] = 101_u8;
+    set name_v13[1_u64] = 110_u8;
+    set name_v13[2_u64] = 99_u8;
+    set name_v13[3_u64] = 111_u8;
+    set name_v13[4_u64] = 100_u8;
+    set name_v13[5_u64] = 101_u8;
+    set name_v13[6_u64] = 95_u8;
+    set name_v13[7_u64] = 107_u8;
+    set name_v13[8_u64] = 101_u8;
+    set name_v13[9_u64] = 101_u8;
+    set name_v13[10_u64] = 112_u8;
+    set name_v13[11_u64] = 95_u8;
+    set name_v13[12_u64] = 98_u8;
+    set name_v13[13_u64] = 117_u8;
+    set name_v13[14_u64] = 102_u8;
+    set name_v13[15_u64] = 102_u8;
+    set name_v13[16_u64] = 101_u8;
+    set name_v13[17_u64] = 114_u8;
+    let row_v14 = BuiltinBinding(library: 4_u8, name: name_v13, length: 18_u64, id: 102_u32);
+    return Some<BuiltinBinding>(value: row_v14);
+  }
+  if index == 103_u64 {
+    let name_v15 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v15[0_u64] = 101_u8;
+    set name_v15[1_u64] = 110_u8;
+    set name_v15[2_u64] = 99_u8;
+    set name_v15[3_u64] = 111_u8;
+    set name_v15[4_u64] = 100_u8;
+    set name_v15[5_u64] = 101_u8;
+    set name_v15[6_u64] = 95_u8;
+    set name_v15[7_u64] = 105_u8;
+    set name_v15[8_u64] = 110_u8;
+    set name_v15[9_u64] = 118_u8;
+    set name_v15[10_u64] = 97_u8;
+    set name_v15[11_u64] = 108_u8;
+    set name_v15[12_u64] = 105_u8;
+    set name_v15[13_u64] = 100_u8;
+    set name_v15[14_u64] = 95_u8;
+    set name_v15[15_u64] = 110_u8;
+    set name_v15[16_u64] = 117_u8;
+    set name_v15[17_u64] = 109_u8;
+    set name_v15[18_u64] = 98_u8;
+    set name_v15[19_u64] = 101_u8;
+    set name_v15[20_u64] = 114_u8;
+    set name_v15[21_u64] = 115_u8;
+    let row_v16 = BuiltinBinding(library: 4_u8, name: name_v15, length: 22_u64, id: 103_u32);
+    return Some<BuiltinBinding>(value: row_v16);
+  }
+  if index == 104_u64 {
+    let name_v17 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v17[0_u64] = 100_u8;
+    set name_v17[1_u64] = 101_u8;
+    set name_v17[2_u64] = 99_u8;
+    set name_v17[3_u64] = 111_u8;
+    set name_v17[4_u64] = 100_u8;
+    set name_v17[5_u64] = 101_u8;
+    set name_v17[6_u64] = 95_u8;
+    set name_v17[7_u64] = 105_u8;
+    set name_v17[8_u64] = 110_u8;
+    set name_v17[9_u64] = 118_u8;
+    set name_v17[10_u64] = 97_u8;
+    set name_v17[11_u64] = 108_u8;
+    set name_v17[12_u64] = 105_u8;
+    set name_v17[13_u64] = 100_u8;
+    set name_v17[14_u64] = 95_u8;
+    set name_v17[15_u64] = 110_u8;
+    set name_v17[16_u64] = 117_u8;
+    set name_v17[17_u64] = 109_u8;
+    set name_v17[18_u64] = 98_u8;
+    set name_v17[19_u64] = 101_u8;
+    set name_v17[20_u64] = 114_u8;
+    set name_v17[21_u64] = 115_u8;
+    let row_v18 = BuiltinBinding(library: 4_u8, name: name_v17, length: 22_u64, id: 104_u32);
+    return Some<BuiltinBinding>(value: row_v18);
+  }
+  if index == 105_u64 {
+    let name_v19 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v19[0_u64] = 110_u8;
+    set name_v19[1_u64] = 101_u8;
+    set name_v19[2_u64] = 119_u8;
+    let row_v20 = BuiltinBinding(library: 4_u8, name: name_v19, length: 3_u64, id: 105_u32);
+    return Some<BuiltinBinding>(value: row_v20);
+  }
+  if index == 112_u64 {
+    let name_v21 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v21[0_u64] = 112_u8;
+    set name_v21[1_u64] = 97_u8;
+    set name_v21[2_u64] = 99_u8;
+    set name_v21[3_u64] = 107_u8;
+    let row_v22 = BuiltinBinding(library: 5_u8, name: name_v21, length: 4_u64, id: 112_u32);
+    return Some<BuiltinBinding>(value: row_v22);
+  }
+  if index == 113_u64 {
+    let name_v23 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v23[0_u64] = 117_u8;
+    set name_v23[1_u64] = 110_u8;
+    set name_v23[2_u64] = 112_u8;
+    set name_v23[3_u64] = 97_u8;
+    set name_v23[4_u64] = 99_u8;
+    set name_v23[5_u64] = 107_u8;
+    let row_v24 = BuiltinBinding(library: 5_u8, name: name_v23, length: 6_u64, id: 113_u32);
+    return Some<BuiltinBinding>(value: row_v24);
+  }
+  if index == 114_u64 {
+    let name_v25 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v25[0_u64] = 117_u8;
+    set name_v25[1_u64] = 110_u8;
+    set name_v25[2_u64] = 112_u8;
+    set name_v25[3_u64] = 97_u8;
+    set name_v25[4_u64] = 99_u8;
+    set name_v25[5_u64] = 107_u8;
+    set name_v25[6_u64] = 95_u8;
+    set name_v25[7_u64] = 111_u8;
+    set name_v25[8_u64] = 110_u8;
+    set name_v25[9_u64] = 101_u8;
+    let row_v26 = BuiltinBinding(library: 5_u8, name: name_v25, length: 10_u64, id: 114_u32);
+    return Some<BuiltinBinding>(value: row_v26);
+  }
+  if index == 115_u64 {
+    let name_v27 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v27[0_u64] = 117_u8;
+    set name_v27[1_u64] = 110_u8;
+    set name_v27[2_u64] = 112_u8;
+    set name_v27[3_u64] = 97_u8;
+    set name_v27[4_u64] = 99_u8;
+    set name_v27[5_u64] = 107_u8;
+    set name_v27[6_u64] = 95_u8;
+    set name_v27[7_u64] = 108_u8;
+    set name_v27[8_u64] = 105_u8;
+    set name_v27[9_u64] = 109_u8;
+    set name_v27[10_u64] = 105_u8;
+    set name_v27[11_u64] = 116_u8;
+    let row_v28 = BuiltinBinding(library: 5_u8, name: name_v27, length: 12_u64, id: 115_u32);
+    return Some<BuiltinBinding>(value: row_v28);
+  }
+  if index == 120_u64 {
+    let name_v29 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v29[0_u64] = 116_u8;
+    set name_v29[1_u64] = 111_u8;
+    set name_v29[2_u64] = 98_u8;
+    set name_v29[3_u64] = 105_u8;
+    set name_v29[4_u64] = 116_u8;
+    let row_v30 = BuiltinBinding(library: 6_u8, name: name_v29, length: 5_u64, id: 120_u32);
+    return Some<BuiltinBinding>(value: row_v30);
+  }
+  if index == 121_u64 {
+    let name_v31 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v31[0_u64] = 98_u8;
+    set name_v31[1_u64] = 110_u8;
+    set name_v31[2_u64] = 111_u8;
+    set name_v31[3_u64] = 116_u8;
+    let row_v32 = BuiltinBinding(library: 6_u8, name: name_v31, length: 4_u64, id: 121_u32);
+    return Some<BuiltinBinding>(value: row_v32);
+  }
+  if index == 122_u64 {
+    let name_v33 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v33[0_u64] = 98_u8;
+    set name_v33[1_u64] = 97_u8;
+    set name_v33[2_u64] = 110_u8;
+    set name_v33[3_u64] = 100_u8;
+    let row_v34 = BuiltinBinding(library: 6_u8, name: name_v33, length: 4_u64, id: 122_u32);
+    return Some<BuiltinBinding>(value: row_v34);
+  }
+  if index == 123_u64 {
+    let name_v35 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v35[0_u64] = 98_u8;
+    set name_v35[1_u64] = 111_u8;
+    set name_v35[2_u64] = 114_u8;
+    let row_v36 = BuiltinBinding(library: 6_u8, name: name_v35, length: 3_u64, id: 123_u32);
+    return Some<BuiltinBinding>(value: row_v36);
+  }
+  if index == 124_u64 {
+    let name_v37 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v37[0_u64] = 98_u8;
+    set name_v37[1_u64] = 120_u8;
+    set name_v37[2_u64] = 111_u8;
+    set name_v37[3_u64] = 114_u8;
+    let row_v38 = BuiltinBinding(library: 6_u8, name: name_v37, length: 4_u64, id: 124_u32);
+    return Some<BuiltinBinding>(value: row_v38);
+  }
+  if index == 125_u64 {
+    let name_v39 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v39[0_u64] = 108_u8;
+    set name_v39[1_u64] = 115_u8;
+    set name_v39[2_u64] = 104_u8;
+    set name_v39[3_u64] = 105_u8;
+    set name_v39[4_u64] = 102_u8;
+    set name_v39[5_u64] = 116_u8;
+    let row_v40 = BuiltinBinding(library: 6_u8, name: name_v39, length: 6_u64, id: 125_u32);
+    return Some<BuiltinBinding>(value: row_v40);
+  }
+  if index == 126_u64 {
+    let name_v41 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v41[0_u64] = 114_u8;
+    set name_v41[1_u64] = 115_u8;
+    set name_v41[2_u64] = 104_u8;
+    set name_v41[3_u64] = 105_u8;
+    set name_v41[4_u64] = 102_u8;
+    set name_v41[5_u64] = 116_u8;
+    let row_v42 = BuiltinBinding(library: 6_u8, name: name_v41, length: 6_u64, id: 126_u32);
+    return Some<BuiltinBinding>(value: row_v42);
+  }
+  if index == 127_u64 {
+    let name_v43 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v43[0_u64] = 97_u8;
+    set name_v43[1_u64] = 114_u8;
+    set name_v43[2_u64] = 115_u8;
+    set name_v43[3_u64] = 104_u8;
+    set name_v43[4_u64] = 105_u8;
+    set name_v43[5_u64] = 102_u8;
+    set name_v43[6_u64] = 116_u8;
+    let row_v44 = BuiltinBinding(library: 6_u8, name: name_v43, length: 7_u64, id: 127_u32);
+    return Some<BuiltinBinding>(value: row_v44);
+  }
+  if index == 128_u64 {
+    let name_v45 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v45[0_u64] = 114_u8;
+    set name_v45[1_u64] = 111_u8;
+    set name_v45[2_u64] = 108_u8;
+    let row_v46 = BuiltinBinding(library: 6_u8, name: name_v45, length: 3_u64, id: 128_u32);
+    return Some<BuiltinBinding>(value: row_v46);
+  }
+  if index == 129_u64 {
+    let name_v47 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v47[0_u64] = 114_u8;
+    set name_v47[1_u64] = 111_u8;
+    set name_v47[2_u64] = 114_u8;
+    let row_v48 = BuiltinBinding(library: 6_u8, name: name_v47, length: 3_u64, id: 129_u32);
+    return Some<BuiltinBinding>(value: row_v48);
+  }
+  if index == 130_u64 {
+    let name_v49 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v49[0_u64] = 98_u8;
+    set name_v49[1_u64] = 115_u8;
+    set name_v49[2_u64] = 119_u8;
+    set name_v49[3_u64] = 97_u8;
+    set name_v49[4_u64] = 112_u8;
+    let row_v50 = BuiltinBinding(library: 6_u8, name: name_v49, length: 5_u64, id: 130_u32);
+    return Some<BuiltinBinding>(value: row_v50);
+  }
+  if index == 131_u64 {
+    let name_v51 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v51[0_u64] = 116_u8;
+    set name_v51[1_u64] = 111_u8;
+    set name_v51[2_u64] = 104_u8;
+    set name_v51[3_u64] = 101_u8;
+    set name_v51[4_u64] = 120_u8;
+    let row_v52 = BuiltinBinding(library: 6_u8, name: name_v51, length: 5_u64, id: 131_u32);
+    return Some<BuiltinBinding>(value: row_v52);
+  }
+  if index == 136_u64 {
+    let name_v53 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v53[0_u64] = 112_u8;
+    set name_v53[1_u64] = 97_u8;
+    set name_v53[2_u64] = 99_u8;
+    set name_v53[3_u64] = 107_u8;
+    let row_v54 = BuiltinBinding(library: 7_u8, name: name_v53, length: 4_u64, id: 136_u32);
+    return Some<BuiltinBinding>(value: row_v54);
+  }
+  if index == 137_u64 {
+    let name_v55 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v55[0_u64] = 117_u8;
+    set name_v55[1_u64] = 110_u8;
+    set name_v55[2_u64] = 112_u8;
+    set name_v55[3_u64] = 97_u8;
+    set name_v55[4_u64] = 99_u8;
+    set name_v55[5_u64] = 107_u8;
+    let row_v56 = BuiltinBinding(library: 7_u8, name: name_v55, length: 6_u64, id: 137_u32);
+    return Some<BuiltinBinding>(value: row_v56);
+  }
+  if index == 138_u64 {
+    let name_v57 = array_filled::<u8, 32>(value: 0_u8);
+    set name_v57[0_u64] = 115_u8;
+    set name_v57[1_u64] = 105_u8;
+    set name_v57[2_u64] = 122_u8;
+    set name_v57[3_u64] = 101_u8;
+    let row_v58 = BuiltinBinding(library: 7_u8, name: name_v57, length: 4_u64, id: 138_u32);
+    return Some<BuiltinBinding>(value: row_v58);
+  }
+  return None<BuiltinBinding>();
+}
+
+const codec_lib_4: Array<u8, 5> = "cjson";
+
+const codec_lib_5: Array<u8, 8> = "cmsgpack";
+
+const codec_lib_6: Array<u8, 3> = "bit";
+
+const codec_lib_7: Array<u8, 6> = "struct";
+
+fn install_codecs(vm: &Vm) -> r: unit writes(vm) {
+  let initial_config_v59 = cjson_config(vm: vm);
+  let globals_v60 = Value::Tab(h: vm^.globals);
+  for (lib_v61 in 4_u64..8_u64) {
+    let t_v62 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 16_u32);
+    if lib_v61 == 4_u64 {
+      set t_v62 = cjson_table(vm: vm, config: initial_config_v59);
+    }
+    let key_v63 = Value::Nil();
+    if lib_v61 == 4_u64 {
+      set key_v63 = intern(heap: &vm^.heap, bytes: &codec_lib_4[0_u64..5_u64]);
+    }
+    if lib_v61 == 5_u64 {
+      set key_v63 = intern(heap: &vm^.heap, bytes: &codec_lib_5[0_u64..8_u64]);
+    }
+    if lib_v61 == 6_u64 {
+      set key_v63 = intern(heap: &vm^.heap, bytes: &codec_lib_6[0_u64..3_u64]);
+    }
+    if lib_v61 == 7_u64 {
+      set key_v63 = intern(heap: &vm^.heap, bytes: &codec_lib_7[0_u64..6_u64]);
+    }
+    let ignored_v64 = table_set(heap: &vm^.heap, t: globals_v60, key: key_v63, val: t_v62);
+    if lib_v61 == 5_u64 {
+      codec_metadata(vm: vm, table: t_v62, key: &codec_name[0_u64..5_u64], text: &codec_lib_5[0_u64..8_u64]);
+      codec_metadata(vm: vm, table: t_v62, key: &codec_version[0_u64..8_u64], text: &mp_version[0_u64..18_u64]);
+      codec_metadata(vm: vm, table: t_v62, key: &codec_copyright[0_u64..10_u64], text: &mp_copyright[0_u64..40_u64]);
+      codec_metadata(vm: vm, table: t_v62, key: &codec_description[0_u64..12_u64], text: &mp_description[0_u64..36_u64]);
+    }
+    for (i_v65 in 96_u64..144_u64) {
+      match codec_builtin(index: i_v65) {
+        Some(value: row_v66) => {
+          let which_v67 = cvt::<u8, u64>(row_v66.library);
+          let matches = which_v67 == lib_v61;
+          let separate = lib_v61 != 4_u64;
+          if band(matches, separate) {
+            let length_v68 = row_v66.length;
+            if length_v68 <= 32_u64 {
+              let key_v69 = intern(heap: &vm^.heap, bytes: &row_v66.name[0_u64..length_v68]);
+              let value_v70 = Value::Builtin(id: row_v66.id);
+              let ignored_v71 = table_set(heap: &vm^.heap, t: t_v62, key: key_v69, val: value_v70);
+            }
+          }
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn codec_value_push(values: &Box<Slots<Value>>, value: Value) -> r: unit writes(values) {
+  let cap_v72 = values^.inner.cap;
+  if values^.inner.len == cap_v72 {
+    let target_v73 = cap_v72 +sat 32_u64;
+    grow(cell: values, capacity: target_v73);
+  }
+  if values^.inner.len < values^.inner.cap {
+    place_back(window: &values^.inner, value: value);
+  }
+  return unit;
+}
+
+fn codec_results(stack: &Box<Slots<Value>>, func: u64, values: &Box<Slots<Value>>) -> r: HostOutcome reads(values), writes(stack) {
+  let count_v74 = values^.inner.len;
+  let end_v75 = func +sat count_v74;
+  ensure_stack(stack: stack, size: end_v75);
+  for (i_v76 in 0_u64..count_v74) {
+    let at_v77 = func +sat i_v76;
+    if at_v77 < stack^.inner.len {
+      if i_v76 < values^.inner.len {
+        set stack^.inner[at_v77] = values^.inner[i_v76];
+      }
+    }
+  }
+  return HostOutcome::Returned(count: count_v74);
+}
+
+fn codec_field(vm: &Vm, table: Value, key: &[u8], value: Value) -> r: unit reads(key), writes(vm) {
+  let name_v78 = intern(heap: &vm^.heap, bytes: key);
+  let ignored_v79 = table_set(heap: &vm^.heap, t: table, key: name_v78, val: value);
+  return unit;
+}
+
+fn codec_metadata(vm: &Vm, table: Value, key: &[u8], text: &[u8]) -> r: unit reads(key), reads(text), writes(vm) {
+  let value_v80 = intern(heap: &vm^.heap, bytes: text);
+  codec_field(vm: vm, table: table, key: key, value: value_v80);
+  return unit;
+}
+
+const codec_name: Array<u8, 5> = "_NAME";
+
+const codec_version: Array<u8, 8> = "_VERSION";
+
+const codec_copyright: Array<u8, 10> = "_COPYRIGHT";
+
+const codec_description: Array<u8, 12> = "_DESCRIPTION";
+
+const mp_version: Array<u8, 18> = "lua-cmsgpack 0.4.0";
+
+const mp_copyright: Array<u8, 40> = "Copyright (C) 2012, Salvatore Sanfilippo";
+
+const mp_description: Array<u8, 36> = "MessagePack C implementation for Lua";
+
+const cj_userdata: Array<u8, 8> = "userdata";
+
+const cj_nulltext: Array<u8, 15> = "userdata: (nil)";

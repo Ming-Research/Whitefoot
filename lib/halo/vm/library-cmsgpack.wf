@@ -1,0 +1,545 @@
+alias Value = pkg::value::Value;
+alias num_of = pkg::value::num_of;
+alias str_of = pkg::value::str_of;
+alias tab_of = pkg::value::tab_of;
+alias truthy = pkg::value::truthy;
+alias intern = pkg::heap::intern;
+alias new_table = pkg::heap::new_table;
+alias table_get = pkg::heap::table_get;
+alias table_set = pkg::heap::table_set;
+
+const mp_string: Array<u8, 6> = "string";
+
+const mp_number: Array<u8, 6> = "number";
+
+const mp_missing: Array<u8, 23> = "Missing bytes in input.";
+
+const mp_bad: Array<u8, 25> = "Bad data format in input.";
+
+const mp_empty: Array<u8, 29> = "MessagePack pack needs input.";
+
+fn mp_write(vm: &Vm, out: &Box<Slots<u8>>, value: Value, depth: u64) -> r: unit writes(vm), writes(out) {
+  match value {
+    Nil() => {
+      let ignored_v1 = msgpack::encode::nil(out: out);
+    }
+    False() => {
+      let no_v2 = False();
+      let ignored_v3 = msgpack::encode::boolean(out: out, value: no_v2);
+    }
+    True() => {
+      let yes_v4 = True();
+      let ignored_v5 = msgpack::encode::boolean(out: out, value: yes_v4);
+    }
+    Num(n: n_v6) => {
+      let ignored_v7 = msgpack::encode::number(out: out, value: n_v6);
+    }
+    Str(..) => {
+      let bytes_v8 = box_slots_new::<u8>(capacity: 0_u64);
+      bytes_string(vm: vm, bytes: &bytes_v8, value: value);
+      let n_v9 = bytes_v8.inner.len;
+      let ignored_v10 = msgpack::encode::string(out: out, bytes: &bytes_v8.inner[0_u64..n_v9]);
+    }
+    Fun(..) => {
+      let ignored_v11 = msgpack::encode::nil(out: out);
+    }
+    Builtin(..) => {
+      let ignored_v12 = msgpack::encode::nil(out: out);
+    }
+    Tab(..) => {
+      if depth >= 16_u64 {
+        let ignored_v13 = msgpack::encode::nil(out: out);
+        return unit;
+      }
+      let key_v14 = Value::Nil();
+      let count_v15 = 0_u64;
+      let max_v16 = 0_u64;
+      let array_v17 = True();
+      loop {
+        match pkg::heap::table_next(heap: &vm^.heap, t: value, key: key_v14) {
+          Err(..) => {
+            break;
+          }
+          Ok(value: next_v18) => {
+            match next_v18 {
+              None() => {
+                break;
+              }
+              Some(value: pair_v19) => {
+                set key_v14 = pair_v19.key;
+                set count_v15 = count_v15 +sat 1_u64;
+                match num_of(v: key_v14) {
+                  Is(x: n_v20) => {
+                    let integer_v21 = ftrunc(n_v20);
+                    let positive_v22 = fgt(n_v20, 0.0_f64);
+                    let whole_v23 = feq(n_v20, integer_v21);
+                    if band(positive_v22, whole_v23) {
+                      if cvt.defined::<f64, i32>(n_v20) {
+                        let index_v24 = cvt::<f64, i32>(n_v20);
+                        let wide_v25 = cvt.wrap::<i32, u64>(index_v24);
+                        set max_v16 = imax(max_v16, wide_v25);
+                      } else {
+                        set array_v17 = False();
+                      }
+                    } else {
+                      set array_v17 = False();
+                    }
+                  }
+                  Not() => {
+                    set array_v17 = False();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      let dense_v26 = count_v15 == max_v16;
+      if band(array_v17, dense_v26) {
+        let n_v27 = cvt.wrap::<u64, u32>(count_v15);
+        let ignored_v28 = msgpack::encode::array(out: out, count: n_v27);
+        for (i_v29 in 0_u64..count_v15) {
+          let next_v30 = i_v29 +sat 1_u64;
+          let n_v31 = cvt.nearest::<u64, f64>(next_v30);
+          let key_v32 = Value::Num(n: n_v31);
+          let item_v33 = table_get(heap: &vm^.heap, t: value, key: key_v32);
+          let d_v34 = depth +sat 1_u64;
+          mp_write(vm: vm, out: out, value: item_v33, depth: d_v34);
+        }
+      } else {
+        let n_v35 = cvt.wrap::<u64, u32>(count_v15);
+        let ignored_v36 = msgpack::encode::map(out: out, count: n_v35);
+        set key_v14 = Value::Nil();
+        loop {
+          match pkg::heap::table_next(heap: &vm^.heap, t: value, key: key_v14) {
+            Err(..) => {
+              break;
+            }
+            Ok(value: next_v37) => {
+              match next_v37 {
+                None() => {
+                  break;
+                }
+                Some(value: pair_v38) => {
+                  set key_v14 = pair_v38.key;
+                  let d_v39 = depth +sat 1_u64;
+                  mp_write(vm: vm, out: out, value: pair_v38.key, depth: d_v39);
+                  mp_write(vm: vm, out: out, value: pair_v38.val, depth: d_v39);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+struct MpFrame {
+  table: Value;
+  key: Value;
+  left: u64;
+  index: u64;
+  map: Bool;
+  needs_key: Bool;
+}
+
+struct MpCursor {
+  offset: u64;
+  error: u8;
+}
+
+fn mp_frame_push(frames: &Box<Slots<MpFrame>>, frame: MpFrame) -> r: unit writes(frames) {
+  let cap_v40 = frames^.inner.cap;
+  if cap_v40 == frames^.inner.len {
+    let target_v41 = cap_v40 +sat 32_u64;
+    grow(cell: frames, capacity: target_v41);
+  }
+  if frames^.inner.len < frames^.inner.cap {
+    place_back(window: &frames^.inner, value: frame);
+  }
+  return unit;
+}
+
+fn mp_read(vm: &Vm, source: &[u8], cursor: &MpCursor, top: u64) -> r: Value reads(source), writes(vm), writes(cursor) {
+  let frames_v42 = box_slots_new::<MpFrame>(capacity: 16_u64);
+  let nil_v43 = Value::Nil();
+  loop {
+    let virtual_top = top;
+    for (j in 0_u64..frames_v42.inner.len) {
+      let frame = frames_v42.inner[j];
+      let slots = 1_u64;
+      let array_frame = bnot(frame.map);
+      let has_key = bnot(frame.needs_key);
+      if bor(array_frame, has_key) {
+        set slots = 2_u64;
+      }
+      set virtual_top = virtual_top +sat slots;
+    }
+    if virtual_top >= 8000_u64 {
+      let ignored_stack = raise_text(vm: vm, text: &mp_stack_values[0_u64..88_u64]);
+      set cursor^.error = 3_u8;
+      return nil_v43;
+    }
+    let value_v44 = nil_v43;
+    let count_v45 = 0_u64;
+    let container_v46 = False();
+    let map_v47 = False();
+    let raw_offset = cursor^.offset;
+    if raw_offset < source^.len {
+      let raw_tag = source^[raw_offset];
+      let low_binary = raw_tag >= 196_u8;
+      let high_binary = raw_tag <= 201_u8;
+      let low_ext = raw_tag >= 212_u8;
+      let high_ext = raw_tag <= 216_u8;
+      let binary_tag = band(low_binary, high_binary);
+      let ext_tag = band(low_ext, high_ext);
+      if bor(binary_tag, ext_tag) {
+        set cursor^.error = 2_u8;
+        return nil_v43;
+      }
+    }
+    match msgpack::decode::next(source: source, offset: cursor^.offset) {
+      Err(error: e_v48) => {
+        match e_v48 {
+          Truncated(..) => {
+            set cursor^.error = 1_u8;
+          }
+          Reserved(..) => {
+            set cursor^.error = 2_u8;
+          }
+          Offset(..) => {
+            set cursor^.error = 1_u8;
+          }
+        }
+        return nil_v43;
+      }
+      Ok(value: token_v49) => {
+        match token_v49 {
+          None() => {
+            set cursor^.error = 1_u8;
+            return nil_v43;
+          }
+          Some(value: t_v50) => {
+            let tag_v51 = t_v50.tag;
+            let unsupported_v52 = tag_v51 >= 196_u8;
+            let before_float_v53 = tag_v51 <= 201_u8;
+            let fixed_ext_v54 = tag_v51 >= 212_u8;
+            let before_raw_v55 = tag_v51 <= 216_u8;
+            let binary_v56 = band(unsupported_v52, before_float_v53);
+            let ext_v57 = band(fixed_ext_v54, before_raw_v55);
+            if bor(binary_v56, ext_v57) {
+              set cursor^.error = 2_u8;
+              return nil_v43;
+            }
+            set cursor^.offset = t_v50.next;
+            match t_v50.event {
+              Nil() => {
+              }
+              False() => {
+                set value_v44 = Value::False();
+              }
+              True() => {
+                set value_v44 = Value::True();
+              }
+              Unsigned(value: n_v58) => {
+                let signed_v59 = reinterpret::<u64, i64>(n_v58);
+                let x_v60 = cvt.nearest::<i64, f64>(signed_v59);
+                set value_v44 = Value::Num(n: x_v60);
+              }
+              Signed(value: n_v61) => {
+                let x_v62 = cvt.nearest::<i64, f64>(n_v61);
+                set value_v44 = Value::Num(n: x_v62);
+              }
+              Float32(value: n_v63) => {
+                let x_v64 = cvt::<f32, f64>(n_v63);
+                set value_v44 = Value::Num(n: x_v64);
+              }
+              Float64(value: n_v65) => {
+                set value_v44 = Value::Num(n: n_v65);
+              }
+              String(start: from_v66, end: to_v67) => {
+                if from_v66 <= to_v67 {
+                  if to_v67 <= source^.len {
+                    set value_v44 = intern(heap: &vm^.heap, bytes: &source^[from_v66..to_v67]);
+                  }
+                }
+              }
+              Binary(..) => {
+                set cursor^.error = 2_u8;
+                return nil_v43;
+              }
+              Extension(..) => {
+                set cursor^.error = 2_u8;
+                return nil_v43;
+              }
+              Array(count: n_v68) => {
+                set count_v45 = cvt::<u32, u64>(n_v68);
+                set container_v46 = True();
+              }
+              Map(count: n_v69) => {
+                set count_v45 = cvt::<u32, u64>(n_v69);
+                set container_v46 = True();
+                set map_v47 = True();
+              }
+            }
+          }
+        }
+      }
+    }
+    let descend_v70 = False();
+    if container_v46 {
+      if bnot(map_v47) {
+        if virtual_top >= 7999_u64 {
+          let ignored_array_stack = raise_text(vm: vm, text: &mp_stack_array[0_u64..51_u64]);
+          set cursor^.error = 3_u8;
+          return nil_v43;
+        }
+      }
+      set value_v44 = new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);
+      if count_v45 > 0_u64 {
+        let left_v71 = count_v45;
+        if map_v47 {
+          set left_v71 = count_v45 *sat 2_u64;
+        }
+        let frame_v72 = MpFrame(table: value_v44, key: nil_v43, left: left_v71, index: 1_u64, map: map_v47, needs_key: map_v47);
+        mp_frame_push(frames: &frames_v42, frame: frame_v72);
+        set descend_v70 = True();
+      }
+    }
+    if bnot(descend_v70) {
+      loop {
+        if frames_v42.inner.len == 0_u64 {
+          return value_v44;
+        }
+        let frame_v73 = take_back(window: &frames_v42.inner);
+        if frame_v73.needs_key {
+          set frame_v73.key = value_v44;
+          set frame_v73.needs_key = False();
+        } else {
+          let key_v74 = frame_v73.key;
+          if bnot(frame_v73.map) {
+            let n_v75 = cvt.nearest::<u64, f64>(frame_v73.index);
+            set key_v74 = Value::Num(n: n_v75);
+          }
+          let probe_valid_v76 = raw_assign(vm: vm, t: frame_v73.table, key: key_v74, v: value_v44);
+          if bnot(probe_valid_v76) {
+            set cursor^.error = 3_u8;
+            return nil_v43;
+          }
+          set frame_v73.index = frame_v73.index +sat 1_u64;
+          set frame_v73.needs_key = frame_v73.map;
+        }
+        set frame_v73.left = frame_v73.left -sat 1_u64;
+        if frame_v73.left == 0_u64 {
+          set value_v44 = frame_v73.table;
+        } else {
+          mp_frame_push(frames: &frames_v42, frame: frame_v73);
+          break;
+        }
+      }
+    }
+  }
+  return nil_v43;
+}
+
+fn library_cmsgpack(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(vm), writes(stack) {
+  if id == 112_u32 {
+    if argc == 0_u64 {
+      return lib_argtext(vm: vm, id: id, index: 0_u64, text: &mp_empty[0_u64..29_u64]);
+    }
+    if argc > 4000_u64 {
+      return lib_argtext(vm: vm, id: id, index: 0_u64, text: &mp_many_args[0_u64..40_u64]);
+    }
+    let out_v77 = box_slots_new::<u8>(capacity: 0_u64);
+    for (i_v78 in 0_u64..argc) {
+      let v_v79 = argument(stack: stack, func: func, argc: argc, index: i_v78);
+      mp_write(vm: vm, out: &out_v77, value: v_v79, depth: 0_u64);
+    }
+    let value_v80 = bytes_value(vm: vm, bytes: &out_v77);
+    return lib_result(stack: stack, func: func, value: value_v80);
+  }
+  let limit_v84 = 2147483647_i64;
+  let offset_v85 = 0_i64;
+  if id == 114_u32 {
+    set limit_v84 = 1_i64;
+  }
+  if id == 115_u32 {
+    let v_v86 = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+    match lib_integer(vm: vm, value: v_v86) {
+      Some(value: n_v87) => {
+        set limit_v84 = n_v87;
+      }
+      None() => {
+        return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: v_v86, expected: &mp_number[0_u64..6_u64]);
+      }
+    }
+  }
+  if id >= 114_u32 {
+    let index_v88 = 1_u64;
+    if id == 115_u32 {
+      set index_v88 = 2_u64;
+    }
+    let v_v89 = argument(stack: stack, func: func, argc: argc, index: index_v88);
+    let probe_valid_v90 = is_nil(v: v_v89);
+    if bnot(probe_valid_v90) {
+      match lib_integer(vm: vm, value: v_v89) {
+        Some(value: n_v91) => {
+          set offset_v85 = n_v91;
+        }
+        None() => {
+          let arg_v92 = index_v88 +sat 1_u64;
+          return lib_argerror(vm: vm, id: id, index: arg_v92, argc: argc, value: v_v89, expected: &mp_number[0_u64..6_u64]);
+        }
+      }
+    }
+  }
+  let av_v81 = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let sv_v82 = coerce_string(vm: vm, v: av_v81);
+  match str_of(v: sv_v82) {
+    NoHandle() => {
+      return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: av_v81, expected: &mp_string[0_u64..6_u64]);
+    }
+    Handle(..) => {
+    }
+  }
+  let source_v83 = box_slots_new::<u8>(capacity: 0_u64);
+  bytes_string(vm: vm, bytes: &source_v83, value: sv_v82);
+  let n_v93 = source_v83.inner.len;
+  let bad_offset_v94 = offset_v85 < 0_i64;
+  let bad_limit_v95 = limit_v84 < 0_i64;
+  if bor(bad_offset_v94, bad_limit_v95) {
+    let yes_v96 = True();
+    return mp_request_error(vm: vm, offset: offset_v85, length: n_v93, invalid: yes_v96);
+  }
+  let start_v97 = cvt::<i64, u64>(offset_v85);
+  if start_v97 > n_v93 {
+    let no_v98 = False();
+    return mp_request_error(vm: vm, offset: offset_v85, length: n_v93, invalid: no_v98);
+  }
+  let all_v99 = offset_v85 == 0_i64;
+  let no_limit_v100 = limit_v84 == 0_i64;
+  set all_v99 = band(all_v99, no_limit_v100);
+  if id == 113_u32 {
+    set all_v99 = True();
+  }
+  if all_v99 {
+    set limit_v84 = 2147483647_i64;
+  }
+  let count_v101 = cvt::<i64, u64>(limit_v84);
+  let cursor_v102 = MpCursor(offset: start_v97, error: 0_u8);
+  let values_v103 = box_slots_new::<Value>(capacity: 16_u64);
+  if bnot(all_v99) {
+    let nil_v104 = Value::Nil();
+    codec_value_push(values: &values_v103, value: nil_v104);
+  }
+  let i_v105 = 0_u64;
+  let decode_argc = argc;
+  if id >= 114_u32 {
+    set decode_argc = 1_u64;
+  }
+  loop {
+    if cursor_v102.offset >= n_v93 {
+      break;
+    }
+    if i_v105 >= count_v101 {
+      break;
+    }
+    let decode_top = decode_argc +sat i_v105;
+    let value_v106 = mp_read(vm: vm, source: &source_v83.inner[0_u64..n_v93], cursor: &cursor_v102, top: decode_top);
+    if cursor_v102.error == 1_u8 {
+      return lib_failure(vm: vm, text: &mp_missing[0_u64..23_u64]);
+    }
+    if cursor_v102.error == 2_u8 {
+      return lib_failure(vm: vm, text: &mp_bad[0_u64..25_u64]);
+    }
+    if cursor_v102.error == 3_u8 {
+      return HostOutcome::Raised();
+    }
+    codec_value_push(values: &values_v103, value: value_v106);
+    set i_v105 = i_v105 +sat 1_u64;
+  }
+  if bnot(all_v99) {
+    let offset_top = decode_argc +sat i_v105;
+    if offset_top >= 8000_u64 {
+      return lib_failure(vm: vm, text: &mp_stack_full[0_u64..43_u64]);
+    }
+    let next_v107 = -1.0_f64;
+    if cursor_v102.offset < n_v93 {
+      set next_v107 = cvt.nearest::<u64, f64>(cursor_v102.offset);
+    }
+    if values_v103.inner.len > 0_u64 {
+      set values_v103.inner[0_u64] = Value::Num(n: next_v107);
+    }
+  }
+  return codec_results(stack: stack, func: func, values: &values_v103);
+}
+
+const mp_invalid_a: Array<u8, 41> = "Invalid request to unpack with offset of ";
+
+const mp_invalid_b: Array<u8, 14> = " and limit of ";
+
+const mp_offset_a: Array<u8, 13> = "Start offset ";
+
+const mp_offset_b: Array<u8, 27> = " greater than input length ";
+
+fn mp_request_error(vm: &Vm, offset: i64, length: u64, invalid: Bool) -> r: HostOutcome writes(vm) {
+  let bytes_v108 = box_slots_new::<u8>(capacity: 128_u64);
+  if invalid {
+    bytes_append(bytes: &bytes_v108, text: &mp_invalid_a[0_u64..41_u64]);
+  } else {
+    bytes_append(bytes: &bytes_v108, text: &mp_offset_a[0_u64..13_u64]);
+  }
+  let narrow_v109 = cvt.wrap::<i64, i32>(offset);
+  let n_v110 = cvt.nearest::<i32, f64>(narrow_v109);
+  let v_v111 = Value::Num(n: n_v110);
+  let s_v112 = coerce_string(vm: vm, v: v_v111);
+  bytes_string(vm: vm, bytes: &bytes_v108, value: s_v112);
+  if invalid {
+    bytes_append(bytes: &bytes_v108, text: &mp_invalid_b[0_u64..14_u64]);
+  } else {
+    bytes_append(bytes: &bytes_v108, text: &mp_offset_b[0_u64..27_u64]);
+  }
+  let narrow_v113 = cvt.wrap::<u64, i32>(length);
+  let n_v114 = cvt.nearest::<i32, f64>(narrow_v113);
+  let v_v115 = Value::Num(n: n_v114);
+  let s_v116 = coerce_string(vm: vm, v: v_v115);
+  bytes_string(vm: vm, bytes: &bytes_v108, value: s_v116);
+  bytes_push(bytes: &bytes_v108, byte: 46_u8);
+  let n_v117 = bytes_v108.inner.len;
+  return lib_failure(vm: vm, text: &bytes_v108.inner[0_u64..n_v117]);
+}
+
+const mp_key_nil: Array<u8, 18> = "table index is nil";
+
+const mp_key_nan: Array<u8, 18> = "table index is NaN";
+
+fn cmsgpack_raw_error(vm: &Vm) -> r: Bool reads(vm) {
+  let bytes = box_slots_new::<u8>(capacity: 18_u64);
+  bytes_string(vm: vm, bytes: &bytes, value: vm^.error);
+  if bytes.inner.len != 18_u64 {
+    return False();
+  }
+  let nil_error = True();
+  let nan_error = True();
+  for (i in 0_u64..18_u64) {
+    if i < bytes.inner.len {
+      if bytes.inner[i] != mp_key_nil[i] {
+        set nil_error = False();
+      }
+      if bytes.inner[i] != mp_key_nan[i] {
+        set nan_error = False();
+      }
+    }
+  }
+  return bor(nil_error, nan_error);
+}
+
+const mp_stack_values: Array<u8, 88> = "stack overflow (too many return values at once; use unpack_one or unpack_limit instead.)";
+
+const mp_stack_array: Array<u8, 51> = "stack overflow (in function mp_decode_to_lua_array)";
+
+const mp_stack_full: Array<u8, 43> = "stack overflow (in function mp_unpack_full)";
+
+const mp_many_args: Array<u8, 40> = "Too many arguments for MessagePack pack.";

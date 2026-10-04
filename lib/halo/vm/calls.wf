@@ -241,15 +241,37 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
       return Step::Error();
     }
     let v = stack^.inner[fslot];
-    let callable = func_of(v: v);
+    let view = func_of(v: v);
     if pattern_is_iterator(vm: vm, value: v) {
-      set callable = FuncView::Native(id: builtin_string_gmatchaux);
+      set view = FuncView::Native(id: builtin_string_gmatchaux);
     }
-    match callable {
+    let codec_config = 0_u64;
+    match view {
+      Lua(h: closure_handle) => {
+        match cjson_binding(vm: vm, handle: closure_handle) {
+          Some(value: native_record) => {
+            set view = FuncView::Native(id: native_record.id);
+            set codec_config = native_record.config;
+          }
+          None() => {
+          }
+        }
+      }
+      Native(..) => {
+      }
+      Other() => {
+      }
+    }
+    match view {
       Lua(h: bound_h_2) => {
         return enter_lua(vm: vm, stack: stack, h: bound_h_2, func: fslot, argc: nargs, wanted: nr, return_pc: return_pc, tail: tailing);
       }
       Native(id: bound_id_1) => {
+        set vm^.cjson_active_config = codec_config;
+        if bound_id_1 == 111_u32 {
+          let ignored = type_error(vm: vm, v: v, op: 2_u8);
+          return Step::Error();
+        }
         if bound_id_1 == builtin_pcall {
           if nargs == 0_u64 {
             let ignored = raise_text(vm: vm, text: &calls_text_3[0_u64..43_u64]);
@@ -269,7 +291,13 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
           let byte_results = bound_id_1 == builtin_string_byte;
           let protected_results = bound_id_1 == builtin_xpcall;
           let many = bor(unpack_results, byte_results);
-          if bor(many, protected_results) {
+          let msgpack_lower = bound_id_1 >= 113_u32;
+          let msgpack_upper = bound_id_1 <= 115_u32;
+          let msgpack_results = band(msgpack_lower, msgpack_upper);
+          let struct_results = bound_id_1 == 137_u32;
+          let codecs_many = bor(msgpack_results, struct_results);
+          let native_many = bor(many, codecs_many);
+          if bor(native_many, protected_results) {
             let room = fslot +sat 8001_u64;
             ensure_stack(stack: stack, size: room);
           }
@@ -314,7 +342,7 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
             if bound_id_1 != builtin_error {
               match out {
                 Raised() => {
-                  library_error_location(vm: vm, pc: call_pc);
+                  library_call_error_location(vm: vm, id: bound_id_1, pc: call_pc);
                 }
                 Returned(..) => {
                 }

@@ -1,7 +1,10 @@
+package json = "../json";
+package msgpack = "../msgpack";
+
 pkg::value: [];
 pkg::number: [pkg::value];
 pkg::lex: [pkg::value, pkg::number];
 pkg::heap: [pkg::value];
 pkg::compile: [pkg::value, pkg::number, pkg::lex, pkg::heap];
-pkg::vm: [pkg::value, pkg::heap, pkg::number];
+pkg::vm: [pkg::value, pkg::heap, pkg::number, json::decode, json::encode, json::text, msgpack::decode, msgpack::encode, msgpack::types];
 pkg::embed: [pkg::value, pkg::heap, pkg::vm, pkg::compile, pkg::number];

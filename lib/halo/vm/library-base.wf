@@ -91,6 +91,10 @@ fn library_base<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<V
     return lib_result(stack: stack, func: func, value: local_value_10);
   }
   if id == builtin_tostring {
+    if cjson_isnull(value: local_a_2) {
+      let value = intern(heap: &vm^.heap, bytes: &cj_nulltext[0_u64..15_u64]);
+      return lib_result(stack: stack, func: func, value: value);
+    }
     if argc < 1_u64 {
       return lib_argtext(vm: vm, id: id, index: 1_u64, text: &library_base_lib_text_8[0_u64..14_u64]);
     }
