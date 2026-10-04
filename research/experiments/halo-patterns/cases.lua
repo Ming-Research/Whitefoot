@@ -1149,7 +1149,11 @@ local cases={
 {"set-edge-85","match",{"\000a-z%d[]\128\255\000","[%z]+"}},
 {"set-edge-86","gmatch",{"\000a-z%d[]\128\255\000","[%z]+"}},
 {"set-edge-87","gsub",{"\000a-z%d[]\128\255\000","[%z]+","%0"}},
-{"argument-error-order","gsub",{"a","a",false,{}}}
+{"argument-error-order","gsub",{"a","a",false,{}}},
+{"callback-error-false","gsub",{"a","(.)",function(s) error(false,0) end}},
+{"callback-error-table","gsub",{"a","(.)",function(s) error({},0) end}},
+{"callback-error-17","gsub",{"a","(.)",function(s) error(17,0) end}},
+{"numeric-source-collector","gsub",{123,"%d",function(s) local x=string.rep(s,1100000); return string.sub(x,1,1) end}}
 }
 local function pack(...) return {n=select("#",...),...} end
 local digits="0123456789abcdef"
@@ -1166,6 +1170,7 @@ local function encode(v)
   return t
 end
 local function error_text(s)
+  if type(s)~="string" then return s end
   local i=string.find(s,": ",1,true)
   if i and string.sub(s,1,12)=="user_script:" then return string.sub(s,i+2) end
   return s
@@ -1196,4 +1201,7 @@ local b=string.gmatch("12","(.)")
 local interleaved=a()..b()..a()..b()
 local exhausted=a()
 results[#results+1]="independent-iterators|"..type(a).."|"..interleaved.."|"..tostring(exhausted)
+local numeric=string.gmatch(123,"%d")
+local garbage=string.rep("q",1100000)
+results[#results+1]="numeric-iterator-collector|"..numeric()..numeric()..numeric().."|"..#garbage
 return results
