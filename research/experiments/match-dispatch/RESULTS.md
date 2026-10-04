@@ -198,6 +198,36 @@ Cycles against Silverfir-nano on the same work (loop, fib, sieve, mandel):
   of which the fetch comparison is 1-6% (`u8v`) and the rest is computing
   `code[pc]` and `regs[base + a]` from indices in every handler.
 
+## Stage 2: the Whitefoot interpreter under the compiler's lowering
+
+`wf/vm.wf` is `vm.c`'s interpreter in the `u8` form, written as guaranteed
+self-tail transfers, one binary per kernel (`build.sh` replaces the
+kernel number), each exiting 0 only when its checksum equals `vm.c`'s. It
+is compiled by one compiler source twice: with
+compiler/match-dispatch-lowering (`wfsplit`) and with the recogniser
+returning no loop (`wfwhole`). Same M1 Pro, eight interleaved launches
+against Silverfir-nano and the C forms (`run-wf.tsv`); dispatch counts are
+`vm.c`'s, since the bytecode is the same.
+
+| | loop | fib | sieve | mandel |
+|---|---:|---:|---:|---:|
+| `wfwhole`, cycles | 5217M | 933M | 2848M | 432M |
+| `wfsplit`, cycles | 4417M | 776M | 2564M | 408M |
+| split against whole | -15.3% | -16.8% | -10.0% | -5.7% |
+| `wfsplit` against C `tailpn-u8` | 1.11x | 1.35x | 1.23x | 1.26x |
+| `wfsplit` against Silverfir-nano | 2.59x | 2.19x | 2.20x | 2.16x |
+| `wfsplit`, instructions per dispatch | 23.2 | 25.1 | 24.1 | 23.6 |
+| C `tailpn-u8`, instructions per dispatch | 17.8 | 18.3 | 18.1 | 17.9 |
+
+The first build of the lowering, which left the `match` scrutinee's copy
+in the shared frame, measured 12% slower than `wfwhole` on `loop` in a
+single probe launch; the part-local slot accounts for the change. The
+remaining distance to the C form is visible in the arm code: each dispatch
+reloads `code`'s box pointer and length and each arm `regs`'s box pointer,
+which the whole-function loop had hoisted; the cell is 24 bytes against
+16; and the call and return arms push and pop frame records through the
+library's window operations.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

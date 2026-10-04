@@ -181,6 +181,9 @@ impl Parameter {
 pub(crate) struct Signature {
     pub(crate) name: String,
     pub(crate) linkage: Linkage,
+    /// The calling convention keyword with its trailing space, or empty for
+    /// the C convention.
+    pub(crate) convention: &'static str,
     pub(crate) result: String,
     pub(crate) parameters: Vec<Parameter>,
     pub(crate) suffix: String,
@@ -196,6 +199,7 @@ impl Signature {
         Self {
             name: name.into(),
             linkage: Linkage::External,
+            convention: "",
             result: result.into(),
             parameters,
             suffix: String::new(),
@@ -224,8 +228,9 @@ impl Signature {
             ""
         };
         format!(
-            "{} {visibility}{} @{}({parameters}){}{}",
+            "{} {visibility}{}{} @{}({parameters}){}{}",
             if definition { "define" } else { "declare" },
+            self.convention,
             self.result,
             self.name,
             self.suffix,

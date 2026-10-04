@@ -223,6 +223,30 @@ interpreter ([results](../../experiments/match-dispatch/RESULTS.md#e1-silverfir-
   the interpreter writer's loop-carried values, which the per-arm lowering
   keeps in registers only if the register budget admits them.
 
+## Stage 2: the lowering in the compiler
+
+Implemented as compiler/match-dispatch-lowering in
+`compiler/src/backend/emitter/dispatch.rs`. The recogniser takes the first
+block, in block order, that ends in a `match` over a nominal enum with at
+least two targets taking no parameters, whose loop is entered only through
+it and left only by returning or jumping back to it. The emitter keeps the
+blocks before the loop in the enclosing function, whose entry into the
+header becomes a call of the dispatch function and a return of its
+result; it then emits the dispatch function (the header, always inlined,
+ending in a table transfer) and one function per arm, whose edges back to
+the header become guaranteed tail calls of the dispatch function. All parts
+share one parameter list under `preserve_none`; the enclosing function's
+frame is passed by pointer, and a slot only one part uses becomes that
+part's own allocation.
+
+Measured on the WF port of E0's interpreter
+([results](../../experiments/match-dispatch/RESULTS.md#stage-2-the-whitefoot-interpreter-under-the-compilers-lowering)):
+10-17% fewer cycles than the same compiler emitting the loop whole on three
+kernels and 6% on the fourth, and 1.11-1.35x of the C `u8` form. The
+deferred register budget, invariant header work, derived addresses and
+handler-base parameter are recorded in `docs/todo.md` under "Interpreter
+dispatch lowering".
+
 ## Later stages
 
 1. Lower the loop in the compiler to the shape E0 selects, with the

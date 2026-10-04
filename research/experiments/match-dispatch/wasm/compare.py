@@ -29,18 +29,26 @@ def timed(cmd):
     cycles = int(re.search(r"(\d+)\s+cycles elapsed", proc.stderr).group(1))
     insns = int(re.search(r"(\d+)\s+instructions retired", proc.stderr).group(1))
     out = proc.stdout.split()
-    return out[1] if len(out) > 1 else "", cycles, insns
+    # A Whitefoot interpreter prints nothing: its exit status 0 says its
+    # checksum equalled vm.c's.
+    return out[1] if len(out) > 1 else None, cycles, insns
 
 
 def command(args, who, kernel):
     if who == "nano":
         return [args.nano, "--interp", args.wasm, kernel]
     binary, _, mode = who.partition("@")
+    if binary.startswith("wf"):
+        # A Whitefoot interpreter binary is built per kernel (wf/vm.wf).
+        return [f"{args.bin}/{binary}-{kernel}"]
     return [f"{args.bin}/{binary}", kernel] + ([mode] if mode else [])
 
 
 def count_binary(who):
     binary = who.partition("@")[0]
+    if binary.startswith("wf"):
+        # wf/vm.wf runs vm.c's bytecode in vm.c's u8 form.
+        return "count-u8"
     if binary.startswith(("e1-", "e1hb-")):
         return "e1-count"
     return "count-" + binary.split("-")[1]
@@ -55,7 +63,7 @@ def run(args):
             random.shuffle(pairs)
             for who, kernel in pairs:
                 checksum, cycles, insns = timed(command(args, who, kernel))
-                if checksums.setdefault(kernel, checksum) != checksum:
+                if checksum is not None and checksums.setdefault(kernel, checksum) != checksum:
                     sys.exit(f"checksum mismatch: {who} {kernel}")
                 tsv.write(f"{r}\t{who}\t{kernel}\t{cycles}\t{insns}\n")
                 tsv.flush()
