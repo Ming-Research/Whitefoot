@@ -242,18 +242,15 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     }
     let v = stack^.inner[fslot];
     let view = func_of(v: v);
-    let codec_closure = False();
+    let codec_config = 0_u64;
     match view {
       Lua(h: closure_handle) => {
-        let hi = cvt::<u32, u64>(closure_handle);
-        if hi < vm^.heap.closures.inner.len {
-          if vm^.heap.closures.inner[hi].live {
-            let proto = vm^.heap.closures.inner[hi].payload.proto;
-            let marker = iand(proto, 2147483648_u32);
-            if marker != 0_u32 {
-              set view = FuncView::Native(id: proto);
-              set codec_closure = True();
-            }
+        match cjson_binding(vm: vm, handle: closure_handle) {
+          Some(value: native_record) => {
+            set view = FuncView::Native(id: native_record.id);
+            set codec_config = native_record.config;
+          }
+          None() => {
           }
         }
       }
@@ -267,6 +264,7 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
         return enter_lua(vm: vm, stack: stack, h: bound_h_2, func: fslot, argc: nargs, wanted: nr, return_pc: return_pc, tail: tailing);
       }
       Native(id: bound_id_1) => {
+        set vm^.cjson_active_config = codec_config;
         if bound_id_1 == 111_u32 {
           let ignored = type_error(vm: vm, v: v, op: 2_u8);
           return Step::Error();
@@ -301,9 +299,7 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
             ensure_stack(stack: stack, size: room);
           }
           let out = HostOutcome::Raised();
-          let host_id = bound_id_1 >= 4096_u32;
-          let unbound = bnot(codec_closure);
-          if band(host_id, unbound) {
+          if bound_id_1 >= 4096_u32 {
             set out = Host::call(env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
           } else {
             let call_pc = return_pc -sat 1_u64;

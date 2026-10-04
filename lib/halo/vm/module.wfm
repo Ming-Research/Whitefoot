@@ -66,6 +66,7 @@ public struct SortFrame {
 
 public struct Vm {
   public cjson_configs: Box<Slots<CjsonConfig>>;
+  public cjson_active_config: u64;
   public library_contexts: Box<Slots<LibraryContext>>;
   public sort_frames: Box<Slots<SortFrame>>;
   public random_state: u64;

@@ -1,3 +1,4 @@
+alias no_handle = pkg::heap::no_handle;
 alias Value = pkg::value::Value;
 alias num_of = pkg::value::num_of;
 alias str_of = pkg::value::str_of;
@@ -43,14 +44,97 @@ fn cjson_config(vm: &Vm) -> r: u64 writes(vm) {
   return index_v4;
 }
 
-fn cjson_bound(id: u32, config: u64) -> r: u32 pure {
-  if config == 0_u64 {
-    return id;
+struct CjsonBinding {
+  id: u32;
+  config: u64;
+}
+
+fn cjson_closure(vm: &Vm, id: u32, config: u64) -> r: Value writes(vm) {
+  let captured = array_filled::<u32, 3>(value: no_handle);
+  let words = array_filled::<u32, 3>(value: id);
+  let low = iand(config, 4294967295_u64);
+  let high = ishr.wrap(config, 32_u32);
+  set words[1_u64] = cvt.wrap::<u64, u32>(low);
+  set words[2_u64] = cvt.wrap::<u64, u32>(high);
+  for (i in 0_u64..3_u64) {
+    let number = cvt.nearest::<u32, f64>(words[i]);
+    let value = Value::Num(n: number);
+    let payload = pkg::heap::Upval::Closed(v: value);
+    match pkg::heap::new_upvalue(heap: &vm^.heap, value: payload) {
+      Some(value: handle) => {
+        set captured[i] = handle;
+      }
+      None() => {
+        return Value::Nil();
+      }
+    }
   }
-  let narrow_v7 = cvt.wrap::<u64, u32>(config);
-  let shifted_v8 = ishl.wrap(narrow_v7, 8_u32);
-  let marked_v9 = ior(shifted_v8, 2147483648_u32);
-  return ior(marked_v9, id);
+  return pkg::heap::new_closure(heap: &vm^.heap, proto: no_handle, upvals: &captured[0_u64..3_u64]);
+}
+
+fn cjson_capture(vm: &Vm, handle: u32) -> r: Option<u32> reads(vm) {
+  let index = cvt::<u32, u64>(handle);
+  if index < vm^.heap.upvalues.inner.len {
+    if vm^.heap.upvalues.inner[index].live {
+      let payload = vm^.heap.upvalues.inner[index].payload;
+      match payload {
+        Open(..) => {
+        }
+        Closed(v: value) => {
+          match num_of(v: value) {
+            Is(x: number) => {
+              let truncated = ftrunc(number);
+              if feq(truncated, number) {
+                if cvt.defined::<f64, u32>(number) {
+                  let word = cvt::<f64, u32>(number);
+                  return Some<u32>(value: word);
+                }
+              }
+            }
+            Not() => {
+            }
+          }
+        }
+      }
+    }
+  }
+  return None<u32>();
+}
+
+fn cjson_binding(vm: &Vm, handle: u32) -> r: Option<CjsonBinding> reads(vm) {
+  let index = cvt::<u32, u64>(handle);
+  if index < vm^.heap.closures.inner.len {
+    if vm^.heap.closures.inner[index].live {
+      if vm^.heap.closures.inner[index].payload.proto == no_handle {
+        if vm^.heap.closures.inner[index].payload.upvals.inner.len == 3_u64 {
+          let words = array_filled::<u32, 3>(value: 0_u32);
+          for (i in 0_u64..3_u64) {
+            let capture_handle = vm^.heap.closures.inner[index].payload.upvals.inner[i];
+            match cjson_capture(vm: vm, handle: capture_handle) {
+              Some(value: word) => {
+                set words[i] = word;
+              }
+              None() => {
+                return None<CjsonBinding>();
+              }
+            }
+          }
+          let id = words[0_u64];
+          let lower = id >= 96_u32;
+          let upper = id <= 105_u32;
+          if band(lower, upper) {
+            let low = cvt::<u32, u64>(words[1_u64]);
+            let high = cvt::<u32, u64>(words[2_u64]);
+            let shifted = ishl.wrap(high, 32_u32);
+            let config = ior(shifted, low);
+            let native_record = CjsonBinding(id: id, config: config);
+            return Some<CjsonBinding>(value: native_record);
+          }
+        }
+      }
+    }
+  }
+  return None<CjsonBinding>();
 }
 
 fn cjson_table(vm: &Vm, config: u64) -> r: Value writes(vm) {
@@ -63,11 +147,9 @@ fn cjson_table(vm: &Vm, config: u64) -> r: Value writes(vm) {
         let n_v13 = row_v12.length;
         if n_v13 <= 32_u64 {
           let key_v14 = intern(heap: &vm^.heap, bytes: &row_v12.name[0_u64..n_v13]);
-          let id_v15 = cjson_bound(id: row_v12.id, config: config);
-          let v_v16 = Value::Builtin(id: id_v15);
+          let v_v16 = Value::Builtin(id: row_v12.id);
           if config > 0_u64 {
-            let upvals = array_filled::<u32, 0>(value: 0_u32);
-            set v_v16 = pkg::heap::new_closure(heap: &vm^.heap, proto: id_v15, upvals: &upvals[0_u64..0_u64]);
+            set v_v16 = cjson_closure(vm: vm, id: row_v12.id, config: config);
           }
           let ignored_v17 = table_set(heap: &vm^.heap, t: table_v10, key: key_v14, val: v_v16);
         }
@@ -416,10 +498,8 @@ fn cjson_write(vm: &Vm, writer: &json::encode::Writer, out: &Box<Slots<u8>>, val
 }
 
 fn library_cjson(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, bound: u32) -> r: HostOutcome writes(vm), writes(stack) {
-  let id_v105 = iand(bound, 255_u32);
-  let config_bits_v106 = iand(bound, 2147483392_u32);
-  let config_id_v107 = ishr.wrap(config_bits_v106, 8_u32);
-  let config_v108 = cvt::<u32, u64>(config_id_v107);
+  let id_v105 = bound;
+  let config_v108 = vm^.cjson_active_config;
   if id_v105 == 105_u32 {
     let index_v109 = cjson_config(vm: vm);
     let table_v110 = cjson_table(vm: vm, config: index_v109);
@@ -532,8 +612,16 @@ fn library_cjson(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, bound
             let bytes_v132 = box_slots_new::<u8>(capacity: 0_u64);
             bytes_string(vm: vm, bytes: &bytes_v132, value: string_v131);
             let n_v133 = bytes_v132.inner.len;
+            for (option_byte in 0_u64..bytes_v132.inner.len) {
+              if bytes_v132.inner[option_byte] == 0_u8 {
+                set n_v133 = option_byte;
+                break;
+              }
+            }
             let valid_v134 = False();
-            if n_v133 == 2_u64 {
+            let two_bytes = bytes_v132.inner.len >= 2_u64;
+            let option_on = n_v133 == 2_u64;
+            if band(two_bytes, option_on) {
               if bytes_v132.inner[0_u64] == 111_u8 {
                 if bytes_v132.inner[1_u64] == 110_u8 {
                   set chosen_v128 = 1_u64;
@@ -541,7 +629,9 @@ fn library_cjson(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, bound
                 }
               }
             }
-            if n_v133 == 3_u64 {
+            let three_bytes = bytes_v132.inner.len >= 3_u64;
+            let option_off = n_v133 == 3_u64;
+            if band(three_bytes, option_off) {
               if bytes_v132.inner[0_u64] == 111_u8 {
                 if bytes_v132.inner[1_u64] == 102_u8 {
                   if bytes_v132.inner[2_u64] == 102_u8 {
@@ -552,7 +642,9 @@ fn library_cjson(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, bound
               }
             }
             if id_v105 == 103_u32 {
-              if n_v133 == 4_u64 {
+              let four_bytes = bytes_v132.inner.len >= 4_u64;
+              let option_null = n_v133 == 4_u64;
+              if band(four_bytes, option_null) {
                 if bytes_v132.inner[0_u64] == 110_u8 {
                   if bytes_v132.inner[1_u64] == 117_u8 {
                     if bytes_v132.inner[2_u64] == 108_u8 {
@@ -576,7 +668,9 @@ fn library_cjson(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, bound
               }
               let message_v136 = box_slots_new::<u8>(capacity: 80_u64);
               bytes_append(bytes: &message_v136, text: &cj_option[0_u64..16_u64]);
-              bytes_string(vm: vm, bytes: &message_v136, value: string_v131);
+              if n_v133 <= bytes_v132.inner.len {
+                bytes_append(bytes: &message_v136, text: &bytes_v132.inner[0_u64..n_v133]);
+              }
               bytes_push(bytes: &message_v136, byte: 39_u8);
               let length_v137 = message_v136.inner.len;
               return lib_argtext(vm: vm, id: id_v105, index: index_v135, text: &message_v136.inner[0_u64..length_v137]);

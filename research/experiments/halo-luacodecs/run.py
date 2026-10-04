@@ -25,7 +25,7 @@ def corpus():
     for x in ('nil','false','true','0','-0','1','-1','1.25','1e-5','1e14','1e100','math.huge','-math.huge','0/0',"''",r"'a/b\n\t\000'",'{}','{1,2,3}','{true,false,cjson.null}','{[3]=1}','{[11]=1}','{[100]=1}',"{a=1}",'{[0]=1}','{[-1]=1}','{[1.5]=1}','{[true]=1}','function() end','cjson.null'):
         add('cjson', 'return cjson.encode('+x+')')
     for text in ('null','true','false','0','-0','1.25','1e400','1e-400','01','0x10','NaN','Infinity','-Infinity','+1','1.','1e','1e+','{}','[]','[null,false,true]','{"a":null}','{"a":1,"a":2}','', ' ', '[', '{', '[1,]', '{"a":}', '{"a" 1}', '{1:2}', '[1 2]', 'true false', 'nul', '"abc', r'"\q"',r'"\uD800"',r'"\uDC00"',r'"\uD834\uDD1E"',r'"\u0000"'):
-        add('cjson', 'return cjson.decode('+json.dumps(text)+')')
+        add('cjson', 'return cjson.decode('+e2e.lua_string(text)+')')
     for fn in ('encode','decode','encode_sparse_array','encode_max_depth','decode_max_depth','encode_number_precision','encode_keep_buffer','encode_invalid_numbers','decode_invalid_numbers','new'):
         for args in ('','nil','true','false','0','1','14','15',"'on'","'off'","'null'",'{},1'):
             add('cjson', 'return cjson.'+fn+'('+args+')')
@@ -97,7 +97,7 @@ def corpus():
         add(lib, 'local s='+expr+'; local t={}; for i=1,#s do t[i]=string.format("%02x",s:byte(i)) end return table.concat(t)')
     for text in ('inf','INF','-nan','nan(1)','nan(foo)','0x1.fp+3','0x1p','0x','1.e2','1\x00true','"x\x00y"','\v1','\f1','[1\x00]'):
         for invalid in ('true','false'):
-            add('cjson','cjson.decode_invalid_numbers('+invalid+'); return cjson.decode('+json.dumps(text)+')')
+            add('cjson','cjson.decode_invalid_numbers('+invalid+'); return cjson.decode('+e2e.lua_string(text)+')')
     for width in ('9','-9','32','-32','2147483648','-2147483648','4294967295','math.huge','0/0'):
         add('bit','return bit.tohex(305419896,'+width+')')
     for n in (7996,7997,7998,7999,8000,9000):
@@ -124,6 +124,18 @@ def corpus():
                 lines.append(line)
         assert replaced
         add('cmsgpack' if case=='cmsgpack-binary' else 'struct','\n'.join(lines))
+    for text in ('1\v','1\f','-0\v','[1\v]','[1\f]','1\v2','1\f2'):
+        add('cjson','return cjson.decode('+e2e.lua_string(text)+')')
+    for fn in ('encode_invalid_numbers','decode_invalid_numbers','encode_keep_buffer','encode_sparse_array'):
+        for option in ('on','off','null','bad',''):
+            add('cjson','return cjson.'+fn+'('+e2e.lua_string(option+'\x00x')+')')
+    add('cmsgpack','return {cmsgpack._NAME,cmsgpack._VERSION,cmsgpack._COPYRIGHT,cmsgpack._DESCRIPTION}')
+    add('cjson','local j=cjson.new(); return {j._NAME,j._VERSION,j.null==cjson.null,type(j.encode)}')
+    for source in (
+        'local j=cjson.new(); local encode=j.encode; j=nil; for i=1,5000 do local x={} end; return encode({1,2})',
+        'local j=cjson.new(); local k=cjson.new(); j.encode_number_precision(2); k.encode_number_precision(3); return {j.encode(1.2345),k.encode(1.2345),cjson.encode(1.2345),j.encode==k.encode,j.encode==j.encode}',
+        'local j=cjson.new(); return {pcall(j.decode,false)}',
+    ): add('cjson',source)
     return rows
 
 REFERENCE = r"""

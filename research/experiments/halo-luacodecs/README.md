@@ -31,8 +31,37 @@ MessagePack uses the general token decoder and writer, with Redis's legacy
 tag exclusions, signed Lua-integer conversion and stream protocol in Halo.
 
 CJSON instances keep independent configuration and reusable buffers. Their
-methods are heap closures with a native prototype marker, so binding an
-instance does not consume host function IDs. Instance reclamation and Lua
+methods are heap closures with the reserved no-prototype sentinel and three
+closed captures: the builtin ID and the two 32-bit halves of the full instance
+index. Binding an instance does not consume host function IDs. Instance reclamation and Lua
 local/field error names remain limitations recorded in `docs/todo.md`.
 The local reference runs on macOS; Linux/glibc qualification remains required
 by the Halo VM design's H4 platform reference.
+
+## Closure binding assessment
+
+A configured CJSON method must keep function identity after extraction from
+its table, select the entire VM configuration index, and preserve all host
+IDs at and above 4096. The draft implementation represents that state as
+checked closed captures in an ordinary heap closure. The no-prototype
+sentinel selects native binding interpretation; the capture decoder checks
+live cells, closed numeric captures and the CJSON builtin range. Ordinary
+native calls reset the active instance to zero before dispatch. CJSON code
+makes no Lua callbacks, so its handler snapshots settings before work without
+requiring a nested native activation record.
+
+Packing an instance into `Closure.proto` was replaced because it truncated
+the instance namespace to 23 bits and combined function and configuration
+selection in an opaque integer. A VM registry keyed only by closure handles
+would need coordinated deletion on collection and reuse; storing captures
+with the heap closure keeps their tracing and reuse lifetime together.
+An explicit native variant of the heap closure remains a viable alternative:
+it would make native function binding a heap-level type, while these captures
+use the same traced captured-value representation as other functions. The
+capture representation is a provisional choice, to reopen when another
+stateful native library requires a different binding payload or a native
+function needs Lua callbacks. Instance configuration reclamation remains a
+separate missing lifetime connection, as the TODO describes.
+
+The new draft tree node `design/compiler/halo-closures.md` records this
+recommendation (Q1); no owner approval or log entry is inferred.

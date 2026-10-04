@@ -296,6 +296,12 @@ fn cj_token(vm: &Vm, source: &[u8], scan: &CjsonScanner, invalid: Bool) -> r: Cj
       if c_v65 == 13_u8 {
         break;
       }
+      if c_v65 == 11_u8 {
+        break;
+      }
+      if c_v65 == 12_u8 {
+        break;
+      }
       if c_v65 == 44_u8 {
         break;
       }
