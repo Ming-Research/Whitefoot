@@ -143,6 +143,8 @@ uint64_t wf__table_hold_keys(void *hold, const wf_key_set *set) {
 /* The user is the taking driver's, since a statement may suspend between
  * building its hold and taking it, but not while it holds a table. */
 void wf__table_hold_take(void *hold) {
+    extern void wf_diag_hold(void);
+    wf_diag_hold();
     wf_cmap_holding *h = (wf_cmap_holding *)hold;
     wf_cmap_hold_take(wf_cmap_user_at(h->map, wf__driver_index()), h);
 }

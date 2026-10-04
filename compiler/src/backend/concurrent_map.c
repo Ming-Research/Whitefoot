@@ -806,8 +806,20 @@ static int holds_cell(const wf_cmap_holding *hold, const cell *c) {
  * statement in the next table may since have removed the key and freed the
  * node this cell still names. A move that begins after this look waits for
  * the lock, as after keep_cell's. */
+/* Diagnostic counters for the MSET investigation; not for merge. */
+#include <stdio.h>
+static _Atomic unsigned long long wf_diag_acquire, wf_diag_try, wf_diag_holds;
+void wf_diag_hold(void) {
+    unsigned long long h = atomic_fetch_add_explicit(&wf_diag_holds, 1, memory_order_relaxed) + 1;
+    if ((h & ((1ull << 20) - 1)) == 0)
+        fprintf(stderr, "diag holds %llu acquire %llu try %llu\n", h,
+                atomic_load_explicit(&wf_diag_acquire, memory_order_relaxed),
+                atomic_load_explicit(&wf_diag_try, memory_order_relaxed));
+}
+
 static int try_entry(wf_cmap_user *u, table *t, cell *c, uint64_t k, const unsigned char *key,
                      uint64_t length, unsigned *round) {
+    atomic_fetch_add_explicit(&wf_diag_try, 1, memory_order_relaxed);
     if (k & LOCKED) {
         if (u->own != NULL && holds_cell(u->own, c))
             return -3;
@@ -921,6 +933,7 @@ static int settle_claim(wf_cmap_user *u, table *t, uint64_t start, uint64_t at, 
  * removed is counted as used, since it stays taken until the table moves. */
 static int acquire_entry(wf_cmap_user *u, table *t, uint64_t tag, const unsigned char *key, uint64_t length,
                          cell **out) {
+    atomic_fetch_add_explicit(&wf_diag_acquire, 1, memory_order_relaxed);
     uint64_t start = start_of(t, tag);
     for (;;) {
         uint64_t i = start;
