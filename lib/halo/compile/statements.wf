@@ -1,0 +1,625 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+const local_self: Array<u8, 4> = "self";
+
+const local_arg: Array<u8, 3> = "arg";
+
+const local_index: Array<u8, 11> = "(for index)";
+
+const local_limit: Array<u8, 11> = "(for limit)";
+
+const local_step: Array<u8, 10> = "(for step)";
+
+const local_generator: Array<u8, 15> = "(for generator)";
+
+const local_state: Array<u8, 11> = "(for state)";
+
+const local_control: Array<u8, 13> = "(for control)";
+
+fn body(p: &Parser, heap: &Heap, needself: Bool, line: u64) -> result_value: Exp writes(p), writes(heap) {
+  doc "CLOSURE captures follow as Move(a: 0, b: local register) or GetUpval(a: 0, u: enclosing upvalue index), in child upvalue order. The VM consumes these pseudo-cells rather than executing them as ordinary register writes.";
+  let parent = p^.current;
+  let child = p^.funcs.inner.len;
+  let fs = new_fs(parent: parent, line: line);
+  push_func(buf: &p^.funcs, v: move fs);
+  set p^.current = child;
+  checknext(p: p, heap: heap, kind: 40_u16);
+  if needself {
+    literal_local(p: p, heap: heap, word: &local_self[0_u64..4_u64], n: 0_i64);
+    adjustlocals(p: p, n: 1_i64);
+  }
+  let params = 0_i64;
+  if p^.token.kind != 41_u16 {
+    loop {
+      if p^.failed {
+        break;
+      }
+      if p^.token.kind == 285_u16 {
+        let h = name(p: p, heap: heap);
+        newlocal(p: p, h: h, n: params);
+        set params = params +wrap 1_i64;
+      } else if p^.token.kind == 279_u16 {
+        advance(p: p, heap: heap);
+        literal_local(p: p, heap: heap, word: &local_arg[0_u64..3_u64], n: params);
+        set params = params +wrap 1_i64;
+        let arg_142 = True();
+        setvararg(p: p, v: arg_142);
+        break;
+      } else {
+        err_6(p: p);
+        break;
+      }
+      if testnext(p: p, heap: heap, kind: 44_u16) {
+      } else {
+        break;
+      }
+    }
+  }
+  adjustlocals(p: p, n: params);
+  let active = nactvar(p: p);
+  let var = isvararg(p: p);
+  if var {
+    let arg_143 = active -wrap 1_i64;
+    set_numparams(p: p, n: arg_143);
+  } else {
+    set_numparams(p: p, n: active);
+  }
+  k_reserve(p: p, n: active);
+  checknext(p: p, heap: heap, kind: 41_u16);
+  chunk(p: p, heap: heap);
+  match_token(p: p, heap: heap, what: 262_u16, who: 265_u16, where: line);
+  let final = k_emit(p: p, op: 30_u8, a: 0_i64, b: 1_i64, c: 0_i64);
+  checkbad(p: p);
+  set p^.current = parent;
+  let arg_144 = cvt.wrap::<u64, i64>(child);
+  let i = k_emit(p: p, op: 36_u8, a: 0_i64, b: arg_144, c: 0_i64);
+  if child < p^.funcs.inner.len {
+    let count = p^.funcs.inner[child].ups.inner.len;
+    for (u in 0_u64..count) {
+      let d = Up(k: 0_u8, info: 0_i64);
+      if child < p^.funcs.inner.len {
+        if u < p^.funcs.inner[child].ups.inner.len {
+          set d = p^.funcs.inner[child].ups.inner[u];
+        }
+      }
+      let op = 4_u8;
+      if d.k == 6_u8 {
+        set op = 0_u8;
+      }
+      let arg_145 = d.info;
+      let capture = k_emit(p: p, op: op, a: 0_i64, b: arg_145, c: 0_i64);
+    }
+  }
+  return empty_exp(k: 11_u8, info: i);
+}
+
+fn follow(kind: u16) -> result_value: Bool pure {
+  if kind == 260_u16 {
+    return True();
+  }
+  if kind == 261_u16 {
+    return True();
+  }
+  if kind == 262_u16 {
+    return True();
+  }
+  if kind == 276_u16 {
+    return True();
+  }
+  return kind == 287_u16;
+}
+
+fn block(p: &Parser, heap: &Heap) -> result_value: unit writes(p), writes(heap) {
+  let arg_146 = False();
+  enterblock(p: p, breakable: arg_146);
+  chunk(p: p, heap: heap);
+  leaveblock(p: p);
+  return unit;
+}
+
+fn condition(p: &Parser, heap: &Heap) -> result_value: i64 writes(p), writes(heap) {
+  let e = expression(p: p, heap: heap);
+  if e.k == 1_u8 {
+    set e.k = 3_u8;
+  }
+  let arg_147 = True();
+  k_goif(p: p, e: &e, truth: arg_147);
+  return e.f;
+}
+
+fn breakstat(p: &Parser) -> result_value: unit writes(p) {
+  let id = p^.current;
+  let bindex = 0_u64;
+  let found = False();
+  let upval = False();
+  let active = 0_i64;
+  if id < p^.funcs.inner.len {
+    let n = p^.funcs.inner[id].blocks.inner.len;
+    loop {
+      if n == 0_u64 {
+        break;
+      }
+      set n = n - 1_u64;
+      if n < p^.funcs.inner[id].blocks.inner.len {
+        let b = p^.funcs.inner[id].blocks.inner[n];
+        if b.breakable {
+          set bindex = n;
+          set found = True();
+          set active = b.nactvar;
+          break;
+        }
+        if b.upval {
+          set upval = True();
+        }
+      }
+    }
+  }
+  if found {
+  } else {
+    err_5(p: p);
+    return unit;
+  }
+  if upval {
+    let i = k_emit(p: p, op: 35_u8, a: active, b: 0_i64, c: 0_i64);
+  }
+  let j = k_jump(p: p);
+  let old = -1_i64;
+  if id < p^.funcs.inner.len {
+    if bindex < p^.funcs.inner[id].blocks.inner.len {
+      set old = p^.funcs.inner[id].blocks.inner[bindex].breaklist;
+    }
+  }
+  let list = k_concat(p: p, l1: old, l2: j);
+  if id < p^.funcs.inner.len {
+    if bindex < p^.funcs.inner[id].blocks.inner.len {
+      set p^.funcs.inner[id].blocks.inner[bindex].breaklist = list;
+    }
+  }
+  return unit;
+}
+
+fn whilestat(p: &Parser, heap: &Heap, line: u64) -> result_value: unit writes(p), writes(heap) {
+  advance(p: p, heap: heap);
+  let start = k_label(p: p);
+  let exit = condition(p: p, heap: heap);
+  let arg_148 = True();
+  enterblock(p: p, breakable: arg_148);
+  checknext(p: p, heap: heap, kind: 259_u16);
+  block(p: p, heap: heap);
+  let j = k_jump(p: p);
+  k_patchlist(p: p, list: j, target: start);
+  match_token(p: p, heap: heap, what: 262_u16, who: 277_u16, where: line);
+  leaveblock(p: p);
+  k_patchhere(p: p, list: exit);
+  return unit;
+}
+
+fn repeatstat(p: &Parser, heap: &Heap, line: u64) -> result_value: unit writes(p), writes(heap) {
+  let start = k_label(p: p);
+  let arg_149 = True();
+  enterblock(p: p, breakable: arg_149);
+  let arg_150 = False();
+  enterblock(p: p, breakable: arg_150);
+  advance(p: p, heap: heap);
+  chunk(p: p, heap: heap);
+  match_token(p: p, heap: heap, what: 276_u16, who: 272_u16, where: line);
+  let exit = condition(p: p, heap: heap);
+  let up = False();
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    let n = p^.funcs.inner[id].blocks.inner.len;
+    if n > 0_u64 {
+      let last = n - 1_u64;
+      set up = p^.funcs.inner[id].blocks.inner[last].upval;
+    }
+  }
+  if up {
+    breakstat(p: p);
+    k_patchhere(p: p, list: exit);
+    leaveblock(p: p);
+    let j = k_jump(p: p);
+    k_patchlist(p: p, list: j, target: start);
+  } else {
+    leaveblock(p: p);
+    k_patchlist(p: p, list: exit, target: start);
+  }
+  leaveblock(p: p);
+  return unit;
+}
+
+fn exp1(p: &Parser, heap: &Heap) -> result_value: unit writes(p), writes(heap) {
+  let e = expression(p: p, heap: heap);
+  k_nextreg(p: p, e: &e);
+  return unit;
+}
+
+fn forbody(p: &Parser, heap: &Heap, base: i64, line: u64, nvars: i64, numeric: Bool) -> result_value: unit writes(p), writes(heap) {
+  adjustlocals(p: p, n: 3_i64);
+  checknext(p: p, heap: heap, kind: 259_u16);
+  let prep = -1_i64;
+  if numeric {
+    set prep = k_emit(p: p, op: 32_u8, a: base, b: -1_i64, c: 0_i64);
+  } else {
+    set prep = k_jump(p: p);
+  }
+  let arg_151 = False();
+  enterblock(p: p, breakable: arg_151);
+  adjustlocals(p: p, n: nvars);
+  k_reserve(p: p, n: nvars);
+  block(p: p, heap: heap);
+  leaveblock(p: p);
+  k_patchhere(p: p, list: prep);
+  let endfor = -1_i64;
+  if numeric {
+    set endfor = k_emit(p: p, op: 31_u8, a: base, b: -1_i64, c: 0_i64);
+  } else {
+    set endfor = k_emit(p: p, op: 33_u8, a: base, b: 0_i64, c: nvars);
+  }
+  k_fixline(p: p, line: line);
+  if numeric {
+    let arg_152 = prep +wrap 1_i64;
+    k_patchlist(p: p, list: endfor, target: arg_152);
+  } else {
+    let j = k_jump(p: p);
+    let arg_153 = prep +wrap 1_i64;
+    k_patchlist(p: p, list: j, target: arg_153);
+  }
+  return unit;
+}
+
+fn forstat(p: &Parser, heap: &Heap, line: u64) -> result_value: unit writes(p), writes(heap) {
+  let arg_154 = True();
+  enterblock(p: p, breakable: arg_154);
+  advance(p: p, heap: heap);
+  let h = name(p: p, heap: heap);
+  let base = freereg(p: p);
+  let kind = p^.token.kind;
+  if kind == 61_u16 {
+    literal_local(p: p, heap: heap, word: &local_index[0_u64..11_u64], n: 0_i64);
+    literal_local(p: p, heap: heap, word: &local_limit[0_u64..11_u64], n: 1_i64);
+    literal_local(p: p, heap: heap, word: &local_step[0_u64..10_u64], n: 2_i64);
+    newlocal(p: p, h: h, n: 3_i64);
+    checknext(p: p, heap: heap, kind: 61_u16);
+    exp1(p: p, heap: heap);
+    checknext(p: p, heap: heap, kind: 44_u16);
+    exp1(p: p, heap: heap);
+    if testnext(p: p, heap: heap, kind: 44_u16) {
+      exp1(p: p, heap: heap);
+    } else {
+      let v = Value::Num(n: 1.0_f64);
+      let k = k_addk(p: p, v: v);
+      let reg = freereg(p: p);
+      let i = k_emit(p: p, op: 1_u8, a: reg, b: k, c: 0_i64);
+      k_reserve(p: p, n: 1_i64);
+    }
+    let arg_155 = True();
+    forbody(p: p, heap: heap, base: base, line: line, nvars: 1_i64, numeric: arg_155);
+  } else if forlistkind(kind: kind) {
+    literal_local(p: p, heap: heap, word: &local_generator[0_u64..15_u64], n: 0_i64);
+    literal_local(p: p, heap: heap, word: &local_state[0_u64..11_u64], n: 1_i64);
+    literal_local(p: p, heap: heap, word: &local_control[0_u64..13_u64], n: 2_i64);
+    newlocal(p: p, h: h, n: 3_i64);
+    let nvars = 4_i64;
+    loop {
+      if testnext(p: p, heap: heap, kind: 44_u16) {
+        let next = name(p: p, heap: heap);
+        newlocal(p: p, h: next, n: nvars);
+        set nvars = nvars +wrap 1_i64;
+      } else {
+        break;
+      }
+    }
+    checknext(p: p, heap: heap, kind: 267_u16);
+    let loopline = p^.lex.line;
+    let e = empty_exp(k: 0_u8, info: 0_i64);
+    let n = exprlist(p: p, heap: heap, e: &e);
+    adjustassign(p: p, nvars: 3_i64, nexps: n, e: &e);
+    k_checkstack(p: p, n: 3_i64);
+    let arg_156 = nvars -wrap 3_i64;
+    let arg_157 = False();
+    forbody(p: p, heap: heap, base: base, line: loopline, nvars: arg_156, numeric: arg_157);
+  } else {
+    err_7(p: p);
+  }
+  match_token(p: p, heap: heap, what: 262_u16, who: 264_u16, where: line);
+  leaveblock(p: p);
+  return unit;
+}
+
+fn thenblock(p: &Parser, heap: &Heap) -> result_value: i64 writes(p), writes(heap) {
+  advance(p: p, heap: heap);
+  let exit = condition(p: p, heap: heap);
+  checknext(p: p, heap: heap, kind: 274_u16);
+  block(p: p, heap: heap);
+  return exit;
+}
+
+fn ifstat(p: &Parser, heap: &Heap, line: u64) -> result_value: unit writes(p), writes(heap) {
+  let escape = -1_i64;
+  let flist = thenblock(p: p, heap: heap);
+  loop {
+    if p^.failed {
+      break;
+    }
+    if p^.token.kind != 261_u16 {
+      break;
+    }
+    let j = k_jump(p: p);
+    set escape = k_concat(p: p, l1: escape, l2: j);
+    k_patchhere(p: p, list: flist);
+    set flist = thenblock(p: p, heap: heap);
+  }
+  if p^.token.kind == 260_u16 {
+    let j = k_jump(p: p);
+    set escape = k_concat(p: p, l1: escape, l2: j);
+    k_patchhere(p: p, list: flist);
+    advance(p: p, heap: heap);
+    block(p: p, heap: heap);
+  } else {
+    set escape = k_concat(p: p, l1: escape, l2: flist);
+  }
+  k_patchhere(p: p, list: escape);
+  match_token(p: p, heap: heap, what: 262_u16, who: 266_u16, where: line);
+  return unit;
+}
+
+fn localstat(p: &Parser, heap: &Heap) -> result_value: unit writes(p), writes(heap) {
+  let nvars = 0_i64;
+  loop {
+    if p^.failed {
+      break;
+    }
+    let h = name(p: p, heap: heap);
+    newlocal(p: p, h: h, n: nvars);
+    set nvars = nvars +wrap 1_i64;
+    if testnext(p: p, heap: heap, kind: 44_u16) {
+    } else {
+      break;
+    }
+  }
+  let e = empty_exp(k: 0_u8, info: 0_i64);
+  let nexps = 0_i64;
+  if testnext(p: p, heap: heap, kind: 61_u16) {
+    set nexps = exprlist(p: p, heap: heap, e: &e);
+  }
+  adjustassign(p: p, nvars: nvars, nexps: nexps, e: &e);
+  adjustlocals(p: p, n: nvars);
+  return unit;
+}
+
+fn localfunc(p: &Parser, heap: &Heap) -> result_value: unit writes(p), writes(heap) {
+  let h = name(p: p, heap: heap);
+  newlocal(p: p, h: h, n: 0_i64);
+  let free = freereg(p: p);
+  let v = empty_exp(k: 6_u8, info: free);
+  k_reserve(p: p, n: 1_i64);
+  adjustlocals(p: p, n: 1_i64);
+  let arg_158 = False();
+  let arg_159 = p^.lex.line;
+  let b = body(p: p, heap: heap, needself: arg_158, line: arg_159);
+  k_store(p: p, var: &v, e: &b);
+  return unit;
+}
+
+fn funcstat(p: &Parser, heap: &Heap, line: u64) -> result_value: unit writes(p), writes(heap) {
+  advance(p: p, heap: heap);
+  let v = singlevar(p: p, heap: heap);
+  loop {
+    if p^.failed {
+      break;
+    }
+    if p^.token.kind != 46_u16 {
+      break;
+    }
+    field(p: p, heap: heap, e: &v);
+  }
+  let self = False();
+  if p^.token.kind == 58_u16 {
+    set self = True();
+    field(p: p, heap: heap, e: &v);
+  }
+  let b = body(p: p, heap: heap, needself: self, line: line);
+  k_store(p: p, var: &v, e: &b);
+  k_fixline(p: p, line: line);
+  return unit;
+}
+
+fn assignment(p: &Parser, heap: &Heap, lhs: &Box<Slots<Exp>>) -> result_value: unit writes(p), writes(heap), writes(lhs) {
+  if p^.failed {
+    return unit;
+  }
+  let count = lhs^.inner.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  let at = count - 1_u64;
+  let v = lhs^.inner[at];
+  if v.k < 6_u8 {
+    err_4(p: p);
+    return unit;
+  }
+  if v.k > 9_u8 {
+    err_4(p: p);
+    return unit;
+  }
+  if testnext(p: p, heap: heap, kind: 44_u16) {
+    let next = primary(p: p, heap: heap);
+    if next.k == 6_u8 {
+      let extra = freereg(p: p);
+      let conflict = False();
+      for (i in 0_u64..lhs^.inner.len) {
+        if lhs^.inner[i].k == 9_u8 {
+          if lhs^.inner[i].info == next.info {
+            set conflict = True();
+            set lhs^.inner[i].info = extra;
+          }
+          if lhs^.inner[i].aux == next.info {
+            set conflict = True();
+            set lhs^.inner[i].aux = extra;
+          }
+        }
+      }
+      if conflict {
+        let arg_161 = next.info;
+        let i = k_emit(p: p, op: 0_u8, a: extra, b: arg_161, c: 0_i64);
+        k_reserve(p: p, n: 1_i64);
+      }
+    }
+    let limit = 200_u64 -sat p^.depth;
+    if count > limit {
+      limiterror(p: p, limit: limit, what: 2_u8);
+      return unit;
+    }
+    push_exp(buf: lhs, v: next);
+    assignment(p: p, heap: heap, lhs: lhs);
+  } else {
+    checknext(p: p, heap: heap, kind: 61_u16);
+    let e = empty_exp(k: 0_u8, info: 0_i64);
+    let nexps = exprlist(p: p, heap: heap, e: &e);
+    let nvars = cvt.wrap::<u64, i64>(count);
+    if nexps != nvars {
+      adjustassign(p: p, nvars: nvars, nexps: nexps, e: &e);
+      if nexps > nvars {
+        let free = freereg(p: p);
+        let arg_162 = free -wrap nexps;
+        let arg_163 = arg_162 +wrap nvars;
+        set_freereg(p: p, n: arg_163);
+      }
+    } else {
+      k_oneret(p: p, e: &e);
+      let var = v;
+      if at < lhs^.inner.len {
+        set var = lhs^.inner[at];
+      }
+      k_store(p: p, var: &var, e: &e);
+      return unit;
+    }
+  }
+  let reg = freereg(p: p);
+  let arg_164 = reg -wrap 1_i64;
+  let e = empty_exp(k: 12_u8, info: arg_164);
+  let var = v;
+  if at < lhs^.inner.len {
+    set var = lhs^.inner[at];
+  }
+  k_store(p: p, var: &var, e: &e);
+  return unit;
+}
+
+fn exprstat(p: &Parser, heap: &Heap) -> result_value: unit writes(p), writes(heap) {
+  let e = primary(p: p, heap: heap);
+  if e.k == 13_u8 {
+    let arg_165 = e.info;
+    let i = k_getins(p: p, pc: arg_165);
+    set i.c = 1_i64;
+    let arg_166 = e.info;
+    k_putins(p: p, pc: arg_166, v: i);
+  } else {
+    let lhs = box_slots_new::<Exp>(capacity: 0_u64);
+    push_exp(buf: &lhs, v: e);
+    assignment(p: p, heap: heap, lhs: &lhs);
+  }
+  return unit;
+}
+
+fn retstat(p: &Parser, heap: &Heap) -> result_value: unit writes(p), writes(heap) {
+  advance(p: p, heap: heap);
+  let first = 0_i64;
+  let nret = 0_i64;
+  let arg_167 = p^.token.kind;
+  let f = follow(kind: arg_167);
+  let arg_168 = p^.token.kind == 59_u16;
+  if bor(f, arg_168) {
+  } else {
+    let e = empty_exp(k: 0_u8, info: 0_i64);
+    set nret = exprlist(p: p, heap: heap, e: &e);
+    let multi = multret(e: &e);
+    if multi {
+      k_setreturns(p: p, e: &e, n: -1_i64);
+      if e.k == 13_u8 {
+        if nret == 1_i64 {
+          let arg_169 = e.info;
+          let i = k_getins(p: p, pc: arg_169);
+          set i.op = 29_u8;
+          let arg_170 = e.info;
+          k_putins(p: p, pc: arg_170, v: i);
+        }
+      }
+      set first = nactvar(p: p);
+      set nret = -1_i64;
+    } else if nret == 1_i64 {
+      set first = k_anyreg(p: p, e: &e);
+    } else {
+      k_nextreg(p: p, e: &e);
+      set first = nactvar(p: p);
+    }
+  }
+  let arg_171 = nret +wrap 1_i64;
+  let i = k_emit(p: p, op: 30_u8, a: first, b: arg_171, c: 0_i64);
+  return unit;
+}
+
+fn statement(p: &Parser, heap: &Heap) -> result_value: Bool writes(p), writes(heap) {
+  let line = p^.lex.line;
+  let kind = p^.token.kind;
+  if kind == 266_u16 {
+    ifstat(p: p, heap: heap, line: line);
+  } else if kind == 277_u16 {
+    whilestat(p: p, heap: heap, line: line);
+  } else if kind == 259_u16 {
+    advance(p: p, heap: heap);
+    block(p: p, heap: heap);
+    match_token(p: p, heap: heap, what: 262_u16, who: 259_u16, where: line);
+  } else if kind == 264_u16 {
+    forstat(p: p, heap: heap, line: line);
+  } else if kind == 272_u16 {
+    repeatstat(p: p, heap: heap, line: line);
+  } else if kind == 265_u16 {
+    funcstat(p: p, heap: heap, line: line);
+  } else if kind == 268_u16 {
+    advance(p: p, heap: heap);
+    if testnext(p: p, heap: heap, kind: 265_u16) {
+      localfunc(p: p, heap: heap);
+    } else {
+      localstat(p: p, heap: heap);
+    }
+  } else if kind == 273_u16 {
+    retstat(p: p, heap: heap);
+    return True();
+  } else if kind == 258_u16 {
+    advance(p: p, heap: heap);
+    breakstat(p: p);
+    return True();
+  } else {
+    exprstat(p: p, heap: heap);
+  }
+  return False();
+}
+
+fn chunk(p: &Parser, heap: &Heap) -> result_value: unit writes(p), writes(heap) {
+  enterlevel(p: p);
+  loop {
+    if p^.failed {
+      break;
+    }
+    let arg_172 = p^.token.kind;
+    let end = follow(kind: arg_172);
+    if end {
+      break;
+    }
+    let last = statement(p: p, heap: heap);
+    let semi = testnext(p: p, heap: heap, kind: 59_u16);
+    let active = nactvar(p: p);
+    set_freereg(p: p, n: active);
+    checkbad(p: p);
+    if last {
+      break;
+    }
+  }
+  leavelevel(p: p);
+  return unit;
+}

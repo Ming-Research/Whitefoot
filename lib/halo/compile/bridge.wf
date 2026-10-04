@@ -1,0 +1,312 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+fn k_getins(p: &Parser, pc: i64) -> result_value: Ins writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return getins(s: &p^.funcs.inner[id], pc: pc);
+  }
+  return Ins(op: 38_u8, a: 0_i64, b: 0_i64, c: 0_i64, line: 0_u64);
+}
+
+fn k_putins(p: &Parser, pc: i64, v: Ins) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return putins(s: &p^.funcs.inner[id], pc: pc, v: v);
+  }
+  return unit;
+}
+
+fn k_label(p: &Parser) -> result_value: i64 writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return label(s: &p^.funcs.inner[id]);
+  }
+  return -1_i64;
+}
+
+fn k_concat(p: &Parser, l1: i64, l2: i64) -> result_value: i64 writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return concat(s: &p^.funcs.inner[id], l1: l1, l2: l2);
+  }
+  return -1_i64;
+}
+
+fn k_patchhere(p: &Parser, list: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return patchhere(s: &p^.funcs.inner[id], list: list);
+  }
+  return unit;
+}
+
+fn k_patchlist(p: &Parser, list: i64, target: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return patchlist(s: &p^.funcs.inner[id], list: list, target: target);
+  }
+  return unit;
+}
+
+fn k_emit(p: &Parser, op: u8, a: i64, b: i64, c: i64) -> result_value: i64 writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return emit(s: &p^.funcs.inner[id], op: op, a: a, b: b, c: c);
+  }
+  return -1_i64;
+}
+
+fn k_jump(p: &Parser) -> result_value: i64 writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return jump(s: &p^.funcs.inner[id]);
+  }
+  return -1_i64;
+}
+
+fn k_checkstack(p: &Parser, n: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return checkstack(s: &p^.funcs.inner[id], n: n);
+  }
+  return unit;
+}
+
+fn k_reserve(p: &Parser, n: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return reserve(s: &p^.funcs.inner[id], n: n);
+  }
+  return unit;
+}
+
+fn k_addk(p: &Parser, v: Value) -> result_value: i64 writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return addk(s: &p^.funcs.inner[id], v: v);
+  }
+  return -1_i64;
+}
+
+fn k_nilregs(p: &Parser, from: i64, n: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return nilregs(s: &p^.funcs.inner[id], from: from, n: n);
+  }
+  return unit;
+}
+
+fn k_setreturns(p: &Parser, e: &Exp, n: i64) -> result_value: unit reads(e), writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return setreturns(s: &p^.funcs.inner[id], e: e, n: n);
+  }
+  return unit;
+}
+
+fn k_oneret(p: &Parser, e: &Exp) -> result_value: unit writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return oneret(s: &p^.funcs.inner[id], e: e);
+  }
+  return unit;
+}
+
+fn k_discharge(p: &Parser, e: &Exp) -> result_value: unit writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return discharge(s: &p^.funcs.inner[id], e: e);
+  }
+  return unit;
+}
+
+fn k_nextreg(p: &Parser, e: &Exp) -> result_value: unit writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return nextreg(s: &p^.funcs.inner[id], e: e);
+  }
+  return unit;
+}
+
+fn k_anyreg(p: &Parser, e: &Exp) -> result_value: i64 writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return anyreg(s: &p^.funcs.inner[id], e: e);
+  }
+  return -1_i64;
+}
+
+fn k_expval(p: &Parser, e: &Exp) -> result_value: unit writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return expval(s: &p^.funcs.inner[id], e: e);
+  }
+  return unit;
+}
+
+fn k_rk(p: &Parser, e: &Exp) -> result_value: i64 writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return rk(s: &p^.funcs.inner[id], e: e);
+  }
+  return -1_i64;
+}
+
+fn k_store(p: &Parser, var: &Exp, e: &Exp) -> result_value: unit reads(var), writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return store(s: &p^.funcs.inner[id], var: var, e: e);
+  }
+  return unit;
+}
+
+fn k_selfcall(p: &Parser, e: &Exp, key: &Exp) -> result_value: unit writes(p), writes(e), writes(key) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return selfcall(s: &p^.funcs.inner[id], e: e, key: key);
+  }
+  return unit;
+}
+
+fn k_goif(p: &Parser, e: &Exp, truth: Bool) -> result_value: unit writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return goif(s: &p^.funcs.inner[id], e: e, truth: truth);
+  }
+  return unit;
+}
+
+fn k_prefix(p: &Parser, op: u8, e: &Exp) -> result_value: unit writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return prefix(s: &p^.funcs.inner[id], op: op, e: e);
+  }
+  return unit;
+}
+
+fn k_infix(p: &Parser, op: u8, e: &Exp) -> result_value: unit writes(p), writes(e) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return infix(s: &p^.funcs.inner[id], op: op, e: e);
+  }
+  return unit;
+}
+
+fn k_postfix(p: &Parser, op: u8, a: &Exp, b: &Exp) -> result_value: unit writes(p), writes(a), writes(b) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return postfix(s: &p^.funcs.inner[id], op: op, a: a, b: b);
+  }
+  return unit;
+}
+
+fn k_setlist(p: &Parser, base: i64, nelems: i64, count: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return setlist(s: &p^.funcs.inner[id], base: base, nelems: nelems, count: count);
+  }
+  return unit;
+}
+
+fn k_fixline(p: &Parser, line: u64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].lastline = p^.lastline;
+    return fixline(s: &p^.funcs.inner[id], line: line);
+  }
+  return unit;
+}
+
+fn freereg(p: &Parser) -> result_value: i64 reads(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    return p^.funcs.inner[id].freereg;
+  }
+  return 0_i64;
+}
+
+fn set_freereg(p: &Parser, n: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].freereg = n;
+  }
+  return unit;
+}
+
+fn nactvar(p: &Parser) -> result_value: i64 reads(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    return p^.funcs.inner[id].nactvar;
+  }
+  return 0_i64;
+}
+
+fn set_nactvar(p: &Parser, n: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].nactvar = n;
+  }
+  return unit;
+}
+
+fn set_numparams(p: &Parser, n: i64) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].numparams = n;
+  }
+  return unit;
+}
+
+fn line(p: &Parser) -> result_value: u64 reads(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    return p^.funcs.inner[id].line;
+  }
+  return 0_u64;
+}
+
+fn isvararg(p: &Parser) -> result_value: Bool reads(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    return p^.funcs.inner[id].vararg;
+  }
+  return False();
+}
+
+fn setvararg(p: &Parser, v: Bool) -> result_value: unit writes(p) {
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    set p^.funcs.inner[id].vararg = v;
+  }
+  return unit;
+}

@@ -1,0 +1,850 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+fn getins(s: &Fs, pc: i64) -> result_value: Ins reads(s) {
+  if pc >= 0_i64 {
+    let i = cvt::<i64, u64>(pc);
+    if i < s^.code.inner.len {
+      return s^.code.inner[i];
+    }
+  }
+  return Ins(op: 38_u8, a: 0_i64, b: 0_i64, c: 0_i64, line: 0_u64);
+}
+
+fn putins(s: &Fs, pc: i64, v: Ins) -> result_value: unit writes(s) {
+  if pc >= 0_i64 {
+    let i = cvt::<i64, u64>(pc);
+    if i < s^.code.inner.len {
+      set s^.code.inner[i] = v;
+    }
+  }
+  return unit;
+}
+
+fn pc(s: &Fs) -> result_value: i64 reads(s) {
+  let arg_16 = s^.code.inner.len;
+  return cvt.wrap::<u64, i64>(arg_16);
+}
+
+fn label(s: &Fs) -> result_value: i64 writes(s) {
+  let n = pc(s: s);
+  set s^.lasttarget = n;
+  return n;
+}
+
+fn getjump(s: &Fs, at: i64) -> result_value: i64 reads(s) {
+  let i = getins(s: s, pc: at);
+  return i.b;
+}
+
+fn fixjump(s: &Fs, at: i64, dest: i64) -> result_value: unit writes(s) {
+  let arg_17 = dest -wrap at;
+  let delta = arg_17 -wrap 1_i64;
+  if delta > 131071_i64 {
+    set s^.bad = 1_u8;
+  }
+  if delta < -131071_i64 {
+    set s^.bad = 1_u8;
+  }
+  let i = getins(s: s, pc: at);
+  set i.b = dest;
+  putins(s: s, pc: at, v: i);
+  return unit;
+}
+
+fn concat(s: &Fs, l1: i64, l2: i64) -> result_value: i64 writes(s) {
+  if l2 == -1_i64 {
+    return l1;
+  }
+  if l1 == -1_i64 {
+    return l2;
+  }
+  let at = l1;
+  loop {
+    let next = getjump(s: s, at: at);
+    if next == -1_i64 {
+      break;
+    }
+    set at = next;
+  }
+  fixjump(s: s, at: at, dest: l2);
+  return l1;
+}
+
+fn control(s: &Fs, at: i64) -> result_value: i64 reads(s) {
+  if at >= 1_i64 {
+    let prev = at - 1_i64;
+    let i = getins(s: s, pc: prev);
+    if i.op >= 23_u8 {
+      if i.op <= 27_u8 {
+        return prev;
+      }
+    }
+    if i.op == 33_u8 {
+      return prev;
+    }
+  }
+  return at;
+}
+
+fn patchtest(s: &Fs, at: i64, reg: i64) -> result_value: Bool writes(s) {
+  let p = control(s: s, at: at);
+  let i = getins(s: s, pc: p);
+  if i.op != 27_u8 {
+    return False();
+  }
+  if reg != 255_i64 {
+    if reg != i.b {
+      set i.a = reg;
+      putins(s: s, pc: p, v: i);
+      return True();
+    }
+  }
+  set i.op = 26_u8;
+  set i.a = i.b;
+  set i.b = 0_i64;
+  putins(s: s, pc: p, v: i);
+  return True();
+}
+
+fn patchaux(s: &Fs, list: i64, vt: i64, reg: i64, dt: i64) -> result_value: unit writes(s) {
+  let at = list;
+  loop {
+    if at == -1_i64 {
+      break;
+    }
+    let next = getjump(s: s, at: at);
+    let v = patchtest(s: s, at: at, reg: reg);
+    if v {
+      fixjump(s: s, at: at, dest: vt);
+    } else {
+      fixjump(s: s, at: at, dest: dt);
+    }
+    set at = next;
+  }
+  return unit;
+}
+
+fn patchhere(s: &Fs, list: i64) -> result_value: unit writes(s) {
+  let n = label(s: s);
+  let arg_18 = s^.jpc;
+  let j = concat(s: s, l1: arg_18, l2: list);
+  set s^.jpc = j;
+  return unit;
+}
+
+fn patchlist(s: &Fs, list: i64, target: i64) -> result_value: unit writes(s) {
+  let n = pc(s: s);
+  if target == n {
+    patchhere(s: s, list: list);
+  } else {
+    patchaux(s: s, list: list, vt: target, reg: 255_i64, dt: target);
+  }
+  return unit;
+}
+
+fn emit(s: &Fs, op: u8, a: i64, b: i64, c: i64) -> result_value: i64 writes(s) {
+  let n = pc(s: s);
+  let arg_19 = s^.jpc;
+  patchaux(s: s, list: arg_19, vt: n, reg: 255_i64, dt: n);
+  set s^.jpc = -1_i64;
+  let arg_20 = s^.lastline;
+  let i = Ins(op: op, a: a, b: b, c: c, line: arg_20);
+  push_ins(buf: &s^.code, v: i);
+  return n;
+}
+
+fn jump(s: &Fs) -> result_value: i64 writes(s) {
+  let jpc = s^.jpc;
+  set s^.jpc = -1_i64;
+  let j = emit(s: s, op: 22_u8, a: 0_i64, b: -1_i64, c: 0_i64);
+  return concat(s: s, l1: j, l2: jpc);
+}
+
+fn condjump(s: &Fs, op: u8, a: i64, b: i64, c: i64) -> result_value: i64 writes(s) {
+  let ignored = emit(s: s, op: op, a: a, b: b, c: c);
+  return jump(s: s);
+}
+
+fn checkstack(s: &Fs, n: i64) -> result_value: unit writes(s) {
+  let stack = s^.freereg +wrap n;
+  if stack > s^.maxstack {
+    if stack >= 250_i64 {
+      set s^.bad = 2_u8;
+    } else {
+      set s^.maxstack = stack;
+    }
+  }
+  return unit;
+}
+
+fn reserve(s: &Fs, n: i64) -> result_value: unit writes(s) {
+  checkstack(s: s, n: n);
+  set s^.freereg = s^.freereg +wrap n;
+  return unit;
+}
+
+fn free(s: &Fs, reg: i64) -> result_value: unit writes(s) {
+  if reg < 256_i64 {
+    if reg >= s^.nactvar {
+      set s^.freereg = s^.freereg -wrap 1_i64;
+    }
+  }
+  return unit;
+}
+
+fn freeexp(s: &Fs, e: &Exp) -> result_value: unit reads(e), writes(s) {
+  if e^.k == 12_u8 {
+    let arg_21 = e^.info;
+    free(s: s, reg: arg_21);
+  }
+  return unit;
+}
+
+fn addk(s: &Fs, v: Value) -> result_value: i64 writes(s) {
+  for (i in 0_u64..s^.ks.inner.len) {
+    let arg_22 = s^.ks.inner[i];
+    let same = same_value(a: arg_22, b: v);
+    if same {
+      return cvt.wrap::<u64, i64>(i);
+    }
+  }
+  let n = s^.ks.inner.len;
+  if n >= 262143_u64 {
+    set s^.bad = 3_u8;
+  }
+  push_value(buf: &s^.ks, v: v);
+  return cvt.wrap::<u64, i64>(n);
+}
+
+fn nilregs(s: &Fs, from: i64, n: i64) -> result_value: unit writes(s) {
+  let arg_23 = from +wrap n;
+  let end = arg_23 -wrap 1_i64;
+  let p = pc(s: s);
+  if p > s^.lasttarget {
+    if p == 0_i64 {
+      if from >= s^.nactvar {
+        return unit;
+      }
+    } else {
+      let prev = p -wrap 1_i64;
+      let i = getins(s: s, pc: prev);
+      if i.op == 3_u8 {
+        if i.a <= from {
+          let arg_24 = i.b +wrap 1_i64;
+          if from <= arg_24 {
+            if end > i.b {
+              set i.b = end;
+              putins(s: s, pc: prev, v: i);
+            }
+            return unit;
+          }
+        }
+      }
+    }
+  }
+  let ignored = emit(s: s, op: 3_u8, a: from, b: end, c: 0_i64);
+  return unit;
+}
+
+fn setreturns(s: &Fs, e: &Exp, n: i64) -> result_value: unit reads(e), writes(s) {
+  let arg_25 = e^.info;
+  let i = getins(s: s, pc: arg_25);
+  if e^.k == 13_u8 {
+    set i.c = n +wrap 1_i64;
+    let arg_26 = e^.info;
+    putins(s: s, pc: arg_26, v: i);
+  } else if e^.k == 14_u8 {
+    set i.b = n +wrap 1_i64;
+    set i.a = s^.freereg;
+    let arg_27 = e^.info;
+    putins(s: s, pc: arg_27, v: i);
+    reserve(s: s, n: 1_i64);
+  }
+  return unit;
+}
+
+fn oneret(s: &Fs, e: &Exp) -> result_value: unit writes(s), writes(e) {
+  let arg_28 = e^.info;
+  let i = getins(s: s, pc: arg_28);
+  if e^.k == 13_u8 {
+    set e^.k = 12_u8;
+    set e^.info = i.a;
+  } else if e^.k == 14_u8 {
+    set i.b = 2_i64;
+    let arg_29 = e^.info;
+    putins(s: s, pc: arg_29, v: i);
+    set e^.k = 11_u8;
+  }
+  return unit;
+}
+
+fn discharge(s: &Fs, e: &Exp) -> result_value: unit writes(s), writes(e) {
+  if e^.k == 6_u8 {
+    set e^.k = 12_u8;
+  } else if e^.k == 7_u8 {
+    let arg_30 = e^.info;
+    let i = emit(s: s, op: 4_u8, a: 0_i64, b: arg_30, c: 0_i64);
+    set e^.info = i;
+    set e^.k = 11_u8;
+  } else if e^.k == 8_u8 {
+    let arg_31 = e^.info;
+    let i = emit(s: s, op: 5_u8, a: 0_i64, b: arg_31, c: 0_i64);
+    set e^.info = i;
+    set e^.k = 11_u8;
+  } else if e^.k == 9_u8 {
+    let arg_32 = e^.aux;
+    free(s: s, reg: arg_32);
+    let arg_33 = e^.info;
+    free(s: s, reg: arg_33);
+    let arg_34 = e^.info;
+    let arg_35 = e^.aux;
+    let i = emit(s: s, op: 6_u8, a: 0_i64, b: arg_34, c: arg_35);
+    set e^.info = i;
+    set e^.k = 11_u8;
+  } else if e^.k == 13_u8 {
+    oneret(s: s, e: e);
+  } else if e^.k == 14_u8 {
+    oneret(s: s, e: e);
+  }
+  return unit;
+}
+
+fn discharge2reg(s: &Fs, e: &Exp, reg: i64) -> result_value: unit writes(s), writes(e) {
+  discharge(s: s, e: e);
+  if e^.k == 1_u8 {
+    nilregs(s: s, from: reg, n: 1_i64);
+  } else if e^.k == 2_u8 {
+    let i = emit(s: s, op: 2_u8, a: reg, b: 1_i64, c: 0_i64);
+  } else if e^.k == 3_u8 {
+    let i = emit(s: s, op: 2_u8, a: reg, b: 0_i64, c: 0_i64);
+  } else if e^.k == 4_u8 {
+    let arg_36 = e^.info;
+    let i = emit(s: s, op: 1_u8, a: reg, b: arg_36, c: 0_i64);
+  } else if e^.k == 5_u8 {
+    let arg_37 = e^.num;
+    let v = Value::Num(n: arg_37);
+    let k = addk(s: s, v: v);
+    let i = emit(s: s, op: 1_u8, a: reg, b: k, c: 0_i64);
+  } else if e^.k == 11_u8 {
+    let arg_38 = e^.info;
+    let i = getins(s: s, pc: arg_38);
+    set i.a = reg;
+    let arg_39 = e^.info;
+    putins(s: s, pc: arg_39, v: i);
+  } else if e^.k == 12_u8 {
+    if reg != e^.info {
+      let arg_40 = e^.info;
+      let i = emit(s: s, op: 0_u8, a: reg, b: arg_40, c: 0_i64);
+    }
+  } else {
+    return unit;
+  }
+  set e^.info = reg;
+  set e^.k = 12_u8;
+  return unit;
+}
+
+fn dischargeany(s: &Fs, e: &Exp) -> result_value: unit writes(s), writes(e) {
+  if e^.k != 12_u8 {
+    reserve(s: s, n: 1_i64);
+    let arg_41 = s^.freereg -wrap 1_i64;
+    discharge2reg(s: s, e: e, reg: arg_41);
+  }
+  return unit;
+}
+
+fn needvalue(s: &Fs, list: i64) -> result_value: Bool reads(s) {
+  let at = list;
+  loop {
+    if at == -1_i64 {
+      break;
+    }
+    let p = control(s: s, at: at);
+    let i = getins(s: s, pc: p);
+    if i.op != 27_u8 {
+      return True();
+    }
+    set at = getjump(s: s, at: at);
+  }
+  return False();
+}
+
+fn expreg(s: &Fs, e: &Exp, reg: i64) -> result_value: unit writes(s), writes(e) {
+  discharge2reg(s: s, e: e, reg: reg);
+  if e^.k == 10_u8 {
+    let arg_42 = e^.t;
+    let arg_43 = e^.info;
+    let t = concat(s: s, l1: arg_42, l2: arg_43);
+    set e^.t = t;
+  }
+  if e^.t != e^.f {
+    let pf = -1_i64;
+    let pt = -1_i64;
+    let arg_44 = e^.t;
+    let tv = needvalue(s: s, list: arg_44);
+    let arg_45 = e^.f;
+    let fv = needvalue(s: s, list: arg_45);
+    if bor(tv, fv) {
+      let fj = -1_i64;
+      if e^.k != 10_u8 {
+        set fj = jump(s: s);
+      }
+      let lbl = label(s: s);
+      set pf = emit(s: s, op: 2_u8, a: reg, b: 0_i64, c: 1_i64);
+      let lbl2 = label(s: s);
+      set pt = emit(s: s, op: 2_u8, a: reg, b: 1_i64, c: 0_i64);
+      patchhere(s: s, list: fj);
+    }
+    let final = label(s: s);
+    let arg_46 = e^.f;
+    patchaux(s: s, list: arg_46, vt: final, reg: reg, dt: pf);
+    let arg_47 = e^.t;
+    patchaux(s: s, list: arg_47, vt: final, reg: reg, dt: pt);
+  }
+  set e^.t = -1_i64;
+  set e^.f = -1_i64;
+  set e^.info = reg;
+  set e^.k = 12_u8;
+  return unit;
+}
+
+fn nextreg(s: &Fs, e: &Exp) -> result_value: unit writes(s), writes(e) {
+  discharge(s: s, e: e);
+  freeexp(s: s, e: e);
+  reserve(s: s, n: 1_i64);
+  let arg_48 = s^.freereg -wrap 1_i64;
+  expreg(s: s, e: e, reg: arg_48);
+  return unit;
+}
+
+fn anyreg(s: &Fs, e: &Exp) -> result_value: i64 writes(s), writes(e) {
+  discharge(s: s, e: e);
+  if e^.k == 12_u8 {
+    if e^.t == e^.f {
+      return e^.info;
+    }
+    if e^.info >= s^.nactvar {
+      let arg_49 = e^.info;
+      expreg(s: s, e: e, reg: arg_49);
+      return e^.info;
+    }
+  }
+  nextreg(s: s, e: e);
+  return e^.info;
+}
+
+fn expval(s: &Fs, e: &Exp) -> result_value: unit writes(s), writes(e) {
+  if e^.t != e^.f {
+    let reg = anyreg(s: s, e: e);
+  } else {
+    discharge(s: s, e: e);
+  }
+  return unit;
+}
+
+fn rk(s: &Fs, e: &Exp) -> result_value: i64 writes(s), writes(e) {
+  expval(s: s, e: e);
+  if e^.k == 5_u8 {
+    if s^.ks.inner.len <= 255_u64 {
+      let arg_50 = e^.num;
+      let v = Value::Num(n: arg_50);
+      let k = addk(s: s, v: v);
+      set e^.info = k;
+      set e^.k = 4_u8;
+      return k +wrap 256_i64;
+    }
+  } else if e^.k >= 1_u8 {
+    if e^.k <= 3_u8 {
+      if s^.ks.inner.len <= 255_u64 {
+        let v = Value::Nil();
+        if e^.k == 2_u8 {
+          set v = Value::True();
+        }
+        if e^.k == 3_u8 {
+          set v = Value::False();
+        }
+        let k = addk(s: s, v: v);
+        set e^.info = k;
+        set e^.k = 4_u8;
+        return k +wrap 256_i64;
+      }
+    } else if e^.k == 4_u8 {
+      if e^.info <= 255_i64 {
+        return e^.info +wrap 256_i64;
+      }
+    }
+  }
+  return anyreg(s: s, e: e);
+}
+
+fn store(s: &Fs, var: &Exp, e: &Exp) -> result_value: unit reads(var), writes(s), writes(e) {
+  if var^.k == 6_u8 {
+    freeexp(s: s, e: e);
+    let arg_51 = var^.info;
+    expreg(s: s, e: e, reg: arg_51);
+    return unit;
+  }
+  if var^.k == 7_u8 {
+    let reg = anyreg(s: s, e: e);
+    let arg_52 = var^.info;
+    let i = emit(s: s, op: 8_u8, a: reg, b: arg_52, c: 0_i64);
+  } else if var^.k == 8_u8 {
+    let reg = anyreg(s: s, e: e);
+    let arg_53 = var^.info;
+    let i = emit(s: s, op: 7_u8, a: reg, b: arg_53, c: 0_i64);
+  } else if var^.k == 9_u8 {
+    let reg = rk(s: s, e: e);
+    let arg_54 = var^.info;
+    let arg_55 = var^.aux;
+    let i = emit(s: s, op: 9_u8, a: arg_54, b: arg_55, c: reg);
+  }
+  freeexp(s: s, e: e);
+  return unit;
+}
+
+fn selfcall(s: &Fs, e: &Exp, key: &Exp) -> result_value: unit writes(s), writes(e), writes(key) {
+  let reg = anyreg(s: s, e: e);
+  freeexp(s: s, e: e);
+  let base = s^.freereg;
+  reserve(s: s, n: 2_i64);
+  let k = rk(s: s, e: key);
+  let arg_56 = e^.info;
+  let i = emit(s: s, op: 11_u8, a: base, b: arg_56, c: k);
+  freeexp(s: s, e: key);
+  set e^.info = base;
+  set e^.k = 12_u8;
+  return unit;
+}
+
+fn invert(s: &Fs, e: &Exp) -> result_value: unit reads(e), writes(s) {
+  let arg_57 = e^.info;
+  let p = control(s: s, at: arg_57);
+  let i = getins(s: s, pc: p);
+  set i.a = 1_i64 -wrap i.a;
+  putins(s: s, pc: p, v: i);
+  return unit;
+}
+
+fn jumpon(s: &Fs, e: &Exp, cond: i64) -> result_value: i64 writes(s), writes(e) {
+  if e^.k == 11_u8 {
+    let arg_58 = e^.info;
+    let i = getins(s: s, pc: arg_58);
+    if i.op == 19_u8 {
+      if s^.code.inner.len > 0_u64 {
+        let dropped = take_back(window: &s^.code.inner);
+      }
+      let arg_59 = i.b;
+      let arg_60 = 1_i64 -wrap cond;
+      return condjump(s: s, op: 26_u8, a: arg_59, b: 0_i64, c: arg_60);
+    }
+  }
+  dischargeany(s: s, e: e);
+  freeexp(s: s, e: e);
+  let arg_61 = e^.info;
+  return condjump(s: s, op: 27_u8, a: 255_i64, b: arg_61, c: cond);
+}
+
+fn goif(s: &Fs, e: &Exp, truth: Bool) -> result_value: unit writes(s), writes(e) {
+  discharge(s: s, e: e);
+  let j = -1_i64;
+  if truth {
+    if e^.k == 4_u8 {
+    } else if e^.k == 5_u8 {
+    } else if e^.k == 2_u8 {
+    } else if e^.k == 10_u8 {
+      invert(s: s, e: e);
+      set j = e^.info;
+    } else {
+      set j = jumpon(s: s, e: e, cond: 0_i64);
+    }
+    let arg_62 = e^.f;
+    let f = concat(s: s, l1: arg_62, l2: j);
+    set e^.f = f;
+    let arg_63 = e^.t;
+    patchhere(s: s, list: arg_63);
+    set e^.t = -1_i64;
+  } else {
+    if e^.k == 1_u8 {
+    } else if e^.k == 3_u8 {
+    } else if e^.k == 10_u8 {
+      set j = e^.info;
+    } else {
+      set j = jumpon(s: s, e: e, cond: 1_i64);
+    }
+    let arg_64 = e^.t;
+    let t = concat(s: s, l1: arg_64, l2: j);
+    set e^.t = t;
+    let arg_65 = e^.f;
+    patchhere(s: s, list: arg_65);
+    set e^.f = -1_i64;
+  }
+  return unit;
+}
+
+fn removevalues(s: &Fs, list: i64) -> result_value: unit writes(s) {
+  let at = list;
+  loop {
+    if at == -1_i64 {
+      break;
+    }
+    let patched = patchtest(s: s, at: at, reg: 255_i64);
+    set at = getjump(s: s, at: at);
+  }
+  return unit;
+}
+
+fn codenot(s: &Fs, e: &Exp) -> result_value: unit writes(s), writes(e) {
+  discharge(s: s, e: e);
+  if e^.k == 1_u8 {
+    set e^.k = 2_u8;
+  } else if e^.k == 3_u8 {
+    set e^.k = 2_u8;
+  } else if e^.k == 4_u8 {
+    set e^.k = 3_u8;
+  } else if e^.k == 5_u8 {
+    set e^.k = 3_u8;
+  } else if e^.k == 2_u8 {
+    set e^.k = 3_u8;
+  } else if e^.k == 10_u8 {
+    invert(s: s, e: e);
+  } else {
+    dischargeany(s: s, e: e);
+    freeexp(s: s, e: e);
+    let arg_66 = e^.info;
+    let i = emit(s: s, op: 19_u8, a: 0_i64, b: arg_66, c: 0_i64);
+    set e^.info = i;
+    set e^.k = 11_u8;
+  }
+  let tmp = e^.f;
+  set e^.f = e^.t;
+  set e^.t = tmp;
+  let arg_67 = e^.f;
+  removevalues(s: s, list: arg_67);
+  let arg_68 = e^.t;
+  removevalues(s: s, list: arg_68);
+  return unit;
+}
+
+fn numeral(e: &Exp) -> result_value: Bool reads(e) {
+  if e^.k == 5_u8 {
+    if e^.t == -1_i64 {
+      return e^.f == -1_i64;
+    }
+  }
+  return False();
+}
+
+fn fold(op: u8, a: &Exp, b: &Exp) -> result_value: Bool reads(b), writes(a) {
+  let na = numeral(e: a);
+  let nb = numeral(e: b);
+  if na {
+  } else {
+    return False();
+  }
+  if nb {
+  } else {
+    return False();
+  }
+  let x = a^.num;
+  let y = b^.num;
+  let z = 0.0_f64;
+  if op == 12_u8 {
+    set z = fadd.strict(x, y);
+  } else if op == 13_u8 {
+    set z = fsub.strict(x, y);
+  } else if op == 14_u8 {
+    set z = fmul.strict(x, y);
+  } else if op == 15_u8 {
+    if feq(y, 0.0_f64) {
+      return False();
+    }
+    set z = fdiv.strict(x, y);
+  } else if op == 16_u8 {
+    if feq(y, 0.0_f64) {
+      return False();
+    }
+    let q = fdiv.strict(x, y);
+    let f = pkg::number::floor(value: q);
+    let product = fmul.strict(f, y);
+    set z = fsub.strict(x, product);
+  } else if op == 17_u8 {
+    set z = pkg::number::pow(a: x, b: y);
+  } else if op == 18_u8 {
+    set z = fneg(x);
+  } else {
+    return False();
+  }
+  if fne(z, z) {
+    return False();
+  }
+  set a^.num = z;
+  return True();
+}
+
+fn arith(s: &Fs, op: u8, a: &Exp, b: &Exp) -> result_value: unit writes(s), writes(a), writes(b) {
+  let folded = fold(op: op, a: a, b: b);
+  if folded {
+    return unit;
+  }
+  let o2 = 0_i64;
+  if op != 18_u8 {
+    if op != 20_u8 {
+      set o2 = rk(s: s, e: b);
+    }
+  }
+  let o1 = rk(s: s, e: a);
+  if o1 > o2 {
+    freeexp(s: s, e: a);
+    freeexp(s: s, e: b);
+  } else {
+    freeexp(s: s, e: b);
+    freeexp(s: s, e: a);
+  }
+  let i = emit(s: s, op: op, a: 0_i64, b: o1, c: o2);
+  set a^.info = i;
+  set a^.k = 11_u8;
+  return unit;
+}
+
+fn compare(s: &Fs, op: u8, cond: i64, a: &Exp, b: &Exp) -> result_value: unit writes(s), writes(a), writes(b) {
+  let o1 = rk(s: s, e: a);
+  let o2 = rk(s: s, e: b);
+  freeexp(s: s, e: b);
+  freeexp(s: s, e: a);
+  let c = cond;
+  if c == 0_i64 {
+    if op != 23_u8 {
+      let tmp = o1;
+      set o1 = o2;
+      set o2 = tmp;
+      set c = 1_i64;
+    }
+  }
+  let i = condjump(s: s, op: op, a: c, b: o1, c: o2);
+  set a^.info = i;
+  set a^.k = 10_u8;
+  return unit;
+}
+
+fn prefix(s: &Fs, op: u8, e: &Exp) -> result_value: unit writes(s), writes(e) {
+  let zero = empty_exp(k: 5_u8, info: 0_i64);
+  if op == 1_u8 {
+    codenot(s: s, e: e);
+  } else if op == 0_u8 {
+    let n = numeral(e: e);
+    if n {
+    } else {
+      let r = anyreg(s: s, e: e);
+    }
+    arith(s: s, op: 18_u8, a: e, b: &zero);
+  } else {
+    let r = anyreg(s: s, e: e);
+    arith(s: s, op: 20_u8, a: e, b: &zero);
+  }
+  return unit;
+}
+
+fn infix(s: &Fs, op: u8, e: &Exp) -> result_value: unit writes(s), writes(e) {
+  if op == 13_u8 {
+    let arg_69 = True();
+    goif(s: s, e: e, truth: arg_69);
+  } else if op == 14_u8 {
+    let arg_70 = False();
+    goif(s: s, e: e, truth: arg_70);
+  } else if op == 6_u8 {
+    nextreg(s: s, e: e);
+  } else if op <= 5_u8 {
+    let n = numeral(e: e);
+    if n {
+    } else {
+      let k = rk(s: s, e: e);
+    }
+  } else {
+    let k = rk(s: s, e: e);
+  }
+  return unit;
+}
+
+fn postfix(s: &Fs, op: u8, a: &Exp, b: &Exp) -> result_value: unit writes(s), writes(a), writes(b) {
+  if op == 13_u8 {
+    discharge(s: s, e: b);
+    let arg_71 = b^.f;
+    let arg_72 = a^.f;
+    let f = concat(s: s, l1: arg_71, l2: arg_72);
+    set b^.f = f;
+    set a^ = b^;
+  } else if op == 14_u8 {
+    discharge(s: s, e: b);
+    let arg_73 = b^.t;
+    let arg_74 = a^.t;
+    let t = concat(s: s, l1: arg_73, l2: arg_74);
+    set b^.t = t;
+    set a^ = b^;
+  } else if op == 6_u8 {
+    expval(s: s, e: b);
+    let arg_75 = b^.info;
+    let i = getins(s: s, pc: arg_75);
+    if b^.k == 11_u8 {
+      if i.op == 21_u8 {
+        freeexp(s: s, e: a);
+        set i.b = a^.info;
+        let arg_76 = b^.info;
+        putins(s: s, pc: arg_76, v: i);
+        set a^.k = 11_u8;
+        set a^.info = b^.info;
+        return unit;
+      }
+    }
+    nextreg(s: s, e: b);
+    arith(s: s, op: 21_u8, a: a, b: b);
+  } else if op <= 5_u8 {
+    let code = op +wrap 12_u8;
+    arith(s: s, op: code, a: a, b: b);
+  } else if op == 7_u8 {
+    compare(s: s, op: 23_u8, cond: 0_i64, a: a, b: b);
+  } else if op == 8_u8 {
+    compare(s: s, op: 23_u8, cond: 1_i64, a: a, b: b);
+  } else if op == 9_u8 {
+    compare(s: s, op: 24_u8, cond: 1_i64, a: a, b: b);
+  } else if op == 10_u8 {
+    compare(s: s, op: 25_u8, cond: 1_i64, a: a, b: b);
+  } else if op == 11_u8 {
+    compare(s: s, op: 24_u8, cond: 0_i64, a: a, b: b);
+  } else if op == 12_u8 {
+    compare(s: s, op: 25_u8, cond: 0_i64, a: a, b: b);
+  }
+  return unit;
+}
+
+fn setlist(s: &Fs, base: i64, nelems: i64, count: i64) -> result_value: unit writes(s) {
+  doc "Retain PUC SETLIST extension words in raw PCs, including the control-structure length check. Assembly folds the data word into one cell.";
+  let arg_77 = nelems -wrap 1_i64;
+  let arg_78 = arg_77 / 50_i64;
+  let c = arg_78 +wrap 1_i64;
+  let b = count;
+  if b == -1_i64 {
+    set b = 0_i64;
+  }
+  if c <= 511_i64 {
+    let i = emit(s: s, op: 34_u8, a: base, b: b, c: c);
+  } else {
+    let i = emit(s: s, op: 34_u8, a: base, b: b, c: 0_i64);
+    let data = emit(s: s, op: 38_u8, a: 0_i64, b: 0_i64, c: c);
+  }
+  set s^.freereg = base +wrap 1_i64;
+  return unit;
+}
+
+fn fixline(s: &Fs, line: u64) -> result_value: unit writes(s) {
+  let n = pc(s: s);
+  let arg_79 = n -wrap 1_i64;
+  let i = getins(s: s, pc: arg_79);
+  set i.line = line;
+  let arg_80 = n -wrap 1_i64;
+  putins(s: s, pc: arg_80, v: i);
+  return unit;
+}

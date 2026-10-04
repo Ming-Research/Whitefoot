@@ -1,0 +1,312 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+struct Tag {
+  tag: u8;
+  handle: u32;
+  num: f64;
+}
+
+struct Exp {
+  k: u8;
+  info: i64;
+  aux: i64;
+  num: f64;
+  t: i64;
+  f: i64;
+}
+
+struct Ins {
+  op: u8;
+  a: i64;
+  b: i64;
+  c: i64;
+  line: u64;
+}
+
+struct Up {
+  k: u8;
+  info: i64;
+}
+
+struct Block {
+  breaklist: i64;
+  nactvar: i64;
+  upval: Bool;
+  breakable: Bool;
+}
+
+struct Fs {
+  parent: u64;
+  line: u64;
+  lastline: u64;
+  lasttarget: i64;
+  jpc: i64;
+  freereg: i64;
+  nactvar: i64;
+  maxstack: i64;
+  numparams: i64;
+  nlocals: u64;
+  vararg: Bool;
+  code: Box<Slots<Ins>>;
+  ks: Box<Slots<Value>>;
+  locals: Box<Slots<u32>>;
+  ups: Box<Slots<Up>>;
+  blocks: Box<Slots<Block>>;
+  bad: u8;
+}
+
+struct Parser {
+  source: Box<Slots<u8>>;
+  chunk: Box<Slots<u8>>;
+  decoded: Box<Slots<u8>>;
+  lookbuf: Box<Slots<u8>>;
+  output: Box<Slots<u8>>;
+  funcs: Box<Slots<Fs>>;
+  current: u64;
+  lex: pkg::lex::State;
+  token: pkg::lex::Token;
+  look: pkg::lex::Token;
+  tokenvalue: Value;
+  lookvalue: Value;
+  haslook: Bool;
+  lastline: u64;
+  depth: u64;
+  failed: Bool;
+  errorline: u64;
+}
+
+fn push_byte(buf: &Box<Slots<u8>>, v: u8) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_1 = cap +sat cap;
+    let target = imax(arg_1, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}
+
+fn push_index(buf: &Box<Slots<u32>>, v: u32) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_2 = cap +sat cap;
+    let target = imax(arg_2, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}
+
+fn push_value(buf: &Box<Slots<Value>>, v: Value) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_3 = cap +sat cap;
+    let target = imax(arg_3, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}
+
+fn push_ins(buf: &Box<Slots<Ins>>, v: Ins) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_4 = cap +sat cap;
+    let target = imax(arg_4, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}
+
+fn push_up(buf: &Box<Slots<Up>>, v: Up) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_5 = cap +sat cap;
+    let target = imax(arg_5, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}
+
+fn push_block(buf: &Box<Slots<Block>>, v: Block) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_6 = cap +sat cap;
+    let target = imax(arg_6, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}
+
+fn push_func(buf: &Box<Slots<Fs>>, v: Fs) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_7 = cap +sat cap;
+    let target = imax(arg_7, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: move v);
+  } else {
+    let dropped = move v;
+  }
+  return unit;
+}
+
+fn push_cell(buf: &Box<Slots<Cell>>, v: Cell) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_8 = cap +sat cap;
+    let target = imax(arg_8, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}
+
+fn push_proto(buf: &Box<Slots<Proto>>, v: Proto) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_9 = cap +sat cap;
+    let target = imax(arg_9, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}
+
+fn text(buf: &Box<Slots<u8>>, s: &[u8]) -> result_value: unit reads(s), writes(buf) {
+  for (i in 0_u64..s^.len) {
+    let arg_10 = s^[i];
+    push_byte(buf: buf, v: arg_10);
+  }
+  return unit;
+}
+
+fn decimal(buf: &Box<Slots<u8>>, n: u64) -> result_value: unit writes(buf) {
+  let tmp = box_slots_new::<u8>(capacity: 20_u64);
+  let x = n;
+  loop {
+    let arg_11 = x % 10_u64;
+    let digit = cvt.wrap::<u64, u8>(arg_11);
+    let arg_12 = digit +wrap 48_u8;
+    push_byte(buf: &tmp, v: arg_12);
+    set x = x / 10_u64;
+    if x == 0_u64 {
+      break;
+    }
+  }
+  loop {
+    if tmp.inner.len == 0_u64 {
+      break;
+    }
+    let c = take_back(window: &tmp.inner);
+    push_byte(buf: buf, v: c);
+  }
+  return unit;
+}
+
+fn empty_exp(k: u8, info: i64) -> result_value: Exp pure {
+  doc "PUC expkind ordinals: VOID 0, NIL 1, TRUE 2, FALSE 3, K 4, KNUM 5, LOCAL 6, UPVAL 7, GLOBAL 8, INDEXED 9, JMP 10, RELOCABLE 11, NONRELOC 12, CALL 13, VARARG 14. Jump-list ends are -1; RK constants add 256.";
+  return Exp(k: k, info: info, aux: 0_i64, num: 0.0_f64, t: -1_i64, f: -1_i64);
+}
+
+fn same_value(a: Value, b: Value) -> result_value: Bool pure {
+  let av = tag_value(v: a);
+  let bv = tag_value(v: b);
+  if av.tag != bv.tag {
+    return False();
+  }
+  if av.tag == 3_u8 {
+    let arg_13 = av.num;
+    let arg_14 = bv.num;
+    return feq(arg_13, arg_14);
+  }
+  return av.handle == bv.handle;
+}
+
+fn tag_value(v: Value) -> result_value: Tag pure {
+  match v {
+    Nil() => {
+      return Tag(tag: 0_u8, handle: 0_u32, num: 0.0_f64);
+    }
+    False() => {
+      return Tag(tag: 1_u8, handle: 0_u32, num: 0.0_f64);
+    }
+    True() => {
+      return Tag(tag: 2_u8, handle: 0_u32, num: 0.0_f64);
+    }
+    Num(n: number) => {
+      return Tag(tag: 3_u8, handle: 0_u32, num: number);
+    }
+    Str(h: handle_value) => {
+      return Tag(tag: 4_u8, handle: handle_value, num: 0.0_f64);
+    }
+    Tab(h: handle_value) => {
+      return Tag(tag: 5_u8, handle: handle_value, num: 0.0_f64);
+    }
+    Fun(h: handle_value) => {
+      return Tag(tag: 6_u8, handle: handle_value, num: 0.0_f64);
+    }
+    Builtin(id: handle_value) => {
+      return Tag(tag: 7_u8, handle: handle_value, num: 0.0_f64);
+    }
+  }
+}
+
+fn new_fs(parent: u64, line: u64) -> result_value: Fs pure {
+  doc "Each prototype owns its PUC instruction records, constants, active-local names, upvalue descriptions and block stack. Local instruction indexes survive parsing; only assembly fuses pairs and assigns script-wide indexes. parent is an index, so prototype growth cannot invalidate a reference held by recursive parsing.";
+  let code = box_slots_new::<Ins>(capacity: 0_u64);
+  let ks = box_slots_new::<Value>(capacity: 0_u64);
+  let locals = box_slots_new::<u32>(capacity: 0_u64);
+  let ups = box_slots_new::<Up>(capacity: 0_u64);
+  let blocks = box_slots_new::<Block>(capacity: 0_u64);
+  let arg_15 = False();
+  return Fs(parent: parent, line: line, lastline: 1_u64, lasttarget: -1_i64, jpc: -1_i64, freereg: 0_i64, nactvar: 0_i64, maxstack: 2_i64, numparams: 0_i64, nlocals: 0_u64, vararg: arg_15, code: move code, ks: move ks, locals: move locals, ups: move ups, blocks: move blocks, bad: 0_u8);
+}
+
+fn push_exp(buf: &Box<Slots<Exp>>, v: Exp) -> result_value: unit writes(buf) {
+  let n = buf^.inner.len;
+  let cap = buf^.inner.cap;
+  if n == cap {
+    let arg_160 = cap +sat cap;
+    let target = imax(arg_160, 32_u64);
+    grow(cell: buf, capacity: target);
+  }
+  if buf^.inner.len < buf^.inner.cap {
+    place_back(window: &buf^.inner, value: v);
+  }
+  return unit;
+}

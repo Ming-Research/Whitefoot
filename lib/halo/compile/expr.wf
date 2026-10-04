@@ -1,0 +1,419 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+fn forlistkind(kind: u16) -> result_value: Bool pure {
+  if kind == 44_u16 {
+    return True();
+  }
+  return kind == 267_u16;
+}
+
+fn field(p: &Parser, heap: &Heap, e: &Exp) -> result_value: unit writes(p), writes(heap), writes(e) {
+  let reg = k_anyreg(p: p, e: e);
+  advance(p: p, heap: heap);
+  let key = nameexp(p: p, heap: heap);
+  let k = k_rk(p: p, e: &key);
+  set e^.aux = k;
+  set e^.k = 9_u8;
+  return unit;
+}
+
+fn index(p: &Parser, heap: &Heap) -> result_value: Exp writes(p), writes(heap) {
+  advance(p: p, heap: heap);
+  let e = expression(p: p, heap: heap);
+  k_expval(p: p, e: &e);
+  checknext(p: p, heap: heap, kind: 93_u16);
+  return e;
+}
+
+fn int2fb(value: i64) -> result_value: i64 pure {
+  let x = value;
+  let e = 0_i64;
+  loop {
+    if x < 16_i64 {
+      break;
+    }
+    let arg_123 = x +wrap 1_i64;
+    set x = arg_123 / 2_i64;
+    set e = e +wrap 1_i64;
+  }
+  if x < 8_i64 {
+    return x;
+  }
+  let arg_124 = e +wrap 1_i64;
+  let arg_125 = arg_124 *wrap 8_i64;
+  let arg_126 = arg_125 +wrap x;
+  return arg_126 -wrap 8_i64;
+}
+
+fn constructor(p: &Parser, heap: &Heap) -> result_value: Exp writes(p), writes(heap) {
+  let line = p^.lex.line;
+  let at = k_emit(p: p, op: 10_u8, a: 0_i64, b: 0_i64, c: 0_i64);
+  let t = empty_exp(k: 11_u8, info: at);
+  k_nextreg(p: p, e: &t);
+  checknext(p: p, heap: heap, kind: 123_u16);
+  let v = empty_exp(k: 0_u8, info: 0_i64);
+  let na = 0_i64;
+  let nh = 0_i64;
+  let pending = 0_i64;
+  loop {
+    if p^.failed {
+      break;
+    }
+    if p^.token.kind == 125_u16 {
+      break;
+    }
+    if v.k != 0_u8 {
+      k_nextreg(p: p, e: &v);
+      set v.k = 0_u8;
+      if pending == 50_i64 {
+        let arg_127 = t.info;
+        k_setlist(p: p, base: arg_127, nelems: na, count: pending);
+        set pending = 0_i64;
+      }
+    }
+    let record = p^.token.kind == 91_u16;
+    if p^.token.kind == 285_u16 {
+      let ahead = lookahead(p: p, heap: heap);
+      if ahead == 61_u16 {
+        set record = True();
+      }
+    }
+    if record {
+      let reg = freereg(p: p);
+      let key = empty_exp(k: 0_u8, info: 0_i64);
+      if p^.token.kind == 285_u16 {
+        set key = nameexp(p: p, heap: heap);
+      } else {
+        set key = index(p: p, heap: heap);
+      }
+      set nh = nh +wrap 1_i64;
+      checknext(p: p, heap: heap, kind: 61_u16);
+      let rkkey = k_rk(p: p, e: &key);
+      let val = expression(p: p, heap: heap);
+      let rkval = k_rk(p: p, e: &val);
+      let arg_128 = t.info;
+      let i = k_emit(p: p, op: 9_u8, a: arg_128, b: rkkey, c: rkval);
+      set_freereg(p: p, n: reg);
+    } else {
+      set v = expression(p: p, heap: heap);
+      set na = na +wrap 1_i64;
+      set pending = pending +wrap 1_i64;
+    }
+    if testnext(p: p, heap: heap, kind: 44_u16) {
+    } else if testnext(p: p, heap: heap, kind: 59_u16) {
+    } else {
+      break;
+    }
+  }
+  match_token(p: p, heap: heap, what: 125_u16, who: 123_u16, where: line);
+  if pending != 0_i64 {
+    let multi = multret(e: &v);
+    if multi {
+      k_setreturns(p: p, e: &v, n: -1_i64);
+      let arg_129 = t.info;
+      k_setlist(p: p, base: arg_129, nelems: na, count: -1_i64);
+      set na = na -wrap 1_i64;
+    } else {
+      if v.k != 0_u8 {
+        k_nextreg(p: p, e: &v);
+      }
+      let arg_130 = t.info;
+      k_setlist(p: p, base: arg_130, nelems: na, count: pending);
+    }
+  }
+  let ins = k_getins(p: p, pc: at);
+  set ins.b = int2fb(value: na);
+  set ins.c = int2fb(value: nh);
+  k_putins(p: p, pc: at, v: ins);
+  return t;
+}
+
+fn exprlist(p: &Parser, heap: &Heap, e: &Exp) -> result_value: i64 writes(p), writes(heap), writes(e) {
+  set e^ = expression(p: p, heap: heap);
+  let n = 1_i64;
+  loop {
+    if testnext(p: p, heap: heap, kind: 44_u16) {
+      k_nextreg(p: p, e: e);
+      set e^ = expression(p: p, heap: heap);
+      set n = n +wrap 1_i64;
+    } else {
+      break;
+    }
+  }
+  return n;
+}
+
+fn funcargs(p: &Parser, heap: &Heap, f: &Exp) -> result_value: unit writes(p), writes(heap), writes(f) {
+  let line = p^.lex.line;
+  let args = empty_exp(k: 0_u8, info: 0_i64);
+  if p^.token.kind == 40_u16 {
+    if line != p^.lastline {
+      err_3(p: p);
+      return unit;
+    }
+    advance(p: p, heap: heap);
+    if p^.token.kind == 41_u16 {
+    } else {
+      let n = exprlist(p: p, heap: heap, e: &args);
+      k_setreturns(p: p, e: &args, n: -1_i64);
+    }
+    match_token(p: p, heap: heap, what: 41_u16, who: 40_u16, where: line);
+  } else if p^.token.kind == 123_u16 {
+    set args = constructor(p: p, heap: heap);
+  } else if p^.token.kind == 286_u16 {
+    let arg_131 = p^.tokenvalue;
+    set args = stringexp(p: p, v: arg_131);
+    advance(p: p, heap: heap);
+  } else {
+    err_2(p: p);
+    return unit;
+  }
+  let base = f^.info;
+  let params = -1_i64;
+  let multi = multret(e: &args);
+  if multi {
+  } else {
+    if args.k != 0_u8 {
+      k_nextreg(p: p, e: &args);
+    }
+    let free = freereg(p: p);
+    let arg_132 = free -wrap base;
+    set params = arg_132 -wrap 1_i64;
+  }
+  let arg_133 = params +wrap 1_i64;
+  let i = k_emit(p: p, op: 28_u8, a: base, b: arg_133, c: 2_i64);
+  set f^ = empty_exp(k: 13_u8, info: i);
+  k_fixline(p: p, line: line);
+  let arg_134 = base +wrap 1_i64;
+  set_freereg(p: p, n: arg_134);
+  return unit;
+}
+
+fn primary(p: &Parser, heap: &Heap) -> result_value: Exp writes(p), writes(heap) {
+  let e = empty_exp(k: 0_u8, info: 0_i64);
+  if p^.failed {
+    return e;
+  }
+  if p^.token.kind == 40_u16 {
+    let line = p^.lex.line;
+    advance(p: p, heap: heap);
+    set e = expression(p: p, heap: heap);
+    match_token(p: p, heap: heap, what: 41_u16, who: 40_u16, where: line);
+    k_discharge(p: p, e: &e);
+  } else if p^.token.kind == 285_u16 {
+    set e = singlevar(p: p, heap: heap);
+  } else {
+    err_0(p: p);
+    return e;
+  }
+  loop {
+    if p^.failed {
+      break;
+    }
+    let kind = p^.token.kind;
+    if kind == 46_u16 {
+      field(p: p, heap: heap, e: &e);
+    } else if kind == 91_u16 {
+      let reg = k_anyreg(p: p, e: &e);
+      let key = index(p: p, heap: heap);
+      let k = k_rk(p: p, e: &key);
+      set e.aux = k;
+      set e.k = 9_u8;
+    } else if kind == 58_u16 {
+      advance(p: p, heap: heap);
+      let key = nameexp(p: p, heap: heap);
+      k_selfcall(p: p, e: &e, key: &key);
+      funcargs(p: p, heap: heap, f: &e);
+    } else if kind == 40_u16 {
+      k_nextreg(p: p, e: &e);
+      funcargs(p: p, heap: heap, f: &e);
+    } else if kind == 286_u16 {
+      k_nextreg(p: p, e: &e);
+      funcargs(p: p, heap: heap, f: &e);
+    } else if kind == 123_u16 {
+      k_nextreg(p: p, e: &e);
+      funcargs(p: p, heap: heap, f: &e);
+    } else {
+      break;
+    }
+  }
+  return e;
+}
+
+fn simple(p: &Parser, heap: &Heap) -> result_value: Exp writes(p), writes(heap) {
+  let kind = p^.token.kind;
+  let e = empty_exp(k: 0_u8, info: 0_i64);
+  if p^.failed {
+    return e;
+  }
+  if kind == 284_u16 {
+    set e.k = 5_u8;
+    let arg_135 = p^.tokenvalue;
+    let v = tag_value(v: arg_135);
+    set e.num = v.num;
+  } else if kind == 286_u16 {
+    let arg_136 = p^.tokenvalue;
+    set e = stringexp(p: p, v: arg_136);
+  } else if kind == 269_u16 {
+    set e.k = 1_u8;
+  } else if kind == 275_u16 {
+    set e.k = 2_u8;
+  } else if kind == 263_u16 {
+    set e.k = 3_u8;
+  } else if kind == 279_u16 {
+    let var = isvararg(p: p);
+    if var {
+    } else {
+      err_1(p: p);
+      return e;
+    }
+    let i = k_emit(p: p, op: 37_u8, a: 0_i64, b: 1_i64, c: 0_i64);
+    set e = empty_exp(k: 14_u8, info: i);
+  } else if kind == 123_u16 {
+    return constructor(p: p, heap: heap);
+  } else if kind == 265_u16 {
+    advance(p: p, heap: heap);
+    let arg_137 = False();
+    let arg_138 = p^.lex.line;
+    return body(p: p, heap: heap, needself: arg_137, line: arg_138);
+  } else {
+    return primary(p: p, heap: heap);
+  }
+  advance(p: p, heap: heap);
+  return e;
+}
+
+fn binop(kind: u16) -> result_value: u8 pure {
+  if kind == 43_u16 {
+    return 0_u8;
+  }
+  if kind == 45_u16 {
+    return 1_u8;
+  }
+  if kind == 42_u16 {
+    return 2_u8;
+  }
+  if kind == 47_u16 {
+    return 3_u8;
+  }
+  if kind == 37_u16 {
+    return 4_u8;
+  }
+  if kind == 94_u16 {
+    return 5_u8;
+  }
+  if kind == 278_u16 {
+    return 6_u8;
+  }
+  if kind == 283_u16 {
+    return 7_u8;
+  }
+  if kind == 280_u16 {
+    return 8_u8;
+  }
+  if kind == 60_u16 {
+    return 9_u8;
+  }
+  if kind == 282_u16 {
+    return 10_u8;
+  }
+  if kind == 62_u16 {
+    return 11_u8;
+  }
+  if kind == 281_u16 {
+    return 12_u8;
+  }
+  if kind == 257_u16 {
+    return 13_u8;
+  }
+  if kind == 271_u16 {
+    return 14_u8;
+  }
+  return 15_u8;
+}
+
+fn priority(op: u8, right: Bool) -> result_value: u8 pure {
+  if op <= 1_u8 {
+    return 6_u8;
+  }
+  if op <= 4_u8 {
+    return 7_u8;
+  }
+  if op == 5_u8 {
+    if right {
+      return 9_u8;
+    }
+    return 10_u8;
+  }
+  if op == 6_u8 {
+    if right {
+      return 4_u8;
+    }
+    return 5_u8;
+  }
+  if op <= 12_u8 {
+    return 3_u8;
+  }
+  if op == 13_u8 {
+    return 2_u8;
+  }
+  if op == 14_u8 {
+    return 1_u8;
+  }
+  return 0_u8;
+}
+
+fn subexpr(p: &Parser, heap: &Heap, limit: u8) -> result_value: Exp writes(p), writes(heap) {
+  enterlevel(p: p);
+  let e = empty_exp(k: 0_u8, info: 0_i64);
+  if p^.failed {
+    leavelevel(p: p);
+    return e;
+  }
+  let u = 3_u8;
+  if p^.token.kind == 45_u16 {
+    set u = 0_u8;
+  }
+  if p^.token.kind == 270_u16 {
+    set u = 1_u8;
+  }
+  if p^.token.kind == 35_u16 {
+    set u = 2_u8;
+  }
+  if u != 3_u8 {
+    advance(p: p, heap: heap);
+    set e = subexpr(p: p, heap: heap, limit: 8_u8);
+    k_prefix(p: p, op: u, e: &e);
+  } else {
+    set e = simple(p: p, heap: heap);
+  }
+  loop {
+    if p^.failed {
+      break;
+    }
+    let arg_139 = p^.token.kind;
+    let op = binop(kind: arg_139);
+    let arg_140 = False();
+    let left = priority(op: op, right: arg_140);
+    if left <= limit {
+      break;
+    }
+    advance(p: p, heap: heap);
+    k_infix(p: p, op: op, e: &e);
+    let arg_141 = True();
+    let right = priority(op: op, right: arg_141);
+    let other = subexpr(p: p, heap: heap, limit: right);
+    k_postfix(p: p, op: op, a: &e, b: &other);
+    checkbad(p: p);
+  }
+  leavelevel(p: p);
+  return e;
+}
+
+fn expression(p: &Parser, heap: &Heap) -> result_value: Exp writes(p), writes(heap) {
+  return subexpr(p: p, heap: heap, limit: 0_u8);
+}

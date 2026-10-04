@@ -1,0 +1,388 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+fn fused(op: u8) -> result_value: Bool pure {
+  if op >= 23_u8 {
+    if op <= 27_u8 {
+      return True();
+    }
+  }
+  return op == 33_u8;
+}
+
+fn collapsed(i: &Ins) -> result_value: Bool reads(i) {
+  let op = i^.op;
+  let pair = fused(op: op);
+  if pair {
+    return True();
+  }
+  if op == 34_u8 {
+    return i^.c == 0_i64;
+  }
+  return False();
+}
+
+fn cellmap(s: &Fs, start: u64) -> result_value: Box<Slots<u32>> reads(s) {
+  let map = box_slots_new::<u32>(capacity: 0_u64);
+  let at = start;
+  let skip = False();
+  for (i in 0_u64..s^.code.inner.len) {
+    if skip {
+      let target = at -wrap 1_u64;
+      let arg_173 = cvt.wrap::<u64, u32>(target);
+      push_index(buf: &map, v: arg_173);
+      set skip = False();
+    } else {
+      let arg_174 = cvt.wrap::<u64, u32>(at);
+      push_index(buf: &map, v: arg_174);
+      set at = at +wrap 1_u64;
+      let ins = s^.code.inner[i];
+      let pair = collapsed(i: &ins);
+      if pair {
+        set skip = True();
+      }
+    }
+  }
+  let arg_176 = cvt.wrap::<u64, u32>(at);
+  push_index(buf: &map, v: arg_176);
+  return move map;
+}
+
+fn target(map: &Box<Slots<u32>>, at: i64) -> result_value: u32 reads(map) {
+  if at >= 0_i64 {
+    let i = cvt::<i64, u64>(at);
+    if i < map^.inner.len {
+      return map^.inner[i];
+    }
+  }
+  return 4294967295_u32;
+}
+
+fn to_cell(i: &Ins, t: u32) -> result_value: Cell reads(i) {
+  doc "Fused comparisons mean exactly: if (cmp(b, c) == a) jump to target else fall through. TEST and TESTSET use truth(value) == c. RK operand narrowing intentionally removes the 256 tag; the verifier has already established all register and constant domains.";
+  let arg_177 = i^.a;
+  let a = cvt.wrap::<i64, u8>(arg_177);
+  let arg_178 = i^.b;
+  let b = cvt.wrap::<i64, u8>(arg_178);
+  let arg_179 = i^.c;
+  let c = cvt.wrap::<i64, u8>(arg_179);
+  let arg_180 = i^.b;
+  let bx = cvt.wrap::<i64, u32>(arg_180);
+  let arg_181 = i^.c;
+  let cx = cvt.wrap::<i64, u32>(arg_181);
+  let bk = i^.b >= 256_i64;
+  let ck = i^.c >= 256_i64;
+  let op = i^.op;
+  if op == 0_u8 {
+    return Cell::Move(a: a, b: b);
+  }
+  if op == 2_u8 {
+    return Cell::LoadBool(a: a, b: b, skip: c);
+  }
+  if op == 3_u8 {
+    return Cell::LoadNil(a: a, b: b);
+  }
+  if op == 4_u8 {
+    return Cell::GetUpval(a: a, u: b);
+  }
+  if op == 5_u8 {
+    return Cell::GetGlobal(a: a, k: b);
+  }
+  if op == 7_u8 {
+    return Cell::SetGlobal(a: a, k: b);
+  }
+  if op == 8_u8 {
+    return Cell::SetUpval(a: a, u: b);
+  }
+  if op == 10_u8 {
+    return Cell::NewTable(a: a, asize: b, hsize: c);
+  }
+  if op == 18_u8 {
+    return Cell::Unm(a: a, b: b);
+  }
+  if op == 19_u8 {
+    return Cell::Not(a: a, b: b);
+  }
+  if op == 20_u8 {
+    return Cell::Len(a: a, b: b);
+  }
+  if op == 21_u8 {
+    return Cell::Concat(a: a, b: b, c: c);
+  }
+  if op == 22_u8 {
+    return Cell::Jmp(target: t);
+  }
+  if op == 26_u8 {
+    return Cell::TestJmp(a: a, c: c, target: t);
+  }
+  if op == 27_u8 {
+    return Cell::TestSetJmp(a: a, b: b, c: c, target: t);
+  }
+  if op == 28_u8 {
+    return Cell::Call(a: a, b: b, c: c);
+  }
+  if op == 29_u8 {
+    return Cell::TailCall(a: a, b: b, c: c);
+  }
+  if op == 30_u8 {
+    return Cell::Return(a: a, b: b);
+  }
+  if op == 31_u8 {
+    return Cell::ForLoop(a: a, target: t);
+  }
+  if op == 32_u8 {
+    return Cell::ForPrep(a: a, target: t);
+  }
+  if op == 33_u8 {
+    return Cell::TForLoop(a: a, c: c, target: t);
+  }
+  if op == 34_u8 {
+    return Cell::SetList(a: a, b: b, c: cx);
+  }
+  if op == 35_u8 {
+    return Cell::Close(a: a);
+  }
+  if op == 36_u8 {
+    return Cell::Closure(a: a, proto: bx);
+  }
+  if op == 37_u8 {
+    return Cell::VarArg(a: a, b: b);
+  }
+  if op == 1_u8 {
+    if i^.b < 256_i64 {
+      return Cell::LoadK(a: a, k: b);
+    }
+    return Cell::LoadKx(a: a, k: bx);
+  }
+  if op == 6_u8 {
+    if ck {
+      return Cell::GetTableK(a: a, t: b, k: c);
+    }
+    return Cell::GetTableR(a: a, t: b, c: c);
+  }
+  if op == 11_u8 {
+    if ck {
+      return Cell::SelfK(a: a, b: b, k: c);
+    }
+    return Cell::SelfR(a: a, b: b, c: c);
+  }
+  if op == 9_u8 {
+    if bk {
+      if ck {
+        return Cell::SetTableKK(t: a, key: b, val: c);
+      }
+      return Cell::SetTableKR(t: a, key: b, val: c);
+    }
+    if ck {
+      return Cell::SetTableRK(t: a, key: b, val: c);
+    }
+    return Cell::SetTableRR(t: a, key: b, val: c);
+  }
+  if op == 12_u8 {
+    if bk {
+      if ck {
+        return Cell::AddKK(a: a, b: b, c: c);
+      }
+      return Cell::AddKR(a: a, b: b, c: c);
+    }
+    if ck {
+      return Cell::AddRK(a: a, b: b, c: c);
+    }
+    return Cell::AddRR(a: a, b: b, c: c);
+  }
+  if op == 13_u8 {
+    if bk {
+      if ck {
+        return Cell::SubKK(a: a, b: b, c: c);
+      }
+      return Cell::SubKR(a: a, b: b, c: c);
+    }
+    if ck {
+      return Cell::SubRK(a: a, b: b, c: c);
+    }
+    return Cell::SubRR(a: a, b: b, c: c);
+  }
+  if op == 14_u8 {
+    if bk {
+      if ck {
+        return Cell::MulKK(a: a, b: b, c: c);
+      }
+      return Cell::MulKR(a: a, b: b, c: c);
+    }
+    if ck {
+      return Cell::MulRK(a: a, b: b, c: c);
+    }
+    return Cell::MulRR(a: a, b: b, c: c);
+  }
+  if op == 15_u8 {
+    if bk {
+      if ck {
+        return Cell::DivKK(a: a, b: b, c: c);
+      }
+      return Cell::DivKR(a: a, b: b, c: c);
+    }
+    if ck {
+      return Cell::DivRK(a: a, b: b, c: c);
+    }
+    return Cell::DivRR(a: a, b: b, c: c);
+  }
+  if op == 16_u8 {
+    if bk {
+      if ck {
+        return Cell::ModKK(a: a, b: b, c: c);
+      }
+      return Cell::ModKR(a: a, b: b, c: c);
+    }
+    if ck {
+      return Cell::ModRK(a: a, b: b, c: c);
+    }
+    return Cell::ModRR(a: a, b: b, c: c);
+  }
+  if op == 17_u8 {
+    if bk {
+      if ck {
+        return Cell::PowKK(a: a, b: b, c: c);
+      }
+      return Cell::PowKR(a: a, b: b, c: c);
+    }
+    if ck {
+      return Cell::PowRK(a: a, b: b, c: c);
+    }
+    return Cell::PowRR(a: a, b: b, c: c);
+  }
+  if op == 23_u8 {
+    if bk {
+      if ck {
+        return Cell::EqJmpKK(a: a, b: b, c: c, target: t);
+      }
+      return Cell::EqJmpKR(a: a, b: b, c: c, target: t);
+    }
+    if ck {
+      return Cell::EqJmpRK(a: a, b: b, c: c, target: t);
+    }
+    return Cell::EqJmpRR(a: a, b: b, c: c, target: t);
+  }
+  if op == 24_u8 {
+    if bk {
+      if ck {
+        return Cell::LtJmpKK(a: a, b: b, c: c, target: t);
+      }
+      return Cell::LtJmpKR(a: a, b: b, c: c, target: t);
+    }
+    if ck {
+      return Cell::LtJmpRK(a: a, b: b, c: c, target: t);
+    }
+    return Cell::LtJmpRR(a: a, b: b, c: c, target: t);
+  }
+  if op == 25_u8 {
+    if bk {
+      if ck {
+        return Cell::LeJmpKK(a: a, b: b, c: c, target: t);
+      }
+      return Cell::LeJmpKR(a: a, b: b, c: c, target: t);
+    }
+    if ck {
+      return Cell::LeJmpRK(a: a, b: b, c: c, target: t);
+    }
+    return Cell::LeJmpRR(a: a, b: b, c: c, target: t);
+  }
+  return Cell::Return(a: 0_u8, b: 1_u8);
+}
+
+fn assemble(p: &Parser) -> result_value: Result<Script, CompileError> reads(p) {
+  let code = box_slots_new::<Cell>(capacity: 0_u64);
+  let consts = box_slots_new::<Value>(capacity: 0_u64);
+  let protos = box_slots_new::<Proto>(capacity: 0_u64);
+  let lineinfo = box_slots_new::<u32>(capacity: 0_u64);
+  for (id in 0_u64..p^.funcs.inner.len) {
+    let s = &p^.funcs.inner[id];
+    let start = code.inner.len;
+    let kbase = consts.inner.len;
+    let map = cellmap(s: s, start: start);
+    let nk = s^.ks.inner.len;
+    let nups = s^.ups.inner.len;
+    let arg_182 = cvt.wrap::<u64, u32>(start);
+    let arg_183 = cvt.wrap::<u64, u32>(kbase);
+    let arg_184 = cvt.wrap::<u64, u32>(nk);
+    let arg_185 = s^.numparams;
+    let arg_186 = cvt.wrap::<i64, u8>(arg_185);
+    let arg_187 = s^.vararg;
+    let arg_188 = s^.maxstack;
+    let arg_189 = cvt.wrap::<i64, u8>(arg_188);
+    let arg_190 = cvt.wrap::<u64, u8>(nups);
+    let proto = Proto(start: arg_182, kbase: arg_183, nk: arg_184, numparams: arg_186, is_vararg: arg_187, maxstack: arg_189, nups: arg_190);
+    push_proto(buf: &protos, v: proto);
+    for (k in 0_u64..s^.ks.inner.len) {
+      let arg_191 = s^.ks.inner[k];
+      push_value(buf: &consts, v: arg_191);
+    }
+    let skip = False();
+    for (j in 0_u64..s^.code.inner.len) {
+      if skip {
+        set skip = False();
+      } else {
+        let i = s^.code.inner[j];
+        let arg_192 = i.op;
+        let pair = fused(op: arg_192);
+        let t = 0_u32;
+        if pair {
+          let next = j +wrap 1_u64;
+          if next < s^.code.inner.len {
+            let arg_193 = s^.code.inner[next].b;
+            set t = target(map: &map, at: arg_193);
+          }
+          set skip = True();
+        } else if i.op == 34_u8 {
+          if i.c == 0_i64 {
+            let next = j +wrap 1_u64;
+            if next < s^.code.inner.len {
+              set i.c = s^.code.inner[next].c;
+            }
+            set skip = True();
+          }
+        } else if i.op == 22_u8 {
+          let arg_194 = i.b;
+          set t = target(map: &map, at: arg_194);
+        } else if i.op == 31_u8 {
+          let arg_195 = i.b;
+          set t = target(map: &map, at: arg_195);
+        } else if i.op == 32_u8 {
+          let arg_196 = i.b;
+          set t = target(map: &map, at: arg_196);
+        }
+        if i.op == 5_u8 {
+          if i.b >= 256_i64 {
+            let msg = box_slots_new::<u8>(capacity: 0_u64);
+            text(buf: &msg, s: &msg_15[0_u64..59_u64]);
+            let arg_197 = i.line;
+            let e = CompileError(line: arg_197, message: move msg);
+            return Err<Script, CompileError>(error: move e);
+          }
+        }
+        if i.op == 7_u8 {
+          if i.b >= 256_i64 {
+            let msg = box_slots_new::<u8>(capacity: 0_u64);
+            text(buf: &msg, s: &msg_15[0_u64..59_u64]);
+            let arg_198 = i.line;
+            let e = CompileError(line: arg_198, message: move msg);
+            return Err<Script, CompileError>(error: move e);
+          }
+        }
+        let cell = to_cell(i: &i, t: t);
+        push_cell(buf: &code, v: cell);
+        let arg_199 = i.line;
+        let arg_200 = cvt.wrap::<u64, u32>(arg_199);
+        push_index(buf: &lineinfo, v: arg_200);
+      }
+    }
+  }
+  for (pad in 0_u64..256_u64) {
+    let nil = Value::Nil();
+    push_value(buf: &consts, v: nil);
+  }
+  let script = Script(code: move code, consts: move consts, protos: move protos, lineinfo: move lineinfo);
+  return Ok<Script, CompileError>(value: move script);
+}

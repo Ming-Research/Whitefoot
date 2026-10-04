@@ -112,3 +112,10 @@ public fn str_of(v: Value) -> r: HandleView pure doc "The string handle a value 
 public fn tab_of(v: Value) -> r: HandleView pure doc "The table handle a value holds, or NoHandle for every other kind.";
 
 public fn truthy(v: Value) -> r: Bool pure doc "Lua truth: every value except nil and false is true.";
+
+public struct Script {
+  public code: Box<Slots<Cell>>;
+  public consts: Box<Slots<Value>>;
+  public protos: Box<Slots<Proto>>;
+  public lineinfo: Box<Slots<u32>>;
+}

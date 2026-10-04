@@ -1,0 +1,1412 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+alias Value = halo::value::Value;
+alias Cell = halo::value::Cell;
+alias Script = halo::value::Script;
+alias Heap = halo::heap::Heap;
+
+fn push(out: &Box<Slots<u8>>, byte: u8) -> result: unit writes(out) {
+  doc "Append a byte to reusable experiment storage.";
+  let cap = out^.inner.cap;
+  if out^.inner.len == cap {
+    let twice = cap +sat cap;
+    let target = imax(twice, 4096_u64);
+    if target >= cap {
+      grow(cell: out, capacity: target);
+    }
+  }
+  if out^.inner.len < out^.inner.cap {
+    place_back(window: &out^.inner, value: byte);
+  }
+  return unit;
+}
+
+fn decimal(out: &Box<Slots<u8>>, number: u64) -> result: unit writes(out) {
+  doc "Decimal field in a token dump.";
+  let digits = slots_new::<u8, 20>();
+  let n = number;
+  loop {
+    let d = n % 10_u64;
+    let b = cvt.wrap::<u64, u8>(d);
+    let c = b +wrap 48_u8;
+    if digits.len < digits.cap {
+      place_back(window: &digits, value: c);
+    }
+    set n = n / 10_u64;
+    if n == 0_u64 {
+      break;
+    }
+  }
+  loop {
+    if digits.len == 0_u64 {
+      break;
+    }
+    let b = take_back(window: &digits);
+    push(out: out, byte: b);
+  }
+  push(out: out, byte: 9_u8);
+  return unit;
+}
+
+fn hex_digit(n: u8) -> b: u8 pure {
+  doc "Lowercase hexadecimal digit.";
+  if n < 10_u8 {
+    return n +wrap 48_u8;
+  }
+  return n +wrap 87_u8;
+}
+
+fn hex(out: &Box<Slots<u8>>, bytes: &[u8], start: u64, end: u64) -> result: unit reads(bytes), writes(out) {
+  doc "Binary-safe payload; a dash denotes empty or absent bytes.";
+  if start == end {
+    push(out: out, byte: 45_u8);
+  }
+  if start <= end {
+    for (i in start..end) {
+      if i < bytes^.len {
+        let byte = bytes^[i];
+        let hi = byte / 16_u8;
+        let lo = byte % 16_u8;
+        let h = hex_digit(n: hi);
+        let l = hex_digit(n: lo);
+        push(out: out, byte: h);
+        push(out: out, byte: l);
+      }
+    }
+  }
+  push(out: out, byte: 10_u8);
+  return unit;
+}
+
+fn read_source(factory: &HandleFactory, input: &InputStream, source: &Box<Slots<u8>>) -> success: Bool writes(factory), writes(input), writes(source) waits {
+  doc "Read stdin in small host operations, preserving all binary bytes.";
+  let scratch = array_filled::<u8, 4096>(value: 0_u8);
+  loop {
+    let deadline = None<std::time::Instant>();
+    let got = std::io::read_next(factory: factory, input: input, destination: &scratch[0_u64..4096_u64], start: 0_u64, end: 4096_u64, deadline: deadline);
+    match got {
+      Ok(value: count) => {
+        for (i in 0_u64..count) {
+          if i < 4096_u64 {
+            let b = scratch[i];
+            push(out: source, byte: b);
+          }
+        }
+      }
+      Err(error: stop) => {
+        match stop {
+          ReadEnd() => {
+            return True();
+          }
+          ReadFailed(error: problem) => {
+            return False();
+          }
+        }
+      }
+    }
+  }
+  return False();
+}
+
+const chunk_name: Array<u8, 6> = "=stdin";
+
+fn dump_value(heap: &Heap, value: Value, out: &Box<Slots<u8>>) -> result: unit reads(heap), writes(out) {
+  match value {
+    Nil() => {
+      push(out: out, byte: 48_u8);
+      push(out: out, byte: 10_u8);
+    }
+    False() => {
+      push(out: out, byte: 49_u8);
+      push(out: out, byte: 10_u8);
+    }
+    True() => {
+      push(out: out, byte: 50_u8);
+      push(out: out, byte: 10_u8);
+    }
+    Num(n: number) => {
+      push(out: out, byte: 51_u8);
+      push(out: out, byte: 9_u8);
+      let text = array_filled::<u8, 32>(value: 0_u8);
+      let count = halo::number::format_number(value: number, out: &text[0_u64..32_u64]);
+      for (i in 0_u64..count) {
+        if i < 32_u64 {
+          push(out: out, byte: text[i]);
+        }
+      }
+      push(out: out, byte: 10_u8);
+    }
+    Str(h: handle) => {
+      push(out: out, byte: 52_u8);
+      push(out: out, byte: 9_u8);
+      let i = cvt::<u32, u64>(handle);
+      if i < heap^.strings.inner.len {
+        let n = heap^.strings.inner[i].payload.bytes.inner.len;
+        hex(out: out, bytes: &heap^.strings.inner[i].payload.bytes.inner[0_u64..n], start: 0_u64, end: n);
+      }
+    }
+    Tab(h: handle) => {
+      push(out: out, byte: 88_u8);
+    }
+    Fun(h: handle) => {
+      push(out: out, byte: 88_u8);
+    }
+    Builtin(id: handle) => {
+      push(out: out, byte: 88_u8);
+    }
+  }
+  return unit;
+}
+
+fn dump_cell(cell: Cell, out: &Box<Slots<u8>>) -> result: unit writes(out) {
+  match cell {
+    Move(a: v_a, b: v_b) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 118_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      push(out: out, byte: 10_u8);
+    }
+    LoadK(a: v_a, k: v_k) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_k = cvt::<u8, u64>(v_k);
+      decimal(out: out, number: w_k);
+      push(out: out, byte: 10_u8);
+    }
+    LoadKx(a: v_a, k: v_k) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 120_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_k = cvt::<u32, u64>(v_k);
+      decimal(out: out, number: w_k);
+      push(out: out, byte: 10_u8);
+    }
+    LoadBool(a: v_a, b: v_b, skip: v_skip) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 66_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_skip = cvt::<u8, u64>(v_skip);
+      decimal(out: out, number: w_skip);
+      push(out: out, byte: 10_u8);
+    }
+    LoadNil(a: v_a, b: v_b) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 78_u8);
+      push(out: out, byte: 105_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      push(out: out, byte: 10_u8);
+    }
+    GetUpval(a: v_a, u: v_u) => {
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 85_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 118_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_u = cvt::<u8, u64>(v_u);
+      decimal(out: out, number: w_u);
+      push(out: out, byte: 10_u8);
+    }
+    SetUpval(a: v_a, u: v_u) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 85_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 118_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_u = cvt::<u8, u64>(v_u);
+      decimal(out: out, number: w_u);
+      push(out: out, byte: 10_u8);
+    }
+    GetGlobal(a: v_a, k: v_k) => {
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_k = cvt::<u8, u64>(v_k);
+      decimal(out: out, number: w_k);
+      push(out: out, byte: 10_u8);
+    }
+    SetGlobal(a: v_a, k: v_k) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_k = cvt::<u8, u64>(v_k);
+      decimal(out: out, number: w_k);
+      push(out: out, byte: 10_u8);
+    }
+    GetTableR(a: v_a, t: v_t, c: v_c) => {
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_t = cvt::<u8, u64>(v_t);
+      decimal(out: out, number: w_t);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    GetTableK(a: v_a, t: v_t, k: v_k) => {
+      push(out: out, byte: 71_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_t = cvt::<u8, u64>(v_t);
+      decimal(out: out, number: w_t);
+      let w_k = cvt::<u8, u64>(v_k);
+      decimal(out: out, number: w_k);
+      push(out: out, byte: 10_u8);
+    }
+    SetTableRR(t: v_t, key: v_key, val: v_val) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_t = cvt::<u8, u64>(v_t);
+      decimal(out: out, number: w_t);
+      let w_key = cvt::<u8, u64>(v_key);
+      decimal(out: out, number: w_key);
+      let w_val = cvt::<u8, u64>(v_val);
+      decimal(out: out, number: w_val);
+      push(out: out, byte: 10_u8);
+    }
+    SetTableRK(t: v_t, key: v_key, val: v_val) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_t = cvt::<u8, u64>(v_t);
+      decimal(out: out, number: w_t);
+      let w_key = cvt::<u8, u64>(v_key);
+      decimal(out: out, number: w_key);
+      let w_val = cvt::<u8, u64>(v_val);
+      decimal(out: out, number: w_val);
+      push(out: out, byte: 10_u8);
+    }
+    SetTableKR(t: v_t, key: v_key, val: v_val) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_t = cvt::<u8, u64>(v_t);
+      decimal(out: out, number: w_t);
+      let w_key = cvt::<u8, u64>(v_key);
+      decimal(out: out, number: w_key);
+      let w_val = cvt::<u8, u64>(v_val);
+      decimal(out: out, number: w_val);
+      push(out: out, byte: 10_u8);
+    }
+    SetTableKK(t: v_t, key: v_key, val: v_val) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_t = cvt::<u8, u64>(v_t);
+      decimal(out: out, number: w_t);
+      let w_key = cvt::<u8, u64>(v_key);
+      decimal(out: out, number: w_key);
+      let w_val = cvt::<u8, u64>(v_val);
+      decimal(out: out, number: w_val);
+      push(out: out, byte: 10_u8);
+    }
+    NewTable(a: v_a, asize: v_asize, hsize: v_hsize) => {
+      push(out: out, byte: 78_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 119_u8);
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_asize = cvt::<u8, u64>(v_asize);
+      decimal(out: out, number: w_asize);
+      let w_hsize = cvt::<u8, u64>(v_hsize);
+      decimal(out: out, number: w_hsize);
+      push(out: out, byte: 10_u8);
+    }
+    SelfR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 102_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    SelfK(a: v_a, b: v_b, k: v_k) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 102_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_k = cvt::<u8, u64>(v_k);
+      decimal(out: out, number: w_k);
+      push(out: out, byte: 10_u8);
+    }
+    AddRR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 65_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    AddRK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 65_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    AddKR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 65_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    AddKK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 65_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    SubRR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    SubRK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    SubKR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    SubKK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 98_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    MulRR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    MulRK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    MulKR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    MulKK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    DivRR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 68_u8);
+      push(out: out, byte: 105_u8);
+      push(out: out, byte: 118_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    DivRK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 68_u8);
+      push(out: out, byte: 105_u8);
+      push(out: out, byte: 118_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    DivKR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 68_u8);
+      push(out: out, byte: 105_u8);
+      push(out: out, byte: 118_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    DivKK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 68_u8);
+      push(out: out, byte: 105_u8);
+      push(out: out, byte: 118_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    ModRR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    ModRK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    ModKR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    ModKK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 77_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 100_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    PowRR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 80_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 119_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    PowRK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 80_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 119_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    PowKR(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 80_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 119_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    PowKK(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 80_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 119_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    Unm(a: v_a, b: v_b) => {
+      push(out: out, byte: 85_u8);
+      push(out: out, byte: 110_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      push(out: out, byte: 10_u8);
+    }
+    Not(a: v_a, b: v_b) => {
+      push(out: out, byte: 78_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      push(out: out, byte: 10_u8);
+    }
+    Len(a: v_a, b: v_b) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 110_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      push(out: out, byte: 10_u8);
+    }
+    Concat(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 67_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 110_u8);
+      push(out: out, byte: 99_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    Jmp(target: v_target) => {
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 9_u8);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    EqJmpRR(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 69_u8);
+      push(out: out, byte: 113_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    EqJmpRK(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 69_u8);
+      push(out: out, byte: 113_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    EqJmpKR(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 69_u8);
+      push(out: out, byte: 113_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    EqJmpKK(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 69_u8);
+      push(out: out, byte: 113_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    LtJmpRR(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    LtJmpRK(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    LtJmpKR(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    LtJmpKK(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    LeJmpRR(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    LeJmpRK(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    LeJmpKR(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    LeJmpKK(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 75_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    TestJmp(a: v_a, c: v_c, target: v_target) => {
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 115_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    TestSetJmp(a: v_a, b: v_b, c: v_c, target: v_target) => {
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 115_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 74_u8);
+      push(out: out, byte: 109_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    Call(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 67_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    TailCall(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 105_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 67_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    Return(a: v_a, b: v_b) => {
+      push(out: out, byte: 82_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 114_u8);
+      push(out: out, byte: 110_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      push(out: out, byte: 10_u8);
+    }
+    ForLoop(a: v_a, target: v_target) => {
+      push(out: out, byte: 70_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 114_u8);
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    ForPrep(a: v_a, target: v_target) => {
+      push(out: out, byte: 70_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 114_u8);
+      push(out: out, byte: 80_u8);
+      push(out: out, byte: 114_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    TForLoop(a: v_a, c: v_c, target: v_target) => {
+      push(out: out, byte: 84_u8);
+      push(out: out, byte: 70_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 114_u8);
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 112_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_c = cvt::<u8, u64>(v_c);
+      decimal(out: out, number: w_c);
+      let w_target = cvt::<u32, u64>(v_target);
+      decimal(out: out, number: w_target);
+      push(out: out, byte: 10_u8);
+    }
+    SetList(a: v_a, b: v_b, c: v_c) => {
+      push(out: out, byte: 83_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 76_u8);
+      push(out: out, byte: 105_u8);
+      push(out: out, byte: 115_u8);
+      push(out: out, byte: 116_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      let w_c = cvt::<u32, u64>(v_c);
+      decimal(out: out, number: w_c);
+      push(out: out, byte: 10_u8);
+    }
+    Close(a: v_a) => {
+      push(out: out, byte: 67_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 115_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      push(out: out, byte: 10_u8);
+    }
+    Closure(a: v_a, proto: v_proto) => {
+      push(out: out, byte: 67_u8);
+      push(out: out, byte: 108_u8);
+      push(out: out, byte: 111_u8);
+      push(out: out, byte: 115_u8);
+      push(out: out, byte: 117_u8);
+      push(out: out, byte: 114_u8);
+      push(out: out, byte: 101_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_proto = cvt::<u32, u64>(v_proto);
+      decimal(out: out, number: w_proto);
+      push(out: out, byte: 10_u8);
+    }
+    VarArg(a: v_a, b: v_b) => {
+      push(out: out, byte: 86_u8);
+      push(out: out, byte: 97_u8);
+      push(out: out, byte: 114_u8);
+      push(out: out, byte: 65_u8);
+      push(out: out, byte: 114_u8);
+      push(out: out, byte: 103_u8);
+      push(out: out, byte: 9_u8);
+      let w_a = cvt::<u8, u64>(v_a);
+      decimal(out: out, number: w_a);
+      let w_b = cvt::<u8, u64>(v_b);
+      decimal(out: out, number: w_b);
+      push(out: out, byte: 10_u8);
+    }
+  }
+  return unit;
+}
+
+fn dump_script(heap: &Heap, script: &Script, out: &Box<Slots<u8>>) -> result: unit reads(heap), reads(script), writes(out) {
+  for (i in 0_u64..script^.protos.inner.len) {
+    let p = script^.protos.inner[i];
+    push(out: out, byte: 80_u8);
+    push(out: out, byte: 9_u8);
+    decimal(out: out, number: i);
+    let w_start = cvt::<u32, u64>(p.start);
+    decimal(out: out, number: w_start);
+    let w_kbase = cvt::<u32, u64>(p.kbase);
+    decimal(out: out, number: w_kbase);
+    let w_nk = cvt::<u32, u64>(p.nk);
+    decimal(out: out, number: w_nk);
+    let w_numparams = cvt::<u8, u64>(p.numparams);
+    decimal(out: out, number: w_numparams);
+    let w_maxstack = cvt::<u8, u64>(p.maxstack);
+    decimal(out: out, number: w_maxstack);
+    let w_nups = cvt::<u8, u64>(p.nups);
+    decimal(out: out, number: w_nups);
+    let vararg = 0_u64;
+    if p.is_vararg {
+      set vararg = 1_u64;
+    }
+    decimal(out: out, number: vararg);
+    push(out: out, byte: 10_u8);
+  }
+  for (i in 0_u64..script^.consts.inner.len) {
+    push(out: out, byte: 75_u8);
+    push(out: out, byte: 9_u8);
+    decimal(out: out, number: i);
+    let v = script^.consts.inner[i];
+    dump_value(heap: heap, value: v, out: out);
+  }
+  for (i in 0_u64..script^.code.inner.len) {
+    push(out: out, byte: 67_u8);
+    push(out: out, byte: 9_u8);
+    decimal(out: out, number: i);
+    let line = 0_u64;
+    if i < script^.lineinfo.inner.len {
+      set line = cvt::<u32, u64>(script^.lineinfo.inner[i]);
+    }
+    decimal(out: out, number: line);
+    let cell = script^.code.inner[i];
+    dump_cell(cell: cell, out: out);
+  }
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: output, stderr: stderr, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd_read, write: cwd_write) = move cwd;
+  std::fs::close_directory(factory: &factory, directory: move cwd_read);
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
+  let source = box_slots_new::<u8>(capacity: 0_u64);
+  let read = read_source(factory: &factory, input: &input, source: &source);
+  if read {
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let out = box_slots_new::<u8>(capacity: 0_u64);
+  let heap = halo::heap::heap_new(limit: 18446744073709551615_u64);
+  let argc = std::text::args_count(args: &args);
+  if argc > 1_u64 {
+    set heap.bytes = 18446744073709551615_u64;
+    if argc > 2_u64 {
+      set heap.bytes = 18446744073709551590_u64;
+    }
+  }
+  let n = source.inner.len;
+  let compiled = halo::compile::compile(heap: &heap, chunk_name: &chunk_name[0_u64..6_u64], source: &source.inner[0_u64..n]);
+  match move compiled {
+    Ok(value: script) => {
+      dump_script(heap: &heap, script: &script, out: &out);
+    }
+    Err(error: problem) => {
+      push(out: &out, byte: 69_u8);
+      push(out: &out, byte: 9_u8);
+      decimal(out: &out, number: problem.line);
+      let len = problem.message.inner.len;
+      hex(out: &out, bytes: &problem.message.inner[0_u64..len], start: 0_u64, end: len);
+    }
+  }
+  let length = out.inner.len;
+  let position = 0_u64;
+  loop {
+    if position >= length {
+      break;
+    }
+    let deadline = None<std::time::Instant>();
+    let written = std::io::write_once(factory: &factory, output: &output, source: &out.inner[0_u64..length], start: position, end: length, deadline: deadline);
+    match written {
+      Ok(value: end) => {
+        if end == position {
+          return std::process::exit_status(code: 2_u8);
+        }
+        set position = end;
+      }
+      Err(error: problem) => {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

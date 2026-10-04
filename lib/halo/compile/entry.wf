@@ -1,0 +1,55 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+fn compile(heap: &Heap, chunk_name: &[u8], source: &[u8]) -> result_value: Result<Script, CompileError> reads(chunk_name), reads(source), writes(heap) {
+  doc "The public Lua 5.1 compile path: lex, parse and generate with PUC expression descriptors, verify, then assemble cells. Strings and names are interned in the supplied heap; compilation does not collect that heap.";
+  let input = box_slots_new::<u8>(capacity: 0_u64);
+  text(buf: &input, s: source);
+  let chunkname = box_slots_new::<u8>(capacity: 0_u64);
+  text(buf: &chunkname, s: chunk_name);
+  let decoded = box_slots_new::<u8>(capacity: 0_u64);
+  let lookbuf = box_slots_new::<u8>(capacity: 0_u64);
+  let output = box_slots_new::<u8>(capacity: 0_u64);
+  let funcs = box_slots_new::<Fs>(capacity: 0_u64);
+  let fs = new_fs(parent: 18446744073709551615_u64, line: 0_u64);
+  push_func(buf: &funcs, v: move fs);
+  let lex = pkg::lex::new();
+  let token = pkg::lex::Token(kind: 287_u16, start: 0_u64, end: 0_u64, line: 1_u64);
+  let look = token;
+  let nil = Value::Nil();
+  let arg_201 = False();
+  let arg_202 = False();
+  let p = Parser(source: move input, chunk: move chunkname, decoded: move decoded, lookbuf: move lookbuf, output: move output, funcs: move funcs, current: 0_u64, lex: lex, token: token, look: look, tokenvalue: nil, lookvalue: nil, haslook: arg_201, lastline: 1_u64, depth: 1_u64, failed: arg_202, errorline: 1_u64);
+  let arg_203 = True();
+  setvararg(p: &p, v: arg_203);
+  advance(p: &p, heap: heap);
+  chunk(p: &p, heap: heap);
+  if p.token.kind != 287_u16 {
+    expected(p: &p, kind: 287_u16);
+  }
+  let final = k_emit(p: &p, op: 30_u8, a: 0_i64, b: 1_i64, c: 0_i64);
+  checkbad(p: &p);
+  if p.failed {
+    let result = box_slots_new::<u8>(capacity: 0_u64);
+    let n = p.output.inner.len;
+    text(buf: &result, s: &p.output.inner[0_u64..n]);
+    let arg_204 = p.errorline;
+    let error = CompileError(line: arg_204, message: move result);
+    return Err<Script, CompileError>(error: move error);
+  }
+  let verified = verify_functions(p: &p);
+  if verified {
+  } else {
+    err_14(p: &p);
+    let result = box_slots_new::<u8>(capacity: 0_u64);
+    let n = p.output.inner.len;
+    text(buf: &result, s: &p.output.inner[0_u64..n]);
+    let arg_205 = p.errorline;
+    let error = CompileError(line: arg_205, message: move result);
+    return Err<Script, CompileError>(error: move error);
+  }
+  return assemble(p: &p);
+}

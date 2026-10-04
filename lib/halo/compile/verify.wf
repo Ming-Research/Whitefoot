@@ -1,0 +1,380 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+fn register_ok(r: i64, limit: i64) -> result_value: Bool pure {
+  if r < 0_i64 {
+    return False();
+  }
+  return r < limit;
+}
+
+fn rk_ok(r: i64, limit: i64, nk: i64) -> result_value: Bool pure {
+  if r >= 256_i64 {
+    let k = r - 256_i64;
+    if k >= 256_i64 {
+      return False();
+    }
+    return k < nk;
+  }
+  return register_ok(r: r, limit: limit);
+}
+
+fn instruction_ok(i: &Ins, stack: i64, nk: i64, nups: i64, ncode: i64) -> result_value: Bool reads(i) {
+  let op = i^.op;
+  let a = i^.a;
+  let b = i^.b;
+  let c = i^.c;
+  if op > 37_u8 {
+    return False();
+  }
+  if i^.line >= 2147483645_u64 {
+    return False();
+  }
+  if op == 22_u8 {
+    return register_ok(r: b, limit: ncode);
+  }
+  if op >= 23_u8 {
+    if op <= 25_u8 {
+      if a < 0_i64 {
+        return False();
+      }
+      if a > 1_i64 {
+        return False();
+      }
+      let bb = rk_ok(r: b, limit: stack, nk: nk);
+      let cc = rk_ok(r: c, limit: stack, nk: nk);
+      return band(bb, cc);
+    }
+  }
+  if register_ok(r: a, limit: stack) {
+  } else {
+    return False();
+  }
+  if op == 0_u8 {
+    return register_ok(r: b, limit: stack);
+  }
+  if op == 1_u8 {
+    return register_ok(r: b, limit: nk);
+  }
+  if op == 2_u8 {
+    if b < 0_i64 {
+      return False();
+    }
+    if b > 1_i64 {
+      return False();
+    }
+    if c < 0_i64 {
+      return False();
+    }
+    return c <= 1_i64;
+  }
+  if op == 3_u8 {
+    if b < a {
+      return False();
+    }
+    return register_ok(r: b, limit: stack);
+  }
+  if op == 4_u8 {
+    return register_ok(r: b, limit: nups);
+  }
+  if op == 8_u8 {
+    return register_ok(r: b, limit: nups);
+  }
+  if op == 5_u8 {
+    return register_ok(r: b, limit: nk);
+  }
+  if op == 7_u8 {
+    return register_ok(r: b, limit: nk);
+  }
+  if op == 6_u8 {
+    let bb = register_ok(r: b, limit: stack);
+    let cc = rk_ok(r: c, limit: stack, nk: nk);
+    return band(bb, cc);
+  }
+  if op == 9_u8 {
+    let bb = rk_ok(r: b, limit: stack, nk: nk);
+    let cc = rk_ok(r: c, limit: stack, nk: nk);
+    return band(bb, cc);
+  }
+  if op == 10_u8 {
+    if b < 0_i64 {
+      return False();
+    }
+    if b > 255_i64 {
+      return False();
+    }
+    if c < 0_i64 {
+      return False();
+    }
+    return c <= 255_i64;
+  }
+  if op == 11_u8 {
+    let arg_206 = a +wrap 1_i64;
+    let extra = register_ok(r: arg_206, limit: stack);
+    let bb = register_ok(r: b, limit: stack);
+    let cc = rk_ok(r: c, limit: stack, nk: nk);
+    let arg_207 = band(bb, cc);
+    return band(extra, arg_207);
+  }
+  if op >= 12_u8 {
+    if op <= 17_u8 {
+      let bb = rk_ok(r: b, limit: stack, nk: nk);
+      let cc = rk_ok(r: c, limit: stack, nk: nk);
+      return band(bb, cc);
+    }
+  }
+  if op >= 18_u8 {
+    if op <= 20_u8 {
+      return register_ok(r: b, limit: stack);
+    }
+  }
+  if op == 21_u8 {
+    if b > c {
+      return False();
+    }
+    let bb = register_ok(r: b, limit: stack);
+    let cc = register_ok(r: c, limit: stack);
+    return band(bb, cc);
+  }
+  if op == 26_u8 {
+    if c < 0_i64 {
+      return False();
+    }
+    return c <= 1_i64;
+  }
+  if op == 27_u8 {
+    if c < 0_i64 {
+      return False();
+    }
+    if c > 1_i64 {
+      return False();
+    }
+    return register_ok(r: b, limit: stack);
+  }
+  if op == 28_u8 {
+    if b < 0_i64 {
+      return False();
+    }
+    if c < 0_i64 {
+      return False();
+    }
+    if b > 0_i64 {
+      let arg_208 = a +wrap b;
+      let arg_209 = arg_208 -wrap 1_i64;
+      if register_ok(r: arg_209, limit: stack) {
+      } else {
+        return False();
+      }
+    }
+    if c > 1_i64 {
+      let arg_210 = a +wrap c;
+      let arg_211 = arg_210 -wrap 2_i64;
+      return register_ok(r: arg_211, limit: stack);
+    }
+    return True();
+  }
+  if op == 29_u8 {
+    if b < 0_i64 {
+      return False();
+    }
+    if c != 0_i64 {
+      return False();
+    }
+    if b > 0_i64 {
+      let arg_212 = a +wrap b;
+      let arg_213 = arg_212 -wrap 1_i64;
+      return register_ok(r: arg_213, limit: stack);
+    }
+    return True();
+  }
+  if op == 30_u8 {
+    if b < 0_i64 {
+      return False();
+    }
+    if b > 1_i64 {
+      let arg_214 = a +wrap b;
+      let arg_215 = arg_214 -wrap 2_i64;
+      return register_ok(r: arg_215, limit: stack);
+    }
+    return True();
+  }
+  if op == 31_u8 {
+    let arg_216 = a +wrap 3_i64;
+    let aa = register_ok(r: arg_216, limit: stack);
+    let bb = register_ok(r: b, limit: ncode);
+    return band(aa, bb);
+  }
+  if op == 32_u8 {
+    let arg_217 = a +wrap 3_i64;
+    let aa = register_ok(r: arg_217, limit: stack);
+    let bb = register_ok(r: b, limit: ncode);
+    return band(aa, bb);
+  }
+  if op == 33_u8 {
+    if c <= 0_i64 {
+      return False();
+    }
+    let arg_218 = a +wrap 2_i64;
+    let arg_219 = arg_218 +wrap c;
+    return register_ok(r: arg_219, limit: stack);
+  }
+  if op == 34_u8 {
+    if b < 0_i64 {
+      return False();
+    }
+    if c < 0_i64 {
+      return False();
+    }
+    let arg_220 = a +wrap b;
+    return register_ok(r: arg_220, limit: stack);
+  }
+  if op == 35_u8 {
+    return True();
+  }
+  if op == 36_u8 {
+    return b >= 0_i64;
+  }
+  if op == 37_u8 {
+    if b < 0_i64 {
+      return False();
+    }
+    if b > 1_i64 {
+      let arg_221 = a +wrap b;
+      let arg_222 = arg_221 -wrap 2_i64;
+      return register_ok(r: arg_222, limit: stack);
+    }
+    return True();
+  }
+  return False();
+}
+
+fn verify_functions(p: &Parser) -> result_value: Bool reads(p) {
+  doc "One pre-lowering verification of register, constant, branch, child-prototype and capture domains, and each final Return. It also checks script-wide index representability before narrowing.";
+  let ncells = 0_u64;
+  let nkall = 0_u64;
+  for (id in 0_u64..p^.funcs.inner.len) {
+    let s = &p^.funcs.inner[id];
+    let n = s^.code.inner.len;
+    let nk = s^.ks.inner.len;
+    let ups = s^.ups.inner.len;
+    if n == 0_u64 {
+      return False();
+    }
+    if n > 2147483647_u64 {
+      return False();
+    }
+    if nk > 262143_u64 {
+      return False();
+    }
+    if ups > 60_u64 {
+      return False();
+    }
+    if s^.maxstack < 2_i64 {
+      return False();
+    }
+    if s^.maxstack >= 250_i64 {
+      return False();
+    }
+    if s^.numparams < 0_i64 {
+      return False();
+    }
+    if s^.numparams > s^.maxstack {
+      return False();
+    }
+    let last = n - 1_u64;
+    if s^.code.inner[last].op != 30_u8 {
+      return False();
+    }
+    let captured = 0_u64;
+    let data_pending = False();
+    for (j in 0_u64..n) {
+      let i = s^.code.inner[j];
+      if data_pending {
+        if i.op != 38_u8 {
+          return False();
+        }
+        if i.a != 0_i64 {
+          return False();
+        }
+        if i.b != 0_i64 {
+          return False();
+        }
+        if i.c <= 511_i64 {
+          return False();
+        }
+        if i.c > 4294967295_i64 {
+          return False();
+        }
+        set data_pending = False();
+      } else {
+        let arg_223 = s^.maxstack;
+        let arg_224 = cvt.wrap::<u64, i64>(nk);
+        let arg_225 = cvt.wrap::<u64, i64>(ups);
+        let arg_226 = cvt::<u64, i64>(n);
+        let ok = instruction_ok(i: &i, stack: arg_223, nk: arg_224, nups: arg_225, ncode: arg_226);
+        if ok {
+        } else {
+          return False();
+        }
+        if captured > 0_u64 {
+          if i.a != 0_i64 {
+            return False();
+          }
+          if i.op == 0_u8 {
+          } else if i.op == 4_u8 {
+          } else {
+            return False();
+          }
+          set captured = captured - 1_u64;
+        } else if i.op == 36_u8 {
+          let arg_227 = i.b;
+          let child = cvt.wrap::<i64, u64>(arg_227);
+          if child <= id {
+            return False();
+          }
+          if child >= p^.funcs.inner.len {
+            return False();
+          }
+          if p^.funcs.inner[child].parent != id {
+            return False();
+          }
+          set captured = p^.funcs.inner[child].ups.inner.len;
+        }
+        let arg_228 = i.op;
+        let pair = fused(op: arg_228);
+        if pair {
+          let next = j +wrap 1_u64;
+          if next >= n {
+            return False();
+          }
+          if s^.code.inner[next].op != 22_u8 {
+            return False();
+          }
+        }
+        if i.op == 34_u8 {
+          if i.c == 0_i64 {
+            set data_pending = True();
+          }
+        }
+      }
+    }
+    if data_pending {
+      return False();
+    }
+    if captured != 0_u64 {
+      return False();
+    }
+    set ncells = ncells +sat n;
+    set nkall = nkall +sat nk;
+  }
+  if ncells >= 4294967295_u64 {
+    return False();
+  }
+  if nkall > 4294967039_u64 {
+    return False();
+  }
+  return True();
+}

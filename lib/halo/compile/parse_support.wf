@@ -1,0 +1,861 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+alias Proto = pkg::value::Proto;
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
+
+const msg_0: Array<u8, 17> = "unexpected symbol";
+
+const msg_1: Array<u8, 42> = "cannot use '...' outside a vararg function";
+
+const msg_2: Array<u8, 27> = "function arguments expected";
+
+const msg_3: Array<u8, 48> = "ambiguous syntax (function call x new statement)";
+
+const msg_4: Array<u8, 12> = "syntax error";
+
+const msg_5: Array<u8, 16> = "no loop to break";
+
+const msg_6: Array<u8, 24> = "<name> or '...' expected";
+
+const msg_7: Array<u8, 20> = "'=' or 'in' expected";
+
+const msg_8: Array<u8, 32> = "chunk has too many syntax levels";
+
+const msg_9: Array<u8, 26> = "control structure too long";
+
+const msg_10: Array<u8, 34> = "function or expression too complex";
+
+const msg_11: Array<u8, 23> = "constant table overflow";
+
+const msg_12: Array<u8, 24> = "too many local variables";
+
+const msg_13: Array<u8, 17> = "not enough memory";
+
+const msg_14: Array<u8, 42> = "compiler instruction cannot be represented";
+
+const msg_15: Array<u8, 59> = "compiler cannot represent a global constant index above 255";
+
+const tok_0: Array<u8, 3> = "and";
+
+const tok_1: Array<u8, 5> = "break";
+
+const tok_2: Array<u8, 2> = "do";
+
+const tok_3: Array<u8, 4> = "else";
+
+const tok_4: Array<u8, 6> = "elseif";
+
+const tok_5: Array<u8, 3> = "end";
+
+const tok_6: Array<u8, 5> = "false";
+
+const tok_7: Array<u8, 3> = "for";
+
+const tok_8: Array<u8, 8> = "function";
+
+const tok_9: Array<u8, 2> = "if";
+
+const tok_10: Array<u8, 2> = "in";
+
+const tok_11: Array<u8, 5> = "local";
+
+const tok_12: Array<u8, 3> = "nil";
+
+const tok_13: Array<u8, 3> = "not";
+
+const tok_14: Array<u8, 2> = "or";
+
+const tok_15: Array<u8, 6> = "repeat";
+
+const tok_16: Array<u8, 6> = "return";
+
+const tok_17: Array<u8, 4> = "then";
+
+const tok_18: Array<u8, 4> = "true";
+
+const tok_19: Array<u8, 5> = "until";
+
+const tok_20: Array<u8, 5> = "while";
+
+const tok_21: Array<u8, 2> = "..";
+
+const tok_22: Array<u8, 3> = "...";
+
+const tok_23: Array<u8, 2> = "==";
+
+const tok_24: Array<u8, 2> = ">=";
+
+const tok_25: Array<u8, 2> = "<=";
+
+const tok_26: Array<u8, 2> = "~=";
+
+const tok_27: Array<u8, 8> = "<number>";
+
+const tok_28: Array<u8, 6> = "<name>";
+
+const tok_29: Array<u8, 8> = "<string>";
+
+const tok_30: Array<u8, 5> = "<eof>";
+
+const str_expected: Array<u8, 9> = " expected";
+
+const str_close: Array<u8, 20> = " expected (to close ";
+
+const str_atline: Array<u8, 9> = " at line ";
+
+const str_mainlimit: Array<u8, 28> = "main function has more than ";
+
+const str_funlimit: Array<u8, 17> = "function at line ";
+
+const str_more: Array<u8, 15> = " has more than ";
+
+const str_locals: Array<u8, 15> = "local variables";
+
+const str_upvalues: Array<u8, 8> = "upvalues";
+
+const str_assignvars: Array<u8, 23> = "variables in assignment";
+
+fn clear_bytes(b: &Box<Slots<u8>>) -> result_value: unit writes(b) {
+  loop {
+    if b^.inner.len == 0_u64 {
+      break;
+    }
+    let v = take_back(window: &b^.inner);
+  }
+  return unit;
+}
+
+fn syntax(p: &Parser, msg: &[u8], near: Bool) -> result_value: unit reads(msg), writes(p) {
+  if p^.failed {
+    return unit;
+  }
+  set p^.failed = True();
+  set p^.errorline = p^.lex.line;
+  let m = slots_new::<u8, 40>();
+  let arg_81 = p^.errorline;
+  let err = pkg::lex::Error(message: move m, line: arg_81, near_kind: 0_u16, start: 0_u64, end: 0_u64);
+  let chunklen = p^.chunk.inner.len;
+  pkg::lex::format_error(chunk: &p^.chunk.inner[0_u64..chunklen], error: &err, decoded: &p^.decoded, output: &p^.output);
+  let prefix = p^.output.inner.len;
+  text(buf: &p^.output, s: msg);
+  if near {
+    let kind = p^.token.kind;
+    if kind == 285_u16 {
+      clear_bytes(b: &p^.decoded);
+      let start = p^.token.start;
+      let end = p^.token.end;
+      if start <= end {
+        if end <= p^.source.inner.len {
+          text(buf: &p^.decoded, s: &p^.source.inner[start..end]);
+        }
+      }
+    } else if kind == 284_u16 {
+      clear_bytes(b: &p^.decoded);
+      let start = p^.token.start;
+      let end = p^.token.end;
+      if start <= end {
+        if end <= p^.source.inner.len {
+          text(buf: &p^.decoded, s: &p^.source.inner[start..end]);
+        }
+      }
+    }
+    let m2 = slots_new::<u8, 40>();
+    let arg_82 = p^.errorline;
+    let arg_83 = p^.token.start;
+    let arg_84 = p^.token.end;
+    let err2 = pkg::lex::Error(message: move m2, line: arg_82, near_kind: kind, start: arg_83, end: arg_84);
+    let suffix = box_slots_new::<u8>(capacity: 0_u64);
+    let cn = p^.chunk.inner.len;
+    pkg::lex::format_error(chunk: &p^.chunk.inner[0_u64..cn], error: &err2, decoded: &p^.decoded, output: &suffix);
+    if prefix <= suffix.inner.len {
+      let end = suffix.inner.len;
+      text(buf: &p^.output, s: &suffix.inner[prefix..end]);
+    }
+  }
+  return unit;
+}
+
+fn err_0(p: &Parser) -> result_value: unit writes(p) {
+  let arg_85 = True();
+  syntax(p: p, msg: &msg_0[0_u64..17_u64], near: arg_85);
+  return unit;
+}
+
+fn err_1(p: &Parser) -> result_value: unit writes(p) {
+  let arg_86 = True();
+  syntax(p: p, msg: &msg_1[0_u64..42_u64], near: arg_86);
+  return unit;
+}
+
+fn err_2(p: &Parser) -> result_value: unit writes(p) {
+  let arg_87 = True();
+  syntax(p: p, msg: &msg_2[0_u64..27_u64], near: arg_87);
+  return unit;
+}
+
+fn err_3(p: &Parser) -> result_value: unit writes(p) {
+  let arg_88 = True();
+  syntax(p: p, msg: &msg_3[0_u64..48_u64], near: arg_88);
+  return unit;
+}
+
+fn err_4(p: &Parser) -> result_value: unit writes(p) {
+  let arg_89 = True();
+  syntax(p: p, msg: &msg_4[0_u64..12_u64], near: arg_89);
+  return unit;
+}
+
+fn err_5(p: &Parser) -> result_value: unit writes(p) {
+  let arg_90 = True();
+  syntax(p: p, msg: &msg_5[0_u64..16_u64], near: arg_90);
+  return unit;
+}
+
+fn err_6(p: &Parser) -> result_value: unit writes(p) {
+  let arg_91 = True();
+  syntax(p: p, msg: &msg_6[0_u64..24_u64], near: arg_91);
+  return unit;
+}
+
+fn err_7(p: &Parser) -> result_value: unit writes(p) {
+  let arg_92 = True();
+  syntax(p: p, msg: &msg_7[0_u64..20_u64], near: arg_92);
+  return unit;
+}
+
+fn err_8(p: &Parser) -> result_value: unit writes(p) {
+  let arg_93 = False();
+  syntax(p: p, msg: &msg_8[0_u64..32_u64], near: arg_93);
+  return unit;
+}
+
+fn err_9(p: &Parser) -> result_value: unit writes(p) {
+  let arg_94 = True();
+  syntax(p: p, msg: &msg_9[0_u64..26_u64], near: arg_94);
+  return unit;
+}
+
+fn err_10(p: &Parser) -> result_value: unit writes(p) {
+  let arg_95 = True();
+  syntax(p: p, msg: &msg_10[0_u64..34_u64], near: arg_95);
+  return unit;
+}
+
+fn err_13(p: &Parser) -> result_value: unit writes(p) {
+  raw_error(p: p, kind: 13_u8);
+  return unit;
+}
+
+fn err_14(p: &Parser) -> result_value: unit writes(p) {
+  let arg_99 = True();
+  syntax(p: p, msg: &msg_14[0_u64..42_u64], near: arg_99);
+  return unit;
+}
+
+fn raw_error(p: &Parser, kind: u8) -> result_value: unit writes(p) {
+  if p^.failed {
+    return unit;
+  }
+  set p^.failed = True();
+  set p^.errorline = p^.lex.line;
+  clear_bytes(b: &p^.output);
+  if kind == 13_u8 {
+    text(buf: &p^.output, s: &msg_13[0_u64..17_u64]);
+  } else if kind == 12_u8 {
+    text(buf: &p^.output, s: &msg_12[0_u64..24_u64]);
+  } else {
+    text(buf: &p^.output, s: &msg_11[0_u64..23_u64]);
+  }
+  return unit;
+}
+
+fn checkbad(p: &Parser) -> result_value: unit writes(p) {
+  let id = p^.current;
+  let bad = 0_u8;
+  if id < p^.funcs.inner.len {
+    set bad = p^.funcs.inner[id].bad;
+  }
+  if bad == 1_u8 {
+    err_9(p: p);
+  }
+  if bad == 2_u8 {
+    err_10(p: p);
+  }
+  if bad == 3_u8 {
+    raw_error(p: p, kind: 11_u8);
+  }
+  return unit;
+}
+
+fn token_text(kind: u16, out: &Box<Slots<u8>>) -> result_value: unit writes(out) {
+  if kind < 257_u16 {
+    let arg_101 = cvt.wrap::<u16, u8>(kind);
+    push_byte(buf: out, v: arg_101);
+    return unit;
+  }
+  if kind == 257_u16 {
+    text(buf: out, s: &tok_0[0_u64..3_u64]);
+    return unit;
+  }
+  if kind == 258_u16 {
+    text(buf: out, s: &tok_1[0_u64..5_u64]);
+    return unit;
+  }
+  if kind == 259_u16 {
+    text(buf: out, s: &tok_2[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 260_u16 {
+    text(buf: out, s: &tok_3[0_u64..4_u64]);
+    return unit;
+  }
+  if kind == 261_u16 {
+    text(buf: out, s: &tok_4[0_u64..6_u64]);
+    return unit;
+  }
+  if kind == 262_u16 {
+    text(buf: out, s: &tok_5[0_u64..3_u64]);
+    return unit;
+  }
+  if kind == 263_u16 {
+    text(buf: out, s: &tok_6[0_u64..5_u64]);
+    return unit;
+  }
+  if kind == 264_u16 {
+    text(buf: out, s: &tok_7[0_u64..3_u64]);
+    return unit;
+  }
+  if kind == 265_u16 {
+    text(buf: out, s: &tok_8[0_u64..8_u64]);
+    return unit;
+  }
+  if kind == 266_u16 {
+    text(buf: out, s: &tok_9[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 267_u16 {
+    text(buf: out, s: &tok_10[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 268_u16 {
+    text(buf: out, s: &tok_11[0_u64..5_u64]);
+    return unit;
+  }
+  if kind == 269_u16 {
+    text(buf: out, s: &tok_12[0_u64..3_u64]);
+    return unit;
+  }
+  if kind == 270_u16 {
+    text(buf: out, s: &tok_13[0_u64..3_u64]);
+    return unit;
+  }
+  if kind == 271_u16 {
+    text(buf: out, s: &tok_14[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 272_u16 {
+    text(buf: out, s: &tok_15[0_u64..6_u64]);
+    return unit;
+  }
+  if kind == 273_u16 {
+    text(buf: out, s: &tok_16[0_u64..6_u64]);
+    return unit;
+  }
+  if kind == 274_u16 {
+    text(buf: out, s: &tok_17[0_u64..4_u64]);
+    return unit;
+  }
+  if kind == 275_u16 {
+    text(buf: out, s: &tok_18[0_u64..4_u64]);
+    return unit;
+  }
+  if kind == 276_u16 {
+    text(buf: out, s: &tok_19[0_u64..5_u64]);
+    return unit;
+  }
+  if kind == 277_u16 {
+    text(buf: out, s: &tok_20[0_u64..5_u64]);
+    return unit;
+  }
+  if kind == 278_u16 {
+    text(buf: out, s: &tok_21[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 279_u16 {
+    text(buf: out, s: &tok_22[0_u64..3_u64]);
+    return unit;
+  }
+  if kind == 280_u16 {
+    text(buf: out, s: &tok_23[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 281_u16 {
+    text(buf: out, s: &tok_24[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 282_u16 {
+    text(buf: out, s: &tok_25[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 283_u16 {
+    text(buf: out, s: &tok_26[0_u64..2_u64]);
+    return unit;
+  }
+  if kind == 284_u16 {
+    text(buf: out, s: &tok_27[0_u64..8_u64]);
+    return unit;
+  }
+  if kind == 285_u16 {
+    text(buf: out, s: &tok_28[0_u64..6_u64]);
+    return unit;
+  }
+  if kind == 286_u16 {
+    text(buf: out, s: &tok_29[0_u64..8_u64]);
+    return unit;
+  }
+  if kind == 287_u16 {
+    text(buf: out, s: &tok_30[0_u64..5_u64]);
+    return unit;
+  }
+  return unit;
+}
+
+fn expected(p: &Parser, kind: u16) -> result_value: unit writes(p) {
+  let out = box_slots_new::<u8>(capacity: 0_u64);
+  push_byte(buf: &out, v: 39_u8);
+  token_text(kind: kind, out: &out);
+  push_byte(buf: &out, v: 39_u8);
+  text(buf: &out, s: &str_expected[0_u64..9_u64]);
+  let n = out.inner.len;
+  let arg_102 = True();
+  syntax(p: p, msg: &out.inner[0_u64..n], near: arg_102);
+  return unit;
+}
+
+fn match_token(p: &Parser, heap: &Heap, what: u16, who: u16, where: u64) -> result_value: unit writes(p), writes(heap) {
+  if testnext(p: p, heap: heap, kind: what) {
+    return unit;
+  }
+  if where == p^.lex.line {
+    expected(p: p, kind: what);
+    return unit;
+  }
+  let out = box_slots_new::<u8>(capacity: 0_u64);
+  push_byte(buf: &out, v: 39_u8);
+  token_text(kind: what, out: &out);
+  push_byte(buf: &out, v: 39_u8);
+  text(buf: &out, s: &str_close[0_u64..20_u64]);
+  push_byte(buf: &out, v: 39_u8);
+  token_text(kind: who, out: &out);
+  push_byte(buf: &out, v: 39_u8);
+  text(buf: &out, s: &str_atline[0_u64..9_u64]);
+  decimal(buf: &out, n: where);
+  push_byte(buf: &out, v: 41_u8);
+  let n = out.inner.len;
+  let arg_103 = True();
+  syntax(p: p, msg: &out.inner[0_u64..n], near: arg_103);
+  return unit;
+}
+
+fn limiterror(p: &Parser, limit: u64, what: u8) -> result_value: unit writes(p) {
+  let out = box_slots_new::<u8>(capacity: 0_u64);
+  let l = line(p: p);
+  if l == 0_u64 {
+    text(buf: &out, s: &str_mainlimit[0_u64..28_u64]);
+  } else {
+    text(buf: &out, s: &str_funlimit[0_u64..17_u64]);
+    decimal(buf: &out, n: l);
+    text(buf: &out, s: &str_more[0_u64..15_u64]);
+  }
+  decimal(buf: &out, n: limit);
+  push_byte(buf: &out, v: 32_u8);
+  if what == 0_u8 {
+    text(buf: &out, s: &str_locals[0_u64..15_u64]);
+  } else if what == 1_u8 {
+    text(buf: &out, s: &str_upvalues[0_u64..8_u64]);
+  } else {
+    text(buf: &out, s: &str_assignvars[0_u64..23_u64]);
+  }
+  let n = out.inner.len;
+  let arg_104 = False();
+  syntax(p: p, msg: &out.inner[0_u64..n], near: arg_104);
+  return unit;
+}
+
+fn check_intern(p: &Parser, token: &pkg::lex::Token, v: Value) -> result_value: unit reads(token), writes(p) {
+  if token^.kind == 285_u16 {
+    let t = tag_value(v: v);
+    if t.tag != 4_u8 {
+      err_13(p: p);
+    }
+  } else if token^.kind == 286_u16 {
+    let t = tag_value(v: v);
+    if t.tag != 4_u8 {
+      err_13(p: p);
+    }
+  }
+  return unit;
+}
+
+fn token_value(p: &Parser, heap: &Heap, token: &pkg::lex::Token, decoded: &Box<Slots<u8>>) -> result_value: Value reads(p), reads(token), reads(decoded), writes(heap) {
+  if token^.kind == 286_u16 {
+    let n = decoded^.inner.len;
+    return pkg::heap::intern(heap: heap, bytes: &decoded^.inner[0_u64..n]);
+  }
+  if token^.kind == 285_u16 {
+    let start = token^.start;
+    let end = token^.end;
+    if start <= end {
+      if end <= p^.source.inner.len {
+        return pkg::heap::intern(heap: heap, bytes: &p^.source.inner[start..end]);
+      }
+    }
+  }
+  if token^.kind == 284_u16 {
+    let start = token^.start;
+    let end = token^.end;
+    if start <= end {
+      if end <= p^.source.inner.len {
+        let number = pkg::number::str2number(bytes: &p^.source.inner[start..end]);
+        match number {
+          Some(value: x) => {
+            return Value::Num(n: x);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+  }
+  return Value::Nil();
+}
+
+fn advance(p: &Parser, heap: &Heap) -> result_value: unit writes(p), writes(heap) {
+  checkbad(p: p);
+  if p^.failed {
+    return unit;
+  }
+  set p^.lastline = p^.lex.line;
+  if p^.haslook {
+    set p^.token = p^.look;
+    set p^.tokenvalue = p^.lookvalue;
+    set p^.haslook = False();
+    clear_bytes(b: &p^.decoded);
+    let n = p^.lookbuf.inner.len;
+    text(buf: &p^.decoded, s: &p^.lookbuf.inner[0_u64..n]);
+    return unit;
+  }
+  let n = p^.source.inner.len;
+  let r = pkg::lex::next(source: &p^.source.inner[0_u64..n], state: &p^.lex, decoded: &p^.decoded);
+  match move r {
+    Ok(value: t) => {
+      set p^.token = t;
+      let v = token_value(p: p, heap: heap, token: &t, decoded: &p^.decoded);
+      set p^.tokenvalue = v;
+      check_intern(p: p, token: &t, v: v);
+    }
+    Err(error: e) => {
+      set p^.failed = True();
+      set p^.errorline = e.line;
+      let cn = p^.chunk.inner.len;
+      pkg::lex::format_error(chunk: &p^.chunk.inner[0_u64..cn], error: &e, decoded: &p^.decoded, output: &p^.output);
+    }
+  }
+  return unit;
+}
+
+fn lookahead(p: &Parser, heap: &Heap) -> result_value: u16 writes(p), writes(heap) {
+  if p^.failed {
+    return 287_u16;
+  }
+  if p^.haslook {
+    return p^.look.kind;
+  }
+  let n = p^.source.inner.len;
+  let r = pkg::lex::next(source: &p^.source.inner[0_u64..n], state: &p^.lex, decoded: &p^.lookbuf);
+  match move r {
+    Ok(value: t) => {
+      set p^.look = t;
+      let v = token_value(p: p, heap: heap, token: &t, decoded: &p^.lookbuf);
+      set p^.lookvalue = v;
+      check_intern(p: p, token: &t, v: v);
+      set p^.haslook = True();
+      return t.kind;
+    }
+    Err(error: e) => {
+      set p^.failed = True();
+      set p^.errorline = e.line;
+      let cn = p^.chunk.inner.len;
+      pkg::lex::format_error(chunk: &p^.chunk.inner[0_u64..cn], error: &e, decoded: &p^.lookbuf, output: &p^.output);
+    }
+  }
+  return 287_u16;
+}
+
+fn testnext(p: &Parser, heap: &Heap, kind: u16) -> result_value: Bool writes(p), writes(heap) {
+  if p^.failed {
+    return False();
+  }
+  if p^.token.kind == kind {
+    advance(p: p, heap: heap);
+    return True();
+  }
+  return False();
+}
+
+fn checknext(p: &Parser, heap: &Heap, kind: u16) -> result_value: unit writes(p), writes(heap) {
+  if p^.failed {
+    return unit;
+  }
+  if p^.token.kind != kind {
+    expected(p: p, kind: kind);
+  } else {
+    advance(p: p, heap: heap);
+  }
+  return unit;
+}
+
+fn name(p: &Parser, heap: &Heap) -> result_value: u32 writes(p), writes(heap) {
+  if p^.token.kind != 285_u16 {
+    expected(p: p, kind: 285_u16);
+    return 4294967295_u32;
+  }
+  let arg_105 = p^.tokenvalue;
+  let v = tag_value(v: arg_105);
+  advance(p: p, heap: heap);
+  return v.handle;
+}
+
+fn stringexp(p: &Parser, v: Value) -> result_value: Exp writes(p) {
+  let k = k_addk(p: p, v: v);
+  return empty_exp(k: 4_u8, info: k);
+}
+
+fn nameexp(p: &Parser, heap: &Heap) -> result_value: Exp writes(p), writes(heap) {
+  let h = name(p: p, heap: heap);
+  let v = Value::Str(h: h);
+  return stringexp(p: p, v: v);
+}
+
+fn newlocal(p: &Parser, h: u32, n: i64) -> result_value: unit writes(p) {
+  let active = nactvar(p: p);
+  let pos = active +wrap n;
+  if pos >= 200_i64 {
+    limiterror(p: p, limit: 200_u64, what: 0_u8);
+    return unit;
+  }
+  let owner = p^.current;
+  if owner < p^.funcs.inner.len {
+    let count = p^.funcs.inner[owner].nlocals;
+    if count >= 32767_u64 {
+      raw_error(p: p, kind: 12_u8);
+      return unit;
+    }
+    set p^.funcs.inner[owner].nlocals = count + 1_u64;
+  }
+  if pos < 0_i64 {
+    return unit;
+  }
+  let i = cvt::<i64, u64>(pos);
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    let count = p^.funcs.inner[id].locals.inner.len;
+    if count == i {
+      push_index(buf: &p^.funcs.inner[id].locals, v: h);
+    } else if i < count {
+      set p^.funcs.inner[id].locals.inner[i] = h;
+    }
+  }
+  return unit;
+}
+
+fn literal_local(p: &Parser, heap: &Heap, word: &[u8], n: i64) -> result_value: unit reads(word), writes(p), writes(heap) {
+  let v = pkg::heap::intern(heap: heap, bytes: word);
+  let t = tag_value(v: v);
+  if t.tag != 4_u8 {
+    err_13(p: p);
+    return unit;
+  }
+  let arg_106 = t.handle;
+  newlocal(p: p, h: arg_106, n: n);
+  return unit;
+}
+
+fn adjustlocals(p: &Parser, n: i64) -> result_value: unit writes(p) {
+  let old = nactvar(p: p);
+  let arg_107 = old +wrap n;
+  set_nactvar(p: p, n: arg_107);
+  return unit;
+}
+
+fn enterblock(p: &Parser, breakable: Bool) -> result_value: unit writes(p) {
+  let n = nactvar(p: p);
+  let arg_108 = False();
+  let b = Block(breaklist: -1_i64, nactvar: n, upval: arg_108, breakable: breakable);
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    push_block(buf: &p^.funcs.inner[id].blocks, v: b);
+  }
+  return unit;
+}
+
+fn leaveblock(p: &Parser) -> result_value: unit writes(p) {
+  let arg_109 = False();
+  let arg_110 = False();
+  let b = Block(breaklist: -1_i64, nactvar: 0_i64, upval: arg_109, breakable: arg_110);
+  let id = p^.current;
+  if id < p^.funcs.inner.len {
+    if p^.funcs.inner[id].blocks.inner.len > 0_u64 {
+      set b = take_back(window: &p^.funcs.inner[id].blocks.inner);
+    }
+  }
+  let arg_111 = b.nactvar;
+  set_nactvar(p: p, n: arg_111);
+  if b.upval {
+    let arg_112 = b.nactvar;
+    let i = k_emit(p: p, op: 35_u8, a: arg_112, b: 0_i64, c: 0_i64);
+  }
+  let arg_113 = b.nactvar;
+  set_freereg(p: p, n: arg_113);
+  let arg_114 = b.breaklist;
+  k_patchhere(p: p, list: arg_114);
+  return unit;
+}
+
+fn mark_upvalue(p: &Parser, id: u64, level: i64) -> result_value: unit writes(p) {
+  if id < p^.funcs.inner.len {
+    let n = p^.funcs.inner[id].blocks.inner.len;
+    loop {
+      if n == 0_u64 {
+        break;
+      }
+      set n = n - 1_u64;
+      if n < p^.funcs.inner[id].blocks.inner.len {
+        if p^.funcs.inner[id].blocks.inner[n].nactvar <= level {
+          set p^.funcs.inner[id].blocks.inner[n].upval = True();
+          break;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn resolve(p: &Parser, id: u64, h: u32, base: Bool) -> result_value: Exp writes(p) {
+  if id >= p^.funcs.inner.len {
+    return empty_exp(k: 8_u8, info: 255_i64);
+  }
+  let n = p^.funcs.inner[id].nactvar;
+  let parent = p^.funcs.inner[id].parent;
+  loop {
+    if n <= 0_i64 {
+      break;
+    }
+    set n = n -wrap 1_i64;
+    let i = cvt.wrap::<i64, u64>(n);
+    if id < p^.funcs.inner.len {
+      if i < p^.funcs.inner[id].locals.inner.len {
+        if p^.funcs.inner[id].locals.inner[i] == h {
+          if base {
+          } else {
+            mark_upvalue(p: p, id: id, level: n);
+          }
+          return empty_exp(k: 6_u8, info: n);
+        }
+      }
+    }
+  }
+  let arg_115 = False();
+  let v = resolve(p: p, id: parent, h: h, base: arg_115);
+  if v.k == 8_u8 {
+    return v;
+  }
+  if id < p^.funcs.inner.len {
+    for (i in 0_u64..p^.funcs.inner[id].ups.inner.len) {
+      let u = p^.funcs.inner[id].ups.inner[i];
+      if u.k == v.k {
+        if u.info == v.info {
+          let arg_116 = cvt.wrap::<u64, i64>(i);
+          return empty_exp(k: 7_u8, info: arg_116);
+        }
+      }
+    }
+    let nup = p^.funcs.inner[id].ups.inner.len;
+    if nup >= 60_u64 {
+      let current = p^.current;
+      set p^.current = id;
+      limiterror(p: p, limit: 60_u64, what: 1_u8);
+      set p^.current = current;
+      return empty_exp(k: 7_u8, info: 0_i64);
+    }
+    let arg_117 = v.k;
+    let arg_118 = v.info;
+    let u = Up(k: arg_117, info: arg_118);
+    push_up(buf: &p^.funcs.inner[id].ups, v: u);
+    let arg_119 = cvt.wrap::<u64, i64>(nup);
+    return empty_exp(k: 7_u8, info: arg_119);
+  }
+  return empty_exp(k: 8_u8, info: 255_i64);
+}
+
+fn singlevar(p: &Parser, heap: &Heap) -> result_value: Exp writes(p), writes(heap) {
+  let h = name(p: p, heap: heap);
+  let arg_120 = p^.current;
+  let arg_121 = True();
+  let e = resolve(p: p, id: arg_120, h: h, base: arg_121);
+  if e.k == 8_u8 {
+    let v = Value::Str(h: h);
+    let k = k_addk(p: p, v: v);
+    set e.info = k;
+  }
+  return e;
+}
+
+fn enterlevel(p: &Parser) -> result_value: unit writes(p) {
+  set p^.depth = p^.depth +sat 1_u64;
+  if p^.depth > 200_u64 {
+    err_8(p: p);
+  }
+  return unit;
+}
+
+fn leavelevel(p: &Parser) -> result_value: unit writes(p) {
+  if p^.depth > 0_u64 {
+    set p^.depth = p^.depth - 1_u64;
+  }
+  return unit;
+}
+
+fn multret(e: &Exp) -> result_value: Bool reads(e) {
+  if e^.k == 13_u8 {
+    return True();
+  }
+  return e^.k == 14_u8;
+}
+
+fn adjustassign(p: &Parser, nvars: i64, nexps: i64, e: &Exp) -> result_value: unit writes(p), writes(e) {
+  let extra = nvars -wrap nexps;
+  let multi = multret(e: e);
+  if multi {
+    set extra = extra +wrap 1_i64;
+    if extra < 0_i64 {
+      set extra = 0_i64;
+    }
+    k_setreturns(p: p, e: e, n: extra);
+    if extra > 1_i64 {
+      let arg_122 = extra -wrap 1_i64;
+      k_reserve(p: p, n: arg_122);
+    }
+  } else {
+    if e^.k != 0_u8 {
+      k_nextreg(p: p, e: e);
+    }
+    if extra > 0_i64 {
+      let reg = freereg(p: p);
+      k_reserve(p: p, n: extra);
+      k_nilregs(p: p, from: reg, n: extra);
+    }
+  }
+  return unit;
+}

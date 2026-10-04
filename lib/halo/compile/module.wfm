@@ -1,1 +1,9 @@
+alias Script = pkg::value::Script;
+alias Heap = pkg::heap::Heap;
 
+public struct CompileError {
+  public line: u64;
+  public message: Box<Slots<u8>>;
+}
+
+public fn compile(heap: &Heap, chunk_name: &[u8], source: &[u8]) -> result_value: Result<Script, CompileError> reads(chunk_name), reads(source), writes(heap) doc "PUC Lua 5.1 one-pass parser and expression-descriptor code generator. Prototypes are numbered in lexical preorder, main at zero; code and constants occupy contiguous script-wide ranges. LoadKx indexes relative to the prototype kbase. Fused comparisons mean: if (cmp(b, c) == a) jump to target else fall through. TestJmp jumps when truth(R(a)) equals c; TestSetJmp assigns R(a) = R(b) and jumps when truth(R(b)) equals c. TForLoop jumps when the first generator result is nonnil. Closure is followed by one capture pseudo-cell per upvalue: Move(a: 0, b: local register), or GetUpval(a: 0, u: enclosing upvalue index), consumed by the VM rather than dispatched. lineinfo has one entry per emitted cell, retaining the first instruction's PUC line for fused pairs.";

@@ -1,0 +1,5 @@
+package halo = "../../../lib/halo";
+
+pkg::dump: [halo::compile, halo::value, halo::heap, halo::number, std::io, std::process, std::time, std::fs, std::text];
+
+entry dump = pkg::dump::main;
