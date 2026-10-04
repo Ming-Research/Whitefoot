@@ -256,6 +256,22 @@ within 13% elsewhere. Its distance to Silverfir-nano is that of the C form
 with the same design: E1 measured the accumulator and pinned locals, which
 this interpreter does not have, as the larger lever.
 
+### Handler table address as a parameter (`wfbase`)
+
+Passing the handler table's address along the chain, instead of forming it
+with `adrp` and `add` in every arm, removes 10% of the instructions per
+dispatch (`loop` 20.2 to 18.2) and changes no cycle count beyond the layout
+noise: against `wfhoist` in ten interleaved launches (`run-wf-base.tsv`)
+`loop` +0.3%, `fib` -1.3%, `sieve` +1.3%, `mandel` -0.6%. On this core the
+two instructions issued in the slack of a dispatch; E1's C form had shown
+the same for its instruction count. It is kept because it costs one register
+only where one is free, but it is not a speed result here.
+
+Single launches of one binary also moved between two levels during this
+work (`wfhoist` on `fib`: 607 million cycles in the interleaved run, 1151
+million in three later launches), the placement effect Silverfir-nano's
+record describes; the tables report medians of interleaved launches.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which
