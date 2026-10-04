@@ -329,6 +329,20 @@ pub(super) fn find(
     (found, rejections)
 }
 
+/// What [`FunctionEmitter::loop_invariants`] finds the loop cannot change.
+#[derive(Default)]
+struct LoopInvariants {
+    /// Header instructions, by index, the enclosing function computes once.
+    hoisted: Vec<usize>,
+    hoisted_values: HashSet<IrValueId>,
+    /// The hoisted values the loop still reads, which the parts receive.
+    passed: Vec<IrValueId>,
+    /// Header parameters passed through unchanged that nothing in the loop
+    /// reads once the hoisted work has left it.
+    dropped: HashSet<IrValueId>,
+    facts: HashMap<IrValueId, String>,
+}
+
 /// Which part of a split function is being emitted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Part {
@@ -348,6 +362,9 @@ enum Role {
     HeaderValue,
     /// A value from before the loop.
     Invariant,
+    /// A header value the enclosing function computes once, because the
+    /// loop cannot change it.
+    Hoisted,
 }
 
 /// The emission state of one split function.
@@ -358,6 +375,12 @@ pub(super) struct DispatchEmission {
     arm_symbols: Vec<String>,
     table_symbol: String,
     parameters: Vec<(IrValueId, IrType, Role)>,
+    /// The header instructions, by index, that the enclosing function
+    /// computes once before calling the dispatch function.
+    hoisted: Vec<usize>,
+    /// The checked reference facts of a parameter that holds the same
+    /// pointer as one of the function's own parameters.
+    facts: HashMap<IrValueId, String>,
     frame: bool,
     destination: bool,
     result: String,
@@ -467,15 +490,23 @@ impl FunctionEmitter<'_, '_> {
             self.dispatch_ledger.extend(ledger);
             return Ok(None);
         }
-        let header = self.block(plan.header)?;
+        let header = self.block(plan.header)?.clone();
+        let invariant = self.loop_invariants(&plan, &header, reachable);
         let mut parameters = Vec::new();
         for (value, ty) in header.parameters() {
-            if self.storage.slot(*value).is_none() {
+            if self.storage.slot(*value).is_none() && !invariant.dropped.contains(value) {
                 parameters.push((*value, *ty, Role::Carried));
             }
         }
+        let header_values: Vec<IrValueId> = plan
+            .header_values
+            .iter()
+            .copied()
+            .filter(|value| !invariant.hoisted_values.contains(value))
+            .collect();
         for (values, role) in [
-            (&plan.header_values, Role::HeaderValue),
+            (&invariant.passed, Role::Hoisted),
+            (&header_values, Role::HeaderValue),
             (&plan.invariants, Role::Invariant),
         ] {
             for value in values {
@@ -569,6 +600,8 @@ impl FunctionEmitter<'_, '_> {
             arm_symbols,
             table_symbol: format!("{body_symbol}.dispatch.table"),
             parameters,
+            hoisted: invariant.hoisted,
+            facts: invariant.facts,
             frame,
             destination,
             result: result.to_owned(),
@@ -616,7 +649,7 @@ impl FunctionEmitter<'_, '_> {
                     self.value_name(argument)
                 }
                 Role::HeaderValue if !into_arm => "poison".to_owned(),
-                Role::HeaderValue | Role::Invariant => self.value_name(value),
+                Role::HeaderValue | Role::Invariant | Role::Hoisted => self.value_name(value),
             };
             arguments.push(format!("{ty_name} {operand}"));
         }
@@ -661,6 +694,46 @@ impl FunctionEmitter<'_, '_> {
             .map(|(parameter, _)| *parameter)
             .zip(arguments.iter().copied())
             .collect();
+        if !tail {
+            // The hoisted header values, computed once from the arguments
+            // this edge gives the header's parameters.
+            let hoisted = self
+                .dispatch
+                .as_ref()
+                .map(|dispatch| dispatch.hoisted.clone())
+                .unwrap_or_default();
+            let header = header.clone();
+            if !hoisted.is_empty() {
+                // The header's parameters are not defined in the enclosing
+                // function: each one the hoisted work reads is named there
+                // as this edge's argument for it.
+                let mut read: HashSet<IrValueId> = HashSet::new();
+                for index in &hoisted {
+                    if let Some(instruction) = header.instructions().get(*index) {
+                        read.extend(instruction.operands());
+                    }
+                }
+                for ((parameter, ty), (_, argument)) in header.parameters().iter().zip(&carried) {
+                    if read.contains(parameter) && self.storage.slot(*parameter).is_none() {
+                        let ty = self.output.type_name(self.program, *ty)?;
+                        let argument = self.value_name(*argument);
+                        writeln!(
+                            self.output,
+                            "  {} = select i1 true, {ty} {argument}, {ty} {argument}",
+                            value_name(*parameter)
+                        )
+                        .map_err(|_| BackendFailure::TextEmission)?;
+                    }
+                }
+            }
+            for index in hoisted {
+                let instruction = header
+                    .instructions()
+                    .get(index)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                self.emit_instruction(target, index, instruction)?;
+            }
+        }
         self.emit_place_edge(target, arguments, drops)?;
         let list = self.dispatch_arguments(&carried, false)?;
         self.output.symbol(symbol.clone());
@@ -751,7 +824,8 @@ impl FunctionEmitter<'_, '_> {
             } else {
                 value_name(*value)
             };
-            parameters.push(Parameter::named(ty, name));
+            let facts = dispatch.facts.get(value).map_or("", String::as_str);
+            parameters.push(Parameter::named(format!("{ty}{facts}"), name));
         }
         if dispatch.frame {
             parameters.push(Parameter::named("ptr", "%wf.frame"));
@@ -793,8 +867,15 @@ impl FunctionEmitter<'_, '_> {
         self.materialized.clear();
         self.output.open_block(block_label(header));
         let block = self.block(header)?.clone();
+        let hoisted = self
+            .dispatch
+            .as_ref()
+            .map(|dispatch| dispatch.hoisted.clone())
+            .unwrap_or_default();
         for (index, instruction) in block.instructions().iter().enumerate() {
-            self.emit_instruction(header, index, instruction)?;
+            if !hoisted.contains(&index) {
+                self.emit_instruction(header, index, instruction)?;
+            }
         }
         self.emit_terminator(header, block.terminator())?;
         self.output.finish_ir_block(header)?;
@@ -875,6 +956,216 @@ impl FunctionEmitter<'_, '_> {
             references,
         );
         Ok(())
+    }
+
+    /// What the loop cannot change. A header parameter is passed through
+    /// when every edge back to the header gives it its own value; it holds
+    /// a read-only reference when the one edge into the loop gives it one of
+    /// the function's read-only reference parameters, whose referents the
+    /// function does not write [EFF-2, EFF-5]. A header instruction that
+    /// projects a box's referent or reads a container's measure through such
+    /// a reference, or through a value so hoisted, is hoisted into the
+    /// enclosing function. A passed-through parameter nothing else in the
+    /// loop reads is dropped, and one holding the same pointer as a function
+    /// parameter carries that parameter's checked facts.
+    fn loop_invariants(
+        &self,
+        plan: &DispatchLoop,
+        header: &IrBlock,
+        reachable: &[bool],
+    ) -> LoopInvariants {
+        let mut result = LoopInvariants::default();
+        let blocks = self.function.blocks();
+        let parameters: Vec<IrValueId> = header
+            .parameters()
+            .iter()
+            .map(|(value, _)| *value)
+            .collect();
+        let mut entries = Vec::new();
+        let mut backedges = Vec::new();
+        for (index, block) in blocks.iter().enumerate() {
+            if let IrTerminator::Jump {
+                target, arguments, ..
+            } = block.terminator()
+                && *target == plan.header
+                && reachable[index]
+            {
+                if plan.region[index] {
+                    backedges.push(arguments.clone());
+                } else {
+                    entries.push(arguments.clone());
+                }
+            }
+        }
+        let [entry] = entries.as_slice() else {
+            return result;
+        };
+        // A block parameter inside the loop whose every incoming value is the
+        // same value, as at the join of an `if` in an arm, is that value.
+        let mut incoming: HashMap<IrValueId, Vec<IrValueId>> = HashMap::new();
+        for (index, block) in blocks.iter().enumerate() {
+            if !plan.region[index] {
+                continue;
+            }
+            if let IrTerminator::Jump {
+                target, arguments, ..
+            } = block.terminator()
+                && plan.region[target.index()]
+            {
+                for ((parameter, _), argument) in
+                    blocks[target.index()].parameters().iter().zip(arguments)
+                {
+                    incoming.entry(*parameter).or_default().push(*argument);
+                }
+            }
+        }
+        let mut same: HashMap<IrValueId, IrValueId> = HashMap::new();
+        loop {
+            let mut changed = false;
+            for (parameter, arguments) in &incoming {
+                let roots: HashSet<IrValueId> = arguments
+                    .iter()
+                    .map(|argument| *same.get(argument).unwrap_or(argument))
+                    .collect();
+                if let [root] = roots.into_iter().collect::<Vec<_>>().as_slice()
+                    && root != parameter
+                    && same.get(parameter) != Some(root)
+                {
+                    same.insert(*parameter, *root);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let root = |value: &IrValueId| *same.get(value).unwrap_or(value);
+        let passed_through: Vec<bool> = (0..parameters.len())
+            .map(|position| {
+                backedges.iter().all(|arguments| {
+                    arguments.get(position).map(root) == Some(parameters[position])
+                })
+            })
+            .collect();
+        let function_parameters: Vec<IrValueId> = self
+            .function
+            .parameters()
+            .iter()
+            .map(|(value, _)| *value)
+            .collect();
+        let readonly: HashSet<IrValueId> = self
+            .function
+            .readonly_reference_parameters
+            .iter()
+            .copied()
+            .collect();
+        let mut rooted: HashSet<IrValueId> = HashSet::new();
+        for (position, parameter) in parameters.iter().enumerate() {
+            if !passed_through[position] {
+                continue;
+            }
+            let Some(argument) = entry.get(position) else {
+                continue;
+            };
+            if readonly.contains(argument) {
+                rooted.insert(*parameter);
+            }
+            if let Some(index) = function_parameters
+                .iter()
+                .position(|value| value == argument)
+                && let Some((_, ty)) = self.function.parameters().get(index)
+                && let Ok(facts) = self.reference_parameter_facts(index, *ty)
+                && !facts.is_empty()
+            {
+                result.facts.insert(*parameter, facts);
+            }
+        }
+        for value in &plan.invariants {
+            if readonly.contains(value) {
+                rooted.insert(*value);
+            }
+        }
+        for (index, instruction) in header.instructions().iter().enumerate() {
+            let IrInstruction::Define {
+                result: value,
+                operation,
+                ..
+            } = instruction
+            else {
+                continue;
+            };
+            let hoist = match operation {
+                crate::IrOperation::ProjectAddress {
+                    address,
+                    projection: crate::IrPlaceStep::BoxReferent { .. },
+                } if rooted.contains(address) => {
+                    rooted.insert(*value);
+                    true
+                }
+                crate::IrOperation::ContainerMeasure { container, .. }
+                    if rooted.contains(container) =>
+                {
+                    true
+                }
+                _ => false,
+            };
+            if hoist {
+                result.hoisted.push(index);
+                result.hoisted_values.insert(*value);
+            }
+        }
+        // What the loop still reads once the hoisted work leaves it: the
+        // header's remaining instructions and terminator and every block of
+        // the loop, apart from a back edge's argument for the parameter it
+        // passes through.
+        let mut reads: HashSet<IrValueId> = HashSet::new();
+        for (index, instruction) in header.instructions().iter().enumerate() {
+            if !result.hoisted.contains(&index) {
+                reads.extend(instruction.operands());
+            }
+        }
+        reads.extend(header.terminator().operands());
+        for (index, block) in blocks.iter().enumerate() {
+            if !plan.region[index] {
+                continue;
+            }
+            for instruction in block.instructions() {
+                reads.extend(instruction.operands());
+            }
+            match block.terminator() {
+                IrTerminator::Jump {
+                    target,
+                    arguments,
+                    drops,
+                } if *target == plan.header => {
+                    for (position, argument) in arguments.iter().enumerate() {
+                        if !passed_through.get(position).copied().unwrap_or(false)
+                            || root(argument) != *argument
+                        {
+                            reads.insert(*argument);
+                        }
+                    }
+                    reads.extend(drops.iter().map(|drop| drop.operand()));
+                }
+                terminator => reads.extend(terminator.operands()),
+            }
+        }
+        for (position, parameter) in parameters.iter().enumerate() {
+            if passed_through[position] && !reads.contains(parameter) {
+                result.dropped.insert(*parameter);
+            }
+        }
+        result.passed = result
+            .hoisted
+            .iter()
+            .filter_map(|index| match header.instructions().get(*index) {
+                Some(IrInstruction::Define { result: value, .. }) if reads.contains(value) => {
+                    Some(*value)
+                }
+                _ => None,
+            })
+            .collect();
+        result
     }
 
     fn set_part(&mut self, part: Part) {
