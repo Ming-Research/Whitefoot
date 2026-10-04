@@ -1,0 +1,131 @@
+alias Value = pkg::value::Value;
+alias Heap = pkg::heap::Heap;
+alias no_handle = pkg::heap::no_handle;
+
+fn stack_limit(vm: &Vm, stack: &Box<Slots<Value>>) -> r: u64 reads(vm), reads(stack) {
+  doc "The highest frame_top of any frame, the live part of the stack, capped at the stack's length; the whole stack when no frame is active.";
+  let len = stack^.inner.len;
+  let n = vm^.frames.inner.len;
+  if n == 0_u64 {
+    return len;
+  }
+  let limit = 0_u64;
+  let i = 0_u64;
+  loop {
+    if i < vm^.frames.inner.len {
+      let t = vm^.frames.inner[i].frame_top;
+      if t > limit {
+        set limit = t;
+      }
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  if limit > len {
+    return len;
+  }
+  return limit;
+}
+
+fn mark_roots(vm: &Vm, stack: &Box<Slots<Value>>, consts: &Box<Slots<Value>>, limit: u64) -> r: unit reads(stack), reads(consts), writes(vm) {
+  doc "Marks every root: the live stack, each frame's closure, the open upvalues, the globals, the per-type metatables, the script's constants, the error value and a host-stopped stack.";
+  let i = 0_u64;
+  loop {
+    if i < limit {
+      if i < stack^.inner.len {
+        let v = stack^.inner[i];
+        pkg::heap::gc_mark(heap: &vm^.heap, v: v);
+      }
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  set i = 0_u64;
+  loop {
+    if i < vm^.frames.inner.len {
+      let c = vm^.frames.inner[i].closure;
+      if c != no_handle {
+        let f = Value::Fun(h: c);
+        pkg::heap::gc_mark(heap: &vm^.heap, v: f);
+      }
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  set i = 0_u64;
+  loop {
+    if i < vm^.open_upvalues.inner.len {
+      let u = vm^.open_upvalues.inner[i];
+      pkg::heap::gc_mark_upvalue(heap: &vm^.heap, h: u);
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  let g = Value::Tab(h: vm^.globals);
+  pkg::heap::gc_mark(heap: &vm^.heap, v: g);
+  set i = 0_u64;
+  loop {
+    if i < 6_u64 {
+      let m = vm^.type_metatables[i];
+      if m != no_handle {
+        let mv = Value::Tab(h: m);
+        pkg::heap::gc_mark(heap: &vm^.heap, v: mv);
+      }
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  set i = 0_u64;
+  loop {
+    if i < consts^.inner.len {
+      let k = consts^.inner[i];
+      pkg::heap::gc_mark(heap: &vm^.heap, v: k);
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  let e = vm^.error;
+  pkg::heap::gc_mark(heap: &vm^.heap, v: e);
+  set i = 0_u64;
+  loop {
+    if i < vm^.stopped_stack.inner.len {
+      let sv = vm^.stopped_stack.inner[i];
+      pkg::heap::gc_mark(heap: &vm^.heap, v: sv);
+      set i = i +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  return unit;
+}
+
+fn collect_if_due(vm: &Vm, stack: &Box<Slots<Value>>, consts: &Box<Slots<Value>>) -> r: unit reads(consts), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "A safepoint: at a loop back-edge or call every live value is in a stack slot or a root, so a due collection marks the roots, clears the stack above the live part as Lua 5.1's traversestack does, and sweeps.";
+  let due = pkg::heap::gc_due(heap: &vm^.heap);
+  if bnot(due) {
+    return unit;
+  }
+  let limit = stack_limit(vm: vm, stack: stack);
+  pkg::heap::gc_begin(heap: &vm^.heap);
+  mark_roots(vm: vm, stack: stack, consts: consts, limit: limit);
+  pkg::heap::gc_propagate(heap: &vm^.heap);
+  let j = limit;
+  loop {
+    if j < stack^.inner.len {
+      set stack^.inner[j] = Value::Nil();
+      set j = j +wrap 1_u64;
+    } else {
+      break;
+    }
+  }
+  let freed = pkg::heap::gc_sweep(heap: &vm^.heap);
+  return unit;
+}

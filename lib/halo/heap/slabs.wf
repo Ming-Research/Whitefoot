@@ -7,7 +7,7 @@ fn heap_new(limit: u64) -> r: Heap pure {
   let upvalues = box_slots_new::<UpvalCell>(capacity: 0_u64);
   let interned = box_slots_new::<u32>(capacity: 0_u64);
   let gray = box_slots_new::<Value>(capacity: 0_u64);
-  return Heap(strings: move strings, tables: move tables, closures: move closures, upvalues: move upvalues, strings_free: no_handle, tables_free: no_handle, closures_free: no_handle, upvalues_free: no_handle, interned: move interned, intern_count: 0_u64, bytes: 0_u64, bytes_since_gc: 0_u64, limit: limit, epoch: 0_u32, gray: move gray);
+  return Heap(strings: move strings, tables: move tables, closures: move closures, upvalues: move upvalues, strings_free: no_handle, tables_free: no_handle, closures_free: no_handle, upvalues_free: no_handle, interned: move interned, intern_count: 0_u64, bytes: 0_u64, bytes_since_gc: 0_u64, limit: limit, epoch: 0_u32, gray: move gray, threshold: 1048576_u64);
 }
 
 fn charge(heap: &Heap, amount: u64) -> r: Bool writes(heap.bytes), writes(heap.bytes_since_gc) {

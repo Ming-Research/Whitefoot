@@ -134,10 +134,16 @@ object kind is a `Box<Slots<Cell>>` with a free list; a cell is
 Collector: stop-the-world mark and sweep with an explicit gray stack and
 epoch marks (E1). Roots: the stack below the current frame's
 `base + maxstack`, frame records, open upvalues, globals, the registry,
-every script's constant pool, and values the host pins. Collection happens
-only inside allocation, never at a dispatch; an allocating helper takes the
-values it must keep as arguments and returns the new handle, and a handler
-never holds an unrooted handle across a second allocation. Trigger:
+every script's constant pool, and values the host pins. Collection happens at the budget's own safepoints, a loop back-edge or a
+call, where every live value is in a stack slot or another root (revised
+during implementation from "only inside allocation", which would have made
+every allocating helper keep its live values as arguments): a due
+collection marks the stack below the highest frame top, frame closures,
+open upvalues, globals, per-type metatables, the script's constants, the
+error value and a host-stopped stack, clears the stack above as Lua 5.1's
+`traversestack` does, and sweeps. Straight-line code between safepoints is
+finite, so allocation between collections is bounded by the code and by
+library calls, which the byte limit covers. Trigger:
 `bytes_since_gc > max(1 MiB, live_bytes_after_last_gc)`. Byte accounting
 answers G5: past `memory_limit`, collect once, then raise "not enough
 memory". Not incremental, no weak tables, no `__gc` in slice 1.

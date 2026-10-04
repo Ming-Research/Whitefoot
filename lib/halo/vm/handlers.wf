@@ -2303,7 +2303,7 @@ fn instruction_concat<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<S
   return step;
 }
 
-fn instruction_jmp<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, targetv: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+fn instruction_jmp<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
@@ -2318,6 +2318,7 @@ fn instruction_jmp<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slot
     if bnot(atom113) {
       return Step::Budget();
     }
+    collect_if_due(vm: vm, stack: stack, consts: consts);
   }
   set next = target;
   if vm^.suspended {
@@ -3187,7 +3188,7 @@ fn instruction_test_set_jmp<interface Host<E>>(code: &Box<Slots<Cell>>, consts: 
   return Step::Error();
 }
 
-fn instruction_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), writes(stack), writes(vm), writes(env) contract {
+fn instruction_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
@@ -3204,6 +3205,7 @@ fn instruction_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slo
   if bnot(atom144) {
     return Step::Budget();
   }
+  collect_if_due(vm: vm, stack: stack, consts: consts);
   let argc = 0_u64;
   if b == 0_u64 {
     let first = ra + 1_u64;
@@ -3236,7 +3238,7 @@ fn instruction_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slo
   return final_step;
 }
 
-fn instruction_tail_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), writes(stack), writes(vm), writes(env) contract {
+fn instruction_tail_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Step reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
@@ -3253,6 +3255,7 @@ fn instruction_tail_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Bo
   if bnot(atom147) {
     return Step::Budget();
   }
+  collect_if_due(vm: vm, stack: stack, consts: consts);
   let argc = 0_u64;
   if b == 0_u64 {
     let first = ra + 1_u64;
@@ -3312,7 +3315,7 @@ fn instruction_return<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<S
   return step;
 }
 
-fn instruction_for_loop<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, targetv: u32) -> r: Step reads(code), writes(stack), writes(vm) contract {
+fn instruction_for_loop<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, av: u8, targetv: u32) -> r: Step reads(code), reads(consts), writes(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
@@ -3328,6 +3331,7 @@ fn instruction_for_loop<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box
   if bnot(atom152) {
     return Step::Budget();
   }
+  collect_if_due(vm: vm, stack: stack, consts: consts);
   if a <= 252_u64 {
     let rlimit = ra + 1_u64;
     let rstep = ra + 2_u64;
@@ -3466,6 +3470,7 @@ fn instruction_tfor_loop<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Bo
   if bnot(atom157) {
     return Step::Budget();
   }
+  collect_if_due(vm: vm, stack: stack, consts: consts);
   if a <= 252_u64 {
     let s1 = ra + 1_u64;
     let s2 = ra + 2_u64;

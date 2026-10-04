@@ -270,5 +270,16 @@ fn gc_sweep(heap: &Heap) -> r: u64 writes(heap) {
     }
   }
   set heap^.bytes_since_gc = 0_u64;
+  let live = heap^.bytes;
+  if live > 1048576_u64 {
+    set heap^.threshold = live;
+  } else {
+    set heap^.threshold = 1048576_u64;
+  }
   return freed;
+}
+
+fn gc_due(heap: &Heap) -> r: Bool reads(heap) {
+  doc "Lua 5.1's default pause: collect when allocation since the last collection exceeds what survived it, and at least 1 MiB.";
+  return heap^.bytes_since_gc > heap^.threshold;
 }
