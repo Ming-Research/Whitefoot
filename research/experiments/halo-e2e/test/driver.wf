@@ -1,0 +1,186 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias InputStream = std::io::InputStream;
+alias OutputStream = std::io::OutputStream;
+alias Value = halo::value::Value;
+alias Vm = halo::vm::Vm;
+alias Engine = halo::embed::Engine;
+alias ScriptId = halo::embed::ScriptId;
+alias Outcome = halo::vm::Outcome;
+
+fn push(out: &Box<Slots<u8>>, byte: u8) -> r: unit writes(out) {
+  let cap = out^.inner.cap;
+  if out^.inner.len == cap { let twice = cap +sat cap; let target = imax(twice,4096_u64); if target > cap {grow(cell: out, capacity: target);} }
+  if out^.inner.len < out^.inner.cap {place_back(window: &out^.inner, value: byte);} return unit;
+}
+fn append(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) {for (i in 0_u64..bytes^.len) {let b = bytes^[i]; push(out: out, byte: b);} return unit;}
+fn decimal(out: &Box<Slots<u8>>, n: u64) -> r: unit writes(out) {
+  let digits = slots_new::<u8,20>(); let n = n;
+  loop {let d = n % 10_u64; let digit = cvt.wrap::<u64,u8>(d); let b = digit +wrap 48_u8; if digits.len < digits.cap {place_back(window: &digits, value: b);} set n = n / 10_u64; if n == 0_u64 {break;}}
+  loop {if digits.len == 0_u64 {break;} let b = take_back(window: &digits); push(out: out, byte: b);} return unit;
+}
+fn value_bytes(vm: &Vm, v: Value, out: &Box<Slots<u8>>) -> r: unit reads(vm), writes(out) {
+  match halo::heap::string_of(heap: &vm^.heap, value: v) {None() => {} Some(value: view) => {let h = cvt::<u32,u64>(view.handle); if h < vm^.heap.strings.inner.len {let n = vm^.heap.strings.inner[h].payload.bytes.inner.len; append(out: out, bytes: &vm^.heap.strings.inner[h].payload.bytes.inner[0_u64..n]);}}} return unit;
+}
+fn hex(n: u8) -> r: u8 pure {if n < 10_u8 {return n +wrap 48_u8;} return n +wrap 87_u8;}
+fn json_string(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) {
+  push(out: out, byte: 34_u8);
+  for (i in 0_u64..bytes^.len) {let b = bytes^[i]; if b == 34_u8 or b == 92_u8 {push(out: out, byte: 92_u8); push(out: out, byte: b);} else {if b < 32_u8 or b > 126_u8 {append(out: out, bytes: &s_32[0_u64..4_u64]); let hi = b / 16_u8; let lo = b % 16_u8; let h = hex(n: hi); let l = hex(n: lo); push(out: out, byte: h); push(out: out, byte: l);} else {push(out: out, byte: b);}}}
+  push(out: out, byte: 34_u8); return unit;
+}
+fn json_bytes(vm: &Vm, value: Value, out: &Box<Slots<u8>>, sanitize: Bool, error: Bool) -> r: unit reads(vm), writes(out) {
+  let bytes = box_slots_new::<u8>(capacity: 0_u64); value_bytes(vm: vm, v: value, out: &bytes);
+  if sanitize {let n = bytes.inner.len; let end = n; for (i in 0_u64..n) {if i < bytes.inner.len {let b = bytes.inner[i]; if b == 0_u8 {if i < end {set end = i;}} if b == 10_u8 or b == 13_u8 {set bytes.inner[i] = 32_u8;}}} loop {if bytes.inner.len <= end {break;} let b = take_back(window: &bytes.inner);}}
+  let prefix = False();
+  if error {for (i in 0_u64..bytes.inner.len) {let b = bytes.inner[i]; if b == 32_u8 {set prefix = True(); break;} if b < 65_u8 or b > 90_u8 {break;}}}
+  if error and bnot(prefix) {let all = box_slots_new::<u8>(capacity: 0_u64); append(out: &all, bytes: &s_33[0_u64..4_u64]); let n = bytes.inner.len; append(out: &all, bytes: &bytes.inner[0_u64..n]); let n = all.inner.len; json_string(out: out, bytes: &all.inner[0_u64..n]);} else {let n = bytes.inner.len; json_string(out: out, bytes: &bytes.inner[0_u64..n]);}
+  return unit;
+}
+fn nil_reply(out: &Box<Slots<u8>>) -> r: unit writes(out) {append(out: out, bytes: &s_34[0_u64..28_u64]); return unit;}
+fn reply(vm: &Vm, value: Value, out: &Box<Slots<u8>>, depth: u64) -> r: unit writes(vm), writes(out) {
+  if depth >= 128_u64 {append(out: out, bytes: &s_35[0_u64..50_u64]); return unit;}
+  match value {
+    Nil() => {nil_reply(out: out);}
+    False() => {nil_reply(out: out);}
+    True() => {append(out: out, bytes: &s_36[0_u64..28_u64]);}
+    Num(n: number) => {
+      let n = ftrunc(number); let v = -9223372036854775808_i64;
+      if cvt.defined::<f64,i64>(n) {set v = cvt::<f64,i64>(n);}
+      append(out: out, bytes: &s_37[0_u64..26_u64]);
+      let bytes = integer_string(vm: vm, value: v); value_bytes(vm: vm, v: bytes, out: out); push(out: out, byte: 125_u8);
+    }
+    Str(..) => {append(out: out, bytes: &s_38[0_u64..23_u64]); let no = False(); json_bytes(vm: vm, value: value, out: out, sanitize: no, error: no); push(out: out, byte: 125_u8);}
+    Tab(..) => {
+      let errkey = literal(vm: vm, text: &s_30[0_u64..3_u64]); let okkey = literal(vm: vm, text: &s_5[0_u64..2_u64]);
+      let err = get(vm: vm, table: value, key: errkey); let ok = get(vm: vm, table: value, key: okkey);
+      let error = is_string(v: err); let status = is_string(v: ok);
+      if error {append(out: out, bytes: &s_39[0_u64..24_u64]); let yes = True(); json_bytes(vm: vm, value: err, out: out, sanitize: yes, error: yes); push(out: out, byte: 125_u8);}
+      else {if status {append(out: out, bytes: &s_40[0_u64..25_u64]); let yes = True(); let no = False(); json_bytes(vm: vm, value: ok, out: out, sanitize: yes, error: no); push(out: out, byte: 125_u8);}
+      else {append(out: out, bytes: &s_41[0_u64..25_u64]); let i = 1_u64; loop {let x = cvt::<u64,f64>(i); let key = num(x: x); let v = get(vm: vm, table: value, key: key); let absent = is_nil(v: v); if absent {break;} if i > 1_u64 {push(out: out, byte: 44_u8);} let next = depth + 1_u64; reply(vm: vm, value: v, out: out, depth: next); set i = i +sat 1_u64;} append(out: out, bytes: &s_42[0_u64..2_u64]);}}
+    }
+    Fun(..) => {nil_reply(out: out);}
+    Builtin(..) => {nil_reply(out: out);}
+  }
+  return unit;
+}
+
+fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64) -> r: Outcome writes(engine), writes(env) {
+  let out = halo::embed::start::<TestHost>(engine: engine, env: env, script: id, budget: budget);
+  let steps = 0_u64;
+  loop {match out {Done(..) => {return out;} Error() => {return out;} HostStopped() => {return out;} Budget() => {if steps >= 1000000_u64 {return out;} set out = halo::embed::resume::<TestHost>(engine: engine, env: env, budget: budget); set steps = steps + 1_u64;}}}
+  return out;
+}
+
+fn install_host(engine: &Engine, env: &Env) -> r: unit writes(engine), writes(env) {
+  let vm = &engine^.vm;
+  let redis = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 8_u32);
+  let k = literal(vm: vm, text: &s_43[0_u64..4_u64]); let v = Value::Builtin(id: 4096_u32); raw(vm: vm, table: redis, key: k, value: v);
+  let k = literal(vm: vm, text: &s_44[0_u64..5_u64]); let v = Value::Builtin(id: 4097_u32); raw(vm: vm, table: redis, key: k, value: v);
+  let k = literal(vm: vm, text: &s_45[0_u64..12_u64]); let v = Value::Builtin(id: 4098_u32); raw(vm: vm, table: redis, key: k, value: v);
+  let k = literal(vm: vm, text: &s_46[0_u64..11_u64]); let v = Value::Builtin(id: 4099_u32); raw(vm: vm, table: redis, key: k, value: v);
+  let k = literal(vm: vm, text: &s_47[0_u64..3_u64]); let v = Value::Builtin(id: 4100_u32); raw(vm: vm, table: redis, key: k, value: v);
+  let k = literal(vm: vm, text: &s_48[0_u64..10_u64]); let v = num(x: 2.0_f64); raw(vm: vm, table: redis, key: k, value: v);
+  let result = halo::embed::set_global(engine: engine, name: &s_49[0_u64..5_u64], value: redis);
+  let db = halo::embed::new_table(engine: engine, asize: 0_u32, hsize: 0_u32); set env^.db = db;
+  let types = halo::embed::new_table(engine: engine, asize: 0_u32, hsize: 0_u32); set env^.types = types;
+  let expiry = halo::embed::new_table(engine: engine, asize: 0_u32, hsize: 0_u32); set env^.expiry = expiry;
+  let dbpin = halo::embed::pin(engine: engine, value: db); let tpin = halo::embed::pin(engine: engine, value: types); let epin = halo::embed::pin(engine: engine, value: expiry);
+  return unit;
+}
+fn protect(engine: &Engine) -> r: unit writes(engine) {
+  let vm = &engine^.vm;
+  let meta = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 1_u32);
+  let index = literal(vm: vm, text: &s_50[0_u64..7_u64]); let v = Value::Builtin(id: 4101_u32); raw(vm: vm, table: meta, key: index, value: v);
+  match halo::value::tab_of(v: meta) {NoHandle() => {} Handle(h: mh) => {let g = cvt::<u32,u64>(vm^.globals); if g < vm^.heap.tables.inner.len {set vm^.heap.tables.inner[g].payload.meta = mh; set vm^.heap.tables.inner[g].payload.read_only = True();}}}
+  return unit;
+}
+fn read_source(factory: &HandleFactory, input: &InputStream, source: &Box<Slots<u8>>) -> success: Bool writes(factory), writes(input), writes(source) waits {
+  doc "Read stdin in small host operations, preserving all binary bytes.";
+  let scratch = array_filled::<u8, 4096>(value: 0_u8);
+  loop {
+    let deadline = None<std::time::Instant>();
+    let got = std::io::read_next(factory: factory, input: input, destination: &scratch[0_u64..4096_u64], start: 0_u64, end: 4096_u64, deadline: deadline);
+    match got {
+      Ok(value: count) => {
+        for (i in 0_u64..count) {
+          if i < 4096_u64 {
+            let b = scratch[i];
+            push(out: source, byte: b);
+          }
+        }
+      }
+      Err(error: stop) => {
+        match stop {
+          ReadEnd() => {
+            return True();
+          }
+          ReadFailed(error: problem) => {
+            return False();
+          }
+        }
+      }
+    }
+  }
+  return False();
+}
+
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: output, stderr: stderr, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd_read, write: cwd_write) = move cwd;
+  std::fs::close_directory(factory: &factory, directory: move cwd_read);
+  std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
+  let source = box_slots_new::<u8>(capacity: 0_u64);
+  let read = read_source(factory: &factory, input: &input, source: &source);
+  if bnot(read) {return std::process::exit_status(code: 2_u8);}
+  let n = source.inner.len; let split = n;
+  for (i in 0_u64..n) {if source.inner[i] == 0_u8 {set split = i; break;}}
+  if split >= n {return std::process::exit_status(code: 2_u8);}
+  let engine = halo::embed::new_engine(limit: 67108864_u64);
+  let nil = Value::Nil(); let no = False(); let env = Env(db: nil, types: nil, expiry: nil, error: no, line: 0_u64);
+  install_host(engine: &engine, env: &env);
+  let out = box_slots_new::<u8>(capacity: 0_u64);
+  let budget = 1000000_u64;
+  let argc = std::text::args_count(args: &args);
+  if argc > 1_u64 {set budget = 1_u64;} if argc > 2_u64 {set budget = 7_u64;}
+  let prep = halo::embed::compile(engine: &engine, chunk_name: &s_51[0_u64..6_u64], source: &source.inner[0_u64..split]);
+  match move prep {Err(..) => {return std::process::exit_status(code: 3_u8);} Ok(value: id) => {let outcome = run_script(engine: &engine, env: &env, id: id, budget: budget); match outcome {Done(..) => {} Error() => {return std::process::exit_status(code: 4_u8);} Budget() => {return std::process::exit_status(code: 5_u8);} HostStopped() => {return std::process::exit_status(code: 6_u8);}}}}
+  protect(engine: &engine);
+  let start = split + 1_u64;
+  let compiled = halo::embed::compile(engine: &engine, chunk_name: &s_52[0_u64..12_u64], source: &source.inner[start..n]);
+  match move compiled {
+    Err(error: error) => {append(out: &out, bytes: &s_39[0_u64..24_u64]); let len = error.message.inner.len; json_string(out: &out, bytes: &error.message.inner[0_u64..len]); push(out: &out, byte: 125_u8);}
+    Ok(value: id) => {
+      let outcome = run_script(engine: &engine, env: &env, id: id, budget: budget);
+      match outcome {
+        Done(count: count) => {let v = Value::Nil(); if count > 0_u64 {match halo::embed::result(engine: &engine, index: 0_u64) {None() => {} Some(value: first) => {set v = first;}}} reply(vm: &engine.vm, value: v, out: &out, depth: 0_u64);}
+        Error() => {let error = halo::embed::error_value(engine: &engine); append(out: &out, bytes: &s_39[0_u64..24_u64]); let yes = True(); json_bytes(vm: &engine.vm, value: error, out: &out, sanitize: yes, error: yes); push(out: &out, byte: 125_u8);}
+        Budget() => {return std::process::exit_status(code: 5_u8);}
+        HostStopped() => {return std::process::exit_status(code: 6_u8);}
+      }
+    }
+  }
+  push(out: &out, byte: 10_u8);
+  let length = out.inner.len;
+  let position = 0_u64;
+  loop {
+    if position >= length {
+      break;
+    }
+    let deadline = None<std::time::Instant>();
+    let written = std::io::write_once(factory: &factory, output: &output, source: &out.inner[0_u64..length], start: position, end: length, deadline: deadline);
+    match written {
+      Ok(value: end) => {
+        if end == position {
+          return std::process::exit_status(code: 2_u8);
+        }
+        set position = end;
+      }
+      Err(error: problem) => {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

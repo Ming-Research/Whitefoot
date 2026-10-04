@@ -1,0 +1,224 @@
+alias Value = halo::value::Value;
+alias Vm = halo::vm::Vm;
+alias HostOutcome = halo::vm::HostOutcome;
+alias Host = halo::vm::Host;
+alias num_of = halo::value::num_of;
+alias str_of = halo::value::str_of;
+alias tab_of = halo::value::tab_of;
+
+struct Env { db: Value; types: Value; expiry: Value; error: Bool; line: u64; }
+
+fn raw(vm: &Vm, table: Value, key: Value, value: Value) -> r: unit writes(vm) {
+  let written = halo::heap::table_set(heap: &vm^.heap, t: table, key: key, val: value); return unit;
+}
+fn get(vm: &Vm, table: Value, key: Value) -> r: Value reads(vm) { return halo::heap::table_get(heap: &vm^.heap, t: table, key: key); }
+fn literal(vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(vm) { return halo::heap::intern(heap: &vm^.heap, bytes: text); }
+fn num(x: f64) -> r: Value pure { return Value::Num(n: x); }
+fn kind(v: Value) -> r: u8 pure { return halo::embed::kind(value: v); }
+fn is_nil(v: Value) -> r: Bool pure { let k = kind(v: v); return k == 0_u8; }
+fn is_string(v: Value) -> r: Bool pure { let k = kind(v: v); return k == 3_u8; }
+fn arg(stack: &Box<Slots<Value>>, func: u64, argc: u64, index: u64) -> r: Value reads(stack) {
+  if index < argc { let at = func +sat 1_u64 +sat index; if at < stack^.inner.len { return stack^.inner[at]; } }
+  return Value::Nil();
+}
+fn string_arg(vm: &Vm, v: Value) -> r: Value writes(vm) {
+  match num_of(v: v) {
+    Is(x: n) => { let bytes = array_filled::<u8,32>(value: 0_u8); let count = halo::number::format_number(value: n, out: &bytes[0_u64..32_u64]); return literal(vm: vm, text: &bytes[0_u64..count]); }
+    Not() => { return v; }
+  }
+}
+fn number(vm: &Vm, v: Value) -> r: f64 reads(vm) {
+  match num_of(v: v) { Is(x: n) => {return n;} Not() => {} }
+  match halo::heap::string_of(heap: &vm^.heap, value: v) {
+    None() => {}
+    Some(value: view) => { let h = cvt::<u32,u64>(view.handle); if h < vm^.heap.strings.inner.len { let n = vm^.heap.strings.inner[h].payload.bytes.inner.len; match halo::number::str2number(bytes: &vm^.heap.strings.inner[h].payload.bytes.inner[0_u64..n]) { Some(value: x) => {return x;} None() => {} } } }
+  }
+  return 0.0_f64;
+}
+fn equals_text(vm: &Vm, value: Value, text: &[u8]) -> r: Bool reads(vm), reads(text) {
+  match halo::heap::string_of(heap: &vm^.heap, value: value) {
+    None() => {return False();}
+    Some(value: view) => {
+      let h = cvt::<u32,u64>(view.handle);
+      if h < vm^.heap.strings.inner.len {
+        if vm^.heap.strings.inner[h].payload.bytes.inner.len == text^.len {
+          for (i in 0_u64..text^.len) {
+            if i < vm^.heap.strings.inner[h].payload.bytes.inner.len {
+              let b = vm^.heap.strings.inner[h].payload.bytes.inner[i];
+              if b >= 97_u8 { if b <= 122_u8 { set b = b - 32_u8; } }
+              if b != text^[i] { return False(); }
+            } else {return False();}
+          }
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
+fn reply_table(vm: &Vm, field: &[u8], v: Value) -> r: Value reads(field), writes(vm) {
+  let t = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 1_u32);
+  let key = literal(vm: vm, text: field); raw(vm: vm, table: t, key: key, value: v); return t;
+}
+fn fail(env: &Env, vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(env), writes(vm) {
+  set env^.error = True(); return literal(vm: vm, text: text);
+}
+fn wrong_args(env: &Env, vm: &Vm) -> r: Value writes(env), writes(vm) {
+  return fail(env: env, vm: vm, text: &s_0[0_u64..58_u64]);
+}
+fn wrong_type(env: &Env, vm: &Vm) -> r: Value writes(env), writes(vm) {
+  return fail(env: env, vm: vm, text: &s_1[0_u64..65_u64]);
+}
+fn type_is(vm: &Vm, types: Value, key: Value, expected: f64) -> r: Bool reads(vm) {
+  let t = get(vm: vm, table: types, key: key);
+  match num_of(v: t) { Is(x: x) => {return feq(x,expected);} Not() => {return True();} }
+}
+fn set_kind(env: &Env, vm: &Vm, key: Value, k: f64) -> r: unit writes(vm), reads(env) {
+  let v = num(x: k); raw(vm: vm, table: env^.types, key: key, value: v); return unit;
+}
+fn erase(env: &Env, vm: &Vm, key: Value) -> r: unit reads(env), writes(vm) {
+  let nil = Value::Nil(); raw(vm: vm, table: env^.db, key: key, value: nil); raw(vm: vm, table: env^.types, key: key, value: nil); raw(vm: vm, table: env^.expiry, key: key, value: nil); return unit;
+}
+fn table_count(vm: &Vm, table: Value) -> r: u64 reads(vm) {
+  let key = Value::Nil(); let count = 0_u64;
+  loop { match halo::heap::table_next(heap: &vm^.heap, t: table, key: key) { Err(..) => {break;} Ok(value: opt) => { match opt { None() => {break;} Some(value: pair) => { set key = pair.key; set count = count +sat 1_u64; } } } } }
+  return count;
+}
+fn integer_string(vm: &Vm, value: i64) -> r: Value writes(vm) {
+  let bytes = box_slots_new::<u8>(capacity: 0_u64);
+  if value < 0_i64 { push(out: &bytes, byte: 45_u8); }
+  let mag = 0_u64;
+  if value < 0_i64 { let next = value + 1_i64; let neg = -next; let unsigned = cvt::<i64,u64>(neg); set mag = unsigned + 1_u64; } else {set mag = cvt::<i64,u64>(value);}
+  decimal(out: &bytes, n: mag);
+  let n = bytes.inner.len; return literal(vm: vm, text: &bytes.inner[0_u64..n]);
+}
+fn parse_integer(vm: &Vm, value: Value) -> r: Option<i64> reads(vm) {
+  match halo::heap::string_of(heap: &vm^.heap, value: value) {
+    None() => {}
+    Some(value: view) => {
+      let h = cvt::<u32,u64>(view.handle);
+      if h < vm^.heap.strings.inner.len {
+        let len = vm^.heap.strings.inner[h].payload.bytes.inner.len;
+        if len > 0_u64 {
+          let neg = False(); let start = 0_u64;
+          if vm^.heap.strings.inner[h].payload.bytes.inner[0_u64] == 45_u8 { set neg = True(); set start = 1_u64; }
+          if start == len {return None<i64>();}
+          let n = 0_u64;
+          for (i in start..len) {
+            if i < vm^.heap.strings.inner[h].payload.bytes.inner.len {
+              let b = vm^.heap.strings.inner[h].payload.bytes.inner[i];
+              if b < 48_u8 {return None<i64>();} if b > 57_u8 {return None<i64>();}
+              let digit = b - 48_u8; let d = cvt::<u8,u64>(digit);
+              if n > 922337203685477580_u64 {return None<i64>();}
+              let next = n * 10_u64 + d;
+              let max = 9223372036854775807_u64; if neg {set max = 9223372036854775808_u64;}
+              if next > max {return None<i64>();} set n = next;
+            } else {return None<i64>();}
+          }
+          if neg { if n == 9223372036854775808_u64 {return Some<i64>(value: -9223372036854775808_i64);} if n <= 9223372036854775807_u64 {let v = cvt::<u64,i64>(n); let r = -v; return Some<i64>(value: r);} }
+          else {if n <= 9223372036854775807_u64 {let v = cvt::<u64,i64>(n); return Some<i64>(value: v);}}
+        }
+      }
+    }
+  }
+  return None<i64>();
+}
+
+fn command(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64) -> r: Value reads(stack), writes(env), writes(vm) {
+  set env^.error = False();
+  let cmd = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+  for (i in 0_u64..argc) {let a = arg(stack: stack, func: func, argc: argc, index: i); let k = kind(v: a); if k != 2_u8 {if k != 3_u8 {return fail(env: env, vm: vm, text: &s_2[0_u64..63_u64]);}}}
+  let key_arg = arg(stack: stack, func: func, argc: argc, index: 1_u64); let key = string_arg(vm: vm, v: key_arg);
+  let a = arg(stack: stack, func: func, argc: argc, index: 2_u64); let a = string_arg(vm: vm, v: a);
+  let b = arg(stack: stack, func: func, argc: argc, index: 3_u64); let b = string_arg(vm: vm, v: b);
+  let old = get(vm: vm, table: env^.db, key: key); let absent = is_nil(v: old);
+  if equals_text(vm: vm, value: cmd, text: &s_3[0_u64..4_u64]) {if argc != 1_u64 {return wrong_args(env: env, vm: vm);} let ok = literal(vm: vm, text: &s_4[0_u64..4_u64]); return reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: ok);}
+  if equals_text(vm: vm, value: cmd, text: &s_6[0_u64..3_u64]) { if argc != 2_u64 {return wrong_args(env: env, vm: vm);} let valid = type_is(vm: vm, types: env^.types, key: key, expected: 1.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);} if absent {return Value::False();} return old; }
+  if equals_text(vm: vm, value: cmd, text: &s_7[0_u64..3_u64]) { if argc != 3_u64 {return wrong_args(env: env, vm: vm);} raw(vm: vm, table: env^.db, key: key, value: a); set_kind(env: env, vm: vm, key: key, k: 1.0_f64); let nil = Value::Nil(); raw(vm: vm, table: env^.expiry, key: key, value: nil); let ok = literal(vm: vm, text: &s_8[0_u64..2_u64]); return reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: ok); }
+  if equals_text(vm: vm, value: cmd, text: &s_9[0_u64..4_u64]) {
+    if argc != 2_u64 {return wrong_args(env: env, vm: vm);} let valid = type_is(vm: vm, types: env^.types, key: key, expected: 1.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);}
+    let n = 0_i64;
+    if bnot(absent) {match parse_integer(vm: vm, value: old) {None() => {return fail(env: env, vm: vm, text: &s_10[0_u64..43_u64]);} Some(value: x) => {set n = x;}}}
+    if n == 9223372036854775807_i64 {return fail(env: env, vm: vm, text: &s_11[0_u64..41_u64]);}
+    let next = n + 1_i64; let val = integer_string(vm: vm, value: next); raw(vm: vm, table: env^.db, key: key, value: val); set_kind(env: env, vm: vm, key: key, k: 1.0_f64); let x = cvt::<i64,f64>(next); return num(x: x);
+  }
+  let del = equals_text(vm: vm, value: cmd, text: &s_12[0_u64..3_u64]); let exists = equals_text(vm: vm, value: cmd, text: &s_13[0_u64..6_u64]);
+  if del or exists {if argc < 2_u64 {return wrong_args(env: env, vm: vm);} let count = 0_u64; for (i in 1_u64..argc) {let v = arg(stack: stack, func: func, argc: argc, index: i); let k = string_arg(vm: vm, v: v); let v = get(vm: vm, table: env^.db, key: k); let missing = is_nil(v: v); if bnot(missing) {set count = count +sat 1_u64; if del {erase(env: env, vm: vm, key: k);}}} let x = cvt::<u64,f64>(count); return num(x: x);}
+  let ex = equals_text(vm: vm, value: cmd, text: &s_14[0_u64..6_u64]); let pex = equals_text(vm: vm, value: cmd, text: &s_15[0_u64..7_u64]);
+  if ex or pex {if argc != 3_u64 {return wrong_args(env: env, vm: vm);} if absent {return num(x: 0.0_f64);} let duration = number(vm: vm, v: a); if ex {set duration = fmul(duration,1000.0_f64);} if fle(duration,0.0_f64) {erase(env: env, vm: vm, key: key);} else {let v = num(x: duration); raw(vm: vm, table: env^.expiry, key: key, value: v);} return num(x: 1.0_f64);}
+  if equals_text(vm: vm, value: cmd, text: &s_16[0_u64..3_u64]) {if argc != 2_u64 {return wrong_args(env: env, vm: vm);} if absent {return num(x: -2.0_f64);} let v = get(vm: vm, table: env^.expiry, key: key); let missing = is_nil(v: v); if missing {return num(x: -1.0_f64);} let x = number(vm: vm, v: v); let quotient = fdiv(x,1000.0_f64); let seconds = ffloor(quotient); return num(x: seconds);}
+  let hs = equals_text(vm: vm, value: cmd, text: &s_17[0_u64..4_u64]); let hg = equals_text(vm: vm, value: cmd, text: &s_18[0_u64..4_u64]); let ha = equals_text(vm: vm, value: cmd, text: &s_19[0_u64..7_u64]);
+  if hs or hg or ha {
+    if hs {if argc < 4_u64 {return wrong_args(env: env, vm: vm);} if argc % 2_u64 != 0_u64 {return wrong_args(env: env, vm: vm);}}
+    if hg {if argc != 3_u64 {return wrong_args(env: env, vm: vm);}}
+    if ha {if argc != 2_u64 {return wrong_args(env: env, vm: vm);}}
+    let valid = type_is(vm: vm, types: env^.types, key: key, expected: 2.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);}
+    let t = old;
+    if absent {set t = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32); if hs {raw(vm: vm, table: env^.db, key: key, value: t); set_kind(env: env, vm: vm, key: key, k: 2.0_f64);}}
+    if hg {let v = get(vm: vm, table: t, key: a); let missing = is_nil(v: v); if missing {return Value::False();} return v;}
+    if hs {let count = 0_u64; let i = 2_u64; loop {if i >= argc {break;} let f = arg(stack: stack, func: func, argc: argc, index: i); let f = string_arg(vm: vm, v: f); let next = i +sat 1_u64; let v = arg(stack: stack, func: func, argc: argc, index: next); let v = string_arg(vm: vm, v: v); let prior = get(vm: vm, table: t, key: f); let missing = is_nil(v: prior); if missing {set count = count +sat 1_u64;} raw(vm: vm, table: t, key: f, value: v); set i = i +sat 2_u64;} let x = cvt::<u64,f64>(count); return num(x: x);}
+    let out = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32); let k = Value::Nil(); let index = 1_u64;
+    loop {match halo::heap::table_next(heap: &vm^.heap, t: t, key: k) {Err(..) => {break;} Ok(value: opt) => {match opt {None() => {break;} Some(value: pair) => {set k = pair.key; let x = cvt::<u64,f64>(index); let ix = num(x: x); raw(vm: vm, table: out, key: ix, value: pair.key); set index = index +sat 1_u64; let x = cvt::<u64,f64>(index); let ix = num(x: x); raw(vm: vm, table: out, key: ix, value: pair.val); set index = index +sat 1_u64;}}}}}
+    return out;
+  }
+  let lp = equals_text(vm: vm, value: cmd, text: &s_20[0_u64..5_u64]); let rp = equals_text(vm: vm, value: cmd, text: &s_21[0_u64..5_u64]); let pop = equals_text(vm: vm, value: cmd, text: &s_22[0_u64..4_u64]); let range = equals_text(vm: vm, value: cmd, text: &s_23[0_u64..6_u64]);
+  if lp or rp or pop or range {
+    if lp or rp {if argc < 3_u64 {return wrong_args(env: env, vm: vm);}}
+    if pop {if argc != 2_u64 {return wrong_args(env: env, vm: vm);}}
+    if range {if argc != 4_u64 {return wrong_args(env: env, vm: vm);}}
+    let valid = type_is(vm: vm, types: env^.types, key: key, expected: 3.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);}
+    let t = old; if absent {set t = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);}
+    let len = halo::heap::table_border(heap: &vm^.heap, t: t);
+    if lp or rp {
+      for (i in 2_u64..argc) {let v = arg(stack: stack, func: func, argc: argc, index: i); let v = string_arg(vm: vm, v: v); let pos = len +sat 1_u64;
+        if lp {let j = len; loop {if j == 0_u64 {break;} let x = cvt::<u64,f64>(j); let oldkey = num(x: x); let prev = get(vm: vm, table: t, key: oldkey); let next = j +sat 1_u64; let x = cvt::<u64,f64>(next); let nk = num(x: x); raw(vm: vm, table: t, key: nk, value: prev); set j = j - 1_u64;} set pos = 1_u64;}
+        let x = cvt::<u64,f64>(pos); let k = num(x: x); raw(vm: vm, table: t, key: k, value: v); set len = len +sat 1_u64;
+      }
+      raw(vm: vm, table: env^.db, key: key, value: t); set_kind(env: env, vm: vm, key: key, k: 3.0_f64); let x = cvt::<u64,f64>(len); return num(x: x);
+    }
+    if pop {if len == 0_u64 {return Value::False();} let one = num(x: 1.0_f64); let first = get(vm: vm, table: t, key: one); for (i in 1_u64..len) {let next = i +sat 1_u64; let x = cvt::<u64,f64>(next); let k = num(x: x); let v = get(vm: vm, table: t, key: k); let x = cvt::<u64,f64>(i); let k = num(x: x); raw(vm: vm, table: t, key: k, value: v);} let x = cvt::<u64,f64>(len); let k = num(x: x); let nil = Value::Nil(); raw(vm: vm, table: t, key: k, value: nil); if len == 1_u64 {erase(env: env, vm: vm, key: key);} return first;}
+    let out = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32); let av = number(vm: vm, v: a); let bv = number(vm: vm, v: b); let start = ftrunc(av); let end = ftrunc(bv); let size = cvt::<u64,f64>(len);
+    if flt(start,0.0_f64) {set start = fadd(size,start);} if flt(end,0.0_f64) {set end = fadd(size,end);} if flt(start,0.0_f64) {set start = 0.0_f64;}
+    let index = 1_u64; for (i in 0_u64..len) {let x = cvt::<u64,f64>(i); if fle(start,x) and fle(x,end) {let next = i +sat 1_u64; let x = cvt::<u64,f64>(next); let k = num(x: x); let v = get(vm: vm, table: t, key: k); let x = cvt::<u64,f64>(index); let k = num(x: x); raw(vm: vm, table: out, key: k, value: v); set index = index +sat 1_u64;}}
+    return out;
+  }
+  let za = equals_text(vm: vm, value: cmd, text: &s_24[0_u64..4_u64]); let zc = equals_text(vm: vm, value: cmd, text: &s_25[0_u64..5_u64]); let zs = equals_text(vm: vm, value: cmd, text: &s_26[0_u64..6_u64]); let zr = equals_text(vm: vm, value: cmd, text: &s_27[0_u64..16_u64]);
+  if za or zc or zs or zr {
+    if za {if argc < 4_u64 {return wrong_args(env: env, vm: vm);} if argc % 2_u64 != 0_u64 {return wrong_args(env: env, vm: vm);}}
+    if zc {if argc != 2_u64 {return wrong_args(env: env, vm: vm);}} if zs {if argc != 3_u64 {return wrong_args(env: env, vm: vm);}} if zr {if argc != 4_u64 {return wrong_args(env: env, vm: vm);}}
+    let valid = type_is(vm: vm, types: env^.types, key: key, expected: 4.0_f64); if bnot(valid) {return wrong_type(env: env, vm: vm);}
+    let t = old; if absent {set t = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 0_u32);}
+    if za {let count = 0_u64; let i = 2_u64; loop {if i >= argc {break;} let score = arg(stack: stack, func: func, argc: argc, index: i); let score = number(vm: vm, v: score); let score = num(x: score); let next = i +sat 1_u64; let member = arg(stack: stack, func: func, argc: argc, index: next); let member = string_arg(vm: vm, v: member); let old = get(vm: vm, table: t, key: member); let missing = is_nil(v: old); if missing {set count = count +sat 1_u64;} raw(vm: vm, table: t, key: member, value: score); set i = i +sat 2_u64;} raw(vm: vm, table: env^.db, key: key, value: t); set_kind(env: env, vm: vm, key: key, k: 4.0_f64); let x = cvt::<u64,f64>(count); return num(x: x);}
+    if zc {let count = table_count(vm: vm, table: t); let x = cvt::<u64,f64>(count); return num(x: x);}
+    if zs {let v = get(vm: vm, table: t, key: a); let missing = is_nil(v: v); if missing {return Value::False();} return string_arg(vm: vm, v: v);}
+    let lo = number(vm: vm, v: a); let hi = number(vm: vm, v: b); let k = Value::Nil(); let count = 0_u64;
+    loop {match halo::heap::table_next(heap: &vm^.heap, t: t, key: k) {Err(..) => {break;} Ok(value: opt) => {match opt {None() => {break;} Some(value: pair) => {set k = pair.key; let x = number(vm: vm, v: pair.val); if fle(lo,x) and fle(x,hi) {let nil = Value::Nil(); raw(vm: vm, table: t, key: k, value: nil); set count = count +sat 1_u64;}}}}}}
+    let remaining = table_count(vm: vm, table: t); if remaining == 0_u64 {erase(env: env, vm: vm, key: key);} let x = cvt::<u64,f64>(count); return num(x: x);
+  }
+  return fail(env: env, vm: vm, text: &s_28[0_u64..41_u64]);
+}
+
+fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  if id == 4100_u32 { return HostOutcome::Returned(count: 0_u64); }
+  if id == 4101_u32 {
+    let name = arg(stack: stack, func: func, argc: argc, index: 1_u64);
+    let text = box_slots_new::<u8>(capacity: 0_u64);
+    append(out: &text, bytes: &s_29[0_u64..56_u64]);
+    value_bytes(vm: vm, v: name, out: &text); push(out: &text, byte: 39_u8);
+    let len = text.inner.len; let e = literal(vm: vm, text: &text.inner[0_u64..len]); set vm^.error = e;
+    return HostOutcome::Raised();
+  }
+  let value = Value::Nil();
+  if id == 4096_u32 or id == 4097_u32 {
+    set value = command(env: env, vm: vm, stack: stack, func: func, argc: argc);
+    if env^.error {if id == 4096_u32 {set vm^.error = value; let pc = vm^.saved_pc; if pc < vm^.lineinfo.inner.len {set env^.line = cvt::<u32,u64>(vm^.lineinfo.inner[pc]);} return HostOutcome::Raised();} set value = reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: value);}
+  } else {
+    let v = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+    if id == 4098_u32 {set value = reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: v);} else {if id == 4099_u32 {set value = reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: v);} else {let e = literal(vm: vm, text: &s_31[0_u64..25_u64]); set vm^.error = e; return HostOutcome::Raised();}}
+  }
+  if func < stack^.inner.len {set stack^.inner[func] = value;}
+  return HostOutcome::Returned(count: 1_u64);
+}
+binding TestHost : Host<Env> { call = host_call; }

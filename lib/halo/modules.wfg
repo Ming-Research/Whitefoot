@@ -4,3 +4,4 @@ pkg::lex: [pkg::value, pkg::number];
 pkg::heap: [pkg::value];
 pkg::compile: [pkg::value, pkg::number, pkg::lex, pkg::heap];
 pkg::vm: [pkg::value, pkg::heap, pkg::number];
+pkg::embed: [pkg::value, pkg::heap, pkg::vm, pkg::compile, pkg::number];
