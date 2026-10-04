@@ -752,3 +752,88 @@ allowance rather than relaxing the criterion. Qualification's runtime checks
 are repeated with explicit worker settings. Both batches include allocation,
 initialization, comparisons and output checks in process wall time; they do
 not isolate the comparison's own elapsed time.
+
+### Split-reachability probe result
+
+The mechanism is demonstrated on the standalone workload. The pinned compiler
+retains the `equal_list` call offer in the outer map's chunk. With the sole
+compiler change in `5f682db71127710bc60bc93f6770ff0113967f27`, the ledger
+omits that offer at static work 119, below 150000. Both compilers retain the
+outer map, the inner Boolean reduction split, and the recursive-loop split.
+The candidate still publishes a `recursive_loop` call whose chunk reaches
+`tree`, and `tree` still has its recursion-budget family. LLVM contains the
+range splitters' publication sites in both images. Thus this does not suppress
+all loop-containing callees or source recursion hidden inside a chunk.
+
+Explicit `WF_WORKERS=1` and `4` qualification passed 22 build/run checks:
+ordinary outputs succeeded; both independent wrong-expectation mutants
+(empty-list flag and nonempty-list flag) failed with exit 1 on both compilers
+and both worker settings. The permission and split ledger lines match exactly.
+Non-parallel LLVM matches byte for byte, SHA-256
+`fc50d4afd1fd47bf45dd2437a0c59686f3693fedbb17451974d92af6ec19d2ca`.
+The earlier 20-check batch used auto workers and four workers and is retained
+as such, not relabelled as sequential.
+
+The confirmation used macOS 26.6.2, Darwin 25.6.0 arm64, eight online CPUs,
+Rust 1.98.1, gate-profile compilers, and native `--par` executables. It ran
+under the common check lock. Each of three blocks ran each image three times,
+rotating baseline/candidate/byte-identical-baseline-copy order. The table gives
+the range of the three block medians, milliseconds of complete process wall
+time. Each short-list case has 1000000 independent rows; length 4096 has 512.
+
+| List length | Workers | Baseline median range | Candidate median range | Criterion |
+|---|---|---|---|---|
+| 0 | 1 | 4.152–6.011 | 4.189–7.287 | within allowance |
+| 0 | 4 | 71.229–73.194 | 6.455–6.533 | improves in every block |
+| 1 | 1 | 8.319–11.865 | 8.357–12.563 | within allowance |
+| 1 | 4 | 70.651–73.037 | 9.391–14.732 | improves in every block |
+| 8 | 1 | 34.061–34.751 | 33.472–37.221 | within allowance |
+| 8 | 4 | 89.095–91.810 | 30.724–32.334 | improves in every block |
+| 4096 | 1 | 10.132–13.093 | 10.101–14.032 | within allowance |
+| 4096 | 4 | 9.877–10.263 | 9.576–10.281 | within allowance |
+
+All 24 confirmation cells satisfy the identical-image control allowance. All
+nine short-list four-worker cells improve beyond it. The 216 initial and 216
+confirmation runtime observations, including statuses and load, are retained
+in [split-reachability-results.tsv](split-reachability-results.tsv). Load was
+not independently controlled beyond the shared lock and the interleaved copy
+control; the older investigation's Linux background-load admission threshold
+is not used for this separately preregistered host comparison. The difference
+attributes a substantial short-list cost to the compiler change on this
+workload. It does not establish the fraction of Snowghost's measured delta
+time caused by these offers, a broad regression-free default policy, or the
+long-list performance boundary.
+
+Reproduction uses `split-reachability.wf` for qualification. For each timing
+case keep all declarations before `fn main()`, replace the two `100000_u64`
+contract bounds by `1000000_u64`, and use a main that calls only
+`check_case(width: WIDTH_u64, count: ROWS_u64)` and returns exit 0 on True,
+1 on False. Build the same source with each compiler using
+`whitefootc --par --par-ledger -o IMAGE SOURCE`; copy the baseline image
+byte-for-byte for the control. Set `WF_WORKERS` explicitly to 1 or 4. The
+confirmation source SHA-256 values, in increasing width order, are:
+
+- 0: `6149493e1b3f4dc88d50b2cbbfb180e14680e0e62a8b9e7cd8e1b380fbd68db1`
+- 1: `ed7f7e8351df1d2608bcb0148cf30a3a877c798709a6eaf592fd23f460e4fb1a`
+- 8: `a6c83929494c80fa056534a3008bffe97a3307a3b6d098543162ccf96797febc`
+- 4096: `fa2ab728db6f66a6f78b999c60db184070d3267b6f022f0f25f538936c3ac955`
+
+The baseline compiler SHA-256 is
+`3b1ff1c4292e95fc38557a94764dd9f13858aaf29ea4a62db9f8ba1557018971`;
+the candidate is
+`9b8e767a341ad82148b59c2dc93342efb0144f4cadcdbd1b8a4e8f0e38cf182e`.
+Local command/status records, full stdout/stderr, emitted LLVM, both source
+variants, binaries and failed initial compilations remain under
+`compiler/target/call-grain-probe/` and
+`compiler/target/call-grain-confirmation/`. Initial failures were canonical
+syntax, an unresolved `Unit` spelling and a non-affine invariant. Runtime
+guards now check slice endpoints during map/setup; these checks are identical
+in A and B. No failed compile is counted as a timing observation.
+
+`make static` passed on `e13ec4336` before the result record was appended,
+and the changed Rust file passes `rustfmt --check`. The full repository gate,
+maintained performance kernels, cross-target behavior, a default-policy
+design change and independent review are not established by this probe. No
+source-language, permission, proof, runtime constant or Snowghost pin changed.
+The new result TSV serves this causal comparison and is removed only when
+its evidence is superseded and no longer cited.
