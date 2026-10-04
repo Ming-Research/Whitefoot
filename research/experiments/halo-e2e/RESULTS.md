@@ -390,3 +390,11 @@ and failure witnesses without rerunning green suites. Findings: none within
 scope. The last static check's first attempt was blocked by another worktree's
 active shared lock; no lock was removed or other worktree changed.
 Publication is intentionally absent under the user's local-only instruction.
+
+## All scripts (2026-10-04, 3697deca8)
+
+With the pattern functions and the cjson, cmsgpack, bit and struct bindings
+merged, and the compiler rebuilt from main with the per-arm match-dispatch
+lowering, all 80 oracle scripts reply as Redis 7.0.15 does at budgets 1, 7 and
+1000: 240 of 240 runs (apps 6/6, libs 10/10, lua-core 48/48, redis-api 16/16).
+The macOS-only qualification of VM.md H4 still applies.
