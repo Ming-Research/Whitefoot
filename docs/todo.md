@@ -3455,8 +3455,9 @@ condition under which it is taken up.
 
 - **Attribute the native corpus stage's macOS budget overrun.**
   The amendment-A full gate took 214.25 s in `compiler/test-corpus` against
-  its 125 s budget, with 1,729 conformance passes and one listener refused by
-  the sandbox; ten program tests also had loopback binds refused and two
+  its 125 s budget, with 1,729 conformance passes and one listener failure
+  (status 13), consistent with the observed sandbox bind refusals; ten
+  program tests also had loopback binds refused and two
   deadline reads failed. The change adds nine native-positive cases and
   twenty-one rejection cases, but their contribution to this overrun is
   unmeasured. Use the existing phase timing support and slow-case records
