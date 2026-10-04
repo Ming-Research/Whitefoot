@@ -74,6 +74,28 @@ def main():
         print(f'budget={budget}: {len(expected)} cases, {len(mismatches)} mismatches, {seconds:.3f}s', flush=True)
         if mismatches:
             print('\n'.join(report[-min(len(mismatches), 12):]))
+    if args.limit is None:
+        contract_source = (HERE / 'depth.lua').read_bytes()
+        contract_expected = ['optional-199|true|199', 'optional-200|false|pattern too complex',
+                             'greedy-199|true|0', 'greedy-200|false|pattern too complex',
+                             'minimal-199|true|0', 'minimal-200|false|pattern too complex',
+                             'tail-1000|true|1000']
+        for budget in map(int, args.budgets.split(',')):
+            extra = [] if budget == 1000 else ['one'] if budget == 1 else ['seven', 'seven']
+            result, seconds = run([str(args.binary.resolve())] + extra, input=b'\0' + contract_source)
+            if result.returncode:
+                raise RuntimeError(f'depth native exit {result.returncode}: {result.stdout!r} {result.stderr!r}')
+            reply = json.loads(result.stdout)
+            if reply.get('type') != 'array' or any(x.get('type') != 'bulk' for x in reply['items']):
+                raise RuntimeError(f'depth result schema: {reply}')
+            actual = [x['bytes'] for x in reply['items']]
+            mismatches = compare(contract_expected, actual)
+            failures += len(mismatches)
+            report += [f'Depth contract budget {budget}: 7 cases, {len(mismatches)} mismatches, '
+                       f'native exit {result.returncode}, {seconds:.3f} seconds.', '']
+            for i, a, b in mismatches:
+                report += [f'- Depth case {i}: contract `{a}`; Halo `{b}`.']
+            print(f'depth budget={budget}: 7 cases, {len(mismatches)} mismatches', flush=True)
     args.report.write_text('\n'.join(report) + '\n')
     return bool(failures)
 

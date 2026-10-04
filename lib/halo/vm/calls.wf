@@ -241,7 +241,11 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
       return Step::Error();
     }
     let v = stack^.inner[fslot];
-    match func_of(v: v) {
+    let callable = func_of(v: v);
+    if pattern_is_iterator(vm: vm, value: v) {
+      set callable = FuncView::Native(id: builtin_string_gmatchaux);
+    }
+    match callable {
       Lua(h: bound_h_2) => {
         return enter_lua(vm: vm, stack: stack, h: bound_h_2, func: fslot, argc: nargs, wanted: nr, return_pc: return_pc, tail: tailing);
       }
@@ -269,6 +273,14 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
             let room = fslot +sat 8001_u64;
             ensure_stack(stack: stack, size: room);
           }
+          let find_results = bound_id_1 == builtin_string_find;
+          let match_results = bound_id_1 == builtin_string_match;
+          let iterator_results = bound_id_1 == builtin_string_gmatchaux;
+          let search_results = bor(find_results, match_results);
+          if bor(search_results, iterator_results) {
+            let room = fslot +sat 34_u64;
+            ensure_stack(stack: stack, size: room);
+          }
           let out = HostOutcome::Raised();
           if bound_id_1 >= 4096_u32 {
             set out = Host::call(env: env, vm: vm, stack: stack, func: fslot, argc: nargs, id: bound_id_1);
@@ -278,8 +290,10 @@ fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
             let string_call = bound_id_1 == builtin_tostring;
             let sort_call = bound_id_1 == builtin_table_sort;
             let protected_call = bound_id_1 == builtin_xpcall;
+            let substitution_call = bound_id_1 == builtin_string_gsub;
             let ordinary_callback = bor(string_call, sort_call);
-            let library_callback = bor(ordinary_callback, protected_call);
+            let protected_callback = bor(ordinary_callback, protected_call);
+            let library_callback = bor(protected_callback, substitution_call);
             if library_callback {
               let a = argument(stack: stack, func: fslot, argc: nargs, index: 0_u64);
               let b = argument(stack: stack, func: fslot, argc: nargs, index: 1_u64);

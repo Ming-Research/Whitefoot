@@ -108,6 +108,17 @@ fn mark_roots(vm: &Vm, stack: &Box<Slots<Value>>, consts: &Box<Slots<Value>>, li
       pkg::heap::gc_mark(heap: &vm^.heap, v: frame.pivot);
     }
   }
+  let substitution_count = vm^.pattern_subs.inner.len;
+  for (index in 0_u64..substitution_count) {
+    if index < vm^.pattern_subs.inner.len {
+      let source = vm^.pattern_subs.inner[index].source;
+      let pattern = vm^.pattern_subs.inner[index].pattern;
+      let replacement = vm^.pattern_subs.inner[index].replacement;
+      pkg::heap::gc_mark(heap: &vm^.heap, v: source);
+      pkg::heap::gc_mark(heap: &vm^.heap, v: pattern);
+      pkg::heap::gc_mark(heap: &vm^.heap, v: replacement);
+    }
+  }
   let e = vm^.error;
   pkg::heap::gc_mark(heap: &vm^.heap, v: e);
   set i = 0_u64;

@@ -18,6 +18,16 @@ fn push_library_context(vm: &Vm, context: LibraryContext) -> r: unit writes(vm) 
 
 fn discard_library_context(vm: &Vm, index: u64) -> r: unit writes(vm) {
   loop {
+    if vm^.pattern_subs.inner.len == 0_u64 {
+      break;
+    }
+    let last = vm^.pattern_subs.inner.len - 1_u64;
+    if vm^.pattern_subs.inner[last].context != index {
+      break;
+    }
+    let discarded = take_back(window: &vm^.pattern_subs.inner);
+  }
+  loop {
     if vm^.sort_frames.inner.len == 0_u64 {
       break;
     }
@@ -112,7 +122,10 @@ fn resume_library<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots
       set vm^.callback_plan = plan;
       set local_outcome_28 = xpcall_continue::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, index: local_index_26, failed: failed);
     } else if bnot(failed) {
-      if local_context_27.id == builtin_table_sort {
+      if local_context_27.id == builtin_string_gsub {
+        set vm^.callback_plan = plan;
+        set local_outcome_28 = pattern_gsub_run::<Host<E>>(code: code, consts: consts, env: env, vm: vm, stack: stack, context: local_index_26);
+      } else if local_context_27.id == builtin_table_sort {
         set vm^.callback_plan = plan;
         let local_ok_29 = sort_run::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, context: local_index_26);
         if local_ok_29 {

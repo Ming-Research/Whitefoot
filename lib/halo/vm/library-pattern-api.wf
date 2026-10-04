@@ -1,0 +1,484 @@
+alias Value = pkg::value::Value;
+alias Cell = pkg::value::Cell;
+
+const pattern_expected_string: Array<u8, 6> = "string";
+
+const pattern_expected_number: Array<u8, 6> = "number";
+
+const pattern_error_1: Array<u8, 33> = "malformed pattern (ends with '%')";
+
+const pattern_error_2: Array<u8, 31> = "malformed pattern (missing ']')";
+
+const pattern_error_3: Array<u8, 21> = "invalid capture index";
+
+const pattern_error_4: Array<u8, 23> = "invalid pattern capture";
+
+const pattern_error_5: Array<u8, 18> = "unfinished capture";
+
+const pattern_error_6: Array<u8, 33> = "missing '[' after '%f' in pattern";
+
+const pattern_error_7: Array<u8, 17> = "too many captures";
+
+const pattern_error_8: Array<u8, 19> = "pattern too complex";
+
+const pattern_error_9: Array<u8, 18> = "unbalanced pattern";
+
+fn pattern_error(vm: &Vm, code: u8) -> r: HostOutcome writes(vm) {
+  if code == 1_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_1[0_u64..33_u64]);
+  }
+  if code == 2_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_2[0_u64..31_u64]);
+  }
+  if code == 3_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_3[0_u64..21_u64]);
+  }
+  if code == 4_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_4[0_u64..23_u64]);
+  }
+  if code == 5_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_5[0_u64..18_u64]);
+  }
+  if code == 6_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_6[0_u64..33_u64]);
+  }
+  if code == 7_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_7[0_u64..17_u64]);
+  }
+  if code == 8_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_8[0_u64..19_u64]);
+  }
+  if code == 9_u8 {
+    return lib_failure(vm: vm, text: &pattern_error_9[0_u64..18_u64]);
+  }
+  return HostOutcome::Raised();
+}
+
+fn pattern_length(vm: &Vm, text: Value) -> r: u64 reads(vm.heap) {
+  match pkg::value::str_of(v: text) {
+    Handle(h: pattern_bound_5) => {
+      let i = cvt::<u32, u64>(pattern_bound_5);
+      if i < vm^.heap.strings.inner.len {
+        return vm^.heap.strings.inner[i].payload.bytes.inner.len;
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return 0_u64;
+}
+
+fn pattern_textbyte(vm: &Vm, text: Value, at: u64) -> r: u8 reads(vm.heap) {
+  match pkg::value::str_of(v: text) {
+    Handle(h: pattern_bound_4) => {
+      let i = cvt::<u32, u64>(pattern_bound_4);
+      if i < vm^.heap.strings.inner.len {
+        if at < vm^.heap.strings.inner[i].payload.bytes.inner.len {
+          return vm^.heap.strings.inner[i].payload.bytes.inner[at];
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return 0_u8;
+}
+
+fn pattern_attempt(vm: &Vm, source: Value, pattern: Value, start: u64, pat: u64) -> r: PatternMatch reads(vm.heap) {
+  let state = pattern_state();
+  match pkg::value::str_of(v: source) {
+    Handle(h: sh) => {
+      match pkg::value::str_of(v: pattern) {
+        Handle(h: ph) => {
+          let si = cvt::<u32, u64>(sh);
+          let pi = cvt::<u32, u64>(ph);
+          if si < vm^.heap.strings.inner.len {
+            if pi < vm^.heap.strings.inner.len {
+              let sn = vm^.heap.strings.inner[si].payload.bytes.inner.len;
+              let pn = vm^.heap.strings.inner[pi].payload.bytes.inner.len;
+              let result = pattern_match(source: &vm^.heap.strings.inner[si].payload.bytes.inner[0_u64..sn], pattern: &vm^.heap.strings.inner[pi].payload.bytes.inner[0_u64..pn], start: start, pat: pat, state: &state, depth: 200_u64);
+              match result {
+                Some(value: end) => {
+                  set state.found = True();
+                  set state.finish = end;
+                }
+                None() => {
+                }
+              }
+            }
+          }
+        }
+        NoHandle() => {
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return state;
+}
+
+fn pattern_slice(vm: &Vm, source: Value, start: u64, end: u64) -> r: Value writes(vm) {
+  let bytes = box_slots_new::<u8>(capacity: 32_u64);
+  pattern_append(vm: vm, bytes: &bytes, source: source, start: start, end: end);
+  return bytes_value(vm: vm, bytes: &bytes);
+}
+
+fn pattern_append(vm: &Vm, bytes: &Box<Slots<u8>>, source: Value, start: u64, end: u64) -> r: unit reads(vm.heap), writes(bytes) {
+  match pkg::value::str_of(v: source) {
+    Handle(h: pattern_bound_3) => {
+      let i = cvt::<u32, u64>(pattern_bound_3);
+      if i < vm^.heap.strings.inner.len {
+        if start <= end {
+          if end <= vm^.heap.strings.inner[i].payload.bytes.inner.len {
+            bytes_append(bytes: bytes, text: &vm^.heap.strings.inner[i].payload.bytes.inner[start..end]);
+          }
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return unit;
+}
+
+fn pattern_capture(vm: &Vm, state: PatternMatch, source: Value, start: u64, end: u64, index: u64) -> r: Option<Value> writes(vm) {
+  if index >= state.level {
+    if index == 0_u64 {
+      let value = pattern_slice(vm: vm, source: source, start: start, end: end);
+      return Some<Value>(value: value);
+    }
+    let ignored = pattern_error(vm: vm, code: 3_u8);
+    return None<Value>();
+  }
+  if index < 32_u64 {
+    let cap = state.captures[index];
+    if cap.length == -1_i64 {
+      let ignored = pattern_error(vm: vm, code: 5_u8);
+      return None<Value>();
+    }
+    if cap.length == -2_i64 {
+      let position = cap.start +sat 1_u64;
+      let number = cvt.nearest::<u64, f64>(position);
+      let value = Value::Num(n: number);
+      return Some<Value>(value: value);
+    }
+    if cap.length >= 0_i64 {
+      let length = cvt::<i64, u64>(cap.length);
+      let finish = cap.start +sat length;
+      let value = pattern_slice(vm: vm, source: source, start: cap.start, end: finish);
+      return Some<Value>(value: value);
+    }
+  }
+  return None<Value>();
+}
+
+fn pattern_results(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, source: Value, start: u64, state: PatternMatch, find: Bool) -> r: HostOutcome writes(vm), writes(stack) {
+  let offset = 0_u64;
+  let count = state.level;
+  if find {
+    let first = start +sat 1_u64;
+    let a = cvt.nearest::<u64, f64>(first);
+    let b = cvt.nearest::<u64, f64>(state.finish);
+    let av = Value::Num(n: a);
+    let bv = Value::Num(n: b);
+    lib_put(stack: stack, at: func, value: av);
+    let second = func +sat 1_u64;
+    lib_put(stack: stack, at: second, value: bv);
+    set offset = 2_u64;
+  } else if count == 0_u64 {
+    set count = 1_u64;
+  }
+  for (i in 0_u64..count) {
+    match pattern_capture(vm: vm, state: state, source: source, start: start, end: state.finish, index: i) {
+      Some(value: pattern_bound_2) => {
+        let base = func +sat offset;
+        let at = base +sat i;
+        lib_put(stack: stack, at: at, value: pattern_bound_2);
+      }
+      None() => {
+        return HostOutcome::Raised();
+      }
+    }
+  }
+  let total = count +sat offset;
+  return HostOutcome::Returned(count: total);
+}
+
+fn pattern_is_iterator(vm: &Vm, value: Value) -> r: Bool reads(vm.heap) {
+  match value {
+    Fun(h: pattern_bound_1) => {
+      let i = cvt::<u32, u64>(pattern_bound_1);
+      if i < vm^.heap.closures.inner.len {
+        if vm^.heap.closures.inner[i].live {
+          return vm^.heap.closures.inner[i].payload.proto == 4294967295_u32;
+        }
+      }
+    }
+    Nil() => {
+    }
+    False() => {
+    }
+    True() => {
+    }
+    Num(..) => {
+    }
+    Str(..) => {
+    }
+    Tab(..) => {
+    }
+    Builtin(..) => {
+    }
+  }
+  return False();
+}
+
+fn pattern_iterator(vm: &Vm, source: Value, pattern: Value) -> r: Value writes(vm) {
+  let values = array_filled::<Value, 3>(value: source);
+  set values[1_u64] = pattern;
+  let zero = Value::Num(n: 0.0_f64);
+  set values[2_u64] = zero;
+  let handles = array_filled::<u32, 3>(value: 4294967295_u32);
+  for (i in 0_u64..3_u64) {
+    let value = values[i];
+    let closed = pkg::heap::Upval::Closed(v: value);
+    match pkg::heap::new_upvalue(heap: &vm^.heap, value: closed) {
+      Some(value: h) => {
+        set handles[i] = h;
+      }
+      None() => {
+        return Value::Nil();
+      }
+    }
+  }
+  return pkg::heap::new_closure(heap: &vm^.heap, proto: 4294967295_u32, upvals: &handles[0_u64..3_u64]);
+}
+
+fn pattern_gmatch_next(vm: &Vm, stack: &Box<Slots<Value>>, func: u64) -> r: HostOutcome writes(vm), writes(stack) {
+  let closure = Value::Nil();
+  if func < stack^.inner.len {
+    set closure = stack^.inner[func];
+  }
+  let values = array_filled::<Value, 3>(value: closure);
+  let control = 4294967295_u32;
+  match closure {
+    Fun(h: pattern_bound_0) => {
+      let hi = cvt::<u32, u64>(pattern_bound_0);
+      if hi < vm^.heap.closures.inner.len {
+        for (i in 0_u64..3_u64) {
+          if i < vm^.heap.closures.inner[hi].payload.upvals.inner.len {
+            let u = vm^.heap.closures.inner[hi].payload.upvals.inner[i];
+            set values[i] = read_upvalue(vm: vm, stack: stack, h: u);
+            if i == 2_u64 {
+              set control = u;
+            }
+          }
+        }
+      }
+    }
+    Nil() => {
+    }
+    False() => {
+    }
+    True() => {
+    }
+    Num(..) => {
+    }
+    Str(..) => {
+    }
+    Tab(..) => {
+    }
+    Builtin(..) => {
+    }
+  }
+  let source = values[0_u64];
+  let pattern = values[1_u64];
+  let position = values[2_u64];
+  let start = 0_u64;
+  match lib_integer(vm: vm, value: position) {
+    Some(value: n) => {
+      if n >= 0_i64 {
+        set start = cvt::<i64, u64>(n);
+      }
+    }
+    None() => {
+    }
+  }
+  let length = pattern_length(vm: vm, text: source);
+  loop {
+    if start > length {
+      return HostOutcome::Returned(count: 0_u64);
+    }
+    let state = pattern_attempt(vm: vm, source: source, pattern: pattern, start: start, pat: 0_u64);
+    if state.error != 0_u8 {
+      return pattern_error(vm: vm, code: state.error);
+    }
+    if state.found {
+      let next = state.finish;
+      if next == start {
+        set next = next +sat 1_u64;
+      }
+      let n = cvt.nearest::<u64, f64>(next);
+      let value = Value::Num(n: n);
+      write_upvalue(vm: vm, stack: stack, h: control, v: value);
+      let no = False();
+      return pattern_results(vm: vm, stack: stack, func: func, source: source, start: start, state: state, find: no);
+    }
+    set start = start +sat 1_u64;
+  }
+  return HostOutcome::Returned(count: 0_u64);
+}
+
+fn library_pattern<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, env: &E, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome reads(code), reads(consts), writes(env), writes(vm), writes(stack) {
+  if id == builtin_string_gmatchaux {
+    return pattern_gmatch_next(vm: vm, stack: stack, func: func);
+  }
+  let a = argument(stack: stack, func: func, argc: argc, index: 0_u64);
+  let b = argument(stack: stack, func: func, argc: argc, index: 1_u64);
+  let source = coerce_string(vm: vm, v: a);
+  match pkg::value::str_of(v: source) {
+    Handle(..) => {
+    }
+    NoHandle() => {
+      return lib_argerror(vm: vm, id: id, index: 1_u64, argc: argc, value: a, expected: &pattern_expected_string[0_u64..6_u64]);
+    }
+  }
+  let pattern = coerce_string(vm: vm, v: b);
+  match pkg::value::str_of(v: pattern) {
+    Handle(..) => {
+    }
+    NoHandle() => {
+      return lib_argerror(vm: vm, id: id, index: 2_u64, argc: argc, value: b, expected: &pattern_expected_string[0_u64..6_u64]);
+    }
+  }
+  if id == builtin_string_gmatch {
+    let iterator = pattern_iterator(vm: vm, source: source, pattern: pattern);
+    return lib_result(stack: stack, func: func, value: iterator);
+  }
+  if id == builtin_string_gsub {
+    return pattern_gsub_start::<Host<E>>(code: code, consts: consts, env: env, vm: vm, stack: stack, func: func, argc: argc, source: source, pattern: pattern);
+  }
+  let length = pattern_length(vm: vm, text: source);
+  let c = argument(stack: stack, func: func, argc: argc, index: 2_u64);
+  let initial = 1_i64;
+  let pattern_atom_1 = is_nil(v: c);
+  if bnot(pattern_atom_1) {
+    match lib_integer(vm: vm, value: c) {
+      Some(value: n) => {
+        set initial = n;
+      }
+      None() => {
+        return lib_argerror(vm: vm, id: id, index: 3_u64, argc: argc, value: c, expected: &pattern_expected_number[0_u64..6_u64]);
+      }
+    }
+  }
+  let relative = relative_position(index: initial, length: length);
+  let start = 0_u64;
+  if relative > 0_i64 {
+    let n = cvt::<i64, u64>(relative);
+    set start = n - 1_u64;
+  }
+  if start > length {
+    set start = length;
+  }
+  let find = id == builtin_string_find;
+  let plain = False();
+  if find {
+    let d = argument(stack: stack, func: func, argc: argc, index: 3_u64);
+    set plain = pkg::value::truthy(v: d);
+    let special = False();
+    let plen = pattern_length(vm: vm, text: pattern);
+    for (i in 0_u64..plen) {
+      let byte = pattern_textbyte(vm: vm, text: pattern, at: i);
+      if byte == 0_u8 {
+        break;
+      }
+      if byte == 94_u8 {
+        set special = True();
+      }
+      if byte == 36_u8 {
+        set special = True();
+      }
+      if byte == 42_u8 {
+        set special = True();
+      }
+      if byte == 43_u8 {
+        set special = True();
+      }
+      if byte == 63_u8 {
+        set special = True();
+      }
+      if byte == 46_u8 {
+        set special = True();
+      }
+      if byte == 40_u8 {
+        set special = True();
+      }
+      if byte == 91_u8 {
+        set special = True();
+      }
+      if byte == 37_u8 {
+        set special = True();
+      }
+      if byte == 45_u8 {
+        set special = True();
+      }
+    }
+    if bnot(special) {
+      set plain = True();
+    }
+  }
+  if plain {
+    let plen = pattern_length(vm: vm, text: pattern);
+    loop {
+      let room = length -sat start;
+      if plen > room {
+        break;
+      }
+      let same = True();
+      for (i in 0_u64..plen) {
+        let at = start +sat i;
+        let x = pattern_textbyte(vm: vm, text: source, at: at);
+        let y = pattern_textbyte(vm: vm, text: pattern, at: i);
+        if x != y {
+          set same = False();
+          break;
+        }
+      }
+      if same {
+        let state = pattern_state();
+        set state.finish = start +sat plen;
+        return pattern_results(vm: vm, stack: stack, func: func, source: source, start: start, state: state, find: find);
+      }
+      if start >= length {
+        break;
+      }
+      set start = start +sat 1_u64;
+    }
+  } else {
+    let first = pattern_textbyte(vm: vm, text: pattern, at: 0_u64);
+    let anchor = first == 94_u8;
+    let pat = 0_u64;
+    if anchor {
+      set pat = 1_u64;
+    }
+    loop {
+      let state = pattern_attempt(vm: vm, source: source, pattern: pattern, start: start, pat: pat);
+      if state.error != 0_u8 {
+        return pattern_error(vm: vm, code: state.error);
+      }
+      if state.found {
+        return pattern_results(vm: vm, stack: stack, func: func, source: source, start: start, state: state, find: find);
+      }
+      if anchor {
+        break;
+      }
+      if start >= length {
+        break;
+      }
+      set start = start +sat 1_u64;
+    }
+  }
+  let nil = Value::Nil();
+  return lib_result(stack: stack, func: func, value: nil);
+}
