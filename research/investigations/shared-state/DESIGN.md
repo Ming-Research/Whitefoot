@@ -531,3 +531,26 @@ H4 alone reaches half the loss, and two causes outside the key set appear:
 the parser and the cell locks. The next measurements name the unnamed
 addresses and change one cause at a time in a diagnostic image, at one CPU
 and two short passes first.
+
+**Measurement 3: the parser.** The diagnostic image `lean`
+(`research/mset-lean-line`, not for merge) puts a loop for the common count
+line, one to nine digits without a sign or leading zero, in front of
+`read_line`, which it keeps for every other line, so replies are unchanged.
+On the 14900K at one CPU, two passes of five seconds (run 37191941173):
+CPU per `MSET` `base` 1.407 and 1.380 µs, `main` 1.531 and 1.519, `main-twin`
+1.495 and 1.513, `lean` 1.437 and 1.498. Two short passes leave a spread of
+4% in one image, too wide for a 3% effect, so the profiles decide it, over
+3,312,055 requests each: `read_line` and `parse_multibulk` together took
+0.345 s in `main`, the parse in `lean` 0.235 s and in `base` 0.217 s. The
+parser's share of the loss, about 33 ns per `MSET`, is confirmed and is
+recovered by the common-line loop. The rates still step by about 5%: the
+wall time includes redis-benchmark's exit, which waits for its 250 ms tick,
+so CPU per request is this comparison's measure.
+
+The unnamed addresses are in `libc.so.6`, the largest at one address that
+takes 0.107 s in `base` and 0.165 to 0.193 s in the images of `main`, which
+fits the key set's copies and moves (H1 and H2) at about 20 ns per `MSET`.
+`try_entry` took 0.465 s in `base` and 0.53 to 0.56 s in the others, about
+20 ns per `MSET` at one CPU; its code differs from `base`'s only in a test
+of the statement's own hold on an already locked cell, which this workload
+never reaches, so the cause is not yet known.
