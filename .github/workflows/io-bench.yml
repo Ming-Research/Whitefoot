@@ -28,6 +28,11 @@ on:
         description: "name=revision pairs; a name ending in -twin measures the same image as its stem, a noise control"
         type: string
         default: "base=cea9188d4 main=HEAD main-twin=HEAD"
+      compare_runner:
+        description: Where the firn comparison runs, a GitHub runner or the owner's i9-14900K under WSL2 (self-hosted, label 14900k)
+        type: choice
+        options: [github, 14900k]
+        default: github
       compare_cpus:
         description: Server CPUs for the firn comparison
         type: string
@@ -61,15 +66,18 @@ jobs:
   # tables it relies on into its record.
   compare-firn:
     if: ${{ inputs.compare_firn }}
-    name: compare-firn (ubuntu-24.04)
-    runs-on: ubuntu-24.04
+    name: compare-firn (${{ inputs.compare_runner }})
+    runs-on: ${{ inputs.compare_runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # The self-hosted machine keeps these installed; its owner has no
+      # passwordless sudo to give a job.
       - name: Install the host toolchain, redis-benchmark and perf
+        if: ${{ runner.environment == 'github-hosted' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang lld redis-tools
@@ -115,9 +123,11 @@ jobs:
             echo "model: $(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)"
           } | tee "$OUT/host.txt"
           if [ "$PROFILE" = true ]; then
-            PERF=$(ls /usr/lib/linux-tools/*/perf 2>/dev/null | head -1)
+            PERF=${PERF:-$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)}
             if [ -n "$PERF" ]; then
-              sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+              if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+                sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+              fi
               export PERF
             else
               echo "no perf for this kernel; profiles skipped" | tee -a "$OUT/host.txt"
