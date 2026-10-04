@@ -3670,24 +3670,6 @@ condition under which it is taken up.
   reading, and running the first route's checks beside the second's would
   settle them. Reopen with the next change to `CONFIG SET` or the idle
   limit, or when the corpus stage needs the time back.
-- **Some new list and set checks were not each made to fail once.** The work
-  stopped for the owner's budget before these checks added to
-  `compiler/tests/programs/network.rs` were broken one way each: the set
-  batch and the `SRANDMEMBER` draws of
-  `firn_answers_the_value_types_as_redis_does_with_lists_and_sets`, the ten
-  list and six set writes of the value-types replay test, and the restart test's keys for
-  `SMOVE`'s two removal records and a store's. The list batch was (eleven
-  breaks, each failing it), so were the eight list removal records (replaced
-  at once, each failing exactly its own key), and `SADD`'s, `SREM`'s and
-  `SPOP`'s records failed exactly their keys in the same check on a branch
-  since dropped. The change: break each
-  set check once (an inverted membership, an absent key's zeros, the -2^63
-  count's error, `SPOP`'s syntax error, `SINTERCARD`'s limit, `SDIFF`'s
-  sense, an emptied destination kept, `SMOVE`'s type check before an absent
-  source, a doubled member in the one-pass draw, independent draws below a
-  third, distinct draws for a negative count, unrecorded `LSET`, `SMOVE` and
-  stores, and each set removal record) and see it fail. Reopen before the
-  firn branches merge.
 - **Sorted-set ranks and counts walk the order element by element.** The
   library's `OrderedMap` keeps no subtree sizes, so `ZRANK` and `ZREVRANK`
   count the members before the one asked, `ZRANGE` by position and

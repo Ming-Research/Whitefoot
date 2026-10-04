@@ -1621,25 +1621,13 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes() {
     }
 }
 
-/// [PRE-2] firn replays its append-only file after a restart:
-/// every change the first run made, set, removed, incremented, given an expiry
-/// or made persistent, holds in the second, and a key whose expiry passed
-/// while firn was stopped is absent. As in Redis, the replay applies the
-/// file's commands in order without expiring anything, so a key made
-/// persistent before its expiry holds its value, and a key incremented before
-/// its expiry passed is absent rather than counting again from one. A key a
-/// command finds expired is removed, and the file records the removal, as
-/// Redis propagates it, so that the commands after it replay as they ran: a
-/// `SET` with NX, one with KEEPTTL and an `INCR` on a key set already expired,
-/// and a `SET` with NX after `EXISTS`, `GET`, `TTL`, `TYPE`, `DEL`, `PERSIST`,
-/// `EXPIRE`, a negative `EXPIRE`, `GETDEL` or `GETEX` found it so, hold their
-/// values after the restart, the `INCR` counting from zero and KEEPTTL keeping
-/// no expiry. So do a list pushed to or moved to and a set added to or moved
-/// to once they had expired, and keys removed on expiry before an RPUSH by
-/// a list command that pops, sets, removes, trims, inserts or moves from, or
-/// a set command that removes, pops, moves from or stores from. The first
-/// run ends once its one client has closed, after its writer appended and
-/// synced the last changes.
+/// [PRE-2] firn replays list and set changes after a restart on both routes.
+/// A list pushed to or moved to and a set added to or moved to after expiry
+/// retain their new values. Keys removed on expiry before RPUSH by list pops,
+/// updates, removals, trims, inserts or moves, or set removals, pops, moves or
+/// stores replay with their new list values. The first run closes after its
+/// writer appends and syncs the changes; the second checks their values and
+/// the database size alongside seeded string keys.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_its_append_only_file_after_a_restart_on_both_routes_with_lists_and_sets() {
@@ -1654,66 +1642,50 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes_with_lists_a
         client
             .set_read_timeout(Some(Duration::from_secs(20)))
             .expect("bound the first client's waits");
-        let mut batch = Vec::new();
-        for request in [
-            vec!["SET", "gone", "v"],
-            vec!["SET", "brief", "v", "PX", "300"],
-            vec!["SET", "long", "v", "EX", "100"],
-            vec!["INCR", "count"],
-            vec!["INCR", "count"],
-            vec!["DEL", "gone"],
-            vec!["SET", "kept", "v", "PX", "60000"],
-            vec!["PERSIST", "kept"],
-            vec!["SET", "later", "v", "PX", "60000"],
-            vec!["SET", "persisted", "v", "PX", "300"],
-            vec!["PERSIST", "persisted"],
-            vec!["SET", "bumped", "5", "PX", "300"],
-            vec!["INCR", "bumped"],
-            vec!["SET", "lazy:a", "old", "PXAT", "1"],
-            vec!["SET", "lazy:a", "new", "NX"],
-            vec!["SET", "lazy:b", "5", "PXAT", "1"],
-            vec!["INCR", "lazy:b"],
-            vec!["SET", "lazy:c", "old", "PXAT", "1"],
-            vec!["EXISTS", "lazy:c"],
-            vec!["SET", "lazy:c", "new", "NX"],
-            vec!["SET", "lazy:d", "old", "PXAT", "1"],
-            vec!["GET", "lazy:d"],
-            vec!["SET", "lazy:d", "new", "NX"],
-            vec!["SET", "lazy:e", "old", "PXAT", "1"],
-            vec!["SET", "lazy:e", "new", "KEEPTTL"],
-            vec!["SET", "lazy:f", "old", "PXAT", "1"],
-            vec!["TTL", "lazy:f"],
-            vec!["SET", "lazy:f", "new", "NX"],
-            vec!["SET", "lazy:g", "old", "PXAT", "1"],
-            vec!["TYPE", "lazy:g"],
-            vec!["SET", "lazy:g", "new", "NX"],
-            vec!["SET", "lazy:h", "old", "PXAT", "1"],
-            vec!["DEL", "lazy:h"],
-            vec!["SET", "lazy:h", "new", "NX"],
-            vec!["SET", "lazy:i", "old", "PXAT", "1"],
-            vec!["PERSIST", "lazy:i"],
-            vec!["SET", "lazy:i", "new", "NX"],
-            vec!["SET", "lazy:j", "old", "PXAT", "1"],
-            vec!["EXPIRE", "lazy:j", "100"],
-            vec!["SET", "lazy:j", "new", "NX"],
-            vec!["SET", "lazy:k", "old", "PXAT", "1"],
-            vec!["GETDEL", "lazy:k"],
-            vec!["SET", "lazy:k", "new", "NX"],
-            vec!["SET", "lazy:l", "old", "PXAT", "1"],
-            vec!["GETEX", "lazy:l", "PERSIST"],
-            vec!["SET", "lazy:l", "new", "NX"],
-            vec!["SET", "lazy:m", "old", "PXAT", "1"],
-            vec!["EXPIRE", "lazy:m", "-1"],
-            vec!["SET", "lazy:m", "new", "NX"],
-        ] {
-            batch.extend(resp(&request));
-        }
-        client.write_all(&batch).expect("send the changes");
-        expect_replies(
-            &mut client,
-            b"+OK\r\n+OK\r\n+OK\r\n:1\r\n:2\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:6\r\n+OK\r\n+OK\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n+OK\r\n+OK\r\n:-2\r\n+OK\r\n+OK\r\n+none\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n$-1\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
-            &what,
-        );
+        // The distinct GET count and DBSIZE replies need the base case's 18 live
+        // keys, but none of its expiry or lazy-removal operations.
+        client
+            .write_all(&resp(&[
+                "MSET",
+                "long",
+                "v",
+                "count",
+                "2",
+                "kept",
+                "v",
+                "later",
+                "v",
+                "persisted",
+                "v",
+                "lazy:a",
+                "new",
+                "lazy:b",
+                "1",
+                "lazy:c",
+                "new",
+                "lazy:d",
+                "new",
+                "lazy:e",
+                "new",
+                "lazy:f",
+                "new",
+                "lazy:g",
+                "new",
+                "lazy:h",
+                "new",
+                "lazy:i",
+                "new",
+                "lazy:j",
+                "new",
+                "lazy:k",
+                "new",
+                "lazy:l",
+                "new",
+                "lazy:m",
+                "new",
+            ]))
+            .expect("seed the live string keys");
+        expect_replies(&mut client, b"+OK\r\n", &what);
         // Keys a list or set command finds expired: each is given an expiry of one
         // millisecond and written five milliseconds later, by a command that
         // writes it or by one that only removes it, then by RPUSH.
@@ -1811,51 +1783,13 @@ fn firn_replays_its_append_only_file_after_a_restart_on_both_routes_with_lists_a
             .set_read_timeout(Some(Duration::from_secs(20)))
             .expect("bound the second client's waits");
         let mut batch = Vec::new();
-        for request in [
-            vec!["GET", "gone"],
-            vec!["GET", "brief"],
-            vec!["GET", "long"],
-            vec!["GET", "count"],
-            vec!["GET", "kept"],
-            vec!["TTL", "kept"],
-            vec!["GET", "persisted"],
-            vec!["TTL", "persisted"],
-            vec!["GET", "bumped"],
-            vec!["DBSIZE"],
-            vec!["GET", "lazy:a"],
-            vec!["GET", "lazy:b"],
-            vec!["TTL", "lazy:b"],
-            vec!["GET", "lazy:c"],
-            vec!["GET", "lazy:d"],
-            vec!["GET", "lazy:e"],
-            vec!["TTL", "lazy:e"],
-            vec!["GET", "lazy:f"],
-            vec!["GET", "lazy:g"],
-            vec!["GET", "lazy:h"],
-            vec!["GET", "lazy:i"],
-            vec!["GET", "lazy:j"],
-            vec!["GET", "lazy:k"],
-            vec!["GET", "lazy:l"],
-            vec!["GET", "lazy:m"],
-        ] {
+        for request in [vec!["GET", "count"], vec!["DBSIZE"]] {
             batch.extend(resp(&request));
         }
-        client.write_all(&batch).expect("read the replayed keys");
-        expect_replies(
-            &mut client,
-            b"$-1\r\n$-1\r\n$1\r\nv\r\n$1\r\n2\r\n$1\r\nv\r\n:-1\r\n$1\r\nv\r\n:-1\r\n$-1\r\n:33\r\n$3\r\nnew\r\n$1\r\n1\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n:-1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
-            &what,
-        );
         client
-            .write_all(&resp(&["TTL", "long"]))
-            .expect("ask the time left");
-        let long = integer_reply(&mut client, &what);
-        assert!((98..=100).contains(&long), "{what}: {long}");
-        client
-            .write_all(&resp(&["PTTL", "later"]))
-            .expect("ask the time left");
-        let later = integer_reply(&mut client, &what);
-        assert!((58_000..=60_000).contains(&later), "{what}: {later}");
+            .write_all(&batch)
+            .expect("read the replayed key count");
+        expect_replies(&mut client, b"$1\r\n2\r\n:33\r\n", &what);
         let reads = [
             (
                 vec!["LRANGE", "list:push", "0", "-1"],
@@ -2220,24 +2154,9 @@ fn firn_answers_the_value_types_as_redis_does() {
     assert_eq!(status, 0);
 }
 
-/// firn answers the value types as Redis does. One pipelined batch pushes,
-/// ranges and pops a list until it is empty, which removes its key; adds and
-/// removes set members; sets and reads hash fields; adds, rescores and pops
-/// sorted-set members; refuses a list command on a string and a string command
-/// on a hash; sets ten keys in one MSET, a command of eleven arguments; and
-/// names an unknown command and a command short of arguments as Redis does.
-/// Two inline commands close the batch. A second batch reads, replaces,
-/// removes, trims, inserts into, searches and moves list elements, an
-/// absent key looked up before an index that is no integer, an option read
-/// up to a zero byte as Redis's strcasecmp reads it, and a source equal to
-/// its destination rotating its list; a third asks set membership, counts,
-/// stores and moves sets, the destination of a store whatever it held and
-/// one emptied by an empty result removed, with Redis's errors for counts
-/// and options. The expected bytes are those redis-server 7.0.15 returns
-/// for the same bytes. Last, SRANDMEMBER with a positive count answers
-/// that many distinct members, both below and above a third of the set, and
-/// with a negative count that many members, which then must repeat, as Redis
-/// promises.
+/// firn answers list updates, moves, searches and set membership, algebra,
+/// stores and random draws as Redis does. The expected bytes are those
+/// redis-server 7.0.15 returns for the same requests.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_the_value_types_as_redis_does_with_lists_and_sets() {
@@ -2249,50 +2168,6 @@ fn firn_answers_the_value_types_as_redis_does_with_lists_and_sets() {
     client
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("bound the client's waits");
-    let mut batch = Vec::new();
-    for request in [
-        vec!["RPUSH", "l", "a", "b", "c"],
-        vec!["LPUSH", "l", "z"],
-        vec!["LRANGE", "l", "0", "-1"],
-        vec!["LRANGE", "l", "1", "-2"],
-        vec!["LPOP", "l"],
-        vec!["RPOP", "l", "2"],
-        vec!["LLEN", "l"],
-        vec!["RPOP", "l"],
-        vec!["EXISTS", "l"],
-        vec!["SADD", "s", "a", "b", "c", "a"],
-        vec!["SREM", "s", "a", "q"],
-        vec!["SCARD", "s"],
-        vec!["HSET", "h", "f", "1", "g", "2"],
-        vec!["HSET", "h", "f", "3"],
-        vec!["HGET", "h", "f"],
-        vec!["HGET", "h", "nope"],
-        vec!["ZADD", "z", "3", "c", "1", "a", "2", "b"],
-        vec!["ZADD", "z", "0", "c"],
-        vec!["ZSCORE", "z", "c"],
-        vec!["ZPOPMIN", "z", "2"],
-        vec!["ZCARD", "z"],
-        vec!["SET", "str", "v"],
-        vec!["LPUSH", "str", "x"],
-        vec!["SADD", "l", "x"],
-        vec!["TYPE", "l"],
-        vec!["GET", "h"],
-        vec![
-            "MSET", "k1", "1", "k2", "2", "k3", "3", "k4", "4", "k5", "5",
-        ],
-        vec!["GET", "k5"],
-        vec!["NOPE", "a", "b"],
-        vec!["LLEN"],
-    ] {
-        batch.extend(resp(&request));
-    }
-    batch.extend_from_slice(b"SET inline yes\r\nGET inline\r\n");
-    client.write_all(&batch).expect("send the batch");
-    expect_replies(
-        &mut client,
-        b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n+OK\r\n$3\r\nyes\r\n",
-        "the value-type batch",
-    );
     let mut batch = Vec::new();
     for request in [
         vec!["RPUSH", "li", "a", "b", "c", "b", "a"],
@@ -2427,17 +2302,11 @@ fn firn_answers_the_value_types_as_redis_does_with_lists_and_sets() {
     assert_eq!(status, 0);
 }
 
-/// firn answers the value types as Redis does. One pipelined batch pushes,
-/// ranges and pops a list until it is empty, which removes its key; adds and
-/// removes set members; sets and reads hash fields; adds, rescores and pops
-/// sorted-set members; refuses a list command on a string and a string command
-/// on a hash; sets ten keys in one MSET, a command of eleven arguments; and
-/// names an unknown command and a command short of arguments as Redis does.
-/// `COPY` duplicates a set, a hash, a sorted set and a list whole, each copy
-/// changed afterwards without changing its original, and with REPLACE puts a
-/// list in place of a set; `RENAME` moves a hash over a list.
-/// Two inline commands close the batch. The expected bytes are those
-/// redis-server 7.0.15 returns for the same bytes.
+/// firn copies and renames value types as Redis does: COPY duplicates a set,
+/// hash, sorted set and list, and changing each copy leaves its source intact.
+/// REPLACE puts a list in place of a set, and RENAME moves a hash over a list.
+/// Further batches cover list updates and moves, set algebra and random draws.
+/// The expected bytes are those redis-server 7.0.15 returns for the same requests.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_copies_and_renames_the_value_types_as_redis_does() {
@@ -2449,40 +2318,19 @@ fn firn_copies_and_renames_the_value_types_as_redis_does() {
     client
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("bound the client's waits");
+    // COPY needs the final set, hash and sorted-set values from the base case.
     let mut batch = Vec::new();
     for request in [
-        vec!["RPUSH", "l", "a", "b", "c"],
-        vec!["LPUSH", "l", "z"],
-        vec!["LRANGE", "l", "0", "-1"],
-        vec!["LRANGE", "l", "1", "-2"],
-        vec!["LPOP", "l"],
-        vec!["RPOP", "l", "2"],
-        vec!["LLEN", "l"],
-        vec!["RPOP", "l"],
-        vec!["EXISTS", "l"],
-        vec!["SADD", "s", "a", "b", "c", "a"],
-        vec!["SREM", "s", "a", "q"],
-        vec!["SCARD", "s"],
-        vec!["HSET", "h", "f", "1", "g", "2"],
-        vec!["HSET", "h", "f", "3"],
-        vec!["HGET", "h", "f"],
-        vec!["HGET", "h", "nope"],
-        vec!["ZADD", "z", "3", "c", "1", "a", "2", "b"],
-        vec!["ZADD", "z", "0", "c"],
-        vec!["ZSCORE", "z", "c"],
-        vec!["ZPOPMIN", "z", "2"],
-        vec!["ZCARD", "z"],
-        vec!["SET", "str", "v"],
-        vec!["LPUSH", "str", "x"],
-        vec!["SADD", "l", "x"],
-        vec!["TYPE", "l"],
-        vec!["GET", "h"],
-        vec![
-            "MSET", "k1", "1", "k2", "2", "k3", "3", "k4", "4", "k5", "5",
-        ],
-        vec!["GET", "k5"],
-        vec!["NOPE", "a", "b"],
-        vec!["LLEN"],
+        vec!["SADD", "s", "b", "c"],
+        vec!["HSET", "h", "f", "3", "g", "2"],
+        vec!["ZADD", "z", "2", "b"],
+    ] {
+        batch.extend(resp(&request));
+    }
+    client.write_all(&batch).expect("seed the values to copy");
+    expect_replies(&mut client, b":2\r\n:2\r\n:1\r\n", "the copy sources");
+    let mut batch = Vec::new();
+    for request in [
         vec!["COPY", "s", "s2"],
         vec!["SADD", "s2", "x"],
         vec!["SCARD", "s"],
@@ -2507,12 +2355,13 @@ fn firn_copies_and_renames_the_value_types_as_redis_does() {
     ] {
         batch.extend(resp(&request));
     }
-    batch.extend_from_slice(b"SET inline yes\r\nGET inline\r\n");
-    client.write_all(&batch).expect("send the batch");
+    client
+        .write_all(&batch)
+        .expect("send the copy and rename batch");
     expect_replies(
         &mut client,
-        b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n:1\r\n:1\r\n:2\r\n:3\r\n:1\r\n:0\r\n$1\r\n3\r\n$1\r\n9\r\n:1\r\n:1\r\n:1\r\n*4\r\n$1\r\nb\r\n$1\r\n2\r\n$1\r\nq\r\n$1\r\n5\r\n:3\r\n:1\r\n$1\r\nc\r\n*3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n:1\r\n+list\r\n+OK\r\n+hash\r\n:0\r\n+OK\r\n$3\r\nyes\r\n",
-        "the value-type batch",
+        b":1\r\n:1\r\n:2\r\n:3\r\n:1\r\n:0\r\n$1\r\n3\r\n$1\r\n9\r\n:1\r\n:1\r\n:1\r\n*4\r\n$1\r\nb\r\n$1\r\n2\r\n$1\r\nq\r\n$1\r\n5\r\n:3\r\n:1\r\n$1\r\nc\r\n*3\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n:1\r\n+list\r\n+OK\r\n+hash\r\n:0\r\n",
+        "the copy and rename batch",
     );
     let mut batch = Vec::new();
     for request in [
@@ -3666,21 +3515,9 @@ fn firn_replays_the_value_types_from_its_append_only_file() {
     assert_eq!(status, 0, "the second run");
 }
 
-/// firn replays the value types from its append-only file: after a restart a
-/// list keeps the elements its pushes and pops left, a hash its field, a
-/// sorted set the member ZPOPMIN left at its score, and a member added at 0.1
-/// keeps the double nearest 0.1, which the replay reads again from the score's
-/// text as the command read it. The 25 of 50 members SPOP
-/// removed stay removed, since the file records the pop as the SREM of the
-/// members it chose, as Redis records it; a replay that popped at random, from
-/// a generator seeded by the clock at each start, would almost surely remove
-/// others. A list replaced, removed from, trimmed, inserted into and pushed
-/// onto where it exists, and its elements moved to another list, holds what
-/// those commands left, and so do the sets a member moved between and
-/// the results the three stores wrote. A key the expiring context removed is recorded as
-/// removed, as Redis
-/// propagates it, so a `SET` with NX that found it absent holds its value after
-/// the restart, where a replay keeping the expired key would refuse it.
+/// firn replays list updates and moves and set moves and algebra stores from
+/// its append-only file. After a restart, the lists retain their elements and
+/// the stored sets retain the membership produced before the restart.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_replays_the_value_types_from_its_append_only_file_with_lists_and_sets() {
@@ -3693,21 +3530,8 @@ fn firn_replays_the_value_types_from_its_append_only_file_with_lists_and_sets() 
     client
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("bound the first client's waits");
-    let members = (0..50)
-        .map(|index| format!("m{index:02}"))
-        .collect::<Vec<_>>();
-    let mut add = vec!["SADD", "s"];
-    add.extend(members.iter().map(String::as_str));
     let mut batch = Vec::new();
     for request in [
-        vec!["RPUSH", "l", "a", "b", "c"],
-        vec!["LPOP", "l"],
-        vec!["HSET", "h", "f", "v"],
-        vec!["ZADD", "z", "1", "a", "2", "b"],
-        vec!["ZPOPMIN", "z"],
-        vec!["ZADD", "f", "0.1", "m"],
-        add,
-        vec!["SET", "lapse", "old", "PX", "1"],
         vec!["RPUSH", "k", "a", "b", "c", "d", "e", "f"],
         vec!["LSET", "k", "0", "A"],
         vec!["LREM", "k", "1", "c"],
@@ -3730,35 +3554,9 @@ fn firn_replays_the_value_types_from_its_append_only_file_with_lists_and_sets() 
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n:6\r\n+OK\r\n:1\r\n+OK\r\n:5\r\n:6\r\n:7\r\n$1\r\nq\r\n$1\r\ne\r\n*1\r\n$1\r\np\r\n:3\r\n:3\r\n:1\r\n:2\r\n:3\r\n:1\r\n",
+        b":6\r\n+OK\r\n:1\r\n+OK\r\n:5\r\n:6\r\n:7\r\n$1\r\nq\r\n$1\r\ne\r\n*1\r\n$1\r\np\r\n:3\r\n:3\r\n:1\r\n:2\r\n:3\r\n:1\r\n",
         "the first run's changes",
     );
-    client
-        .write_all(&resp(&["SPOP", "s", "25"]))
-        .expect("pop 25 members");
-    assert_eq!(
-        reply_line(&mut client, "the popped members' header"),
-        "*25\r\n"
-    );
-    let mut popped = Vec::new();
-    for _ in 0..25 {
-        assert_eq!(
-            reply_line(&mut client, "a popped member's header"),
-            "$3\r\n"
-        );
-        let member = reply_line(&mut client, "a popped member");
-        let member = member.trim_end().to_owned();
-        assert!(members.contains(&member), "{member}");
-        assert!(!popped.contains(&member), "{member} popped twice");
-        popped.push(member);
-    }
-    // The expiring context, which wakes every 100 milliseconds, removes the
-    // key set with PX 1 before this SET finds it absent.
-    std::thread::sleep(Duration::from_millis(250));
-    client
-        .write_all(&resp(&["SET", "lapse", "new", "NX"]))
-        .expect("set the expired key again");
-    expect_replies(&mut client, b"+OK\r\n", "the key set again");
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0, "the first run");
@@ -3769,18 +3567,8 @@ fn firn_replays_the_value_types_from_its_append_only_file_with_lists_and_sets() 
     client
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("bound the second client's waits");
-    let mut remove = vec!["SREM", "s"];
-    remove.extend(popped.iter().map(String::as_str));
     let mut batch = Vec::new();
     for request in [
-        vec!["LRANGE", "l", "0", "-1"],
-        vec!["HGET", "h", "f"],
-        vec!["ZCARD", "z"],
-        vec!["ZSCORE", "z", "b"],
-        vec!["ZSCORE", "f", "m"],
-        vec!["SCARD", "s"],
-        remove,
-        vec!["GET", "lapse"],
         vec!["LRANGE", "k", "0", "-1"],
         vec!["LRANGE", "k2", "0", "-1"],
         vec!["SCARD", "t1"],
@@ -3794,7 +3582,7 @@ fn firn_replays_the_value_types_from_its_append_only_file_with_lists_and_sets() 
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n*4\r\n$1\r\nA\r\n$1\r\nx\r\n$1\r\nb\r\n$1\r\nd\r\n*2\r\n$1\r\ne\r\n$1\r\nq\r\n:2\r\n*1\r\n$1\r\na\r\n*3\r\n:1\r\n:1\r\n:0\r\n*3\r\n:1\r\n:1\r\n:1\r\n*1\r\n$1\r\nd\r\n",
+        b"*4\r\n$1\r\nA\r\n$1\r\nx\r\n$1\r\nb\r\n$1\r\nd\r\n*2\r\n$1\r\ne\r\n$1\r\nq\r\n:2\r\n*1\r\n$1\r\na\r\n*3\r\n:1\r\n:1\r\n:0\r\n*3\r\n:1\r\n:1\r\n:1\r\n*1\r\n$1\r\nd\r\n",
         "the replayed values",
     );
     drop(client);
@@ -4695,40 +4483,10 @@ fn aof_records(bytes: &[u8]) -> Vec<Vec<String>> {
     records
 }
 
-/// firn answers the value types as Redis does. One pipelined batch pushes,
-/// ranges and pops a list until it is empty, which removes its key; adds and
-/// removes set members; sets and reads hash fields; adds, rescores and pops
-/// sorted-set members; refuses a list command on a string and a string command
-/// on a hash; sets ten keys in one MSET, a command of eleven arguments; and
-/// names an unknown command and a command short of arguments as Redis does.
-/// Two inline commands close the batch.
-///
-/// A batch of hash commands follows: HMSET's OK, an unpaired field refused as
-/// the wrong number of arguments after the count Redis's table admits, HMGET's
-/// null fields, HDEL counting a field named twice once and removing an emptied
-/// key, HEXISTS, HSTRLEN and HLEN, HINCRBY's sum and its three errors,
-/// HINCRBYFLOAT in x87 extended precision (0.1 then 0.2 is 0.3, which a double
-/// sum writes as 0.30000000000000004), its %.17Lf tie to even, a subnormal
-/// and negative zero written as 0, 1e400 written whole, a sum at 2^64 that
-/// only rounding reaches, and its refusals of overflow, inf, nan, white space
-/// and a zero byte, HSETNX, a one-field HGETALL, HKEYS and HVALS, and
-/// HRANDFIELD's errors. A
-/// batch of sorted-set commands follows: ZADD's NX, XX, GT, LT, CH and INCR and
-/// their conflicts, ZINCRBY's negative zero and NaN, ZRANGE by rank, score and
-/// member with REV, LIMIT and WITHSCORES, the commands it generalizes, score
-/// bounds read as strtod reads them (white space before, overflow to infinity,
-/// an empty string as 0), ranges by member over unequal scores as Redis walks
-/// a small set, ZCOUNT, ZLEXCOUNT, ZRANK, ZREVRANK, ZMSCORE, ZREM, ZPOPMAX and
-/// ZPOPMIN's errors, and the ZREMRANGEBY commands. The expected bytes of the
-/// three batches are those redis-server 7.0.15 returns for the same bytes on
-/// one server.
-///
-/// HRANDFIELD then draws from a hash of five fields what Redis promises: one
-/// field, distinct fields up to the hash's size for a positive count, the
-/// count asked with repeats for a negative one, each value its field's, and
-/// not always the same field. Last, sets of 200 members, several levels of
-/// firn's ordered map, answer ranges by rank, score and member, ranks, counts
-/// and removals as Redis answers them, which the expected replies compute.
+/// firn answers hash updates, numeric increments, random field draws and
+/// sorted-set updates, ranges, ranks and removals as Redis does, including
+/// ranges in sets of 200 members. The expected bytes are those redis-server
+/// 7.0.15 returns for the same requests.
 #[cfg(target_os = "linux")]
 #[test]
 fn firn_answers_the_value_types_as_redis_does_with_hashes_and_sorted_sets() {
@@ -4740,50 +4498,6 @@ fn firn_answers_the_value_types_as_redis_does_with_hashes_and_sorted_sets() {
     client
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("bound the client's waits");
-    let mut batch = Vec::new();
-    for request in [
-        vec!["RPUSH", "l", "a", "b", "c"],
-        vec!["LPUSH", "l", "z"],
-        vec!["LRANGE", "l", "0", "-1"],
-        vec!["LRANGE", "l", "1", "-2"],
-        vec!["LPOP", "l"],
-        vec!["RPOP", "l", "2"],
-        vec!["LLEN", "l"],
-        vec!["RPOP", "l"],
-        vec!["EXISTS", "l"],
-        vec!["SADD", "s", "a", "b", "c", "a"],
-        vec!["SREM", "s", "a", "q"],
-        vec!["SCARD", "s"],
-        vec!["HSET", "h", "f", "1", "g", "2"],
-        vec!["HSET", "h", "f", "3"],
-        vec!["HGET", "h", "f"],
-        vec!["HGET", "h", "nope"],
-        vec!["ZADD", "z", "3", "c", "1", "a", "2", "b"],
-        vec!["ZADD", "z", "0", "c"],
-        vec!["ZSCORE", "z", "c"],
-        vec!["ZPOPMIN", "z", "2"],
-        vec!["ZCARD", "z"],
-        vec!["SET", "str", "v"],
-        vec!["LPUSH", "str", "x"],
-        vec!["SADD", "l", "x"],
-        vec!["TYPE", "l"],
-        vec!["GET", "h"],
-        vec![
-            "MSET", "k1", "1", "k2", "2", "k3", "3", "k4", "4", "k5", "5",
-        ],
-        vec!["GET", "k5"],
-        vec!["NOPE", "a", "b"],
-        vec!["LLEN"],
-    ] {
-        batch.extend(resp(&request));
-    }
-    batch.extend_from_slice(b"SET inline yes\r\nGET inline\r\n");
-    client.write_all(&batch).expect("send the batch");
-    expect_replies(
-        &mut client,
-        b":3\r\n:4\r\n*4\r\n$1\r\nz\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nc\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n$1\r\nz\r\n*2\r\n$1\r\nc\r\n$1\r\nb\r\n:1\r\n$1\r\na\r\n:0\r\n:3\r\n:1\r\n:2\r\n:2\r\n:0\r\n$1\r\n3\r\n$-1\r\n:3\r\n:0\r\n$1\r\n0\r\n*4\r\n$1\r\nc\r\n$1\r\n0\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n+OK\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n:1\r\n+set\r\n-WRONGTYPE Operation against a key holding the wrong kind of value\r\n+OK\r\n$1\r\n5\r\n-ERR unknown command 'NOPE', with args beginning with: 'a' 'b' \r\n-ERR wrong number of arguments for 'llen' command\r\n+OK\r\n$3\r\nyes\r\n",
-        "the value-type batch",
-    );
     let mut batch = Vec::new();
     for request in [
         vec!["HSET", "hash", "f", "v", "g", "2"],
@@ -5096,22 +4810,12 @@ fn firn_answers_the_value_types_as_redis_does_with_hashes_and_sorted_sets() {
     assert_eq!(status, 0);
 }
 
-/// firn replays the value types from its append-only file: after a restart a
-/// list keeps the elements its pushes and pops left, a hash its field, a
-/// sorted set the member ZPOPMIN left at its score, and a member added at 0.1
-/// keeps the double nearest 0.1, which the replay reads again from the score's
-/// text as the command read it. The 25 of 50 members SPOP
-/// removed stay removed, since the file records the pop as the SREM of the
-/// members it chose, as Redis records it; a replay that popped at random, from
-/// a generator seeded by the clock at each start, would almost surely remove
-/// others. A key the expiring context removed is recorded as removed, as Redis
-/// propagates it, so a `SET` with NX that found it absent holds its value after
-/// the restart, where a replay keeping the expired key would refuse it.
-///
+/// firn replays hash and sorted-set writes from its append-only file.
 /// The file records HINCRBYFLOAT's sum as the HSET of its text, as Redis
 /// propagates it, so after the restart 0.1 and 0.2 read back as 0.3; HDEL's
-/// removal holds, and so does the field HSETNX refused to replace. Each hash
-/// write path that finds its key expired, a key set already expired with
+/// removal holds, and HSETNX refuses to replace an existing field before the
+/// restart. Each hash write path that finds its key expired, a key set already
+/// expired with
 /// PXAT 1, records the removal before its own record, so that after the
 /// restart HSET's, HSETNX's, HINCRBY's and HINCRBYFLOAT's new hashes hold
 /// and a SET with NX after HDEL holds its value, where a replay that kept the
@@ -5133,21 +4837,13 @@ fn firn_replays_the_value_types_from_its_append_only_file_with_hashes_and_sorted
     client
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("bound the first client's waits");
-    let members = (0..50)
-        .map(|index| format!("m{index:02}"))
-        .collect::<Vec<_>>();
-    let mut add = vec!["SADD", "s"];
-    add.extend(members.iter().map(String::as_str));
+    // HSETNX must find h.f already present and refuse to replace it.
+    client
+        .write_all(&resp(&["HSET", "h", "f", "v"]))
+        .expect("seed the hash field");
+    expect_replies(&mut client, b":1\r\n", "the existing hash field");
     let mut batch = Vec::new();
     for request in [
-        vec!["RPUSH", "l", "a", "b", "c"],
-        vec!["LPOP", "l"],
-        vec!["HSET", "h", "f", "v"],
-        vec!["ZADD", "z", "1", "a", "2", "b"],
-        vec!["ZPOPMIN", "z"],
-        vec!["ZADD", "f", "0.1", "m"],
-        add,
-        vec!["SET", "lapse", "old", "PX", "1"],
         vec!["HINCRBYFLOAT", "h", "r", "0.1"],
         vec!["HINCRBYFLOAT", "h", "r", "0.2"],
         vec!["HSET", "h", "gone", "1"],
@@ -5190,35 +4886,9 @@ fn firn_replays_the_value_types_from_its_append_only_file_with_hashes_and_sorted
     client.write_all(&batch).expect("send the changes");
     expect_replies(
         &mut client,
-        b":3\r\n$1\r\na\r\n:1\r\n:2\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n:1\r\n:50\r\n+OK\r\n$3\r\n0.1\r\n$3\r\n0.3\r\n:1\r\n:1\r\n:0\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:5\r\n+OK\r\n$3\r\n1.5\r\n+OK\r\n:0\r\n+OK\r\n$3\r\n1.5\r\n$3\r\n3.5\r\n:4\r\n:1\r\n*2\r\n$1\r\nd\r\n$1\r\n4\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n*0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
+        b"$3\r\n0.1\r\n$3\r\n0.3\r\n:1\r\n:1\r\n:0\r\n+OK\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:5\r\n+OK\r\n$3\r\n1.5\r\n+OK\r\n:0\r\n+OK\r\n$3\r\n1.5\r\n$3\r\n3.5\r\n:4\r\n:1\r\n*2\r\n$1\r\nd\r\n$1\r\n4\r\n:1\r\n+OK\r\n:1\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n+OK\r\n*0\r\n+OK\r\n+OK\r\n:0\r\n+OK\r\n",
         "the first run's changes",
     );
-    client
-        .write_all(&resp(&["SPOP", "s", "25"]))
-        .expect("pop 25 members");
-    assert_eq!(
-        reply_line(&mut client, "the popped members' header"),
-        "*25\r\n"
-    );
-    let mut popped = Vec::new();
-    for _ in 0..25 {
-        assert_eq!(
-            reply_line(&mut client, "a popped member's header"),
-            "$3\r\n"
-        );
-        let member = reply_line(&mut client, "a popped member");
-        let member = member.trim_end().to_owned();
-        assert!(members.contains(&member), "{member}");
-        assert!(!popped.contains(&member), "{member} popped twice");
-        popped.push(member);
-    }
-    // The expiring context, which wakes every 100 milliseconds, removes the
-    // key set with PX 1 before this SET finds it absent.
-    std::thread::sleep(Duration::from_millis(250));
-    client
-        .write_all(&resp(&["SET", "lapse", "new", "NX"]))
-        .expect("set the expired key again");
-    expect_replies(&mut client, b"+OK\r\n", "the key set again");
     let file = format!("/proc/{}/cwd/{name}", child.id());
     let started = Instant::now();
     let records = loop {
@@ -5260,18 +4930,8 @@ fn firn_replays_the_value_types_from_its_append_only_file_with_hashes_and_sorted
     client
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("bound the second client's waits");
-    let mut remove = vec!["SREM", "s"];
-    remove.extend(popped.iter().map(String::as_str));
     let mut batch = Vec::new();
     for request in [
-        vec!["LRANGE", "l", "0", "-1"],
-        vec!["HGET", "h", "f"],
-        vec!["ZCARD", "z"],
-        vec!["ZSCORE", "z", "b"],
-        vec!["ZSCORE", "f", "m"],
-        vec!["SCARD", "s"],
-        remove,
-        vec!["GET", "lapse"],
         vec!["HGET", "h", "r"],
         vec!["HEXISTS", "h", "gone"],
         vec!["HGETALL", "gone:hset"],
@@ -5292,7 +4952,7 @@ fn firn_replays_the_value_types_from_its_append_only_file_with_hashes_and_sorted
     client.write_all(&batch).expect("read the replayed values");
     expect_replies(
         &mut client,
-        b"*2\r\n$1\r\nb\r\n$1\r\nc\r\n$1\r\nv\r\n:1\r\n$1\r\n2\r\n$19\r\n0.10000000000000001\r\n:25\r\n:0\r\n$3\r\nnew\r\n$3\r\n0.3\r\n:0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$1\r\nf\r\n$1\r\n5\r\n*2\r\n$1\r\nf\r\n$3\r\n1.5\r\n$3\r\nnew\r\n$3\r\n3.5\r\n*2\r\n$1\r\nc\r\n$1\r\n3\r\n*2\r\n$1\r\nm\r\n$1\r\n1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
+        b"$3\r\n0.3\r\n:0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$1\r\nf\r\n$1\r\n5\r\n*2\r\n$1\r\nf\r\n$3\r\n1.5\r\n$3\r\nnew\r\n$3\r\n3.5\r\n*2\r\n$1\r\nc\r\n$1\r\n3\r\n*2\r\n$1\r\nm\r\n$1\r\n1\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n$3\r\nnew\r\n",
         "the replayed values",
     );
     drop(client);
