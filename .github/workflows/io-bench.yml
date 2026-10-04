@@ -65,6 +65,10 @@ on:
         description: Instead of comparing firn images, run redis-bench.sh scale - this branch's firn, the base image as firn-base, and Redis, Valkey, Dragonfly and Garnet - over compare_cpus
         type: boolean
         default: false
+      compare_profile_test:
+        description: The test and depth each image is profiled under
+        type: string
+        default: "mset 16"
       compare_callers:
         description: Give each profile sample its DWARF-unwound callers
         type: boolean
@@ -218,6 +222,7 @@ jobs:
           COMPARE_PASSES: ${{ inputs.compare_passes }}
           COMPARE_SECONDS: ${{ inputs.compare_seconds }}
           PROFILE: ${{ inputs.compare_profile }}
+          COMPARE_PROFILE: ${{ inputs.compare_profile_test }}
           PERF_ANNOTATE: ${{ inputs.compare_annotate }}
           PERF_CALLERS: ${{ inputs.compare_callers && '1' || '' }}
           PERF_FREQUENCY: ${{ inputs.compare_callers && '999' || '4999' }}
