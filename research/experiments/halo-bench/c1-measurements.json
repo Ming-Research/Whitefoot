@@ -6287,6 +6287,44 @@
     "unrun": [
       "make check (Cargo prohibited by task)",
       "CI (network prohibited by task)"
-    ]
+    ],
+    "review": {
+      "base": "7b410745caba81d0c0c6df187198f7e8576fbf99",
+      "head": "d282a76c8714fc24075d68fe098d185db897c41b",
+      "requested_model": "gpt-6-sol",
+      "read_only": true,
+      "groups_checked": [
+        "A",
+        "D",
+        "C",
+        "R",
+        "M",
+        "V"
+      ],
+      "groups_skipped": {
+        "T": "no specification, test or gate changes",
+        "V4": "task prohibits publication and PR"
+      },
+      "design_checks": [
+        "G1",
+        "G2",
+        "G3",
+        "DC1",
+        "DC2",
+        "DC3",
+        "DC4"
+      ],
+      "findings": [],
+      "checks": [
+        "read complete C1 diff and surrounding owners",
+        "git diff --check",
+        "independent median recomputation",
+        "interleaved launch and oracle row inspection",
+        "source/compiler/binary/report hash verification",
+        "read successful static logs"
+      ],
+      "excluded": "unrelated pre-existing DESIGN.md edit",
+      "green_suites_rerun": false
+    }
   }
 }

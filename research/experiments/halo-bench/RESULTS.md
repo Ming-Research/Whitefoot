@@ -840,8 +840,8 @@ formation fixes add no language rule. `make design-lint` and `make static`
 passed on the measured implementation and the accompanying evidence/tree
 edits. The latter checked repository invariants, archives, translation,
 prose, guidance, source size and tree form. `make check` and CI were not run:
-the task prohibits Cargo and network. Independent review is recorded below
-after completion. No Cargo, network, PR or push command was issued for C1. A concurrent process committed and pushed the
+the task prohibits Cargo and network. No Cargo, network, PR or push command
+was issued for C1. A concurrent process committed and pushed the
 pre-existing DESIGN.md edit after the criterion milestone; the C1
 implementation commits remained local.
 
@@ -852,3 +852,21 @@ and repeated work on fast misses are recorded in docs/todo.md for a later
 measured factoring. No specification or conformance rule changed. The
 new design node is provisional; no approval log or readiness action is
 part of this local experiment.
+
+
+Independent read-only review covered
+`7b410745caba81d0c0c6df187198f7e8576fbf99..d282a76c8714fc24075d68fe098d185db897c41b`,
+with requested model `gpt-6-sol`, excluding the unrelated pre-existing
+DESIGN.md edit. It checked groups A, D, C, R, M and V; T was not triggered,
+and publication/PR checks were outside the task. For M1 it applied G1–G3
+and DC1–DC4 to the relevant compiler/language ancestors and the new node.
+It read the complete C1 diff and surrounding dispatch, handlers, continuation
+checks, results, raw measurements and reports; `git diff --check` passed.
+It independently recomputed the medians, checked alternating launch order,
+oracle counts and hashes, and inspected the static logs without rerunning
+green suites. Findings: **none within scope**, so no finding required a fix.
+The implementing agent also rechecked the raw medians, 80-by-three oracle
+rows, after source hashes, native/compiler/report hashes and source equality
+at handoff. Only this review/result record changed after the reviewed
+revision; the measured implementation remains unchanged. Full `make check`
+and CI are unverified as stated above.
