@@ -1197,8 +1197,10 @@ map respectively to the per-array-key histogram loop and fresh-array Nil
 initialization; these are prominent sampled offsets, without precise
 per-instruction time shares. Raw counter sequence and input identities
 are retained in [table-growth-measurements.json](table-growth-measurements.json).
-The retained full-LTO C1 binary's 71 input hashes match the current head;
-its hash matches the preceding experiment's retained launches.
+The retained full-LTO C1 binary's 71 input hashes match the task base
+66fa1c8b9 (the compiler is checked against its retained binary bytes);
+its hash matches the preceding experiment's retained launches. The
+candidate input map differs only in tables.wf.
 
 Selected trial: retain rehash as the size-selection and replacement owner,
 count array values in power-of-two ranges, and construct the fresh array
@@ -1402,3 +1404,46 @@ paths are verified against the task base. The benchmark and oracle
 source revision is ca75ec503; later edits are evidence and the Halo
 decision. The local design choice is provisional (Q1); no readiness
 or approval log is part of this experiment.
+
+### Table-growth independent review
+
+A separate read-only reviewer configured as GPT-6.1-sol reviewed
+`66fa1c8b9f422fb9e1bc3885f8c75f1fdbfbabf2..84ce1e7ffabe9060a40e03d763a3ba1e36f8aef8`,
+plus the local evidence repairs below, under A, D, C, R, M and V.
+T is not triggered; publication, canonical make check and CI are
+excluded by the task. It read the full diff and contexts, constitution,
+checklist and skill, the Halo ancestor and every child, and applied
+G1–G3 and DC1–DC4. It recomputed the six-pair medians and guards,
+checked all 84 alternating native launches, rehash/work counts,
+source and binary identities, report hashes/counts, all 480 actual
+corpus replies, supplemental PUC outputs, the order-only failure,
+and fib counts/offsets. It ran read-only Git/Python inspections and
+git diff --check, and did not rerun green suites.
+
+Fixed finding D3/V2: the baseline identity sentence said its 71 hashes
+matched the current head, although the candidate changes tables.wf.
+It now names task base 66fa1c8b9. The implementing agent independently
+checks every tracked baseline input against that base and the compiler
+against its actual bytes; the candidate differs only in tables.wf.
+The review also requested retained evidence for the PUC four-register
+fib count: a direct read-only `luac -l -p` wrapper exits 0 in 0.10 s,
+and the listing and tool hash are now in the raw JSON. The earlier
+counter stdout is also retained there. The reviewer verified both
+added fields. These are local evidence repairs, with no new choice
+or implementation change. **No unresolved findings within scope.**
+
+Found along the way: redundant table histogram, initialization and
+reinsertion are fixed; original next/pairs order coverage, residual
+allocation/copying and checked access work, and frame transport costs
+are recorded in the existing TODO. Temporary counter/probe sources and
+control cases are removed after retaining their bytes and observations.
+The kept implementation remains identical to its measured revision.
+Q1 is the only provisional tree decision in this task; other tree
+edits and specification changes are none.
+
+Final `make static` after the review/evidence repairs passes all seven
+stages in 32.06 s summed wrapper wall (all exits 0, within budgets).
+Final git diff --check passes (exit 0). The implementing agent rechecks
+current candidate/source/binary hashes, oracle input identity and each
+six-pair median and guard against the retained observations; all agree.
+All commits remain local and the final library is the measured candidate.
