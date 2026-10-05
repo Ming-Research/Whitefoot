@@ -473,6 +473,31 @@ closure's view on all four routes; it failed on a deliberately weakened edge
 insertion before the change and on a deliberately weakened view through Z
 after it.
 
+### Result
+
+Same host, under the host lock, the pre-change gate build of the branch
+against the change (commit `222dec040`), `whitefootc synthN.wf --check`
+wall seconds, every output identical and empty:
+
+| N | before | after (three runs) |
+|---|---|---|
+| 10 | 0.16 | 0.15, 0.16, 0.16 |
+| 20 | 0.47, 0.37 | 0.16, 0.16, 0.15 |
+| 40 | 2.59, 2.61 | 0.26, 0.26, 0.16 |
+| 80 | 24.50, 24.49 | 0.27, 0.26, 0.36 |
+| 160 | 212.9 | 0.58, 0.58, 0.59 |
+
+The 9,700-line wasm interpreter with its handlers in helper functions
+checked in 30.8 and 30.7 s before and 2.58 and 2.61 s after; the 8,588-line
+variant with 154 handler bodies inline in the arms in 84.8 s before and 2.72
+s after. A paired alternating comparison of five rounds per source with the
+emitted LLVM hashed at every compile gave medians of 1,348 against 1,002 ms
+on `tests/programs/wfgrep.wf` (0.74) and 1,568 against 1,612 ms on
+`tests/programs/fixed_run_library.wf` (1.03), with the LLVM output
+byte-identical in every compile of every source. A first build of the change
+that found a term's row by binary search had measured 1.10 and 1.21 on the
+same two programs; the term-indexed slot tables removed that cost.
+
 Witness policy: a pair the view answers through Z no longer receives a
 `MaterializedBound`, `JoinBound`, `MaterializedDistinct` or `JoinDistinct`
 wrapper at a materialization or join, and a disequality derived from such a
