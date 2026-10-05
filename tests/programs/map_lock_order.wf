@@ -1,0 +1,178 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct LedgerCounts {
+  count: u64;
+  log: u64;
+}
+
+struct Log {
+  log: u64;
+}
+
+fn add_one(slot: &Option<u64>) -> result: unit writes(slot) {
+  match slot^ {
+    Some(value: seen) => {
+      let next = seen^ +wrap 1_u64;
+      set slot^ = Some<u64>(value: next);
+    }
+    None() => {
+      set slot^ = Some<u64>(value: 1_u64);
+    }
+  }
+  return unit;
+}
+
+fn entry_then_count(ledger: Shared<LedgerCounts>, ledger_map: Shared<ConcurrentHashMap<u64>>) -> result: unit pure waits {
+  doc "Adds to an entry and then to the count, in that order in its block.";
+  let key = &names[0_u64..1_u64];
+  for @round (index in 0_u64..2000_u64) {
+    atomic slot = &ledger_map[key], l = &ledger {
+      add_one(slot: slot);
+      set l^.count = l^.count +wrap 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn count_then_entry(ledger: Shared<LedgerCounts>, ledger_map: Shared<ConcurrentHashMap<u64>>) -> result: unit pure waits {
+  doc "Adds to the count and then to the same entry, the other order.";
+  let key = &names[0_u64..1_u64];
+  for @round (index in 0_u64..2000_u64) {
+    atomic slot = &ledger_map[key], l = &ledger {
+      set l^.count = l^.count +wrap 1_u64;
+      add_one(slot: slot);
+    }
+  }
+  return unit;
+}
+
+fn logged(store: Shared<Log>, store_map: Shared<ConcurrentHashMap<u64>>, logging: Bool) -> result: unit pure waits {
+  doc "Adds to an entry and, when logging, to the log after it: the log is reached only on that path.";
+  let key = &names[1_u64..2_u64];
+  for @round (index in 0_u64..2000_u64) {
+    atomic slot = &store_map[key], s = &store {
+      add_one(slot: slot);
+      if logging {
+        set s^.log = s^.log +wrap 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn run(ledger: &Shared<LedgerCounts>, ledger_map: &Shared<ConcurrentHashMap<u64>>, store: &Shared<Log>, store_map: &Shared<ConcurrentHashMap<u64>>) -> result: unit reads(ledger), reads(store), reads(ledger_map), reads(store_map) waits {
+  for @start (index in 0_u64..3_u64) {
+    let first = shared_share::<LedgerCounts>(shared: ledger);
+    let first_map = shared_share::<ConcurrentHashMap<u64>>(shared: ledger_map);
+    spawn entry_then_count(ledger: move first, ledger_map: move first_map);
+    let second = shared_share::<LedgerCounts>(shared: ledger);
+    let second_map = shared_share::<ConcurrentHashMap<u64>>(shared: ledger_map);
+    spawn count_then_entry(ledger: move second, ledger_map: move second_map);
+    let writer = shared_share::<Log>(shared: store);
+    let writer_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
+    let on = True();
+    spawn logged(store: move writer, store_map: move writer_map, logging: on);
+    let quiet = shared_share::<Log>(shared: store);
+    let quiet_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
+    let off = False();
+    spawn logged(store: move quiet, store_map: move quiet_map, logging: off);
+  }
+  return unit;
+}
+
+fn count_pair(first: Shared<u64>, second: Shared<u64>, backwards: Bool) -> result: unit pure waits {
+  for @pair (index in 0_u64..2000_u64) {
+    if backwards {
+      atomic b = &second, a = &first {
+        set b^ = b^ +wrap 1_u64;
+        set a^ = a^ +wrap 1_u64;
+      }
+    } else {
+      atomic a = &first, b = &second {
+        set a^ = a^ +wrap 1_u64;
+        set b^ = b^ +wrap 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn count_pairs(first: &Shared<u64>, second: &Shared<u64>) -> result: unit reads(first), reads(second) waits {
+  let a = shared_share::<u64>(shared: first);
+  let b = shared_share::<u64>(shared: second);
+  let c = shared_share::<u64>(shared: first);
+  let d = shared_share::<u64>(shared: second);
+  let forwards = False();
+  let backwards = True();
+  spawn count_pair(first: move a, second: move b, backwards: forwards);
+  spawn count_pair(first: move c, second: move d, backwards: backwards);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Contexts reach a shared map and its separate counts in opposite block orders. Map entries precede counts in the global type order, and the log object is reached only on the logging tail. Every driver count must observe equal entry and count totals and exactly the logging statements in the log.";
+  let ledger_map = shared_map_new::<u64>(capacity: 0_u64);
+  let ledger_state = LedgerCounts(count: 0_u64, log: 0_u64);
+  let ledger = shared_new::<LedgerCounts>(value: ledger_state);
+  let store_map = shared_map_new::<u64>(capacity: 0_u64);
+  let store_state = Log(log: 0_u64);
+  let store = shared_new::<Log>(value: store_state);
+  run(ledger: &ledger, ledger_map: &ledger_map, store: &store, store_map: &store_map);
+  let first = &names[0_u64..1_u64];
+  let value = 0_u64;
+  let count = 1_u64;
+  atomic slot = &ledger_map[first], l = &ledger {
+    match slot^ {
+      Some(value: seen) => {
+        set value = seen^;
+      }
+      None() => {
+      }
+    }
+    set count = l^.count;
+  }
+  if value != 12000_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if count != value {
+    return exit_status(code: 2_u8);
+  }
+  let second = &names[1_u64..2_u64];
+  let added = 0_u64;
+  let logs = 0_u64;
+  atomic slot = &store_map[second], s = &store {
+    match slot^ {
+      Some(value: seen) => {
+        set added = seen^;
+      }
+      None() => {
+      }
+    }
+    set logs = s^.log;
+  }
+  if added != 12000_u64 {
+    return exit_status(code: 3_u8);
+  }
+  if logs != 6000_u64 {
+    return exit_status(code: 4_u8);
+  }
+  let a = shared_new::<u64>(value: 0_u64);
+  let b = shared_new::<u64>(value: 0_u64);
+  count_pairs(first: &a, second: &b);
+  let av = 0_u64;
+  let bv = 0_u64;
+  atomic left = &a, right = &b {
+    set av = left^;
+    set bv = right^;
+  }
+  if av != 4000_u64 {
+    return exit_status(code: 5_u8);
+  }
+  if bv != 4000_u64 {
+    return exit_status(code: 6_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,22 @@
+struct Pair<A: copy, B: copy> {
+  first: A;
+  second: B;
+}
+
+fn put<T: copy>(first: &Pair<T, T>, second: &Pair<u8, u16>, value: T) -> result: unit writes(first), writes(second) {
+  set first^.first = value;
+  set second^.first = 1_u8;
+  return unit;
+}
+
+fn fill<T: copy>(first: &Shared<Pair<T, T>>, second: &Shared<Pair<u8, u16>>, value: T) -> result: unit reads(first), reads(second) waits {
+  atomic a = &first^, b = &second^ {
+    put::<T>(first: a, second: b, value: value);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "SHARE-2: unification retains one substitution across repeated type parameters. Pair<T,T> cannot unify with Pair<u8,u16>, so their whole targets have distinct roots even in the symbolic generic body.";
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,20 @@
+struct Bounds {
+  from: u64;
+  to: u64;
+}
+
+fn put(store: &Shared<ConcurrentHashMap<u8>>, bounds: &Shared<Bounds>, name: &[u8]) -> result: unit reads(store), reads(bounds), reads(name) waits {
+  atomic r = &bounds^, slot = &store^[&name^[r^.from..r^.to]] {
+    set slot^ = Some<u8>(value: 1_u8);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let range = Bounds(from: 0_u64, to: 1_u64);
+  let bounds = shared_new::<Bounds>(value: move range);
+  let name = array_filled::<u8, 2>(value: 97_u8);
+  put(store: &store, bounds: &bounds, name: &name[0_u64..2_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

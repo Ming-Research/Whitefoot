@@ -192,7 +192,7 @@ fn run_get(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let kind = text_value(env: client, value: held);
@@ -438,11 +438,11 @@ fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   set client^.now = time^.check;
   let outcome = state_absent;
   let answered = False();
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     let kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     let found = kind != 0_u64;
@@ -475,17 +475,17 @@ fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
         }
         put_text(slot: slot, value: move value, expires: expires);
         if timed {
-          queue_expiry(meta: &s^.meta, key: key, at: at, env: env);
+          queue_expiry(meta: m, key: key, at: at, env: env);
         }
         if logged {
           if timed {
-            log_set_at(log: &s^.meta.log, input: input, key: key_span, value: value_span, at: at);
+            log_set_at(log: &m^.log, input: input, key: key_span, value: value_span, at: at);
           } else if mode == mode_getset {
-            log_set(log: &s^.meta.log, input: input, key: key_span, value: value_span);
+            log_set(log: &m^.log, input: input, key: key_span, value: value_span);
           } else if getting {
-            log_without_get(log: &s^.meta.log, input: input, args: args);
+            log_without_get(log: &m^.log, input: input, args: args);
           } else {
-            log_command(log: &s^.meta.log, input: input, args: args);
+            log_command(log: &m^.log, input: input, args: args);
           }
         }
         set outcome = state_done;
@@ -588,18 +588,18 @@ fn run_getdel(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let logged = store^.logging;
   set client^.now = time^.check;
   let kind = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     set kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if kind == 1_u64 {
       reply_held_text(slot: slot, client: client);
       set slot^ = None<Entry>();
       if logged {
-        log_key_word(log: &s^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+        log_key_word(log: &m^.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
       }
     }
   }
@@ -648,11 +648,11 @@ fn run_getex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   let logged = store^.logging;
   set client^.now = time^.check;
   let kind = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     set kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     let text = kind == 1_u64;
@@ -663,13 +663,13 @@ fn run_getex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
         if lapsed {
           set slot^ = None<Entry>();
           if logged {
-            log_key_word(log: &s^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+            log_key_word(log: &m^.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
           }
         } else {
           hold_expiry(slot: slot, expires: at);
-          queue_expiry(meta: &s^.meta, key: key, at: at, env: env);
+          queue_expiry(meta: m, key: key, at: at, env: env);
           if logged {
-            log_expire_at(log: &s^.meta.log, input: input, key: key_span, at_ms: at);
+            log_expire_at(log: &m^.log, input: input, key: key_span, at_ms: at);
           }
         }
       } else if persisting {
@@ -677,7 +677,7 @@ fn run_getex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
         if had != 0_u64 {
           hold_expiry(slot: slot, expires: 0_u64);
           if logged {
-            log_key_word(log: &s^.meta.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
+            log_key_word(log: &m^.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
           }
         }
       }
@@ -732,7 +732,7 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
   }
   let logged = store^.logging;
-  atomic s = &store^.state, slots = &s^.map[keys] {
+  atomic slots = &store^.keys[keys], m = &store^.meta {
     for @stored (at in 0_u64..keys.len) {
       let position = key_position(positions: &client^.key_metadata, index: at);
       let lapsed = held_lapsed(slot: &slots^[at], now: time^.check);
@@ -741,7 +741,7 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
           let index = position -wrap 1_u64;
           let place = key_bounds(input: input, args: args, index: index);
           let key = &input^[place.start..place.end];
-          log_removal(log: &s^.meta.log, key: key);
+          log_removal(log: &m^.log, key: key);
         }
       }
       let value_span = arg(args: args, index: position);
@@ -749,7 +749,7 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       put_text(slot: &slots^[at], value: move value, expires: 0_u64);
     }
     if logged {
-      log_command(log: &s^.meta.log, input: input, args: args);
+      log_command(log: &m^.log, input: input, args: args);
     }
   }
   reply_ok(client: client);
@@ -808,7 +808,7 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   let counted = Counted(value: 0_i64, delta: delta, now: time^.check, state: state_absent);
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     let fresh_needed = True();
     match slot^ {
       Some(value: held) => {
@@ -821,7 +821,7 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if counted.state == state_expired {
       set fresh_needed = True();
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if fresh_needed {
@@ -832,7 +832,7 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if counted.state == state_done {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -1129,11 +1129,11 @@ fn run_append(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   let outcome = state_absent;
   let length = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     let kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if kind == 0_u64 {
@@ -1155,7 +1155,7 @@ fn run_append(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     }
     if outcome == state_done {
       if logged {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -1195,11 +1195,11 @@ fn run_setrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   set client^.now = time^.check;
   let outcome = state_absent;
   let length = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     let kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if kind > 1_u64 {
@@ -1221,7 +1221,7 @@ fn run_setrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
     }
     if outcome == state_done {
       if logged {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -1246,11 +1246,11 @@ fn run_strlen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   let kind = 0_u64;
   let length = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     set kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     set length = held_text_length(slot: slot);
@@ -1283,11 +1283,11 @@ fn run_getrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   let logged = store^.logging;
   set client^.now = time^.check;
   let kind = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     set kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     reply_held_range(slot: slot, client: client, start: start.value, end: end.value);
@@ -1320,7 +1320,7 @@ fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   reply_array(client: client, count: named);
   set client^.now = time^.check;
   let logged = store^.logging;
-  atomic s = &store^.state, slots = &s^.map[keys] {
+  atomic slots = &store^.keys[keys], m = &store^.meta {
     for @answers (step in 0_u64..client^.key_metadata.inner.len) {
       if step < client^.key_metadata.inner.len {
         let rank = client^.key_metadata.inner[step];
@@ -1331,7 +1331,7 @@ fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
               let index = step +wrap 1_u64;
               let place = key_bounds(input: input, args: args, index: index);
               let key = &input^[place.start..place.end];
-              log_removal(log: &s^.meta.log, key: key);
+              log_removal(log: &m^.log, key: key);
             }
           }
           if kind == 1_u64 {
@@ -1368,7 +1368,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   let logged = store^.logging;
   let stored = False();
-  atomic s = &store^.state, slots = &s^.map[keys] {
+  atomic slots = &store^.keys[keys], m = &store^.meta {
     let blocked = False();
     for @checked (rank in 0_u64..keys.len) {
       if rank < slots^.len {
@@ -1379,7 +1379,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
             let index = position -wrap 1_u64;
             let place = key_bounds(input: input, args: args, index: index);
             let key = &input^[place.start..place.end];
-            log_removal(log: &s^.meta.log, key: key);
+            log_removal(log: &m^.log, key: key);
           }
         }
         if kind != 0_u64 {
@@ -1397,7 +1397,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
         put_text(slot: &slots^[at], value: move value, expires: 0_u64);
       }
       if logged {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
       set stored = True();
     }
@@ -1497,7 +1497,7 @@ fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
   let nothing = slots_new::<u8, 24>();
   let empty = Bytes::Short(bytes: move nothing);
   let summed = FloatSum(increment: increment, text: move empty, now: time^.check, state: state_absent);
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     let fresh_needed = True();
     match slot^ {
       Some(value: held) => {
@@ -1510,7 +1510,7 @@ fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
     if summed.state == state_expired {
       set fresh_needed = True();
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if fresh_needed {
@@ -1533,7 +1533,7 @@ fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
     }
     if summed.state == state_done {
       if logged {
-        log_float(log: &s^.meta.log, input: input, key: key_span, text: &summed.text);
+        log_float(log: &m^.log, input: input, key: key_span, text: &summed.text);
       }
     }
   }

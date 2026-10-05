@@ -3532,7 +3532,10 @@ fn a_symbolic_link_at_a_bound_package_root_is_an_envelope_failure() {
         &[
             ("real/modules.wfg", "pkg: [];\n"),
             ("real/module.wfm", "\n"),
-            ("app/modules.wfg", "package lib = \"link\";\n\npkg: [lib];\n"),
+            (
+                "app/modules.wfg",
+                "package lib = \"link\";\n\npkg: [lib];\n",
+            ),
             ("app/module.wfm", "\n"),
         ],
     );

@@ -162,7 +162,10 @@ impl ModuleGraph {
     #[must_use]
     pub fn package_root(&self, package: Package) -> Option<&Path> {
         match package {
-            Package::Bound(place) => self.package_roots.get(usize::from(place)).map(PathBuf::as_path),
+            Package::Bound(place) => self
+                .package_roots
+                .get(usize::from(place))
+                .map(PathBuf::as_path),
             Package::Program | Package::Standard => None,
         }
     }
@@ -596,8 +599,10 @@ pub(crate) fn form_package_graph(
                     }
                 }
                 WrittenRoot::Name(name) => {
-                    let Some(&(_, target)) =
-                        bound.names.iter().find(|(bound_name, _)| bound_name == name)
+                    let Some(&(_, target)) = bound
+                        .names
+                        .iter()
+                        .find(|(bound_name, _)| bound_name == name)
                     else {
                         return issue(GraphIssueKind::UnboundPackage {
                             path: dependency.qualified(),
@@ -746,7 +751,8 @@ pub(crate) fn assemble_graph(
     }
     let library_offset = total;
     let library_modules = library.map_or(&[][..], ModuleGraph::modules);
-    let id = |index: usize| ModuleId::from_index(index).ok_or(GraphCompilerFailure::InvalidGraphTree);
+    let id =
+        |index: usize| ModuleId::from_index(index).ok_or(GraphCompilerFailure::InvalidGraphTree);
     let mut modules: Vec<ModuleRecord> = Vec::with_capacity(total + library_modules.len());
     let mut package_roots = Vec::new();
     let mut entries = Vec::new();
@@ -759,7 +765,8 @@ pub(crate) fn assemble_graph(
                     Package::Program
                 } else {
                     Package::Bound(
-                        u16::try_from(*target - 1).map_err(|_| GraphCompilerFailure::InvalidGraphTree)?,
+                        u16::try_from(*target - 1)
+                            .map_err(|_| GraphCompilerFailure::InvalidGraphTree)?,
                     )
                 };
                 Ok((name.clone(), package))
@@ -1019,12 +1026,12 @@ pub fn discover_module_sources(
         // [MOD-10] the standard library's records come with the compiler.
         let package_root = match module.package() {
             Package::Program => root,
-            Package::Bound(_) => graph
-                .package_root(module.package())
-                .ok_or_else(|| DiscoveryFailure::Unreadable {
+            Package::Bound(_) => graph.package_root(module.package()).ok_or_else(|| {
+                DiscoveryFailure::Unreadable {
                     path: root.to_path_buf(),
                     error: std::io::Error::other("a bound package has no root"),
-                })?,
+                }
+            })?,
             Package::Standard => continue,
         };
         let module_id =

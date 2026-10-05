@@ -92,13 +92,6 @@ rarely insert at the same place.
   self-tail call instead ([VM.md](../research/investigations/halo/VM.md)).
   Reopen when a loop-shaped program cannot be rewritten that way, or with
   the INV-1 join rules.
-- **A table subscripted in a block is refused without a repair.** `s^.map[k]`
-  in an atomic block is OP-4's type mismatch, "an indexable base", against
-  `KeyedTable<V>`, and names nothing a writer can do instead, where the
-  intended form is an entry binding in the header, `e = &s^.map[k]`
-  [SHARE-2]. The change: give that refusal a repair naming the header form.
-  Found by the adversarial tests of the keyed tables. Reopen with the next
-  change to how a subscript's base is refused.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
@@ -628,7 +621,7 @@ rarely insert at the same place.
   the rows that allocate them, while a shared object's state, a keyed
   table's entries and a key set's store come from the context runtime's
   pool, which a no-heap bundle may still use through `shared_new`,
-  `keyed_table_new` and `key_set_insert`. The checker refused `KeySet` there
+  `shared_map_new` and `key_set_insert`. The checker refused `KeySet` there
   for a while, which [STOR-8] does not name; it no longer does. The
   question for the owner: whether the declaration means no allocation at
   all, which would withdraw those three types and their rows too, or no use
@@ -1000,6 +993,17 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **The cross-map audit test counts on the scheduler.** `holds_across_maps`
+  (`compiler/src/backend/concurrent_map_test.c`) stops its audit thread
+  when the four writers finish and then requires two audits, one holding
+  keys and one holding both maps whole. On the two-CPU `completion-linux`
+  runner the audit thread can be starved for the writers' whole run: it
+  failed with 1 audit on main and 0 on a work branch, both on 2026-10-04,
+  with no change to the map. The change: keep the writers running until the
+  audit has completed both kinds of hold, so the count no longer depends on
+  how threads are scheduled while every audit still overlaps writers.
+  Reopen with the next change to that test or its next `io-hosts.yml`
+  failure.
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
@@ -1092,7 +1096,7 @@ rarely insert at the same place.
   by `ZADD`'s server CPU per request on four drivers against one. Reopen
   with the work on `ZADD`'s rate.
 
-- **`KeyedTable<unit>` and tables of other payload-free values do not
+- **`ConcurrentHashMap<unit>` and maps of other payload-free values do not
   lower.** The emitter passes the runtime an entry's `Option` tag as the
   `i32` at offset 0 (`checked_entry` in
   `compiler/src/backend/emitter/shared.rs`) and refuses a tag-only enum,
@@ -2198,6 +2202,33 @@ rarely insert at the same place.
   Reopen when a test needs a deadline order that real time cannot produce
   reliably.
 
+- **Deadline reads fail on the first corpus run after a build on macOS.**
+  `programs::stream::a_deadline_ends_a_read_of_a_silent_writer_on_both_routes`
+  and `..._under_a_pool_pinned_at_zero` (`stdin_deadline.wf`) returned status
+  10 on the first run after building the compiler, on this branch and on a
+  main-equivalent compiler alike, and passed on every repeat on both (macOS,
+  2026-10-05). Status 10 means the first read received the byte the harness
+  writes after 400 ms, so its 50 ms deadline did not end it; the harness
+  starts its delay at child spawn, not at the program's read, so a slow first
+  start can deliver the byte before the read is queued. Impact: a spurious
+  gate failure on a cold host. Change: synchronize the writer with a
+  program-ready event, keeping the delayed-byte assertion, and confirm that a
+  cancellation implementation that ignores the deadline still fails. Reopen
+  when it fails in CI or before changing deadline reads.
+  The same two status-10 failures recurred in amendment S's full gate at
+  `f1fba77c3fa422348b72a00301105d4908e68e5a`; each then passed unchanged in
+  isolation. The recurrence preserves the need for a ready-event test rather
+  than establishing a deadline-runtime defect.
+
+- **Symbolic const expressions in atomic root comparison are conservative.**
+  An unresolved capacity expression can equal a concrete capacity, so the
+  comparison treats it as possibly equal without solving arithmetic. It can
+  also refuse a call through `Array<u8, n + 1>` and `Array<u8, n + 2>` that
+  no concrete instance aliases. Define a specification-fixed comparison if
+  a writer needs that distinction; validate equal-value expressions still
+  overlap and the distinct-capacity witness is admitted. Reopen with the
+  first shared generic storage algorithm needing that call.
+
 ## Modules and libraries
 
 - **Halo F4 has no every-allocation reachability verifier.**
@@ -2273,6 +2304,14 @@ rarely insert at the same place.
   boundaries. Reopen when that boundary record is next updated, before
   using it as current integration guidance; verify its witnesses against
   the then-current compiler and Halo revision.
+
+- **Whole-map iteration.** Shared maps provide selections, counting and swaps,
+  but no iteration API. Firn's BGSAVE and SCAN need a whole-map traversal whose
+  references remain valid under the whole hold and whose yielded order has a
+  stated meaning. Design that interface and add independent snapshot/cursor
+  cases when either command is selected; do not infer an order from the runtime
+  hash index. Validate by enumerating each present key once across growth and
+  deletion, with missing keys excluded.
 
 - **Library capacity ceilings that existed for OP-9.**
   `GrowVector<T, const ceiling: u64>` in `lib/std/collections/vector`, the
@@ -2419,21 +2458,6 @@ rarely insert at the same place.
 
 ## Interpreter dispatch lowering
 
-- **A dispatch loop past the argument registers is emitted whole.**
-  compiler/match-dispatch-lowering gives every part one parameter per
-  carried value, header value and value from before the loop, and emits a
-  loop whose parts would need more than the convention's argument registers
-  (measured in `research/experiments/match-dispatch/RESULTS.md`, "Argument
-  registers": without callee-saved registers 24 integer on arm64 and 12 on
-  x86-64) as one function, since the C experiment measured a stack-passed
-  parameter at 8% and two at 43%. The owner's direction is a spill block in
-  the enclosing function's frame: keep the values the loop's carried
-  dependency chains need in registers and store the coldest values from
-  before the loop in frame slots the parts read, so such loops split too.
-  Validate with a loop past twelve parameters on x86-64, comparing cycles
-  against whole emission. Reopen when a consumer's dispatch loop exceeds a
-  target's register parameters.
-
 - **Build-time toolchain probes are not rerun when the toolchain changes.**
   `compiler/build.rs` probes the assembler for the no-capture spelling and
   for `preserve_none`, but declares no `rerun-if` dependency on the
@@ -2443,26 +2467,6 @@ rarely insert at the same place.
   the assembler's identity (its path and version output) as a rerun input.
   Reopen when a host's clang changes under an existing build directory.
 
-- **The parts of a split loop carry no reference parameter facts.** The
-  enclosing function's reference parameters keep `noalias`, `nonnull` and
-  `dereferenceable` (compiler/backend-facts); the same values arrive in the
-  parts as plain pointers, so the host cannot use those facts inside the
-  arms. Stating them on the parts' parameters needs the facts mapped from
-  the enclosing parameters through the header's carried values. Validate
-  with the WF interpreter's kernels. Reopen with the invariant-header
-  work.
-
-- **Loop-invariant header work runs on every dispatch.** A split loop's
-  header is recomputed in each arm: the WF interpreter
-  (`research/experiments/match-dispatch/wf/vm.wf`) reloads `code`'s box
-  pointer and length and `regs`'s box pointer on every dispatch, which
-  LLVM hoisted out of the whole-function loop. A header computation whose
-  operands are values from before the loop or header parameters every
-  back edge passes unchanged, and which reads only memory under a
-  read-only reference parameter, could run once in the enclosing function
-  and travel as a parameter. Validate on the WF interpreter's kernels
-  against the C `u8` form. Reopen with the next dispatch-lowering change.
-
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
   is 10-30% above the pointer form with every other mechanism equal
@@ -2470,12 +2474,17 @@ rarely insert at the same place.
   use of a carried index addresses one array and the index changes only by
   offsets and stores of checked values, the parts could carry the derived
   address beside the index. Needs its own design and a falsifier; reopen
-  after the invariant-header work.
+  as the next dispatch-lowering change, the invariant-header work having
+  landed.
 
-- **The handler table's address is rematerialised in every arm.** Two
-  instructions per dispatch on arm64 (`adrp`, `add`); E1 passing it as a
-  parameter matched Silverfir-nano's instruction count on its loop kernel.
-  Pass it as a hidden parameter once the register budget above exists.
+- **Values kept in the frame past the registers are unmeasured.** A split
+  dispatch loop whose parts need more argument registers than the
+  convention has keeps the values it cannot change in frame slots, which
+  each part loads (compiler/match-dispatch-lowering); its cost against
+  whole-function emission has not been measured. Validate with a loop past
+  twelve parameters on x86-64 or past eight under the C convention on
+  arm64, comparing cycles with whole emission, and Halo's VM under the C
+  convention. Reopen with the first consumer whose loop needs the frame.
 
 - **A `match` on a place copies the scrutinee into a frame slot.** The
   emitter copies the matched value into a slot to read its tag while the
@@ -2484,6 +2493,32 @@ rarely insert at the same place.
   load per dispatch until the slot became part-local. Reading the tag from
   the place would remove the copy everywhere. Low priority; reopen if a
   profile shows the copy outside split loops.
+
+- **Firn GET retains an Entry copy because its existing byte slot makes the
+  frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
+  eliminates two 72-byte copies from `run_pop`, but `run_get` still has its
+  prior 72-byte copy: its ordinary `i8` slot fails
+  `plan_target_frame`'s independent-slot alignment test in
+  `compiler/src/target.rs`. Investigate separating slots with different
+  alignments without changing their lifetimes or alias facts. Reopen with
+  firn GET performance work; validate the normal GET path's optimized IR
+  loses the copy while the frame and borrow tests retain their observations.
+
+- **Interpreter state is pinned only through the calling convention.** A
+  split loop keeps its changing values in registers because every part
+  shares one prototype, so the pinning has the convention's register count,
+  one mapping for the whole loop, and needs `preserve_none`, which only
+  arm64 and x86-64 have. E0's single-function computed goto lost to the
+  split form once state grew (`research/experiments/match-dispatch/RESULTS.md`,
+  "What the results say about the lowering"). An alternative within LLVM IR:
+  one function with an indirect branch per handler, and empty inline-asm
+  operands with physical-register constraints at each handler's entry and
+  exit, which fixes where the state lives at every boundary with no count
+  limit and lets regions differ. Validate first in C beside E0's kernels:
+  the asm-pinned goto form against `tailpn` in the checked and `u8` forms,
+  worth a compiler change only if it is no more than 2% slower there.
+  Reopen when the wasm interpreter's profile shows register pressure the
+  convention cannot hold, or when a target without `preserve_none` matters.
 
 ## Code structure
 
@@ -3454,6 +3489,14 @@ condition under which it is taken up.
   longer; reopen when the corpus job becomes the longest or its budget trips.
   This changes conformance evidence wiring, so the PR states it under
   AGENTS.md rule 4.
+  The local macOS amendment S gate at
+  `f1fba77c3fa422348b72a00301105d4908e68e5a` took 214.72 s in
+  `compiler/test-corpus`, above its 125 s budget; the native conformance walk
+  was the last test still running. The amendment changes the manifest from
+  1,733 to 1,735 cases and from 552 to 557 native-run cases, but those counts
+  do not attribute the overrun. Profile the serial walk and host startup
+  before deciding whether the amendment adds work on that path or the host
+  needs another budget. No budget was raised and no case was removed.
 - **The Windows io-hosts steps have no time budget.** They run without
   `run-check.pl`, so only their step timeouts (5 and 8 min) and the job's
   (10 min) bound them, and the Windows job is now the longest CI job, 230–285

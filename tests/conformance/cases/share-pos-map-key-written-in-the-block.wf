@@ -1,0 +1,28 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let name = array_filled::<u8, 2>(value: 97_u8);
+  let key = &name[0_u64..1_u64];
+  atomic slot = &store[key] {
+    set name[0_u64] = 98_u8;
+    set slot^ = Some<u8>(value: 1_u8);
+  }
+  let found = 0_u8;
+  atomic a = &store[&name[1_u64..2_u64]], b = &store[&name[0_u64..1_u64]] {
+    match a^ {
+      Some(value: seen) => {
+        set found = seen^;
+      }
+      None() => {
+      }
+    }
+    match b^ {
+      Some(value: seen) => {
+        let more = seen^ +wrap 10_u8;
+        set found = found +wrap more;
+      }
+      None() => {
+      }
+    }
+  }
+  return std::process::exit_status(code: found);
+}

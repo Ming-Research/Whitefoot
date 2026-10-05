@@ -66,6 +66,7 @@ mod reinterpret;
 mod requires;
 mod resource_enums;
 mod result_abi;
+mod shared_maps;
 mod stack_ledger;
 mod system;
 mod tail_calls;

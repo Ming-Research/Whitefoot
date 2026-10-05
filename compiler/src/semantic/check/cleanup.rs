@@ -101,18 +101,15 @@ impl<'unit> TypeContext<'unit> {
                 // [SHARE-1] the statement's end may release the state, as the
                 // release of a handle does.
                 CheckedStatement::Atomic {
-                    target,
-                    entries,
+                    targets,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => {
-                    self.validate_expression_release_graphs(target)?;
-                    self.release_graph_nodes(target.ty())?;
-                    for key in entries
+                    for key in targets
                         .iter()
-                        .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                        .flat_map(crate::semantic::CheckedTarget::expressions)
                     {
                         self.validate_expression_release_graphs(key)?;
                     }
@@ -248,7 +245,7 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Window { .. }
                 | CheckedType::Segments { .. }
                 | CheckedType::KeySet
-                | CheckedType::KeyedEntries { .. } => {
+                | CheckedType::Entries { .. } => {
                     // [OWN-1, STOR-3] an `Array` of copy elements is copy and
                     // a copy value has an empty release.
                     if !self.is_copy_type(check_context, current)? {
@@ -323,7 +320,7 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Window { .. }
                 | CheckedType::Segments { .. }
                 | CheckedType::KeySet
-                | CheckedType::KeyedEntries { .. }
+                | CheckedType::Entries { .. }
                     if selected =>
                 {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
@@ -340,7 +337,7 @@ impl<'unit> TypeContext<'unit> {
                 | CheckedType::Window { .. }
                 | CheckedType::Segments { .. }
                 | CheckedType::KeySet
-                | CheckedType::KeyedEntries { .. } => {
+                | CheckedType::Entries { .. } => {
                     if !self.is_copy_type(check_context, current)? {
                         drops.push((path, current));
                     }

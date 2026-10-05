@@ -1,0 +1,12 @@
+const names: Array<u8, 1> =[97_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let key = &names[0_u64..1_u64];
+  let counted = 0_u64;
+  atomic slot = &store[key], t = &store {
+    set slot^ = Some<u8>(value: 1_u8);
+    set counted = map_count::<u8>(map: t);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
