@@ -297,9 +297,27 @@ archives, README translation, spec prose integrity, guidance, source size
 and design lint. `git diff --check` passed (exit 0). These checks cover the
 results and TODO/status edits in this working tree on parent
 `5d2ab819af3b822f5f051efbc657632c40dbbe82`; the native host hashes are
-unchanged. Independent review is pending. The canonical `make check` was
-not run: it invokes Cargo, which this task prohibits. No specification rules or design-tree decisions changed;
+unchanged. The canonical `make check` was not run: it invokes Cargo, which this task prohibits. No specification rules or design-tree decisions changed;
 no decision card is needed for measuring the already requested P1 baseline.
+
+## Independent review
+
+A separate read-only reviewer, configured as GPT-6.1-sol, reviewed
+`75c9d7b48ae29642a36c078edd00b0048f0a2fd3..d993ea49f7d670bc401d6115c1cd099c6015cb83`
+against checklist groups A, D, R, M and V, including the design-tree
+correspondence checks. C and T were not applicable because compiler,
+library, formal tests, specification and gate wiring are unchanged;
+publication was waived by the explicit no-push/no-PR instruction.
+
+The reviewer read all changed artifacts, the VM commitments, research method,
+compiler root and dispatch/self-tail decisions, and the embedding root-bridge
+implementation. It independently recomputed accepted pair ordering,
+checksums/stats/exits, medians/ranges/ratios and budget arithmetic; verified
+source and available binary hashes; reconstructed every primary profile's
+exclusive symbol counts and group totals from raw call graphs; and checked
+all 22 primary excerpt hashes. No findings within scope. No suites were
+rerun, and no file was edited by the reviewer. The remaining depth-16,
+causal-speedup, isolated-decrement and full-gate limits remain open.
 
 ## Found along the way
 
