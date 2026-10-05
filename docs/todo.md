@@ -2379,14 +2379,18 @@ rarely insert at the same place.
   as the next dispatch-lowering change, the invariant-header work having
   landed.
 
-- **Values kept in the frame past the registers are unmeasured.** A split
-  dispatch loop whose parts need more argument registers than the
-  convention has keeps the values it cannot change in frame slots, which
-  each part loads (compiler/match-dispatch-lowering); its cost against
-  whole-function emission has not been measured. Validate with a loop past
-  twelve parameters on x86-64 or past eight under the C convention on
-  arm64, comparing cycles with whole emission, and Halo's VM under the C
-  convention. Reopen with the first consumer whose loop needs the frame.
+- **Values kept in the frame past the registers are measured on one case
+  only.** A split dispatch loop whose parts need more argument registers
+  than the convention has keeps the values it cannot change in frame slots
+  (compiler/match-dispatch-lowering). With one value spilled under
+  `preserve_none` on arm64 the split loop takes 24-36% fewer cycles than
+  the same loop emitted whole
+  (`research/experiments/match-dispatch/RESULTS.md`, "Values kept in the
+  frame past the registers"); more spilled values, the C convention and
+  x86-64 are unmeasured. Validate with the same S/W pair under the C
+  convention on arm64 (8 registers) and on the 14900K. Reopen with the
+  first consumer whose loop spills several values, or a host without
+  `preserve_none`.
 
 - **A `match` on a place copies the scrutinee into a frame slot.** The
   emitter copies the matched value into a slot to read its tag while the
