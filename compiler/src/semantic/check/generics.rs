@@ -2309,14 +2309,14 @@ impl<'unit> DeclarationInventory<'unit> {
     }
 }
 
-/// The renaming class of a symbolic function instance: its declaration and
-/// the kind of each argument, when every argument is a distinct symbolic
-/// parameter. Two instances of one class differ only by a one-to-one
-/// renaming of those parameters, so their bodies prove the same summaries.
 /// A declaration and, per argument, its kind and, for a const parameter,
 /// that parameter's written integer type.
 pub(super) type RenamingClass = (DeclarationId, Vec<(u8, Option<IntegerType>)>);
 
+/// The renaming class of a symbolic function instance, when every argument
+/// is a distinct symbolic parameter. Two instances of one class differ only
+/// by a one-to-one renaming of those parameters, so their bodies prove the
+/// same summaries.
 pub(super) fn symbolic_renaming_class(
     signature: &FunctionSignature,
     const_types: &HashMap<DeclarationId, IntegerType>,
