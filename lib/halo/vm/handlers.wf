@@ -3829,7 +3829,7 @@ struct FastCursor {
   handled: Bool;
 }
 
-fn fast_instruction_get_table_r(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, tv: u8, cv: u8) -> r: Result<FastCursor, Step> reads(code), reads(consts), writes(stack), writes(vm) contract {
+fn fast_instruction_get_table_r(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, tv: u8, cv: u8) -> r: Result<FastCursor, Step> reads(code), writes(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
@@ -3847,7 +3847,8 @@ fn fast_instruction_get_table_r(code: &Box<Slots<Cell>>, consts: &Box<Slots<Valu
   if bnot(atom31) {
     set stack^.inner[ra] = value;
   } else {
-    let cursor = FastCursor(pc: pc, handled: False());
+    let handled = False();
+    let cursor = FastCursor(pc: pc, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   if vm^.suspended {
@@ -3855,7 +3856,8 @@ fn fast_instruction_get_table_r(code: &Box<Slots<Cell>>, consts: &Box<Slots<Valu
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -3881,7 +3883,8 @@ fn fast_instruction_get_table_k(code: &Box<Slots<Cell>>, consts: &Box<Slots<Valu
   if bnot(atom34) {
     set stack^.inner[ra] = value;
   } else {
-    let cursor = FastCursor(pc: pc, handled: False());
+    let handled = False();
+    let cursor = FastCursor(pc: pc, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   if vm^.suspended {
@@ -3889,7 +3892,8 @@ fn fast_instruction_get_table_k(code: &Box<Slots<Cell>>, consts: &Box<Slots<Valu
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -3897,7 +3901,7 @@ fn fast_instruction_get_table_k(code: &Box<Slots<Cell>>, consts: &Box<Slots<Valu
   return Err<FastCursor, Step>(error: failure);
 }
 
-fn fast_instruction_set_table_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, tv: u8, keyv: u8, valv: u8) -> r: Result<FastCursor, Step> reads(code), reads(consts), writes(stack), writes(vm) contract {
+fn fast_instruction_set_table_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, tv: u8, keyv: u8, valv: u8) -> r: Result<FastCursor, Step> reads(code), writes(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
@@ -3918,7 +3922,8 @@ fn fast_instruction_set_table_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Val
   if bnot(atom37) {
     set ok = raw_assign(vm: vm, t: t, key: key, v: value);
   } else {
-    let cursor = FastCursor(pc: pc, handled: False());
+    let handled = False();
+    let cursor = FastCursor(pc: pc, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   if vm^.suspended {
@@ -3935,7 +3940,8 @@ fn fast_instruction_set_table_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Val
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -3965,7 +3971,8 @@ fn fast_instruction_set_table_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Val
   if bnot(atom43) {
     set ok = raw_assign(vm: vm, t: t, key: key, v: value);
   } else {
-    let cursor = FastCursor(pc: pc, handled: False());
+    let handled = False();
+    let cursor = FastCursor(pc: pc, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   if vm^.suspended {
@@ -3982,7 +3989,8 @@ fn fast_instruction_set_table_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Val
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -3990,7 +3998,7 @@ fn fast_instruction_set_table_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Val
   return Err<FastCursor, Step>(error: failure);
 }
 
-fn fast_instruction_add_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Result<FastCursor, Step> reads(code), reads(consts), writes(stack), writes(vm) contract {
+fn fast_instruction_add_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Result<FastCursor, Step> reads(code), writes(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
@@ -4010,13 +4018,15 @@ fn fast_instruction_add_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
           set stack^.inner[ra] = Value::Num(n: z);
         }
         Not() => {
-          let cursor = FastCursor(pc: pc, handled: False());
+          let handled = False();
+          let cursor = FastCursor(pc: pc, handled: handled);
           return Ok<FastCursor, Step>(value: cursor);
         }
       }
     }
     Not() => {
-      let cursor = FastCursor(pc: pc, handled: False());
+      let handled = False();
+      let cursor = FastCursor(pc: pc, handled: handled);
       return Ok<FastCursor, Step>(value: cursor);
     }
   }
@@ -4025,7 +4035,8 @@ fn fast_instruction_add_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4053,13 +4064,15 @@ fn fast_instruction_add_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
           set stack^.inner[ra] = Value::Num(n: z);
         }
         Not() => {
-          let cursor = FastCursor(pc: pc, handled: False());
+          let handled = False();
+          let cursor = FastCursor(pc: pc, handled: handled);
           return Ok<FastCursor, Step>(value: cursor);
         }
       }
     }
     Not() => {
-      let cursor = FastCursor(pc: pc, handled: False());
+      let handled = False();
+      let cursor = FastCursor(pc: pc, handled: handled);
       return Ok<FastCursor, Step>(value: cursor);
     }
   }
@@ -4068,7 +4081,8 @@ fn fast_instruction_add_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4076,7 +4090,7 @@ fn fast_instruction_add_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
   return Err<FastCursor, Step>(error: failure);
 }
 
-fn fast_instruction_sub_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Result<FastCursor, Step> reads(code), reads(consts), writes(stack), writes(vm) contract {
+fn fast_instruction_sub_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8) -> r: Result<FastCursor, Step> reads(code), writes(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
@@ -4096,13 +4110,15 @@ fn fast_instruction_sub_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
           set stack^.inner[ra] = Value::Num(n: z);
         }
         Not() => {
-          let cursor = FastCursor(pc: pc, handled: False());
+          let handled = False();
+          let cursor = FastCursor(pc: pc, handled: handled);
           return Ok<FastCursor, Step>(value: cursor);
         }
       }
     }
     Not() => {
-      let cursor = FastCursor(pc: pc, handled: False());
+      let handled = False();
+      let cursor = FastCursor(pc: pc, handled: handled);
       return Ok<FastCursor, Step>(value: cursor);
     }
   }
@@ -4111,7 +4127,8 @@ fn fast_instruction_sub_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4139,13 +4156,15 @@ fn fast_instruction_sub_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
           set stack^.inner[ra] = Value::Num(n: z);
         }
         Not() => {
-          let cursor = FastCursor(pc: pc, handled: False());
+          let handled = False();
+          let cursor = FastCursor(pc: pc, handled: handled);
           return Ok<FastCursor, Step>(value: cursor);
         }
       }
     }
     Not() => {
-      let cursor = FastCursor(pc: pc, handled: False());
+      let handled = False();
+      let cursor = FastCursor(pc: pc, handled: handled);
       return Ok<FastCursor, Step>(value: cursor);
     }
   }
@@ -4154,7 +4173,8 @@ fn fast_instruction_sub_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4182,13 +4202,15 @@ fn fast_instruction_mul_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
           set stack^.inner[ra] = Value::Num(n: z);
         }
         Not() => {
-          let cursor = FastCursor(pc: pc, handled: False());
+          let handled = False();
+          let cursor = FastCursor(pc: pc, handled: handled);
           return Ok<FastCursor, Step>(value: cursor);
         }
       }
     }
     Not() => {
-      let cursor = FastCursor(pc: pc, handled: False());
+      let handled = False();
+      let cursor = FastCursor(pc: pc, handled: handled);
       return Ok<FastCursor, Step>(value: cursor);
     }
   }
@@ -4197,7 +4219,8 @@ fn fast_instruction_mul_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4228,13 +4251,15 @@ fn fast_instruction_mod_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
           set stack^.inner[ra] = Value::Num(n: z);
         }
         Not() => {
-          let cursor = FastCursor(pc: pc, handled: False());
+          let handled = False();
+          let cursor = FastCursor(pc: pc, handled: handled);
           return Ok<FastCursor, Step>(value: cursor);
         }
       }
     }
     Not() => {
-      let cursor = FastCursor(pc: pc, handled: False());
+      let handled = False();
+      let cursor = FastCursor(pc: pc, handled: handled);
       return Ok<FastCursor, Step>(value: cursor);
     }
   }
@@ -4243,7 +4268,8 @@ fn fast_instruction_mod_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4251,12 +4277,11 @@ fn fast_instruction_mod_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, 
   return Err<FastCursor, Step>(error: failure);
 }
 
-fn fast_instruction_eq_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Result<FastCursor, Step> reads(code), reads(consts), writes(stack), writes(vm) contract {
+fn fast_instruction_eq_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Result<FastCursor, Step> reads(code), reads(consts), reads(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
   ensures when Ok(value: cursor): cursor.pc < code^.inner.len;
-  ensures when Ok(value: cursor): base + 256_u64 <= stack^.inner.len;
 } {
   let n = code^.inner.len;
   let next = pc + 1_u64;
@@ -4281,7 +4306,8 @@ fn fast_instruction_eq_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     }
   }
   if bnot(numeric) {
-    let cursor = FastCursor(pc: pc, handled: False());
+    let handled = False();
+    let cursor = FastCursor(pc: pc, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let expected = a != 0_u64;
@@ -4293,7 +4319,8 @@ fn fast_instruction_eq_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4301,12 +4328,11 @@ fn fast_instruction_eq_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
   return Err<FastCursor, Step>(error: failure);
 }
 
-fn fast_instruction_lt_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Result<FastCursor, Step> reads(code), reads(consts), writes(stack), writes(vm) contract {
+fn fast_instruction_lt_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Result<FastCursor, Step> reads(code), reads(consts), reads(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
   ensures when Ok(value: cursor): cursor.pc < code^.inner.len;
-  ensures when Ok(value: cursor): base + 256_u64 <= stack^.inner.len;
 } {
   let n = code^.inner.len;
   let next = pc + 1_u64;
@@ -4331,7 +4357,8 @@ fn fast_instruction_lt_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     }
   }
   if bnot(numeric) {
-    let cursor = FastCursor(pc: pc, handled: False());
+    let handled = False();
+    let cursor = FastCursor(pc: pc, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let expected = a != 0_u64;
@@ -4343,7 +4370,8 @@ fn fast_instruction_lt_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4351,12 +4379,11 @@ fn fast_instruction_lt_jmp_rk(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
   return Err<FastCursor, Step>(error: failure);
 }
 
-fn fast_instruction_lt_jmp_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Result<FastCursor, Step> reads(code), reads(consts), writes(stack), writes(vm) contract {
+fn fast_instruction_lt_jmp_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Result<FastCursor, Step> reads(code), reads(consts), reads(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
   ensures when Ok(value: cursor): cursor.pc < code^.inner.len;
-  ensures when Ok(value: cursor): base + 256_u64 <= stack^.inner.len;
 } {
   let n = code^.inner.len;
   let next = pc + 1_u64;
@@ -4381,7 +4408,8 @@ fn fast_instruction_lt_jmp_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     }
   }
   if bnot(numeric) {
-    let cursor = FastCursor(pc: pc, handled: False());
+    let handled = False();
+    let cursor = FastCursor(pc: pc, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let expected = a != 0_u64;
@@ -4393,7 +4421,8 @@ fn fast_instruction_lt_jmp_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
@@ -4401,12 +4430,11 @@ fn fast_instruction_lt_jmp_kr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
   return Err<FastCursor, Step>(error: failure);
 }
 
-fn fast_instruction_le_jmp_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Result<FastCursor, Step> reads(code), reads(consts), writes(stack), writes(vm) contract {
+fn fast_instruction_le_jmp_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, pc: u64, base: u64, kbase: u64, av: u8, bv: u8, cv: u8, targetv: u32) -> r: Result<FastCursor, Step> reads(code), reads(stack), writes(vm) contract {
   requires pc < code^.inner.len;
   requires base + 256_u64 <= stack^.inner.len;
   requires kbase + 256_u64 <= consts^.inner.len;
   ensures when Ok(value: cursor): cursor.pc < code^.inner.len;
-  ensures when Ok(value: cursor): base + 256_u64 <= stack^.inner.len;
 } {
   let n = code^.inner.len;
   let next = pc + 1_u64;
@@ -4431,7 +4459,8 @@ fn fast_instruction_le_jmp_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     }
   }
   if bnot(numeric) {
-    let cursor = FastCursor(pc: pc, handled: False());
+    let handled = False();
+    let cursor = FastCursor(pc: pc, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let expected = a != 0_u64;
@@ -4443,7 +4472,8 @@ fn fast_instruction_le_jmp_rr(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>
     return Err<FastCursor, Step>(error: failure);
   }
   if next < n {
-    let cursor = FastCursor(pc: next, handled: True());
+    let handled = True();
+    let cursor = FastCursor(pc: next, handled: handled);
     return Ok<FastCursor, Step>(value: cursor);
   }
   let ignored = raise_text(vm: vm, text: &dispatch_text_0[0_u64..16_u64]);
