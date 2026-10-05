@@ -698,3 +698,13 @@ continuation traffic: P1 already showed native per-arm dispatch in the joined
 source, so a gain cannot be attributed to creating per-arm native dispatch.
 Call/Return remain joined because their normal paths change frame bases;
 this bounded trial does not redesign `prepare`, `enter_lua` or `finish`.
+
+Before any candidate check or timing began, the retained P1 leaf counts
+narrowed the trial to 18 arms: Move, LoadK, GetUpval, GetTableR/K,
+SetTableRR/KR, AddRR/RK, SubRR/RK, MulKR, ModRK, EqJmpRK, LtJmpRK/KR,
+LeJmpRR and ForLoop. GetUpval is prominent in fib; MulKR and SubRR occur
+in binary-trees; ModRK occurs in string-key, concat and sort. Unused
+arithmetic and comparison siblings were left joined. Call and Return are
+prominent in fib and binary-trees but remain outside this unchanged-base
+trial. The source milestone for the initial broader draft precedes this
+profile-based narrowing; neither draft was measured before narrowing.
