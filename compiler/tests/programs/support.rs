@@ -194,7 +194,13 @@ pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
     std::fs::create_dir(&directory).expect("create unique program directory");
     let executable = directory.join(format!("{entry}{}", std::env::consts::EXE_SUFFIX));
     let mut command = Command::new(env!("CARGO_BIN_EXE_whitefootc"));
+    // `--par --par-call-grain off` selects the overlap lowering the program
+    // cases build with (`OverlapLowering::On`), which the plain command line
+    // leaves off.
     command
+        .arg("--par")
+        .arg("--par-call-grain")
+        .arg("off")
         .arg("--graph")
         .arg(root.join("modules.wfg"))
         .arg("--entry")
