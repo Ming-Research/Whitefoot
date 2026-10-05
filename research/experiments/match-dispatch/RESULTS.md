@@ -512,6 +512,30 @@ with correct CRCs, and one `/usr/bin/time -l` launch each:
 
 The score rises 3.4%, meeting the criterion.
 
+### Not adopted: pairs of additions
+
+v2g's operation-pair profile shows 33.3 million `I32Add` dispatches
+directly followed by another. Folding the second into the first's sum
+(`(a + b) + c`, when the second adds the temporary the first wrote) folded
+425: the additions are independent, each written to a local, as in a loop
+that advances two indices. Merging an `I32Add` emitted directly after
+another, with no branch target between them, into one `I32Add2(e, x, y, d,
+a, b)` that performs both in order (and splitting it again when a load or
+store folds the second), was predicted to remove 20-33 million dispatches;
+criterion: adopt if the median score rises at least 2%. It removed 18.4
+million (506,088,437 to 487,719,418, 3.6%); seven alternating launches
+([run-wasm-add-pairs.tsv](run-wasm-add-pairs.tsv)), every launch with
+correct CRCs:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2g | 2762.4 | 1.7% | 10,648,948,853 | 2,285,196,012 |
+| add-pairs | 2809.0 | 0.6% | 10,483,486,410 | 2,247,321,457 |
+
+The score rises 1.7%, short of the criterion with spreads that decide it,
+so the interpreter keeps v2g's form. A merged dispatch saves the indirect
+branch and the fetch but not the second addition's three slot accesses.
+
 ### Frame slots addressed from a derived pointer
 
 The interpreter's handlers address frame slots as `stack^.inner[fp + k]`,
