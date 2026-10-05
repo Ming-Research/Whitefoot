@@ -606,6 +606,23 @@ rarely insert at the same place.
   meanwhile report it as unsupported, with a conformance case either way.
   Reopen when a program needs a payload read without a binder.
 
+- **Half of an arm's closures recompute a state that did not change.** In
+  the synthetic N-arm interpreter of
+  [the active-term measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#active-term-matrices),
+  each arm ran about fourteen computed closures: `close` in
+  `compiler/src/semantic/entailment/state.rs` keys its remembered view on the
+  term table's revision, so each `let` that registers a term discards it
+  although a term without a fact changes no answer, and `close` never records
+  a complete closure on a state whose record is `Unknown`, so the arm-entry
+  state is closed from scratch at each of its first judgments. With the
+  matrices indexed by active terms each closure is small, so the saving is a
+  constant factor. The change: key the remembered view on the active terms
+  and the measure bounds rather than on every registration, and let a
+  complete closure of an `Unknown` record upgrade it to `Closed` through the
+  view's cell. Validate with the verification switch and the synthetic series.
+  Reopen when a profile of a real program attributes a substantial share to
+  repeated closures of unchanged states.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**
@@ -2396,9 +2413,9 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
-  1,729-line inline test module, and the tests in
-  `compiler/src/semantic/tests/entailment.rs` have 10,920 lines and 156
+  `compiler/src/semantic/entailment/state.rs` has 8,367 lines, including a
+  1,886-line inline test module, and the tests in
+  `compiler/src/semantic/tests/entailment.rs` have 11,049 lines and 158
   tests. The flow itself is divided into its sub-contexts and component
   modules (`design/compiler/engine-components.md`), none over 3,200 lines.
   `state.rs` can move its test module to its own file and its dense-closure

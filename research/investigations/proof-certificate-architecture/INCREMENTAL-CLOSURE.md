@@ -375,3 +375,107 @@ paths. Set `BASELINE`, `CANDIDATE` and `WORK_ROOT` explicitly and run under
 `.github/run-check.pl`. The runner requires `shasum` for retained SHA-256
 evidence. Later test-only route counters and conformance evidence do not alter
 the measured production mechanisms.
+
+## Active-term matrices
+
+### Question
+
+A synthetic interpreter, one function whose `match` has N arms, each arm
+doing a few checked stack operations and a guaranteed tail call
+(`research/experiments/match-dispatch/wasm/gen.py` in its stage-3 form writes
+the real one; the synthetic generator is kept with this record's
+measurements), checked in 0.10, 0.36, 3.0 and 27.3 s for N = 10, 20, 40, 80
+on an idle M1 Pro, roughly N³, and the real 178-arm interpreter did not
+finish checking in minutes. What scales with the whole function rather than
+with the facts on the path being checked?
+
+### Measurement
+
+A copy of the compiler with one trace line per closure, join,
+materialization and contradiction probe (route, matrix dimension, stored
+cells, terms with any stored cell, cells in the closed matrix, ledger nodes
+interned) checked the synthetic program at N = 5, 10, 20, 40, 80 on an Apple
+Silicon Mac. D is the number of registered terms when the function ends;
+"computed" closures are those not answered from the remembered view;
+Σ dim² is the total of matrix cells allocated and filled by them.
+
+| N | D | computed closures (unseeded/insert/closed) | Σ dim² | two-input joins | join-route interned nodes | materializations | materialized cells | max terms with a stored cell in an arm-entry state | check wall s |
+|---|---|---|---|---|---|---|---|---|---|
+| 5 | 54 | 131 (100/20/11) | 93,922 | 5 | 10,951 | 15 | 23,205 | 13 | 0.52 (cold) |
+| 10 | 94 | 196 (135/40/21) | 476,662 | 10 | 48,301 | 30 | 115,610 | 13 | 0.10 |
+| 20 | 174 | 326 (205/80/41) | 2,945,342 | 20 | 266,201 | 60 | 700,020 | 13 | 0.41 |
+| 40 | 334 | 586 (345/160/81) | 20,519,502 | 40 | 1,722,801 | 120 | 4,811,240 | 13 | 3.09 |
+| 80 | 654 | 1,106 (625/320/161) | 152,807,022 | 80 | 12,303,201 | 240 | 35,555,280 | 13 | 28.98 |
+
+Every closed matrix was completely full (`closed_live / dim²` = 1.000 in
+every trace): for any two registered terms a and b the implicit type-range
+bounds `a - Z <= max(a)` and `Z - b <= -min(b)` compose to `a - b <= max(a)
+- min(b)`, which the fixed point derives through Z as its first middle and
+edge insertion derives from each fresh term's two implicit edges. D grows by
+eight per arm, since the arm's binders, locals and commit value are never
+removed from the term table, while at most thirteen terms carried a stored
+relation in any arm-entry state at every N. Each arm ran about fourteen
+computed closures, two joins and three materializations, each Θ(D²), which
+is the cubic: Σ dim² grew ×6.2, ×7.0 and ×7.4 per doubling, the wall time
+×7.5 and ×9.4. The two-input `if` join interned about D² fresh `JoinBound`
+nodes each (`dim=502 joined_live=252004 interned=259038`), the first
+materialization of each arm one `MaterializedBound` per cell (`dim=325
+stored=105625 interned_total=105679`), and each kill scanned the store's
+`(1.5·D)²` cells; the unseeded fixed point's Z-path candidates were
+deduplicated by the content-addressed ledger and cost one probe and one cell
+write each. A profile of the 80-arm check put 3,954 of 7,954 samples in the
+fixed point, 1,469 in `DerivationLedger::intern` and 904 in
+`DenseClosureBounds::set`.
+
+### Alternatives
+
+- Scoping or retiring terms at arm and block exits: subsumed, because commit
+  values, call and measure datums and constants have no lexical scope and
+  still grow D by one `set` per arm, `TermId` is the dense index of every
+  ledger node and retained goal, and an in-scope binder without a fact still
+  fills a row.
+- Storing only cells stronger than the Z path, the alternative this record's
+  first selection rejected: not needed to remove the cubic, and it changes
+  the stored-cell identity of pairs of two active terms, which the
+  semi-naive freshness, the row summaries and the weakened-cell repair read
+  by position.
+- Fewer closures, by keeping the remembered view across the registration of a
+  term without facts or by recording a complete closure on a state whose
+  record is unknown: each halves the computed closures per arm and leaves
+  every one Θ(D²).
+
+### Selection
+
+The matrices are indexed by each state's active terms: Z, the terms with a
+stored bound or disequality candidate, and the terms whose implicit facts
+relate them to another non-Z term (a measure equated to a symbolic constant
+with that constant, a capacity measure with a registered length or head
+sibling). A term outside that set holds exactly its reflexive bound and its
+two bounds against Z, so it is never an interior vertex of a strictly
+shortest path (its Z→t→Z cycle weighs `max(t) - min(t) >= 0`, and a constant's
+zero-weight cycle gives an equal bound at depth two more, which the
+candidate order rejects) and no strengthening applies to its cells in a
+non-contradictory state; the closure over the active terms therefore derives
+every bound the closure over all terms derives, and the closed view answers a
+pair with such a term from its implicit bound and the active term's Z cell,
+with the `TransitiveBound` through Z the complete closure selects for that
+cell. A join ranges over the union of its inputs' active terms, reads a term
+an input holds no row for through that input's view, and stores a
+disequality on a term outside that union only where the inputs bound the
+other term strictly above and strictly below the term's range on different
+paths, the one case the joined Z bounds do not imply. When the ordinary
+layer's join activates terms the full join did not, which happens when a full
+input is contradictory while its ordinary layer is not, the full join is
+retaken over those terms so its stored selection stays at least as strong as
+its view. The test oracle closes the same state over every registered term
+and compares every registered pair's bound and disequality with the active
+closure's view on all four routes; it failed on a deliberately weakened edge
+insertion before the change and on a deliberately weakened view through Z
+after it.
+
+Witness policy: a pair the view answers through Z no longer receives a
+`MaterializedBound`, `JoinBound`, `MaterializedDistinct` or `JoinDistinct`
+wrapper at a materialization or join, and a disequality derived from such a
+strict bound is re-derived rather than stored; these are the different valid
+derivations of equal bounds that the retained-derivation decision admits,
+and no rendered diagnostic names a derivation node kind.
