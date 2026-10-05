@@ -688,17 +688,8 @@ impl CompiledProgram {
 
     /// Runs the program with standard input on a pipe its writer holds open
     /// and silent for `delay` before it writes `bytes` and closes, so the
-    /// program can wait on a writer that has sent nothing yet.
-    pub fn run_with_late_input(
-        &self,
-        bytes: &[u8],
-        delay: std::time::Duration,
-        native_ring: bool,
-    ) -> Output {
-        self.run_with_late_input_and_settings(bytes, delay, native_ring, &[])
-    }
-
-    /// [`Self::run_with_late_input`] with the runtime settings named.
+    /// program can wait on a writer that has sent nothing yet, with the
+    /// runtime settings named.
     pub fn run_with_late_input_and_settings(
         &self,
         bytes: &[u8],

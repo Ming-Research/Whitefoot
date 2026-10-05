@@ -124,8 +124,10 @@ fn assembler() -> &'static str {
 /// the build directory was first made. The file named, the file a symbolic
 /// link resolves to, and the `clang` in the directory the assembler reports
 /// installing from are watched: macOS's `/usr/bin/clang` is a stub that an
-/// update leaves untouched, while the tools it forwards to change. A
-/// bare name found on `PATH`, as on Windows, reruns when `PATH` changes.
+/// update leaves untouched, while the tools it forwards to change, and
+/// `DEVELOPER_DIR` can select other tools. A bare name found on `PATH`, as
+/// on Windows, reruns when `PATH` changes. Switching tools with
+/// `xcode-select`, which no file or variable here records, is not covered.
 fn watch_assembler() {
     let assembler = assembler();
     let path = Path::new(assembler);
@@ -139,10 +141,17 @@ fn watch_assembler() {
     } else {
         println!("cargo::rerun-if-env-changed=PATH");
     }
+    // macOS's stub forwards to the developer directory these select.
+    println!("cargo::rerun-if-env-changed=DEVELOPER_DIR");
+    let executable = if env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows") {
+        "clang.exe"
+    } else {
+        "clang"
+    };
     if let Ok(output) = Command::new(assembler).arg("--version").output() {
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             if let Some(directory) = line.strip_prefix("InstalledDir: ") {
-                let installed = Path::new(directory.trim()).join("clang");
+                let installed = Path::new(directory.trim()).join(executable);
                 if installed.exists() {
                     println!("cargo::rerun-if-changed={}", installed.display());
                 }
