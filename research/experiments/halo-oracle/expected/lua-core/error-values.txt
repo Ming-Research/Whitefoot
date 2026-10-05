@@ -1,0 +1,29 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "nil",
+      "kind": "bulk"
+    },
+    {
+      "type": "bulk",
+      "bytes": "boom"
+    },
+    {
+      "type": "nil",
+      "kind": "bulk"
+    },
+    {
+      "type": "bulk",
+      "bytes": "table"
+    },
+    {
+      "type": "bulk",
+      "bytes": "table-error"
+    },
+    {
+      "type": "integer",
+      "value": 1
+    }
+  ]
+}

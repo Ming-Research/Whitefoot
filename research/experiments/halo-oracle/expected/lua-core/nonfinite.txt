@@ -1,0 +1,33 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "inf"
+    },
+    {
+      "type": "bulk",
+      "bytes": "-inf"
+    },
+    {
+      "type": "bulk",
+      "bytes": "nan"
+    },
+    {
+      "type": "integer",
+      "value": 1
+    },
+    {
+      "type": "nil",
+      "kind": "bulk"
+    },
+    {
+      "type": "integer",
+      "value": 1
+    },
+    {
+      "type": "nil",
+      "kind": "bulk"
+    }
+  ]
+}

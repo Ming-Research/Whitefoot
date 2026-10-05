@@ -1,0 +1,21 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "status",
+      "bytes": "OK"
+    },
+    {
+      "type": "error",
+      "bytes": "ERR value is not an integer or out of range"
+    },
+    {
+      "type": "bulk",
+      "bytes": "table"
+    },
+    {
+      "type": "bulk",
+      "bytes": "ERR value is not an integer or out of range"
+    }
+  ]
+}

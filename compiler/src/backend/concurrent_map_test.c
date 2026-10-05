@@ -2416,14 +2416,18 @@ static void holds_positions(void) {
  * keys or each map whole. The sum over both maps equals the count of keyed
  * statements in every audit and at the end. Patience never runs out where
  * hashes are whole, so holds taken out of order would wait for each other
- * until the alarm. */
-enum { PAIR_ACCOUNTS = 16, PAIR_MOVES = 3000, PAIR_COUNTS = 6000 };
+ * until the alarm. Movers and counters run their counts and then on until
+ * the audit has held both maps both ways, by keys and whole, so every
+ * observation the audit owes is made while statements still run, whatever
+ * the scheduler gives the audit's thread. */
+enum { PAIR_ACCOUNTS = 16, PAIR_MOVES = 3000, PAIR_COUNTS = 6000, PAIR_AUDITS = 2 };
 
 typedef struct {
     wf_cmap *maps[2];
     unsigned index;
     _Atomic uint64_t *total;
     _Atomic int *stop;
+    _Atomic uint64_t *audits;
     uint64_t checks;
 } across_t;
 
@@ -2434,7 +2438,7 @@ static void *move_across(void *arg) {
     unsigned char bytes[2][3][16];
     wf_cmap_holding holds[2];
     uint64_t state = mix64(p->index + 77);
-    for (uint64_t i = 0; i < PAIR_MOVES; i++) {
+    for (uint64_t i = 0; i < PAIR_MOVES || atomic_load(p->audits) < PAIR_AUDITS; i++) {
         unsigned counts[2] = {1 + (unsigned)(next(&state) % 3), 1 + (unsigned)(next(&state) % 3)};
         int forward = (int)(next(&state) & 1);
         for (unsigned t = 0; t < 2; t++) {
@@ -2463,7 +2467,7 @@ static void *count_across(void *arg) {
     test_driver = p->index;
     unsigned char bytes[16];
     uint64_t state = mix64(p->index + 13);
-    for (uint64_t i = 0; i < PAIR_COUNTS; i++) {
+    for (uint64_t i = 0; i < PAIR_COUNTS || atomic_load(p->audits) < PAIR_AUDITS; i++) {
         wf_cmap *map = p->maps[next(&state) & 1];
         wf_cmap_user *user = wf_cmap_user_at(map, p->index);
         wf_cmap_entry entry;
@@ -2500,6 +2504,7 @@ static void *audit_across(void *arg) {
         if (sum != total)
             fail("an audit of two maps saw a statement half done (sum, total)", sum, total);
         p->checks++;
+        atomic_store(p->audits, p->checks);
     }
     return NULL;
 }
@@ -2510,26 +2515,30 @@ static void holds_across_maps(void) {
     set_patience(SHARED_HASHES ? PATIENCE : UINT64_MAX, SHARED_HASHES ? PATIENCE : UINT64_MAX);
     _Atomic uint64_t total = 0;
     _Atomic int stop = 0;
+    _Atomic uint64_t audits = 0;
     pthread_t t[MOVERS + COUNTERS + 1];
     across_t p[MOVERS + COUNTERS + 1];
     for (unsigned i = 0; i <= MOVERS + COUNTERS; i++) {
-        p[i] = (across_t){{maps[0], maps[1]}, i, &total, &stop, 0};
+        p[i] = (across_t){{maps[0], maps[1]}, i, &total, &stop, &audits, 0};
         pthread_create(&t[i], NULL, i < MOVERS ? move_across : i < MOVERS + COUNTERS ? count_across : audit_across, &p[i]);
     }
     for (unsigned i = 0; i < MOVERS + COUNTERS; i++)
         pthread_join(t[i], NULL);
     atomic_store(&stop, 1);
     pthread_join(t[MOVERS + COUNTERS], NULL);
-    if (p[MOVERS + COUNTERS].checks < 2)
-        fail("the audit never held both maps both ways", p[MOVERS + COUNTERS].checks, 2);
+    if (p[MOVERS + COUNTERS].checks < PAIR_AUDITS)
+        fail("the audit never held both maps both ways", p[MOVERS + COUNTERS].checks, PAIR_AUDITS);
     uint64_t sum = 0;
     for (unsigned m = 0; m < 2; m++) {
         for (uint64_t *slot; (slot = wf_cmap_drain(maps[m])) != NULL;)
             sum += slot[0];
         wf_cmap_destroy(maps[m]);
     }
-    if (sum != COUNTERS * PAIR_COUNTS)
-        fail("a change was lost across two maps (sum, expected)", sum, COUNTERS * PAIR_COUNTS);
+    if (atomic_load(&total) < COUNTERS * PAIR_COUNTS)
+        fail("the counters ran fewer statements than their counts (counted, expected)", atomic_load(&total),
+             COUNTERS * PAIR_COUNTS);
+    if (sum != atomic_load(&total))
+        fail("a change was lost across two maps (sum, counted)", sum, atomic_load(&total));
     set_patience(PATIENCE, PATIENCE);
 }
 

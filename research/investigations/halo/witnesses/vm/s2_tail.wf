@@ -1,0 +1,558 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Value {
+  Nil();
+  False();
+  True();
+  Num(n: f64);
+  Str(h: u32);
+  Tab(h: u32);
+  Fun(h: u32);
+  Builtin(id: u32);
+}
+
+enum Cell {
+  Move(a: u8, b: u8);
+  LoadK(a: u8, k: u8);
+  AddRR(a: u8, b: u8, c: u8);
+  LtJmp(a: u8, b: u8, target: u32);
+  ForLoop(a: u8, target: u32);
+  GetIdx(a: u8, t: u8, i: u8);
+  SetIdx(t: u8, i: u8, v: u8);
+  GetUpval(a: u8, u: u8);
+  Call(a: u8, nargs: u8, start: u32, kstart: u32);
+  Return(a: u8);
+  HostCall(a: u8, nargs: u8);
+}
+
+enum NumView {
+  Is(x: f64);
+  Not();
+}
+
+enum TabView {
+  IsTab(h: u32);
+  NotTab();
+}
+
+enum Upval {
+  Open(slot: u64);
+  Closed(v: Value);
+}
+
+struct TableCell {
+  live: Bool;
+  mark: u32;
+  array: Box<Slots<Value>>;
+}
+
+struct Frame {
+  return_pc: u64;
+  base: u64;
+  kbase: u64;
+  upvals: u64;
+}
+
+struct Heap {
+  tables: Box<Slots<TableCell>>;
+  upvals: Box<Slots<Upval>>;
+  bytes: u64;
+}
+
+struct Vm {
+  heap: Heap;
+  frames: Box<Slots<Frame>>;
+  top: u64;
+  saved_pc: u64;
+  saved_base: u64;
+  saved_kbase: u64;
+  error: Value;
+}
+
+enum Outcome {
+  Done(count: u64);
+  Failed();
+  Budget();
+  HostStopped();
+}
+
+interface Host<E> {
+  fn call(env: &E, vm: &Vm, stack: &Box<Slots<Value>>, base: u64, argc: u64) -> r: Bool writes(env), writes(vm), writes(stack) contract {
+    ensures stack^.inner.len == entry(stack)^.inner.len;
+  };
+}
+
+fn num_of(v: Value) -> r: NumView pure {
+  match v {
+    Num(n: x) => {
+      return NumView::Is(x: x);
+    }
+    Nil() => {
+      return NumView::Not();
+    }
+    False() => {
+      return NumView::Not();
+    }
+    True() => {
+      return NumView::Not();
+    }
+    Str(h: hv) => {
+      return NumView::Not();
+    }
+    Tab(h: hv) => {
+      return NumView::Not();
+    }
+    Fun(h: hv) => {
+      return NumView::Not();
+    }
+    Builtin(id: hid) => {
+      return NumView::Not();
+    }
+  }
+}
+
+fn tab_of(v: Value) -> r: TabView pure {
+  match v {
+    Tab(h: hv) => {
+      return TabView::IsTab(h: hv);
+    }
+    Num(n: x) => {
+      return TabView::NotTab();
+    }
+    Nil() => {
+      return TabView::NotTab();
+    }
+    False() => {
+      return TabView::NotTab();
+    }
+    True() => {
+      return TabView::NotTab();
+    }
+    Str(h: hv) => {
+      return TabView::NotTab();
+    }
+    Fun(h: hv) => {
+      return TabView::NotTab();
+    }
+    Builtin(id: hid) => {
+      return TabView::NotTab();
+    }
+  }
+}
+
+fn slow_arith(vm: &Vm, stack: &Box<Slots<Value>>, ra: u64, b: Value, c: Value) -> ok: Bool writes(vm), writes(stack) contract {
+  requires ra < stack^.inner.len;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "The shared slow executor: coercions and metamethods; writes the destination slot itself.";
+  set stack^.inner[ra] = Value::Nil();
+  set vm^.error = Value::Nil();
+  return False();
+}
+
+fn array_index(x: f64, len: u64) -> idx: Result<u64, unit> pure contract {
+  ensures when Ok(value: i): i < len;
+} {
+  if cvt.defined::<f64, u64>(x) {
+    let k = cvt::<f64, u64>(x);
+    if k >= 1_u64 {
+      let i = k - 1_u64;
+      if i < len {
+        return Ok<u64, unit>(value: i);
+      }
+    }
+  }
+  return Err<u64, unit>(error: unit);
+}
+
+fn run<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, stack: &Box<Slots<Value>>, vm: &Vm, env: &E, pc: u64, base: u64, kbase: u64, budget: u64) -> r: Outcome reads(code), reads(consts), writes(stack), writes(vm), writes(env) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= stack^.inner.len;
+  requires kbase + 256_u64 <= consts^.inner.len;
+} {
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Move(a: av, b: bv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let v = stack^.inner[rb];
+      set stack^.inner[ra] = v;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: next, base: base, kbase: kbase, budget: budget);
+      }
+      return Outcome::Failed();
+    }
+    LoadK(a: av, k: kv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let kw = cvt::<u8, u64>(kv^);
+      let ra = base + aw;
+      let rk = kbase + kw;
+      let v = consts^.inner[rk];
+      set stack^.inner[ra] = v;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: next, base: base, kbase: kbase, budget: budget);
+      }
+      return Outcome::Failed();
+    }
+    AddRR(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let vb = stack^.inner[rb];
+      let vc = stack^.inner[rc];
+      match num_of(v: vb) {
+        Is(x: xb) => {
+          match num_of(v: vc) {
+            Is(x: yb) => {
+              let sum = fadd.strict(xb, yb);
+              set stack^.inner[ra] = Value::Num(n: sum);
+            }
+            Not() => {
+              if slow_arith(vm: vm, stack: stack, ra: ra, b: vb, c: vc) {
+              } else {
+                return Outcome::Failed();
+              }
+            }
+          }
+        }
+        Not() => {
+          if slow_arith(vm: vm, stack: stack, ra: ra, b: vb, c: vc) {
+          } else {
+            return Outcome::Failed();
+          }
+        }
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: next, base: base, kbase: kbase, budget: budget);
+      }
+      return Outcome::Failed();
+    }
+    LtJmp(a: av, b: bv, target: tv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let va = stack^.inner[ra];
+      let vb = stack^.inner[rb];
+      let taken = False();
+      match num_of(v: va) {
+        Is(x: xb) => {
+          match num_of(v: vb) {
+            Is(x: yb) => {
+              set taken = flt(xb, yb);
+            }
+            Not() => {
+              return Outcome::Failed();
+            }
+          }
+        }
+        Not() => {
+          return Outcome::Failed();
+        }
+      }
+      let next = pc + 1_u64;
+      if taken {
+        set next = cvt::<u32, u64>(tv^);
+      }
+      if next < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: next, base: base, kbase: kbase, budget: budget);
+      }
+      return Outcome::Failed();
+    }
+    ForLoop(a: av, target: tv) => {
+      if budget == 0_u64 {
+        set vm^.saved_pc = pc;
+        set vm^.saved_base = base;
+        set vm^.saved_kbase = kbase;
+        return Outcome::Budget();
+      }
+      let left = budget - 1_u64;
+      let t = cvt::<u32, u64>(tv^);
+      if t < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: t, base: base, kbase: kbase, budget: left);
+      }
+      return Outcome::Failed();
+    }
+    GetIdx(a: av, t: tv, i: iv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let tw = cvt::<u8, u64>(tv^);
+      let iw = cvt::<u8, u64>(iv^);
+      let ra = base + aw;
+      let rt = base + tw;
+      let ri = base + iw;
+      let vt = stack^.inner[rt];
+      let vi = stack^.inner[ri];
+      match tab_of(v: vt) {
+        IsTab(h: th) => {
+          let ti = cvt::<u32, u64>(th);
+          if ti < vm^.heap.tables.inner.len {
+            match num_of(v: vi) {
+              Is(x: xb) => {
+                let alen = vm^.heap.tables.inner[ti].array.inner.len;
+                match array_index(x: xb, len: alen) {
+                  Ok(value: idx) => {
+                    let v = vm^.heap.tables.inner[ti].array.inner[idx];
+                    set stack^.inner[ra] = v;
+                  }
+                  Err(error: miss) => {
+                    set stack^.inner[ra] = Value::Nil();
+                  }
+                }
+              }
+              Not() => {
+                return Outcome::Failed();
+              }
+            }
+          } else {
+            return Outcome::Failed();
+          }
+        }
+        NotTab() => {
+          return Outcome::Failed();
+        }
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: next, base: base, kbase: kbase, budget: budget);
+      }
+      return Outcome::Failed();
+    }
+    SetIdx(t: tv, i: iv, v: vop) => {
+      let tw = cvt::<u8, u64>(tv^);
+      let iw = cvt::<u8, u64>(iv^);
+      let vw = cvt::<u8, u64>(vop^);
+      let rt = base + tw;
+      let ri = base + iw;
+      let rv = base + vw;
+      let vt = stack^.inner[rt];
+      let vi = stack^.inner[ri];
+      let vv = stack^.inner[rv];
+      match tab_of(v: vt) {
+        IsTab(h: th) => {
+          let ti = cvt::<u32, u64>(th);
+          if ti < vm^.heap.tables.inner.len {
+            match num_of(v: vi) {
+              Is(x: xb) => {
+                let alen = vm^.heap.tables.inner[ti].array.inner.len;
+                match array_index(x: xb, len: alen) {
+                  Ok(value: idx) => {
+                    set vm^.heap.tables.inner[ti].array.inner[idx] = vv;
+                  }
+                  Err(error: miss) => {
+                    return Outcome::Failed();
+                  }
+                }
+              }
+              Not() => {
+                return Outcome::Failed();
+              }
+            }
+          } else {
+            return Outcome::Failed();
+          }
+        }
+        NotTab() => {
+          return Outcome::Failed();
+        }
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: next, base: base, kbase: kbase, budget: budget);
+      }
+      return Outcome::Failed();
+    }
+    GetUpval(a: av, u: uv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let uw = cvt::<u8, u64>(uv^);
+      let ra = base + aw;
+      if uw < vm^.heap.upvals.inner.len {
+        match vm^.heap.upvals.inner[uw] {
+          Open(slot: sv) => {
+            let s = sv^;
+            if s < stack^.inner.len {
+              let v = stack^.inner[s];
+              set stack^.inner[ra] = v;
+            } else {
+              return Outcome::Failed();
+            }
+          }
+          Closed(v: cvv) => {
+            let v = cvv^;
+            set stack^.inner[ra] = v;
+          }
+        }
+      } else {
+        return Outcome::Failed();
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: next, base: base, kbase: kbase, budget: budget);
+      }
+      return Outcome::Failed();
+    }
+    Call(a: av, nargs: nargsv, start: startv, kstart: kstartv) => {
+      if budget == 0_u64 {
+        set vm^.saved_pc = pc;
+        set vm^.saved_base = base;
+        set vm^.saved_kbase = kbase;
+        return Outcome::Budget();
+      }
+      let left = budget - 1_u64;
+      let next = pc + 1_u64;
+      if next < n {
+      } else {
+        return Outcome::Failed();
+      }
+      let frame = Frame(return_pc: next, base: base, kbase: kbase, upvals: 0_u64);
+      if vm^.frames.inner.len < vm^.frames.inner.cap {
+        place_back(window: &vm^.frames.inner, value: frame);
+      } else {
+        return Outcome::Failed();
+      }
+      let aw = cvt::<u8, u64>(av^);
+      let fslot = base + aw;
+      let new_base = fslot + 1_u64;
+      let kb = cvt::<u32, u64>(kstartv^);
+      let e = cvt::<u32, u64>(startv^);
+      if new_base <= 18446744073709551359_u64 {
+        let blim = new_base + 256_u64;
+        if blim <= stack^.inner.len {
+          if kb <= 18446744073709551359_u64 {
+            let klim = kb + 256_u64;
+            if klim <= consts^.inner.len {
+              if e < n {
+                return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: e, base: new_base, kbase: kb, budget: left);
+              }
+            }
+          }
+        }
+      }
+      return Outcome::Failed();
+    }
+    Return(a: av) => {
+      let aw = cvt::<u8, u64>(av^);
+      let ra = base + aw;
+      let v = stack^.inner[ra];
+      if vm^.frames.inner.len == 0_u64 {
+        set stack^.inner[0_u64] = v;
+        return Outcome::Done(count: 1_u64);
+      }
+      let frame = take_back(window: &vm^.frames.inner);
+      let fb = frame.base;
+      let fk = frame.kbase;
+      let rp = frame.return_pc;
+      if fb <= 18446744073709551359_u64 {
+        let blim = fb + 256_u64;
+        if blim <= stack^.inner.len {
+          set stack^.inner[fb] = v;
+          if fk <= 18446744073709551359_u64 {
+            let klim = fk + 256_u64;
+            if klim <= consts^.inner.len {
+              if rp < n {
+                return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: rp, base: fb, kbase: fk, budget: budget);
+              }
+            }
+          }
+        }
+      }
+      return Outcome::Failed();
+    }
+    HostCall(a: av, nargs: nargsv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let ra = base + aw;
+      let argc = cvt::<u8, u64>(nargsv^);
+      if Host::call(env: env, vm: vm, stack: stack, base: ra, argc: argc) {
+      } else {
+        return Outcome::HostStopped();
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run::<Host<E>>(code: code, consts: consts, stack: stack, vm: vm, env: env, pc: next, base: base, kbase: kbase, budget: budget);
+      }
+      return Outcome::Failed();
+    }
+  }
+}
+
+struct NoEnv {
+  calls: u64;
+}
+
+fn no_call(env: &NoEnv, vm: &Vm, stack: &Box<Slots<Value>>, base: u64, argc: u64) -> r: Bool writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  set env^.calls = env^.calls +wrap 1_u64;
+  set vm^.top = base;
+  if base < stack^.inner.len {
+    set stack^.inner[base] = Value::Nil();
+  }
+  return True();
+}
+
+binding NoHost : Host<NoEnv> {
+  call = no_call;
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Cell>(capacity: 4_u64);
+  let c0 = Cell::LoadK(a: 0_u8, k: 0_u8);
+  if code.inner.len < code.inner.cap {
+    place_back(window: &code.inner, value: c0);
+  }
+  let c1 = Cell::Return(a: 0_u8);
+  if code.inner.len < code.inner.cap {
+    place_back(window: &code.inner, value: c1);
+  }
+  let consts = box_slots_new::<Value>(capacity: 300_u64);
+  for (i in 0_u64..300_u64) {
+    let kv = Value::Num(n: 1.5_f64);
+    if consts.inner.len < consts.inner.cap {
+      place_back(window: &consts.inner, value: kv);
+    }
+  }
+  let stack = box_slots_new::<Value>(capacity: 1024_u64);
+  for (i in 0_u64..1024_u64) {
+    let nv = Value::Nil();
+    if stack.inner.len < stack.inner.cap {
+      place_back(window: &stack.inner, value: nv);
+    }
+  }
+  let tables = box_slots_new::<TableCell>(capacity: 16_u64);
+  let upvals = box_slots_new::<Upval>(capacity: 16_u64);
+  let heap = Heap(tables: move tables, upvals: move upvals, bytes: 0_u64);
+  let frames = box_slots_new::<Frame>(capacity: 200_u64);
+  let noerr = Value::Nil();
+  let vm = Vm(heap: move heap, frames: move frames, top: 0_u64, saved_pc: 0_u64, saved_base: 0_u64, saved_kbase: 0_u64, error: noerr);
+  let env = NoEnv(calls: 0_u64);
+  if code.inner.len > 0_u64 {
+    if stack.inner.len >= 256_u64 {
+      if consts.inner.len >= 256_u64 {
+        let out = run::<NoHost>(code: &code, consts: &consts, stack: &stack, vm: &vm, env: &env, pc: 0_u64, base: 0_u64, kbase: 0_u64, budget: 1000_u64);
+        match out {
+          Done(count: c) => {
+            return exit_status(code: 0_u8);
+          }
+          Failed() => {
+            return exit_status(code: 1_u8);
+          }
+          Budget() => {
+            return exit_status(code: 1_u8);
+          }
+          HostStopped() => {
+            return exit_status(code: 1_u8);
+          }
+        }
+      }
+    }
+  }
+  return exit_status(code: 2_u8);
+}

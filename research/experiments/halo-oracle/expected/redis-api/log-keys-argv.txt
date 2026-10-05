@@ -1,0 +1,47 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "integer",
+      "value": 2
+    },
+    {
+      "type": "integer",
+      "value": 3
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "halo-oracle:api"
+        },
+        {
+          "type": "bulk",
+          "bytes": "halo-oracle:api:second"
+        }
+      ]
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "17"
+        },
+        {
+          "type": "bulk",
+          "bytes": "hello world"
+        },
+        {
+          "type": "bulk",
+          "bytes": ""
+        }
+      ]
+    },
+    {
+      "type": "bulk",
+      "bytes": "string"
+    }
+  ]
+}

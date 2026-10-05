@@ -1,0 +1,17 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "nil",
+      "kind": "bulk"
+    },
+    {
+      "type": "bulk",
+      "bytes": "string"
+    },
+    {
+      "type": "bulk",
+      "bytes": "ERR value is not an integer or out of range"
+    }
+  ]
+}

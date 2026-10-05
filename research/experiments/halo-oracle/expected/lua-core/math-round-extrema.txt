@@ -1,0 +1,29 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "integer",
+      "value": -2
+    },
+    {
+      "type": "integer",
+      "value": -1
+    },
+    {
+      "type": "integer",
+      "value": 7
+    },
+    {
+      "type": "integer",
+      "value": 5
+    },
+    {
+      "type": "integer",
+      "value": -2
+    },
+    {
+      "type": "bulk",
+      "bytes": "-1.5"
+    }
+  ]
+}

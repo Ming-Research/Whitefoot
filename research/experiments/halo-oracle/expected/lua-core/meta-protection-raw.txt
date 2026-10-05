@@ -1,0 +1,33 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "locked"
+    },
+    {
+      "type": "nil",
+      "kind": "bulk"
+    },
+    {
+      "type": "integer",
+      "value": 7
+    },
+    {
+      "type": "integer",
+      "value": 1
+    },
+    {
+      "type": "integer",
+      "value": 99
+    },
+    {
+      "type": "integer",
+      "value": 1
+    },
+    {
+      "type": "integer",
+      "value": 1
+    }
+  ]
+}

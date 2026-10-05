@@ -1,0 +1,42 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "string"
+    },
+    {
+      "type": "bulk",
+      "bytes": "halo"
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer",
+          "value": 1
+        },
+        {
+          "type": "integer",
+          "value": -2
+        },
+        {
+          "type": "bulk",
+          "bytes": "x"
+        },
+        {
+          "type": "integer",
+          "value": 1
+        },
+        {
+          "type": "nil",
+          "kind": "bulk"
+        }
+      ]
+    },
+    {
+      "type": "integer",
+      "value": 1
+    }
+  ]
+}

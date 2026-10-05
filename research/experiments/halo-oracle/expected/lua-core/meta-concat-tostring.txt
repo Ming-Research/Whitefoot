@@ -1,0 +1,17 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "T7"
+    },
+    {
+      "type": "bulk",
+      "bytes": "T7:x"
+    },
+    {
+      "type": "bulk",
+      "bytes": "x:T7"
+    }
+  ]
+}

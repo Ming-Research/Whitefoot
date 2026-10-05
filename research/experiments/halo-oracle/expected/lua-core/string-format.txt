@@ -1,0 +1,17 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "-17|word|ff|1.25| 1.50"
+    },
+    {
+      "type": "bulk",
+      "bytes": "\"a\\\nb\\\"\\\\\\000\""
+    },
+    {
+      "type": "bulk",
+      "bytes": "3"
+    }
+  ]
+}

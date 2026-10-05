@@ -1,0 +1,38 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "9501ffc3c2a3610062"
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer",
+          "value": 1
+        },
+        {
+          "type": "integer",
+          "value": -1
+        },
+        {
+          "type": "integer",
+          "value": 1
+        },
+        {
+          "type": "nil",
+          "kind": "bulk"
+        },
+        {
+          "type": "bulk",
+          "bytes": "a\u0000b"
+        }
+      ]
+    },
+    {
+      "type": "integer",
+      "value": 3
+    }
+  ]
+}

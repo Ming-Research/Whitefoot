@@ -1,0 +1,58 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "number"
+    },
+    {
+      "type": "integer",
+      "value": 7
+    },
+    {
+      "type": "bulk",
+      "bytes": "string"
+    },
+    {
+      "type": "bulk",
+      "bytes": "7"
+    },
+    {
+      "type": "bulk",
+      "bytes": "boolean"
+    },
+    {
+      "type": "nil",
+      "kind": "bulk"
+    },
+    {
+      "type": "bulk",
+      "bytes": "table"
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "a"
+        },
+        {
+          "type": "bulk",
+          "bytes": "b"
+        }
+      ]
+    },
+    {
+      "type": "bulk",
+      "bytes": "table"
+    },
+    {
+      "type": "bulk",
+      "bytes": "PONG"
+    },
+    {
+      "type": "status",
+      "bytes": "PONG"
+    }
+  ]
+}
