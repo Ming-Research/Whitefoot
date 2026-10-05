@@ -2291,29 +2291,27 @@ impl Vocabulary {
         // left to the continuation's closure; only images bounding the
         // receiver strictly above a term's range and strictly below it on
         // different edges deliver a disequality the joined bounds do not
-        // imply, which the prefilter on the images' Z bounds recognizes.
+        // imply. The prefilter recognizes that case from the least upper
+        // bound among the images holding one and the least lower bound among
+        // the images holding one: an image bounding the receiver on one side
+        // only is a valid above or below image, and an image without a Z
+        // bound on the receiver takes part in the exact check alone.
         let receiver = context.receiver;
         let mut candidates = contributing
             .iter()
             .flat_map(|index| images[*index].distinct.iter().copied())
             .filter(|pair| pair.0 == receiver || pair.1 == receiver)
             .collect::<BTreeSet<_>>();
-        let zero_bounds = contributing
-            .iter()
-            .map(|index| {
-                let image = &images[*index];
-                Some((
-                    image.bounds.get(receiver, ZERO)?.0,
-                    image.bounds.get(ZERO, receiver)?.0,
-                ))
-            })
-            .collect::<Option<Vec<(i128, i128)>>>();
-        if let Some(zero_bounds) = zero_bounds
-            && let (Some(lowest_to_zero), Some(lowest_from_zero)) = (
-                zero_bounds.iter().map(|(to_zero, _)| *to_zero).min(),
-                zero_bounds.iter().map(|(_, from_zero)| *from_zero).min(),
-            )
-            && lowest_to_zero.saturating_add(lowest_from_zero) <= -2
+        let lowest_zero_bound = |left: TermId, right: TermId| {
+            contributing
+                .iter()
+                .filter_map(|index| images[*index].bounds.get(left, right).map(|held| held.0))
+                .min()
+        };
+        if let (Some(lowest_to_zero), Some(lowest_from_zero)) = (
+            lowest_zero_bound(receiver, ZERO),
+            lowest_zero_bound(ZERO, receiver),
+        ) && lowest_to_zero.saturating_add(lowest_from_zero) <= -2
         {
             for other in self.terms.ids() {
                 if other == receiver || other == ZERO {

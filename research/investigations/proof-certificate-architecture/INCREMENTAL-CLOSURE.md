@@ -623,24 +623,67 @@ disequality through every image: a stored pair, or a strict bound in either
 orientation, a bound held through the image's Z bound on the receiver and
 the other term's implicit bound included [ENT-4]. Candidates are the stored
 pairs of the images plus, when some image bounds the receiver strictly
-above a value another bounds it strictly below (the sum of the images' least
-`receiver - Z` and least `Z - receiver` bounds is at most -2), every
-registered term the images all hold the pair for; a pair every image derives
-on the same side is implied by the joined Z bounds and left to the
-continuation's closure, as a bound held through Z already was. A delivered
-disequality's parent is the image's Give node over the disequality derived
-on the carrier side from the strict bound's own derivation, so a delivery
-join's parents stay Give nodes.
+above a value another bounds it strictly below, every registered term the
+images all hold the pair for; a pair every image derives on the same side is
+implied by the joined Z bounds and left to the continuation's closure, as a
+bound held through Z already was. The prefilter for that case takes the
+least `receiver - Z` bound among the images holding one and the least
+`Z - receiver` bound among the images holding one and scans when their sum
+is at most -2: an image bounding the receiver on one side only is a valid
+above or below image, and an image without a Z bound on the receiver takes
+part in the exact per-pair check alone. A delivered disequality's parent is
+the image's Give node over the disequality derived on the carrier side from
+the strict bound's own derivation, so a delivery join's parents stay Give
+nodes.
 
-The test `value_if_delivers_a_disequality_held_through_zero_on_opposite_sides`
-gives `300_i32` on one edge and `-5_i32` on the other to a receiver later
-required unequal to a `u8` parameter the edges' states hold no fact on; it is
-accepted, and with the opposite-side scan disabled it is refused at FN-8,
-while a `200_i32` edge is refused by both. The delivery test that inspects
-both retained layers (`value_if_delivery_retains_the_ordinary_fallback_and_shared_give_root`)
+Alternatives considered and refused:
+
+- keeping the through-Z disequalities with every registered term in the
+  image and withholding the disequality-only terms from the probe's
+  universe: refused because the probe must see every relation the state
+  holds to find its contradiction, a disequality against an equality
+  included, and every later reader of the image, the join first, would
+  still walk the pairs;
+- storing in the image only the through-Z disequalities with the closure's
+  active terms and delivering no other: refused because the term a later
+  requirement names need not be active in any edge's state, as the `u8`
+  parameter of the test below is not, so the delivered disequality would be
+  lost there while the joined Z bounds do not imply it;
+- delivering a literal carrier as its bound on Z alone: refused in the
+  design tree already, since it drops the edge's own bounds on other terms,
+  and it would not reach a parameter carrier bounded by a `requires`
+  clause, which holds the same through-Z disequalities.
+
+The tests build `pick`, whose receiver is given one edge per entry of a list,
+each a literal or an `i32` parameter required below zero (`d`), above 255
+(`e`) or unbounded (`w`), and then required unequal to a `u8` parameter the
+edges' states hold no fact on; they pin the delivery join of the disequality
+between the receiver and that parameter and one Give parent per edge.
+`value_match_delivers_a_disequality_held_through_zero_on_opposite_sides`
+gives `300_i32` and `-5_i32`, in both orders and with `e` as a third edge,
+accepted, and refuses `200_i32` at FN-8; with the opposite-side scan disabled
+the accepted programs are refused at FN-8.
+`value_match_delivers_a_disequality_from_one_sided_edges` gives `e` and `d`,
+in both orders, and `e` with `-5_i32`.
+`value_match_delivers_no_disequality_past_an_unbounded_edge` refuses every
+list holding `w`, and
+`value_match_leaves_a_same_side_disequality_to_the_joined_bound` accepts
+`300_i32` with `400_i32`, `e` with `300_i32` and `d` with `-5_i32` with no
+delivered disequality, the joined Z bound implying it. The delivery test that
+inspects both retained layers
+(`value_if_delivery_retains_the_ordinary_fallback_and_shared_give_root`)
 caught two wrong shapes of the delivered disequality's derivation on the way,
 a bare strict-bound node as a join parent and a Give node whose source named
 the receiver.
+
+Review follow-up: the first prefilter (commit `2f3f97567`) required every
+image to hold both Z bounds on the receiver and disabled the scan otherwise,
+so the one-sided edges `give e` under `requires e > 255_i32` and `give d`
+under `requires d < 0_i32`, whose images hold `x >= 256` alone and
+`x <= -1` alone while the join holds no Z bound on `x`, lost the disequality
+the previous compiler delivered: the one-sided test above is refused at
+FN-8 against that prefilter and accepted against the corrected one, which
+takes each side's least bound over the images holding it.
 
 ### Result
 
@@ -654,13 +697,19 @@ the receiver.
 | the same, N = 160 | 2.8 s | 0.53 s |
 | the same, N = 320 | 31.6 s | 1.3 s |
 
-The commit `1088bfc9a` passed the unit suite (1,942 cases) and the corpus
+The commit `2f3f97567` (its compiler sources are those of the branch head) passed the unit suite (1,942 cases) and the corpus
 (136 and 23 cases; one later rerun hit the firn "Connection reset by peer"
 flake noted in `docs/todo.md`), and the alternating paired comparison against
 `068701657` (5 rounds, median, LLVM identical across every compile) gave
 wfgrep 1.003, fixed_run_library 1.002, the earlier interpreter `v2d.wf`
 1.003 and the synthetic N = 160 program 0.201; one paired round of the
 inline-handler interpreter gave 303.6 s against 2.59 s with identical LLVM.
+The revision with the corrected one-sided prefilter passed the unit suite
+(1,945 cases), the corpus (136 and 23 cases) and `make static`; its paired
+comparison against `068701657` (3 rounds) gave wfgrep 1.000,
+fixed_run_library 0.999 and `v2d.wf` 1.003 with identical LLVM, and it
+checks the inline-handler interpreter in 2.52 s, emitting the same LLVM as
+`2f3f97567`.
 
 The synthetic program's growth needs operands whose ranges the constant
 exceeds: the same generator with `u64` operands and a `/checked` division
