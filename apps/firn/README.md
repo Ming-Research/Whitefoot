@@ -127,10 +127,15 @@ From the repository root, with the compiler built as the
 [README](../../README.md#try-it) describes:
 
 ```sh
-compiler/target/release/whitefootc --graph apps/firn/modules.wfg --entry firn -o firn
+compiler/target/release/whitefootc --graph apps/firn/modules.wfg --entry firn --cache compiler/target/firn-cache -o firn
 ./firn 6379 0 - 0
 redis-cli -p 6379 PING
 ```
+
+The cache keeps each module's checked and compiled parts, so a rebuild
+after an edit compiles only what the edit changed. A cached build does not
+link the runtime under link-time optimization; build with `--full-lto`
+instead of `--cache` to measure firn's speed, as the benchmarks do.
 
 Up to four arguments may come first by position, in this order:
 
