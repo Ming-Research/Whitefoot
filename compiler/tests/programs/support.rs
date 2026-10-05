@@ -170,13 +170,17 @@ pub fn compile_program(name: &str) -> whitefoot::LlvmModule {
 }
 
 /// Builds the named entry of a module program the repository keeps under
-/// `apps/` [MOD-1, MOD-2, MOD-9] the way its developers do, with the
-/// compiler executable and an incremental build cache that persists across
-/// test runs, so a rerun after an edit reuses every unchanged proof analysis
-/// and native object. The cache lies under `WHITEFOOT_SCRATCH_ROOT`, or the
-/// host's temporary directory, and its records are keyed by the compiler's
-/// identity and their exact inputs, so a stale record is recomputed rather
-/// than reused. Only the Linux-hosted network tests serve one today.
+/// `apps/` [MOD-1, MOD-2, MOD-9], by one of two routes so that both stay
+/// tested. Under CI (the `CI` variable hosted runners set) it compiles the
+/// program in-process and links it as every other program case is linked.
+/// Elsewhere it builds it the way its developers do, with the compiler
+/// executable and an incremental build cache that persists across test
+/// runs, so a rerun that changed neither the program nor the compiler
+/// reuses the checked module and every native object. The cache lies under
+/// `WHITEFOOT_SCRATCH_ROOT`, or the host's temporary directory, and its
+/// records are keyed by the compiler's identity and their exact inputs, so
+/// a stale record is recomputed rather than reused. Only the Linux-hosted
+/// network tests serve one today.
 #[cfg(target_os = "linux")]
 pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -184,6 +188,9 @@ pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
         .expect("the compiler package lives directly under the repository root")
         .join("apps")
         .join(name);
+    if std::env::var_os("CI").is_some() {
+        return build_program(&compile_app(&root, name, entry));
+    }
     let cache = std::env::var_os("WHITEFOOT_SCRATCH_ROOT")
         .map_or_else(std::env::temp_dir, PathBuf::from)
         .join("whitefoot-app-cache")
@@ -220,6 +227,35 @@ pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
         directory,
         executable,
     }
+}
+
+/// Compiles a module program under `apps/` in-process, reading its graph and
+/// every record the graph registers, with the overlap lowering the program
+/// cases use.
+#[cfg(target_os = "linux")]
+fn compile_app(root: &Path, name: &str, entry: &str) -> whitefoot::LlvmModule {
+    let graph =
+        whitefoot::form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
+            .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure:?}"));
+    let sources = whitefoot::discover_module_sources(root, &graph)
+        .unwrap_or_else(|failure| panic!("{name}'s records must read: {failure}"));
+    let inputs = sources
+        .iter()
+        .map(|source| {
+            SourceInput::new(&source.logical_path, &source.bytes)
+                .in_module(source.module, source.role)
+        })
+        .collect::<Vec<_>>();
+    crate::support::timed("whitefoot-compile", || {
+        whitefoot::compile_module_program(
+            &graph,
+            &inputs,
+            whitefoot::ModuleEntry::Named(entry),
+            CompilerLimits::default(),
+            OverlapLowering::On,
+        )
+        .unwrap_or_else(|failure| panic!("{name} must compile: {failure}"))
+    })
 }
 
 /// Compiles the explicit sequential lowering used by paired corpus controls.

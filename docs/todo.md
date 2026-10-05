@@ -3189,25 +3189,16 @@ condition under which it is taken up.
 
 ## Verification tooling
 
-- **The gate's app builds start from an empty cache.** The Linux corpus
-  tests build firn with the compiler's incremental cache under
-  `WHITEFOOT_SCRATCH_ROOT` (`build_app` in
-  `compiler/tests/programs/support.rs`), which a developer's rerun reuses.
-  An informal local observation, not a recorded experiment: on an M1 Pro,
-  `whitefootc --graph apps/firn/modules.wfg --entry firn --cache DIR -o
-  firn --report` took 17.8 s cold, 0.1 s unchanged and 7.4 s after a
-  one-line body edit, against 26.8 s for `--full-lto`. `gate.yml` points
-  the scratch root at a fresh runner directory, so every CI run is cold.
-  The change: restore and save that cache directory across gate runs (an
-  `actions/cache` step keyed on the compiler's sources), safe because a
-  record whose compiler identity or inputs differ is recomputed, never
-  reused. The cache also never evicts: each new compiler binary adds
-  records beside the old ones, and an interrupted write leaves its
-  `.partial` file, so a developer's directory grows until removed; a
-  restore step should start from records of the current compiler only.
-  Validate with the corpus job's `test-corpus` stage time on a run that
-  restores the cache. Reopen when the corpus stage nears its budget or a
-  second app joins the tests.
+- **The local app-build cache never evicts.** Outside CI the corpus tests
+  build firn with the compiler's incremental cache under
+  `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`
+  in `compiler/tests/programs/support.rs`). Each new compiler binary adds
+  records beside the old ones, which no later build reads, and an
+  interrupted write leaves its `.partial` file, so the directory grows
+  until someone removes it. The change: drop records of other compiler
+  identities and stale partial files when the cache opens, or prune by age.
+  Validate with the directory's size staying flat across compiler rebuilds.
+  Reopen when the cache directory's growth is noticed on a developer host.
 
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on
