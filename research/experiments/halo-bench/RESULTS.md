@@ -1159,3 +1159,57 @@ retained raw observations serve this comparison in this experiment until
 superseded. No compiler, specification, conformance, network, Cargo, push
 or PR change is in scope. The owner's task supplies the bounded direction
 and keep/revert rule; any retained Halo decision is provisional at handoff.
+
+### Growth attribution and structural assessment
+
+Both implementations require **25 rehashes**, triggered at key 1, then
+`2^e + 1` for e=0..23. The array grows from empty through
+1, 2, 4, ..., 16,777,216 slots; the real hash part stays empty.
+Halo's absent-key insertion into an empty hash requests rehash; its
+half-full histogram rule picks exactly the same powers as Lua. The
+temporary PUC counter confirms every old/new size and triggering key on
+the 10-million kernel, excluding startup tables by table identity. The
+1,000-element sizing run took 0.42 s including wrapper (exit 0), and the
+full counter run 0.31 s (exit 0), checksum `50000005000000`.
+The count for Halo is derived from its unchanged insertion and histogram
+rules, rather than from a Halo counter build.
+
+Both numusearray equivalents inspect 16,777,215 array slots in total.
+Halo additionally makes 352,321,563 bin advances for those array keys,
+with integer-to-float-to-integer conversion and Value construction per
+live slot; Lua accumulates each power-of-two range directly. Extra-key
+classification adds 300 bin advances in Halo. Halo scans zero hash slots;
+Lua visits its nil dummy node once per rehash (25 visits), with no hash
+element moved. Halo computesizes always visits 27 bins (675 total); Lua
+stops after 1..25 bins (325 total). These small differences do not explain
+the profile by themselves.
+
+Halo initializes 33,554,431 fresh array slots to Nil and then
+reinserts 16,777,215 existing values through insert_parts, including
+numeric conversion and bounds work. Lua initializes only the
+16,777,216 newly added slots and retains the old prefix through realloc,
+whose physical copy count depends on the allocator. Both perform zero
+semantic hash-node reinsertion on this kernel; Lua does not semantically
+reinsert the retained array prefix. Thus Halo does the same number of
+rehashes with substantially more work per rehash, not merely the same
+algorithm more slowly. Baseline native rehash offsets +452 and +920
+map respectively to the per-array-key histogram loop and fresh-array Nil
+initialization; these are prominent sampled offsets, without precise
+per-instruction time shares. Raw counter sequence and input identities
+are retained in [table-growth-measurements.json](table-growth-measurements.json).
+The retained full-LTO C1 binary's 71 input hashes match the current head;
+its hash matches the preceding experiment's retained launches.
+
+Selected trial: retain rehash as the size-selection and replacement owner,
+count array values in power-of-two ranges, and construct the fresh array
+by copying its surviving prefix once and initializing only the added
+suffix. Reinsert only a shrinking array's vanishing suffix, in ascending
+order, then old hash nodes in descending order as Lua does. This removes
+redundant work for every table without a workload-specialized path and
+preserves the existing accounting and failure boundary: replacement occurs
+only after successful insertion and charge. In-place grow/realloc is a
+viable further alternative, but this bounded trial isolates redundant
+classification, initialization and reinsertion without changing table
+ownership or mutation on failed rehash. Reopen prefix allocation copying
+if the selected change still leaves measured growth cost. No new public
+interface or representation is needed.
