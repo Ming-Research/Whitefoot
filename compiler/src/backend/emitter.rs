@@ -11,6 +11,7 @@ mod buffer;
 mod cleanup;
 mod contexts;
 mod conversion;
+mod dispatch;
 mod floating;
 mod floor;
 mod frames;
@@ -1018,11 +1019,18 @@ enum FunctionSlot {
     /// the start, which its await reads [WAIT-2]. It is the starting frame's
     /// own, so it outlives the context that writes it.
     ContextResult(IrValueId),
+    /// Where a split dispatch loop keeps a value it cannot change and has no
+    /// argument register for (compiler/match-dispatch-lowering).
+    Spill(IrValueId),
 }
 
 /// Where a body constructs its stored result: its destination parameter,
 /// which for a register-returned result is its public entry's frame slot.
 const RESULT_POINTER: &str = "%wf.result";
+
+/// The comment prefix of a dispatch ledger line in an emitted module, which
+/// `whitefootc --dispatch-ledger` prints (compiler/match-dispatch-lowering).
+pub const DISPATCH_LEDGER_PREFIX: &str = "; dispatch: ";
 
 /// The internal symbol a register-returned definition's destination-form
 /// body is emitted under, beside the public entry that keeps `symbol`.
@@ -1058,6 +1066,8 @@ struct FunctionFramePlan {
 struct FunctionFrameContents<'plan> {
     storage: &'plan FunctionStoragePlan,
     result_slot: Option<usize>,
+    /// The values a split dispatch loop keeps in the frame.
+    spills: &'plan [(IrValueId, IrType)],
 }
 
 impl FunctionFramePlan {
@@ -1070,6 +1080,7 @@ impl FunctionFramePlan {
         let FunctionFrameContents {
             storage,
             result_slot,
+            spills,
         } = contents;
         let mut specifications = Vec::new();
         let mut ordered = Vec::new();
@@ -1180,6 +1191,15 @@ impl FunctionFramePlan {
                     _ => {}
                 }
             }
+        }
+        for (value, ty) in spills {
+            push_function_slot(
+                &mut specifications,
+                &mut ordered,
+                FunctionSlot::Spill(*value),
+                TargetStorageType::source(*ty),
+                None,
+            )?;
         }
         let target_plan = plan_target_frame(target, program, &specifications)
             .map_err(BackendFailure::TargetLayout)?;
@@ -1397,6 +1417,15 @@ struct FunctionEmitter<'program, 'state> {
     /// The caller's remaining budget, as an operand: the value a call that
     /// stays inside this component carries. Fixed for the whole emission.
     grain_next: Option<String>,
+    /// The dispatch loop this function is split around and the part being
+    /// emitted (compiler/match-dispatch-lowering).
+    dispatch: Option<dispatch::DispatchEmission>,
+    /// The frame slots the part being emitted has asked for, which decides
+    /// which slots a split function's parts share.
+    slot_uses: std::cell::RefCell<HashSet<FunctionSlot>>,
+    /// What the dispatch lowering did with this function's loops around a
+    /// `match`, for the developer ledger (compiler/match-dispatch-lowering).
+    dispatch_ledger: Vec<String>,
 }
 
 /// What one function's emission shares with the rest of its module, and the
@@ -1474,6 +1503,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             FunctionFrameContents {
                 storage: &storage,
                 result_slot,
+                spills: &[],
             },
         )?;
         let mut output = FunctionBody::default();
@@ -1504,6 +1534,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             frontiers,
             grain,
             grain_next: None,
+            dispatch: None,
+            slot_uses: std::cell::RefCell::new(HashSet::new()),
+            dispatch_ledger: Vec::new(),
         })
     }
 
@@ -1720,7 +1753,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             self.reachable_blocks()?
         };
-        self.incoming = self.collect_incoming(&reachable)?;
         // A declaration names a linked definition by its public ABI. A
         // definition whose result returns in registers is emitted as its
         // destination-form body under an internal symbol, followed by the
@@ -1759,6 +1791,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         } else {
             llvm_type_with_references(self.program, abi.result().ty(), &mut references.types)?
         };
+        if !declaration {
+            self.dispatch = self.plan_dispatch(
+                &reachable,
+                &body_symbol,
+                abi.result().uses_destination(),
+                &result,
+            )?;
+        }
+        let reachable = self.enclosing_blocks(&reachable);
+        self.incoming = self.collect_incoming(&reachable)?;
         if abi.result().uses_destination() && (declaration || !waiting) {
             parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
         }
@@ -1861,14 +1903,21 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if waiting {
             self.emit_frame_exit()?;
         }
-        if entry {
-            let public_entry = self.public_entry(&symbol, &body_symbol, &public, &abi)?;
-            module.define(signature.define(self.output, &self.entry_prelude)?);
-            module.text("\n");
-            module.append(public_entry);
+        let public_entry = if entry {
+            Some(self.public_entry(&symbol, &body_symbol, &public, &abi)?)
         } else {
-            module.define(signature.define(self.output, &self.entry_prelude)?);
-            module.text("\n");
+            None
+        };
+        module.define(signature.define(std::mem::take(&mut self.output), &self.entry_prelude)?);
+        module.text("\n");
+        if self.dispatch.is_some() {
+            self.emit_dispatch_parts(&mut module)?;
+        }
+        if let Some(public_entry) = public_entry {
+            module.append(public_entry);
+        }
+        for line in std::mem::take(&mut self.dispatch_ledger) {
+            module.text(format!("{DISPATCH_LEDGER_PREFIX}{line}\n"));
         }
         Ok(module)
     }
@@ -2452,15 +2501,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 set,
             } => self.emit_keyed_entries_fill(result, *entries, *hold, *position, *set),
             IrOperation::KeySetNew { capacity } => self.emit_key_set_new(result, ty, *capacity),
-            IrOperation::KeySetPut {
-                set,
-                key,
-                payload,
-                add,
-            } => self.emit_key_set_put(result, *set, *key, *payload, *add),
-            IrOperation::KeySetPayload { set, index } => {
-                self.emit_key_set_payload(result, *set, *index)
-            }
+            IrOperation::KeySetInsert { set, key } => self.emit_key_set_insert(result, *set, *key),
             IrOperation::WatchBegin { record } => {
                 self.emit_watch_call(result, *record, None, "wf__watch_begin")
             }
@@ -2560,6 +2601,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 arguments,
                 drops,
             } => {
+                if self.emit_dispatch_transfer(*target, arguments, drops)? {
+                    return Ok(());
+                }
                 let target_block = self.block(*target)?;
                 if target_block.parameters().len() != arguments.len() {
                     return Err(BackendFailure::InvalidIr);
@@ -2612,6 +2656,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 enum_type,
                 targets,
             } => {
+                if self.emit_dispatch_select(block, *scrutinee, *enum_type)? {
+                    return Ok(());
+                }
                 self.materialize_operands([*scrutinee])?;
                 let (tag, tag_ty) = self.match_tag(*scrutinee, *enum_type)?;
                 writeln!(
@@ -2637,11 +2684,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     let emission_argument_0 = invalid_tag_label(block);
 
                     writeln!(self.output, "  ]").map_err(|_| BackendFailure::TextEmission)?;
+                    // Every value of an enum type carries one of its declared
+                    // tags, so no execution reaches this default
+                    // (compiler/backend-facts).
                     self.output.open_block(emission_argument_0.to_string());
-                    {
-                        self.output.symbol("abort");
-                        write!(self.output, "  call void @abort()\n  unreachable\n")
-                    }?;
+                    writeln!(self.output, "  unreachable")?;
                     Ok::<_, BackendFailure>(())
                 }
             }
@@ -2835,6 +2882,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// Returns the address assigned by the already validated physical frame.
     /// No operation emitter can create storage of its own.
     fn entry_slot(&self, key: FunctionSlot) -> Result<String, BackendFailure> {
+        self.slot_uses.borrow_mut().insert(key);
         self.frame.slot(key)
     }
 

@@ -169,20 +169,75 @@ pub fn compile_program(name: &str) -> whitefoot::LlvmModule {
     compile_programs(&[name])
 }
 
-/// Compiles the named entry of a module program the repository keeps under
-/// `apps/`, reading its graph and every record the graph registers [MOD-1,
-/// MOD-2, MOD-9]. Only the Linux-hosted network tests serve one today.
+/// Builds the named entry of a module program the repository keeps under
+/// `apps/` [MOD-1, MOD-2, MOD-9], by one of two routes so that both stay
+/// tested. Under CI (the `CI` variable hosted runners set) it compiles the
+/// program in-process and links it as every other program case is linked.
+/// Elsewhere it builds it the way its developers do, with the compiler
+/// executable and an incremental build cache that persists across test
+/// runs, so a rerun that changed neither the program nor the compiler
+/// reuses the checked module and every native object. The cache lies under
+/// `WHITEFOOT_SCRATCH_ROOT`, or the host's temporary directory, and its
+/// records are keyed by the compiler's identity and their exact inputs, so
+/// a stale record is recomputed rather than reused. Only the Linux-hosted
+/// network tests serve one today.
 #[cfg(target_os = "linux")]
-pub fn compile_app(name: &str, entry: &str) -> whitefoot::LlvmModule {
+pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("the compiler package lives directly under the repository root")
         .join("apps")
         .join(name);
+    if std::env::var_os("CI").is_some() {
+        return build_program(&compile_app(&root, name, entry));
+    }
+    let cache = std::env::var_os("WHITEFOOT_SCRATCH_ROOT")
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+        .join("whitefoot-app-cache")
+        .join(name);
+    let sequence = NEXT_EXECUTION.fetch_add(1, Ordering::Relaxed);
+    let directory =
+        std::env::temp_dir().join(format!("whitefoot-app-{}-{sequence}", std::process::id()));
+    std::fs::create_dir(&directory).expect("create unique program directory");
+    let executable = directory.join(format!("{entry}{}", std::env::consts::EXE_SUFFIX));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_whitefootc"));
+    // `--par --par-call-grain off` selects the overlap lowering the program
+    // cases build with (`OverlapLowering::On`), which the plain command line
+    // leaves off.
+    command
+        .arg("--par")
+        .arg("--par-call-grain")
+        .arg("off")
+        .arg("--graph")
+        .arg(root.join("modules.wfg"))
+        .arg("--entry")
+        .arg(entry)
+        .arg("--cache")
+        .arg(&cache)
+        .arg("-o")
+        .arg(&executable);
+    // A cold build compiles the whole program; the ordinary child deadline
+    // is sized for running programs, not for building one.
+    let output = crate::support::timed("whitefoot-and-native-app-build", || {
+        output_within(&mut command, Duration::from_secs(600))
+            .unwrap_or_else(|error| panic!("run the compiler for {name}: {error}"))
+    });
+    assert!(output.status.success(), "{name} must build: {output:?}");
+    CompiledProgram {
+        directory,
+        executable,
+    }
+}
+
+/// Compiles a module program under `apps/` in-process, reading its graph and
+/// every record the graph registers, with the overlap lowering the program
+/// cases use.
+#[cfg(target_os = "linux")]
+fn compile_app(root: &Path, name: &str, entry: &str) -> whitefoot::LlvmModule {
     let graph =
         whitefoot::form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
             .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure:?}"));
-    let sources = whitefoot::discover_module_sources(&root, &graph)
+    let sources = whitefoot::discover_module_sources(root, &graph)
         .unwrap_or_else(|failure| panic!("{name}'s records must read: {failure}"));
     let inputs = sources
         .iter()
@@ -446,6 +501,13 @@ impl CompiledProgram {
     #[cfg(windows)]
     pub(super) fn executable(&self) -> &Path {
         &self.executable
+    }
+
+    /// The directory the program runs in, where a file it names relative to
+    /// its working directory lies, so that a case can read what it wrote.
+    #[cfg(target_os = "linux")]
+    pub(super) fn working_directory(&self) -> &Path {
+        &self.directory
     }
 
     /// Runs the program in `working_directory` with `arguments` as argv[1..].

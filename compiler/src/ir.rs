@@ -1281,19 +1281,12 @@ pub enum IrOperation {
     KeySetNew {
         capacity: IrValueId,
     },
-    /// [SHARE-1] adds the key the range `key` names to the set `set`
-    /// addresses with `payload`, replacing the payload of a key the set
-    /// holds or, with `add`, adding to it modulo 2^64. Defines `Unit`.
-    KeySetPut {
+    /// [SHARE-1] inserts the key the range `key` names into the set `set`
+    /// addresses, appending it when the set lacks it. Defines `u64`, the
+    /// index of the key's first insertion.
+    KeySetInsert {
         set: IrValueId,
         key: IrValueId,
-        payload: IrValueId,
-        add: bool,
-    },
-    /// The payload of key `index` of the set `set` addresses. Defines `u64`.
-    KeySetPayload {
-        set: IrValueId,
-        index: IrValueId,
     },
     /// [SHARE-3] a guard read false: begins the watch `record`, before the
     /// statement gives up anything it holds. Defines `Unit`.

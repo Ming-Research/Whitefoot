@@ -1,5 +1,5 @@
 # Wall-time budgets, in seconds, for each labeled verification stage on the
-# hosted runners: ubuntu-24.04 (linux) and macos-14 (macos). `run-check.pl`
+# hosted runners: ubuntu-24.04 (linux) and macos-15 (macos). `run-check.pl`
 # reads this table without changing any stage's status. In CI it records a
 # stage over its budget, or one without a row for its host, and the job's
 # final verdict step fails on that record; a local run only prints the
@@ -34,7 +34,7 @@ compiler/test-unit              105    100    -
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    200    255    -
+check/corpus                    265    255    -
 compiler/test-build-corpus      95     135    -
 compiler/test-corpus            145    125    -
 

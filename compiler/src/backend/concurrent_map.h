@@ -77,10 +77,9 @@ void wf_cmap_hold(wf_cmap_user *user);
 void wf_cmap_unhold(wf_cmap_user *user);
 int wf_cmap_holds_whole(const wf_cmap_user *user);
 
-/* A key set: distinct byte-string keys in increasing lexicographic order of
- * their bytes, a proper prefix first, each with a 64-bit payload. `len` is
- * the number of keys; `store` is the set's memory, NULL while it has none,
- * taken from the includer's host. */
+/* A key set: distinct byte-string keys in the order each was first
+ * inserted. `len` is the number of keys; `store` is the set's memory, NULL
+ * while it has none, taken from the includer's host. */
 typedef struct wf_key_set {
     uint64_t len;
     void *store;
@@ -88,14 +87,11 @@ typedef struct wf_key_set {
 
 /* An empty set with room for capacity keys. */
 void wf_cmap_key_set_new(wf_key_set *set, uint64_t capacity);
-/* Adds key with payload when the set lacks it, else replaces its payload. */
-void wf_cmap_key_set_put(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t payload);
-/* Adds key with payload amount when the set lacks it, else adds amount to
- * its payload modulo 2^64. */
-void wf_cmap_key_set_add(wf_key_set *set, const unsigned char *key, uint64_t length, uint64_t amount);
-/* The payload and the bytes of the key at index, below len; the bytes stay
- * where they are until the set next changes. */
-uint64_t wf_cmap_key_set_payload(const wf_key_set *set, uint64_t index);
+/* The index of key in the set: that of its first insertion when the set
+ * has it, else len, after appending it. */
+uint64_t wf_cmap_key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t length);
+/* The bytes of the key at index, below len; they stay where they are until
+ * the set next changes. */
 const unsigned char *wf_cmap_key_set_key(const wf_key_set *set, uint64_t index, uint64_t *length);
 /* Gives the set's memory back, leaving it empty; or gives back the memory
  * of a set whose `store` alone is at hand, NULL for none. When the includer
@@ -113,13 +109,15 @@ void wf_cmap_key_set_drop_spare(void);
  * zero in the order of addition; repeated keys share one entry.
  *
  * One added key: its bytes, which stay as they are until the hold is taken;
- * its locked cell and slot, the cell kept only by the first of equal keys,
- * its leader; `rank`, which in the record at index i names the position of
- * the key that is i-th in byte order; whether its entry was created for the
- * hold; and whether it leads its run of equal keys. */
+ * its tag; its locked cell and slot, the cell kept only by the first of
+ * equal keys, its leader; `rank`, which in the record at index i names the
+ * position of the key that is i-th in the hold's lock order, by tag, then
+ * by bytes, a proper prefix first; whether its entry was created for the hold; and
+ * whether it leads its run of equal keys. */
 typedef struct {
     const unsigned char *key;
     uint64_t length;
+    uint64_t tag;
     void *cell;
     void *slot;
     uint64_t rank;
@@ -169,8 +167,8 @@ uint64_t wf_cmap_hold_key(wf_cmap_holding *hold, const unsigned char *key, uint6
 uint64_t wf_cmap_hold_keys(wf_cmap_holding *hold, const wf_key_set *set);
 /* Holds the entries of the added keys together, creating the absent ones,
  * for a statement that reaches no other entry of the map: their cells are
- * locked in increasing byte order of the keys, without repeats, the order
- * every hold uses, so two holds never wait for each other in a cycle. When
+ * locked in increasing order of the keys' tags, then of their bytes, a
+ * proper prefix first, without repeats, the order every hold uses, so two holds never wait for each other in a cycle. When
  * it would wait past its patience, meets a cell it holds itself, which two
  * of its keys of one hash make it do, or finds the table full, it gives
  * everything back and holds the whole map instead, as wf_cmap_hold does,

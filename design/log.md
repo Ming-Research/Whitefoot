@@ -5,6 +5,37 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
+
+Nodes: compiler/verification
+
+Owner-approved: In the session of 2026-10-05, written in Chinese: Q16, "keep it locally, turn it off on CI; that way both routes are tested and local runs are faster" (translated); after the handoff of PR #226 at `a5fc19e9a`, which showed the decision's text, "Confirmed" (translated).
+
+Summary: Outside CI a program case builds an app under `apps/` with the compiler executable and a persistent incremental cache, reusing the checked module and objects when neither the app nor the compiler changed; under CI it compiles the app in-process as before. A cache record is keyed by the compiler's identity and its exact inputs and every assertion reruns, so this is not the cached test verdict the existing reuse decision refuses, and alternating the routes keeps both builds under test.
+
+## 2026-10-05 Hoisted dispatch invariants, the frame past the registers and the ledger
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: In the session of 2026-10-04, written in Chinese: Q9 A, the developer ledger ("A is fine to do together if the work is small", translated), and the follow-ups to hoist invariant loads, carry reference facts, spill to the frame and pass the table base ("the rest are all approved, start", translated); after the handoff of PR #222 at `74cfeaade`, which presented decision cards Q10 and Q11 and the ledger edit, "Agree to 10 and 11" (translated).
+
+Summary: A split dispatch loop entered by one edge computes in the enclosing function what the loop cannot change: the box projections and measures of a read-only reference passed through unchanged, the box projection of a passed-through reference used only for it, no parameter for a reference left unread, and a function parameter's reference facts on the part parameter holding its pointer (Q10), which brought the WF interpreter to 1.00-1.13x of the C tail-call form. Past the convention's argument registers, values the loop cannot change wait in enclosing-frame slots, the fewest-read first, and the handler table's address is a parameter where a register is left (Q11). `whitefootc --dispatch-ledger` reports each loop's split verdict or first failed condition, instead of a source marker that would make acceptance depend on the host (Q9). Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md).
+
+## 2026-10-04 Interpreter dispatch through match
+
+Nodes: compiler/match-dispatch-lowering, compiler/backend-facts
+
+Owner-approved: In the session of 2026-10-04, written in Chinese: Q3, the unreachable default of an enum-tag switch ("Change 3", translated); and, after the handoff of PR #217 at `9a09561d9`, which presented decision cards Q4-Q8 and the backend-facts ground edit, "Agree to all" (translated).
+
+Summary: A loop whose header ends in a `match` over a nominal enum, entered only through the header and left only by returning or jumping back, is emitted as an enclosing function that calls an always-inline dispatch function once, plus one function per arm chained by guaranteed tail calls through a per-loop handler table (Q4), all parts sharing one parameter list (Q5), under `preserve_none` where a build-time probe finds it and the C convention otherwise, with a loop that needs more argument registers than the convention has emitted whole (Q6); the enclosing frame is shared by pointer and a slot only one part uses is that part's own (Q7); waiting, budgeted, cloned, overlapped, synthesized and prelude-carrying functions stay whole and the table holds function addresses (Q8, which closes Q2 provisionally). The default of every enum-tag switch is `unreachable` (Q3), its ground now naming the runtime's linked bodies. The owner's direction for values beyond the registers, a spill block in the enclosing frame (Q1), is deferred to `docs/todo.md`. Measurements and refused alternatives are in [the match-dispatch investigation](../research/investigations/match-dispatch/DESIGN.md) and [its results](../research/experiments/match-dispatch/RESULTS.md).
+## 2026-10-04 Key sets in insertion order, the lock order the runtime's
+
+Nodes: language/waiting/shared-objects/keyed-tables, compiler/waiting-contexts/concurrent-map
+
+Owner-approved: 2026-10-04, in the session, written in Chinese: direction E for key sets after the MSET investigation ("I think E is fine"; the payload dropped, "2 agreed"; block order apart from lock order agreed once unit order was shown unchanged, "I meant the former, so it is not affected, good", translated); after the handoff of PR #221, which showed every rule change with its before and after behavior and these tree edits, Q36 A ("Q36 agreed", translated).
+
+Summary: A key set keeps its distinct keys in first-insertion order and `key_set_insert` answers a key's index, so a command naming several keys replies and records in its arguments' order and keeps its own merge policy in data at that index, instead of keys in byte order with payloads, which made every insertion search and move items and leaked the runtime's lock order into program-visible order; holds lock in increasing order of the keys' 62-bit tags, then their bytes, which compares integers where byte order called `memcmp`. The cost of the byte-ordered set and the effect of this one are measured in [MSET after the redesign](../research/investigations/shared-state/DESIGN.md#mset-after-the-redesign).
+
 ## 2026-10-04 Package bindings
 
 Nodes: language/packages, language/name-resolution, language/standard-library
