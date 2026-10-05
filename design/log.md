@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 Cache pruning refused
+
+Nodes: compiler/incremental-compilation
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #229 at `357f343e4`, which presented compiler-driven pruning of cache directories as decision Q18: "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated).
+
+Summary: The compiler does not prune a cache directory. The proposed pruning, removing other compiler identities' records and stale temporary files when a directory opens, is withdrawn and recorded under Rejected: a developer's local cache is the developer's to clean, and deleting files on a shared host is not the compiler's responsibility.
+
 ## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
 
 Nodes: compiler/verification
