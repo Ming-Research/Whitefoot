@@ -6,6 +6,7 @@ pub(super) const SHARED_MAPS: &[RepairPair] = &[
         rejected: include_bytes!("../../../../tests/conformance/cases/type9-neg-map-field.wf"),
         rule: "TYPE-9",
         sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
             "a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`",
         ],
         repaired: &[include_bytes!(
@@ -19,6 +20,7 @@ pub(super) const SHARED_MAPS: &[RepairPair] = &[
         ),
         rule: "TYPE-9",
         sentences: &[
+            "]: InvalidRestrictedTypePlacement\n",
             "this type argument would place `ConcurrentHashMap<u8>` as an inline value; make a shared map with `shared_map_new::<V>(capacity: n)`",
         ],
         repaired: &[include_bytes!(

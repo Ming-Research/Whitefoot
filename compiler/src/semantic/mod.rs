@@ -771,11 +771,11 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by WIN-3.
         mechanical_fix: &'static str,
     },
-    /// [TYPE-9] a runtime-capacity storage shape was written in a position
-    /// that stores it inline. Such a shape may appear only as the content of
-    /// a `Box` — the type of its `inner` field.
-    InlineRuntimeCapacityShape {
-        /// The exact written shape.
+    /// [TYPE-9] a placement-restricted type was written outside its home,
+    /// or its content was moved out of that home. Runtime-capacity shapes
+    /// and `Segments` live in `Box` content; maps live in shared-object state.
+    InvalidRestrictedTypePlacement {
+        /// The exact placement-restricted type.
         spelling: String,
         /// Exact restructuring required by TYPE-9.
         mechanical_fix: String,
