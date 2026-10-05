@@ -683,6 +683,19 @@ rarely insert at the same place.
   against direct C and the current WF implementation. No new language operation
   is selected yet.
 
+- **A frame holding a one-byte slot keeps every slot in one aggregate.**
+  `plan_target_frame` (`compiler/src/target.rs`) gives a function's slots
+  separate allocations only when they share one alignment. A function with
+  an atomic statement's `i1` unit flags therefore gets one frame aggregate,
+  and LLVM keeps copies into its fields that separate allocations would let
+  it remove: firn's `run_pop` copies its 72-byte entry slot into the frame
+  to match on the tag (`lower_match` loads a borrowed scrutinee whole). The
+  copy costs nothing measurable: moving the match into a helper removed it
+  and `RPOP` measured 0.998 over 9 pairs. Giving every slot its own
+  allocation made `RPOP` 3% slower in three runs. Match a borrowed
+  scrutinee's tag through its address when a measured path pays for the
+  copy.
+
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn
@@ -1204,6 +1217,27 @@ rarely insert at the same place.
   ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
   The cause is unattributed: the host had no `perf`. Validate by a profile
   of both on four drivers. Reopen with firn's next performance work.
+
+- **firn answers about 1.3% fewer `RPOP`s of one list on four drivers than
+  `cea9188d4`.** Over 9 interleaved pairs on the 14900K VM (4 server CPUs,
+  16 client processes, a list holding elements), the head measured 0.987
+  of `cea9188d4`; an emptied list's `RPOP` and one driver are level. The
+  loss came with #208, whose first commit that builds firn already has it.
+  Building `cea9188d4` with the head's concurrent map or its completion
+  bridge does not reproduce it. The entry is held about 180 cycles in both,
+  and the lock passes between drivers on 10.3 and 10.8 of every 100 takes.
+  Each of these changed nothing: removing the frame's slot copy, testing
+  `RPOP` first in dispatch, splitting the entry lock by readers, the old
+  push allocation, polling or longer waits for a held cell, and a
+  fence-free keyed mark, which `membarrier`'s registration made worse
+  ([concurrent map](../research/investigations/concurrent-map/DESIGN.md#a-keyed-statements-mark-without-a-fence-tried-and-withdrawn)).
+  Work outside the statement costs about four times as much on a key four
+  drivers share: 130 ns more per request at one driver cost 520 ns at
+  four. The remaining difference is spread over the request path in pieces
+  of 1 to 2 ns, below the ±1% that code placement alone moves a build, and
+  the VM has no hardware counters. Compare one request's instructions and
+  cache misses on bare-metal Linux with `perf stat` and `perf c2c`. Reopen
+  when that host is available.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
