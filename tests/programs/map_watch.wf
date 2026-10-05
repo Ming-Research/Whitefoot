@@ -92,13 +92,13 @@ fn exchange(boxes: &Shared<ConcurrentHashMap<u64>>, closed: &Shared<u64>, receiv
     let taker = shared_share::<ConcurrentHashMap<u64>>(shared: boxes);
     let total = shared_share::<u64>(shared: received);
     spawn post(boxes: move sender, at: at);
-    spawn fetch(boxes: move taker, received: move total, at: at);
+    spawn fetch(received: move total, boxes: move taker, at: at);
   }
   for @watcher (index in 0_u64..2_u64) {
     let watching = shared_share::<ConcurrentHashMap<u64>>(shared: boxes);
     let stopping = shared_share::<u64>(shared: closed);
     let counting = shared_share::<u64>(shared: waited);
-    spawn wait_ready(boxes: move watching, closed: move stopping, waited: move counting);
+    spawn wait_ready(closed: move stopping, boxes: move watching, waited: move counting);
   }
   let closer = shared_share::<u64>(shared: closed);
   spawn close(closed: move closer);
@@ -106,7 +106,7 @@ fn exchange(boxes: &Shared<ConcurrentHashMap<u64>>, closed: &Shared<u64>, receiv
 }
 
 fn main() -> status: ExitStatus pure waits {
-  doc "Four pairs of contexts pass 500 values each through one entry of a shared map, a sender waiting for its box to be empty and a taker for it to hold a value, so each guard reads an entry and every wake comes from a write to the map. Two more contexts wait on a guard that reads an entry and the state's own field together, which a closing context sets. The total is the sum of 1 to 500 four times, every box ends empty and both waiters wake, on any number of drivers; the status names the first wrong count.";
+  doc "Four pairs of contexts pass 500 values each through one entry of a shared map, a sender waiting for its box to be empty and a taker for it to hold a value, so each guard reads an entry and every wake comes from a write to the map. Two more contexts wait on a guard that reads an entry and a separate closed object together, which a closing context sets. The total is the sum of 1 to 500 four times, every box ends empty and both waiters wake, on any number of drivers; the status names the first wrong count.";
   let boxes = shared_map_new::<u64>(capacity: 0_u64);
   let closed = shared_new::<u64>(value: 0_u64);
   let received = shared_new::<u64>(value: 0_u64);

@@ -4,22 +4,22 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let store = shared_map_new::<u8>(capacity: 4_u64);
   let sum = 0_u64;
   atomic t = &store {
-  for (i in 0_u64..4000000_u64) {
-    let at = i % 256_u64;
-    let end = at + 1_u64;
-    let key = &bytes[at..end];
-    let slot = &t^[key];
-    let v = 0_u64;
-    match slot^ {
-      Some(value: n) => {
-        set v = 1_u64;
+    for (i in 0_u64..4000000_u64) {
+      let at = i % 256_u64;
+      let end = at + 1_u64;
+      let key = &bytes[at..end];
+      let slot = &t^[key];
+      let v = 0_u64;
+      match slot^ {
+        Some(value: n) => {
+          set v = 1_u64;
+        }
+        None() => {
+          set v = 2_u64;
+        }
       }
-      None() => {
-        set v = 2_u64;
-      }
+      set sum = sum +wrap v;
     }
-    set sum = sum +wrap v;
-  }
   }
   if sum == 8000000_u64 {
     return std::process::exit_status(code: 0_u8);

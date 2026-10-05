@@ -572,22 +572,16 @@ impl<'unit> Checker<'_, 'unit> {
             // The two window shapes in both placements [WIN-1]: the filled
             // prefix is `r.len` and a `Ring` additionally carries the window
             // origin `head`.
-            (crate::ContainerShape::Slots, capacity) => {
-                if capacity.is_none() {}
-                Ok(CheckedType::Window {
-                    shape: WindowShape::Slots,
-                    element: self.types.intern_element(element_type)?,
-                    capacity,
-                })
-            }
-            (crate::ContainerShape::Ring, capacity) => {
-                if capacity.is_none() {}
-                Ok(CheckedType::Window {
-                    shape: WindowShape::Ring,
-                    element: self.types.intern_element(element_type)?,
-                    capacity,
-                })
-            }
+            (crate::ContainerShape::Slots, capacity) => Ok(CheckedType::Window {
+                shape: WindowShape::Slots,
+                element: self.types.intern_element(element_type)?,
+                capacity,
+            }),
+            (crate::ContainerShape::Ring, capacity) => Ok(CheckedType::Window {
+                shape: WindowShape::Ring,
+                element: self.types.intern_element(element_type)?,
+                capacity,
+            }),
             // [TYPE-9] segments exist only as `Box` content and have no
             // constant-capacity form.
             (crate::ContainerShape::Segments, None) => Ok(CheckedType::Segments {
@@ -1684,10 +1678,10 @@ impl<'unit> TypeContext<'unit> {
                         result.push(module.to_owned());
                         result.push(name.to_owned());
                     }
-                    for (_, argument) in substitution.entries() {
+                    for (key, argument) in substitution.entries() {
                         match argument {
                             GenericArgument::Type(t) => result.extend(self.atomic_type_order(*t)?),
-                            _ => result.push(format!("{argument:?}")),
+                            _ => result.push(self.stable_argument_spelling(*key, *argument)?),
                         }
                     }
                     return Ok(result);

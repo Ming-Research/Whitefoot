@@ -86,9 +86,15 @@ fn run(ledger: &Shared<LedgerCounts>, ledger_map: &Shared<ConcurrentHashMap<u64>
 fn count_pair(first: Shared<u64>, second: Shared<u64>, backwards: Bool) -> result: unit pure waits {
   for @pair (index in 0_u64..2000_u64) {
     if backwards {
-      atomic b = &second, a = &first { set b^ = b^ +wrap 1_u64; set a^ = a^ +wrap 1_u64; }
+      atomic b = &second, a = &first {
+        set b^ = b^ +wrap 1_u64;
+        set a^ = a^ +wrap 1_u64;
+      }
     } else {
-      atomic a = &first, b = &second { set a^ = a^ +wrap 1_u64; set b^ = b^ +wrap 1_u64; }
+      atomic a = &first, b = &second {
+        set a^ = a^ +wrap 1_u64;
+        set b^ = b^ +wrap 1_u64;
+      }
     }
   }
   return unit;
@@ -99,8 +105,10 @@ fn count_pairs(first: &Shared<u64>, second: &Shared<u64>) -> result: unit reads(
   let b = shared_share::<u64>(shared: second);
   let c = shared_share::<u64>(shared: first);
   let d = shared_share::<u64>(shared: second);
-  spawn count_pair(first: move a, second: move b, backwards: False());
-  spawn count_pair(first: move c, second: move d, backwards: True());
+  let forwards = False();
+  let backwards = True();
+  spawn count_pair(first: move a, second: move b, backwards: forwards);
+  spawn count_pair(first: move c, second: move d, backwards: backwards);
   return unit;
 }
 
@@ -108,10 +116,10 @@ fn main() -> status: ExitStatus pure waits {
   doc "Contexts reach a shared map and its separate counts in opposite block orders. Map entries precede counts in the global type order, and the log object is reached only on the logging tail. Every driver count must observe equal entry and count totals and exactly the logging statements in the log.";
   let ledger_map = shared_map_new::<u64>(capacity: 0_u64);
   let ledger_state = LedgerCounts(count: 0_u64, log: 0_u64);
-  let ledger = shared_new::<LedgerCounts>(value: move ledger_state);
+  let ledger = shared_new::<LedgerCounts>(value: ledger_state);
   let store_map = shared_map_new::<u64>(capacity: 0_u64);
   let store_state = Log(log: 0_u64);
-  let store = shared_new::<Log>(value: move store_state);
+  let store = shared_new::<Log>(value: store_state);
   run(ledger: &ledger, ledger_map: &ledger_map, store: &store, store_map: &store_map);
   let first = &names[0_u64..1_u64];
   let value = 0_u64;
@@ -156,8 +164,15 @@ fn main() -> status: ExitStatus pure waits {
   count_pairs(first: &a, second: &b);
   let av = 0_u64;
   let bv = 0_u64;
-  atomic first = &a, second = &b { set av = first^; set bv = second^; }
-  if av != 4000_u64 { return exit_status(code: 5_u8); }
-  if bv != 4000_u64 { return exit_status(code: 6_u8); }
+  atomic left = &a, right = &b {
+    set av = left^;
+    set bv = right^;
+  }
+  if av != 4000_u64 {
+    return exit_status(code: 5_u8);
+  }
+  if bv != 4000_u64 {
+    return exit_status(code: 6_u8);
+  }
   return exit_status(code: 0_u8);
 }

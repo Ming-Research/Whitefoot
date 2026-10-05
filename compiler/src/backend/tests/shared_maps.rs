@@ -68,22 +68,21 @@ fn entries_witness_detects_selection_of_one_slot_for_every_set_index() {
 
 #[test]
 fn whole_swap_witness_detects_a_missing_swap() {
-    for name in ["swapped"] {
-        let llvm = compile(&witness(name));
-        let mut changes = 0;
-        let damaged = llvm
-            .lines()
-            .map(|line| {
-                if line.contains("call void @wf__keyed_table_swap(") {
-                    changes += 1;
-                    "  ; deliberately omitted table swap".to_owned()
-                } else {
-                    line.to_owned()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(changes > 0, "the swap damage was applied");
-        assert_ne!(compile_and_run(&damaged).status.code(), Some(22), "{name}");
-    }
+    let name = "swapped";
+    let llvm = compile(&witness(name));
+    let mut changes = 0;
+    let damaged = llvm
+        .lines()
+        .map(|line| {
+            if line.contains("call void @wf__keyed_table_swap(") {
+                changes += 1;
+                "  ; deliberately omitted table swap".to_owned()
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(changes > 0, "the swap damage was applied");
+    assert_ne!(compile_and_run(&damaged).status.code(), Some(22), "{name}");
 }

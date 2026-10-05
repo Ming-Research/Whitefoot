@@ -75,8 +75,8 @@ fn table_read_fold_with_sibling_writes() -> String {
         )
         .replace("0_u64..4000000_u64", "0_u64..256_u64")
         .replace(
-            "    set sum = sum +wrap v;",
-            "    set marks[i] = v;\n    set sum = sum +wrap v;",
+            "      set sum = sum +wrap v;",
+            "      set marks[i] = v;\n      set sum = sum +wrap v;",
         )
 }
 
@@ -123,8 +123,8 @@ fn split_table_read_fold_with_overlapping_writes_stays_sequential() {
     let source = std::str::from_utf8(TABLE_READ_FOLD)
         .expect("UTF-8 table reader")
         .replace(
-            "    let slot = &t^[key];",
-            "    set t^[key] = None<u8>();\n    let slot = &t^[key];",
+            "      let slot = &t^[key];",
+            "      set t^[key] = None<u8>();\n      let slot = &t^[key];",
         );
     let ledger = super::compile_permission_ledger(source.as_bytes());
     assert!(

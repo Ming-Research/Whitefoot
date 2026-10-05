@@ -105,7 +105,7 @@ impl Checker<'_, '_> {
                 *place,
                 *place,
                 *place,
-                &mut block_bindings,
+                &block_bindings,
                 scope.loops.len(),
             )?;
             let paths = target

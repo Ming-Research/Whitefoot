@@ -52,7 +52,7 @@ fn reset(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> re
 }
 
 fn trade(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> result: unit pure waits {
-  doc "Exchanges the state's table with a table of its own a hundred times, adjusting the total by what each table held, in one statement.";
+  doc "Exchanges the state's table with a map of its own a hundred times, adjusting the total by what each table held, in one statement.";
   let mine = shared_map_new::<u64>(capacity: 0_u64);
   let held = 0_u64;
   let keys = prefixes();
@@ -112,10 +112,10 @@ fn run(store: &Shared<Totals>, store_map: &Shared<ConcurrentHashMap<u64>>, misma
     spawn bump_keys(store: move handle, store_map: move handle_map);
   }
   let resetting = shared_share::<Totals>(shared: store);
-    let resetting_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
+  let resetting_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
   spawn reset(store: move resetting, store_map: move resetting_map);
   let trading = shared_share::<Totals>(shared: store);
-    let trading_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
+  let trading_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
   spawn trade(store: move trading, store_map: move trading_map);
   for @watch (index in 0_u64..2_u64) {
     let handle = shared_share::<Totals>(shared: store);
@@ -127,10 +127,10 @@ fn run(store: &Shared<Totals>, store_map: &Shared<ConcurrentHashMap<u64>>, misma
 }
 
 fn main() -> status: ExitStatus pure waits {
-  doc "A shared map is swapped with a fresh map and exchanged with another while other contexts lock its entries one key at a time: four contexts add to eight entries and a total, one replaces the table with an empty one and zeroes the total two hundred times, one exchanges it with a table of its own and moves the total by the difference a hundred times, and two compare the entries' sum with the total. A statement that locked the table it read before the replacement or the exchange would add to a table no longer the state's and leave the sum and the total apart. Every order of the statements keeps them equal, so the status is 0 and names the first disagreement otherwise.";
+  doc "A shared map is swapped with a fresh map and exchanged with another while other contexts lock its entries one key at a time: four contexts add to eight entries and a total, one swaps the map with an empty one and zeroes the total two hundred times, one exchanges it with a map of its own and moves the total by the difference a hundred times, and two compare the entries' sum with the total. A statement that locked the map contents it read before the replacement or the exchange would add to displaced map contents and leave the sum and the total apart. Every order of the statements keeps them equal, so the status is 0 and names the first disagreement otherwise.";
   let store_map = shared_map_new::<u64>(capacity: 0_u64);
   let state = Totals(total: 0_u64, resets: 0_u64);
-  let store = shared_new::<Totals>(value: move state);
+  let store = shared_new::<Totals>(value: state);
   let mismatches = shared_new::<u64>(value: 0_u64);
   run(store: &store, store_map: &store_map, mismatches: &mismatches);
   let keys = prefixes();
