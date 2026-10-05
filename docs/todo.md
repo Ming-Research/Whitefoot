@@ -159,10 +159,7 @@ rarely insert at the same place.
   about 25 million), the entailment schedule of the function inventory
   (`analyze_function_inventory` in `compiler/src/semantic/check.rs`, about 11
   million), instantiation-cycle rejection (7 million) and concrete signature
-  collection (6 million). Resolution's per-declaration scans of every
-  terminal for `public` and a function body are now one pass
-  ([compile-speed](../research/investigations/compile-speed/DESIGN.md#attribution));
-  the comparison below has not been repeated since. Impact: every check of a module that names a
+  collection (6 million). Impact: every check of a module that names a
   library module, and every program returning `ExitStatus`, pays per
   function for declarations it does not use. Change: find in each the work
   repeated per function over every declaration or signature of the closure

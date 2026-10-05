@@ -2998,3 +2998,37 @@ enum Right {
         variants[1]
     );
 }
+
+/// The path-sorted index returns exactly the uses a scan of every use finds
+/// inside each subtree, in record order.
+#[test]
+fn uses_under_a_subtree_match_a_scan_of_every_use() {
+    let source = include_bytes!("../../../tests/conformance/cases/ex1-pos-worked-example.wf");
+    with_resolution_sources(&[SourceInput::new("test.wf", source)], true, |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("the worked example must resolve: {outcome:?}");
+        };
+        let uses = resolved.lexical_uses();
+        assert!(uses.len() > 10);
+        let mut prefixes = vec![Vec::new()];
+        for usage in uses {
+            let path = usage.origin().node().components();
+            prefixes.extend((1..=path.len()).map(|length| path[..length].to_vec()));
+        }
+        prefixes.sort();
+        prefixes.dedup();
+        for prefix in prefixes {
+            let scanned = uses
+                .iter()
+                .filter(|usage| usage.origin().node().components().starts_with(&prefix))
+                .map(std::ptr::from_ref)
+                .collect::<Vec<_>>();
+            let indexed = resolved
+                .lexical_uses_under(&prefix)
+                .into_iter()
+                .map(std::ptr::from_ref)
+                .collect::<Vec<_>>();
+            assert_eq!(indexed, scanned, "uses under {prefix:?}");
+        }
+    });
+}

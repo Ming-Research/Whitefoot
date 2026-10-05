@@ -5125,6 +5125,8 @@ fn close_from_view_seed(
     let width = terms.ids().count();
     let view = &seed.closed;
     let core_terms = view.matrix.dimension;
+    // The term table only grows, so the view covers a prefix of its terms.
+    debug_assert!(core_terms <= width);
     let mut dense = DenseClosureBounds::new(width);
     for row in 0..core_terms {
         let (from, to) = (row * core_terms, row * width);
@@ -7683,6 +7685,35 @@ pub(crate) mod tests {
             &first,
             &close(&copy, &terms, &goals, &mut ledger)
         ));
+    }
+
+    /// A standing measure fact that replaces a different one can weaken an
+    /// implicit bound a remembered view already used, so it ends the view
+    /// seed and the next closure holds only the new fact.
+    #[test]
+    fn a_replaced_standing_measure_fact_ends_the_view_seed() {
+        let mut terms = TermTable::new();
+        let measure = terms.intern(TermKind::Measure(
+            CheckedMeasure::Length,
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+        ));
+        terms.set_measure_bound(measure, MeasureBound::Constant(7));
+        let other = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(1)),
+            IntegerType::U8,
+        ));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        let bound = |left, right, bound| Relation::Bound { left, right, bound };
+        state.establish(&bound(other, ZERO, 5), &mut ledger, event);
+        assert!(close(&state, &terms, &goals, &mut ledger).derives_bound(measure, ZERO, 7));
+        terms.set_measure_bound(measure, MeasureBound::Constant(9));
+        state.establish(&bound(ZERO, other, 0), &mut ledger, event);
+        let closed = close(&state, &terms, &goals, &mut ledger);
+        assert!(!closed.derives_bound(measure, ZERO, 7));
+        assert!(closed.derives_bound(measure, ZERO, 9));
     }
 
     fn postcondition_call_proof(ledger: &mut DerivationLedger, relation: Relation) -> DerivationId {

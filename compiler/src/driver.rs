@@ -1787,8 +1787,10 @@ pub fn entry_verdict(
         || {
             // Each module's verdict reads only its own records and its
             // dependencies' interfaces, so the verdicts are independent and
-            // run concurrently; the first rejection or failure in module
-            // order is the one reported, as a sequential walk would.
+            // run concurrently. The first rejection or failure in module
+            // order is the one reported; unlike a sequential walk, every
+            // module is checked even after an earlier one rejects, and a
+            // panic in any of them propagates.
             let verdicts = in_parallel(&modules, |module| {
                 let name = graph
                     .modules()

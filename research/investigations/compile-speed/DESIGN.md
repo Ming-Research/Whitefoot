@@ -46,10 +46,10 @@ Baseline compiler: main `c3d26643`, the revision Snowghost pins.
 
 ## Baseline
 
-| Entry | No cache: wall | front end | link | peak RSS | Fresh cache: wall |
-|---|---:|---:|---:|---:|---:|
-| `style_oracle` | 190.5 s | 172.5 s | 17.9 s | 3.9 GB | 95.5 s |
-| `layout_oracle` | 481.3 s | 451.7 s | 29.5 s | 9.1 GB | 274.6 s |
+| Entry | No cache: wall | front end | link | peak RSS | Fresh cache `--check`: wall | peak RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| `style_oracle` | 190.5 s | 172.5 s | 17.9 s | 3.9 GB | 95.5 s | 2.5 GB |
+| `layout_oracle` | 481.3 s | 451.7 s | 29.5 s | 9.1 GB | 274.6 s | 2.9 GB |
 
 The fresh-cache column is the build Snowghost now runs. It halves the
 uncached time because an entry composition reuses the proof receipts its
@@ -100,7 +100,8 @@ Counting the closure routes of the `pkg::html::tree_builder` check (a
 temporary print) gave 4556 closures, of which 1121 ran the complete
 unseeded fixed point because the state had no closure record. Weighting each
 closure by its asymptotic cost (n³ for the fixed point, n² for edge
-insertion) puts 95% of the closure cost in those 1121. A backtrace of the
+insertion) puts an estimated 95% of the closure cost in those 1121; this is
+a weighting of route counts, not a measured time. A backtrace of the
 large ones (n from 254 to 356) shows `prove_bounded_relation` closing the
 function's ordinary flow state, which carried only 76 to 84 bounds: a state
 that has never been snapshotted has no record, every statement registers six
@@ -135,8 +136,11 @@ before these criteria were written; their results below are the same runs.
    probe. Routine fixes under unchanged design.
 2. **Concurrent module verdicts.** An entry composition computes its module
    verdicts on one thread per processor (`WHITEFOOT_JOBS` overrides) and
-   reports the first rejection or failure in module order. The build cache's
-   counters and settled-verdict map become thread-safe.
+   reports the first rejection or failure in module order. Unlike the
+   sequential walk, every module is checked even after an earlier one
+   rejects, and a panic in any of them propagates. The build cache's
+   counters and settled-verdict map become thread-safe. Candidates 1 and 2
+   were measured only together.
 3. **View seeds.** A state without a closure record keeps its remembered
    closed view while it gains only bound candidates or signed goals; the next
    closure widens the view to the current terms and inserts the bounds that
@@ -181,7 +185,10 @@ Fresh-cache `--check`, wall and user seconds on four processors:
 Against the baseline, the fresh-cache `style_oracle` check is 2.5x faster
 and `layout_oracle` 3.0x. Peak RSS went from 2.5 GB to 2.1 GB for
 `style_oracle` and from 2.9 GB to 4.1 GB for `layout_oracle`, whose
-concurrent module checks are held in memory at once. Peak RSS of
+concurrent module checks are held in memory at once. The `pkg::style` module check
+moved from 22.6 s to 24.8 s and back to 23.3 s across candidates 3 and 4,
+within the noise of single runs; its cost is the edge insertion described
+below. Peak RSS of
 the `pkg::html::tree_builder` check fell from 2.3 GB to 1.2 GB with
 candidate 4. The LLVM of `png_oracle`, `css_selectors_oracle`,
 `html_tree_oracle` and `style_oracle` is byte-identical to the baseline's
