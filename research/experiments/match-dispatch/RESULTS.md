@@ -449,8 +449,7 @@ The score rises 3.8%, above the 2% criterion.
 helper's parameters with `let`, except a body that delivers a value from a
 `match` (`give`), which stays a call: the checker's handling of such
 deliveries grows faster than linearly with the function, and the fully
-inlined interpreter took 313 s to check where this form takes 3.5 s
-(`docs/todo.md`, "Checking one function grows faster than its size"). Built
+inlined interpreter took 313 s to check where this form takes 3.5 s. Built
 by the compiler with stack-box pinning and active-term closures merged, the
 `I32Add` arm's machine code is the same seventeen instructions as v2d's: by
 v2d the helpers were already inlined by LLVM, so writing them into the
