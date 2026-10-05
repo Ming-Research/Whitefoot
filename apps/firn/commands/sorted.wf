@@ -266,6 +266,16 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       break @options;
     }
     let option = arg(args: args, index: first);
+    let lead = byte_at(input: input, index: option.start);
+    let folded = ior(lead, 32_u8);
+    let above = folded >= 97_u8;
+    let below = folded <= 122_u8;
+    let cased = band(above, below);
+    let filled = option.length > 0_u64;
+    let letter = band(cased, filled);
+    if bnot(letter) {
+      break @options;
+    }
     let is_nx = option_matches(input: input, span: option, word: &word_nx[0_u64..2_u64]);
     let is_xx = option_matches(input: input, span: option, word: &word_xx[0_u64..2_u64]);
     let is_ch = option_matches(input: input, span: option, word: &word_ch[0_u64..2_u64]);
