@@ -16,6 +16,7 @@ mod call_separations;
 mod collisions_and_killed_facts;
 mod content_moves;
 mod selector_scope;
+mod shared_maps;
 mod storage_destructuring;
 
 /// One repair [DIAG-1], pinned with the programs it produces: a rejected
@@ -2848,7 +2849,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicTargetNotShared\n",
-            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new`, and give each context its own handle made with `shared_share`\n",
+            "\n  mechanical_fix: name a place of type `Shared<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let plain = shared_new::<u8>(value: 0_u8);
@@ -2913,7 +2914,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
         rule: "SHARE-2",
         sentences: &[
             "]: WaitInsideAtomic\n",
-            "\n  mechanical_fix: end the outer atomic statement before starting the inner one, carrying what the inner one needs in a local; a state's tables and fields are all reached through the one statement's binding and its entry bindings\n",
+            "\n  mechanical_fix: name both handles as targets of one statement, `atomic outer = &first, inner = &second { … }`, or end the outer statement before starting the inner one\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let first = shared_new::<u8>(value: 0_u8);
@@ -2924,6 +2925,14 @@ fn main() -> status: std::process::ExitStatus pure waits {
   }
   atomic inner = &second {
     set inner^ = carried;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#, br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_new::<u8>(value: 0_u8);
+  let second = shared_new::<u8>(value: 0_u8);
+  atomic outer = &first, inner = &second {
+    set inner^ = outer^;
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -3522,6 +3531,7 @@ fn each_pinned_repair_is_carried_out_by_its_programs() {
         .chain(call_separations::CALL_SEPARATIONS)
         .chain(content_moves::CONTENT_MOVES)
         .chain(storage_destructuring::STORAGE_DESTRUCTURING)
+        .chain(shared_maps::SHARED_MAPS)
         .chain(selector_scope::SELECTOR_SCOPE)
         .chain(collisions_and_killed_facts::COLLISIONS_AND_KILLED_FACTS)
     {

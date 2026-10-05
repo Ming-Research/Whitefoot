@@ -77,13 +77,6 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **A table subscripted in a block is refused without a repair.** `s^.map[k]`
-  in an atomic block is OP-4's type mismatch, "an indexable base", against
-  `KeyedTable<V>`, and names nothing a writer can do instead, where the
-  intended form is an entry binding in the header, `e = &s^.map[k]`
-  [SHARE-2]. The change: give that refusal a repair naming the header form.
-  Found by the adversarial tests of the keyed tables. Reopen with the next
-  change to how a subscript's base is refused.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
@@ -613,7 +606,7 @@ rarely insert at the same place.
   the rows that allocate them, while a shared object's state, a keyed
   table's entries and a key set's store come from the context runtime's
   pool, which a no-heap bundle may still use through `shared_new`,
-  `keyed_table_new` and `key_set_insert`. The checker refused `KeySet` there
+  `shared_map_new` and `key_set_insert`. The checker refused `KeySet` there
   for a while, which [STOR-8] does not name; it no longer does. The
   question for the owner: whether the declaration means no allocation at
   all, which would withdraw those three types and their rows too, or no use
@@ -1088,7 +1081,7 @@ rarely insert at the same place.
   by `ZADD`'s server CPU per request on four drivers against one. Reopen
   with the work on `ZADD`'s rate.
 
-- **`KeyedTable<unit>` and tables of other payload-free values do not
+- **`ConcurrentHashMap<unit>` and maps of other payload-free values do not
   lower.** The emitter passes the runtime an entry's `Option` tag as the
   `i32` at offset 0 (`checked_entry` in
   `compiler/src/backend/emitter/shared.rs`) and refuses a tag-only enum,
@@ -2194,7 +2187,42 @@ rarely insert at the same place.
   Reopen when a test needs a deadline order that real time cannot produce
   reliably.
 
+- **Deadline reads fail on the first corpus run after a build on macOS.**
+  `programs::stream::a_deadline_ends_a_read_of_a_silent_writer_on_both_routes`
+  and `..._under_a_pool_pinned_at_zero` (`stdin_deadline.wf`) returned status
+  10 on the first run after building the compiler, on this branch and on a
+  main-equivalent compiler alike, and passed on every repeat on both (macOS,
+  2026-10-05). Status 10 means the first read received the byte the harness
+  writes after 400 ms, so its 50 ms deadline did not end it; the harness
+  starts its delay at child spawn, not at the program's read, so a slow first
+  start can deliver the byte before the read is queued. Impact: a spurious
+  gate failure on a cold host. Change: synchronize the writer with a
+  program-ready event, keeping the delayed-byte assertion, and confirm that a
+  cancellation implementation that ignores the deadline still fails. Reopen
+  when it fails in CI or before changing deadline reads.
+  The same two status-10 failures recurred in amendment S's full gate at
+  `f1fba77c3fa422348b72a00301105d4908e68e5a`; each then passed unchanged in
+  isolation. The recurrence preserves the need for a ready-event test rather
+  than establishing a deadline-runtime defect.
+
+- **Symbolic const expressions in atomic root comparison are conservative.**
+  An unresolved capacity expression can equal a concrete capacity, so the
+  comparison treats it as possibly equal without solving arithmetic. It can
+  also refuse a call through `Array<u8, n + 1>` and `Array<u8, n + 2>` that
+  no concrete instance aliases. Define a specification-fixed comparison if
+  a writer needs that distinction; validate equal-value expressions still
+  overlap and the distinct-capacity witness is admitted. Reopen with the
+  first shared generic storage algorithm needing that call.
+
 ## Modules and libraries
+
+- **Whole-map iteration.** Shared maps provide selections, counting and swaps,
+  but no iteration API. Firn's BGSAVE and SCAN need a whole-map traversal whose
+  references remain valid under the whole hold and whose yielded order has a
+  stated meaning. Design that interface and add independent snapshot/cursor
+  cases when either command is selected; do not infer an order from the runtime
+  hash index. Validate by enumerating each present key once across growth and
+  deletion, with missing keys excluded.
 
 - **Library capacity ceilings that existed for OP-9.**
   `GrowVector<T, const ceiling: u64>` in `lib/std/collections/vector`, the
@@ -2363,6 +2391,16 @@ rarely insert at the same place.
   load per dispatch until the slot became part-local. Reading the tag from
   the place would remove the copy everywhere. Low priority; reopen if a
   profile shows the copy outside split loops.
+
+- **Firn GET retains an Entry copy because its existing byte slot makes the
+  frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
+  eliminates two 72-byte copies from `run_pop`, but `run_get` still has its
+  prior 72-byte copy: its ordinary `i8` slot fails
+  `plan_target_frame`'s independent-slot alignment test in
+  `compiler/src/target.rs`. Investigate separating slots with different
+  alignments without changing their lifetimes or alias facts. Reopen with
+  firn GET performance work; validate the normal GET path's optimized IR
+  loses the copy while the frame and borrow tests retain their observations.
 
 - **Interpreter state is pinned only through the calling convention.** A
   split loop keeps its changing values in registers because every part
@@ -3360,6 +3398,14 @@ condition under which it is taken up.
   longer; reopen when the corpus job becomes the longest or its budget trips.
   This changes conformance evidence wiring, so the PR states it under
   AGENTS.md rule 4.
+  The local macOS amendment S gate at
+  `f1fba77c3fa422348b72a00301105d4908e68e5a` took 214.72 s in
+  `compiler/test-corpus`, above its 125 s budget; the native conformance walk
+  was the last test still running. The amendment changes the manifest from
+  1,733 to 1,735 cases and from 552 to 557 native-run cases, but those counts
+  do not attribute the overrun. Profile the serial walk and host startup
+  before deciding whether the amendment adds work on that path or the host
+  needs another budget. No budget was raised and no case was removed.
 - **The Windows io-hosts steps have no time budget.** They run without
   `run-check.pl`, so only their step timeouts (5 and 8 min) and the job's
   (10 min) bound them, and the Windows job is now the longest CI job, 230–285

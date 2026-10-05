@@ -519,7 +519,7 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.state = state_absent;
   let unset = False();
   let adding = Adding(nx: nx, xx: xx, gt: gt, lt: lt, incr: incr, added: 0_u64, updated: 0_u64, processed: 0_u64, score: 0.0_f64, nan: unset);
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = add_scores(env: client, value: held, adding: &adding);
@@ -531,7 +531,7 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if client^.state == state_expired {
       set slot^ = None<Entry>();
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
       set create = True();
     }
@@ -555,7 +555,7 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let changes = adding.added +wrap adding.updated;
     if changes > 0_u64 {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -649,7 +649,7 @@ fn run_zrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = remove_ranked(env: client, value: held);
@@ -665,12 +665,12 @@ fn run_zrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if lapsed {
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if client^.number > 0_u64 {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -843,7 +843,7 @@ fn run_zpop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   if from_top {
     set client^.low = 1_i64;
   }
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = pop_ranked(env: client, value: held);
@@ -859,7 +859,7 @@ fn run_zpop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if lapsed {
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     let done = client^.state == state_done;
@@ -868,7 +868,7 @@ fn run_zpop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let logged = band(changed, popped);
     if logged {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -925,7 +925,7 @@ fn run_zcard(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = sorted_size(env: client, value: held);
@@ -997,7 +997,7 @@ fn run_zscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = member_score(env: client, value: held);
@@ -1078,7 +1078,7 @@ fn run_zmscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = member_scores(env: client, value: held);
@@ -1224,7 +1224,7 @@ fn run_zrank(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   if reverse {
     set client^.low = 1_i64;
   }
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = member_rank(env: client, value: held);

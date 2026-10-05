@@ -1,0 +1,20 @@
+struct Cell {
+  held: Box<u8>;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let one = box_new::<u8>(value: 1_u8);
+  let two = box_new::<u8>(value: 2_u8);
+  let left = Cell(held: move one);
+  let right = Cell(held: move two);
+  let first = shared_new::<Cell>(value: move left);
+  let second = shared_new::<Cell>(value: move right);
+  let seen = 0_u8;
+  atomic a = &first, b = &second {
+    let inside = &a^.held.inner;
+    let fresh = box_new::<u8>(value: 3_u8);
+    set b^.held = move fresh;
+    set seen = inside^;
+  }
+  return std::process::exit_status(code: seen);
+}

@@ -10,12 +10,12 @@ mod entailment;
 mod entry;
 mod goal;
 mod loop_permission;
-mod model;
+pub(crate) mod model;
 mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
 mod places;
-pub(crate) use places::PlaceRoot as CheckedPlaceRoot;
+pub(crate) use places::{PlaceRoot as CheckedPlaceRoot, ResolvedPlace as CheckedResolvedPlace};
 mod postcondition;
 mod range_facts;
 mod range_judgment;
@@ -48,13 +48,13 @@ pub(crate) use loop_permission::{LoopActualization, LoopCombine, LoopPermission}
 pub(crate) use model::{
     BindingId, CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation,
     CheckedBufferRoot, CheckedConst, CheckedContainerRoot, CheckedConversionMode, CheckedDrop,
-    CheckedElement, CheckedEntryBinding, CheckedEntryIndex, CheckedEnumType, CheckedExpression,
-    CheckedFloatOperation, CheckedFunction, CheckedIntegerOperation, CheckedLoopId,
-    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType,
-    CheckedOwnedTakeCleanup, CheckedParameter, CheckedPlaceStep, CheckedProgramData,
-    CheckedProjectedDrop, CheckedRangeElementPlace, CheckedRangeRoot, CheckedRangeSource,
-    CheckedReleaseClass, CheckedSegmentIndex, CheckedSegmentSelect, CheckedSetTarget,
-    CheckedShared, CheckedStatement, CheckedTargetDomainObligation, CheckedType, CheckedValue,
+    CheckedElement, CheckedEnumType, CheckedExpression, CheckedFloatOperation, CheckedFunction,
+    CheckedIntegerOperation, CheckedLoopId, CheckedMatchArm, CheckedMeasure, CheckedMode,
+    CheckedNominalKind, CheckedNumericType, CheckedOwnedTakeCleanup, CheckedParameter,
+    CheckedPlaceStep, CheckedProgramData, CheckedProjectedDrop, CheckedRangeElementPlace,
+    CheckedRangeRoot, CheckedRangeSource, CheckedReleaseClass, CheckedSegmentIndex,
+    CheckedSegmentSelect, CheckedSetTarget, CheckedShared, CheckedStatement, CheckedTarget,
+    CheckedTargetDomainObligation, CheckedTargetKind, CheckedType, CheckedValue,
     CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell, MeasuredKind, NominalId,
     PropagationContext, WindowShape,
 };
@@ -771,11 +771,11 @@ pub enum SemanticIssueKind {
         /// Exact restructuring required by WIN-3.
         mechanical_fix: &'static str,
     },
-    /// [TYPE-9] a runtime-capacity storage shape was written in a position
-    /// that stores it inline. Such a shape may appear only as the content of
-    /// a `Box` — the type of its `inner` field.
-    InlineRuntimeCapacityShape {
-        /// The exact written shape.
+    /// [TYPE-9] a placement-restricted type was written outside its home,
+    /// or its content was moved out of that home. Runtime-capacity shapes
+    /// and `Segments` live in `Box` content; maps live in shared-object state.
+    InvalidRestrictedTypePlacement {
+        /// The exact placement-restricted type.
         spelling: String,
         /// Exact restructuring required by TYPE-9.
         mechanical_fix: String,
@@ -897,7 +897,7 @@ pub enum SemanticIssueKind {
     },
     /// [REF-4] a range reference was formed over the keyed entries an entry
     /// binding names, which are entries of a table and no run of storage.
-    RangeOverKeyedEntries {
+    RangeOverEntries {
         /// Exact restructuring required by REF-4.
         mechanical_fix: &'static str,
     },
@@ -1137,6 +1137,12 @@ pub enum SemanticIssueKind {
     },
     /// An entry binding whose index atom is neither a `&[u8]` range nor a
     /// place of type `KeySet` [SHARE-2].
+    TableOffsetNotKey {
+        mechanical_fix: &'static str,
+    },
+    TableEntriesNotBorrowed {
+        mechanical_fix: &'static str,
+    },
     AtomicKeyNotBytes {
         /// The key's value.
         found: String,

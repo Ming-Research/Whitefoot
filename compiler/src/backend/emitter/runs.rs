@@ -218,9 +218,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 )
                 .map_err(|_| BackendFailure::TextEmission);
             }
-            Some(IrType::Address(IrAddressed::KeyedEntries { .. }))
-                if measure == IrMeasure::Length =>
-            {
+            Some(IrType::Address(IrAddressed::Entries { .. })) if measure == IrMeasure::Length => {
                 let count = self.next_temporary()?;
                 return writeln!(
                     self.output,
@@ -232,8 +230,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .map_err(|_| BackendFailure::TextEmission);
             }
             Some(
-                IrType::KeySet
-                | IrType::Address(IrAddressed::KeySet | IrAddressed::KeyedEntries { .. }),
+                IrType::KeySet | IrType::Address(IrAddressed::KeySet | IrAddressed::Entries { .. }),
             ) => return Err(BackendFailure::InvalidIr),
             _ => {}
         }

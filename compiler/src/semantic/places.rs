@@ -439,9 +439,23 @@ pub(crate) trait SeparationOracle {
 pub(crate) struct ResolvedPlace {
     pub(crate) root: PlaceRoot,
     pub(crate) path: Vec<PlaceStep>,
+    /// Other state roots compared as this root by SHARE-2, pairwise.
+    pub(crate) atomic_aliases: Vec<BindingId>,
 }
 
 impl ResolvedPlace {
+    pub(crate) fn roots_overlap(&self, other: &Self) -> bool {
+        self.root == other.root
+            || match other.root {
+                PlaceRoot::Binding(binding) => self.atomic_aliases.contains(&binding),
+                PlaceRoot::Constant(_) => false,
+            }
+            || match self.root {
+                PlaceRoot::Binding(binding) => other.atomic_aliases.contains(&binding),
+                PlaceRoot::Constant(_) => false,
+            }
+    }
+
     /// The same root and static path shape at an arbitrary loop header.
     ///
     /// A loop-carried rebinding may evaluate every written index and range
@@ -578,6 +592,7 @@ impl ResolvedPlace {
     /// The whole storage of one binding, with no selection below the root.
     pub(crate) const fn binding(binding: BindingId) -> Self {
         Self {
+            atomic_aliases: Vec::new(),
             root: PlaceRoot::Binding(binding),
             path: Vec::new(),
         }
@@ -587,6 +602,7 @@ impl ResolvedPlace {
     /// shape a bare or projected place resolves to [REF-1].
     pub(crate) fn fields(binding: BindingId, fields: Vec<u32>) -> Self {
         Self {
+            atomic_aliases: Vec::new(),
             root: PlaceRoot::Binding(binding),
             path: fields.into_iter().map(PlaceStep::Field).collect(),
         }
@@ -595,6 +611,7 @@ impl ResolvedPlace {
     /// One binding's storage with an already-resolved step path below it.
     pub(crate) const fn from_path(binding: BindingId, path: Vec<PlaceStep>) -> Self {
         Self {
+            atomic_aliases: Vec::new(),
             root: PlaceRoot::Binding(binding),
             path,
         }
@@ -621,7 +638,11 @@ impl ResolvedPlace {
             path.push(PlaceStep::Deref);
         }
         path.extend(fields.into_iter().map(PlaceStep::Field));
-        Self { root, path }
+        Self {
+            root,
+            path,
+            atomic_aliases: Vec::new(),
+        }
     }
 
     /// Whether this place's path positively selects the same storage as, or a
@@ -631,7 +652,7 @@ impl ResolvedPlace {
     /// target after a write below it. Invalidation instead asks the
     /// conservative question in [`Self::may_be_prefix_of`].
     pub(crate) fn contains(&self, other: &Self) -> bool {
-        self.root == other.root
+        self.roots_overlap(other)
             && self.path.len() <= other.path.len()
             && self
                 .path
@@ -713,7 +734,7 @@ impl ResolvedPlace {
     /// their index values are unknown. Unknown targets need actual identity.
     pub(crate) fn exchange_safe(&self, oracle: &dyn SeparationOracle, other: &Self) -> bool {
         !places_overlap(oracle, self, other)
-            || (self.root == other.root
+            || (self.roots_overlap(other)
                 && self.path.len() == other.path.len()
                 && self.path.iter().zip(&other.path).all(|(left, right)| {
                     matches!((left, right), (PlaceStep::Index(_), PlaceStep::Index(_)))
@@ -943,6 +964,7 @@ fn paths_overlap(
         // The window a [WIN-2] answer is read of is the place the two steps
         // hang below, which is the common prefix walked so far.
         let window = ResolvedPlace {
+            atomic_aliases: place.atomic_aliases.clone(),
             root: place.root,
             path: place.path[..depth].to_vec(),
         };
@@ -966,7 +988,7 @@ pub(crate) fn places_overlap(
     left: &ResolvedPlace,
     right: &ResolvedPlace,
 ) -> bool {
-    left.root == right.root && paths_overlap(oracle, left, &left.path, &right.path)
+    left.roots_overlap(right) && paths_overlap(oracle, left, &left.path, &right.path)
 }
 
 /// [EFF-5] whether two places overlap whatever values their index and range
@@ -982,11 +1004,12 @@ pub(crate) fn places_overlap(
 /// two payload steps naming different variants or a slot or a range against
 /// `r.last` or `r.filled`.
 pub(crate) fn overlaps_at_every_position(left: &ResolvedPlace, right: &ResolvedPlace) -> bool {
-    if left.root != right.root {
+    if !left.roots_overlap(right) {
         return false;
     }
     for (depth, (left_step, right_step)) in left.path.iter().zip(&right.path).enumerate() {
         let window = ResolvedPlace {
+            atomic_aliases: left.atomic_aliases.clone(),
             root: left.root,
             path: left.path[..depth].to_vec(),
         };
@@ -1049,12 +1072,13 @@ pub(crate) fn range_separation_candidate(
     left: &ResolvedPlace,
     right: &ResolvedPlace,
 ) -> Option<(CapturedRange, CapturedRange)> {
-    if left.root != right.root {
+    if !left.roots_overlap(right) {
         return None;
     }
     let oracle = UnprovedSeparations;
     for (depth, (left_step, right_step)) in left.path.iter().zip(&right.path).enumerate() {
         let window = ResolvedPlace {
+            atomic_aliases: left.atomic_aliases.clone(),
             root: left.root,
             path: left.path[..depth].to_vec(),
         };
@@ -1190,6 +1214,7 @@ impl NamedPlace {
         let mut resolved = places.resolve(self.root, &self.steps);
         if resolved.is_empty() && keep_unresolved {
             resolved.push(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: self.root,
                 path: self.steps.clone(),
             });
@@ -1328,7 +1353,7 @@ impl PlaceMap {
         left: &ResolvedPlace,
         right: &ResolvedPlace,
     ) -> bool {
-        if left.root != right.root {
+        if !left.roots_overlap(right) {
             return false;
         }
         places_overlap(oracle, left, right)
@@ -1379,6 +1404,7 @@ impl PlaceMap {
     pub(crate) fn resolve(&self, root: PlaceRoot, steps: &[PlaceStep]) -> Vec<ResolvedPlace> {
         let mut resolved = match root {
             PlaceRoot::Constant(_) => vec![ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root,
                 path: Vec::new(),
             }],
@@ -1443,17 +1469,17 @@ impl PlaceMap {
                 }
                 // [SHARE-2] the binding is a reference anchored at the
                 // object's state, as a reference parameter is at itself.
-                CheckedStatement::Atomic {
-                    binding,
-                    state,
-                    body,
-                    ..
-                } => {
-                    let summary = self.summary_mut(*binding);
-                    summary.ty = Some(*state);
-                    summary.reference = true;
-                    if summary.reference_paths.is_empty() {
-                        summary.reference_paths = vec![ResolvedPlace::binding(*binding)];
+                CheckedStatement::Atomic { targets, body, .. } => {
+                    for target in targets {
+                        let binding = &target.binding;
+                        let state = &target.referent;
+
+                        let summary = self.summary_mut(*binding);
+                        summary.ty = Some(*state);
+                        summary.reference = true;
+                        if summary.reference_paths.is_empty() {
+                            summary.reference_paths = vec![ResolvedPlace::binding(*binding)];
+                        }
                     }
                     self.collect_block_bindings(body);
                 }
@@ -1499,6 +1525,7 @@ mod tests {
 
     fn place(binding: u32, path: &[PlaceStep]) -> ResolvedPlace {
         ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: PlaceRoot::Binding(BindingId(binding)),
             path: path.to_vec(),
         }

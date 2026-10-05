@@ -1,0 +1,82 @@
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+fn read(outer: Shared<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>) -> result: u8 pure waits {
+  let key = &names[0_u64..1_u64];
+  let missing = &names[1_u64..2_u64];
+  let inner = None<Shared<ConcurrentHashMap<u8>>>();
+  atomic e = &outer[key] {
+    match e^ {
+      Some(value: handle) => {
+        let kept = shared_share::<ConcurrentHashMap<u8>>(shared: handle);
+        set inner = Some<Shared<ConcurrentHashMap<u8>>>(value: move kept);
+      }
+      None() => {
+      }
+    }
+  }
+  let got = 0_u8;
+  match move inner {
+    Some(value: handle) => {
+      atomic t = &handle {
+        let slot = &t^[key];
+        match slot^ {
+          Some(value: held) => {
+            set got = held^;
+          }
+          None() => {
+            set got = 40_u8;
+          }
+        }
+        let absent = &t^[missing];
+        match absent^ {
+          Some(value: held) => {
+            set got = 50_u8;
+          }
+          None() => {
+            set got = got +wrap 2_u8;
+          }
+        }
+        let keys = key_set_new(capacity: 2_u64);
+        let first = key_set_insert(keys: &keys, key: key);
+        let second = key_set_insert(keys: &keys, key: missing);
+        let entries = &t^[keys];
+        let batch = 0_u8;
+        for (i in 0_u64..keys.len) {
+          match entries^[i] {
+            Some(value: held) => {
+              set batch = batch +wrap held^;
+            }
+            None() => {
+              set batch = batch +wrap 2_u8;
+            }
+          }
+        }
+        if batch != got {
+          set got = 70_u8;
+        }
+      }
+    }
+    None() => {
+      set got = 60_u8;
+    }
+  }
+  return got;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let outer = shared_map_new::<Shared<ConcurrentHashMap<u8>>>(capacity: 1_u64);
+  let key = &names[0_u64..1_u64];
+  let made = shared_map_new::<u8>(capacity: 1_u64);
+  atomic t = &made {
+    set t^[key] = Some<u8>(value: 7_u8);
+  }
+  atomic e = &outer[key] {
+    set e^ = Some<Shared<ConcurrentHashMap<u8>>>(value: move made);
+  }
+  let a = shared_share::<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>(shared: &outer);
+  let b = shared_share::<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>(shared: &outer);
+  let first = spawn read(outer: move a);
+  let second = spawn read(outer: move b);
+  let code = first +wrap second;
+  return std::process::exit_status(code: code);
+}

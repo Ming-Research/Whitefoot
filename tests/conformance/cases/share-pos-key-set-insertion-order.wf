@@ -1,13 +1,7 @@
-struct Store {
-  map: KeyedTable<u64>;
-}
-
 const names: Array<u8, 2> =[98_u8, 97_u8];
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let table = keyed_table_new::<u64>(capacity: 0_u64);
-  let state = Store(map: move table);
-  let store = shared_new::<Store>(value: move state);
+  let store = shared_map_new::<u64>(capacity: 0_u64);
   let keys = key_set_new(capacity: 2_u64);
   let b = &names[0_u64..1_u64];
   let a = &names[1_u64..2_u64];
@@ -26,13 +20,13 @@ fn main() -> status: std::process::ExitStatus pure waits {
   if keys.len != 2_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  atomic s = &store, es = &s^.map[keys] {
+  atomic es = &store[keys] {
     set es^[0_u64] = Some<u64>(value: 19_u64);
     set es^[1_u64] = Some<u64>(value: 23_u64);
   }
   let b_value = 0_u64;
   let a_value = 0_u64;
-  atomic s = &store, slot = &s^.map[b] {
+  atomic slot = &store[b] {
     match slot^ {
       Some(value: held) => {
         set b_value = held^;
@@ -44,7 +38,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   if b_value != 19_u64 {
     return std::process::exit_status(code: 5_u8);
   }
-  atomic s = &store, slot = &s^.map[a] {
+  atomic slot = &store[a] {
     match slot^ {
       Some(value: held) => {
         set a_value = held^;

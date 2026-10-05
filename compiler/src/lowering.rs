@@ -101,7 +101,7 @@ fn lower_type(erasure: TypeLowering<'_>, value: CheckedType) -> Result<IrType, L
             element: lower_element(erasure, element)?,
         },
         CheckedType::KeySet => IrType::KeySet,
-        CheckedType::KeyedEntries { element } => IrType::KeyedEntries {
+        CheckedType::Entries { element } => IrType::Entries {
             element: lower_element(erasure, element)?,
         },
         CheckedType::Window {
@@ -355,7 +355,7 @@ impl From<crate::target::TargetLayoutFailure> for LoweringFailure {
 /// The [PRE-1] records whose bodies the compiler itself emits: the ten
 /// construction functions [OP-13], the nine window operations [OP-10],
 /// `swap` [OP-11], `free_empty` [OP-14], `shared_new` and `shared_share`,
-/// `keyed_table_new` and `keyed_table_count`, and the four key-set functions
+/// `shared_map_new` and `map_count`, and the four key-set functions
 /// [SHARE-1].
 ///
 /// The host functions [PRE-2] are deliberately absent: those are body-less
@@ -393,8 +393,8 @@ pub(crate) const COMPILER_OWNED_PRELUDE_ROWS: [&str; 27] = [
     // two and the key set's four.
     "shared_new",
     "shared_share",
-    "keyed_table_new",
-    "keyed_table_count",
+    "shared_map_new",
+    "map_count",
     "key_set_new",
     "key_set_insert",
 ];

@@ -1,0 +1,24 @@
+const names: Array<u8, 1> =[97_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let other = shared_share::<ConcurrentHashMap<u8>>(shared: &store);
+  let key = &names[0_u64..1_u64];
+  let seen = 0_u8;
+  let counted = 0_u64;
+  atomic t = &store, e = &other[key] {
+    set e^ = Some<u8>(value: 7_u8);
+    match t^[key] {
+      Some(value: held) => {
+        set seen = held^;
+      }
+      None() => {
+      }
+    }
+    set counted = map_count::<u8>(map: t);
+  }
+  let tens = seen *wrap 10_u8;
+  let ones = cvt.wrap::<u64, u8>(counted);
+  let code = tens +wrap ones;
+  return std::process::exit_status(code: code);
+}

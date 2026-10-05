@@ -1,0 +1,21 @@
+const names: Array<u8, 1> =[97_u8];
+
+fn fill(map: &ConcurrentHashMap<u8>, count: &u8, key: &[u8]) -> result: unit reads(key), writes(map), writes(count) {
+  set map^[key] = Some<u8>(value: 9_u8);
+  set count^ = 1_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let tally = shared_new::<u8>(value: 0_u8);
+  let counted = 0_u64;
+  atomic t = &store, c = &tally {
+    fill(map: t, count: c, key: &names[0_u64..1_u64]);
+  }
+  atomic t = &store {
+    set counted = map_count::<u8>(map: t);
+  }
+  let code = cvt.wrap::<u64, u8>(counted);
+  return std::process::exit_status(code: code);
+}

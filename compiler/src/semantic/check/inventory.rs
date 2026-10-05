@@ -159,7 +159,7 @@ impl TypeContext<'_> {
             // released as their `Option<V>` [SHARE-1].
             CheckedNominalKind::Shared { state, shape } => match shape {
                 CheckedShared::Object => vec![*state],
-                CheckedShared::Table { entry } => {
+                CheckedShared::Map { entry } => {
                     vec![*state, *entry]
                 }
             },

@@ -68,7 +68,7 @@ pub(super) fn emit_resource_drop_helpers(
                 shape: IrShared::Object,
             } => emit_shared_drop_helper(program, &mut module, nominal, *state)?,
             IrNominalKind::Shared {
-                shape: IrShared::Table { entry },
+                shape: IrShared::Map { entry },
                 ..
             } => emit_keyed_table_drop_helper(program, &mut module, nominal, *entry)?,
             _ => {}
@@ -181,7 +181,7 @@ fn emit_shared_drop_helper(
 /// or a key set [SHARE-1], and so names the runtime's entries for them.
 pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFailure> {
     Ok(program_types(program)?.into_iter().any(|ty| match ty {
-        IrType::KeySet | IrType::KeyedEntries { .. } => true,
+        IrType::KeySet | IrType::Entries { .. } => true,
         IrType::Nominal(id) => program
             .nominal(id)
             .is_some_and(|nominal| matches!(nominal.kind(), IrNominalKind::Shared { .. })),
@@ -192,7 +192,7 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 29] = [
+    let declarations: [(&str, &str, &[&str]); 34] = [
         ("wf__shared_new", "ptr", &["i64"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
@@ -201,7 +201,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__shared_unlock", "void", &["ptr", "i32"]),
         ("wf__shared_take", "void", &["ptr", "i32"]),
         ("wf__shared_watch", "i32", &["ptr", "i32", "ptr"]),
-        ("wf__keyed_table_new", "ptr", &["i64", "i64", "i64"]),
+        ("wf__shared_map_new", "ptr", &["i64", "i64", "i64"]),
         (
             "wf__keyed_table_count",
             "i64",
@@ -220,6 +220,15 @@ pub(super) fn shared_runtime_declarations() -> Module {
             &["ptr", "ptr", "i64", "i32", "ptr"],
         ),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
+        ("wf__atomic_group_take", "void", &["ptr", "i64"]),
+        ("wf__atomic_group_release", "void", &["ptr", "i64"]),
+        ("wf__table_hold_read", "void", &["ptr"]),
+        ("wf__table_held_entry", "ptr", &["ptr", "ptr", "i64", "i32"]),
+        (
+            "wf__table_held_entries",
+            "void",
+            &["ptr", "ptr", "ptr", "ptr"],
+        ),
         ("wf__table_hold_begin", "void", &["ptr", "ptr"]),
         ("wf__table_hold_key", "i64", &["ptr", "ptr", "i64"]),
         ("wf__table_hold_keys", "i64", &["ptr", "ptr"]),
@@ -493,7 +502,7 @@ fn stable_type_spelling(program: &IrProgram, ty: IrType) -> Result<String, Backe
         IrType::Segments { element: held } => format!("segments<{}>", element(held)?),
         IrType::Range { element: held } => format!("range<{}>", element(held)?),
         IrType::KeySet => "keyset".to_owned(),
-        IrType::KeyedEntries { element: held } => format!("entries<{}>", element(held)?),
+        IrType::Entries { element: held } => format!("entries<{}>", element(held)?),
         IrType::RuntimeBoxPayload { nominal } => format!(
             "payload<{}>",
             program
@@ -566,7 +575,7 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
             IrType::Buffer { element } | IrType::Segments { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?)
             }
-            IrType::Range { element } | IrType::KeyedEntries { element } => {
+            IrType::Range { element } | IrType::Entries { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
             }
             IrType::RuntimeBoxPayload { .. } | IrType::KeySet => {}
@@ -588,7 +597,7 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
                     IrNominalKind::Box { referent, .. } => pending.push(*referent),
                     IrNominalKind::Shared { state, shape } => {
                         pending.push(*state);
-                        if let IrShared::Table { entry } = shape {
+                        if let IrShared::Map { entry } = shape {
                             pending.push(*entry);
                         }
                     }
@@ -848,7 +857,7 @@ fn emit_cleanup_jobs(
                 // mean a value of a type no storage can hold.
                 // The entries an entry binding names are its statement's
                 // record and own nothing [SHARE-2].
-                IrType::Buffer { .. } | IrType::Segments { .. } | IrType::KeyedEntries { .. } => {
+                IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Entries { .. } => {
                     return Err(BackendFailure::InvalidIr);
                 }
                 IrType::Nominal(id) => {

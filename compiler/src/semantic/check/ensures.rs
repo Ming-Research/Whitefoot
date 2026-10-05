@@ -1143,19 +1143,19 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 // [SHARE-2] the binding is a reference to the object's state,
                 // read through as a reference match binder is.
-                CheckedStatement::Atomic {
-                    binding,
-                    state,
-                    body,
-                    ..
-                } => {
-                    bindings.insert(
-                        *binding,
-                        PostconditionBindingInfo {
-                            ty: *state,
-                            implicit_deref: true,
-                        },
-                    );
+                CheckedStatement::Atomic { targets, body, .. } => {
+                    for target in targets {
+                        let binding = &target.binding;
+                        let state = &target.referent;
+
+                        bindings.insert(
+                            *binding,
+                            PostconditionBindingInfo {
+                                ty: *state,
+                                implicit_deref: true,
+                            },
+                        );
+                    }
                     Checker::collect_postcondition_binding_info(body, bindings);
                 }
                 _ => {}
