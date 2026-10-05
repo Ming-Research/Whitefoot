@@ -7,8 +7,10 @@ Criterion fixed before measurement: each Halo median must be at most Redis
 numeric loop triggers attribution, inspecting value width and handle checks
 first. Profile every measured kernel above 1.5; report sampled work in
 value/handle access, dispatch, slow execution, GC and budget handling. Sampling
-cannot establish the causal speedup of removing that work. C1–C6 remain
-candidates. The later cost-repair experiment below evaluates embedding roots
+cannot establish the causal speedup of removing that work. The initial
+baseline selected no C1–C6 candidate; subsequent bounded same-source trials
+are recorded in [RESULTS.md](RESULTS.md). The later cost-repair experiment
+below evaluates embedding roots
 and the collector predicate separately from those candidates.
 
 The seven `kernels/*.lua` are standalone Lua 5.1 scripts printing one numeric

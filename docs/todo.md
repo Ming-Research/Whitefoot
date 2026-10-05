@@ -2274,8 +2274,14 @@ rarely insert at the same place.
   still misses P1 after removing repeated resume copying and guarding the
   collector call on the not-due path. Numeric profiles expose dispatch/continuation
   traffic, tag tests, repeated window tests and safepoint predicate work;
-  table rehash, concat and sorting have separate substantial costs. Change:
-  compare the VM.md C1–C6 candidates and library/heap paths with same-source,
+  table rehash, concat and sorting have separate substantial costs. Fresh
+  [C1 profiles](../research/experiments/halo-bench/RESULTS.md#profile-selection-and-frame-window-criterion)
+  place 54.01–58.62% of fib(34) samples in frame helpers and 31.12–32.31% of
+  integer-table samples in rehash. The bounded frame-window clearing trial
+  improves fib only 2.99%, below its 10% criterion; it does not rule out
+  other frame changes or establish C2/C3 performance. Change: compare frame
+  construction, table growth, the VM.md candidates and library/heap paths
+  with same-source,
   full-LTO pairs, preserving checksums, normal GC, roots and handle validity.
   Reopen at the next performance experiment; require a discriminating native
   comparison before selecting a candidate or claiming a causal speedup.

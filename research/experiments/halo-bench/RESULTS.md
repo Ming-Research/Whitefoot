@@ -967,5 +967,137 @@ suspensions are zero, and paired completed-collection counts agree: fib 0,
 loop 0, integer-table 5, string-key 0, concat 0, sort 3, binary-trees 176.
 These are same-source total process times on the recorded M1 Pro/macOS
 host; native placement can change along with the source arithmetic. No
-claim assigns the measured gain solely to check removal. This trial will
-be reverted after its cost/correctness observations; C2/C3 are unmeasured.
+claim assigns the measured gain solely to check removal. This trial is
+reverted after its cost/correctness observations; C2/C3 are unmeasured.
+
+### Check-cost observations
+
+The same candidate source passes three uncached whole-graph checks. Tool
+wall times are 271.14, 250.02 and 251.17 s (all exit 0), median **251.17 s**.
+Against the supplied C1 median of 241 s this is **1.042× (+4.22%)**, below
+301.25 s: the 1.25× guard passes. The range is 250.02–271.14 s; the baseline
+was measured earlier, so this is not a paired attribution of checker cost.
+No module-stage or proof-phase cost is isolated. The runtime criterion still
+fails and determines reversion. Two early authoring checks exited 1 at
+FORM-2 because an overbroad edit touched unchanged `prepare` indentation;
+that suffix was restored before any accepted check/build/timing. Their
+exact raw logs were overwritten during repair and no duration from them
+enters the admitted statistic.
+
+### Trial correctness observations
+
+The full-LTO trial oracle host builds with exit 0 in 552.00 s. One-script,
+three-budget ordinary and stress samples pass 3/3 each before the complete
+runs. Ordinary oracle **240/240** and stress oracle **240/240** pass at
+budgets 1, 7 and 1000. A tool compares every case/budget/result/collection
+row with C1's retained reports and finds all 240 rows identical in each
+mode. Stress totals remain 20,450 collections at each budget, with no
+zero-collection script. No script or expected reply changed.
+
+The local root witnesses pass 9/9 with stress at the three budgets, 25
+collections per budget. Frame alias isolation passes 1/1 with 9 collections;
+the parked-stack collection probe passes 1/1 with 14. Hiding that snapshot
+only during collection fails comparison (exit 1), returning the existing
+`attempt to index a function value` error after 5 collections rather than
+expected `zzz`. Embedding smoke exits 0. Independent omitted pin, compile
+and unpin refresh controls exit 59, 69 and 62 as required.
+
+The remaining source-root omission controls are constructed separately with
+a worktree-local compiler cache; they test discrimination, not performance.
+Each removes one marking call, retains the surrounding reads/iteration,
+uses unchanged cases, and restores the collector before the next control.
+
+### Root discrimination and final source
+
+The independently built controls all compile successfully: open-upvalue
+marking omitted, 569.65 s; frame-closure marking omitted, 523.78 s; constant
+marking omitted, 525.38 s (each exit 0, worktree-local cache, no timing
+selection from these builds). Open-upvalue omission fails 3/3 comparisons
+at budgets 1, 7 and 1000, returning bulk `wrong` rather than `kept`, with
+3 collections each. Frame omission fails the isolated budget-1 witness
+after 9 collections, returning `invalid upvalue index` rather than `qqq`.
+Constant omission fails 50/80 scripts at each budget, **150/240** comparisons.
+All three comparison runners exit 1 as required. A short repeat retained
+the typed negative replies; its source and executable digests match the
+first runs. The JSON retains removed calls, collector/binary hashes, raw
+reports and typed replies. Each collector change is restored independently.
+
+**Reverted.** Library bytes now equal the task's C1 base, confirmed by
+`git diff --exit-code dc39d44d9811d65f92fc4262c7b7f5f8359a1812 -- lib`
+(exit 0). C1 remains kept; no additional optimization is kept. C2 and C3
+criteria are recorded but neither mechanism was implemented or measured: the
+authorized profile-directed alternative was tried instead. The 2.99% result
+rejects only this frame-window trial under its 10% criterion, not frame
+optimization generally or C2/C3. There is no new design-tree decision or
+specification rule change. VM.md's C2/C3 rows say unmeasured; the performance
+TODO records remaining frame and table work and the failed bounded trial.
+
+Busy-lock attempts during the typed-reply repeat exited 75 and retried
+only that same command. A stale design-lint record then blocked acquisition:
+its recorded owner PID was absent (`ps` exit 1 and `kill(pid, 0)` reporting
+`ProcessLookupError`), and the command record was inspected before removing
+only its pid/command files and empty lock directory. The next retry acquired
+the normal lock. No live owner was interrupted and no lock override was used.
+
+### Commands and limits
+
+Every heavy child was its own `perl .github/run-check.pl LABEL COMMAND ...`;
+the one-shot orchestration drivers ran outside the wrapper, and were deleted
+after use. Generated binaries, logs, cache and typed replies stay in the
+existing ignored worktree target. Native speed pairs use full LTO; cached
+negative-control builds are correctness checks only. Commands, exits, raw
+launches and redacted logs are in c23-measurements.json. Reproduction uses
+C1's retained full-LTO binary or a rebuild from the base above, and the
+trial source in commit `600ac4ec6e5ec0eb3cee8c25a84774919821182b`.
+
+| Stage | Tool wall s | Exit | Observation |
+|---|---:|---:|---|
+| bench-build | 561.16 | 0 | accepted |
+| one-pair | 13.23 | 0 | accepted |
+| three-pairs | 32.46 | 0 | accepted |
+| six-pairs | 62.01 | 0 | six pairs per kernel |
+| e2e-build | 552.00 | 0 | accepted |
+
+Reproduction commands run from the worktree root. Use the trial source at
+the recorded commit for candidate builds; the final branch has reverted it.
+Replace `<PUC_LUA>` with the supplied local Redis Lua executable. Set TMPDIR
+to the existing benchmark target for builds.
+
+```sh
+perl .github/run-check.pl halo-c23-profile python3 -B research/experiments/halo-bench/run.py --lua <PUC_LUA> --binary research/experiments/halo-bench/target/halo-c1 --kernels fib,integer-table --scale fib=34 --runs 3 --profile --out research/experiments/halo-bench/target/c23-profile-three.json
+perl .github/run-check.pl halo-frame-check compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-modules
+perl .github/run-check.pl halo-frame-bench-build compiler/target/gate/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o research/experiments/halo-bench/target/halo-frame
+perl .github/run-check.pl halo-frame-pairs python3 -B research/experiments/halo-bench/run.py --lua <PUC_LUA> --before-binary research/experiments/halo-bench/target/halo-c1 --binary research/experiments/halo-bench/target/halo-frame --kernels fib,loop,integer-table,string-key,concat,sort,binary-trees --scale binary-trees=14 --runs 6 --out research/experiments/halo-bench/target/frame-six.json
+perl .github/run-check.pl halo-frame-e2e-build compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --entry test --full-lto -o research/experiments/halo-bench/target/frame-e2e
+perl .github/run-check.pl halo-frame-oracle python3 -B research/experiments/halo-e2e/run.py --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/frame-e2e --scratch-root research/experiments/halo-bench/target --budgets 1,7,1000 --report research/experiments/halo-bench/target/halo-frame-oracle.md
+```
+
+For the oracle's stress mode, add `--gc-stress` and a separate report. Local
+root runs add `--cases research/experiments/halo-gc/cases`; the isolated frame
+adds `--filter gc/frame-closure --budgets 1 --isolate-frames`, and the parked
+probe adds `--filter gc/suspended-stack --budgets 1 --collect-suspended`. Its
+omission control adds `--omit-suspended-root` with stress on (expected exit 1).
+The source-root controls remove exactly the JSON's named call from the trial
+collector, one at a time, build with `--cache` inside the target instead of
+full LTO, and use the unchanged selected root case or full stress corpus.
+Restore before the next control; an accepted control build exits 0 and the
+comparison exits 1. No oracle expectation is changed.
+
+Unverified: C2/C3 performance, other hosts/compilers, budgeted performance,
+binary-trees depth 16, isolated frame/checker sub-costs, and F4's existing
+every-allocation reachability-verifier gap. The canonical `make check` and
+CI are excluded by the task's Cargo/network prohibition. No Cargo, network,
+push, PR, merge, specification or conformance change is made.
+
+Found along the way: fixed the performance TODO's stale all-joined C1
+description and the benchmark README's present-tense candidate status;
+recorded remaining frame/table costs in the existing TODO. The two early
+formation repairs and excerpt-boundary whitespace were corrected locally.
+No new compiler or collector defect was inferred from sampled occupancy.
+
+Static validation on the reverted library and complete evidence: the
+`make design-lint` sizing run exits 0 in 7.98 s; `make static` exits 0 in
+34.38 s with all seven stages within their macOS budgets. It checks repository
+invariants, specification archives, translation, prose, guidance, compiler
+source-size records and tree form. `git diff --check` exits 0. The revision
+to be reviewed below preserves the C1 library byte for byte.
