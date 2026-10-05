@@ -1,0 +1,747 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Cell {
+  Movi(c: u8, imm: u64);
+  Mov(a: u8, c: u8);
+  Add(a: u8, b: u8, c: u8);
+  Sub(a: u8, b: u8, c: u8);
+  Mul(a: u8, b: u8, c: u8);
+  And(a: u8, b: u8, c: u8);
+  Xor(a: u8, b: u8, c: u8);
+  Shl(a: u8, b: u8, c: u8);
+  Shru(a: u8, b: u8, c: u8);
+  Addi(a: u8, c: u8, imm: u64);
+  LtBr(a: u8, b: u8, t: u32);
+  LtiBr(a: u8, imm: u64, t: u32);
+  EqzBr(a: u8, t: u32);
+  Jmp(t: u32);
+  Load8(a: u8, c: u8, off: u32);
+  Store8(a: u8, b: u8, off: u32);
+  Fadd(a: u8, b: u8, c: u8);
+  Fsub(a: u8, b: u8, c: u8);
+  Fmul(a: u8, b: u8, c: u8);
+  FgtBr(a: u8, b: u8, t: u32);
+  I2f(a: u8, c: u8);
+  Call(b: u8, t: u32);
+  Ret(a: u8);
+}
+
+struct Frame {
+  ret_pc: u64;
+  base: u64;
+}
+
+fn run(code: &Box<Slots<Cell>>, regs: &Box<Slots<u64>>, mem: &Box<Slots<u8>>, frames: &Box<Slots<Frame>>, pc: u64, base: u64) -> r: u64 reads(code), writes(regs), writes(mem), writes(frames) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= regs^.inner.len;
+} {
+  doc "research/experiments/match-dispatch/vm.c's interpreter in the u8 access form: u8 operands within 256 slots of frame headroom, a fetch index compared with the code length, unsigned compares (every kernel's compared values are nonnegative).";
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Movi(c: cv, imm: iv) => {
+      let cw = cvt::<u8, u64>(cv^);
+      let rc = base + cw;
+      set regs^.inner[rc] = iv^;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Mov(a: av, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      set regs^.inner[rc] = x;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Add(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let z = x +wrap y;
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Sub(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let z = x -wrap y;
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Mul(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let z = x *wrap y;
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    And(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let z = iand(x, y);
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Xor(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let z = ixor(x, y);
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Shl(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let s = iand(y, 63_u64);
+      let s32 = cvt.wrap::<u64, u32>(s);
+      let z = ishl.wrap(x, s32);
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Shru(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let s = iand(y, 63_u64);
+      let s32 = cvt.wrap::<u64, u32>(s);
+      let z = ishr.wrap(x, s32);
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Addi(a: av, c: cv, imm: iv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let z = x +wrap iv^;
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    LtBr(a: av, b: bv, t: tv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let next = pc + 1_u64;
+      if x < y {
+        set next = cvt::<u32, u64>(tv^);
+      }
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    LtiBr(a: av, imm: iv, t: tv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let ra = base + aw;
+      let x = regs^.inner[ra];
+      let next = pc + 1_u64;
+      if x < iv^ {
+        set next = cvt::<u32, u64>(tv^);
+      }
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    EqzBr(a: av, t: tv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let ra = base + aw;
+      let x = regs^.inner[ra];
+      let next = pc + 1_u64;
+      if x == 0_u64 {
+        set next = cvt::<u32, u64>(tv^);
+      }
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Jmp(t: tv) => {
+      let next = cvt::<u32, u64>(tv^);
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Load8(a: av, c: cv, off: ov) => {
+      let aw = cvt::<u8, u64>(av^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let o = cvt::<u32, u64>(ov^);
+      let ad = x +wrap o;
+      if ad < mem^.inner.len {
+        let byte = mem^.inner[ad];
+        let w = cvt::<u8, u64>(byte);
+        set regs^.inner[rc] = w;
+        let next = pc + 1_u64;
+        if next < n {
+          return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+        }
+      }
+      return 18446744073709551615_u64;
+    }
+    Store8(a: av, b: bv, off: ov) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let o = cvt::<u32, u64>(ov^);
+      let ad = x +wrap o;
+      if ad < mem^.inner.len {
+        let byte = cvt.wrap::<u64, u8>(y);
+        set mem^.inner[ad] = byte;
+        let next = pc + 1_u64;
+        if next < n {
+          return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+        }
+      }
+      return 18446744073709551615_u64;
+    }
+    Fadd(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let fx = reinterpret::<u64, f64>(x);
+      let fy = reinterpret::<u64, f64>(y);
+      let fz = fadd.strict(fx, fy);
+      let z = reinterpret::<f64, u64>(fz);
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Fsub(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let fx = reinterpret::<u64, f64>(x);
+      let fy = reinterpret::<u64, f64>(y);
+      let fz = fsub.strict(fx, fy);
+      let z = reinterpret::<f64, u64>(fz);
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Fmul(a: av, b: bv, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let fx = reinterpret::<u64, f64>(x);
+      let fy = reinterpret::<u64, f64>(y);
+      let fz = fmul.strict(fx, fy);
+      let z = reinterpret::<f64, u64>(fz);
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    FgtBr(a: av, b: bv, t: tv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let bw = cvt::<u8, u64>(bv^);
+      let ra = base + aw;
+      let rb = base + bw;
+      let x = regs^.inner[ra];
+      let y = regs^.inner[rb];
+      let fx = reinterpret::<u64, f64>(x);
+      let fy = reinterpret::<u64, f64>(y);
+      let next = pc + 1_u64;
+      if fgt(fx, fy) {
+        set next = cvt::<u32, u64>(tv^);
+      }
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    I2f(a: av, c: cv) => {
+      let aw = cvt::<u8, u64>(av^);
+      let cw = cvt::<u8, u64>(cv^);
+      let ra = base + aw;
+      let rc = base + cw;
+      let x = regs^.inner[ra];
+      let fz = cvt.nearest::<u64, f64>(x);
+      let z = reinterpret::<f64, u64>(fz);
+      set regs^.inner[rc] = z;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: next, base: base);
+      }
+      return 18446744073709551615_u64;
+    }
+    Call(b: bv, t: tv) => {
+      let bw = cvt::<u8, u64>(bv^);
+      let nb = base + bw;
+      let rp = pc + 1_u64;
+      let fr = Frame(ret_pc: rp, base: base);
+      if frames^.inner.len < frames^.inner.cap {
+        place_back(window: &frames^.inner, value: fr);
+        let t = cvt::<u32, u64>(tv^);
+        if nb <= 18446744073709551359_u64 {
+          let lim = nb + 256_u64;
+          if lim <= regs^.inner.len {
+            if t < n {
+              return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: t, base: nb);
+            }
+          }
+        }
+      }
+      return 18446744073709551615_u64;
+    }
+    Ret(a: av) => {
+      let aw = cvt::<u8, u64>(av^);
+      let ra = base + aw;
+      let v = regs^.inner[ra];
+      set regs^.inner[base] = v;
+      if frames^.inner.len == 0_u64 {
+        return v;
+      }
+      let fr = take_back(window: &frames^.inner);
+      let fb = fr.base;
+      let rp = fr.ret_pc;
+      if fb <= 18446744073709551359_u64 {
+        let lim = fb + 256_u64;
+        if lim <= regs^.inner.len {
+          if rp < n {
+            return musttail run(code: code, regs: regs, mem: mem, frames: frames, pc: rp, base: fb);
+          }
+        }
+      }
+      return 18446744073709551615_u64;
+    }
+  }
+}
+
+fn emit(code: &Box<Slots<Cell>>, cell: Cell) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: cell);
+    return True();
+  }
+  return False();
+}
+
+fn build_loop(code: &Box<Slots<Cell>>) -> ok: Bool writes(code) {
+  doc "vm.c's k_loop at its default size; instruction indices as vm.c assigns them.";
+  let ok = True();
+  let c1 = Cell::Movi(c: 0_u8, imm: 0_u64);
+  let e1 = emit(code: code, cell: c1);
+  set ok = band(ok, e1);
+  let c2 = Cell::Movi(c: 1_u8, imm: 0_u64);
+  let e2 = emit(code: code, cell: c2);
+  set ok = band(ok, e2);
+  let c3 = Cell::Movi(c: 2_u8, imm: 200000000_u64);
+  let e3 = emit(code: code, cell: c3);
+  set ok = band(ok, e3);
+  let c4 = Cell::Movi(c: 4_u8, imm: 3_u64);
+  let e4 = emit(code: code, cell: c4);
+  set ok = band(ok, e4);
+  let c5 = Cell::Shru(a: 0_u8, b: 4_u8, c: 3_u8);
+  let e5 = emit(code: code, cell: c5);
+  set ok = band(ok, e5);
+  let c6 = Cell::Xor(a: 3_u8, b: 1_u8, c: 3_u8);
+  let e6 = emit(code: code, cell: c6);
+  set ok = band(ok, e6);
+  let c7 = Cell::Add(a: 0_u8, b: 3_u8, c: 0_u8);
+  let e7 = emit(code: code, cell: c7);
+  set ok = band(ok, e7);
+  let c8 = Cell::Addi(a: 1_u8, c: 1_u8, imm: 1_u64);
+  let e8 = emit(code: code, cell: c8);
+  set ok = band(ok, e8);
+  let c9 = Cell::LtBr(a: 1_u8, b: 2_u8, t: 4_u32);
+  let e9 = emit(code: code, cell: c9);
+  set ok = band(ok, e9);
+  let c10 = Cell::Ret(a: 0_u8);
+  let e10 = emit(code: code, cell: c10);
+  set ok = band(ok, e10);
+  return ok;
+}
+
+fn build_fib(code: &Box<Slots<Cell>>) -> ok: Bool writes(code) {
+  doc "vm.c's k_fib(35).";
+  let ok = True();
+  let c11 = Cell::Movi(c: 10_u8, imm: 35_u64);
+  let e11 = emit(code: code, cell: c11);
+  set ok = band(ok, e11);
+  let c12 = Cell::Call(b: 10_u8, t: 3_u32);
+  let e12 = emit(code: code, cell: c12);
+  set ok = band(ok, e12);
+  let c13 = Cell::Ret(a: 10_u8);
+  let e13 = emit(code: code, cell: c13);
+  set ok = band(ok, e13);
+  let c14 = Cell::LtiBr(a: 0_u8, imm: 2_u64, t: 11_u32);
+  let e14 = emit(code: code, cell: c14);
+  set ok = band(ok, e14);
+  let c15 = Cell::Addi(a: 0_u8, c: 10_u8, imm: 18446744073709551615_u64);
+  let e15 = emit(code: code, cell: c15);
+  set ok = band(ok, e15);
+  let c16 = Cell::Call(b: 10_u8, t: 3_u32);
+  let e16 = emit(code: code, cell: c16);
+  set ok = band(ok, e16);
+  let c17 = Cell::Mov(a: 10_u8, c: 2_u8);
+  let e17 = emit(code: code, cell: c17);
+  set ok = band(ok, e17);
+  let c18 = Cell::Addi(a: 0_u8, c: 10_u8, imm: 18446744073709551614_u64);
+  let e18 = emit(code: code, cell: c18);
+  set ok = band(ok, e18);
+  let c19 = Cell::Call(b: 10_u8, t: 3_u32);
+  let e19 = emit(code: code, cell: c19);
+  set ok = band(ok, e19);
+  let c20 = Cell::Add(a: 2_u8, b: 10_u8, c: 0_u8);
+  let e20 = emit(code: code, cell: c20);
+  set ok = band(ok, e20);
+  let c21 = Cell::Ret(a: 0_u8);
+  let e21 = emit(code: code, cell: c21);
+  set ok = band(ok, e21);
+  let c22 = Cell::Ret(a: 0_u8);
+  let e22 = emit(code: code, cell: c22);
+  set ok = band(ok, e22);
+  return ok;
+}
+
+fn build_sieve(code: &Box<Slots<Cell>>) -> ok: Bool writes(code) {
+  doc "vm.c's k_sieve(4000) over 8192 bytes.";
+  let ok = True();
+  let c23 = Cell::Movi(c: 0_u8, imm: 0_u64);
+  let e23 = emit(code: code, cell: c23);
+  set ok = band(ok, e23);
+  let c24 = Cell::Movi(c: 3_u8, imm: 8192_u64);
+  let e24 = emit(code: code, cell: c24);
+  set ok = band(ok, e24);
+  let c25 = Cell::Movi(c: 4_u8, imm: 1_u64);
+  let e25 = emit(code: code, cell: c25);
+  set ok = band(ok, e25);
+  let c26 = Cell::Movi(c: 6_u8, imm: 0_u64);
+  let e26 = emit(code: code, cell: c26);
+  set ok = band(ok, e26);
+  let c27 = Cell::Movi(c: 7_u8, imm: 4000_u64);
+  let e27 = emit(code: code, cell: c27);
+  set ok = band(ok, e27);
+  let c28 = Cell::Movi(c: 8_u8, imm: 0_u64);
+  let e28 = emit(code: code, cell: c28);
+  set ok = band(ok, e28);
+  let c29 = Cell::Movi(c: 1_u8, imm: 0_u64);
+  let e29 = emit(code: code, cell: c29);
+  set ok = band(ok, e29);
+  let c30 = Cell::Store8(a: 1_u8, b: 4_u8, off: 0_u32);
+  let e30 = emit(code: code, cell: c30);
+  set ok = band(ok, e30);
+  let c31 = Cell::Addi(a: 1_u8, c: 1_u8, imm: 1_u64);
+  let e31 = emit(code: code, cell: c31);
+  set ok = band(ok, e31);
+  let c32 = Cell::LtBr(a: 1_u8, b: 3_u8, t: 7_u32);
+  let e32 = emit(code: code, cell: c32);
+  set ok = band(ok, e32);
+  let c33 = Cell::Movi(c: 1_u8, imm: 2_u64);
+  let e33 = emit(code: code, cell: c33);
+  set ok = band(ok, e33);
+  let c34 = Cell::Load8(a: 1_u8, c: 5_u8, off: 0_u32);
+  let e34 = emit(code: code, cell: c34);
+  set ok = band(ok, e34);
+  let c35 = Cell::EqzBr(a: 5_u8, t: 19_u32);
+  let e35 = emit(code: code, cell: c35);
+  set ok = band(ok, e35);
+  let c36 = Cell::Addi(a: 0_u8, c: 0_u8, imm: 1_u64);
+  let e36 = emit(code: code, cell: c36);
+  set ok = band(ok, e36);
+  let c37 = Cell::Add(a: 1_u8, b: 1_u8, c: 2_u8);
+  let e37 = emit(code: code, cell: c37);
+  set ok = band(ok, e37);
+  let c38 = Cell::Jmp(t: 18_u32);
+  let e38 = emit(code: code, cell: c38);
+  set ok = band(ok, e38);
+  let c39 = Cell::Store8(a: 2_u8, b: 8_u8, off: 0_u32);
+  let e39 = emit(code: code, cell: c39);
+  set ok = band(ok, e39);
+  let c40 = Cell::Add(a: 1_u8, b: 2_u8, c: 2_u8);
+  let e40 = emit(code: code, cell: c40);
+  set ok = band(ok, e40);
+  let c41 = Cell::LtBr(a: 2_u8, b: 3_u8, t: 16_u32);
+  let e41 = emit(code: code, cell: c41);
+  set ok = band(ok, e41);
+  let c42 = Cell::Addi(a: 1_u8, c: 1_u8, imm: 1_u64);
+  let e42 = emit(code: code, cell: c42);
+  set ok = band(ok, e42);
+  let c43 = Cell::LtBr(a: 1_u8, b: 3_u8, t: 11_u32);
+  let e43 = emit(code: code, cell: c43);
+  set ok = band(ok, e43);
+  let c44 = Cell::Addi(a: 6_u8, c: 6_u8, imm: 1_u64);
+  let e44 = emit(code: code, cell: c44);
+  set ok = band(ok, e44);
+  let c45 = Cell::LtBr(a: 6_u8, b: 7_u8, t: 6_u32);
+  let e45 = emit(code: code, cell: c45);
+  set ok = band(ok, e45);
+  let c46 = Cell::Ret(a: 0_u8);
+  let e46 = emit(code: code, cell: c46);
+  set ok = band(ok, e46);
+  return ok;
+}
+
+fn build_mandel(code: &Box<Slots<Cell>>) -> ok: Bool writes(code) {
+  doc "vm.c's k_mandel(600); the constants live in slots 20 to 25.";
+  let ok = True();
+  let c47 = Cell::Movi(c: 0_u8, imm: 0_u64);
+  let e47 = emit(code: code, cell: c47);
+  set ok = band(ok, e47);
+  let c48 = Cell::Movi(c: 3_u8, imm: 600_u64);
+  let e48 = emit(code: code, cell: c48);
+  set ok = band(ok, e48);
+  let c49 = Cell::Movi(c: 4_u8, imm: 100_u64);
+  let e49 = emit(code: code, cell: c49);
+  set ok = band(ok, e49);
+  let c50 = Cell::Movi(c: 13_u8, imm: 0_u64);
+  let e50 = emit(code: code, cell: c50);
+  set ok = band(ok, e50);
+  let c51 = Cell::Movi(c: 1_u8, imm: 0_u64);
+  let e51 = emit(code: code, cell: c51);
+  set ok = band(ok, e51);
+  let c52 = Cell::I2f(a: 1_u8, c: 12_u8);
+  let e52 = emit(code: code, cell: c52);
+  set ok = band(ok, e52);
+  let c53 = Cell::Fmul(a: 12_u8, b: 25_u8, c: 12_u8);
+  let e53 = emit(code: code, cell: c53);
+  set ok = band(ok, e53);
+  let c54 = Cell::Fadd(a: 12_u8, b: 23_u8, c: 7_u8);
+  let e54 = emit(code: code, cell: c54);
+  set ok = band(ok, e54);
+  let c55 = Cell::Movi(c: 2_u8, imm: 0_u64);
+  let e55 = emit(code: code, cell: c55);
+  set ok = band(ok, e55);
+  let c56 = Cell::I2f(a: 2_u8, c: 12_u8);
+  let e56 = emit(code: code, cell: c56);
+  set ok = band(ok, e56);
+  let c57 = Cell::Fmul(a: 12_u8, b: 24_u8, c: 12_u8);
+  let e57 = emit(code: code, cell: c57);
+  set ok = band(ok, e57);
+  let c58 = Cell::Fadd(a: 12_u8, b: 22_u8, c: 6_u8);
+  let e58 = emit(code: code, cell: c58);
+  set ok = band(ok, e58);
+  let c59 = Cell::Mov(a: 13_u8, c: 8_u8);
+  let e59 = emit(code: code, cell: c59);
+  set ok = band(ok, e59);
+  let c60 = Cell::Mov(a: 13_u8, c: 9_u8);
+  let e60 = emit(code: code, cell: c60);
+  set ok = band(ok, e60);
+  let c61 = Cell::Movi(c: 5_u8, imm: 0_u64);
+  let e61 = emit(code: code, cell: c61);
+  set ok = band(ok, e61);
+  let c62 = Cell::Fmul(a: 8_u8, b: 8_u8, c: 10_u8);
+  let e62 = emit(code: code, cell: c62);
+  set ok = band(ok, e62);
+  let c63 = Cell::Fmul(a: 9_u8, b: 9_u8, c: 11_u8);
+  let e63 = emit(code: code, cell: c63);
+  set ok = band(ok, e63);
+  let c64 = Cell::Fadd(a: 10_u8, b: 11_u8, c: 12_u8);
+  let e64 = emit(code: code, cell: c64);
+  set ok = band(ok, e64);
+  let c65 = Cell::FgtBr(a: 12_u8, b: 20_u8, t: 26_u32);
+  let e65 = emit(code: code, cell: c65);
+  set ok = band(ok, e65);
+  let c66 = Cell::Fmul(a: 8_u8, b: 9_u8, c: 12_u8);
+  let e66 = emit(code: code, cell: c66);
+  set ok = band(ok, e66);
+  let c67 = Cell::Fmul(a: 12_u8, b: 21_u8, c: 12_u8);
+  let e67 = emit(code: code, cell: c67);
+  set ok = band(ok, e67);
+  let c68 = Cell::Fadd(a: 12_u8, b: 7_u8, c: 9_u8);
+  let e68 = emit(code: code, cell: c68);
+  set ok = band(ok, e68);
+  let c69 = Cell::Fsub(a: 10_u8, b: 11_u8, c: 12_u8);
+  let e69 = emit(code: code, cell: c69);
+  set ok = band(ok, e69);
+  let c70 = Cell::Fadd(a: 12_u8, b: 6_u8, c: 8_u8);
+  let e70 = emit(code: code, cell: c70);
+  set ok = band(ok, e70);
+  let c71 = Cell::Addi(a: 5_u8, c: 5_u8, imm: 1_u64);
+  let e71 = emit(code: code, cell: c71);
+  set ok = band(ok, e71);
+  let c72 = Cell::LtBr(a: 5_u8, b: 4_u8, t: 15_u32);
+  let e72 = emit(code: code, cell: c72);
+  set ok = band(ok, e72);
+  let c73 = Cell::Add(a: 0_u8, b: 5_u8, c: 0_u8);
+  let e73 = emit(code: code, cell: c73);
+  set ok = band(ok, e73);
+  let c74 = Cell::Addi(a: 2_u8, c: 2_u8, imm: 1_u64);
+  let e74 = emit(code: code, cell: c74);
+  set ok = band(ok, e74);
+  let c75 = Cell::LtBr(a: 2_u8, b: 3_u8, t: 9_u32);
+  let e75 = emit(code: code, cell: c75);
+  set ok = band(ok, e75);
+  let c76 = Cell::Addi(a: 1_u8, c: 1_u8, imm: 1_u64);
+  let e76 = emit(code: code, cell: c76);
+  set ok = band(ok, e76);
+  let c77 = Cell::LtBr(a: 1_u8, b: 3_u8, t: 5_u32);
+  let e77 = emit(code: code, cell: c77);
+  set ok = band(ok, e77);
+  let c78 = Cell::Ret(a: 0_u8);
+  let e78 = emit(code: code, cell: c78);
+  set ok = band(ok, e78);
+  return ok;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "build.sh replaces the kernel number below: 0 loop, 1 fib, 2 sieve, 3 mandel. Exit 0 when the checksum equals vm.c's.";
+  let which = 0_u64;
+  let code = box_slots_new::<Cell>(capacity: 64_u64);
+  let regs = box_slots_new::<u64>(capacity: 65536_u64);
+  for (i in 0_u64..65536_u64) {
+    if regs.inner.len < regs.inner.cap {
+      place_back(window: &regs.inner, value: 0_u64);
+    }
+  }
+  let mem = box_slots_new::<u8>(capacity: 8192_u64);
+  for (i in 0_u64..8192_u64) {
+    if mem.inner.len < mem.inner.cap {
+      place_back(window: &mem.inner, value: 0_u8);
+    }
+  }
+  let frames = box_slots_new::<Frame>(capacity: 1024_u64);
+  let ok = False();
+  let expected = 0_u64;
+  if which == 0_u64 {
+    set ok = build_loop(code: &code);
+    set expected = 827357840561519684_u64;
+  }
+  if which == 1_u64 {
+    set ok = build_fib(code: &code);
+    set expected = 9227465_u64;
+  }
+  if which == 2_u64 {
+    set ok = build_sieve(code: &code);
+    set expected = 4112000_u64;
+  }
+  if which == 3_u64 {
+    set ok = build_mandel(code: &code);
+    set expected = 7563277_u64;
+    if regs.inner.len > 25_u64 {
+      set regs.inner[20_u64] = reinterpret::<f64, u64>(4.0_f64);
+      set regs.inner[21_u64] = reinterpret::<f64, u64>(2.0_f64);
+      set regs.inner[22_u64] = reinterpret::<f64, u64>(-2.0_f64);
+      set regs.inner[23_u64] = reinterpret::<f64, u64>(-1.5_f64);
+      let step = 0.005_f64;
+      set regs.inner[24_u64] = reinterpret::<f64, u64>(step);
+      set regs.inner[25_u64] = reinterpret::<f64, u64>(step);
+    }
+  }
+  if ok {
+    if code.inner.len > 0_u64 {
+      if regs.inner.len >= 256_u64 {
+        let r = run(code: &code, regs: &regs, mem: &mem, frames: &frames, pc: 0_u64, base: 0_u64);
+        if r == expected {
+          return exit_status(code: 0_u8);
+        }
+        return exit_status(code: 1_u8);
+      }
+    }
+  }
+  return exit_status(code: 2_u8);
+}

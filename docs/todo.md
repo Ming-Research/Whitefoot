@@ -985,6 +985,17 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **The cross-map audit test counts on the scheduler.** `holds_across_maps`
+  (`compiler/src/backend/concurrent_map_test.c`) stops its audit thread
+  when the four writers finish and then requires two audits, one holding
+  keys and one holding both maps whole. On the two-CPU `completion-linux`
+  runner the audit thread can be starved for the writers' whole run: it
+  failed with 1 audit on main and 0 on a work branch, both on 2026-10-04,
+  with no change to the map. The change: keep the writers running until the
+  audit has completed both kinds of hold, so the count no longer depends on
+  how threads are scheduled while every audit still overlaps writers.
+  Reopen with the next change to that test or its next `io-hosts.yml`
+  failure.
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
@@ -2315,6 +2326,60 @@ rarely insert at the same place.
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
 
+## Interpreter dispatch lowering
+
+- **Build-time toolchain probes are not rerun when the toolchain changes.**
+  `compiler/build.rs` probes the assembler for the no-capture spelling and
+  for `preserve_none`, but declares no `rerun-if` dependency on the
+  assembler, so after a clang upgrade the recorded answers stay until the
+  build script reruns for another reason. A stale `preserve_none` answer
+  after a downgrade would emit a convention the assembler refuses. Track
+  the assembler's identity (its path and version output) as a rerun input.
+  Reopen when a host's clang changes under an existing build directory.
+
+- **A loop-carried index is recomputed into an address in every arm.** The
+  C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
+  is 10-30% above the pointer form with every other mechanism equal
+  (E1 in `research/experiments/match-dispatch/RESULTS.md`). When every
+  use of a carried index addresses one array and the index changes only by
+  offsets and stores of checked values, the parts could carry the derived
+  address beside the index. Needs its own design and a falsifier; reopen
+  as the next dispatch-lowering change, the invariant-header work having
+  landed.
+
+- **Values kept in the frame past the registers are unmeasured.** A split
+  dispatch loop whose parts need more argument registers than the
+  convention has keeps the values it cannot change in frame slots, which
+  each part loads (compiler/match-dispatch-lowering); its cost against
+  whole-function emission has not been measured. Validate with a loop past
+  twelve parameters on x86-64 or past eight under the C convention on
+  arm64, comparing cycles with whole emission, and Halo's VM under the C
+  convention. Reopen with the first consumer whose loop needs the frame.
+
+- **A `match` on a place copies the scrutinee into a frame slot.** The
+  emitter copies the matched value into a slot to read its tag while the
+  arms read their binders from the place itself. In one function the host
+  removes the copy; in a split loop it cost a store and a store-forwarded
+  load per dispatch until the slot became part-local. Reading the tag from
+  the place would remove the copy everywhere. Low priority; reopen if a
+  profile shows the copy outside split loops.
+
+- **Interpreter state is pinned only through the calling convention.** A
+  split loop keeps its changing values in registers because every part
+  shares one prototype, so the pinning has the convention's register count,
+  one mapping for the whole loop, and needs `preserve_none`, which only
+  arm64 and x86-64 have. E0's single-function computed goto lost to the
+  split form once state grew (`research/experiments/match-dispatch/RESULTS.md`,
+  "What the results say about the lowering"). An alternative within LLVM IR:
+  one function with an indirect branch per handler, and empty inline-asm
+  operands with physical-register constraints at each handler's entry and
+  exit, which fixes where the state lives at every boundary with no count
+  limit and lets regions differ. Validate first in C beside E0's kernels:
+  the asm-pinned goto form against `tailpn` in the checked and `u8` forms,
+  worth a compiler change only if it is no more than 2% slower there.
+  Reopen when the wasm interpreter's profile shows register pressure the
+  convention cannot hold, or when a target without `preserve_none` matters.
+
 ## Code structure
 
 - **Five parallel substitution walkers over a type invariant.**
@@ -3120,6 +3185,17 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **The local app-build cache never evicts.** Outside CI the corpus tests
+  build firn with the compiler's incremental cache under
+  `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`
+  in `compiler/tests/programs/support.rs`). Each new compiler binary adds
+  records beside the old ones, which no later build reads, and an
+  interrupted write leaves its `.partial` file, so the directory grows
+  until someone removes it. The change: drop records of other compiler
+  identities and stale partial files when the cache opens, or prune by age.
+  Validate with the directory's size staying flat across compiler rebuilds.
+  Reopen when the cache directory's growth is noticed on a developer host.
 
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on
