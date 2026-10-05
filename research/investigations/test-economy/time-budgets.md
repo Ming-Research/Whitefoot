@@ -398,6 +398,13 @@ Every other case changed by under 0.3 s. On 2026-10-05 the owner approved
 both a raise to 115 s and splitting that witness case into one case per
 witness, so that the five can run on separate threads ("do both", translated from Chinese).
 
+**`check/unit` on ubuntu, raised to 250 s.** The unit group holds the
+library's test build and its cases. With `compiler/test-unit` raised to
+115 s, the group's 235 s fell below the sum of its two stages' budgets,
+135 s and 115 s, and the group took 248.7 s at `98adb1c02` and 249.9 s at
+main's `bfe5d652b`. On 2026-10-05 the owner approved raising it to that
+sum, 250 s ("can raise it to 250s", translated from Chinese).
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases

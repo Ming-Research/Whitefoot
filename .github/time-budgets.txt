@@ -28,7 +28,7 @@ performance-instrument          10     10     -
 compiler/lint                   40     80     -
 
 # gate.yml, unit group: the library in test mode, then its cases
-check/unit                      235    280    -
+check/unit                      250    280    -
 compiler/test-build-unit        135    185    -
 compiler/test-unit              115    100    -
 
