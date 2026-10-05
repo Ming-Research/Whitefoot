@@ -985,6 +985,17 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **The cross-map audit test counts on the scheduler.** `holds_across_maps`
+  (`compiler/src/backend/concurrent_map_test.c`) stops its audit thread
+  when the four writers finish and then requires two audits, one holding
+  keys and one holding both maps whole. On the two-CPU `completion-linux`
+  runner the audit thread can be starved for the writers' whole run: it
+  failed with 1 audit on main and 0 on a work branch, both on 2026-10-04,
+  with no change to the map. The change: keep the writers running until the
+  audit has completed both kinds of hold, so the count no longer depends on
+  how threads are scheduled while every audit still overlaps writers.
+  Reopen with the next change to that test or its next `io-hosts.yml`
+  failure.
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
@@ -2317,21 +2328,6 @@ rarely insert at the same place.
 
 ## Interpreter dispatch lowering
 
-- **A dispatch loop past the argument registers is emitted whole.**
-  compiler/match-dispatch-lowering gives every part one parameter per
-  carried value, header value and value from before the loop, and emits a
-  loop whose parts would need more than the convention's argument registers
-  (measured in `research/experiments/match-dispatch/RESULTS.md`, "Argument
-  registers": without callee-saved registers 24 integer on arm64 and 12 on
-  x86-64) as one function, since the C experiment measured a stack-passed
-  parameter at 8% and two at 43%. The owner's direction is a spill block in
-  the enclosing function's frame: keep the values the loop's carried
-  dependency chains need in registers and store the coldest values from
-  before the loop in frame slots the parts read, so such loops split too.
-  Validate with a loop past twelve parameters on x86-64, comparing cycles
-  against whole emission. Reopen when a consumer's dispatch loop exceeds a
-  target's register parameters.
-
 - **Build-time toolchain probes are not rerun when the toolchain changes.**
   `compiler/build.rs` probes the assembler for the no-capture spelling and
   for `preserve_none`, but declares no `rerun-if` dependency on the
@@ -2341,26 +2337,6 @@ rarely insert at the same place.
   the assembler's identity (its path and version output) as a rerun input.
   Reopen when a host's clang changes under an existing build directory.
 
-- **The parts of a split loop carry no reference parameter facts.** The
-  enclosing function's reference parameters keep `noalias`, `nonnull` and
-  `dereferenceable` (compiler/backend-facts); the same values arrive in the
-  parts as plain pointers, so the host cannot use those facts inside the
-  arms. Stating them on the parts' parameters needs the facts mapped from
-  the enclosing parameters through the header's carried values. Validate
-  with the WF interpreter's kernels. Reopen with the invariant-header
-  work.
-
-- **Loop-invariant header work runs on every dispatch.** A split loop's
-  header is recomputed in each arm: the WF interpreter
-  (`research/experiments/match-dispatch/wf/vm.wf`) reloads `code`'s box
-  pointer and length and `regs`'s box pointer on every dispatch, which
-  LLVM hoisted out of the whole-function loop. A header computation whose
-  operands are values from before the loop or header parameters every
-  back edge passes unchanged, and which reads only memory under a
-  read-only reference parameter, could run once in the enclosing function
-  and travel as a parameter. Validate on the WF interpreter's kernels
-  against the C `u8` form. Reopen with the next dispatch-lowering change.
-
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
   is 10-30% above the pointer form with every other mechanism equal
@@ -2368,12 +2344,17 @@ rarely insert at the same place.
   use of a carried index addresses one array and the index changes only by
   offsets and stores of checked values, the parts could carry the derived
   address beside the index. Needs its own design and a falsifier; reopen
-  after the invariant-header work.
+  as the next dispatch-lowering change, the invariant-header work having
+  landed.
 
-- **The handler table's address is rematerialised in every arm.** Two
-  instructions per dispatch on arm64 (`adrp`, `add`); E1 passing it as a
-  parameter matched Silverfir-nano's instruction count on its loop kernel.
-  Pass it as a hidden parameter once the register budget above exists.
+- **Values kept in the frame past the registers are unmeasured.** A split
+  dispatch loop whose parts need more argument registers than the
+  convention has keeps the values it cannot change in frame slots, which
+  each part loads (compiler/match-dispatch-lowering); its cost against
+  whole-function emission has not been measured. Validate with a loop past
+  twelve parameters on x86-64 or past eight under the C convention on
+  arm64, comparing cycles with whole emission, and Halo's VM under the C
+  convention. Reopen with the first consumer whose loop needs the frame.
 
 - **A `match` on a place copies the scrutinee into a frame slot.** The
   emitter copies the matched value into a slot to read its tag while the
@@ -2382,6 +2363,22 @@ rarely insert at the same place.
   load per dispatch until the slot became part-local. Reading the tag from
   the place would remove the copy everywhere. Low priority; reopen if a
   profile shows the copy outside split loops.
+
+- **Interpreter state is pinned only through the calling convention.** A
+  split loop keeps its changing values in registers because every part
+  shares one prototype, so the pinning has the convention's register count,
+  one mapping for the whole loop, and needs `preserve_none`, which only
+  arm64 and x86-64 have. E0's single-function computed goto lost to the
+  split form once state grew (`research/experiments/match-dispatch/RESULTS.md`,
+  "What the results say about the lowering"). An alternative within LLVM IR:
+  one function with an indirect branch per handler, and empty inline-asm
+  operands with physical-register constraints at each handler's entry and
+  exit, which fixes where the state lives at every boundary with no count
+  limit and lets regions differ. Validate first in C beside E0's kernels:
+  the asm-pinned goto form against `tailpn` in the checked and `u8` forms,
+  worth a compiler change only if it is no more than 2% slower there.
+  Reopen when the wasm interpreter's profile shows register pressure the
+  convention cannot hold, or when a target without `preserve_none` matters.
 
 ## Code structure
 
