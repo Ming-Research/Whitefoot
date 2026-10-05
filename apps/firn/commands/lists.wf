@@ -1,8 +1,3 @@
-alias copy_bytes = pkg::bytes::copy_bytes;
-alias log_prepared = pkg::store::log_prepared;
-alias Bytes = pkg::bytes::Bytes;
-alias push_item = pkg::protocol::push_item;
-alias reply_text = pkg::protocol::reply_text;
 alias Key = pkg::bytes::Key;
 alias KeyHash = pkg::bytes::KeyHash;
 alias Client = pkg::protocol::Client;
@@ -95,130 +90,39 @@ struct Seek {
   state: u64;
 }
 
-struct ListLog {
-  command: Option<Box<Slots<u8>>>;
-  removal: Option<Box<Slots<u8>>>;
-}
-
-fn prepare_list_log(input: &[u8], args: &Box<Slots<Span>>, key: &[u8], logging: Bool) -> prepared: ListLog reads(input), reads(args), reads(key) {
-  doc "Formats the possible push or pop AOF command and expiry removal before taking the entry; logging disabled prepares no buffers.";
-  if logging {
-    let command = box_slots_new::<u8>(capacity: 0_u64);
-    log_command(log: &command, input: input, args: args);
-    let removal = box_slots_new::<u8>(capacity: 0_u64);
-    log_removal(log: &removal, key: key);
-    let recorded = Some<Box<Slots<u8>>>(value: move command);
-    let removed = Some<Box<Slots<u8>>>(value: move removal);
-    return ListLog(command: move recorded, removal: move removed);
-  }
-  let recorded = None<Box<Slots<u8>>>();
-  let removed = None<Box<Slots<u8>>>();
-  return ListLog(command: move recorded, removal: move removed);
-}
-
-fn append_list_log(log: &Box<Slots<u8>>, prepared: &Option<Box<Slots<u8>>>) -> result: unit reads(prepared), writes(log) {
-  doc "Appends a selected prepared command or removal at the command's atomic point; an absent buffer means logging was disabled.";
-  match prepared^ {
-    Some(value: bytes) => {
-      let length = bytes^.inner.len;
-      let window = &bytes^.inner[0_u64..length];
-      log_prepared(log: log, prepared: window);
-    }
-    None() => {
-    }
-  }
+fn element_out(env: &Client, value: &Box<Slots<u8>>) -> result: unit reads(value), writes(env) {
+  doc "Writes one list element as a bulk string.";
+  reply_bulk(client: env, stored: value);
   return unit;
 }
 
-fn prepare_list(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
-  doc "Prepares push payloads in reverse argument order in the reusable item window, without computing unused hashes; each payload is already in its final list allocation.";
-  clear_items(client: client);
-  let count = args^.inner.len;
-  let many = count -sat 2_u64;
-  for @elements (step in 0_u64..many) {
-    let back = count -wrap step;
-    let index = back -wrap 1_u64;
-    let span = arg(args: args, index: index);
-    let element = copy_bytes(input: input, start: span.start, length: span.length);
-    let bytes = Bytes::Long(bytes: move element);
-    let prepared = Key(hash: 0_u64, bytes: move bytes);
-    push_item(client: client, item: move prepared);
-  }
-  return unit;
-}
-
-fn list_reply_room(client: &Client, count: u64) -> result: unit writes(client) {
-  doc "Reserves the reusable list-reply window for a list snapshot whose count is at most the list ceiling.";
-  if count <= ceiling {
-    if count > client^.list_reply.inner.cap {
-      grow(cell: &client^.list_reply, capacity: count);
-    }
-  }
-  return unit;
-}
-
-fn hold_list_element(client: &Client, element: Box<Slots<u8>>) -> result: unit writes(client) {
-  doc "Transfers an owned list element into a reserved reply snapshot, without copying or hashing it.";
-  let bytes = Bytes::Long(bytes: move element);
-  if client^.list_reply.inner.len < client^.list_reply.inner.cap {
-    place_back(window: &client^.list_reply.inner, value: move bytes);
-  } else {
-    let dropped = move bytes;
-  }
-  return unit;
-}
-
-fn element_snapshot(env: &Client, value: &Box<Slots<u8>>) -> result: unit reads(value), writes(env) {
-  doc "Copies one shared list element into the reserved reply snapshot while the entry is held.";
-  let length = value^.inner.len;
-  let window = &value^.inner[0_u64..length];
-  let copied = bytes_new(input: window, start: 0_u64, length: length);
-  if env^.list_reply.inner.len < env^.list_reply.inner.cap {
-    place_back(window: &env^.list_reply.inner, value: move copied);
-  } else {
-    let dropped = move copied;
-  }
-  return unit;
-}
-
-binding ElementSnapshot : DequeVisit<Box<Slots<u8>>, Client> {
-  accept = element_snapshot;
-}
-
-fn answer_list(client: &Client, counted: Bool) -> result: unit writes(client) {
-  doc "Formats the owned list snapshot after releasing the entry, then restores its empty reusable window.";
-  let count = client^.list_reply.inner.len;
-  if counted {
-    reply_array(client: client, count: count);
-  }
-  if count <= 1_u64 {
-    if client^.list_reply.inner.len > 0_u64 {
-      let item = take_back(window: &client^.list_reply.inner);
-      reply_text(client: client, text: &item);
-    }
-    return unit;
-  }
-  let items = box_slots_new::<Bytes>(capacity: 0_u64);
-  swap(first: &client^.list_reply, second: &items);
-  for @answers (index in 0_u64..count) {
-    if index < items.inner.len {
-      reply_text(client: client, text: &items.inner[index]);
-    }
-  }
-  loop @clear {
-    if items.inner.len == 0_u64 {
-      break @clear;
-    }
-    let dropped = take_back(window: &items.inner);
-  }
-  swap(first: &client^.list_reply, second: &items);
-  return unit;
+binding ElementOut : DequeVisit<Box<Slots<u8>>, Client> {
+  accept = element_out;
 }
 
 fn list_room(list: &Box<Ring<Box<Slots<u8>>>>) -> result: unit writes(list) {
-  doc "Reserves room for one element with the shared geometric growth policy; a full list whose doubled capacity exceeds the ceiling stays full.";
-  if list^.inner.len >= list^.inner.cap {
-    list_batch_room(list: list, additional: 1_u64);
+  doc "Moves a full list to a new backing twice its capacity, at least eight elements; a list at the ceiling of 2^32 elements stays full.";
+  let length = list^.inner.len;
+  let capacity = list^.inner.cap;
+  if length < capacity {
+    return unit;
+  }
+  let doubled = capacity +wrap capacity;
+  let target = imax(doubled, 8_u64);
+  let fits = target <= ceiling;
+  let enough = target >= length;
+  let possible = band(fits, enough);
+  if possible {
+    let spare = deque_new::<Box<Slots<u8>>, ceiling>(capacity: 0_u64);
+    swap(first: list, second: &spare);
+    let old_length = spare.inner.len;
+    if target >= old_length {
+      let grown = deque_rebase::<Box<Slots<u8>>, ceiling>(values: move spare, capacity: target);
+      swap(first: list, second: &grown);
+    } else {
+      swap(first: list, second: &spare);
+      let discarded = move spare;
+    }
   }
   return unit;
 }
@@ -238,68 +142,22 @@ fn push_element(list: &Box<Ring<Box<Slots<u8>>>>, element: Box<Slots<u8>>, front
   return unit;
 }
 
-fn list_batch_room(list: &Box<Ring<Box<Slots<u8>>>>, additional: u64) -> result: unit writes(list) {
-  doc "Reserves room for a push batch with the same geometric capacities and ceiling stop as successive single-element pushes, rebasing at most once.";
-  let length = list^.inner.len;
-  let capacity = list^.inner.cap;
-  let wanted = length +wrap additional;
-  let target = capacity;
-  loop @capacity {
-    if target >= wanted {
-      break @capacity;
-    }
-    let doubled = target +wrap target;
-    let next = imax(doubled, 8_u64);
-    if next > ceiling {
-      break @capacity;
-    }
-    if next <= target {
-      break @capacity;
-    }
-    set target = next;
-  }
-  let growing = target > capacity;
-  let fits = target <= ceiling;
-  let possible = band(growing, fits);
-  if possible {
-    let spare = deque_new::<Box<Slots<u8>>, ceiling>(capacity: 0_u64);
-    swap(first: list, second: &spare);
-    let old_length = spare.inner.len;
-    if target >= old_length {
-      let grown = deque_rebase::<Box<Slots<u8>>, ceiling>(values: move spare, capacity: target);
-      swap(first: list, second: &grown);
-    } else {
-      swap(first: list, second: &spare);
-      let discarded = move spare;
-    }
-  }
-  return unit;
-}
-
-fn push_all(list: &Box<Ring<Box<Slots<u8>>>>, client: &Client, front: Bool, additional: u64) -> result: unit writes(list), writes(client) {
-  doc "Transfers already allocated push payloads onto the list in argument order, at its head or tail, reserving batch room once and dropping elements beyond the original growth ceiling.";
-  list_batch_room(list: list, additional: additional);
+fn push_all(list: &Box<Ring<Box<Slots<u8>>>>, client: &Client, front: Bool) -> result: unit writes(list), writes(client) {
+  doc "Pushes the string of every prepared key onto the list, in the order the command named them, at its head or its tail.";
   loop @elements {
-    if client^.items.inner.len == 0_u64 {
+    if client^.items.inner.len > 0_u64 {
+      let prepared = take_back(window: &client^.items.inner);
+      let element = key_boxed(key: move prepared);
+      push_element(list: list, element: move element, front: front);
+    } else {
       break @elements;
     }
-    let prepared = take_back(window: &client^.items.inner);
-    let element = key_boxed(key: move prepared);
-    if list^.inner.len < list^.inner.cap {
-      if front {
-        let length = deque_push_front::<Box<Slots<u8>>>(values: list, value: move element);
-      } else {
-        let length = deque_push_back::<Box<Slots<u8>>>(values: list, value: move element);
-      }
-    } else {
-      let dropped = move element;
-    }
   }
   return unit;
 }
 
-fn push_items(env: &Client, value: &Entry, front: Bool, additional: u64) -> kind: u64 writes(env), writes(value) {
-  doc "Pushes the prepared keys onto a live list, at its head when front is true and its tail otherwise, recording done and the list's new length in number; records wrong for another kind and expired for an expired entry.";
+fn push_items(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Pushes the prepared keys onto a live list, at its head when low is 0 and its tail otherwise, recording done and the list's new length in number; records wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
     set env^.state = state_expired;
@@ -307,7 +165,8 @@ fn push_items(env: &Client, value: &Entry, front: Bool, additional: u64) -> kind
   }
   match value^.value {
     Items(items: list) => {
-      push_all(list: list, client: env, front: front, additional: additional);
+      let front = env^.low == 0_i64;
+      push_all(list: list, client: env, front: front);
       set env^.number = list^.inner.len;
       set env^.state = state_done;
       return 2_u64;
@@ -333,20 +192,19 @@ fn push_items(env: &Client, value: &Entry, front: Bool, additional: u64) -> kind
 
 fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, front: Bool, existing: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "LPUSH key element [element ...] and RPUSH: pushes each element in turn at the list's head (front) or tail, creating the list for an absent key, and answers its length; LPUSHX and RPUSHX (existing) push only onto a list that exists and answer 0 for an absent key. A key whose expiry has been reached is removed first, the removal recorded before the push.";
-  prepare_list(input: input, args: args, client: client);
+  prepare_keys(input: input, args: args, client: client, first: 2_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  let logging = store^.logging;
-  let prepared = prepare_list_log(input: input, args: args, key: key, logging: logging);
   set client^.now = time^.check;
   set client^.state = state_absent;
-  let wanted = client^.items.inner.len;
-  let capacity = imax(wanted, 8_u64);
-  let fits = capacity <= ceiling;
+  set client^.low = 1_i64;
+  if front {
+    set client^.low = 0_i64;
+  }
   atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
-        let edited = push_items(env: client, value: held, front: front, additional: wanted);
+        let edited = push_items(env: client, value: held);
       }
       None() => {
       }
@@ -354,8 +212,8 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if client^.state == state_expired {
       set slot^ = None<Entry>();
       set client^.state = state_absent;
-      if logging {
-        append_list_log(log: &s^.meta.log, prepared: &prepared.removal);
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
       }
     }
     let create = client^.state == state_absent;
@@ -363,9 +221,11 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       set create = False();
     }
     if create {
-      if fits {
+      let wanted = client^.items.inner.len;
+      let capacity = imax(wanted, 8_u64);
+      if capacity <= ceiling {
         let list = deque_new::<Box<Slots<u8>>, ceiling>(capacity: capacity);
-        push_all(list: &list, client: client, front: front, additional: wanted);
+        push_all(list: &list, client: client, front: front);
         set client^.number = list.inner.len;
         let made = Value::Items(items: move list);
         let fresh = Entry(value: move made, expires: 0_u64);
@@ -374,8 +234,8 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       }
     }
     if client^.state == state_done {
-      if logging {
-        append_list_log(log: &s^.meta.log, prepared: &prepared.command);
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -406,8 +266,8 @@ fn pop_one(list: &Box<Ring<Box<Slots<u8>>>>, from_head: Bool) -> popped: Option<
   return None<Box<Slots<u8>>>();
 }
 
-fn pop_items(env: &Client, value: &Entry, from_head: Bool) -> kind: u64 writes(env), writes(value) {
-  doc "Pops up to number elements from a live list, from its head when from_head is true and its tail otherwise, transferring their allocations into the reserved list-reply window for formatting after the statement, and leaves how many it popped in number. Records done, or emptied when the list is left empty; wrong for another kind and expired for an expired entry.";
+fn pop_items(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
+  doc "Pops up to number elements from a live list, from its head when low is 0 and its tail otherwise, writing them as the reply: an array when high is 1, else the one bulk string, and leaves how many it popped in number. Records done, or emptied when the list is left empty; wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
     set env^.state = state_expired;
@@ -417,12 +277,15 @@ fn pop_items(env: &Client, value: &Entry, from_head: Bool) -> kind: u64 writes(e
     Items(items: list) => {
       let length = list^.inner.len;
       let taken = imin(env^.number, length);
-      list_reply_room(client: env, count: taken);
+      if env^.high == 1_i64 {
+        reply_array(client: env, count: taken);
+      }
+      let from_head = env^.low == 0_i64;
       for @popping (step in 0_u64..taken) {
         let popped = pop_one(list: list, from_head: from_head);
         match move popped {
           Some(value: element) => {
-            hold_list_element(client: env, element: move element);
+            reply_bulk(client: env, stored: &element);
           }
           None() => {
           }
@@ -472,15 +335,21 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  let logging = store^.logging;
-  let prepared = prepare_list_log(input: input, args: args, key: key, logging: logging);
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = wanted;
+  set client^.low = 1_i64;
+  if front {
+    set client^.low = 0_i64;
+  }
+  set client^.high = 0_i64;
+  if counted {
+    set client^.high = 1_i64;
+  }
   atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
-        let edited = pop_items(env: client, value: held, from_head: front);
+        let edited = pop_items(env: client, value: held);
       }
       None() => {
       }
@@ -492,8 +361,8 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       set slot^ = None<Entry>();
     }
     if lapsed {
-      if logging {
-        append_list_log(log: &s^.meta.log, prepared: &prepared.removal);
+      if store^.logging {
+        log_removal(log: &s^.meta.log, key: key);
       }
     }
     let done = client^.state == state_done;
@@ -501,8 +370,8 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let popped = client^.number > 0_u64;
     let recorded = band(changed, popped);
     if recorded {
-      if logging {
-        append_list_log(log: &s^.meta.log, prepared: &prepared.command);
+      if store^.logging {
+        log_command(log: &s^.meta.log, input: input, args: args);
       }
     }
   }
@@ -510,7 +379,6 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let emptied = client^.state == state_emptied;
   let answered = bor(done, emptied);
   if answered {
-    answer_list(client: client, counted: counted);
     return unit;
   }
   if client^.state == state_wrong {
@@ -525,8 +393,8 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   return unit;
 }
 
-fn range_items(env: &Client, value: &Entry, first_negative: Bool, last_negative: Bool) -> kind: u64 reads(value), writes(env) {
-  doc "Snapshots the elements of a live list from index low to index high, both inclusive and counted from the tail when negative, for an array reply, recording done; records wrong for another kind and expired for an expired entry.";
+fn range_items(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
+  doc "Writes the elements of a live list from index low to index high, both inclusive and counted from the tail when negative, as an array reply, recording done; records wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
     set env^.state = state_expired;
@@ -538,10 +406,10 @@ fn range_items(env: &Client, value: &Entry, first_negative: Bool, last_negative:
       let signed_length = cvt.wrap::<u64, i64>(length);
       let first = env^.low;
       let last = env^.high;
-      if first_negative {
+      if first < 0_i64 {
         set first = signed_length +wrap first;
       }
-      if last_negative {
+      if last < 0_i64 {
         set last = signed_length +wrap last;
       }
       if first < 0_i64 {
@@ -551,6 +419,7 @@ fn range_items(env: &Client, value: &Entry, first_negative: Bool, last_negative:
       let crossed = first > last;
       let empty = bor(past_end, crossed);
       if empty {
+        reply_array(client: env, count: 0_u64);
         set env^.state = state_done;
         return 2_u64;
       }
@@ -561,11 +430,11 @@ fn range_items(env: &Client, value: &Entry, first_negative: Bool, last_negative:
       let stop = cvt.wrap::<i64, u64>(last);
       let span = stop -wrap start;
       let count = span +wrap 1_u64;
-      list_reply_room(client: env, count: count);
+      reply_array(client: env, count: count);
       for @elements (step in 0_u64..count) {
         let index = start +wrap step;
         if index < list^.inner.len {
-          deque_visit_at::<ElementSnapshot>(values: list, index: index, env: env);
+          deque_visit_at::<ElementOut>(values: list, index: index, env: env);
         }
       }
       set env^.state = state_done;
@@ -591,7 +460,7 @@ fn range_items(env: &Client, value: &Entry, first_negative: Bool, last_negative:
 }
 
 fn run_lrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "LRANGE key start stop: answers the list's elements from start to stop, both inclusive and counted from the tail when negative, copied in the atomic statement that finds the list and formatted as a reply after it releases the entry.";
+  doc "LRANGE key start stop: answers the list's elements from start to stop, both inclusive and counted from the tail when negative, written into the reply inside the atomic statement that finds the list.";
   let first = arg(args: args, index: 2_u64);
   let last = arg(args: args, index: 3_u64);
   let start = read_integer(input: input, start: first.start, length: first.length);
@@ -607,14 +476,12 @@ fn run_lrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  let first_negative = start.value < 0_i64;
-  let last_negative = stop.value < 0_i64;
   set client^.low = start.value;
   set client^.high = stop.value;
   atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
-        let found = range_items(env: client, value: held, first_negative: first_negative, last_negative: last_negative);
+        let found = range_items(env: client, value: held);
       }
       None() => {
       }
@@ -624,8 +491,6 @@ fn run_lrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     remove_expired(store: store, key: key, now: client^.now);
   }
   if client^.state == state_done {
-    let counted = True();
-    answer_list(client: client, counted: counted);
     return unit;
   }
   if client^.state == state_wrong {

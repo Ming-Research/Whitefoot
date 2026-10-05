@@ -70,5 +70,3 @@ public fn lower(byte: u8) -> result: u8 pure doc "An upper-case ASCII letter in 
 public fn byte_before(input: &[u8], position: u64, end: u64) -> result: u8 reads(input) doc "One byte of the input at a position before end, or zero at end and past it, where the zero byte ending a C string is read.";
 
 public fn glob_match(input: &[u8], start: u64, length: u64, name: &[u8]) -> matched: Bool reads(input), reads(name) doc "Whether a name matches the glob pattern of length bytes of the input from start, as Redis's stringmatchlen matches one with nocase set: * matches any run of bytes, ? any one byte, [...] one byte of a class, a backslash makes the next byte literal, and any other byte matches itself in either case.";
-
-public fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) doc "Copies input bytes directly into an owned byte window, reading an absent position as zero; a length above 2^62 yields an empty window.";

@@ -638,8 +638,7 @@ fn client_new(capacity: u64) -> made: Client pure contract {
   let unlocked = False();
   let open = False();
   let settings = settings_empty();
-  let list_reply = box_slots_new::<Bytes>(capacity: 0_u64);
-  return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, list_reply: move list_reply, key_metadata: move key_metadata, keys: keys, random: 0_u64, id: 0_u64, name: move name, authenticated: trusted, locked: unlocked, closing: open, unix_us: 0_u64, settings: move settings);
+  return Client(bytes: move bytes, at: 0_u64, now: 0_u64, state: 0_u64, number: 0_u64, low: 0_i64, high: 0_i64, items: move items, scores: move scores, key_metadata: move key_metadata, keys: keys, random: 0_u64, id: 0_u64, name: move name, authenticated: trusted, locked: unlocked, closing: open, unix_us: 0_u64, settings: move settings);
 }
 
 fn empty_text() -> made: Bytes pure {
