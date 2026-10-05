@@ -805,9 +805,7 @@ impl<'unit> DeclarationInventory<'unit> {
         declaration: DeclarationId,
     ) -> Result<String, CheckStop> {
         self.resolved
-            .declarations()
-            .iter()
-            .find(|record| record.id() == declaration)
+            .declaration(declaration)
             .map(|record| record.spelling().to_owned())
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }

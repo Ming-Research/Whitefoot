@@ -367,9 +367,7 @@ impl<'unit> TypeContext<'unit> {
         let record = self
             .declarations
             .resolved
-            .declarations()
-            .iter()
-            .find(|candidate| candidate.id() == declaration)
+            .declaration(declaration)
             .ok_or(crate::SemanticCompilerFailure::InvalidResolution)?;
         let node = self
             .declarations

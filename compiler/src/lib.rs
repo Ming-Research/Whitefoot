@@ -73,10 +73,14 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R 
             Err(current) => used = current,
         }
     };
-    let reservation = WorkerReservation(reserved);
-    if reservation.0 == 0 {
+    if reserved == 0 {
         return items.iter().map(work).collect();
     }
+    // Each worker returns its reservation as soon as no item is left for
+    // it, so a nested call made by a slower item can use the freed share.
+    let reservations = (0..reserved)
+        .map(|_| WorkerReservation(1))
+        .collect::<Vec<_>>();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let take_items = || {
         let mut done = Vec::new();
@@ -89,11 +93,16 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R 
         }
     };
     let finished = std::thread::scope(|scope| {
-        let workers = (0..reservation.0)
-            .map(|_| {
+        let workers = reservations
+            .into_iter()
+            .map(|reservation| {
                 std::thread::Builder::new()
                     .stack_size(WORKER_STACK_BYTES)
-                    .spawn_scoped(scope, take_items)
+                    .spawn_scoped(scope, move || {
+                        let done = take_items();
+                        drop(reservation);
+                        done
+                    })
             })
             .collect::<Vec<_>>();
         // A thread the host refuses leaves its share to the others.
@@ -107,7 +116,6 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R 
         }
         finished
     });
-    drop(reservation);
     let mut slots = items.iter().map(|_| None).collect::<Vec<Option<R>>>();
     for (index, result) in finished {
         slots[index] = Some(result);

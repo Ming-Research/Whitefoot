@@ -349,9 +349,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .types
                     .declarations
                     .resolved
-                    .declarations()
-                    .iter()
-                    .find(|candidate| candidate.id() == declaration)
+                    .declaration(declaration)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 let source = self
                     .types
