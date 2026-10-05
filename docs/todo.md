@@ -1005,17 +1005,6 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
-- **The cross-map audit test counts on the scheduler.** `holds_across_maps`
-  (`compiler/src/backend/concurrent_map_test.c`) stops its audit thread
-  when the four writers finish and then requires two audits, one holding
-  keys and one holding both maps whole. On the two-CPU `completion-linux`
-  runner the audit thread can be starved for the writers' whole run: it
-  failed with 1 audit on main and 0 on a work branch, both on 2026-10-04,
-  with no change to the map. The change: keep the writers running until the
-  audit has completed both kinds of hold, so the count no longer depends on
-  how threads are scheduled while every audit still overlaps writers.
-  Reopen with the next change to that test or its next `io-hosts.yml`
-  failure.
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
@@ -2348,14 +2337,29 @@ rarely insert at the same place.
 
 ## Interpreter dispatch lowering
 
-- **Build-time toolchain probes are not rerun when the toolchain changes.**
-  `compiler/build.rs` probes the assembler for the no-capture spelling and
-  for `preserve_none`, but declares no `rerun-if` dependency on the
-  assembler, so after a clang upgrade the recorded answers stay until the
-  build script reruns for another reason. A stale `preserve_none` answer
-  after a downgrade would emit a convention the assembler refuses. Track
-  the assembler's identity (its path and version output) as a rerun input.
-  Reopen when a host's clang changes under an existing build directory.
+- **Halo's `AddRR` arm copies its `Value` operands to the stack before
+  testing their tags, for a reason not yet attributed.** In Halo's
+  interpreter (worktree of branch claude/halo-slice1, `lib/halo/vm/
+  dispatch.wf` arm `AddRR` inlining `instruction_add_rr` from
+  `lib/halo/vm/handlers.wf`), the split arm copies both 16-byte operands
+  from the register file to stack temporaries (`ldr q0/q1; stp q0, q1,
+  [sp, #0x70]`) and reads tag and payload back from the stack. Two
+  standalone witnesses of the same `match` shapes (a nested `match` on
+  `regs^.inner[b]`, and `let` bindings handed to an out-of-line slow path)
+  read the tag from the slot itself, so the cause lies in the surrounding
+  `run` (eight parameters, an inlined handler, a large live set, or the
+  `Step` value the arms build), not in the `match` lowering alone. Impact:
+  two stores and two dependent reloads on Halo's hottest arm. The change:
+  reduce `run` until the copy disappears, then fix the lowering that causes
+  it. Validate on `run.body.arm.20`'s machine code and Halo's fib timing.
+  Reopen when Halo's dispatch is next measured.
+- **An enum's tag is an `i32` whatever its variant count.** Halo's `Cell`
+  (a tag, three `u8` and one `u32` payload) has a 12-byte stride where a
+  one-byte tag would pack it into 8; an interpreter's code array is then a
+  half larger than needed, and each fetch spans more cache. The change: size
+  the tag to the variant count and order fields to pack, a layout decision
+  for compiler/payload-enum-layout. Validate with Halo's dispatch timings and
+  the wasm interpreter's `Op` stride. Reopen with that layout decision.
 
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
@@ -2379,14 +2383,6 @@ rarely insert at the same place.
   convention on arm64 (8 registers) and on the 14900K. Reopen with the
   first consumer whose loop spills several values, or a host without
   `preserve_none`.
-
-- **A `match` on a place copies the scrutinee into a frame slot.** The
-  emitter copies the matched value into a slot to read its tag while the
-  arms read their binders from the place itself. In one function the host
-  removes the copy; in a split loop it cost a store and a store-forwarded
-  load per dispatch until the slot became part-local. Reading the tag from
-  the place would remove the copy everywhere. Low priority; reopen if a
-  profile shows the copy outside split loops.
 
 - **Interpreter state is pinned only through the calling convention.** A
   split loop keeps its changing values in registers because every part
@@ -3209,17 +3205,6 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
-
-- **The local app-build cache never evicts.** Outside CI the corpus tests
-  build firn with the compiler's incremental cache under
-  `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`
-  in `compiler/tests/programs/support.rs`). Each new compiler binary adds
-  records beside the old ones, which no later build reads, and an
-  interrupted write leaves its `.partial` file, so the directory grows
-  until someone removes it. The change: drop records of other compiler
-  identities and stale partial files when the cache opens, or prune by age.
-  Validate with the directory's size staying flat across compiler rebuilds.
-  Reopen when the cache directory's growth is noticed on a developer host.
 
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on

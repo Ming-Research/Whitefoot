@@ -114,7 +114,10 @@ fn an_empty_standard_input_reaches_its_end_without_publishing() {
 
 /// [PRE-2] a read of standard input with a deadline ends once the clock has
 /// reached it while the writer is still silent, with nothing read: the byte
-/// the writer sends afterwards is what the next read receives. The shipped
+/// the writer sends afterwards is what the next read receives. The byte is
+/// sent 400 ms after the program reports, on standard output, that it is
+/// about to read, so a host slow to start the program cannot deliver it
+/// before the read. The shipped
 /// route cancels the ring's read; without a ring a helper holds the read and
 /// is interrupted. The program reports the first check that failed.
 #[test]
@@ -127,13 +130,18 @@ fn a_deadline_ends_a_read_of_a_silent_writer_on_both_routes() {
         &[true, false]
     };
     for &native_ring in routes {
-        let output =
-            program.run_with_late_input(b"z", std::time::Duration::from_millis(400), native_ring);
+        let output = program.run_with_input_after_first_output(
+            b"z",
+            std::time::Duration::from_millis(400),
+            native_ring,
+            &[],
+        );
         assert_eq!(
             output.status.code(),
             Some(0),
             "native ring: {native_ring}: {output:?}"
         );
+        assert_eq!(output.stdout, b".", "native ring: {native_ring}");
         assert!(
             output.stderr.is_empty(),
             "native ring: {native_ring}: {output:?}"
@@ -188,12 +196,13 @@ fn a_read_with_a_distant_deadline_completes_when_its_bytes_arrive() {
 fn a_deadline_ends_a_read_under_a_pool_pinned_at_zero() {
     let llvm = compile_program("stdin_deadline.wf");
     let program = build_program(&llvm);
-    let output = program.run_with_late_input_and_settings(
+    let output = program.run_with_input_after_first_output(
         b"z",
         std::time::Duration::from_millis(400),
         false,
         &[("WF_IO_HELPERS", "0")],
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(output.stdout, b".");
     assert!(output.stderr.is_empty(), "{output:?}");
 }
