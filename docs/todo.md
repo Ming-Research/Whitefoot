@@ -623,6 +623,43 @@ rarely insert at the same place.
   Reopen when a profile of a real program attributes a substantial share to
   repeated closures of unchanged states.
 
+- **Every relational measure term is in every closure universe.** With the
+  closure matrices indexed by active terms
+  ([the active-term measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#active-term-matrices)),
+  `closure_universe` in `compiler/src/semantic/entailment/state.rs` still
+  admits every term of `TermTable::relational_terms`, the measures whose
+  implicit facts relate them to another non-Z term, and `measure_term` in
+  `flow/prover.rs` interns the length, capacity and head measures of each
+  measured place together, so a function with many measured places has a
+  universe that grows with that count, and with it every closure, join and
+  materialization. Impact: superlinear checking returns for such a function;
+  the interpreters measured have a handful of measured places. The change:
+  admit a relational group (a place's measures and a length's symbolic
+  constant) only while one member holds a stored relation, and let the closed
+  view answer a pair inside a dormant group from the group's implicit edges,
+  which the implicit-range snapshot would have to carry. Validate with the
+  verification switch, a generated-flow case with dormant measure groups and
+  a synthetic program with one measured place per arm. Reopen when a profile
+  of a real program attributes closure time to relational rows without facts.
+
+- **An ordinary relation that does not improve the full selection is not
+  materialized before a kill.** `materialize_closure_before_kill` in
+  `compiler/src/semantic/entailment/state.rs` returns early when the full
+  closure record is closed and no active term is fresh; an ordinary fact
+  weaker than the call-dependent selection of its pair (`p - x <= -1` beside
+  a call's `p - x <= -2`) leaves that record closed while the ordinary
+  fallbacks it improves (`Z - x` through `p`) are not stored, so a kill of
+  its support removes them from the ordinary layer, and a later removal of
+  the call's candidates leaves the pair at its type range. Found by the
+  generated-flow comparison at 3000 cases (case 1379) with the reference's
+  ordinary layer; the gate runs 1000 cases. Impact: a weaker ordinary
+  fallback after an S12 holder kill in that shape, never a wrong acceptance.
+  The change: skip the materialization only when the ordinary record is also
+  closed, or store the improved ordinary fallbacks alone. Validate with the
+  generated flows at 3000 cases and the paired comparison on wfgrep and
+  fixed_run_library. Reopen when a program's postcondition reasoning is
+  refused after a write that its ordinary facts should survive.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**
@@ -2413,8 +2450,8 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 8,367 lines, including a
-  1,886-line inline test module, and the tests in
+  `compiler/src/semantic/entailment/state.rs` has 8,577 lines, including a
+  2,001-line inline test module, and the tests in
   `compiler/src/semantic/tests/entailment.rs` have 11,049 lines and 158
   tests. The flow itself is divided into its sub-contexts and component
   modules (`design/compiler/engine-components.md`), none over 3,200 lines.

@@ -3396,7 +3396,10 @@ impl FactState {
                 ledger.depends_on_postcondition_call(proof)
             });
         self.postcondition_candidates = false;
-        // Every remaining selection is now its ordinary selection.
+        // Every remaining selection is now its ordinary selection: each pair
+        // whose selection depended on a call carries the ordinary fallback
+        // its materialization or join stored, which was a closed value of the
+        // ordinary layer, so the ordinary layer's record describes the state.
         self.closure = self.ordinary_closure.clone();
         changed
     }
@@ -6090,31 +6093,44 @@ pub(crate) fn materialize_closure_at(
         // Only a relation whose selected proof depends on a postcondition call
         // needs an ordinary candidate. Any other selection is derivable
         // without such calls, so it already equals the ordinary closure, which
-        // has fewer facts and cannot be stronger.
-        for (left, right, bound, parent) in ordinary_closed.matrix.cells() {
-            let (_, selected) = materialized
-                .bounds
-                .get(left, right)
-                .expect("the ordinary closure is no stronger than the canonical one");
+        // has fewer facts and cannot be stronger. Every cell of the canonical
+        // closure is visited, read through the ordinary view: a term active
+        // only through a call-dependent relation has no row in the ordinary
+        // closure, which answers its pairs through Z, and the fallback for
+        // such a pair is that answer.
+        let canonical: Vec<(TermId, TermId, DerivationId)> = materialized
+            .bounds
+            .cells()
+            .map(|(left, right, _, selected)| (left, right, selected))
+            .collect();
+        for (left, right, selected) in canonical {
             if !ledger.depends_on_postcondition_call(selected) {
                 continue;
             }
+            let Some((bound, parent)) = ordinary_closed.matrix.lookup_proof(left, right, ledger)
+            else {
+                continue;
+            };
             let proof = materialized_bound_proof(ledger, left, right, bound, event, parent);
             materialized.add_bound(left, right, bound, proof, ledger);
         }
-        let mut keys = ordinary_closed
-            .distinct
+        let mut keys = materialized
+            .distinct_proofs
             .iter()
-            .copied()
-            .filter(|pair| ledger.depends_on_postcondition_call(materialized.distinct_proofs[pair]))
+            .filter(|(_, proof)| ledger.depends_on_postcondition_call(**proof))
+            .map(|(pair, _)| *pair)
+            .filter(|pair| ordinary_closed.derives_distinct_pair(*pair))
             .collect::<Vec<_>>();
         keys.sort_unstable();
         for (left, right) in keys {
+            let parent = ordinary_closed
+                .distinct_proof((left, right), ledger)
+                .expect("the ordinary closure holds the disequality it derives");
             let proof = ledger.intern(DerivationNode::MaterializedDistinct {
                 left,
                 right,
                 event,
-                parent: ordinary_closed.distinct_proofs[&(left, right)],
+                parent,
             });
             materialized.add_distinct_candidate((left, right), proof, ledger);
         }
@@ -6169,7 +6185,11 @@ pub(crate) fn join_at(
         joined.ordinary_closure = ClosureRecord::Unknown;
         return joined;
     }
-    let ordinary = join_at_once(&ordinary_states, terms, goals, ledger, event, &[]);
+    // The ordinary join stores a row for every term of the full join as well,
+    // so a pair the full join selected through a call-dependent proof has an
+    // ordinary fallback even where the ordinary inputs answer it through Z.
+    let full_slots = joined.bounds.slots().to_vec();
+    let ordinary = join_at_once(&ordinary_states, terms, goals, ledger, event, &full_slots);
     joined.ordinary_closure = if ordinary.all_derivable {
         ClosureRecord::Unknown
     } else {
@@ -7027,6 +7047,68 @@ pub(crate) mod tests {
         }));
         assert!(!joined.distinct.contains(&(b, c)));
         assert!(!joined.bounds.is_active(c));
+    }
+
+    /// A term active only through a call-dependent disequality has no row in
+    /// the ordinary closure, which answers its pairs through Z. The
+    /// materialization must still give every call-dependent cell of such a
+    /// term its ordinary fallback, so that removing the call-dependent
+    /// candidates leaves the bound the ordinary layer derives.
+    #[test]
+    fn a_materialized_ordinary_layer_keeps_a_bound_on_a_distinct_only_term() {
+        let mut terms = TermTable::new();
+        let place = |binding, ty| {
+            TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                ty,
+            )
+        };
+        let t = terms.intern(place(0, IntegerType::U8));
+        let y = terms.intern(place(1, IntegerType::U8));
+        let x = terms.intern(place(2, IntegerType::I32));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: x,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let stronger = Relation::Bound {
+            left: ZERO,
+            right: x,
+            bound: -400,
+        };
+        let call = postcondition_call_proof(&mut ledger, stronger.clone());
+        state.establish_from_proof(&stronger, call, &ledger);
+        let distinct = Relation::Distinct {
+            left: t,
+            right: y,
+            difference: 0,
+        };
+        let call = postcondition_call_proof(&mut ledger, distinct.clone());
+        state.establish_from_proof(&distinct, call, &ledger);
+        let mut direct = state.clone();
+        direct.retain_non_postcondition_candidates(&ledger);
+        let direct = close(&direct, &terms, &goals, &mut ledger);
+        assert_eq!(direct.tight_bound(t, x), Some(-45));
+        let snapshot = ledger.event(FlowEventKind::Snapshot, None);
+        let materialized = materialize_closure_at(&state, &terms, &goals, &mut ledger, snapshot);
+        assert_eq!(
+            close(&materialized, &terms, &goals, &mut ledger).tight_bound(t, x),
+            Some(-145)
+        );
+        let mut ordinary = materialized.clone();
+        ordinary.retain_non_postcondition_candidates(&ledger);
+        let closed = close(&ordinary, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(t, x), Some(-45));
+        assert_eq!(closed.tight_bound(x, t), direct.tight_bound(x, t));
+        assert!(!closed.derives(&distinct));
     }
 
     #[test]
@@ -8278,7 +8360,7 @@ pub(crate) mod tests {
         VERIFIED_CLOSURES.with(|count| count.set(0));
         ROUTE_COUNTS.with(|counts| counts.set([0; CLOSURE_ROUTES.len()]));
         let mut actions = [0_usize; 13];
-        for case in 0..400_u64 {
+        for case in 0..1000_u64 {
             let mut seed = case.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
             let mut terms = TermTable::new();
             let mut binding = 0;
@@ -8305,6 +8387,24 @@ pub(crate) mod tests {
             ));
             terms.set_measure_bound(measure, MeasureBound::Constant(7));
             places.push(measure);
+            // A capacity sibling, whose standing ordering relates two non-Z
+            // terms, and a length equated to a symbolic constant: the
+            // relational terms every closure universe must carry.
+            let capacity = terms.intern(TermKind::Measure(
+                CheckedMeasure::Capacity,
+                super::super::term::ResolvedPlace::binding(BindingId(100)),
+            ));
+            places.push(capacity);
+            let parameter = terms.intern(TermKind::ConstParameter(
+                DeclarationId::from_index(0).expect("zero declaration identity exists"),
+                IntegerType::U8,
+            ));
+            let alias = terms.intern(TermKind::Measure(
+                CheckedMeasure::Length,
+                super::super::term::ResolvedPlace::binding(BindingId(102)),
+            ));
+            terms.set_measure_bound(alias, MeasureBound::Equal(parameter));
+            places.push(alias);
             let mut goals = GoalTable::default();
             let goal = goals.intern(
                 GoalExpression::Datum(super::super::super::goal::GoalDatum::Place {
@@ -8341,20 +8441,41 @@ pub(crate) mod tests {
                     let state = &mut states[index];
                     let ledger = &mut ledgers[index];
                     let event = events[index];
+                    // The walk promotes a predecessor's contradiction before
+                    // every kill and join (`promote_flow_contradiction`), so
+                    // a predecessor contradictory only through call-dependent
+                    // facts is neutral in both layers of the join.
+                    if matches!(action, 6 | 9) {
+                        let promote = |state: &mut FactState, ledger: &mut DerivationLedger| {
+                            let closed = close(state, &terms, &goals, ledger);
+                            if closed.contradictory() {
+                                state.promote_to_contradiction(closed.contradiction_proof());
+                            }
+                        };
+                        promote(state, ledger);
+                        if let Some(copy) = &mut earlier {
+                            promote(&mut copy[index], ledger);
+                        }
+                    }
                     match action {
                         0..=2 if left != right => {
                             state.establish(&Relation::Bound { left, right, bound }, ledger, event);
                         }
                         3 if left != right => {
-                            state.establish(
-                                &Relation::Distinct {
-                                    left,
-                                    right,
-                                    difference: 0,
-                                },
-                                ledger,
-                                event,
-                            );
+                            let relation = Relation::Distinct {
+                                left,
+                                right,
+                                difference: 0,
+                            };
+                            if bound < 0 {
+                                state.establish(&relation, ledger, event);
+                            } else {
+                                // A call-dependent disequality: its terms
+                                // are active only until a candidate removal,
+                                // which the ordinary layer must survive.
+                                let call = postcondition_call_proof(ledger, relation.clone());
+                                state.establish_from_proof(&relation, call, ledger);
+                            }
                         }
                         4 | 5 if left != right => {
                             let relation = Relation::Bound { left, right, bound };
@@ -8414,7 +8535,21 @@ pub(crate) mod tests {
                         // comparison of its clone also checks memo reuse.
                         let _ = close(state, &terms, &goals, ledger);
                     }
-                    let _ = contradiction_without_proofs(state, &terms, &goals);
+                    // The proof-free probe answers the contradiction question
+                    // the closure over every registered term answers.
+                    let probe = contradiction_without_proofs(state, &terms, &goals);
+                    let mut every = state.clone();
+                    every.closure = ClosureRecord::Unknown;
+                    let mut every_ledger = ledger.clone();
+                    let complete = close_with_row_pruning::<true, false>(
+                        &every,
+                        &terms,
+                        &goals,
+                        &mut every_ledger,
+                        None,
+                        UniverseChoice::Every,
+                    );
+                    assert_eq!(probe, complete.all_derivable, "case {case}: {trace:?}");
                 }
                 if action == 9 {
                     earlier = if earlier.is_none() {

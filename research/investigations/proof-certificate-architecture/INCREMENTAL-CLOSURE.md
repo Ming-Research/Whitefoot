@@ -381,13 +381,37 @@ the measured production mechanisms.
 ### Question
 
 A synthetic interpreter, one function whose `match` has N arms, each arm
-doing a few checked stack operations and a guaranteed tail call
-(`research/experiments/match-dispatch/wasm/gen.py` in its stage-3 form writes
-the real one; the synthetic generator is kept with this record's
-measurements), checked in 0.10, 0.36, 3.0 and 27.3 s for N = 10, 20, 40, 80
-on an idle M1 Pro, roughly N³, and the real 178-arm interpreter did not
-finish checking in minutes. What scales with the whole function rather than
-with the facts on the path being checked?
+doing a few checked stack operations and a guaranteed tail call, checked in
+0.10, 0.36, 3.0 and 27.3 s for N = 10, 20, 40, 80 on an idle M1 Pro, roughly
+N³, and a real 178-arm interpreter (the stage-3 wasm interpreter of the
+match-dispatch investigation, not on this branch) did not finish checking in
+minutes. What scales with the whole function rather than with the facts on
+the path being checked? The generator is not kept as a file; it is this
+script, run as `python3 synth.py N`:
+
+```python
+import sys
+n = int(sys.argv[1])
+o = ["alias ExitStatus = std::process::ExitStatus;",
+     "alias exit_status = std::process::exit_status;", "", "enum Op {"]
+o += [f"  A{i}(x: u16);" for i in range(n)]
+o += ["}", "",
+      "fn run(code: &Box<Slots<Op>>, stack: &Box<Array<u64>>, pc: u64, sp: u64)"
+      " -> r: u64 reads(code), writes(stack) contract {",
+      "  requires pc < code^.inner.len;", "  requires sp <= stack^.inner.len;",
+      "} {", "  let n = code^.inner.len;", "  match code^.inner[pc] {"]
+for i in range(n):
+    o += [f"    A{i}(x: xv) => {{", "      if sp >= 2_u64 {",
+          "        let s1 = sp - 1_u64;", "        let s2 = sp - 2_u64;",
+          "        let a = stack^.inner[s2];", "        let b = stack^.inner[s1];",
+          "        let c = a +wrap b;", "        set stack^.inner[s2] = c;",
+          "        let next = pc + 1_u64;", "        if next < n {",
+          "          return musttail run(code: code, stack: stack, pc: next, sp: s1);",
+          "        }", "      }", "      return 0_u64;", "    }"]
+o += ["  }", "}", "", "fn main() -> status: ExitStatus pure {",
+      "  return exit_status(code: 0_u8);", "}", ""]
+open(f"synth{n}.wf", "w").write("\n".join(o))
+```
 
 ### Measurement
 
@@ -497,6 +521,51 @@ on `tests/programs/wfgrep.wf` (0.74) and 1,568 against 1,612 ms on
 byte-identical in every compile of every source. A first build of the change
 that found a term's row by binary search had measured 1.10 and 1.21 on the
 same two programs; the term-indexed slot tables removed that cost.
+
+Review follow-up: the generated flows now also establish call-dependent
+disequalities, include a capacity sibling and a length equated to a symbolic
+constant among their terms, promote a predecessor's contradiction before
+every kill and join as the walk does, check at every step that the
+proof-free contradiction probe agrees with the closure over every registered
+term, and run 1000 cases. Two gaps of the active-term matrices surfaced. A
+term active only through a call-dependent disequality has no row in the
+ordinary closure, so the materialization's fallback loop, which visited the
+ordinary closure's cells, gave such a term's call-dependent cells no
+fallback; it now visits every call-dependent cell of the canonical closure
+and reads the ordinary closure through its view, and the ordinary join
+stores a row for every term of the full join. And a predecessor
+contradictory only through call-dependent facts is neutral in the full join
+while its ordinary layer contributes to the ordinary join, so the ordinary
+join can hold rows the full join lacks; the full join is then retaken over
+those rows, as the selection above records. A third finding predates the
+change: materialization before a kill is skipped when the full closure
+record is closed, and an ordinary relation that does not improve the full
+selection leaves that record closed while the ordinary fallbacks it improves
+are not yet stored, so the kill removes its support before they exist
+(generated case 1379 of 3000). Materializing on the ordinary record as well
+cost nothing measurable, but it changes which ordinary fallbacks a program
+holds, which is a change of the ordinary layer's completeness rather than a
+restoration of it; it is recorded in `docs/todo.md`. Taking the ordinary
+record before marking the cells a candidate removal weakens, which was tried
+as a fix for the second gap, doubled the wfgrep check by repairing those
+cells at every removal and was not kept.
+
+Changed observation: the generated-flow comparison `assert_flow_states_agree`
+compared the two states' stored cell lists and stored disequality sets; it
+now compares every registered pair's bound and disequality query, since the
+optimized and the reference state store different rows for the same closure.
+The oracle's stored-disequality comparison is kept on the active universe.
+
+Limit: the universe of every closure contains every relational term of the
+function whether or not it carries a stored fact, and the measure walk interns
+the length, capacity and head measures of each measured place together, so a
+function with many measured places has a universe, and so closure, join and
+materialization costs, that grow with that count again. The synthetic and the
+real interpreters here have a handful of measured places; a program with
+hundreds would show the growth. The remedy is to admit a relational group to
+the universe only while one of its members holds a stored fact and to answer
+a pair inside a dormant group from its implicit edges, which needs the view to
+know those edges; it is recorded in `docs/todo.md`.
 
 Witness policy: a pair the view answers through Z no longer receives a
 `MaterializedBound`, `JoinBound`, `MaterializedDistinct` or `JoinDistinct`
