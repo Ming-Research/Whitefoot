@@ -856,7 +856,7 @@ unlock on each single-key path, with no additional hold bookkeeping between
 them and no added odd-alignment flag slot. This is an IR check, not a throughput
 measurement. The comparison uses the amendment A compiler and firn at
 `520759233bbdfd3556890c128693e30c3d0c7e48`, and amendment S at
-`d7fcb9efb2c99457b8c19dfa7fb44699e7f6375b`, on macOS arm64 with Apple clang 21.0.0 (clang-2100.3.34.2), target
+`9d873c27c12b4abf4c147572b18c74e30fd11c16`, on macOS arm64 with Apple clang 21.0.0 (clang-2100.3.34.2), target
 arm64-apple-darwin25.6.0.
 For each revision, build the gate compiler and emit firn with:
 
@@ -893,6 +893,13 @@ The frame-alignment explanation is supported by `plan_target_frame` in
 padding. Removing the atomic i1 slots lets run_pop take that path, whereas
 run_get's existing byte slot still prevents it. The remaining GET copy is
 recorded in `docs/todo.md`; this comparison does not claim it was removed.
+
+Final IR emission, optimization and executable construction at this revision
+each returned 0. Both functions' raw IR and optimized resume bodies were
+byte-identical to the earlier amendment S observation at
+`d7fcb9efb2c99457b8c19dfa7fb44699e7f6375b`, after the derived-root and type-order
+repairs; the counts and allocation inspection above were repeated on the final
+output.
 
 Found while checking the ports: the native guard harness retained a map handle
 in a local used by its later cleanup, and program fixtures retained constructor
