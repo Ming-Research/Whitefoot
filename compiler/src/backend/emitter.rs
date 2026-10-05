@@ -811,7 +811,7 @@ fn emit_global_constants(output: &mut Module, program: &IrProgram) -> Result<(),
     let mut none_types = BTreeSet::new();
     for nominal in program.nominals() {
         if let IrNominalKind::Shared {
-            shape: IrShared::Table {
+            shape: IrShared::Map {
                 entry: IrType::Nominal(option),
             },
             ..
@@ -2476,15 +2476,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
             }
             IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
-            IrOperation::KeyedTableNew { nominal, capacity } => {
+            IrOperation::ConcurrentHashMapNew { nominal, capacity } => {
                 self.emit_keyed_table_new(result, ty, *nominal, *capacity)
             }
-            IrOperation::KeyedTablePrepareShared { table } => {
-                let arguments = format!("ptr {}", self.value_name(*table));
-                self.emit_unit_call(result, "wf__table_prepare_shared", &arguments)
+            IrOperation::AtomicGroupTarget {
+                record,
+                index,
+                object,
+                hold,
+            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold),
+            IrOperation::AtomicGroupTake { record } => {
+                self.emit_atomic_group_call(result, *record, None, true)
             }
-            IrOperation::KeyedTableCount { table } => self.emit_keyed_table_count(result, *table),
-            IrOperation::KeyedTableSwap { first, second } => {
+            IrOperation::AtomicGroupRelease { record, nominal } => {
+                self.emit_atomic_group_call(result, *record, *nominal, false)
+            }
+            IrOperation::TableHoldRead { record } => {
+                self.emit_table_hold_call(result, *record, "wf__table_hold_read")
+            }
+            IrOperation::ConcurrentHashMapCount { table } => {
+                self.emit_keyed_table_count(result, *table)
+            }
+            IrOperation::ConcurrentHashMapSwap { first, second } => {
                 self.emit_keyed_table_swap(result, *first, *second)
             }
             IrOperation::TableLockEntry {
@@ -2492,7 +2505,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 table,
                 key,
                 read,
-            } => self.emit_table_lock_entry(result, *record, *table, *key, *read),
+                stable_absence,
+            } => self.emit_table_lock_entry(result, *record, *table, *key, *read, *stable_absence),
             IrOperation::TableEntrySlot { nominal, record } => {
                 self.emit_table_entry_slot(result, *nominal, *record)
             }
@@ -2535,10 +2549,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::TableHoldRelease { nominal, record } => {
                 self.emit_table_hold_release(result, *nominal, *record)
             }
-            IrOperation::KeyedEntriesRecord { record, .. } => {
+            IrOperation::EntriesRecord { record, .. } => {
                 self.emit_keyed_entries_record(result, *record)
             }
-            IrOperation::KeyedEntriesFill {
+            IrOperation::EntriesFill {
                 entries,
                 hold,
                 position,
@@ -3065,7 +3079,7 @@ pub(super) fn llvm_type_with_references(
         // statement's record of its hold, the set's first position in it and
         // the set's count [SHARE-2].
         IrType::KeySet => Ok("{ i64, ptr }".to_owned()),
-        IrType::KeyedEntries { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
+        IrType::Entries { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // compiler/storage-representation: a runtime-capacity `Array<T>` is
         // one block `[len | elements]`, header first, exactly as a boxed
         // window block is. An `Array`'s `len` equals its `cap` [WIN-1], so

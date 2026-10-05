@@ -76,16 +76,14 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
                 collect_statements(body, bindings);
             }
             CheckedStatement::Atomic {
-                target,
-                entries,
+                targets,
                 guard,
                 body,
                 ..
             } => {
-                collect_expression(target, bindings);
-                for key in entries
+                for key in targets
                     .iter()
-                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                    .flat_map(crate::semantic::CheckedTarget::expressions)
                 {
                     collect_expression(key, bindings);
                 }
@@ -331,16 +329,12 @@ impl IrBuilder<'_> {
         Ok(address)
     }
 
-    pub(super) fn borrow_may_write(
-        &self,
-        writable: bool,
-        sources: &[BindingId],
-        places: &[CheckedResolvedPlace],
-    ) -> bool {
+    pub(super) fn borrow_may_write(&self, writable: bool, places: &[CheckedResolvedPlace]) -> bool {
         writable
-            && sources
-                .iter()
-                .all(|source| !self.readonly_atomic_sources.contains(source))
+            && places.iter().all(|place| match place.root {
+                CheckedPlaceRoot::Binding(root) => !self.readonly_atomic_roots.contains(&root),
+                CheckedPlaceRoot::Constant(_) => true,
+            })
             && self.capture_write_contexts.iter().all(|context| {
                 places.iter().all(|place| {
                     let captured = match place.root {
@@ -371,11 +365,10 @@ impl IrBuilder<'_> {
             CheckedExpression::BorrowAddressed {
                 root,
                 writable,
-                atomic_sources,
                 write_places,
                 ..
             } => {
-                let write = self.borrow_may_write(*writable, atomic_sources, write_places);
+                let write = self.borrow_may_write(*writable, write_places);
                 self.lower_place_address_access(root, write)?
             }
             CheckedExpression::BorrowRangeIndex { place, .. } => self.lower_range_address(
@@ -528,8 +521,8 @@ impl IrBuilder<'_> {
                         let ty = lower_type(self.erasure, subscript.element_type)?;
                         let referent =
                             IrAddressed::of(ty).ok_or(LoweringFailure::InvalidCheckedProgram)?;
-                        if let IrType::KeyedEntries { element } = ty {
-                            let record = self.record(IrRecordKind::KeyedEntries)?;
+                        if let IrType::Entries { element } = ty {
+                            let record = self.record(IrRecordKind::Entries)?;
                             let read_record = if write {
                                 None
                             } else {
@@ -571,7 +564,7 @@ impl IrBuilder<'_> {
                             offset,
                             target_domain: subscript.target_domain.into(),
                         },
-                        IrType::KeyedEntries { .. } => IrPlaceStep::KeyedEntriesElement { offset },
+                        IrType::Entries { .. } => IrPlaceStep::EntriesElement { offset },
                         _ => return Err(LoweringFailure::InvalidCheckedProgram),
                     };
                     (

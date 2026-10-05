@@ -24,9 +24,10 @@ use crate::{IrRecord, IrRecordKind, IrShared};
 /// The frame storage of one record, by its kind.
 fn record_storage(kind: IrRecordKind) -> String {
     match kind {
+        IrRecordKind::AtomicGroup { count } => format!("[{count} x {{ ptr, ptr }}]"),
         IrRecordKind::TableEntry => format!("[{} x i8]", crate::backend::TABLE_ENTRY_SIZE),
         IrRecordKind::TableHold => format!("[{} x i8]", crate::backend::TABLE_HOLD_SIZE),
-        IrRecordKind::KeyedEntries => "{ ptr, i64, i64 }".to_owned(),
+        IrRecordKind::Entries => "{ ptr, i64, i64 }".to_owned(),
         IrRecordKind::Watch => format!("[{} x i8]", crate::backend::WATCH_SIZE),
     }
 }
@@ -76,12 +77,16 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
             | IrOperation::TableHoldBegin { record, .. }
             | IrOperation::TableHoldKey { record, .. }
             | IrOperation::TableHoldKeys { record, .. }
+            | IrOperation::AtomicGroupTarget { record, .. }
+            | IrOperation::AtomicGroupTake { record }
+            | IrOperation::AtomicGroupRelease { record, .. }
+            | IrOperation::TableHoldRead { record }
             | IrOperation::TableHoldWhole { record }
             | IrOperation::TableHoldTake { record }
             | IrOperation::TableHoldSlot { record, .. }
             | IrOperation::TableHoldRelease { record, .. }
             | IrOperation::TableHeldEntries { record, .. }
-            | IrOperation::KeyedEntriesRecord { record, .. }
+            | IrOperation::EntriesRecord { record, .. }
             | IrOperation::WatchBegin { record }
             | IrOperation::WatchObject { record, .. }
             | IrOperation::WatchTable { record, .. }
@@ -118,6 +123,49 @@ pub(super) fn record_prelude(function: &IrFunction) -> String {
 }
 
 impl FunctionEmitter<'_, '_> {
+    pub(super) fn emit_atomic_group_target(
+        &mut self,
+        result: IrValueId,
+        record: IrRecord,
+        index: u32,
+        object: IrValueId,
+        hold: Option<IrRecord>,
+    ) -> Result<(), BackendFailure> {
+        let IrRecordKind::AtomicGroup { count } = record.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        if index >= count {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let bare = self.bare(result);
+        let storage = record_storage(record.kind());
+        writeln!(self.output,"  %{bare}.object = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 0\n  store ptr {}, ptr %{bare}.object, align 8\n  %{bare}.hold = getelementptr {storage}, ptr {}, i64 0, i32 {index}, i32 1\n  store ptr {}, ptr %{bare}.hold, align 8",record_name(record),self.value_name(object),record_name(record),hold.map(record_name).unwrap_or_else(||"null".to_owned())).map_err(|_|BackendFailure::TextEmission)?;
+        self.emit_constant(result, IrType::Unit, IrConstant::Unit)
+    }
+    pub(super) fn emit_atomic_group_call(
+        &mut self,
+        result: IrValueId,
+        record: IrRecord,
+        nominal: Option<IrNominalId>,
+        take: bool,
+    ) -> Result<(), BackendFailure> {
+        let IrRecordKind::AtomicGroup { count } = record.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        if let Some(nominal) = nominal {
+            self.checked_entry(nominal)?;
+        }
+        let name = if take {
+            "wf__atomic_group_take"
+        } else {
+            "wf__atomic_group_release"
+        };
+        self.emit_unit_call(
+            result,
+            name,
+            &format!("ptr {}, i64 {count}", record_name(record)),
+        )
+    }
     /// The state type of a shared-object nominal.
     fn shared_state(&self, nominal: IrNominalId) -> Result<IrType, BackendFailure> {
         match self.nominal(nominal)?.kind() {
@@ -134,7 +182,7 @@ impl FunctionEmitter<'_, '_> {
     fn table_entry(&self, nominal: IrNominalId) -> Result<IrType, BackendFailure> {
         match self.nominal(nominal)?.kind() {
             IrNominalKind::Shared {
-                shape: IrShared::Table { entry },
+                shape: IrShared::Map { entry },
                 ..
             } => Ok(*entry),
             _ => Err(BackendFailure::InvalidIr),
@@ -149,7 +197,7 @@ impl FunctionEmitter<'_, '_> {
         Ok(matches!(
             self.nominal(nominal)?.kind(),
             IrNominalKind::Shared {
-                shape: IrShared::Table { .. },
+                shape: IrShared::Map { .. },
                 ..
             }
         ))
@@ -223,12 +271,15 @@ impl FunctionEmitter<'_, '_> {
         if ty != IrType::Nominal(nominal) {
             return Err(BackendFailure::InvalidIr);
         }
-        let entry = self.checked_entry(nominal)?;
+        let IrType::Nominal(map) = self.shared_state(nominal)? else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let entry = self.checked_entry(map)?;
         let entry_type = self.output.type_name(self.program, entry)?;
-        self.names(&["wf__keyed_table_new"]);
+        self.names(&["wf__shared_map_new"]);
         writeln!(
             self.output,
-            "  {} = call ptr @wf__keyed_table_new(i64 ptrtoint (ptr getelementptr ({entry_type}, ptr null, i64 1) to i64), i64 ptrtoint (ptr getelementptr ({{ i8, {entry_type} }}, ptr null, i64 0, i32 1) to i64), i64 {})",
+            "  {} = call ptr @wf__shared_map_new(i64 ptrtoint (ptr getelementptr ({entry_type}, ptr null, i64 1) to i64), i64 ptrtoint (ptr getelementptr ({{ i8, {entry_type} }}, ptr null, i64 0, i32 1) to i64), i64 {})",
             self.value_name(result),
             self.value_name(capacity)
         )
@@ -324,6 +375,7 @@ impl FunctionEmitter<'_, '_> {
         table: IrValueId,
         key: IrValueId,
         read: bool,
+        stable_absence: bool,
     ) -> Result<(), BackendFailure> {
         if !self.names_table(table)? || record.kind() != IrRecordKind::TableEntry {
             return Err(BackendFailure::InvalidIr);
@@ -335,7 +387,7 @@ impl FunctionEmitter<'_, '_> {
             self.output,
             "  %{bare}.slot = call ptr @wf__table_lock_entry(ptr {table}, ptr %{bare}.key, i64 %{bare}.length, i32 {read}, ptr {record})\n  store ptr %{bare}.slot, ptr {word}",
             table = self.value_name(table),
-            read = u32::from(read),
+            read = if read {1 + 2 * u32::from(stable_absence)} else {0},
             record = record_name(record),
             word = record_slot_name(record),
         )
@@ -511,7 +563,7 @@ impl FunctionEmitter<'_, '_> {
         result: IrValueId,
         record: IrRecord,
     ) -> Result<(), BackendFailure> {
-        if record.kind() != IrRecordKind::KeyedEntries {
+        if record.kind() != IrRecordKind::Entries {
             return Err(BackendFailure::InvalidIr);
         }
         writeln!(
@@ -535,7 +587,7 @@ impl FunctionEmitter<'_, '_> {
     ) -> Result<(), BackendFailure> {
         if !matches!(
             self.value_type(entries),
-            Some(IrType::Address(IrAddressed::KeyedEntries { .. }))
+            Some(IrType::Address(IrAddressed::Entries { .. }))
         ) || self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet))
             || hold.kind() != IrRecordKind::TableHold
         {

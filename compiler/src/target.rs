@@ -598,7 +598,7 @@ fn holds_union_enum(
         | IrType::Range { .. }
         | IrType::RuntimeBoxPayload { .. }
         | IrType::KeySet
-        | IrType::KeyedEntries { .. }
+        | IrType::Entries { .. }
         | IrType::Address(_) => Ok(false),
     }
 }
@@ -694,7 +694,7 @@ impl<'types> ReturnLeaves<'types> {
             // `{ i64, ptr }`, and the `{ ptr, i64, i64 }` record an entry
             // binding names, which is only ever reached by its address.
             IrType::KeySet => self.integer(copies, 2),
-            IrType::KeyedEntries { .. } => self.integer(copies, 3),
+            IrType::Entries { .. } => self.integer(copies, 3),
             IrType::Window {
                 shape,
                 element,
@@ -1137,15 +1137,25 @@ fn validate_target_obligation(
         }
         // [SHARE-1] a table keeps each entry's `Option<V>` in a slot of a
         // node the runtime carves, aligned to at most 16 bytes.
-        IrOperation::KeyedTableNew { nominal, .. } => {
+        IrOperation::ConcurrentHashMapNew { nominal, .. } => {
             if result_type != IrType::Nominal(*nominal) {
                 return Err(TargetLayoutFailure::InvalidIr);
             }
             let IrNominalKind::Shared {
-                shape: IrShared::Table { entry },
-                ..
+                state: IrType::Nominal(map),
+                shape: IrShared::Object,
             } = program
                 .nominal(*nominal)
+                .ok_or(TargetLayoutFailure::InvalidIr)?
+                .kind()
+            else {
+                return Err(TargetLayoutFailure::InvalidIr);
+            };
+            let IrNominalKind::Shared {
+                shape: IrShared::Map { entry },
+                ..
+            } = program
+                .nominal(*map)
                 .ok_or(TargetLayoutFailure::InvalidIr)?
                 .kind()
             else {
@@ -1397,7 +1407,7 @@ impl<'types> LayoutComputer<'types> {
             // [SHARE-2] the statement's record of the entries an entry binding
             // over a key set names: its hold, the set's first position and
             // its count.
-            IrType::KeyedEntries { element } => {
+            IrType::Entries { element } => {
                 self.element(element)?;
                 Ok(Layout { size: 24, align: 8 })
             }

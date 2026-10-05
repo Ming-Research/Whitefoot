@@ -71,7 +71,7 @@ pub(super) fn base_elements(
             CheckedNominalKind::Box { referent, .. } => pending.push(*referent),
             CheckedNominalKind::Shared { state, shape } => {
                 pending.push(*state);
-                if let CheckedShared::Table { entry } = shape {
+                if let CheckedShared::Map { entry } = shape {
                     pending.push(*entry);
                 }
             }
@@ -83,7 +83,7 @@ pub(super) fn base_elements(
         | CheckedType::Window { element, .. }
         | CheckedType::Buffer { element }
         | CheckedType::Segments { element }
-        | CheckedType::KeyedEntries { element } = ty
+        | CheckedType::Entries { element } = ty
             && needed.insert(element.index())
         {
             pending.push(
@@ -292,7 +292,7 @@ impl<'a> PhysicalTypes<'a> {
                 state: self.ty(state)?,
                 shape: match shape {
                     CheckedShared::Object => IrShared::Object,
-                    CheckedShared::Table { entry } => IrShared::Table {
+                    CheckedShared::Map { entry } => IrShared::Map {
                         entry: self.ty(entry)?,
                     },
                 },
@@ -445,8 +445,8 @@ impl<'a> PhysicalTypes<'a> {
                                 pending.push((*left, *right))
                             }
                             (
-                                CheckedShared::Table { entry: left_entry },
-                                CheckedShared::Table { entry: right_entry },
+                                CheckedShared::Map { entry: left_entry },
+                                CheckedShared::Map { entry: right_entry },
                             ) => {
                                 pending.push((*left, *right));
                                 pending.push((*left_entry, *right_entry));

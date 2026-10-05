@@ -531,10 +531,15 @@ impl<'unit> Checker<'_, 'unit> {
                     } else {
                         super::super::super::types::Placement::Reference
                     },
+                    &signature.substitution,
                 )?;
             }
-            self.types
-                .reject_inline_runtime_capacity(node, signature.result)?;
+            self.types.reject_placement(
+                node,
+                signature.result,
+                super::super::super::types::Placement::Value,
+                &signature.substitution,
+            )?;
         }
         let result = signature.result;
         let result_mode = signature.result_mode;

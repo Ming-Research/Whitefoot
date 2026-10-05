@@ -853,7 +853,12 @@ impl<'unit> Checker<'_, 'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             self.ensure_nominal_type(check_context, ty, substitution)?;
             let parsed = self.parse_type_with(check_context, ty, substitution)?;
-            self.types.reject_inline_runtime_capacity(ty, parsed)?;
+            self.types.reject_placement(
+                ty,
+                parsed,
+                super::types::Placement::Value,
+                substitution,
+            )?;
             // [TYPE-2, GRAM-2] `field := "readonly"? IDENT ":" type ";"`: the
             // written modifier is what makes the field unassignable.
             let readonly = self
@@ -929,7 +934,12 @@ impl<'unit> Checker<'_, 'unit> {
                         .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                     self.ensure_nominal_type(check_context, ty, substitution)?;
                     let parsed = self.parse_type_with(check_context, ty, substitution)?;
-                    self.types.reject_inline_runtime_capacity(ty, parsed)?;
+                    self.types.reject_placement(
+                        ty,
+                        parsed,
+                        super::types::Placement::Value,
+                        substitution,
+                    )?;
                     // [GRAM-2] a `vfield` carries no modifier: `readonly` is
                     // a `field` alternative and an enum payload has none.
                     fields.push(CheckedField {

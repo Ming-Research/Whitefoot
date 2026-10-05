@@ -450,6 +450,10 @@ impl ResolvedPlace {
                 PlaceRoot::Binding(binding) => self.atomic_aliases.contains(&binding),
                 PlaceRoot::Constant(_) => false,
             }
+            || match self.root {
+                PlaceRoot::Binding(binding) => other.atomic_aliases.contains(&binding),
+                PlaceRoot::Constant(_) => false,
+            }
     }
 
     /// The same root and static path shape at an arbitrary loop header.
@@ -730,7 +734,7 @@ impl ResolvedPlace {
     /// their index values are unknown. Unknown targets need actual identity.
     pub(crate) fn exchange_safe(&self, oracle: &dyn SeparationOracle, other: &Self) -> bool {
         !places_overlap(oracle, self, other)
-            || (self.root == other.root
+            || (self.roots_overlap(other)
                 && self.path.len() == other.path.len()
                 && self.path.iter().zip(&other.path).all(|(left, right)| {
                     matches!((left, right), (PlaceStep::Index(_), PlaceStep::Index(_)))
@@ -1068,7 +1072,7 @@ pub(crate) fn range_separation_candidate(
     left: &ResolvedPlace,
     right: &ResolvedPlace,
 ) -> Option<(CapturedRange, CapturedRange)> {
-    if left.root != right.root {
+    if !left.roots_overlap(right) {
         return None;
     }
     let oracle = UnprovedSeparations;
@@ -1349,7 +1353,7 @@ impl PlaceMap {
         left: &ResolvedPlace,
         right: &ResolvedPlace,
     ) -> bool {
-        if left.root != right.root {
+        if !left.roots_overlap(right) {
             return false;
         }
         places_overlap(oracle, left, right)

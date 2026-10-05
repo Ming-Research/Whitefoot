@@ -188,6 +188,7 @@ fn main() -> status: std::process::ExitStatus pure {
             let mut expected = vec![PlaceStep::Field(u32::try_from(field).unwrap())];
             expected.extend_from_slice(&prefix);
             assert!(paths.contains(&ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(parameter.binding),
                 path: expected,
             }));
@@ -209,6 +210,7 @@ fn main() -> status: std::process::ExitStatus pure {
                     let mut complete = vec![PlaceStep::Field(u32::try_from(field).unwrap())];
                     complete.extend_from_slice(&expected);
                     assert!(paths.contains(&ResolvedPlace {
+                        atomic_aliases: Vec::new(),
                         root: PlaceRoot::Binding(parameter.binding),
                         path: complete,
                     }));

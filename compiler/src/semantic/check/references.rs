@@ -224,14 +224,6 @@ impl ReferenceInfo {
         }
     }
 
-    fn formed_through(
-        kind: ReferenceKind,
-        paths: Vec<ResolvedPlace>,
-        _parent: Option<&Self>,
-    ) -> Self {
-        Self::formed_paths(kind, paths)
-    }
-
     pub(super) const fn is_valid(&self) -> bool {
         matches!(self.validity, ReferenceValidity::Valid)
     }
@@ -1089,13 +1081,7 @@ impl<'unit> Checker<'_, 'unit> {
             return Ok(TypedExpression {
                 expression,
                 mode: CheckedMode::Reference,
-                reference: Some(ReferenceInfo::formed_through(
-                    ReferenceKind::Single,
-                    places,
-                    root_binding
-                        .as_ref()
-                        .and_then(|local| local.reference.as_ref()),
-                )),
+                reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Single, places)),
                 reference_value: true,
                 effects,
                 accesses,
@@ -1163,13 +1149,7 @@ impl<'unit> Checker<'_, 'unit> {
         } else {
             vec![place]
         };
-        let mut reference = ReferenceInfo::formed_through(
-            ReferenceKind::Single,
-            places.clone(),
-            root_binding
-                .as_ref()
-                .and_then(|local| local.reference.as_ref()),
-        );
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Single, places.clone());
         if let Some(CheckedPlaceStep::Subscript(index)) = path.last()
             && matches!(ty, CheckedType::Entries { .. })
             && let CheckedExpression::BorrowAddressed { root: keys, .. } = &index.offset
@@ -1361,11 +1341,7 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Range,
-            reference: Some(ReferenceInfo::formed_through(
-                ReferenceKind::Range,
-                places,
-                root_binding.and_then(|local| local.reference.as_ref()),
-            )),
+            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
             reference_value: true,
             effects: carried.effects,
             accesses,
@@ -1671,11 +1647,7 @@ impl<'unit> Checker<'_, 'unit> {
         Ok(TypedExpression {
             expression,
             mode: CheckedMode::Range,
-            reference: Some(ReferenceInfo::formed_through(
-                ReferenceKind::Range,
-                places,
-                root_binding.and_then(|local| local.reference.as_ref()),
-            )),
+            reference: Some(ReferenceInfo::formed_paths(ReferenceKind::Range, places)),
             reference_value: true,
             effects: carried.effects,
             accesses,

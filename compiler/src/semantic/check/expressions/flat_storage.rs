@@ -1417,7 +1417,7 @@ impl<'unit> Checker<'_, 'unit> {
                                 .tree
                                 .has_fixed(offset_node, FixedTerminal::Move)?
                             {
-                                return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a table by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
+                                return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a map by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
                             }
                             Some(self.check_place_borrow(
                                 context,
@@ -1444,7 +1444,7 @@ impl<'unit> Checker<'_, 'unit> {
             let captured = if table_entry.is_some() {
                 if offset.expression.ty() == CheckedType::KeySet {
                     if !set_place {
-                        return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a table by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
+                        return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a map by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
                     }
                     if self.body.table_set_borrow != Some(suffix) {
                         return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableEntriesNotBorrowed { mechanical_fix: "write `&t^[keys]`: the entries under a key set are reached only as a reference of kind `&Entries<V>`" });
@@ -1455,7 +1455,7 @@ impl<'unit> Checker<'_, 'unit> {
                 } else if offset.mode != CheckedMode::Range
                     || offset.expression.ty() != CheckedType::Integer(IntegerType::U8)
                 {
-                    return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a table by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
+                    return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a map by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
                 }
                 Some(CapturedValue::unknown())
             } else {

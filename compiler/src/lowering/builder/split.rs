@@ -602,8 +602,8 @@ impl<'program> IrBuilder<'program> {
             self.function_name,
         )?;
         builder
-            .readonly_atomic_sources
-            .clone_from(&self.readonly_atomic_sources);
+            .readonly_atomic_roots
+            .clone_from(&self.readonly_atomic_roots);
         builder
             .capture_write_contexts
             .clone_from(&self.capture_write_contexts);
@@ -1302,7 +1302,7 @@ fn frame_bytes(ty: IrType) -> u64 {
         IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } | IrType::KeySet => {
             2 * FRAME_FIELD_ALIGN
         }
-        IrType::KeyedEntries { .. } => 3 * FRAME_FIELD_ALIGN,
+        IrType::Entries { .. } => 3 * FRAME_FIELD_ALIGN,
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => FRAME_FIELD_ALIGN,
         // Aggregates trigger capture selection and the final exact-layout
         // query; a conservative fit retains its established capture interface.

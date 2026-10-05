@@ -1706,7 +1706,10 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
             }
-            if matches!(value, GenericArgument::Function(_)) {
+            if matches!(
+                value,
+                GenericArgument::Type(_) | GenericArgument::Function(_)
+            ) {
                 binding_sites.push((parameter.key(), source));
             }
             bindings.push((parameter.key(), value));

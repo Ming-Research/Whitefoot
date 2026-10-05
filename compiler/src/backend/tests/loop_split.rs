@@ -64,21 +64,20 @@ use super::{
 const PERMITTED_FOLD: &[u8] = include_bytes!("../../../../tests/programs/parallel/range_fold.wf");
 
 const TABLE_READ_FOLD: &[u8] =
-    include_bytes!("../../../../tests/programs/parallel/table_read_fold.wf");
+    include_bytes!("../../../../tests/programs/parallel/map_read_fold.wf");
 
 fn table_read_fold_with_sibling_writes() -> String {
-    let source = std::str::from_utf8(TABLE_READ_FOLD).expect("UTF-8 table reader");
-    format!(
-        "struct Store {{\n  map: KeyedTable<u8>;\n  marks: Array<u64, 256>;\n}}\n\n{}",
-        source
-            .replace("4000000_u64", "256_u64")
-            .replace("8000000_u64", "512_u64")
-            .replace(
-                "  let t = &table;",
-                "  let marks = array_filled::<u64, 256>(value: 0_u64);\n  let store = Store(map: move table, marks: marks);\n  let t = &store.map;",
-            )
-            .replace("    set sum = sum +wrap v;", "    set store.marks[i] = v;\n    set sum = sum +wrap v;")
-    )
+    std::str::from_utf8(TABLE_READ_FOLD)
+        .expect("UTF-8 map reader")
+        .replace(
+            "  let sum = 0_u64;",
+            "  let sum = 0_u64;\n  let marks = array_filled::<u64, 256>(value: 0_u64);",
+        )
+        .replace("0_u64..4000000_u64", "0_u64..256_u64")
+        .replace(
+            "    set sum = sum +wrap v;",
+            "    set marks[i] = v;\n    set sum = sum +wrap v;",
+        )
 }
 
 #[test]

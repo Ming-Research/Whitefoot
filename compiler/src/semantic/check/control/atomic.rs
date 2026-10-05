@@ -17,13 +17,14 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 pub(in crate::semantic::check) const SHARE2_NAME_A_SHARED_HANDLE: &str = "name a place of type `Shared<T>`: create the object with `shared_new`, or with `shared_map_new` for a map, and give each context its own handle made with `shared_share`";
+pub(in crate::semantic::check) const SHARE2_KEY_WITHOUT_MOVE: &str = "name the key set without `move`: the statement reads it when it begins and the binding over it stays valid while the set is not written";
 pub(in crate::semantic::check) const SHARE2_KEY_A_BYTE_RANGE: &str = "name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`";
 pub(in crate::semantic::check) const SHARE2_KEY_BEFORE_THE_STATEMENT: &str = "read handles and keys before the statement: copy a handle held in a state out with `shared_share` in an earlier atomic statement, and compute a key that comes from a state into a local the same way; a statement reads its handles and keys when it begins, before it holds any state";
 pub(in crate::semantic::check) const SHARE2_WAIT_OUTSIDE_THE_BLOCK: &str = "move the waiting call out of the atomic statement: end the statement first, wait, and start another atomic statement for any update that depends on the outcome";
 pub(in crate::semantic::check) const SHARE2_END_THE_OUTER_STATEMENT: &str = "name both handles as targets of one statement, `atomic outer = &first, inner = &second { … }`, or end the outer statement before starting the inner one";
 pub(in crate::semantic::check) const SHARE2_READ_ONLY_GUARD: &str = "make the guard read only, calling a function whose row writes nothing and moves no argument, and make the update in the block";
 pub(in crate::semantic::check) const SHARE2_USE_THE_BINDING: &str = "remove the target, or the whole statement when no target is used; a statement holds what its targets name, so a target nothing uses holds a state or entries for nothing";
-struct EntryHeader {
+struct IndexHeader {
     atom: Option<NodeId>,
 }
 impl Checker<'_, '_> {
@@ -92,7 +93,7 @@ impl Checker<'_, '_> {
                 .map(|last| self.types.declarations.tree.subscript_offset(*last))
                 .transpose()?
                 .flatten();
-            let header = EntryHeader { atom };
+            let header = IndexHeader { atom };
             let borrow = if atom.is_some() {
                 Self::check_place_borrow_prefix
             } else {
@@ -186,7 +187,7 @@ impl Checker<'_, '_> {
             let map_entry = self.table_entry_type(state);
             let earlier = targets.iter().map(|t| t.binding).collect::<Vec<_>>();
             let (kind, referent, anchors) = match (map_entry, atom) {
-                (Some(entry), Some(_)) => self.check_target_index(context, node, &header, BindingId(u32::MAX), &earlier, &statement_roots, &mut block_bindings, scope.loops.len(), &mut effects, entry)?,
+                (Some(entry), Some(_)) => self.check_target_index(context, node, &header, &earlier, &statement_roots, &mut block_bindings, scope.loops.len(), &mut effects, entry)?,
                 (Some(_), None) => (CheckedTargetKind::MapWhole, state, Vec::new()),
                 (None, None) => (CheckedTargetKind::Object, state, Vec::new()),
                 (None, Some(_)) => return self.types.declarations.issue_node(SemanticRule::Share2, *place, SemanticIssueKind::AtomicTargetNotShared { found: "an indexed handle whose state is no concurrent hash map".to_owned(), mechanical_fix: "write the target as `name = &handle` and reach the state through `name^`; an index step names entries of a `ConcurrentHashMap<V>` state alone" }),
@@ -366,8 +367,7 @@ impl Checker<'_, '_> {
         &mut self,
         context: FunctionContext<'_, '_>,
         node: NodeId,
-        header: &EntryHeader,
-        state_binding: BindingId,
+        header: &IndexHeader,
         earlier: &[BindingId],
         statement_roots: &[DeclarationId],
         block_bindings: &mut HashMap<DeclarationId, LocalBinding>,
@@ -392,7 +392,7 @@ impl Checker<'_, '_> {
                 atom,
                 SemanticIssueKind::AtomicKeyNotBytes {
                     found: "a value `move` takes".to_owned(),
-                    mechanical_fix: SHARE2_KEY_A_BYTE_RANGE,
+                    mechanical_fix: SHARE2_KEY_WITHOUT_MOVE,
                 },
             );
         }
@@ -407,9 +407,9 @@ impl Checker<'_, '_> {
                 .any(|path| statement_roots.contains(&path.root))
         };
         let reads_the_state = |places: &[ResolvedPlace]| {
-            places.iter().any(|place| {
-                matches!(place.root, PlaceRoot::Binding(root) if root == state_binding || earlier.contains(&root))
-            })
+            places.iter().any(
+                |place| matches!(place.root, PlaceRoot::Binding(root) if earlier.contains(&root)),
+            )
         };
         // The index atom: a reference variable or borrow of one key, or a
         // place holding a key set, which the statement borrows.

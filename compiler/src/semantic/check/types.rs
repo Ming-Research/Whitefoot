@@ -125,6 +125,7 @@ impl<'unit> Checker<'_, 'unit> {
                 } else {
                     Placement::Reference
                 },
+                substitution,
             )?;
             parameters.push(ParameterSignature {
                 declaration: declaration.id(),
@@ -152,7 +153,8 @@ impl<'unit> Checker<'_, 'unit> {
             .first_child_with(node, Production::Type)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
         let parsed = self.parse_type_with(check_context, ty, substitution)?;
-        self.types.reject_inline_runtime_capacity(ty, parsed)?;
+        self.types
+            .reject_placement(ty, parsed, Placement::Value, substitution)?;
         Ok((CheckedMode::Own, parsed))
     }
 
@@ -1491,26 +1493,21 @@ impl<'unit> TypeContext<'unit> {
         self.element_ids.insert(ty, element);
         Ok(element)
     }
-    /// Judge TYPE-9 homes through the concrete type, independently of its spelling.
-    pub(super) fn reject_inline_runtime_capacity(
-        &self,
-        node: NodeId,
-        ty: CheckedType,
-    ) -> Result<(), CheckStop> {
-        self.reject_placement(node, ty, Placement::Value)
-    }
+    /// Judge TYPE-9 homes through the concrete type and attribute an instance
+    /// refusal to the argument that puts its parameter in the refused position.
     pub(super) fn reject_placement(
         &self,
         node: NodeId,
         ty: CheckedType,
         position: Placement,
+        substitution: &GenericSubstitution,
     ) -> Result<(), CheckStop> {
         fn visit(
             cx: &TypeContext<'_>,
             ty: CheckedType,
             position: Placement,
             seen: &mut HashSet<CheckedType>,
-        ) -> Option<CheckedType> {
+        ) -> Option<(CheckedType, Placement)> {
             let runtime = matches!(
                 ty,
                 CheckedType::Buffer { .. }
@@ -1521,7 +1518,7 @@ impl<'unit> TypeContext<'unit> {
             if runtime && !matches!(position, Placement::BoxContent | Placement::Reference)
                 || map && !matches!(position, Placement::SharedState | Placement::Reference)
             {
-                return Some(ty);
+                return Some((ty, position));
             }
             if !seen.insert(ty) {
                 return None;
@@ -1557,14 +1554,81 @@ impl<'unit> TypeContext<'unit> {
                 _ => None,
             }
         }
-        let Some(found) = visit(self, ty, position, &mut HashSet::new()) else {
+        let Some((found, refused_position)) = visit(self, ty, position, &mut HashSet::new()) else {
             return Ok(());
         };
         // Compiler-owned generic records are checked at their concrete call below.
         if self.declarations.tree.is_prelude_node(node)? {
             return Ok(());
         }
-        self.declarations.issue_node(SemanticRule::Type9, node, SemanticIssueKind::InlineRuntimeCapacityShape { spelling: self.checked_type_name(found)?, mechanical_fix: if matches!(found, CheckedType::Nominal(_)) { "a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`, made by `shared_map_new::<V>(capacity: n)`, and reach the map through an atomic target; a callee takes `&ConcurrentHashMap<V>`".to_owned() } else { "wrap it in a Box, or write the constant-capacity form".to_owned() } })
+        let owner = self.declarations.tree.path(node)?.components();
+        let parameter_uses = self
+            .declarations
+            .resolved
+            .lexical_uses()
+            .iter()
+            .filter_map(|usage| {
+                if !usage.origin().node().components().starts_with(owner) {
+                    return None;
+                }
+                match usage.target() {
+                    ResolvedTarget::Source {
+                        declaration,
+                        class: DeclarationClass::GenericType,
+                    } => Some(declaration),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut source = node;
+        for (key, argument) in substitution.entries() {
+            let super::generics::GenericArgument::Type(argument) = argument else {
+                continue;
+            };
+            let super::generics::GenericParameterKey::Source(declaration) = key else {
+                continue;
+            };
+            if !parameter_uses.is_empty() && !parameter_uses.contains(declaration) {
+                continue;
+            }
+            if visit(self, *argument, Placement::Value, &mut HashSet::new()).map(|(ty, _)| ty)
+                == Some(found)
+            {
+                source = self.behavior_binding_site(node, *key, substitution)?;
+                if source != node {
+                    break;
+                }
+            }
+        }
+        let mechanical_fix = if source != node {
+            let position = match refused_position {
+                Placement::Value => "an inline value",
+                Placement::Reference => "a reference referent",
+                Placement::BoxContent => "Box content",
+                Placement::SharedState => "shared-object state",
+            };
+            let repair = if matches!(found, CheckedType::Nominal(_)) {
+                "make a shared map with `shared_map_new::<V>(capacity: n)`, and pass its handle `Shared<ConcurrentHashMap<V>>` or a reference `&ConcurrentHashMap<V>` instead"
+            } else {
+                "put the runtime-capacity storage behind a Box and pass a reference to its content"
+            };
+            format!(
+                "this type argument would place `{}` as {position}; {repair}",
+                self.checked_type_name(found)?
+            )
+        } else if matches!(found, CheckedType::Nominal(_)) {
+            "a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`, made by `shared_map_new::<V>(capacity: n)`, and reach the map through an atomic target; a callee takes `&ConcurrentHashMap<V>`".to_owned()
+        } else {
+            "wrap it in a Box, or write the constant-capacity form".to_owned()
+        };
+        self.declarations.issue_node(
+            SemanticRule::Type9,
+            source,
+            SemanticIssueKind::InlineRuntimeCapacityShape {
+                spelling: self.checked_type_name(found)?,
+                mechanical_fix,
+            },
+        )
     }
     /// The static order of concrete state types; object identity orders a type group.
     pub(super) fn atomic_type_order(&self, ty: CheckedType) -> Result<Vec<String>, CheckStop> {
@@ -1577,8 +1641,9 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Float(FloatType::F64) => (9, None),
             CheckedType::Unit => (10, None),
             CheckedType::Array { element, length } => {
+                result.extend(self.atomic_type_order(self.elements[element.0 as usize])?);
                 result.push(format!("{length:?}"));
-                (11, Some(element))
+                (11, None)
             }
             CheckedType::Buffer { element } => (11, Some(element)),
             CheckedType::Window {
@@ -1586,11 +1651,9 @@ impl<'unit> TypeContext<'unit> {
                 element,
                 capacity,
             } => {
+                result.extend(self.atomic_type_order(self.elements[element.0 as usize])?);
                 result.push(format!("{capacity:?}"));
-                (
-                    if shape == WindowShape::Slots { 12 } else { 13 },
-                    Some(element),
-                )
+                (if shape == WindowShape::Slots { 12 } else { 13 }, None)
             }
             CheckedType::Segments { element } => (14, Some(element)),
             CheckedType::KeySet => (18, None),
@@ -1614,10 +1677,12 @@ impl<'unit> TypeContext<'unit> {
                     };
                     result.push(format!("{rank:03}"));
                     if rank == 100 {
-                        result.push(
-                            self.declarations
-                                .module_symbol_base(template.declaration, &template.name),
-                        );
+                        let base = self
+                            .declarations
+                            .module_symbol_base(template.declaration, &template.name);
+                        let (module, name) = base.rsplit_once('.').unwrap_or(("", base.as_str()));
+                        result.push(module.to_owned());
+                        result.push(name.to_owned());
                     }
                     for (_, argument) in substitution.entries() {
                         match argument {
@@ -1639,6 +1704,9 @@ impl<'unit> TypeContext<'unit> {
                         result.extend(self.atomic_type_order(b)?);
                         return Ok(result);
                     }
+                    Some(PreludeType::Overflow) => (23, None),
+                    Some(PreludeType::DivError) => (24, None),
+                    Some(PreludeType::NarrowError) => (25, None),
                     _ => {
                         result.push(self.checked_type_name(ty)?);
                         (100, None)
@@ -1705,6 +1773,25 @@ impl<'unit> TypeContext<'unit> {
                 },
             ) if x == y => {
                 self.types_unify(self.elements[a.0 as usize], self.elements[b.0 as usize])
+            }
+            (CheckedType::Buffer { element: a }, CheckedType::Buffer { element: b })
+            | (CheckedType::Segments { element: a }, CheckedType::Segments { element: b })
+            | (CheckedType::Entries { element: a }, CheckedType::Entries { element: b }) => {
+                self.types_unify(self.elements[a.0 as usize], self.elements[b.0 as usize])
+            }
+            (
+                CheckedType::Window {
+                    shape: a,
+                    element: x,
+                    capacity: c,
+                },
+                CheckedType::Window {
+                    shape: b,
+                    element: y,
+                    capacity: d,
+                },
+            ) if a == b && c == d => {
+                self.types_unify(self.elements[x.0 as usize], self.elements[y.0 as usize])
             }
             _ => false,
         }

@@ -1718,8 +1718,32 @@ fn third_of(outer: &Outer) -> result: u64 reads(outer) {{
 
 #[test]
 fn table_borrows_materialize_only_writable_roots() {
-    let source =
-        include_bytes!("../../../tests/conformance/cases/share-pos-table-nested-readers.wf");
+    let source = br#"const names: Array<u8, 2> =[97_u8, 98_u8];
+
+fn read(store: &Shared<ConcurrentHashMap<u8>>, keys: &KeySet) -> result: unit reads(store), reads(keys) waits {
+  let first = &names[0_u64..1_u64];
+  let second = &names[1_u64..2_u64];
+  atomic t = &store^ {
+    let a = &t^[first];
+    let b = &t^[second];
+    let es = &t^[keys^];
+    let unused = es^.len;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 2_u64);
+  let keys = key_set_new(capacity: 2_u64);
+  let first = &names[0_u64..1_u64];
+  key_set_insert(keys: &keys, key: first);
+  atomic t = &store {
+    set t^[first] = Some<u8>(value: 8_u8);
+  }
+  read(store: &store, keys: &keys);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
     with_ir(source, |program| {
         let reader = function(program, "read");
         let selections = reader
@@ -1741,7 +1765,7 @@ fn table_borrows_materialize_only_writable_roots() {
         assert_eq!(
             selections,
             [false, false],
-            "shared outer readers must never materialize inner cells"
+            "whole-map readers must never materialize cells"
         );
         assert!(
             reader
@@ -1777,74 +1801,51 @@ fn table_borrows_materialize_only_writable_roots() {
 }
 
 #[test]
-fn table_borrows_follow_parameter_rows_and_local_ownership() {
-    let source = br#"struct Store {
-  map: KeyedTable<u8>;
-  count: u8;
-}
+fn map_borrows_follow_parameter_rows_and_rebinding() {
+    let source = br#"const names: Array<u8, 1> =[97_u8];
 
-const names: Array<u8, 1> =[97_u8];
-
-fn reader(env: &Store, key: &[u8]) -> result: unit reads(env), reads(key) {
+fn reader(env: &ConcurrentHashMap<u8>, key: &[u8]) -> result: unit reads(env), reads(key) {
   let copied = env;
-  let t = &copied^.map;
-  let slot = &t^[key];
-  match slot^ {
-    Some(value: n) => {
-    }
-    None() => {
-    }
-  }
+  let slot = &copied^[key];
+  let value = slot^;
   return unit;
 }
 
-fn writer(env: &Store, key: &[u8]) -> result: unit reads(key), writes(env.map) {
+fn writer(env: &ConcurrentHashMap<u8>, key: &[u8]) -> result: unit reads(key), writes(env) {
   let copied = env;
-  let t = &copied^.map;
-  let slot = &t^[key];
+  let slot = &copied^[key];
   set slot^ = Some<u8>(value: 7_u8);
   return unit;
 }
 
-fn other_writer(env: &Store, key: &[u8]) -> result: unit reads(env.map), reads(key), writes(env.count) {
-  let t = &env^.map;
-  let slot = &t^[key];
-  match slot^ {
-    Some(value: n) => {
-    }
-    None() => {
-    }
-  }
-  set env^.count = 1_u8;
+fn other_writer(env: &ConcurrentHashMap<u8>, count: &u8, key: &[u8]) -> result: unit reads(env), reads(key), writes(count) {
+  let slot = &env^[key];
+  let value = slot^;
+  set count^ = 1_u8;
   return unit;
 }
 
-fn rebound(table: &KeyedTable<u8>, key: &[u8]) -> result: unit reads(table), reads(key) {
-  let old = &table^[key];
-  match old^ {
-    Some(value: n) => {
-    }
-    None() => {
-    }
-  }
-  let local = keyed_table_new::<u8>(capacity: 1_u64);
-  set table = &local;
-  let slot = &table^[key];
+fn rebound(table: &ConcurrentHashMap<u8>, replacement: &ConcurrentHashMap<u8>, key: &[u8]) -> result: unit reads(table), reads(key), writes(replacement) {
+  let selected = table;
+  let old = &selected^[key];
+  let old_value = old^;
+  set selected = replacement;
+  let slot = &selected^[key];
   set slot^ = Some<u8>(value: 4_u8);
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
-  let map = keyed_table_new::<u8>(capacity: 1_u64);
-  let local = Store(map: move map, count: 0_u8);
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let count = 0_u8;
   let key = &names[0_u64..1_u64];
-  let t = &local.map;
-  let slot = &t^[key];
-  set slot^ = Some<u8>(value: 3_u8);
-  reader(env: &local, key: key);
-  writer(env: &local, key: key);
-  other_writer(env: &local, key: key);
-  rebound(table: &local.map, key: key);
+  atomic t = &store {
+    let slot = &t^[key];
+    set slot^ = Some<u8>(value: 3_u8);
+    reader(env: t, key: key);
+    writer(env: t, key: key);
+    other_writer(env: t, count: &count, key: key);
+  }
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1879,7 +1880,7 @@ fn main() -> status: std::process::ExitStatus pure {
         }
     });
     let source = String::from_utf8(source.to_vec()).unwrap();
-    let readonly_write = source.replace("reads(key), writes(env.map)", "reads(env), reads(key)");
+    let readonly_write = source.replace("reads(key), writes(env)", "reads(env), reads(key)");
     assert_ne!(readonly_write, source);
     assert_eq!(
         crate::compile(

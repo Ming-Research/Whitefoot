@@ -66,9 +66,9 @@ mod reinterpret;
 mod requires;
 mod resource_enums;
 mod result_abi;
+mod shared_maps;
 mod stack_ledger;
 mod system;
-mod table_grants;
 mod tail_calls;
 mod target_frame;
 /// [TYPE-9]'s storage shapes and the cell as the backend emits them: their
