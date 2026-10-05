@@ -581,3 +581,117 @@ wrapper at a materialization or join, and a disequality derived from such a
 strict bound is re-derived rather than stored; these are the different valid
 derivations of equal bounds that the retained-derivation decision admits,
 and no rendered diagnostic names a derivation node kind.
+
+## Delivery disequalities through Z
+
+### Question
+
+With the matrices indexed by active terms, the stage-3 wasm interpreter in
+register form with every handler body inline in its 200-arm `match` (9,456
+lines, 24 `give` edges in the handlers that trap or saturate) still took
+310 s to check on the 14900K host, accepted. A sample put every sample under
+`value_delivery_image` -> `promote_flow_contradiction` ->
+`contradiction_without_proofs`, in the complete fixed point. What in a
+delivery image grows with the function?
+
+### Measurement
+
+A trace of the complete probe's universe on that program (one line per
+probe: dimension, relational terms, middles, stored cells and terms,
+disequality candidates, registered terms, term kinds) showed 329 probes of
+dimension at most 90 and four of dimension 3,040 to 3,073 against 3,157
+registered terms, each with 13 stored cells on 14 terms and 3,038 to 3,071
+disequality candidates over `place`, `index-capture`, `commit-value` and
+datum terms. The image of a `give` edge is a fresh fact state, so its
+promotion runs the complete probe over its universe, and that universe was
+the function. The disequalities came from `relations_mentioning`: for the
+carrier, a constant outside the ranges of most terms (a saturating
+truncation's `i32` limit against the `u8`, `u16` and `u32` places of every
+arm), it listed the disequality the carrier's Z bound implies through each
+registered term's range, which `delivery_edge_state`'s through-Z filter
+drops for bounds and did not drop for disequalities. Before the active-term
+matrices the dense `distinct` set of every closure held the same pairs, so
+the images carried them then as well.
+
+### Selection
+
+An edge image now stores a disequality only among the closure's active
+terms: `relations_mentioning` lists the bounds of the carrier with the
+active terms and the disequalities the closure's own set holds, answering a
+carrier without a row through Z. The delivery join evaluates each candidate
+disequality through every image: a stored pair, or a strict bound in either
+orientation, a bound held through the image's Z bound on the receiver and
+the other term's implicit bound included [ENT-4]. Candidates are the stored
+pairs of the images plus, when some image bounds the receiver strictly
+above a value another bounds it strictly below (the sum of the images' least
+`receiver - Z` and least `Z - receiver` bounds is at most -2), every
+registered term the images all hold the pair for; a pair every image derives
+on the same side is implied by the joined Z bounds and left to the
+continuation's closure, as a bound held through Z already was. A delivered
+disequality's parent is the image's Give node over the disequality derived
+on the carrier side from the strict bound's own derivation, so a delivery
+join's parents stay Give nodes.
+
+The test `value_if_delivers_a_disequality_held_through_zero_on_opposite_sides`
+gives `300_i32` on one edge and `-5_i32` on the other to a receiver later
+required unequal to a `u8` parameter the edges' states hold no fact on; it is
+accepted, and with the opposite-side scan disabled it is refused at FN-8,
+while a `200_i32` edge is refused by both. The delivery test that inspects
+both retained layers (`value_if_delivery_retains_the_ordinary_fallback_and_shared_give_root`)
+caught two wrong shapes of the delivered disequality's derivation on the way,
+a bare strict-bound node as a join parent and a Give node whose source named
+the receiver.
+
+### Result
+
+14900K host, the branch head before this change (`068701657`) against it,
+`whitefootc FILE --check`, every output identical and empty:
+
+| program | before | after |
+|---|---|---|
+| inline-handler wasm interpreter (9,456 lines) | 310.5 s | 2.54 s |
+| synthetic, one `value_if` per arm giving `300_u64` or a `u8` operand, N = 80 | 0.44 s | 0.23 s |
+| the same, N = 160 | 2.8 s | 0.53 s |
+| the same, N = 320 | 31.6 s | 1.3 s |
+
+The commit `1088bfc9a` passed the unit suite (1,942 cases) and the corpus
+(136 and 23 cases; one later rerun hit the firn "Connection reset by peer"
+flake noted in `docs/todo.md`), and the alternating paired comparison against
+`068701657` (5 rounds, median, LLVM identical across every compile) gave
+wfgrep 1.003, fixed_run_library 1.002, the earlier interpreter `v2d.wf`
+1.003 and the synthetic N = 160 program 0.201; one paired round of the
+inline-handler interpreter gave 303.6 s against 2.59 s with identical LLVM.
+
+The synthetic program's growth needs operands whose ranges the constant
+exceeds: the same generator with `u64` operands and a `/checked` division
+delivered through a `value_match` grows only mildly (0.28 against 1.0 s from
+N = 80 to 160 before the change, 0.19 against 0.46 s after), since a `u64`
+carrier is distinct through Z from no `u64` term. The generator is this
+script, run as `python3 synth3.py N`:
+
+```python
+import sys
+n = int(sys.argv[1])
+o = ["alias ExitStatus = std::process::ExitStatus;",
+     "alias exit_status = std::process::exit_status;", "", "enum Op {"]
+o += [f"  A{i}(x: u8);" for i in range(n)]
+o += ["}", "",
+      "fn run(code: &Box<Slots<Op>>, stack: &Box<Array<u8>>, pc: u64, sp: u64)"
+      " -> r: u64 reads(code), writes(stack) contract {",
+      "  requires pc < code^.inner.len;", "  requires sp <= stack^.inner.len;",
+      "} {", "  let n = code^.inner.len;", "  match code^.inner[pc] {"]
+for i in range(n):
+    o += [f"    A{i}(x: xv) => {{", "      if sp >= 2_u64 {",
+          "        let s1 = sp - 1_u64;", "        let s2 = sp - 2_u64;",
+          "        let a = stack^.inner[s2];", "        let b = stack^.inner[s1];",
+          "        let w = cvt::<u8, u64>(xv^);",
+          "        let aw = cvt::<u8, u64>(a);",
+          "        let c = if aw < w {", "          give 300_u64;", "        } else {", "          give aw;", "        }",
+          "        let cw = cvt.wrap::<u64, u8>(c);", "        set stack^.inner[s2] = cw;",
+          "        let next = pc + 1_u64;", "        if next < n {",
+          "          return musttail run(code: code, stack: stack, pc: next, sp: s1);",
+          "        }", "      }", "      return 0_u64;", "    }"]
+o += ["  }", "}", "", "fn main() -> status: ExitStatus pure {",
+      "  return exit_status(code: 0_u8);", "}", ""]
+open(f"synth3_{n}.wf", "w").write("\n".join(o))
+```

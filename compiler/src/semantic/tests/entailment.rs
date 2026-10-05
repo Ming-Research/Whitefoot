@@ -4578,6 +4578,81 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// A delivery image stores only the disequalities among its active terms; a
+/// disequality the receiver's Z bound implies through another term's range is
+/// evaluated at the join from each image's Z bound. Two edges bounding the
+/// receiver strictly above a `u8` term's range and strictly below it both
+/// hold `x != small`, and the joined bounds do not, so the join delivers it;
+/// an edge whose constant lies inside that range holds no such disequality
+/// and the call's requirement stays unproved.
+#[test]
+fn value_if_delivers_a_disequality_held_through_zero_on_opposite_sides() {
+    let program = |above: &str| {
+        format!(
+            r#"fn touch(v: u8) -> result: unit pure contract {{
+  requires v <= 255_u8;
+}} {{
+  return unit;
+}}
+
+fn unequal(value: i32, other: u8) -> result: unit pure contract {{
+  requires value != cvt::<u8, i32>(other);
+}} {{
+  return unit;
+}}
+
+fn pick(flag: Bool, small: u8) -> result: unit pure {{
+  touch(v: small);
+  let x = if flag {{
+    give {above}_i32;
+  }} else {{
+    give -5_i32;
+  }}
+  unequal(value: x, other: small);
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        )
+    };
+    let accepted = program("300");
+    let summary = accepted_entailment(accepted.as_bytes(), "pick");
+    validate_derivations(&summary);
+    // The receiver's disequalities with `small` and with the two literals'
+    // value terms are delivered; each has one Give parent per edge.
+    let joined = summary
+        .derivations
+        .nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node,
+                DerivationNode::PostconditionDeliveryJoin { detail }
+                    if matches!(detail.relation, Relation::Distinct { .. })
+                        && detail.parents.len() == 2
+            )
+        })
+        .count();
+    assert!(
+        joined >= 1,
+        "the join delivers the disequality held through Z"
+    );
+    let rejected = program("200");
+    with_semantics(rejected.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("a constant inside the range delivers no disequality: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8);
+        assert!(matches!(
+            issue.kind(),
+            SemanticIssueKind::UndischargedCallRequirement(..)
+        ));
+    });
+}
+
 #[test]
 fn value_match_delivers_common_bounds_while_a_missing_branch_does_not() {
     let source = br#"enum Choice {
