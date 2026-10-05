@@ -19,6 +19,7 @@ alias copy_key = pkg::bytes::copy_key;
 alias clear_items = pkg::protocol::clear_items;
 alias expired = pkg::store::expired;
 alias remove_expired = pkg::store::remove_expired;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
 alias hash_map_new = std::collections::hash_map::hash_map_new;
 alias hash_map_put = std::collections::hash_map::hash_map_put;
@@ -155,8 +156,61 @@ fn place_rank(sorted: &Sorted, member: Key, score: f64, keys: &KeyEnv) -> result
   return unit;
 }
 
+struct ScoreEdit {
+  doc "One held member's score change under ZADD's options: offered is the command's score, old the member's score, target its new score and outcome what score_edit did with it, one of edit_passed, edit_nan, edit_kept and edit_moved; found reports that the member was held.";
+  offered: f64;
+  old: f64;
+  target: f64;
+  outcome: u64;
+  found: Bool;
+  nx: Bool;
+  gt: Bool;
+  lt: Bool;
+  incr: Bool;
+}
+
+const edit_passed: u64 = 0_u64;
+
+const edit_nan: u64 = 1_u64;
+
+const edit_kept: u64 = 2_u64;
+
+const edit_moved: u64 = 3_u64;
+
+fn score_edit(env: &ScoreEdit, key: &Key, value: &f64) -> result: u64 writes(env), writes(value) {
+  doc "Gives a held member its new score as Redis's zsetAdd does under ZADD's options: NX passes over it; INCR adds the offered score to its score, a NaN sum stopping the command; GT and LT pass over a score not greater or not less than its score; an equal score keeps it, and another is stored as kept_score keeps it.";
+  set env^.found = True();
+  let old = value^;
+  set env^.old = old;
+  let target = env^.offered;
+  if env^.incr {
+    set target = fadd.strict(old, target);
+  }
+  set env^.target = target;
+  let number = feq(target, target);
+  let invalid = bnot(number);
+  let not_less = fge(target, old);
+  let not_greater = fle(target, old);
+  let lt_refuses = band(env^.lt, not_less);
+  let gt_refuses = band(env^.gt, not_greater);
+  let refused = bor(lt_refuses, gt_refuses);
+  if env^.nx {
+    set env^.outcome = edit_passed;
+  } else if invalid {
+    set env^.outcome = edit_nan;
+  } else if refused {
+    set env^.outcome = edit_passed;
+  } else if fne(target, old) {
+    set value^ = kept_score(score: target);
+    set env^.outcome = edit_moved;
+  } else {
+    set env^.outcome = edit_kept;
+  }
+  return env^.outcome;
+}
+
 fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding) -> result: unit writes(sorted), writes(client), writes(adding) {
-  doc "Gives every prepared member its prepared score as Redis's zsetAdd does under ZADD's options: NX passes over a member the set holds and XX one it does not; INCR adds the score to the member's, stopping the command with nan set when the sum is NaN; GT and LT pass over a member whose new score is not greater or not less than its score; a held member whose new score equals its score keeps it, counted as processed. A member is kept at its score as kept_score keeps it, moved to its new place in the order when its score changes.";
+  doc "Gives every prepared member its prepared score as Redis's zsetAdd does under ZADD's options: a held member's score is changed in place as score_edit changes it, and the member moved to its new place in the order when its score changed; XX passes over a member the set does not hold, and a new member is kept at its score as kept_score keeps it.";
   loop @pairs {
     let have_member = client^.items.inner.len > 0_u64;
     let have_score = client^.scores.inner.len > 0_u64;
@@ -169,38 +223,26 @@ fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding) -> result: unit
     let score = take_back(window: &client^.scores.inner);
     let keys = client^.keys;
     let absent = False();
-    let probe = ScoreProbe(score: 0.0_f64, found: absent);
-    let seen = hash_map_lookup::<KeyHash, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
-    if probe.found {
-      let target = score;
-      if adding^.incr {
-        set target = fadd.strict(probe.score, score);
-      }
-      let number = feq(target, target);
-      let invalid = bnot(number);
-      let not_less = fge(target, probe.score);
-      let not_greater = fle(target, probe.score);
-      let lt_refuses = band(adding^.lt, not_less);
-      let gt_refuses = band(adding^.gt, not_greater);
-      let refused = bor(lt_refuses, gt_refuses);
-      if adding^.nx {
-        let passed = move member;
-      } else if invalid {
+    let edit = ScoreEdit(offered: score, old: 0.0_f64, target: score, outcome: edit_passed, found: absent, nx: adding^.nx, gt: adding^.gt, lt: adding^.lt, incr: adding^.incr);
+    let edited = hash_map_edit::<KeyHash, f64, ScoreEdit, u64, fn score_edit, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, edit_env: &edit);
+    if edit.found {
+      if edit.outcome == edit_nan {
         let stopped = move member;
         set adding^.nan = True();
         break @pairs;
-      } else if refused {
+      }
+      if edit.outcome == edit_passed {
         let passed = move member;
       } else {
-        set adding^.score = target;
+        set adding^.score = edit.target;
         set adding^.processed = adding^.processed +wrap 1_u64;
-        let changed = fne(target, probe.score);
-        if changed {
-          let old_member = copy_key(key: &member);
-          let old = Rank(score: probe.score, member: move old_member);
+        if edit.outcome == edit_moved {
+          let old = Rank(score: edit.old, member: move member);
           let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &old, env: &keys);
-          let kept = kept_score(score: target);
-          place_rank(sorted: sorted, member: move member, score: kept, keys: &keys);
+          let Rank(score: dropped, member: moved) = move old;
+          let kept = kept_score(score: edit.target);
+          let rank = Rank(score: kept, member: move moved);
+          let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
           set adding^.updated = adding^.updated +wrap 1_u64;
         } else {
           let unchanged = move member;
