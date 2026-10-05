@@ -2279,8 +2279,16 @@ rarely insert at the same place.
   place 54.01–58.62% of fib(34) samples in frame helpers and 31.12–32.31% of
   integer-table samples in rehash. The bounded frame-window clearing trial
   improves fib only 2.99%, below its 10% criterion; it does not rule out
-  other frame changes or establish C2/C3 performance. Change: compare frame
-  construction, table growth, the VM.md candidates and library/heap paths
+  other frame changes or establish C2/C3 performance. The
+  [bounded table-growth change](../research/experiments/halo-bench/RESULTS.md#six-pair-table-growth-result)
+  removes per-array-key histogram walks, repeated Nil initialization and
+  retained-prefix reinsertion, improving integer-table by 25.70% on the
+  measured host. Fresh prefix allocation/copying and checked handle/bounds
+  work remain; their isolated costs are unmeasured. The
+  [frame inspection](../research/experiments/halo-bench/RESULTS.md#fib-frame-input-for-the-next-experiment)
+  points to metadata checks, native call storage and 80-byte frame/result
+  transport; sampled offsets do not isolate cycle shares. Change: compare frame
+  construction, residual table allocation/copying, the VM.md candidates and library/heap paths
   with same-source,
   full-LTO pairs, preserving checksums, normal GC, roots and handle validity.
   Reopen at the next performance experiment; require a discriminating native

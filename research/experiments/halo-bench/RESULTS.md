@@ -1303,3 +1303,102 @@ Candidate retains fresh allocation and copies the retained prefix:
 physical in-place resize and isolated copy costs remain possible follow-up
 experiments, not prerequisites for this bounded trial. The computesizes
 loop still examines all 27 bins; its small total was not selected.
+
+### Table behavior and selection
+
+**Kept under the recorded criterion.** The candidate oracle host builds
+with full LTO in 536.27 s (exit 0). One existing next/pairs script at
+three budgets passes 3/3 in ordinary mode (0.65 s including a cold host
+launch) and stress (0.21 s), before the complete comparison. Ordinary
+**240/240** and GC-stress **240/240** comparisons pass at budgets 1, 7 and
+1000. All typed replies match the unchanged recorded Redis corpus bytes.
+The implementing agent checks all 240 report rows per mode, actual
+ordinary/stress reply bytes, and unchanged oracle, runner and host source.
+
+The supplemental corpus input records the unsorted sequence
+`beta=2|alpha=1|gamma=3` for both next and pairs, byte-identical to the
+supplied unmodified Lua. A second probe observes mixed numeric, string
+and boolean keys through four snapshots of growth, holes, shrink and
+regrowth, including borders. Its PUC counter confirms a 64-to-1 array
+shrink with keys 24 and 64 still live in the vanishing suffix, and a
+later 128-to-0 shrink with sparse numeric entries. Unmodified and counter
+PUC outputs agree exactly. Candidate comparisons pass **6/6 ordinary**
+and **6/6 stress** (two scripts at three budgets); stress performs 17
+and 3,371 collections respectively at each budget. Reversing only the
+expected next sequence while preserving its contents and script gives
+**0/3**, runner exit 1, as required. These probes protect this trial's
+order and border observations; the original corpus's sorted order
+observation remains the recorded gap. Probe source, independent expected
+bytes, native excerpts, reports and redacted command logs are in the raw
+JSON, so the ignored scratch probes can be reproduced without depending
+on a new maintained harness.
+
+The ordinary supplementary sizing attempt returned 75 while the stress
+oracle wrapper still owned the lock. Subsequent commands acquired it
+only after that owner exited; the identical size command was retried and
+passed. Its size result therefore follows the full supplemental run,
+rather than preceding it; the original corpus samples preceded all
+complete runs. No command bypassed the lock and no timed pair overlapped
+another heavy command. No original expectation was edited.
+
+The provisional Halo tree choice is `design/halo/table-growth.md` (Q1 at
+handoff). It selects range counting and single-pass replacement against
+the measured original algorithm; it does not reject future in-place
+resize. No approval log is written. Leftovers in docs/todo.md are the
+oracle's order-coverage gap, residual allocation/copying and checked
+access costs, and frame-helper attribution. Compiler, specification,
+conformance, collector and frame bytes are unchanged. No language rule
+changes: every specification rule has identical before/after behavior.
+
+### Table experiment commands and limits
+
+Every heavy child is a direct `perl .github/run-check.pl LABEL COMMAND ...`;
+the benchmark and oracle runners are compiler-independent existing
+callers. Generated compiler temporaries use the existing benchmark target.
+Commands are reproduced below; each listed positive command exits 0.
+The order-only control exits 1 as intended, and the one busy sizing
+attempt exits 75 before its successful retry. Counter construction uses
+clang -O2 on a temporary copy of the supplied ltable.c with the JSON's
+fprintf inserted immediately before resize, then links that object with
+the supplied lua.o and liblua.a (both wrapper exits 0). The 1,000-element
+size run precedes the 10-million fill/read count. `<PUC_LUA>` denotes
+the supplied unmodified Lua executable.
+
+```sh
+perl .github/run-check.pl halo-table-check compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-module pkg::heap
+perl .github/run-check.pl halo-table-bench-build compiler/target/gate/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o research/experiments/halo-bench/target/halo-table
+perl .github/run-check.pl halo-table-six-pairs python3 -B research/experiments/halo-bench/run.py --lua <PUC_LUA> --before-binary research/experiments/halo-bench/target/halo-c1 --binary research/experiments/halo-bench/target/halo-table --kernels fib,loop,integer-table,string-key,concat,sort,binary-trees --scale binary-trees=14 --runs 6 --out research/experiments/halo-bench/target/table-six.json
+perl .github/run-check.pl halo-table-e2e-build compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --entry test --full-lto -o research/experiments/halo-bench/target/table-e2e
+perl .github/run-check.pl halo-table-oracle python3 -B research/experiments/halo-e2e/run.py --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/table-e2e --scratch-root research/experiments/halo-bench/target --budgets 1,7,1000 --report research/experiments/halo-bench/target/table-oracle.md
+```
+
+For the first and three-pair samples replace `--runs 6` with 1 and 3
+and use distinct labels and outputs. For oracle stress add `--gc-stress`
+and a distinct report. For the original one-script oracle sample add
+`--filter lua-core/next-pairs`. Reconstruct supplemental scripts and
+canonical expected JSON from the raw JSON in the ignored target, then
+add `--cases <probe-root>` to the same oracle runner; the negative
+control uses its separately retained order-permuted expectation.
+Set TMPDIR to the existing worktree benchmark target for native builds.
+The retained baseline full-LTO binary is identified by hash and its
+matching source map; if absent, rebuild from task base 66fa1c8b9 with
+the same benchmark command and compiler, rather than substituting another
+binary. Candidate source is recorded in the raw JSON at ca75ec503.
+
+Unverified: canonical make check and CI (Cargo and network are excluded),
+other hosts/compilers, isolated contributions of the combined trial,
+physical realloc copy counts, precise intra-frame-helper cycle shares,
+binary-trees depth 16, budgeted kernel performance and broader iteration
+coverage beyond the corpus and two supplemental scripts. No network,
+Cargo, push, PR or merge command is used; all milestones are local.
+
+Static validation: the design-lint sample passes in 7.06 s (exit 0).
+`make static` passes all seven stages in 32.34 s
+(summed wrapper wall), all exits 0 and all within their macOS budgets.
+It checks repository invariants, archives, translation, prose, guidance,
+source-size records and tree form. `git diff --check` exits 0. The
+unchanged compiler/specification/conformance and original oracle/host
+paths are verified against the task base. The benchmark and oracle
+source revision is ca75ec503; later edits are evidence and the Halo
+decision. The local design choice is provisional (Q1); no readiness
+or approval log is part of this experiment.
