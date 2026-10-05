@@ -967,6 +967,39 @@ beyond it). firn's module and the runtime's units were compiled apart at
   3,421,000. The quick table's `LRANGE_100` ratios at 8 and 16 are
   therefore not the servers'.
 
+### A keyed statement's mark without a fence
+
+**The cost.** Every keyed statement marked its user active with a
+sequentially consistent store and then read the whole-map gate, which on
+x86-64 is an `xchg`, a full barrier, before the cell's own compare-and-swap.
+On one key that four drivers share, firn's `RPOP` was 1.2% below
+`cea9188d4` (9 interleaved pairs, 16 client processes, 20M requests each,
+the 14900K VM, 4 server CPUs; sd of the ratio 0.010). A probe that dropped
+the barrier with no replacement, which is unsound, answered 1.7% more.
+
+**The design.** The rare side pays: a hold of the whole map, after it
+closes the gate and before it reads the marks, makes every thread of the
+process execute a full barrier, through Linux's expedited private
+`membarrier` or Windows's `FlushProcessWriteBuffers`, and a keyed statement
+orders its mark and its read of the gate by the compiler alone. Either the
+statement's mark is visible to the hold after the barrier, or the
+statement's read follows its thread's barrier and sees the gate closed. A
+map made where the host has no such barrier, macOS or a Linux kernel or
+sandbox that refuses `membarrier`, keeps the fence; the map records which at
+creation, before any thread shares it.
+
+**Checks.** `concurrent-map-test` gains an `asymmetric` build that runs every
+test with the barrier on Linux and fails if the host refused it; it passed
+11 times in a row. The same build with the barrier made a no-op failed all 5
+runs with "a hold saw a keyed statement half done".
+
+**Measured.** With the barrier, `RPOP` rose 1.2% over the head before it (9
+pairs, ratio 1.013, sd 0.010), and against `cea9188d4` it measured 0.993
+(mean of 9 pairs, sd 0.011) in one session and 1.008 in a profiled pair;
+the user CPU per request was equal, 215 ns against 214, the entry lock 11.4
+ns against 13.1. A hold of the whole map now costs one barrier, a system
+call that interrupts each CPU running the process's threads.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are

@@ -43,7 +43,11 @@
  * WF_CMAP_CURRENT_USER(map), the user the calling thread holds, whose
  * spare memory a hold's keys then reuse, and WF_CMAP_SPARE_KEYS(), a
  * `void *` place only the calling thread uses, where the memory of the last
- * key set it freed is kept for its next one.
+ * key set it freed is kept for its next one. It may supply
+ * WF_CMAP_BARRIER_ENABLE(), nonzero when WF_CMAP_BARRIER() then makes every
+ * thread of the process execute a full memory barrier before it returns; a
+ * map created then marks keyed statements without a fence of their own
+ * (enter_keyed).
  */
 #if !defined(WF_CMAP_TAKE) || !defined(WF_CMAP_GIVE) || !defined(WF_CMAP_YIELD) || !defined(WF_CMAP_EXHAUSTED)
 #error "the includer supplies WF_CMAP_TAKE, WF_CMAP_GIVE, WF_CMAP_YIELD and WF_CMAP_EXHAUSTED"
@@ -84,6 +88,10 @@
 #endif
 #ifndef WF_CMAP_HOLD_CLOSED
 #define WF_CMAP_HOLD_CLOSED(u) ((void)0)
+#endif
+#ifndef WF_CMAP_BARRIER_ENABLE
+#define WF_CMAP_BARRIER_ENABLE() 0
+#define WF_CMAP_BARRIER() ((void)0)
 #endif
 /* And a writer about to help a move out of one of map's tables to its end. */
 #ifndef WF_CMAP_FINISHING
@@ -209,6 +217,9 @@ struct wf_cmap {
      * statements over the whole map: the next one to take and the one whose
      * turn it is. */
     _Alignas(64) _Atomic int gate;
+    /* Whether keyed statements mark themselves without a fence, set when the
+     * map is made and read only after. */
+    int asymmetric;
     _Atomic int waiting;
     _Atomic uint64_t hold_next;
     _Atomic uint64_t hold_serving;
@@ -1023,17 +1034,31 @@ static int lock_entry(wf_cmap_user *u, uint64_t tag, const unsigned char *key, u
 }
 
 /* Marks u inside a keyed statement, once no statement holds the whole map.
- * The mark and the hold's gate are each written and then the other read,
- * all sequentially consistent: either the hold sees the mark and waits for
- * the statement, or the statement sees the gate and waits for the hold. A
+ * The mark and the hold's gate are each written and then the other read:
+ * either the hold sees the mark and waits for the statement, or the
+ * statement sees the gate and waits for the hold. Both sides are
+ * sequentially consistent, or, in an asymmetric map, the statement's write
+ * and read are ordered by the compiler alone and the hold makes every thread
+ * execute a full barrier between closing the gate and reading the marks, so
+ * that a statement's mark is visible to it or the statement's read comes
+ * after that barrier and sees the gate; a keyed statement, which every
+ * command on a key is, then pays no fence, and a hold, which is rare, pays
+ * the barrier. A
  * statement that waits is counted, and the next hold waits until every
  * counted statement has begun, so that holds one after another do not keep
  * keyed statements out. */
 static void enter_keyed(wf_cmap_user *u) {
     wf_cmap *map = u->map;
-    atomic_store_explicit(&u->active, 1, memory_order_seq_cst);
-    if (atomic_load_explicit(&map->gate, memory_order_seq_cst) == 0)
-        return;
+    if (map->asymmetric) {
+        atomic_store_explicit(&u->active, 1, memory_order_relaxed);
+        atomic_signal_fence(memory_order_seq_cst);
+        if (atomic_load_explicit(&map->gate, memory_order_acquire) == 0)
+            return;
+    } else {
+        atomic_store_explicit(&u->active, 1, memory_order_seq_cst);
+        if (atomic_load_explicit(&map->gate, memory_order_seq_cst) == 0)
+            return;
+    }
     atomic_store_explicit(&u->active, 0, memory_order_release);
     atomic_fetch_add_explicit(&map->waiting, 1, memory_order_seq_cst);
     for (;;) {
@@ -1294,6 +1319,8 @@ void wf_cmap_hold(wf_cmap_user *u) {
          open = 0)
         back_off(&round);
     WF_CMAP_HOLD_CLOSED(u);
+    if (map->asymmetric)
+        WF_CMAP_BARRIER();
     int n = atomic_load_explicit(&map->users_seen, memory_order_seq_cst);
     for (int i = 0; i < n; i++) {
         round = 0;
@@ -2297,6 +2324,7 @@ wf_cmap *wf_cmap_create(uint64_t capacity) {
     wf_cmap *map = (wf_cmap *)(((uintptr_t)raw + 63) & ~(uintptr_t)63);
     memset(map, 0, sizeof *map);
     map->raw = raw;
+    map->asymmetric = WF_CMAP_BARRIER_ENABLE() != 0;
     for (int i = 0; i < WF_CMAP_MAX_USERS; i++)
         map->users[i].map = map;
     /* Half full when it holds capacity keys, as dense as a table gets

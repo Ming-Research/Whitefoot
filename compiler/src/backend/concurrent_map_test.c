@@ -77,6 +77,25 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 #define WF_CMAP_PATIENCE(u) patience_of(u)
 #define WF_CMAP_HOLD_QUEUED(u) hold_seen((u), 0)
 #define WF_CMAP_HOLD_CLOSED(u) hold_seen((u), 1)
+/* Built with WF_TEST_ASYMMETRIC on Linux, keyed statements mark themselves
+ * without a fence and a hold of the whole map issues Linux's expedited
+ * membarrier (enter_keyed); every other build keeps the fence. */
+#if defined(WF_TEST_ASYMMETRIC) && defined(__linux__)
+#include <linux/membarrier.h>
+#include <sys/syscall.h>
+static int test_barrier_enable(void) {
+    return syscall(SYS_membarrier, MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED, 0, 0) == 0;
+}
+static void test_barrier(void) {
+    if (syscall(SYS_membarrier, MEMBARRIER_CMD_PRIVATE_EXPEDITED, 0, 0) != 0)
+        abort();
+}
+#define WF_CMAP_BARRIER_ENABLE() test_barrier_enable()
+#define WF_CMAP_BARRIER() test_barrier()
+#else
+#define WF_CMAP_BARRIER_ENABLE() 0
+#define WF_CMAP_BARRIER() ((void)0)
+#endif
 
 /* The tests a build runs: locked reads change only wf_cmap_get, which only
  * the tests of word keys call, and narrowed hashes change only entries'
@@ -2944,6 +2963,15 @@ int main(void) {
      * than at the gate's limit. */
     alarm(120);
     set_patience(PATIENCE, PATIENCE);
+#if defined(WF_TEST_ASYMMETRIC) && defined(__linux__)
+    {
+        /* The asymmetric build tests the barrier only if the host grants it. */
+        wf_cmap *probe = wf_cmap_create(16);
+        if (!probe->asymmetric)
+            fail("the asymmetric build's map keeps the fence (asymmetric, wanted)", 0, 1);
+        wf_cmap_destroy(probe);
+    }
+#endif
     if (ENTRY_TESTS) {
         entries_huge_capacity();
         entries_sequential();
