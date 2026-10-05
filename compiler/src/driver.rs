@@ -1791,7 +1791,7 @@ pub fn entry_verdict(
             // order is the one reported; unlike a sequential walk, every
             // module is checked even after an earlier one rejects, and a
             // panic in any of them propagates.
-            let verdicts = in_parallel(&modules, |module| {
+            let verdicts = crate::in_parallel(&modules, |module| {
                 let name = graph
                     .modules()
                     .get(module.index())
@@ -1827,61 +1827,6 @@ pub fn entry_verdict(
         let _ = cache.store(COMPOSITION_VERDICTS, &acceptance, b"accepted");
     }
     Ok(verdict)
-}
-
-/// The stack each worker of [`in_parallel`] runs on, as large as the
-/// compiler driver's own: a worker runs the same recursive checks.
-const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
-
-/// `work` applied to every item, on up to one thread per available processor,
-/// with the results in item order; one thread runs every item on the calling
-/// thread.
-fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    let jobs = std::thread::available_parallelism()
-        .map_or(1, usize::from)
-        .min(items.len());
-    if jobs <= 1 {
-        return items.iter().map(work).collect();
-    }
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let finished = std::thread::scope(|scope| {
-        let workers = (0..jobs)
-            .map(|_| {
-                std::thread::Builder::new()
-                    .stack_size(WORKER_STACK_BYTES)
-                    .spawn_scoped(scope, || {
-                        let mut done = Vec::new();
-                        loop {
-                            let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let Some(item) = items.get(index) else {
-                                break done;
-                            };
-                            done.push((index, work(item)));
-                        }
-                    })
-            })
-            .collect::<Vec<_>>();
-        workers
-            .into_iter()
-            .flat_map(|worker| match worker {
-                Ok(worker) => worker
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-                // A thread the host refuses leaves its share to the others.
-                Err(_) => Vec::new(),
-            })
-            .collect::<Vec<_>>()
-    });
-    let mut slots = items.iter().map(|_| None).collect::<Vec<Option<R>>>();
-    for (index, result) in finished {
-        slots[index] = Some(result);
-    }
-    // A refused thread's items, if every thread was refused, run here.
-    slots
-        .into_iter()
-        .zip(items)
-        .map(|(slot, item)| slot.unwrap_or_else(|| work(item)))
-        .collect()
 }
 
 /// [MOD-8] the key material of an accepted composition: the selection and

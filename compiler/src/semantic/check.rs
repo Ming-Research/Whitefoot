@@ -17,6 +17,7 @@ mod receipts;
 mod references;
 mod repairs;
 mod requires;
+mod schedule;
 mod spawn;
 mod support;
 mod tail_calls;
@@ -37,11 +38,7 @@ use crate::{
     SemanticRule,
 };
 
-use super::entailment::{
-    EntailmentCallee, EntailmentContext, PostconditionSchedule, VerifiedPostconditionSummary,
-    analyze_function, analyze_function_candidate, collect_statement_calls,
-    finalize_function_entailment, postcondition_schedule,
-};
+use super::entailment::{EntailmentCallee, collect_statement_calls, finalize_function_entailment};
 use super::goal::{
     CheckedCallRequirement, CheckedRequirement, ConcreteGoal, GoalDatum, GoalExpression,
     GoalOperation, GoalProjection,
@@ -60,9 +57,7 @@ use super::postcondition::CheckedPostconditionSelector;
 use super::tree::TreeView;
 use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
-use generics::{
-    GenericParameter, GenericSubstitution, summary_entailment, symbolic_renaming_class,
-};
+use generics::{GenericParameter, GenericSubstitution};
 use inventory::InventoryView;
 use references::ReferenceInfo;
 
@@ -2130,245 +2125,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             pending.extend(calls.iter().map(|call| call.callee.0 as usize));
         }
         Ok(analyzed)
-    }
-
-    /// Analyzes every function of the inventory, or only those `analyzed`
-    /// marks. A caller that restricts the set must close it under callees.
-    ///
-    /// Symbolic validation passes `judged`, the canonical instances whose own
-    /// analysis is judged. Every other symbolic instance is analyzed only for
-    /// the summaries its callers read, so one that renames an instance of the
-    /// same declaration already analyzed in an earlier component takes that
-    /// analysis's summary instead of analyzing the same body again [FN-2].
-    fn analyze_function_inventory(
-        &mut self,
-        functions: &mut [CheckedFunctionInventory],
-        callees: &[EntailmentCallee],
-        optimistic_batch: bool,
-        analyzed: Option<&[bool]>,
-        allow_receipts: bool,
-        judged: Option<&[bool]>,
-    ) -> Result<PostconditionSchedule, CheckStop> {
-        let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
-        let renaming_classes = (0..functions.len())
-            .map(|index| {
-                judged
-                    .filter(|judged| !judged[index])
-                    .and_then(|_| self.types.signatures.get(index))
-                    .and_then(symbolic_renaming_class)
-            })
-            .collect::<Vec<_>>();
-        let mut renamed_analyses: HashMap<(DeclarationId, Vec<u8>), (u32, usize)> = HashMap::new();
-        self.analysis.renamed_summaries = vec![false; functions.len()];
-        let contract_queries = self.analysis.contract_queries.clone();
-        let const_parameter_types = self.types.const_generic_types().collect();
-        // [MOD-8] the concrete inventory's analyses may stand on receipts;
-        // the symbolic validation of generic templates always runs afresh.
-        let receipts = self
-            .receipts
-            .filter(|_| allow_receipts && self.reject_entailment);
-        let items = receipts
-            .map(|_| self.types.declarations.receipt_items())
-            .transpose()?;
-        if receipts.is_some() {
-            self.analysis.reused_analyses = vec![false; functions.len()];
-        }
-        // ENT is the single acceptance-bearing proof path for ordinary
-        // obligations, call requirements, invariants and postconditions.
-        let mut schedule =
-            postcondition_schedule(functions.iter().map(|checked| &checked.function))
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if schedule.components.is_empty() {
-            for index in 0..functions.len() {
-                if !selected(index) {
-                    continue;
-                }
-                if let (Some(store), Some(items)) = (receipts, &items)
-                    && let Some(entailment) = self.recorded_analysis(
-                        store,
-                        items,
-                        functions,
-                        index,
-                        callees,
-                        &[],
-                        &const_parameter_types,
-                    )
-                {
-                    functions[index].function.entailment = entailment;
-                    continue;
-                }
-                let checked = &mut functions[index];
-                let context = EntailmentContext {
-                    declarations: self.types.declarations.resolved.declarations(),
-                    callees,
-                    constants: &self.types.checked_constants,
-                    constant_ids: &self.types.constants,
-                    const_parameter_types: &const_parameter_types,
-                    nominals: &self.types.nominals,
-                    elements: &self.types.elements,
-                    contract_queries: &contract_queries,
-                    verified_postconditions: &[],
-                    verified_postcondition_proofs: &[],
-                    binding_names: &checked.binding_names,
-                };
-                checked.function.entailment = if optimistic_batch {
-                    analyze_function_candidate(&checked.function, &context)
-                } else {
-                    analyze_function(&checked.function, &context)
-                };
-            }
-        } else {
-            for component in &mut schedule.components {
-                // Callee closure keeps components whole: skipping one skips
-                // both its analysis and the summaries no analyzed body reads.
-                if !component
-                    .functions
-                    .iter()
-                    .any(|function| selected(function.0 as usize))
-                {
-                    continue;
-                }
-                for function in &component.functions {
-                    let function_index = function.0 as usize;
-                    let verified_postconditions = functions
-                        .iter()
-                        .map(|checked| {
-                            checked
-                                .function
-                                .entailment
-                                .postconditions
-                                .iter()
-                                .filter(|proof| {
-                                    selected(checked.function.id.0 as usize)
-                                        && proof.summary.as_ref().is_some_and(|summary| {
-                                            summary.component < component.ordinal
-                                        })
-                                })
-                                .filter_map(|proof| {
-                                    checked
-                                        .function
-                                        .postconditions
-                                        .get(proof.relation_ordinal as usize)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    let verified_postcondition_proofs = functions
-                        .iter()
-                        .map(|checked| {
-                            checked
-                                .function
-                                .entailment
-                                .postconditions
-                                .iter()
-                                .filter(|proof| {
-                                    selected(checked.function.id.0 as usize)
-                                        && proof.summary.as_ref().is_some_and(|summary| {
-                                            summary.component < component.ordinal
-                                        })
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    let checked = functions
-                        .get(function_index)
-                        .filter(|checked| checked.function.id == *function)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let recorded = match (receipts, &items) {
-                        (Some(store), Some(items)) => self.recorded_analysis(
-                            store,
-                            items,
-                            functions,
-                            function_index,
-                            callees,
-                            &verified_postconditions,
-                            &const_parameter_types,
-                        ),
-                        _ => None,
-                    };
-                    let class = renaming_classes[function_index].clone();
-                    let renamed = class
-                        .as_ref()
-                        .and_then(|class| renamed_analyses.get(class))
-                        .filter(|(ordinal, _)| *ordinal < component.ordinal)
-                        .map(|(_, representative)| {
-                            summary_entailment(&functions[*representative].function.entailment)
-                        });
-                    let recorded_none = recorded.is_none();
-                    let analyzed_here = recorded_none && renamed.is_none();
-                    let entailment = if let Some(entailment) = recorded.or(renamed) {
-                        entailment
-                    } else {
-                        let context = EntailmentContext {
-                            declarations: self.types.declarations.resolved.declarations(),
-                            callees,
-                            constants: &self.types.checked_constants,
-                            constant_ids: &self.types.constants,
-                            const_parameter_types: &const_parameter_types,
-                            nominals: &self.types.nominals,
-                            elements: &self.types.elements,
-                            contract_queries: &contract_queries,
-                            verified_postconditions: &verified_postconditions,
-                            verified_postcondition_proofs: &verified_postcondition_proofs,
-                            binding_names: &checked.binding_names,
-                        };
-                        analyze_function_candidate(&checked.function, &context)
-                    };
-                    drop(verified_postconditions);
-                    drop(verified_postcondition_proofs);
-                    functions[function_index].function.entailment = entailment;
-                    self.analysis.renamed_summaries[function_index] =
-                        !analyzed_here && recorded_none;
-                    if analyzed_here && let Some(class) = class {
-                        renamed_analyses
-                            .entry(class)
-                            .or_insert((component.ordinal, function_index));
-                    }
-                }
-
-                let publish = component.functions.iter().all(|function| {
-                    let checked = &functions[function.0 as usize].function;
-                    checked
-                        .entailment
-                        .loop_invariants
-                        .iter()
-                        .all(|invariant| invariant.proof.discharged())
-                        && (matches!(
-                            checked.entailment.body_disposition,
-                            super::model::CheckedBodyDisposition::Uninhabited { .. }
-                        ) || checked.postconditions.is_empty()
-                            || (checked.entailment.postconditions.len()
-                                == checked.postconditions.len()
-                                && checked
-                                    .entailment
-                                    .postconditions
-                                    .iter()
-                                    .all(|proof| proof.aggregate.discharged)))
-                });
-                if publish {
-                    for function in &component.functions {
-                        let checked = &mut functions[function.0 as usize].function;
-                        if matches!(
-                            checked.entailment.body_disposition,
-                            super::model::CheckedBodyDisposition::Uninhabited { .. }
-                        ) {
-                            continue;
-                        }
-                        for proof in &mut checked.entailment.postconditions {
-                            let summary = VerifiedPostconditionSummary {
-                                function: *function,
-                                block: proof.block.clone(),
-                                relation_ordinal: proof.relation_ordinal,
-                                component: component.ordinal,
-                            };
-                            proof.summary = Some(summary.clone());
-                            component.summaries.push(summary);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(schedule)
     }
 
     fn install_call_requirements(

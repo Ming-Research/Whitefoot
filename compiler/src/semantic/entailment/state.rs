@@ -3435,8 +3435,17 @@ impl FactState {
         other: &Self,
         ledger: &DerivationLedger,
     ) {
-        let needs_fallback = |proof: Option<&DerivationId>| {
-            proof.is_none_or(|proof| ledger.depends_on_postcondition_call(*proof))
+        self.merge_fallback_candidates(other, true, ledger);
+    }
+
+    /// [`Self::merge_relation_candidates_from`] for a pair this state holds,
+    /// or also for one it does not when `absent` is set. A join leaves out a
+    /// pair whose term it reads through zero, which an ordinary candidate
+    /// could only weaken.
+    fn merge_fallback_candidates(&mut self, other: &Self, absent: bool, ledger: &DerivationLedger) {
+        let needs_fallback = |proof: Option<&DerivationId>| match proof {
+            Some(proof) => ledger.depends_on_postcondition_call(*proof),
+            None => absent,
         };
         let bound_pairs = other
             .bounds
@@ -3511,13 +3520,178 @@ pub(crate) struct ClosedState {
     /// registered when the closure was taken. Row-major order is the sorted
     /// `(left, right)` order every deterministic consumer iterates in.
     matrix: DenseClosureBounds,
+    /// The implicit bounds through zero of each term the closure computed no
+    /// row for, by term identity: such a term's closed row and column are
+    /// zero's, shifted by these bounds [ENT-2, ENT-4].
+    passive: Vec<Option<PassiveBounds>>,
     distinct: WordHashSet<(TermId, TermId)>,
     distinct_proofs: WordHashMap<(TermId, TermId), DerivationId>,
     opaque: WordHashSet<(GoalId, GoalSign)>,
     opaque_proofs: WordHashMap<(GoalId, GoalSign), DerivationId>,
 }
 
+/// The tightest implicit bounds of a term with no other fact:
+/// `term - Z <= upper` and `Z - term <= lower`.
+#[derive(Clone, Copy, Debug)]
+struct PassiveBounds {
+    upper: (i128, ImplicitBoundKind),
+    lower: (i128, ImplicitBoundKind),
+}
+
+/// The implicit bounds of every term outside `universe` other than zero, and
+/// of no term inside it or excluded from the closure.
+fn passive_bounds(
+    terms: &TermTable,
+    universe: &ActiveMiddles,
+    excluded: Option<TermId>,
+) -> Vec<Option<PassiveBounds>> {
+    terms
+        .ids()
+        .map(|id| {
+            if id == ZERO || universe.contains(id) || Some(id) == excluded {
+                return None;
+            }
+            let mut upper: Option<(i128, ImplicitBoundKind)> = None;
+            let mut lower: Option<(i128, ImplicitBoundKind)> = None;
+            for_each_implicit_bound(terms, id, |left, right, bound, kind| {
+                let slot = if (left, right) == (id, ZERO) {
+                    &mut upper
+                } else if (left, right) == (ZERO, id) {
+                    &mut lower
+                } else {
+                    return;
+                };
+                if slot.is_none_or(|(held, _)| bound < held) {
+                    *slot = Some((bound, kind));
+                }
+            });
+            Some(PassiveBounds {
+                upper: upper?,
+                lower: lower?,
+            })
+        })
+        .collect()
+}
+
 impl ClosedState {
+    fn passive(&self, term: TermId) -> Option<PassiveBounds> {
+        self.passive.get(term.0 as usize).copied().flatten()
+    }
+
+    /// The closed bound `left - right`, read from the matrix or, for a term
+    /// the closure computed no row for, through zero.
+    fn value(&self, left: TermId, right: TermId) -> Option<i128> {
+        if let Some((bound, _)) = self.matrix.lookup(left, right) {
+            return Some(bound);
+        }
+        match (self.passive(left), self.passive(right)) {
+            (Some(_), _) | (_, Some(_)) if left == right => Some(0),
+            (Some(from), Some(to)) => Some(compose_transitive_bounds(from.upper.0, to.lower.0)),
+            (Some(from), None) => self
+                .matrix
+                .lookup(ZERO, right)
+                .map(|(bound, _)| compose_transitive_bounds(from.upper.0, bound))
+                .or_else(|| (right == ZERO).then_some(from.upper.0)),
+            (None, Some(to)) => self
+                .matrix
+                .lookup(left, ZERO)
+                .map(|(bound, _)| compose_transitive_bounds(bound, to.lower.0))
+                .or_else(|| (left == ZERO).then_some(to.lower.0)),
+            (None, None) => None,
+        }
+    }
+
+    /// The closed bound `left - right` with its proof; a bound read through
+    /// zero for a term without a row is proved by transitivity through zero
+    /// from that term's implicit bound.
+    fn cell(
+        &self,
+        left: TermId,
+        right: TermId,
+        ledger: &mut DerivationLedger,
+    ) -> Option<(i128, DerivationId)> {
+        if let Some(cell) = self.matrix.lookup(left, right) {
+            return Some(cell);
+        }
+        let implicit = |ledger: &mut DerivationLedger, left, right, (bound, kind)| {
+            (
+                bound,
+                ledger.intern(DerivationNode::ImplicitBound {
+                    left,
+                    right,
+                    bound,
+                    kind,
+                }),
+            )
+        };
+        let (first, second) = match (self.passive(left), self.passive(right)) {
+            (Some(_), _) | (_, Some(_)) if left == right => {
+                return Some(implicit(
+                    ledger,
+                    left,
+                    right,
+                    (0, ImplicitBoundKind::Reflexive),
+                ));
+            }
+            (Some(from), _) if right == ZERO => {
+                return Some(implicit(ledger, left, ZERO, from.upper));
+            }
+            (_, Some(to)) if left == ZERO => return Some(implicit(ledger, ZERO, right, to.lower)),
+            (Some(from), Some(to)) => (
+                implicit(ledger, left, ZERO, from.upper),
+                implicit(ledger, ZERO, right, to.lower),
+            ),
+            (Some(from), None) => (
+                implicit(ledger, left, ZERO, from.upper),
+                self.matrix.lookup(ZERO, right)?,
+            ),
+            (None, Some(to)) => (
+                self.matrix.lookup(left, ZERO)?,
+                implicit(ledger, ZERO, right, to.lower),
+            ),
+            (None, None) => return None,
+        };
+        let bound = compose_transitive_bounds(first.0, second.0);
+        Some((
+            bound,
+            ledger.intern(DerivationNode::TransitiveBound {
+                left,
+                middle: ZERO,
+                right,
+                bound,
+                first: first.1,
+                second: second.1,
+            }),
+        ))
+    }
+
+    /// Whether the disequality of an ordered pair is held or derivable from
+    /// either strict bound.
+    fn holds_distinct(&self, pair: (TermId, TermId)) -> bool {
+        self.distinct.contains(&pair)
+            || self.value(pair.0, pair.1).is_some_and(|bound| bound <= -1)
+            || self.value(pair.1, pair.0).is_some_and(|bound| bound <= -1)
+    }
+
+    /// The proof of a held or derivable disequality of an ordered pair.
+    fn distinct_proof(
+        &self,
+        pair: (TermId, TermId),
+        ledger: &mut DerivationLedger,
+    ) -> Option<DerivationId> {
+        if let Some(proof) = self.distinct_proofs.get(&pair) {
+            return Some(*proof);
+        }
+        self.relation_proof(
+            &Relation::Distinct {
+                left: pair.0,
+                right: pair.1,
+                difference: 0,
+            },
+            ledger,
+        )
+    }
+
     fn selected_relations_depend_on_postcondition_call(&self, ledger: &DerivationLedger) -> bool {
         self.matrix
             .cells()
@@ -3531,9 +3705,7 @@ impl ClosedState {
         if self.all_derivable {
             return true;
         }
-        self.matrix
-            .lookup(left, right)
-            .is_some_and(|(held, _)| held <= bound)
+        self.value(left, right).is_some_and(|held| held <= bound)
     }
 
     /// Strongest closed difference bound for interval projection.  Callers
@@ -3541,7 +3713,7 @@ impl ClosedState {
     /// meaningful numeric interval.
     pub(crate) fn tight_bound(&self, left: TermId, right: TermId) -> Option<i128> {
         (!self.all_derivable)
-            .then(|| self.matrix.lookup(left, right).map(|(bound, _)| bound))
+            .then(|| self.value(left, right))
             .flatten()
     }
 
@@ -3737,7 +3909,10 @@ impl ClosedState {
         if self.all_derivable {
             return self.contradiction;
         }
-        let (held, parent) = self.matrix.lookup(left, right)?;
+        if self.value(left, right)? > requested {
+            return None;
+        }
+        let (held, parent) = self.cell(left, right, ledger)?;
         if held > requested {
             return None;
         }
@@ -4186,8 +4361,12 @@ pub(crate) fn contradiction_without_proofs(
     }
     if let Some(EdgeClosure {
         dense, distinct, ..
-    }) = insert_fresh_edges(state, terms, &mut NoProofs)
-    {
+    }) = insert_fresh_edges(
+        state,
+        terms,
+        &closure_universe(state, terms, goals),
+        &mut NoProofs,
+    ) {
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::InsertionWithoutProofs);
         let contradictory = terms
@@ -4323,6 +4502,7 @@ fn goal_contradiction_without_proofs(
         all_derivable: false,
         contradiction: None,
         matrix,
+        passive: Vec::new(),
         distinct,
         distinct_proofs: HashMap::default(),
         opaque: state.opaque.clone(),
@@ -4373,6 +4553,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
             all_derivable: true,
             contradiction: state.contradiction,
             matrix: DenseClosureBounds::new(0),
+            passive: Vec::new(),
             distinct: HashSet::default(),
             distinct_proofs: HashMap::default(),
             opaque: HashSet::default(),
@@ -4380,9 +4561,10 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         };
     }
     let term_count = terms.ids().count();
+    let universe = closure_universe(state, terms, goals);
     if excluded.is_none()
         && !REFERENCE_PRODUCT
-        && let Some(closed) = close_by_edge_insertion(state, terms, goals, ledger)
+        && let Some(closed) = close_by_edge_insertion(state, terms, goals, &universe, ledger)
     {
         #[cfg(test)]
         if tests::verifying_seeded_closures() {
@@ -4392,7 +4574,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
     }
     if excluded.is_none()
         && !REFERENCE_PRODUCT
-        && let Some(closed) = close_from_view_seed(state, terms, goals, ledger)
+        && let Some(closed) = close_from_view_seed(state, terms, goals, &universe, ledger)
     {
         #[cfg(test)]
         if tests::verifying_seeded_closures() {
@@ -4407,6 +4589,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
             all_derivable: false,
             contradiction: None,
             matrix: DenseClosureBounds::values_from_store(term_count, &state.bounds),
+            passive: passive_bounds(terms, &universe, None),
             distinct: (*state.distinct).clone(),
             distinct_proofs: (*state.distinct_proofs).clone(),
             opaque: state.opaque.clone(),
@@ -4416,7 +4599,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         // over this term universe, so the fixed point would add nothing. The
         // [ENT-2] implicit bounds are re-emitted regardless: they hold at
         // every program point by term kind, never by surviving in a map.
-        for id in terms.ids() {
+        for id in terms.ids().filter(|id| universe.contains(*id)) {
             for_each_implicit_bound(terms, id, |left, right, bound, kind| {
                 restore_implicit_bound(&mut closed, left, right, bound, kind, ledger);
             });
@@ -4449,7 +4632,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
     });
     let ids = terms
         .ids()
-        .filter(|id| Some(*id) != excluded)
+        .filter(|id| Some(*id) != excluded && universe.contains(*id))
         .collect::<Vec<_>>();
     let active_middles = closure_middle_terms(state, terms, goals, &ids);
     {
@@ -4633,6 +4816,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense_bounds,
+        passive: passive_bounds(terms, &universe, excluded),
         distinct,
         distinct_proofs,
         opaque: state.opaque.clone(),
@@ -4671,15 +4855,23 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
 fn insert_fresh_edges<P: ClosureProofs>(
     state: &FactState,
     terms: &TermTable,
+    universe: &ActiveMiddles,
     ledger: &mut P,
 ) -> Option<EdgeClosure> {
     let term_count = terms.ids().count();
+    let missing_row = terms
+        .ids()
+        .any(|id| id != ZERO && universe.contains(id) && state.bounds.get(id, ZERO).is_none());
     type Cells<'a> = &'a [(TermId, TermId)];
     let (core_terms, fresh_terms, fresh_cells, weakened_cells): (usize, &[TermId], Cells, Cells) =
         match &state.closure {
             ClosureRecord::Closed { terms } if (*terms as usize) < term_count => {
                 (*terms as usize, &[], &[], &[])
             }
+            // A term that has become part of the universe since, by a signed
+            // goal that names it, has no row yet; its implicit edges are
+            // inserted as an absent cell's are.
+            ClosureRecord::Closed { terms: core } if missing_row => (*core as usize, &[], &[], &[]),
             ClosureRecord::Core {
                 terms,
                 fresh_terms,
@@ -4715,7 +4907,7 @@ fn insert_fresh_edges<P: ClosureProofs>(
     // other facts are gone) or stronger than their cell — a measure's
     // standing bound can be registered after the core closed — then every
     // fresh cell at its current value.
-    let mut pending = pending_implicit_edges(terms, &fresh, &dense, ledger);
+    let mut pending = pending_implicit_edges(terms, universe, &fresh, &dense, ledger);
     let mut weakened = weakened_cells.to_vec();
     weakened.sort_unstable();
     weakened.dedup();
@@ -4810,12 +5002,13 @@ fn insert_fresh_edges<P: ClosureProofs>(
 /// measure's standing bound can be registered after the core closed.
 fn pending_implicit_edges<P: ClosureProofs>(
     terms: &TermTable,
+    universe: &ActiveMiddles,
     fresh: &[bool],
     dense: &DenseClosureBounds,
     ledger: &mut P,
 ) -> PendingEdges {
     let mut pending = PendingEdges::new();
-    for id in terms.ids() {
+    for id in terms.ids().filter(|id| universe.contains(*id)) {
         for_each_implicit_bound(terms, id, |left, right, bound, kind| {
             if fresh[left.0 as usize]
                 || fresh[right.0 as usize]
@@ -5062,13 +5255,14 @@ fn close_by_edge_insertion(
     state: &FactState,
     terms: &TermTable,
     goals: &GoalTable,
+    universe: &ActiveMiddles,
     ledger: &mut DerivationLedger,
 ) -> Option<ClosedState> {
     let EdgeClosure {
         dense,
         distinct,
         distinct_proofs,
-    } = insert_fresh_edges(state, terms, ledger)?;
+    } = insert_fresh_edges(state, terms, universe, ledger)?;
     #[cfg(test)]
     tests::record_route(tests::ClosureRoute::InsertionWithProofs);
     let mut contradiction = None;
@@ -5087,6 +5281,7 @@ fn close_by_edge_insertion(
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense,
+        passive: passive_bounds(terms, universe, None),
         distinct,
         distinct_proofs,
         opaque: state.opaque.clone(),
@@ -5110,6 +5305,7 @@ fn close_from_view_seed(
     state: &FactState,
     terms: &TermTable,
     goals: &GoalTable,
+    universe: &ActiveMiddles,
     ledger: &mut DerivationLedger,
 ) -> Option<ClosedState> {
     let seed = state.view_seed.as_ref()?;
@@ -5145,7 +5341,7 @@ fn close_from_view_seed(
     for slot in fresh.iter_mut().skip(core_terms) {
         *slot = true;
     }
-    let mut pending = pending_implicit_edges(terms, &fresh, &dense, ledger);
+    let mut pending = pending_implicit_edges(terms, universe, &fresh, &dense, ledger);
     let mut cells = seed.fresh_cells.clone();
     cells.sort_unstable();
     cells.dedup();
@@ -5194,6 +5390,7 @@ fn close_from_view_seed(
         all_derivable: contradiction.is_some(),
         contradiction,
         matrix: dense,
+        passive: passive_bounds(terms, universe, None),
         distinct,
         distinct_proofs,
         opaque: state.opaque.clone(),
@@ -5233,6 +5430,21 @@ fn close_goal_contradictions(
         closed.all_derivable = closed.contradiction.is_some();
     }
     closed
+}
+
+/// The terms an [ENT-4] closure computes rows for: zero, every endpoint of a
+/// live relation or of an implicit edge between two nonzero terms, and every
+/// term of a live signed goal. Any other term has no fact but its implicit
+/// bounds through zero, so it is never a better middle than zero and its
+/// closed row and column are zero's shifted by those bounds, which
+/// [`ClosedState`] reads on demand instead of storing.
+fn closure_universe(state: &FactState, terms: &TermTable, goals: &GoalTable) -> ActiveMiddles {
+    #[cfg(test)]
+    if tests::closing_every_term() {
+        return ActiveMiddles(vec![true; terms.ids().count()]);
+    }
+    let ids = terms.ids().collect::<Vec<_>>();
+    closure_middle_terms(state, terms, goals, &ids)
 }
 
 /// Terms that can improve a transitive path beyond the direct implicit path
@@ -5832,7 +6044,11 @@ pub(crate) fn materialize_closure_before_kill(
     goals: &GoalTable,
     ledger: &mut DerivationLedger,
 ) {
-    if state.all_derivable || state.closure.is_closed_over(terms.ids().count()) {
+    // A closed record covers the relations only: a signed goal can still
+    // meet its opposite sign, whose contradiction the snapshot must promote.
+    if state.all_derivable
+        || (state.closure.is_closed_over(terms.ids().count()) && state.opaque.is_empty())
+    {
         return;
     }
     // With no explicit relation or signed goal, closing can add only the
@@ -6012,27 +6228,35 @@ fn materialize_closure(
         // needs an ordinary candidate. Any other selection is derivable
         // without such calls, so it already equals the ordinary closure, which
         // has fewer facts and cannot be stronger.
-        for (left, right, bound, parent) in ordinary_closed.matrix.cells() {
-            let (_, selected) = materialized
-                .bounds
-                .get(left, right)
-                .expect("the ordinary closure is no stronger than the canonical one");
-            if !ledger.depends_on_postcondition_call(selected) {
+        // A term without a row in the ordinary closure is read through zero
+        // there, so every postcondition-dependent selection is looked up
+        // rather than only the ordinary closure's stored cells.
+        let dependent = materialized
+            .bounds
+            .cells()
+            .filter(|(_, _, _, selected)| ledger.depends_on_postcondition_call(*selected))
+            .map(|(left, right, _, _)| (left, right))
+            .collect::<Vec<_>>();
+        for (left, right) in dependent {
+            let Some((bound, parent)) = ordinary_closed.cell(left, right, ledger) else {
                 continue;
-            }
+            };
             let proof =
                 materialized_bound_proof(ledger, left, right, bound, event, parent, wrap_implicit);
             materialized.add_bound(left, right, bound, proof, ledger);
         }
-        let mut keys = ordinary_closed
-            .distinct
+        let mut keys = materialized
+            .distinct_proofs
             .iter()
-            .copied()
-            .filter(|pair| ledger.depends_on_postcondition_call(materialized.distinct_proofs[pair]))
+            .filter(|(_, proof)| ledger.depends_on_postcondition_call(**proof))
+            .map(|(pair, _)| *pair)
+            .filter(|pair| ordinary_closed.holds_distinct(*pair))
             .collect::<Vec<_>>();
         keys.sort_unstable();
         for (left, right) in keys {
-            let parent = ordinary_closed.distinct_proofs[&(left, right)];
+            let parent = ordinary_closed
+                .distinct_proof((left, right), ledger)
+                .expect("the ordinary closure holds this disequality");
             let proof = if !wrap_implicit && ledger.implicit_only(parent) {
                 parent
             } else {
@@ -6100,7 +6324,41 @@ pub(crate) fn join_at(
     joined.ordinary_closure = if ordinary.all_derivable {
         ClosureRecord::Unknown
     } else {
-        joined.merge_relation_candidates_from(&ordinary, ledger);
+        joined.merge_fallback_candidates(&ordinary, false, ledger);
+        // A pair the ordinary join stores no cell for has a term read through
+        // zero there; a postcondition-dependent selection of it still needs
+        // that ordinary value as its fallback.
+        let ordinary_closed = close(&ordinary, terms, goals, ledger);
+        let dependent = joined
+            .bounds
+            .cells()
+            .filter(|(left, right, _, selected)| {
+                ledger.depends_on_postcondition_call(*selected)
+                    && ordinary.bounds.get(*left, *right).is_none()
+            })
+            .map(|(left, right, _, _)| (left, right))
+            .collect::<Vec<_>>();
+        for (left, right) in dependent {
+            if let Some((bound, proof)) = ordinary_closed.cell(left, right, ledger) {
+                joined.add_bound(left, right, bound, proof, ledger);
+            }
+        }
+        let mut distinct = joined
+            .distinct_proofs
+            .iter()
+            .filter(|(pair, proof)| {
+                ledger.depends_on_postcondition_call(**proof)
+                    && !ordinary.distinct_candidates.contains_key(*pair)
+                    && ordinary_closed.holds_distinct(**pair)
+            })
+            .map(|(pair, _)| *pair)
+            .collect::<Vec<_>>();
+        distinct.sort_unstable();
+        for pair in distinct {
+            if let Some(proof) = ordinary_closed.distinct_proof(pair, ledger) {
+                joined.add_distinct_candidate(pair, proof, ledger);
+            }
+        }
         ClosureRecord::closed(terms.ids().count())
     };
     joined.closure = ClosureRecord::closed(terms.ids().count());
@@ -6147,21 +6405,43 @@ fn join_at_once(
     };
     let first = &closed[first_index];
     let mut bounds = BoundStore::with_terms(terms.ids().count());
-    for (left, right, bound, shared) in first.matrix.cells() {
+    // Every pair of terms some predecessor computed a row for. A term no
+    // predecessor has a row for joins as zero's row shifted again.
+    let mut rows = vec![false; terms.ids().count()];
+    for index in &contributing {
+        for (left, _, _, _) in closed[*index].matrix.cells() {
+            rows[left.0 as usize] = true;
+        }
+    }
+    let rows = terms
+        .ids()
+        .filter(|id| rows[id.0 as usize])
+        .collect::<Vec<_>>();
+    let pairs = rows
+        .iter()
+        .flat_map(|left| rows.iter().map(move |right| (*left, *right)))
+        .collect::<Vec<_>>();
+    for (left, right) in pairs {
         let pair = (left, right);
+        let Some(bound) = first.value(left, right) else {
+            continue;
+        };
+        let stored = first.matrix.lookup(left, right).map(|(_, proof)| proof);
         let mut weakest = bound;
-        let mut same_proof = true;
+        let mut same_proof = stored.is_some();
         let held = rest_indices.iter().all(|index| {
-            closed[*index]
-                .matrix
-                .lookup(left, right)
-                .is_some_and(|(other, proof)| {
-                    same_proof &= other == bound && proof == shared;
-                    if other > weakest {
-                        weakest = other;
-                    }
-                    true
-                })
+            closed[*index].value(left, right).is_some_and(|other| {
+                same_proof &= other == bound
+                    && closed[*index]
+                        .matrix
+                        .lookup(left, right)
+                        .map(|(_, proof)| proof)
+                        == stored;
+                if other > weakest {
+                    weakest = other;
+                }
+                true
+            })
         });
         if held {
             // A temporary transitive/strengthened proof may still mention a
@@ -6169,15 +6449,17 @@ fn join_at_once(
             // closures select it, the join must record when its conclusion
             // became independently live. Reuse only existing live facts or
             // implicit bounds, which hold at every program point.
-            let independently_live = ledger.implicit_only(shared)
-                || matches!(
-                    ledger.nodes[shared.0 as usize],
-                    DerivationNode::SourceBound { left: l, right: r, bound: b, .. }
-                        | DerivationNode::JoinBound { left: l, right: r, bound: b, .. }
-                        | DerivationNode::MaterializedBound { left: l, right: r, bound: b, .. }
-                        if (l, r, b) == (left, right, bound)
-                );
-            if contributing.len() == closed.len() && same_proof && independently_live {
+            if let Some(shared) = stored.filter(|_| same_proof)
+                && contributing.len() == closed.len()
+                && (ledger.implicit_only(shared)
+                    || matches!(
+                        ledger.nodes[shared.0 as usize],
+                        DerivationNode::SourceBound { left: l, right: r, bound: b, .. }
+                            | DerivationNode::JoinBound { left: l, right: r, bound: b, .. }
+                            | DerivationNode::MaterializedBound { left: l, right: r, bound: b, .. }
+                            if (l, r, b) == (left, right, bound)
+                    ))
+            {
                 bounds.store_single(left, right, bound, shared);
                 continue;
             }
@@ -6208,16 +6490,25 @@ fn join_at_once(
             bounds.store_single(pair.0, pair.1, weakest, proof);
         }
     }
-    let mut distinct = first.distinct.clone();
-    for index in rest_indices {
-        distinct.retain(|pair| closed[*index].distinct.contains(pair));
-    }
-    let mut distinct_proofs = HashMap::default();
-    let mut distinct_keys: Vec<_> = distinct.iter().copied().collect();
+    // Every disequality some predecessor holds and each one holds or
+    // derives from a strict bound.
+    let mut distinct_keys = contributing
+        .iter()
+        .flat_map(|index| closed[*index].distinct.iter().copied())
+        .collect::<Vec<_>>();
     distinct_keys.sort_unstable();
+    distinct_keys.dedup();
+    distinct_keys.retain(|pair| {
+        contributing
+            .iter()
+            .all(|index| closed[*index].holds_distinct(*pair))
+    });
+    let distinct = distinct_keys.iter().copied().collect::<WordHashSet<_>>();
+    let mut distinct_proofs = HashMap::default();
     for pair in distinct_keys {
-        if contributing.len() == closed.len() {
-            let shared = first.distinct_proofs[&pair];
+        if contributing.len() == closed.len()
+            && let Some(shared) = first.distinct_proofs.get(&pair).copied()
+        {
             let independently_live = ledger.implicit_only(shared)
                 || matches!(
                     ledger.nodes[shared.0 as usize],
@@ -6229,7 +6520,7 @@ fn join_at_once(
             if independently_live
                 && rest_indices
                     .iter()
-                    .all(|index| closed[*index].distinct_proofs[&pair] == shared)
+                    .all(|index| closed[*index].distinct_proofs.get(&pair) == Some(&shared))
             {
                 distinct_proofs.insert(pair, shared);
                 continue;
@@ -6242,7 +6533,9 @@ fn join_at_once(
                     .contradiction
                     .expect("contradictory predecessor proof")
             } else {
-                state.distinct_proofs[&pair]
+                state
+                    .distinct_proof(pair, ledger)
+                    .expect("contributing predecessor holds the joined disequality")
             };
             parents.push(JoinParent {
                 ordinal: u32::try_from(ordinal)
@@ -6421,12 +6714,47 @@ pub(crate) mod tests {
         verifying
     }
 
+    /// Every closed bound over every pair of the closure's terms, stored or
+    /// read through zero for a term without a row.
     fn bound_values(closed: &ClosedState) -> Vec<(TermId, TermId, i128)> {
-        closed
-            .matrix
-            .cells()
-            .map(|(left, right, bound, _)| (left, right, bound))
+        let width = closed.matrix.dimension.max(closed.passive.len());
+        let ids = (0..width)
+            .map(|id| TermId(u32::try_from(id).expect("term index fits the u32 identity")))
+            .collect::<Vec<_>>();
+        ids.iter()
+            .flat_map(|left| ids.iter().map(move |right| (*left, *right)))
+            .filter_map(|(left, right)| closed.value(left, right).map(|bound| (left, right, bound)))
             .collect()
+    }
+
+    /// Every ordered pair whose disequality is held or derivable.
+    fn distinct_pairs(closed: &ClosedState) -> Vec<(TermId, TermId)> {
+        let width = closed.matrix.dimension.max(closed.passive.len());
+        let ids = (0..width)
+            .map(|id| TermId(u32::try_from(id).expect("term index fits the u32 identity")))
+            .collect::<Vec<_>>();
+        ids.iter()
+            .flat_map(|left| ids.iter().map(move |right| (*left, *right)))
+            .filter(|(left, right)| left < right && closed.holds_distinct((*left, *right)))
+            .collect()
+    }
+
+    thread_local! {
+        /// When set, closures on this thread compute a row for every term,
+        /// as the reference every elided closure is compared with.
+        static CLOSE_EVERY_TERM: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(super) fn closing_every_term() -> bool {
+        CLOSE_EVERY_TERM.with(Cell::get)
+    }
+
+    /// Runs `run` with every closure on this thread computing every row.
+    fn with_every_term<T>(run: impl FnOnce() -> T) -> T {
+        let before = CLOSE_EVERY_TERM.with(|every| every.replace(true));
+        let result = run();
+        CLOSE_EVERY_TERM.with(|every| every.set(before));
+        result
     }
 
     pub(super) fn assert_seeded_closure_matches_complete(
@@ -6440,8 +6768,9 @@ pub(crate) mod tests {
         unseeded.closure = ClosureRecord::Unknown;
         unseeded.view_seed = None;
         let mut complete_ledger = ledger.clone();
-        let complete =
-            close_with_excluded_term(&unseeded, terms, goals, &mut complete_ledger, None);
+        let complete = with_every_term(|| {
+            close_with_excluded_term(&unseeded, terms, goals, &mut complete_ledger, None)
+        });
         assert_eq!(
             seeded.all_derivable, complete.all_derivable,
             "seeded closure contradiction differs from the complete closure"
@@ -6455,7 +6784,8 @@ pub(crate) mod tests {
             "seeded closure bounds differ from the complete closure"
         );
         assert_eq!(
-            seeded.distinct, complete.distinct,
+            distinct_pairs(seeded),
+            distinct_pairs(&complete),
             "seeded closure disequalities differ from the complete closure"
         );
         assert_eq!(seeded.opaque, complete.opaque);
@@ -7768,7 +8098,7 @@ pub(crate) mod tests {
                 let mut state = state.clone();
                 state.closure = ClosureRecord::Unknown;
                 state.view_seed = None;
-                close_with_excluded_term(&state, terms, goals, ledger, None)
+                with_every_term(|| close_with_excluded_term(&state, terms, goals, ledger, None))
             })
             .collect::<Vec<_>>();
         let parents = |proofs: Vec<DerivationId>| {
@@ -7923,7 +8253,7 @@ pub(crate) mod tests {
             views[1].closed_view.take();
             views[1].view_seed = None;
             let fast = close(&views[0], terms, goals, &mut ledgers[0]);
-            let reference = close(&views[1], terms, goals, &mut ledgers[1]);
+            let reference = with_every_term(|| close(&views[1], terms, goals, &mut ledgers[1]));
             assert_eq!(
                 fast.all_derivable, reference.all_derivable,
                 "ordinary={ordinary}"
@@ -7937,7 +8267,11 @@ pub(crate) mod tests {
             for (actual, expected) in actual.iter().zip(&expected) {
                 assert_eq!(actual, expected, "ordinary={ordinary}");
             }
-            assert_eq!(fast.distinct, reference.distinct, "ordinary={ordinary}");
+            assert_eq!(
+                distinct_pairs(&fast),
+                distinct_pairs(&reference),
+                "ordinary={ordinary}"
+            );
             assert_eq!(fast.opaque, reference.opaque, "ordinary={ordinary}");
             for goal in goals.ids() {
                 for sign in [GoalSign::Positive, GoalSign::Negative] {
@@ -8094,6 +8428,42 @@ pub(crate) mod tests {
                         _ => {}
                     }
                     if index == 0 {
+                        // A closed record claims its stored selections are
+                        // the closure of its facts, in each layer.
+                        for ordinary_layer in [false, true] {
+                            let mut probe = state.clone();
+                            if ordinary_layer {
+                                probe.retain_non_postcondition_candidates(ledger);
+                            }
+                            if probe.all_derivable
+                                || !probe.closure.is_closed_over(terms.ids().count())
+                            {
+                                continue;
+                            }
+                            let mut unrecorded = probe.clone();
+                            unrecorded.closure = ClosureRecord::Unknown;
+                            unrecorded.view_seed = None;
+                            let mut scratch = ledger.clone();
+                            let complete = with_every_term(|| {
+                                close_with_excluded_term(
+                                    &unrecorded,
+                                    &terms,
+                                    &goals,
+                                    &mut scratch,
+                                    None,
+                                )
+                            });
+                            if complete.all_derivable {
+                                continue;
+                            }
+                            for (left, right, bound, _) in probe.bounds.cells() {
+                                assert_eq!(
+                                    complete.value(left, right),
+                                    Some(bound),
+                                    "a closed record holds a cell weaker than its closure"
+                                );
+                            }
+                        }
                         // Keep the view on the actual optimized state so the
                         // comparison of its clone also checks memo reuse.
                         let _ = close(state, &terms, &goals, ledger);

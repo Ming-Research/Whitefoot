@@ -31,6 +31,93 @@ pub mod spec_identity {
 mod syntax;
 mod target;
 
+/// The stack each worker of [`in_parallel`] runs on, as large as the
+/// compiler driver's own: a worker runs the same recursive checks.
+const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+/// Worker threads every [`in_parallel`] call together has running, beyond
+/// the threads that called it, so nested calls stay within the processors.
+static WORKERS_IN_USE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Returns its reserved workers when the call ends, even by a panic.
+struct WorkerReservation(usize);
+
+impl Drop for WorkerReservation {
+    fn drop(&mut self) {
+        WORKERS_IN_USE.fetch_sub(self.0, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// `work` applied to every item, with the results in item order. The calling
+/// thread takes items alongside up to one worker per further available
+/// processor that no other call holds; with none free, it runs every item.
+pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    use std::sync::atomic::Ordering;
+    let spare = std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .saturating_sub(1);
+    let wanted = spare.min(items.len().saturating_sub(1));
+    let mut used = WORKERS_IN_USE.load(Ordering::Acquire);
+    let reserved = loop {
+        let take = wanted.min(spare.saturating_sub(used));
+        if take == 0 {
+            break 0;
+        }
+        match WORKERS_IN_USE.compare_exchange(
+            used,
+            used + take,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break take,
+            Err(current) => used = current,
+        }
+    };
+    let reservation = WorkerReservation(reserved);
+    if reservation.0 == 0 {
+        return items.iter().map(work).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let take_items = || {
+        let mut done = Vec::new();
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            let Some(item) = items.get(index) else {
+                break done;
+            };
+            done.push((index, work(item)));
+        }
+    };
+    let finished = std::thread::scope(|scope| {
+        let workers = (0..reservation.0)
+            .map(|_| {
+                std::thread::Builder::new()
+                    .stack_size(WORKER_STACK_BYTES)
+                    .spawn_scoped(scope, take_items)
+            })
+            .collect::<Vec<_>>();
+        // A thread the host refuses leaves its share to the others.
+        let mut finished = take_items();
+        for worker in workers.into_iter().flatten() {
+            finished.extend(
+                worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            );
+        }
+        finished
+    });
+    drop(reservation);
+    let mut slots = items.iter().map(|_| None).collect::<Vec<Option<R>>>();
+    for (index, result) in finished {
+        slots[index] = Some(result);
+    }
+    slots
+        .into_iter()
+        .map(|slot| slot.expect("every item is taken by some thread"))
+        .collect()
+}
+
 // Unit and integration tests use the same immutable native-object builder.
 // This alias lets the shared test module name the existing exported inputs.
 #[cfg(test)]

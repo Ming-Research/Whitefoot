@@ -132,6 +132,19 @@ parameter: `slow` was analyzed 40 times (31.5 s), `library_base` 39 times
 (18.2 s) and `prepare` 40 times (14.3 s). Those instances differ only by a
 renaming of symbolic parameters, and their callers read only their summaries.
 
+### Terms without facts
+
+After candidate 5 the slowest Halo function, `library_builtin` (a generated
+table of about a hundred `if index == k { ... return ... }` arms, each
+filling a local array), took 12.9 s in its symbolic and again in its concrete
+analysis. Every arm registers new terms, and a term stays a row of every
+matrix after its scope exits, so the width only grows. A temporary count over
+Halo's `pkg::vm` check found, in closures wider than 300 terms, up to 879
+terms of which only 263 have any row other than zero's shifted by their
+implicit bounds; the squared widths differ by 11.3x. In Snowghost's
+`pkg::style` the same count gives 253 terms and 180 such rows at the median
+of the widest closures, a 2x difference.
+
 ## Candidates and selection
 
 Each candidate changes work only. The selection criteria are that every
@@ -176,6 +189,17 @@ before these criteria were written; their results below are the same runs.
    component still decides publication. A temporary patch that analyzed every
    such instance anyway and compared the two found all 7088 reused instances
    of Halo's `pkg::vm` check identical (456 of them with postconditions).
+
+6. **Closure universe.** Rows only for zero, endpoints of live relations
+   and of nonzero implicit edges, and terms of live signed goals; any other
+   term is read through zero. Joins take every pair of the terms some
+   predecessor has a row for, and ordinary fallbacks (in snapshots and joins)
+   look values up the same way. The generated-flow test now compares every
+   step with a reference that computes every row, and asserts that a closed
+   record's cells equal its closure; that assertion found three places that
+   treated a missing cell as underivable, and a snapshot shortcut that skipped
+   promoting a signed goal's contradiction when the record was closed, which
+   this candidate made reachable and which is fixed.
 
 Rejected alternatives:
 
@@ -226,6 +250,11 @@ With candidate 5, Halo's `pkg::vm` module check takes 57.9 s and 2.2 GB
 instead of exhausting 12 GB, and the `test` entry's fresh-cache check is
 accepted in 122.6 s at 3.3 GB peak RSS. The Snowghost LLVM of all five
 entries stays byte-identical.
+
+With candidate 6, the module checks take 29.2 s for Halo's `pkg::vm` (was
+48.9 s with function concurrency, at 1.9 GB), 6.8 s for Snowghost's
+`pkg::html::tree_builder` (was 13.2 s) and 18.3 s for `pkg::style` (was
+23.3 s); the Snowghost LLVM of all five entries stays byte-identical.
 
 ## Remaining costs
 

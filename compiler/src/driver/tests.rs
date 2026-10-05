@@ -3564,7 +3564,7 @@ fn a_symbolic_link_at_a_bound_package_root_is_an_envelope_failure() {
 #[test]
 fn concurrent_work_returns_results_in_item_order() {
     let items = (0..16_u64).collect::<Vec<_>>();
-    let results = super::in_parallel(&items, |item| {
+    let results = crate::in_parallel(&items, |item| {
         // Later items finish first.
         std::thread::sleep(std::time::Duration::from_millis(32 - 2 * item));
         item * 3
