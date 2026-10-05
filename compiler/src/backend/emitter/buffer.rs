@@ -97,6 +97,49 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         Ok(format!("%{pointer}"))
     }
 
+    /// The address of element `offset` of the block `address` names. In a
+    /// split part, an offset that is a checked sum `start + step` of a value
+    /// the part has at entry addresses the element `step` past element
+    /// `start`, whose pointer the part's prelude derives once
+    /// (compiler/match-dispatch-lowering); it is the same element, and
+    /// `start <= start + step < len` wherever this access is in bounds, so
+    /// the derived pointer is in bounds wherever it is used.
+    pub(super) fn buffer_subscript_pointer(
+        &mut self,
+        block: IrType,
+        address: IrValueId,
+        offset: IrValueId,
+    ) -> Result<String, BackendFailure> {
+        let IrType::Buffer { element } = block else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let element = self
+            .program
+            .element(element)
+            .ok_or(BackendFailure::InvalidIr)?;
+        if let Some((base, start, step)) = self.derivable_subscript(address, offset)
+            && !crate::target::element_has_zero_stride(self.target, self.program, element)
+                .map_err(BackendFailure::TargetLayout)?
+        {
+            let block_type = self.output.type_name(self.program, block)?;
+            let element_type = self.output.type_name(self.program, element)?;
+            let first = format!(
+                "getelementptr inbounds {block_type}, ptr {}, i64 0, i32 {ELEMENTS_FIELD}, i64 0",
+                value_name(base)
+            );
+            let derived = self.derived_element(base, start, &first, &element_type)?;
+            let pointer = self.next_temporary()?;
+            writeln!(
+                self.output,
+                "  %{pointer} = getelementptr inbounds {element_type}, ptr {derived}, i64 {}",
+                self.value_name(step)
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            return Ok(format!("%{pointer}"));
+        }
+        self.buffer_element_pointer(block, &self.value_name(address), &self.value_name(offset))
+    }
+
     /// Projects the first-element address carried by a synthesized task
     /// capture. This changes only the compiler's internal capture ABI; the
     /// source Box value remains the allocation-base pointer.
@@ -370,9 +413,7 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         {
             return Err(BackendFailure::InvalidIr);
         }
-        let address = self.value_name(buffer);
-        let index = self.value_name(offset);
-        let element_pointer = self.buffer_element_pointer(block, &address, &index)?;
+        let element_pointer = self.buffer_subscript_pointer(block, buffer, offset)?;
         self.load_place_result(result, ty, &element_pointer)
     }
 

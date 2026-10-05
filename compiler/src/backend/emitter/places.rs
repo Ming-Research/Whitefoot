@@ -550,11 +550,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     return Err(BackendFailure::InvalidIr);
                 }
                 let (block, _) = self.buffer_block(address)?;
-                self.buffer_element_pointer(
-                    block,
-                    &self.value_name(address),
-                    &self.value_name(*offset),
-                )?
+                self.buffer_subscript_pointer(block, address, *offset)?
             }
             crate::IrPlaceStep::KeyedEntriesElement { offset } => {
                 let IrType::KeyedEntries { element } = base.ty() else {

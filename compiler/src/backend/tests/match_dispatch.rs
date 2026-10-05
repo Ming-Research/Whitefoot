@@ -951,3 +951,148 @@ fn a_hoisted_projection_an_arm_repeats_is_passed_once() {
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
+
+/// An interpreter whose state lives in a frame of a boxed `Array` at a
+/// carried base `fp`: every arm reads and writes `regs^.inner[fp + k]`, and
+/// the loop keeps `regs`'s box, so each part receives its referent. With
+/// `fp` 1, `Add 3; Dec; Jnz 0; Halt` and a count of 1000 returns 3000.
+const FRAME_SLOTS: &str = r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Add();
+  Dec();
+  Jnz(t: u64);
+  Halt();
+}
+
+fn framed(code: &Box<Slots<Op>>, regs: &Box<Array<u64>>, pc: u64, fp: u64) -> r: u64 reads(code), writes(regs) contract {
+  requires pc < code^.inner.len;
+  requires fp + 2_u64 <= regs^.inner.len;
+} {
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Add() => {
+      let at = fp + 0_u64;
+      let a = regs^.inner[at];
+      let b = a +wrap 3_u64;
+      set regs^.inner[at] = b;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail framed(code: code, regs: regs, pc: next, fp: fp);
+      }
+      return 0_u64;
+    }
+    Dec() => {
+      let ct = fp + 1_u64;
+      let c = regs^.inner[ct];
+      let d = c -wrap 1_u64;
+      set regs^.inner[ct] = d;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail framed(code: code, regs: regs, pc: next, fp: fp);
+      }
+      return 0_u64;
+    }
+    Jnz(t: tv) => {
+      let ct = fp + 1_u64;
+      let c = regs^.inner[ct];
+      let next = pc + 1_u64;
+      if c != 0_u64 {
+        set next = tv^;
+      }
+      if next < n {
+        return musttail framed(code: code, regs: regs, pc: next, fp: fp);
+      }
+      return 0_u64;
+    }
+    Halt() => {
+      let at = fp + 0_u64;
+      let a = regs^.inner[at];
+      return a;
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Add();
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Dec();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Jnz(t: 0_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  let regs = box_array_filled::<u64>(count: 3_u64, value: 0_u64);
+  if code.inner.len > 0_u64 {
+    if regs.inner.len >= 3_u64 {
+      set regs.inner[2_u64] = 1000_u64;
+      let r = framed(code: &code, regs: &regs, pc: 0_u64, fp: 1_u64);
+      if r == 3000_u64 {
+        return exit_status(code: 0_u8);
+      }
+      return exit_status(code: 1_u8);
+    }
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn an_arm_addresses_frame_slots_from_a_pointer_its_prelude_derives() {
+    // Each arm's slots are `regs^.inner[fp + k]` with `fp` and the box's
+    // referent both parameters of the part: the prelude derives the pointer
+    // to element `fp` once, and every slot is addressed `k` elements past
+    // it rather than at `fp + k` from the block.
+    let module = emit(FRAME_SLOTS.as_bytes());
+    assert_split(&module, "wf_framed", 4);
+    for arm in 0..4 {
+        let part = definition(&module, &format!("wf_framed.arm.{arm}"));
+        let (prelude, body) = part
+            .split_once("  br label %")
+            .expect("the prelude ends in the branch to the arm");
+        let derived: Vec<&str> = prelude
+            .lines()
+            .filter_map(|line| {
+                line.trim()
+                    .split_once(" = getelementptr inbounds i64, ptr ")
+            })
+            .filter(|(name, _)| name.starts_with("%wf.derived."))
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(
+            derived.len(),
+            1,
+            "the prelude derives one pointer for the box and fp: {part}"
+        );
+        assert!(
+            prelude.contains(&format!(
+                "{}.first = getelementptr inbounds {{ i64, [0 x i64] }}, ptr %v",
+                derived[0]
+            )),
+            "the derived pointer starts at the block's first element: {part}"
+        );
+        assert!(
+            body.contains(&format!(
+                "= getelementptr inbounds i64, ptr {}, i64 %v",
+                derived[0]
+            )),
+            "the arm addresses its slots from the derived pointer: {part}"
+        );
+        assert!(
+            !body.contains("getelementptr inbounds { i64, [0 x i64] }"),
+            "no slot is addressed from the block itself: {part}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}

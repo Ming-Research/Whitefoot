@@ -329,6 +329,46 @@ pub(super) fn find(
     (found, rejections)
 }
 
+/// The loop's unsigned 64-bit sums whose [OP-2] domain the checker
+/// discharged, which the module states with `nuw`: each result with the
+/// block that defines it and its two operands. A header instruction the
+/// enclosing function computes once is no part's.
+fn checked_sums(
+    function: &IrFunction,
+    plan: &DispatchLoop,
+    hoisted: &[usize],
+) -> HashMap<IrValueId, (usize, [IrValueId; 2])> {
+    let mut sums = HashMap::new();
+    for (index, block) in function.blocks().iter().enumerate() {
+        let header = index == plan.header.index();
+        if !header && !plan.region.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        for (position, instruction) in block.instructions().iter().enumerate() {
+            if let IrInstruction::Define {
+                result,
+                operation:
+                    crate::IrOperation::Integer {
+                        operation: crate::IrIntegerOperation::AddExact,
+                        operand_type:
+                            IrType::Integer {
+                                width: 64,
+                                signed: false,
+                            },
+                        arguments,
+                    },
+                ..
+            } = instruction
+                && let [left, right] = arguments.as_slice()
+                && !(header && hoisted.contains(&position))
+            {
+                sums.insert(*result, (index, [*left, *right]));
+            }
+        }
+    }
+    sums
+}
+
 /// What [`FunctionEmitter::loop_invariants`] finds the loop cannot change.
 #[derive(Default)]
 struct LoopInvariants {
@@ -437,6 +477,26 @@ pub(super) struct DispatchEmission {
     destination: bool,
     result: String,
     convention: &'static str,
+    /// The loop's checked unsigned 64-bit sums (see [`checked_sums`]).
+    sums: HashMap<IrValueId, (usize, [IrValueId; 2])>,
+    /// The blocks of the part being emitted.
+    part_blocks: Vec<bool>,
+    /// The element pointers the part being emitted derives once in its
+    /// prelude, by the block and the start offset they are derived from,
+    /// and the prelude lines that derive them.
+    derived: HashMap<(IrValueId, IrValueId), String>,
+    derived_prelude: String,
+}
+
+impl DispatchEmission {
+    /// Whether the part being emitted has `value` from its entry: as a
+    /// parameter, other than a header value the dispatch function computes
+    /// again, or as a value its prelude loads from the frame.
+    fn at_entry(&self, value: IrValueId) -> bool {
+        self.parameters.iter().any(|(parameter, _, role)| {
+            *parameter == value && (self.part == Part::Arm || *role != Role::HeaderValue)
+        }) || self.spilled.iter().any(|(spilled, _)| *spilled == value)
+    }
 }
 
 impl FunctionFramePlan {
@@ -718,6 +778,7 @@ impl FunctionEmitter<'_, '_> {
         let arm_symbols = (0..plan.arms.len())
             .map(|arm| format!("{body_symbol}.arm.{arm}"))
             .collect();
+        let sums = checked_sums(self.function, &plan, &invariant.hoisted);
         Ok(Some(DispatchEmission {
             plan,
             part: Part::Enclosing,
@@ -743,6 +804,10 @@ impl FunctionEmitter<'_, '_> {
             destination,
             result: result.to_owned(),
             convention,
+            sums,
+            part_blocks: Vec::new(),
+            derived: HashMap::new(),
+            derived_prelude: String::new(),
         }))
     }
 
@@ -1082,9 +1147,13 @@ impl FunctionEmitter<'_, '_> {
         let dropped = dispatch.dropped.clone();
         let spilled = dispatch.spilled.clone();
         let pins = dispatch.pins.clone();
-        let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
+        let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>, String)> = Vec::new();
 
-        self.set_part(Part::Header);
+        let mut header_only = vec![false; self.function.blocks().len()];
+        if let Some(member) = header_only.get_mut(header.index()) {
+            *member = true;
+        }
+        self.begin_part(Part::Header, header_only);
         self.output = FunctionBody::default();
         self.output.open_block("entry".to_owned());
         writeln!(self.output, "  br label %{}", block_label(header))
@@ -1104,14 +1173,16 @@ impl FunctionEmitter<'_, '_> {
         }
         self.emit_terminator(header, block.terminator())?;
         self.output.finish_ir_block(header)?;
+        let derived = self.take_derived();
         parts.push((
             self.part_signature(&symbol, Part::Header)?,
             std::mem::take(&mut self.output),
             std::mem::take(&mut *self.slot_uses.borrow_mut()),
+            derived,
         ));
 
-        self.set_part(Part::Arm);
         for ((target, blocks), arm_symbol) in arms.iter().zip(&arm_symbols) {
+            self.begin_part(Part::Arm, blocks.clone());
             self.output = FunctionBody::default();
             self.incoming = self.collect_incoming(blocks)?;
             self.output.open_block("entry".to_owned());
@@ -1132,20 +1203,22 @@ impl FunctionEmitter<'_, '_> {
                 self.emit_terminator(block_id, member.terminator())?;
                 self.output.finish_ir_block(block_id)?;
             }
+            let derived = self.take_derived();
             parts.push((
                 self.part_signature(arm_symbol, Part::Arm)?,
                 std::mem::take(&mut self.output),
                 std::mem::take(&mut *self.slot_uses.borrow_mut()),
+                derived,
             ));
         }
 
         let mut users: HashMap<FunctionSlot, usize> = HashMap::new();
-        for (_, _, uses) in &parts {
+        for (_, _, uses, _) in &parts {
             for key in uses {
                 *users.entry(*key).or_default() += 1;
             }
         }
-        for (signature, mut body, uses) in parts {
+        for (signature, mut body, uses, derived) in parts {
             let locals: HashSet<FunctionSlot> = uses
                 .iter()
                 .copied()
@@ -1181,6 +1254,9 @@ impl FunctionEmitter<'_, '_> {
                     })
                     .map_err(|_| BackendFailure::TextEmission)?;
             }
+            // Derived element pointers read parameters and spilled values,
+            // so they follow the loads above.
+            prelude.push_str(&derived);
             module.define(signature.define(body, &prelude)?);
             module.text("\n");
         }
@@ -1686,10 +1762,87 @@ impl FunctionEmitter<'_, '_> {
             .count()
     }
 
-    fn set_part(&mut self, part: Part) {
+    /// How the part being emitted may address element `offset` of the
+    /// block `address` names from a pointer its prelude derives once: when
+    /// `offset` is a checked unsigned sum [OP-2], defined in this part, of
+    /// a value `start` the part has at entry and another `step`, and the
+    /// block is a value the part has at entry or a name for one, returns
+    /// the block's entry value, `start` and `step`.
+    pub(super) fn derivable_subscript(
+        &self,
+        address: IrValueId,
+        offset: IrValueId,
+    ) -> Option<(IrValueId, IrValueId, IrValueId)> {
+        let dispatch = self.dispatch.as_ref()?;
+        if dispatch.part == Part::Enclosing {
+            return None;
+        }
+        let (block, [left, right]) = *dispatch.sums.get(&offset)?;
+        if !dispatch.part_blocks.get(block).copied().unwrap_or(false) {
+            return None;
+        }
+        let base = dispatch.replaced.get(&address).copied().unwrap_or(address);
+        if !dispatch.at_entry(base) {
+            return None;
+        }
+        let (start, step) = if dispatch.at_entry(left) {
+            (left, right)
+        } else if dispatch.at_entry(right) {
+            (right, left)
+        } else {
+            return None;
+        };
+        // A step kept in a slot would need its load here, apart from the
+        // sum's own.
+        if self.storage.slot(step).is_some() {
+            return None;
+        }
+        Some((base, start, step))
+    }
+
+    /// The name of the pointer to element `start` of the block `base`,
+    /// which the part's prelude derives once from `first`, the block's
+    /// first element as an LLVM pointer expression over `base`.
+    pub(super) fn derived_element(
+        &mut self,
+        base: IrValueId,
+        start: IrValueId,
+        first: &str,
+        element: &str,
+    ) -> Result<String, BackendFailure> {
+        let dispatch = self.dispatch.as_mut().ok_or(BackendFailure::InvalidIr)?;
+        if let Some(name) = dispatch.derived.get(&(base, start)) {
+            return Ok(name.clone());
+        }
+        let name = format!("%wf.derived.{}.{}", base.ordinal(), start.ordinal());
+        writeln!(
+            dispatch.derived_prelude,
+            "  {name}.first = {first}\n  {name} = getelementptr inbounds {element}, ptr {name}.first, i64 {}",
+            value_name(start)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        dispatch.derived.insert((base, start), name.clone());
+        Ok(name)
+    }
+
+    /// Starts emitting `part`, whose blocks are `blocks`, with no derived
+    /// element pointers yet.
+    fn begin_part(&mut self, part: Part, blocks: Vec<bool>) {
         if let Some(dispatch) = &mut self.dispatch {
             dispatch.part = part;
+            dispatch.part_blocks = blocks;
+            dispatch.derived.clear();
+            dispatch.derived_prelude.clear();
         }
+    }
+
+    /// The prelude lines deriving the element pointers the part just
+    /// emitted uses.
+    fn take_derived(&mut self) -> String {
+        self.dispatch
+            .as_mut()
+            .map(|dispatch| std::mem::take(&mut dispatch.derived_prelude))
+            .unwrap_or_default()
     }
 }
 
