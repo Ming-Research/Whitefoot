@@ -382,6 +382,39 @@ replay suites, and `compiler/test-corpus` inside the group stayed within its
 145 s (125.1 s). 1.25 times the slower run, rounded up to 5 s, is 265 s,
 which the owner approved on 2026-10-04 (Q37, "37 agreed", translated from Chinese); macOS stays at 255 s.
 
+**macOS budgets after the move to `macos-15`.** From the merge that moved
+the macOS jobs to `macos-15` (`c3d26643c`, 2026-10-04 22:12 UTC) to
+2026-10-05 08:27 UTC, 29 gate runs on 10 branches ran on `macos-15-arm64`
+images; eleven stage runs went over their budgets, in `check/unit` (up to
+342.7 s of 280 s), `compiler/test-build-unit` (234.3 s of 185 s),
+`compiler/test-unit` (119.5 s of 100 s) and `compiler/test-corpus` (129.9 s
+of 125 s). Against the last 15 `macos-14` runs before the merge, the
+medians moved from 220.5 to 237.2 s (`check/unit`), 145.3 to 144.5 s
+(`compiler/test-build-unit`), 75.4 to 84.4 s (`compiler/test-unit`), 186.8
+to 187.8 s (`check/corpus`) and 89.0 to 99.3 s (`compiler/test-corpus`),
+while the maxima rose more, 256.2 to 342.7 s for `check/unit` and 161.9 to
+234.3 s for `compiler/test-build-unit`. The comparison does not isolate the
+image: the cohorts have different revisions, and those two maxima come
+from 29 and 30 `macos-15` samples against 13 `macos-14` ones each, and a
+larger sample alone raises a maximum.
+Slowest `macos-15` runs, in seconds, and 1.25 times each rounded up to
+5 s, which this change sets as the macOS budgets and the owner approved on
+2026-10-05 ("agree to all the others", translated from Chinese):
+
+| Stage | Slowest run | Budget, before | after |
+|---|---:|---:|---:|
+| `check/unit` | 342.7 | 280 | 430 |
+| `compiler/test-build-unit` | 234.3 | 185 | 295 |
+| `compiler/test-unit` | 119.5 | 100 | 150 |
+| `check/corpus` | 253.6 | 255 | 320 |
+| `compiler/test-build-corpus` | 129.5 | 135 | 165 |
+| `compiler/test-corpus` | 129.9 | 125 | 165 |
+| `check/runtime` | 14.6 | 15 | 20 |
+
+Every other macOS stage's slowest run stayed within its budget. The
+slowest `check/unit` and `compiler/test-unit` came from run 37262433875,
+the slowest `compiler/test-build-unit` from run 37279701596.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases
