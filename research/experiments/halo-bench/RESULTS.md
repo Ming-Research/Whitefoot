@@ -585,8 +585,8 @@ Cargo, push or PR command was used.
 - `make design-lint`: exit 0, 7.99 s sizing run; `make static`: all seven stages exit 0, wrapper 32.77 s. Static uses a task scratch directory for native temporary files. No `make check` ran because it invokes prohibited Cargo; no ready/merge check or approval log was written. No specification or conformance rules changed.
 
 Validation above ran on working source over parent `41a6fee1c9ddeae319d31aa1feef32e0c9954d2d`; binary and
-source hashes identify the tested content. The final handoff commit also adds
-the result prose and review record. Publication is explicitly out of scope.
+source hashes identify the tested content. The runtime changes and result prose are committed separately from the
+subsequent independent review record. Publication is explicitly out of scope.
 
 ### Found during the repair
 
@@ -606,3 +606,48 @@ the result prose and review record. Publication is explicitly out of scope.
   other hot paths, Cell stride, the every-allocation verifier and compiler
   construction cost remain recorded in `docs/todo.md`. This task does not
   select C1–C6 or claim current profile occupancy for them.
+
+### Review repair criteria
+
+The independent review found that pin followed by compile before resume could
+mask either missing invalidation: both operations dirtied the same bridge.
+The corrected lifecycle probe requires a collection/survival observation after
+pin alone, then after compile alone (while the bridge is valid again), then a
+collection/release observation after unpin alone. Before execution, negative
+controls are fixed to bypass only the corresponding embedding refresh using
+the existing VM resume with its stale constant-pool bridge: pin must exit 59,
+compile 69 and unpin 62; ordinary smoke must exit 0. No heap, VM, embedding
+implementation, benchmark source or timing binary changes for this repair.
+The final e2e host is rebuilt, and the changed CLI's ordinary comparisons and
+root controls are rechecked. The interrupted command's reference path is also
+redacted to `<reference-root>`; its observed timings and exits are preserved.
+
+The corrected full-LTO e2e host builds with exit 0 in 461.87 s. Ordinary
+smoke exits 0; omission of the pin, compile and unpin refreshes independently
+fails with exits 59, 69 and 62 respectively, exactly the recorded observations.
+The corrected host also passes ordinary 240/240, stress 240/240, local roots
+9/9, frame 1/1 and suspended snapshot 1/1; a tool rechecks every row against
+before and finds equal outcomes/counts. Memory recovery and the parked-root
+omission control retain their earlier expected results. The complete repair
+check batch exits 0 in 5.52 s. This supplies the independent invalidator
+coverage the initial combined probe lacked.
+
+### Repair independent review
+
+A separate read-only reviewer, configured as GPT-6.1-sol, reviewed
+`6cab1f2dcb7fe858846e68758fe210380e7fd7e0..ec69af2c494b5d26ede8cf319e5c73c1d9efc29f`
+with A, D, C, R, M and V, including design checks G1–G3 and correspondence
+DC1–DC4. T was not triggered; publication was excluded by the user's explicit
+constraint. The reviewer reran no green suites. It read the full diff and
+owners, independently checked launch ordering, medians/ratios, workload and
+tool/binary hashes, all 71 library hashes and e2e source digests, every
+case/count comparison and memory observations. It checked the compiler
+ancestor and Halo siblings: 114→115 nodes, 550→553 decisions, depth 3 and
+526 rejected alternatives unchanged.
+
+Findings fixed: pin and compile mutually masked invalidation in the new
+probe (C1/C2, DC4), now separated and each falsified by its own stale-bridge
+control; a prospective review-record statement (D3/V2), now replaced by this
+actual record; and a machine-local reference path in the interrupted log (A4),
+now a role placeholder. The logic repair receives a narrow follow-up review;
+its result is recorded after that review completes. Q1 remains provisional.

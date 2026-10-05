@@ -421,6 +421,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let omit_suspended_root = False();
   let isolate_frames = False();
   let recover = False();
+  let omit_refresh = 0_u8;
   let positional = 0_u64;
   for (index in 1_u64..modes) {
     if argument_is(args: &args_v99, index: index, text: &stress_option[0_u64..11_u64]) {
@@ -433,9 +434,19 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       set isolate_frames = True();
     } else if argument_is(args: &args_v99, index: index, text: &recovery_option[0_u64..17_u64]) {
       set recover = True();
+    } else if argument_is(args: &args_v99, index: index, text: &pin_refresh_option[0_u64..18_u64]) {
+      set omit_refresh = 1_u8;
+    } else if argument_is(args: &args_v99, index: index, text: &compile_refresh_option[0_u64..22_u64]) {
+      set omit_refresh = 2_u8;
+    } else if argument_is(args: &args_v99, index: index, text: &unpin_refresh_option[0_u64..20_u64]) {
+      set omit_refresh = 3_u8;
     } else {
       set positional = positional +sat 1_u64;
     }
+  }
+  if omit_refresh > 0_u8 {
+    let code = root_updates_probe(omit_refresh: omit_refresh);
+    return std::process::exit_status(code: code);
   }
   if positional > 2_u64 {
     return smoke();
@@ -737,3 +748,9 @@ fn isolate_frame_roots(engine: &Engine) -> r: unit reads(engine.vm.frames), writ
   }
   return unit;
 }
+
+const pin_refresh_option: Array<u8, 18> = "--omit-pin-refresh";
+
+const compile_refresh_option: Array<u8, 22> = "--omit-compile-refresh";
+
+const unpin_refresh_option: Array<u8, 20> = "--omit-unpin-refresh";

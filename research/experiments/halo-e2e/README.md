@@ -118,3 +118,13 @@ fail with the original expected reply unchanged. Ordinary runs omit this flag.
 `--scratch-root DIR` keeps temporary build and fixture files under an existing
 chosen directory. The cost-repair runs use the benchmark's `target/` so all
 new artifacts stay in the requested worktree; the default remains `/private/tmp`.
+
+The lifecycle probe separates pin, compile and unpin with a forced collection
+and its own survival/release observation after each edit. For discriminating
+controls, the executable's `--omit-pin-refresh`, `--omit-compile-refresh` and
+`--omit-unpin-refresh` modes bypass the embedding refresh at exactly that
+checkpoint through the existing VM resume. They must fail with probe exits
+59 (pin lost), 69 (cached literal lost) and 62 (released pin retained), while
+ordinary `a b c` smoke mode exits 0. These modes serve the root-invalidation
+observations and are retired with the research probe or replaced by a
+maintained embedding test; they do not change GC or oracle expectations.

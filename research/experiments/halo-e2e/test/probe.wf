@@ -371,10 +371,10 @@ fn embed_probe() -> r: u8 pure {
       }
     }
   }
-  return root_updates_probe();
+  return root_updates_probe(omit_refresh: 0_u8);
 }
 
-fn root_updates_probe() -> r: u8 pure {
+fn root_updates_probe(omit_refresh: u8) -> r: u8 pure {
   doc "Edit the root set between budget checkpoints, after the first bridge is already valid.";
   let engine = halo::embed::new_engine(limit: 67108864_u64);
   let env = Probe(mode: 0_u8, calls: 0_u64);
@@ -415,18 +415,9 @@ fn root_updates_probe() -> r: u8 pure {
       set token = t;
     }
   }
-  let inactive = halo::embed::compile(engine: &engine, chunk_name: &probe_text_2[0_u64..12_u64], source: &probe_text_3[0_u64..36_u64]);
-  let cached = active;
-  match move inactive {
-    Err(..) => {
-      return 56_u8;
-    }
-    Ok(value: id) => {
-      set cached = id;
-    }
-  }
   let before = halo::embed::collection_count(engine: &engine);
-  let resumed = halo::embed::resume::<ProbeHost>(engine: &engine, env: &env, budget: 1_u64);
+  let omit_pin = omit_refresh == 1_u8;
+  let resumed = root_probe_resume(engine: &engine, env: &env, id: active, omitted: omit_pin);
   match resumed {
     Budget() => {
     }
@@ -454,10 +445,44 @@ fn root_updates_probe() -> r: u8 pure {
       }
     }
   }
+  let inactive = halo::embed::compile(engine: &engine, chunk_name: &probe_text_2[0_u64..12_u64], source: &probe_text_3[0_u64..36_u64]);
+  let cached = active;
+  match move inactive {
+    Err(..) => {
+      return 56_u8;
+    }
+    Ok(value: id) => {
+      set cached = id;
+    }
+  }
+  let omit_compile = omit_refresh == 2_u8;
+  let compiled_resume = root_probe_resume(engine: &engine, env: &env, id: active, omitted: omit_compile);
+  match compiled_resume {
+    Budget() => {
+    }
+    Done(..) => {
+      return 67_u8;
+    }
+    Error() => {
+      return 67_u8;
+    }
+    HostStopped() => {
+      return 67_u8;
+    }
+  }
+  let collected = halo::embed::collection_count(engine: &engine);
+  if collected <= after {
+    return 68_u8;
+  }
+  let cached_live = cached_string_live(engine: &engine, id: cached);
+  if bnot(cached_live) {
+    return 69_u8;
+  }
   halo::embed::unpin(engine: &engine, token: token);
-  let second = halo::embed::resume::<ProbeHost>(engine: &engine, env: &env, budget: 1_u64);
+  let omit_unpin = omit_refresh == 3_u8;
+  let second = root_probe_resume(engine: &engine, env: &env, id: active, omitted: omit_unpin);
   let released = halo::embed::collection_count(engine: &engine);
-  if released <= after {
+  if released <= collected {
     return 61_u8;
   }
   match halo::embed::string_of(engine: &engine, value: held) {
@@ -499,6 +524,43 @@ fn root_updates_probe() -> r: u8 pure {
     }
   }
   return 0_u8;
+}
+
+fn root_probe_resume(engine: &Engine, env: &Probe, id: halo::embed::ScriptId, omitted: Bool) -> r: Outcome writes(engine), writes(env) {
+  doc "The negative controls skip the embedding bridge refresh for one checkpoint, using the same VM resume and collector with the stale bridge. Ordinary probes use the embedding API.";
+  if omitted {
+    let slot = id.slot;
+    if slot < engine^.scripts.inner.len {
+      return halo::vm::resume::<ProbeHost>(script: &engine^.scripts.inner[slot], stack: &engine^.stack, vm: &engine^.vm, env: env, budget: 1_u64);
+    }
+    return Outcome::Error();
+  }
+  return halo::embed::resume::<ProbeHost>(engine: engine, env: env, budget: 1_u64);
+}
+
+fn cached_string_live(engine: &Engine, id: halo::embed::ScriptId) -> r: Bool reads(engine) {
+  doc "The inactive chunk's sole string constant is the independently written 27-byte return literal; it must survive before another root mutation or start can refresh the bridge.";
+  let slot = id.slot;
+  if slot < engine^.scripts.inner.len {
+    let n = engine^.scripts.inner[slot].consts.inner.len;
+    for (i in 0_u64..n) {
+      if slot < engine^.scripts.inner.len {
+        if i < engine^.scripts.inner[slot].consts.inner.len {
+          let v = engine^.scripts.inner[slot].consts.inner[i];
+          match halo::embed::string_of(engine: engine, value: v) {
+            None() => {
+            }
+            Some(value: view) => {
+              if view.length == 27_u64 {
+                return True();
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return False();
 }
 
 fn smoke() -> status: ExitStatus pure {
