@@ -667,3 +667,22 @@ Final `make static` on the reviewed probe repair passes all seven stages,
 exit 0 in 33.59 s; `git diff --check` passes after the review record. The
 handoff leaves the work branch local and the readonly boundary Q1 open;
 no specification change, approval record, PR, push or merge is made.
+
+## C1 bounded per-arm continuation experiment
+
+Criterion fixed before any C1 measurement: keep C1 only if both the numeric
+loop and fib improve by at least 10% in six interleaved same-source
+before/after pairs (full LTO), and the median of three uncached
+`whitefootc --graph lib/halo/modules.wfg --check-modules` runs grows by at
+most 1.5 times. Otherwise revert the candidate and retain the observations.
+The seven P1 sources remain identical within each pair; binary-trees uses
+the previously sized depth 14. The 240-script oracle must pass under budgets
+1, 7 and 1000, both normally and with GC stress. The experiment changes
+only Halo dispatch/handler source, not the compiler, language, or oracle.
+
+A single module-check run sizes each side before the remaining two runs.
+One pair and then three pairs size each kernel before the selected six.
+Commands use the existing gate compiler and each heavy command holds the
+host-wide lock separately. Generated C1 artifacts live in this experiment's
+existing ignored `target/`; retained observations serve reproduction and
+are retired when this comparison no longer needs reproduction.
