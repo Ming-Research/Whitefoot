@@ -2357,18 +2357,6 @@ rarely insert at the same place.
   the assembler's identity (its path and version output) as a rerun input.
   Reopen when a host's clang changes under an existing build directory.
 
-- **A reference handed to a callee is not pinned.** compiler/match-dispatch-lowering
-  computes a passed-through reference's box projection once only when the
-  loop uses the reference for box projections alone. The stage-3 wasm
-  interpreter's arms hand `stack` to a helper function per operation, so
-  every handler reloads the stack box's pointer from the reference, two
-  instructions and a dependent load of the 18 its `I32Add` handler executes
-  (`research/experiments/match-dispatch/RESULTS.md`, "v2 results"). A
-  callee whose effect row writes only the box's content cannot replace the
-  box, so the projection could stay pinned across the call. Validate with
-  the reload gone from the interpreter's handlers and the CoreMark score
-  against v2b. Reopen with the next dispatch-lowering change.
-
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
   is 10-30% above the pointer form with every other mechanism equal

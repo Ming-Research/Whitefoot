@@ -1407,10 +1407,13 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         // A passed-through reference the loop uses only to project its box's
-        // referent, or hands on unchanged to a join's parameter that is the
-        // same value or to its own place on a back edge, keeps one box for
-        // the whole loop: nothing in the loop can replace that box, and no
-        // other reference reaches it [EFF-5]. Its projections are hoisted.
+        // referent, to hand on unchanged to a join's parameter that is the
+        // same value or to its own place on a back edge, or to hand to a
+        // non-waiting callee whose formal writes only below the box's content,
+        // keeps one box for the whole loop: nothing in the loop can replace
+        // that box, and no other reference reaches it [EFF-5]. Its
+        // projections are hoisted, and such a callee receives a part-local
+        // slot holding the hoisted box.
         for (position, parameter) in parameters.iter().enumerate() {
             if !passed_through[position] || self.storage.slot(*parameter).is_some() {
                 continue;
