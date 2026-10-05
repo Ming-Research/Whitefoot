@@ -272,6 +272,57 @@ work (`wfhoist` on `fib`: 607 million cycles in the interleaved run, 1151
 million in three later launches), the placement effect Silverfir-nano's
 record describes; the tables report medians of interleaved launches.
 
+## Stage 3: a wasm interpreter running CoreMark
+
+The design and criteria are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-a-wasm-interpreter-running-coremark).
+`wasm/gen.py` writes the interpreter; `wasm/coremark.py` alternates
+launches and takes medians. Module: Silverfir-nano's
+`benchmarks/wasi/coremark/coremark.wasm`, arguments `0x0 0x0 0x66 2000`
+(the 2K performance run's seeds, 2000 iterations, about 1.6 s under the
+Whitefoot interpreter and 0.35 s under Silverfir-nano's). M1 Pro;
+Silverfir-nano built from main as `sf-nano-cli --interp`; the Whitefoot
+interpreter compiled by this branch's `whitefootc` with `preserve_none`.
+
+### v1, the direct stack machine
+
+Every launch reported CoreMark's list, matrix and state CRCs (0xe714,
+0x1fd7, 0x8e3a) and one final CRC (0x4983) on both interpreters. Seven
+alternating launches ([run-wasm-v1.tsv](run-wasm-v1.tsv)):
+
+| Interpreter | Median score | Spread | Ratio |
+|---|---:|---:|---:|
+| Whitefoot v1 | 1261.0 | 5.8% | 0.223 |
+| Silverfir-nano | 5665.7 | 6.9% | 1 |
+
+The ratio is below the 0.3-0.5x the criterion predicted. One launch of the
+dispatch-counting build (`gen.py --count`) and one `/usr/bin/time -l` launch
+of the measured build at 2000 iterations:
+
+| Quantity | Value |
+|---|---:|
+| Dispatches | 1,271,009,318 |
+| Instructions retired | 23,117,633,381 |
+| Cycles | 5,014,438,171 |
+| Instructions per dispatch | 18.2 |
+| Cycles per dispatch | 3.94 |
+
+The dispatch count moves by tens between launches, with the digits CoreMark
+prints for its timing. The interpreter function splits into 178 per-arm functions taking 15 of
+the 24 integer argument registers (`--dispatch-ledger`). At 3.94 cycles a
+dispatch costs about what E0's tail-call forms cost with frame round trips
+(4.18-4.25 cycles), and at an IPC of 4.6 the core is not waiting on loads:
+the loss is the number of dispatches and the instructions each executes.
+v1 dispatches once per wasm operation, including every `local.get`,
+`local.set` and constant, and each handler checks the operand stack's depth
+and the fetch index and moves values through the frame. Silverfir-nano's
+interpreter folds locals and constants into its operations' operands
+(its static fallthrough statistics are dominated by `MovSlot`, `MovConst`
+and folded arithmetic), so it executes fewer dispatches for the same work.
+Silverfir-nano's own dispatch count is not reported: `/usr/bin/time -l`
+counts only its startup (about 1.1 million cycles), so its execution is
+not measured on these counters.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which

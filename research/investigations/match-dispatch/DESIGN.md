@@ -260,7 +260,81 @@ verdict. Derived addresses for loop-carried indices remain in
    are hoisted into the enclosing function.
 2. Done as stage 2: the Whitefoot interpreter measured under both
    emissions against E0's C forms.
-3. Write a wasm 2.0 interpreter in Whitefoot that runs CoreMark, following
-   Silverfir-nano's interpreter design (predecoded folded cells, an
-   accumulator, register-resident locals as loop-carried state), and compare
-   it with Silverfir-nano on the same CoreMark module.
+3. Stage 3, below: a wasm interpreter in Whitefoot running CoreMark against
+   Silverfir-nano on the same module.
+
+## Stage 3: a wasm interpreter running CoreMark
+
+The question is how far a wasm interpreter written in Whitefoot, compiled
+by the stage-2 lowering, is from Silverfir-nano's interpreter on the same
+CoreMark module, and which part of the gap belongs to the interpreter's
+design and which to the compiler. wasmi, a tail-calling interpreter in
+plain Rust with a register-form bytecode, scores close to Silverfir-nano,
+so a tail-calling interpreter needs no generated assembly to come near it.
+
+The module is Silverfir-nano's `benchmarks/wasi/coremark/coremark.wasm`
+(49,968 bytes, 92 functions, 118 distinct opcodes counting the `0xfc`
+prefixes separately: integer and float arithmetic, sign extension,
+saturating truncation, `memory.copy` and `memory.fill`), importing eight
+WASI functions: `args_get`, `args_sizes_get`, `clock_time_get`,
+`fd_close`, `fd_fdstat_get`, `fd_seek`, `fd_write` and `proc_exit`.
+
+The interpreter is built in two steps:
+
+- **v1, a direct stack machine.** The loader decodes the module's sections;
+  a translator rewrites each function body into one array of a Whitefoot
+  `enum` of operations with branch targets, stack heights and callee
+  indices resolved; the value stack and the locals share one array of
+  `u64`, the stack pointer and frame base travel as loop-carried state, and
+  linear memory is an array of bytes. A host call leaves the interpreter
+  function and returns to a driver that performs it, since a waiting
+  function is not split [compiler/match-dispatch-lowering's provisional
+  exclusions]. The interpreter implements the opcodes the module uses and
+  the loader rejects any other; safety comes from Whitefoot's checks on
+  every access, not from a wasm validator, so a malformed module reaches an
+  error, never undefined behavior.
+- **v2, measured steps toward the fast designs.** Each step is one
+  mechanism from Silverfir-nano (an accumulator for the top of the stack,
+  locals resident in registers, folded operations) or wasmi (register-form
+  operations), measured alone so its effect is attributed.
+
+Measurement: on the M1 Pro, Silverfir-nano's interpreter
+(`sf-nano-cli --interp`) and the Whitefoot interpreter run the same module
+with the same arguments, alternating launches, and each side's score is the
+median of the launches' CoreMark scores.
+
+Criteria, fixed before the first measurement:
+
+- **Correctness.** A run counts only when CoreMark reports correct
+  operation: every CRC it validates matches.
+- **v1 position.** v1's score is reported as a ratio to Silverfir-nano's;
+  there is no threshold. The prediction, written before measuring, is
+  0.3-0.5x, a stack machine executing every `local.get` and `local.set`
+  as an operation.
+- **A v2 step** is kept when it raises the median score by at least 2%
+  over the previous step, twice the 1% the E0 null comparison measured as
+  layout noise; each step records its predicted effect before it is
+  measured.
+- **Compiler attribution.** A gap that profiles to code the compiler emits
+  around a handler (reloads, spills, checks it could have proved) rather
+  than to the interpreter's design goes to `docs/todo.md` as a compiler
+  item with the profile as evidence.
+
+## Stage 3 v1 outcome
+
+v1 runs the module correctly (every CRC CoreMark validates matches) and
+scores 0.223x Silverfir-nano's interpreter, below the predicted 0.3-0.5x
+([results](../../experiments/match-dispatch/RESULTS.md#v1-the-direct-stack-machine)).
+At 3.94 cycles and 18.2 instructions per dispatch, the per-dispatch cost is
+already near E0's tail-call forms; the gap is the dispatch count, one per
+wasm operation including every local access and constant, and the
+instructions each handler spends on operand-stack checks and frame traffic.
+The v2 steps therefore start with the mechanisms that remove dispatches:
+locals and constants folded into operands (Silverfir-nano's `MovSlot` and
+`MovConst` and its folded arithmetic, or wasmi's register form), then an
+accumulator for the top of the stack.
+
+Writing v1 also found that checking one function grows faster than its size
+(`docs/todo.md`, "Checking one function grows faster than its size"): the
+interpreter function checks only with each handler's body in a function of
+its own.
