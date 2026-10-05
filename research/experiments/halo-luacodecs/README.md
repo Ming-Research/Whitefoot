@@ -75,5 +75,5 @@ stateful native library requires a different binding payload or a native
 function needs Lua callbacks. Instance configuration reclamation remains a
 separate missing lifetime connection, as the TODO describes.
 
-The new draft tree node `design/compiler/halo-closures.md` records this
+The new draft tree node `design/halo/closures.md` records this
 recommendation (Q1); no owner approval or log entry is inferred.

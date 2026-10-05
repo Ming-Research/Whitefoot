@@ -157,8 +157,9 @@ in `design/skill/`; `.agents/skills/` (Codex) and `.claude/skills/` (Claude
 Code) hold only links to it, and its body loads when its description matches
 the task. Here its roles are:
 
-- live trees: `design/language.md` and `design/compiler.md` with their
-  subdirectories;
+- live trees: `design/language.md`, `design/compiler.md` and `design/halo.md`
+  (the Halo Lua engine, kept apart so it can leave as its own project) with
+  their subdirectories;
 - change log: `design/log.md`;
 - research record: `research/investigations/` and `research/experiments/`;
 - maintained TODO: `docs/todo.md`;

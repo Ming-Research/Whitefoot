@@ -103,10 +103,10 @@ static:
 DESIGN_REVIEW_BASE ?= origin/main
 design-lint:
 	@$(PY) -m unittest discover -s design/skill -p 'test_lint.py'
-	@$(PY) design/skill/lint.py --trees language compiler --base "$(DESIGN_REVIEW_BASE)"
+	@$(PY) design/skill/lint.py --trees language compiler halo --base "$(DESIGN_REVIEW_BASE)"
 
 design-ready:
-	@$(PY) design/skill/lint.py --trees language compiler --base "$(DESIGN_REVIEW_BASE)" --require-approval
+	@$(PY) design/skill/lint.py --trees language compiler halo --base "$(DESIGN_REVIEW_BASE)" --require-approval
 	@sh .github/check-spec-archives.sh --require-approval "$(DESIGN_REVIEW_BASE)"
 
 repository-invariants:

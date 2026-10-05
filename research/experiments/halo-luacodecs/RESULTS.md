@@ -106,7 +106,7 @@ defects; the reviewer confirmed these bytes equal
 above supplies the runtime evidence that was pending during that review.
 
 Q1 remains open: the provisional configured-method representation is recorded
-in [the closure decision](../../../design/compiler/halo-closures.md), with
+in [the closure decision](../../../design/halo/closures.md), with
 alternatives and reopening conditions in the
 [closure binding assessment](README.md#closure-binding-assessment).
 No owner approval or approval-log entry is inferred. There are no other tree
