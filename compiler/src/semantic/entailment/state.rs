@@ -6963,6 +6963,88 @@ pub(crate) mod tests {
     /// longer imply it: here one path puts `b` above the whole `u8` range of
     /// `a` and the other below it, each path derives `a != b`, and the join
     /// of the two Z bounds on `b` says nothing about `a`.
+    /// A predecessor contradictory only through call-dependent facts is
+    /// neutral in the full join and a live input of the ordinary join, so the
+    /// ordinary join can hold rows for terms the full join answers through
+    /// Z. The full join must then be retaken over those terms: otherwise the
+    /// ordinary fallback for such a pair, merged into a store that has no
+    /// cell for it, would become the full selection, weaker than the view.
+    /// The input is not promoted, as the result-image joins of the flow
+    /// leave their inputs.
+    #[test]
+    fn a_join_retakes_rows_the_ordinary_layer_adds() {
+        let mut terms = TermTable::new();
+        let place = |binding, ty| {
+            TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                ty,
+            )
+        };
+        let t = terms.intern(place(0, IntegerType::U8));
+        let x = terms.intern(place(1, IntegerType::I32));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        // The dead input: an ordinary fact on `t` and a call-dependent
+        // contradiction `Z - Z <= -1`, nothing on `x`.
+        let mut dead = FactState::new();
+        dead.establish(
+            &Relation::Bound {
+                left: t,
+                right: ZERO,
+                bound: 100,
+            },
+            &mut ledger,
+            event,
+        );
+        let impossible = Relation::Bound {
+            left: ZERO,
+            right: ZERO,
+            bound: -1,
+        };
+        let call = postcondition_call_proof(&mut ledger, impossible.clone());
+        dead.establish_from_proof(&impossible, call, &ledger);
+        // The live input: `x` bounded below ordinarily and more tightly by a
+        // call; `t` holds no fact.
+        let mut live = FactState::new();
+        live.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: x,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let tighter = Relation::Bound {
+            left: ZERO,
+            right: x,
+            bound: -400,
+        };
+        let call = postcondition_call_proof(&mut ledger, tighter.clone());
+        live.establish_from_proof(&tighter, call, &ledger);
+        assert!(close(&dead, &terms, &goals, &mut ledger).contradictory());
+        let join_event = ledger.event(FlowEventKind::Join, None);
+        let joined = join_at(&[dead, live], &terms, &goals, &mut ledger, join_event);
+        // The full join is the live input: `t - x` through Z is 255 - 400.
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(t, x), Some(-145));
+        assert_eq!(closed.tight_bound(ZERO, x), Some(-400));
+        // The ordinary join has both inputs: the dead one knows nothing of
+        // `x`, so the ordinary layer bounds `x` only by its type, and its
+        // `t - x` is the weaker of the two inputs' pairs, the dead input's
+        // `t <= 100` composed with the type range of `x`.
+        let mut ordinary = joined.clone();
+        ordinary.retain_non_postcondition_candidates(&ledger);
+        let closed = close(&ordinary, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(ZERO, x), Some(i128::from(i32::MAX) + 1));
+        assert_eq!(
+            closed.tight_bound(t, x),
+            Some(100 + i128::from(i32::MAX) + 1)
+        );
+        assert_eq!(closed.tight_bound(t, ZERO), Some(255));
+    }
+
     #[test]
     fn a_join_keeps_a_disequality_held_through_zero_on_opposite_sides() {
         let mut terms = TermTable::new();
@@ -8441,10 +8523,13 @@ pub(crate) mod tests {
                     let state = &mut states[index];
                     let ledger = &mut ledgers[index];
                     let event = events[index];
-                    // The walk promotes a predecessor's contradiction before
-                    // every kill and join (`promote_flow_contradiction`), so
-                    // a predecessor contradictory only through call-dependent
-                    // facts is neutral in both layers of the join.
+                    // The flow-level kills and joins (`apply_kills`,
+                    // `join_flows`) promote a predecessor's contradiction
+                    // first, so there a predecessor contradictory only
+                    // through call-dependent facts is neutral in both layers
+                    // of the join. The result-image joins and kills do not
+                    // promote; `a_join_retakes_rows_the_ordinary_layer_adds`
+                    // covers an unpromoted contradictory input.
                     if matches!(action, 6 | 9) {
                         let promote = |state: &mut FactState, ledger: &mut DerivationLedger| {
                             let closed = close(state, &terms, &goals, ledger);

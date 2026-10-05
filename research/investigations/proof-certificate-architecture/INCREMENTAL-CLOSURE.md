@@ -518,7 +518,10 @@ s after. A paired alternating comparison of five rounds per source with the
 emitted LLVM hashed at every compile gave medians of 1,348 against 1,002 ms
 on `tests/programs/wfgrep.wf` (0.74) and 1,568 against 1,612 ms on
 `tests/programs/fixed_run_library.wf` (1.03), with the LLVM output
-byte-identical in every compile of every source. A first build of the change
+byte-identical in every compile of every source. The review commit that
+follows (`816657ddc`) measured, against `222dec040` on the 14900K host,
+748 against 742 ms on wfgrep (0.99) and 1,195 against 1,199 ms on
+fixed_run_library (1.00), LLVM identical. A first build of the change
 that found a term's row by binary search had measured 1.10 and 1.21 on the
 same two programs; the term-indexed slot tables removed that cost.
 
@@ -543,12 +546,17 @@ record is closed, and an ordinary relation that does not improve the full
 selection leaves that record closed while the ordinary fallbacks it improves
 are not yet stored, so the kill removes its support before they exist
 (generated case 1379 of 3000). Materializing on the ordinary record as well
-cost nothing measurable, but it changes which ordinary fallbacks a program
-holds, which is a change of the ordinary layer's completeness rather than a
-restoration of it; it is recorded in `docs/todo.md`. Taking the ordinary
-record before marking the cells a candidate removal weakens, which was tried
-as a fix for the second gap, doubled the wfgrep check by repairing those
-cells at every removal and was not kept.
+changes which ordinary fallbacks a program holds, a change of the ordinary
+layer's completeness rather than a restoration of it; it is recorded in
+`docs/todo.md`. Taking the ordinary record before marking the cells a
+candidate removal weakens, which was tried as a fix for the second gap,
+repairs those cells at every removal and was not kept: the paired comparison
+on the 14900K host (five alternating rounds, `--emit-llvm`, the two variants
+present together) measured wfgrep 749 against 1,565 ms (2.09) and
+fixed_run_library 1,213 against 1,400 ms (1.15) relative to commit
+`222dec040`, and the two variants were not measured apart; with both removed
+the same comparison gave 748 against 742 ms (0.99) and 1,195 against 1,199 ms
+(1.00), LLVM identical in every compile.
 
 Changed observation: the generated-flow comparison `assert_flow_states_agree`
 compared the two states' stored cell lists and stored disequality sets; it
