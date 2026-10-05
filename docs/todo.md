@@ -3189,6 +3189,19 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **The gate's app builds start from an empty cache.** The Linux corpus
+  tests build firn with the compiler's incremental cache under
+  `WHITEFOOT_SCRATCH_ROOT` (`build_app` in
+  `compiler/tests/programs/support.rs`), which a developer's rerun reuses:
+  on the M1, firn rebuilt in 7.4 s after a one-line body edit against
+  17.8 s cold. `gate.yml` points the scratch root at a fresh runner
+  directory, so every CI run is cold. The change: restore and save that
+  cache directory across gate runs (an `actions/cache` step keyed on the
+  compiler's sources), safe because a record whose compiler identity or
+  inputs differ is recomputed, never reused. Validate with the corpus
+  job's `test-corpus` stage time on a run that restores the cache. Reopen
+  when the corpus stage nears its budget or a second app joins the tests.
+
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on
   the 14900K under WSL2, every case at once, failed one of firn's cases in

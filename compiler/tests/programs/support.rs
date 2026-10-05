@@ -169,38 +169,51 @@ pub fn compile_program(name: &str) -> whitefoot::LlvmModule {
     compile_programs(&[name])
 }
 
-/// Compiles the named entry of a module program the repository keeps under
-/// `apps/`, reading its graph and every record the graph registers [MOD-1,
-/// MOD-2, MOD-9]. Only the Linux-hosted network tests serve one today.
+/// Builds the named entry of a module program the repository keeps under
+/// `apps/` [MOD-1, MOD-2, MOD-9] the way its developers do, with the
+/// compiler executable and an incremental build cache that persists across
+/// test runs, so a rerun after an edit reuses every unchanged proof analysis
+/// and native object. The cache lies under `WHITEFOOT_SCRATCH_ROOT`, or the
+/// host's temporary directory, and its records are keyed by the compiler's
+/// identity and their exact inputs, so a stale record is recomputed rather
+/// than reused. Only the Linux-hosted network tests serve one today.
 #[cfg(target_os = "linux")]
-pub fn compile_app(name: &str, entry: &str) -> whitefoot::LlvmModule {
+pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("the compiler package lives directly under the repository root")
         .join("apps")
         .join(name);
-    let graph =
-        whitefoot::form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
-            .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure:?}"));
-    let sources = whitefoot::discover_module_sources(&root, &graph)
-        .unwrap_or_else(|failure| panic!("{name}'s records must read: {failure}"));
-    let inputs = sources
-        .iter()
-        .map(|source| {
-            SourceInput::new(&source.logical_path, &source.bytes)
-                .in_module(source.module, source.role)
-        })
-        .collect::<Vec<_>>();
-    crate::support::timed("whitefoot-compile", || {
-        whitefoot::compile_module_program(
-            &graph,
-            &inputs,
-            whitefoot::ModuleEntry::Named(entry),
-            CompilerLimits::default(),
-            OverlapLowering::On,
-        )
-        .unwrap_or_else(|failure| panic!("{name} must compile: {failure}"))
-    })
+    let cache = std::env::var_os("WHITEFOOT_SCRATCH_ROOT")
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+        .join("whitefoot-app-cache")
+        .join(name);
+    let sequence = NEXT_EXECUTION.fetch_add(1, Ordering::Relaxed);
+    let directory =
+        std::env::temp_dir().join(format!("whitefoot-app-{}-{sequence}", std::process::id()));
+    std::fs::create_dir(&directory).expect("create unique program directory");
+    let executable = directory.join(format!("{entry}{}", std::env::consts::EXE_SUFFIX));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_whitefootc"));
+    command
+        .arg("--graph")
+        .arg(root.join("modules.wfg"))
+        .arg("--entry")
+        .arg(entry)
+        .arg("--cache")
+        .arg(&cache)
+        .arg("-o")
+        .arg(&executable);
+    // A cold build compiles the whole program; the ordinary child deadline
+    // is sized for running programs, not for building one.
+    let output = crate::support::timed("whitefoot-and-native-app-build", || {
+        output_within(&mut command, Duration::from_secs(600))
+            .unwrap_or_else(|error| panic!("run the compiler for {name}: {error}"))
+    });
+    assert!(output.status.success(), "{name} must build: {output:?}");
+    CompiledProgram {
+        directory,
+        executable,
+    }
 }
 
 /// Compiles the explicit sequential lowering used by paired corpus controls.
