@@ -677,3 +677,90 @@ old sort's share, and `memmove` from 50.0 to 8.1; `try_entry` is back at
 Measurement 6 went with the byte-ordered set. E carries the parser's
 `read_line` (56.0 ns), which PR #218 removes separately, so E without that
 regression would spend about 3% less than `cea9188d4` per `MSET`.
+
+## Independent shared-object targets
+
+Amendment S replaces the table-field layout and header grants described above.
+TYPE-9 places ConcurrentHashMap values only in Shared state; an entry may
+contain a Shared map handle. SHARE-2 names each held object directly and treats
+unifying state types as pairwise possible aliases. Several entries and key sets
+may use one handle place; a whole target is alone on its handle place.
+
+The checker keeps possible state-root overlap on ordinary resolved reference
+paths. It removes table grants, row checks and provenance sets. Lowering owns
+targets and ordered type groups in its existing atomic module. The existing map
+hold record supplies per-target positions; a group sorts objects by identity and
+merges duplicate objects into a primary hold. Direct single-entry targets retain
+the direct lock/unlock calls. Lazy groups use aligned words rather than Boolean
+address slots. These responsibilities follow the existing checker, lowering and
+runtime boundaries and introduce no additional analysis pass.
+
+Read groups share present cells. An absent key has no cell to exclude an insert,
+so a multi-key read falls back to a whole read hold and probes shared None without
+allocating. Guard-read entries keep exclusive holds until their watches are
+registered. Split chunks retain the current write-footprint rule.
+
+Firn separates its keys and Meta objects, names both where a command needs them,
+and swaps a fresh shared map for FLUSHALL. Whole-map iteration remains a library
+gap recorded in docs/todo.md; no SCAN or BGSAVE claim follows from this amendment.
+
+### Conformance transitions
+
+TYPE-9's position judgment changes the runtime-capacity reference case from a
+rejection to acceptance; a separate generic reference instance and by-value
+negative distinguish the new boundary. Rewritten map cases retain their original
+observations unless the table below explicitly names a replaced observation.
+
+| Retired case | Technical reason |
+|---|---|
+| share-neg-table-subscript-in-block | no table reached through a binding exists |
+| share-neg-table-entry-after-replace | it assigned a table value (`set s^.map = move fresh`); no expression yields a map value now [TYPE-9], and the whole-write invalidation it showed is `share-neg-map-entry-after-swap`'s |
+| share-neg-table-entry-not-through-the-binding | no header has a binding to go through; a target that is no handle is `share-neg-target-not-shared`, and a map inside a local struct is `type9-neg-map-field` |
+| share-neg-table-through-a-box | `type9-neg-map-box-content` |
+| share-pos-table-whole-binding-swapped | `share-pos-map-swapped` |
+| share-pos-table-row-names-no-table | vacuous: a state holds no map |
+| share-pos-table-local-indexed | a map that no shared object holds no longer exists (rulings 1, 3); its absent-`None` and counting observations are `share-pos-map-whole-target-entry`'s |
+| share-neg-table-reached-without-binding | no state contains a map |
+| share-neg-table-two-whole-bindings | the same refusal as `share-neg-target-handle-twice` |
+| share-neg-table-row-names-table-without-binding | no row can reach a map except through a whole target (SHARE-2's consequence sentence) |
+| share-neg-table-whole-binding-unused | the same observation as new `share-neg-target-unused` |
+| share-neg-table-whole-binding-through-a-box | `type9-neg-map-box-content` |
+| share-neg-table-reached-through-a-box | `type9-neg-map-box-content` |
+| share-neg-table-state-alias-write | the header provenance they tested retires: a map is reached only through its own target's state, and no second binding over one state exists |
+| share-neg-table-state-alias-beside-whole | the header provenance they tested retires: a map is reached only through its own target's state, and no second binding over one state exists |
+| share-neg-table-state-alias-join | the header provenance they tested retires: a map is reached only through its own target's state, and no second binding over one state exists |
+| share-neg-table-state-alias-backedge | the header provenance they tested retires: a map is reached only through its own target's state, and no second binding over one state exists |
+| share-pos-table-whole-binding-content-write | the same observation (a `swap` through a whole target keeps it valid) is in `share-pos-map-swapped` |
+| share-neg-table-owned-borrow-without-reference | there is no local map [TYPE-9]; `type9-neg-map-field` refuses its struct |
+| share-neg-table-state-payload-alias | Header grants and table provenance retire; map placement is now TYPE-9 and whole writes invalidate entries under ordinary REF-2. |
+| share-neg-table-state-subfield-alias | Header grants and table provenance retire; map placement is now TYPE-9 and whole writes invalidate entries under ordinary REF-2. |
+
+The backend row-grant mutation and local-table-publication tests retire because
+those mechanisms no longer exist. Their write-selection, set-index and swap
+mutation tests continue against map targets. Pinned grant and local-reference
+repairs retire with their diagnostics; target overlap, unused targets and ordinary
+key-set/subscript repairs continue in shared_maps.rs. The old nested-table writer
+fixture is replaced by a nested Shared handle; its reference permission tests
+continue for whole maps and separate metadata. Runtime local-selection tests
+now take explicit whole holds and retain their allocation, stability, growth and
+release observations.
+
+A single-entry read beside other targets likewise upgrades on an absent key and
+rechecks it under the whole hold. Without that protection a writer could insert
+that key and change the second object before its acquisition, yielding the old
+absence beside the new metadata. Single-target reads require no such upgrade.
+
+The rewritten nested-reader witness preserves both present/absent selections,
+key-set agreement and its exit status 18; a reader first copies the inner handle
+out and then holds its map whole in a separate statement. The replacement witness
+uses a fresh shared map and swap rather than assigning a map value, which TYPE-9
+no longer admits. Its exit changes from 12 to 22 because it additionally observes
+the two displaced entries through the fresh handle and their count after an
+equal-object swap. This is a replacement of the removed assignment mechanism,
+not a changed acceptance expectation.
+
+Found while porting: FLUSHALL's displaced map and expiry queue must leave scope
+before sending its reply, as its existing resource-release description promises.
+They now live in the successful branch, so both are released after the atomic
+statement and before the reply. The firn introduction now describes its separate
+objects rather than claiming that all commands on distinct keys never wait.

@@ -808,8 +808,7 @@ input after widening does not discharge a later bare `cvt` of that input.
 A spawn takes only value parameters [WAIT-3], so two contexts reach one piece
 of state only through a shared object [SHARE-1]. Move the state into it with
 `shared_new`, give each context its own handle made with `shared_share`, and
-change the state only inside an atomic statement, whose block has the object to
-itself [SHARE-2, SHARE-3]:
+change the state only inside an atomic statement, whose block holds its targets together [SHARE-2, SHARE-3]:
 
 ```whitefoot
 let handle = shared_share::<u64>(shared: &counter);
@@ -836,6 +835,23 @@ atomic items = &queue when items^.len > 0_u64 {
   set got = take_front(window: items);
 }
 ```
+
+A map's entries and accompanying metadata can be held by one statement:
+
+```whitefoot
+let keys = shared_map_new::<u8>(capacity: 64_u64);
+let counter = shared_new::<u64>(value: 0_u64);
+atomic slot = &keys[key], count = &counter {
+  set slot^ = Some<u8>(value: 1_u8);
+  set count^ = count^ +wrap 1_u64;
+}
+```
+
+Use a whole map target when keys are computed inside the block, or when
+counting or swapping the map [TYPE-9, SHARE-2]. The maintained
+[shared_maps.wf](../tests/programs/shared_maps.wf) and
+[map_resets.wf](../tests/programs/map_resets.wf) exercise entries, whole maps,
+and separate totals across contexts.
 
 The maintained [shared_objects.wf](../tests/programs/shared_objects.wf) counts
 from sixteen contexts and passes values through a guarded queue this way.

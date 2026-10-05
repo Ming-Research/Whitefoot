@@ -1,0 +1,9 @@
+fn nothing_of<T: drop>(handle: &Shared<T>) -> result: Option<T> reads(handle) {
+  return None<T>();
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let found = nothing_of::<ConcurrentHashMap<u8>>(handle: &store);
+  return std::process::exit_status(code: 0_u8);
+}

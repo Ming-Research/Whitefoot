@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn take_run(run: &Slots<u64>) -> result: u64 reads(run.len) {
+  doc "TYPE-9 amendment S: a runtime-capacity form may be a reference referent or Box content; by-value storage remains refused at the complete type.";
+  let n = run^.len;
+  return n;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "TYPE-9 amendment S admits a reference to a runtime-capacity shape; the type argument is judged at its referent position.";
+  return exit_status(code: 0_u8);
+}
