@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 A box pinned across calls that cannot replace it; derived addresses refused
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #228 at `382e2b05e` and PR #233 at `312273610`, which presented the decisions on keeping a box pinned across calls (Q17) and on derived frame-slot addresses (Q21, recommending not to merge): "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated).
+
+Summary: A passed-through reference whose box the loop keeps stays pinned when the loop hands it to non-waiting callees whose every declared write lies below that box's content, each part handing such a callee a slot holding the hoisted projection, because such a callee cannot replace the box [EFF-1, EFF-5] and the stage-3 wasm interpreter otherwise reloaded the stack box's pointer on every dispatch; its removal raised the CoreMark score 3.8% (Q17). Addressing frame slots from a pointer each part derives at entry is refused for now: on the interpreter with an accumulator register it raised the score 0.9%, below its 2% criterion, and it reopens when another interpreter or an x86-64 measurement shows at least 2% (Q21). Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md).
+
 ## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
 
 Nodes: compiler/verification
