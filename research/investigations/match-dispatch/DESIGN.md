@@ -245,17 +245,19 @@ Measured on the WF port of E0's interpreter
 kernels and 6% on the fourth, and 1.11-1.35x of the C `u8` form.
 
 The parts use `preserve_none` where a build-time probe finds it (LLVM 19 and
-later) and the C convention otherwise, and a loop whose parts would need
-more argument registers than the convention has is emitted whole. The
-deferred spill block, invariant header work, derived addresses and
-handler-base parameter are recorded in `docs/todo.md` under "Interpreter
-dispatch lowering".
+later) and the C convention otherwise. Past the convention's argument
+registers the values the loop cannot change wait in the frame; a loop that
+still does not fit is emitted whole. The enclosing function computes the
+loop's invariant loads once and passes the handler table's address where a
+register is left. `whitefootc --dispatch-ledger` reports each loop's
+verdict. Derived addresses for loop-carried indices remain in
+`docs/todo.md` under "Interpreter dispatch lowering".
 
 ## Later stages
 
-1. Done in part as stage 2: the lowering, with the register budget enforced
-   by emitting an over-budget loop whole; the spill block that would split
-   such loops too is open (`docs/todo.md`).
+1. Done as stage 2: the lowering with its register budget; values the loop
+   cannot change move to the frame past the registers, and invariant loads
+   are hoisted into the enclosing function.
 2. Done as stage 2: the Whitefoot interpreter measured under both
    emissions against E0's C forms.
 3. Write a wasm 2.0 interpreter in Whitefoot that runs CoreMark, following

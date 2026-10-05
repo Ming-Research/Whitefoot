@@ -59,10 +59,10 @@ enum ArgumentRegisters {
 }
 
 impl ArgumentRegisters {
-    /// Whether parameters of these LLVM types all arrive in registers; a
-    /// type other than a pointer, an integer, a float or a range's
-    /// `{ ptr, i64 }` pair counts as not fitting.
-    fn admit(self, types: &[String]) -> bool {
+    /// The integer and floating-point argument registers parameters of these
+    /// LLVM types take, or the first type that is not a pointer, an integer,
+    /// a float or a range's `{ ptr, i64 }` pair.
+    fn demand(types: &[String]) -> Result<(usize, usize), String> {
         let (mut integer, mut float) = (0_usize, 0_usize);
         for ty in types {
             match ty.as_str() {
@@ -76,9 +76,13 @@ impl ArgumentRegisters {
                 {
                     integer += 1;
                 }
-                _ => return false,
+                other => return Err(other.to_owned()),
             }
         }
+        Ok((integer, float))
+    }
+
+    fn fits(self, (integer, float): (usize, usize)) -> bool {
         match self {
             Self::Separate {
                 integer: integers,
@@ -87,11 +91,20 @@ impl ArgumentRegisters {
             Self::Shared(positions) => integer + float <= positions,
         }
     }
+
+    fn describe(self) -> String {
+        match self {
+            Self::Separate { integer, float } => format!("{integer} integer and {float} floating"),
+            Self::Shared(positions) => format!("{positions} shared"),
+        }
+    }
 }
 
 /// One recognised dispatch loop of a function.
 pub(super) struct DispatchLoop {
     pub(super) header: IrBlockId,
+    /// The enum the header's `match` takes apart.
+    pub(super) matched: crate::IrNominalId,
     /// The loop's blocks other than the header.
     pub(super) region: Vec<bool>,
     /// One arm per distinct match target, in the order of the header's
@@ -146,30 +159,44 @@ fn used_values(block: &IrBlock, into: &mut BTreeSet<IrValueId>) {
     into.extend(block.terminator().operands());
 }
 
-/// The first block, in block order, that heads a dispatch loop: it ends in
-/// a `match` over a nominal enum with at least two targets, none of which
+/// Why a loop around a `match` is not a dispatch loop, or why a dispatch loop
+/// is not split, for the dispatch ledger (compiler/match-dispatch-lowering).
+pub(super) struct Rejection {
+    /// The enum the loop's `match` takes apart.
+    pub(super) matched: crate::IrNominalId,
+    pub(super) reason: String,
+}
+
+/// The loops of a function whose `match` over a nominal enum with at least
+/// two targets lies on a cycle through it: the first, in block order, that
+/// heads a dispatch loop, and every other with the first condition it fails.
+/// A `match` inside the loop of a `match` considered before it, such as one
+/// in an arm, is not a loop of its own.
+/// A dispatch loop's header ends in that `match`, none of whose targets
 /// takes parameters; the blocks reachable from its targets without passing
 /// through it are entered only from it and leave only by returning or by
-/// jumping back to it; and at least one of them jumps back.
-pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<DispatchLoop> {
+/// jumping back to it.
+pub(super) fn find(
+    function: &IrFunction,
+    reachable: &[bool],
+) -> (Option<DispatchLoop>, Vec<Rejection>) {
     let blocks = function.blocks();
+    let mut found = None;
+    let mut rejections = Vec::new();
+    let mut covered = vec![false; blocks.len()];
     for (header, block) in blocks.iter().enumerate() {
         if header == 0 || !reachable[header] {
             continue;
         }
         let IrTerminator::Match {
-            enum_type: IrEnumType::Nominal(_),
+            enum_type: IrEnumType::Nominal(matched),
             targets,
             ..
         } = block.terminator()
         else {
             continue;
         };
-        if targets.len() < 2
-            || targets
-                .iter()
-                .any(|target| !blocks[target.block().index()].parameters().is_empty())
-        {
+        if targets.len() < 2 {
             continue;
         }
         let starts: Vec<usize> = targets
@@ -177,32 +204,73 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             .map(|target| target.block().index())
             .collect();
         let region = reach(function, &starts, header);
-        if region[0] {
+        let cyclic = blocks
+            .iter()
+            .enumerate()
+            .any(|(index, member)| region[index] && successors(member).contains(&header));
+        if !cyclic || covered[header] {
             continue;
         }
-        let mut closed = true;
-        let mut backedge = false;
+        for (index, member) in region.iter().enumerate() {
+            covered[index] |= *member;
+        }
+        let reject = |reason: String| Rejection {
+            matched: *matched,
+            reason,
+        };
+        if found.is_some() {
+            rejections.push(reject(
+                "only the function's first dispatch loop is split".to_owned(),
+            ));
+            continue;
+        }
+        if targets
+            .iter()
+            .any(|target| !blocks[target.block().index()].parameters().is_empty())
+        {
+            rejections.push(reject("a target of its match takes parameters".to_owned()));
+            continue;
+        }
+        if region[0] {
+            rejections.push(reject("the loop contains the function's entry".to_owned()));
+            continue;
+        }
+        let mut problem = None;
         for (index, candidate) in blocks.iter().enumerate() {
-            if !reachable[index] {
+            if !reachable[index] || problem.is_some() {
                 continue;
             }
             for successor in successors(candidate) {
-                if region[index] {
-                    // An edge back to the header must be a jump, which the
-                    // emitter turns into a tail call.
-                    let jump = matches!(candidate.terminator(), IrTerminator::Jump { .. });
-                    closed &= region[successor] || (successor == header && jump);
-                    backedge |= successor == header;
-                } else if index != header {
-                    closed &= !region[successor];
+                if region[index] && successor == header {
+                    if !matches!(candidate.terminator(), IrTerminator::Jump { .. }) {
+                        problem = Some("an edge back to its match is not a jump".to_owned());
+                    }
+                } else if region[index] && !region[successor] {
+                    // The arm whose blocks reach this exit.
+                    let arm = targets
+                        .iter()
+                        .find(|target| reach(function, &[target.block().index()], header)[index])
+                        .map_or(0, |target| target.tag());
+                    problem = Some(format!(
+                        "the arm for tag {arm} leaves the loop other than by returning"
+                    ));
+                } else if !region[index] && index != header && region[successor] {
+                    problem = Some(
+                        "the loop is entered other than at its match, which is therefore not its header"
+                            .to_owned(),
+                    );
+                }
+                if problem.is_some() {
+                    break;
                 }
             }
         }
-        if !closed || !backedge {
+        if let Some(problem) = problem {
+            rejections.push(reject(problem));
             continue;
         }
         let mut arms: Vec<(IrBlockId, Vec<bool>)> = Vec::new();
-        let max_tag = targets.iter().map(|target| target.tag()).max()?;
+        let max_tag = targets.iter().map(|target| target.tag()).max().unwrap_or(0);
         let mut table = vec![usize::MAX; max_tag as usize + 1];
         for target in targets {
             let arm = match arms.iter().position(|(block, _)| *block == target.block()) {
@@ -216,6 +284,7 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             table[target.tag() as usize] = arm;
         }
         if table.contains(&usize::MAX) {
+            rejections.push(reject("its match leaves a tag without a target".to_owned()));
             continue;
         }
         let mut loop_defined = HashSet::new();
@@ -244,8 +313,12 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             .copied()
             .filter(|value| !loop_defined.contains(value))
             .collect();
-        return Some(DispatchLoop {
-            header: IrBlockId::from_index(header)?,
+        let Some(header) = IrBlockId::from_index(header) else {
+            continue;
+        };
+        found = Some(DispatchLoop {
+            header,
+            matched: *matched,
             region,
             arms,
             table,
@@ -253,7 +326,32 @@ pub(super) fn find(function: &IrFunction, reachable: &[bool]) -> Option<Dispatch
             invariants,
         });
     }
-    None
+    (found, rejections)
+}
+
+/// What [`FunctionEmitter::loop_invariants`] finds the loop cannot change.
+#[derive(Default)]
+struct LoopInvariants {
+    /// Header instructions, by index, the enclosing function computes once.
+    hoisted: Vec<usize>,
+    hoisted_values: HashSet<IrValueId>,
+    /// The hoisted values the loop still reads, which the parts receive.
+    passed: Vec<IrValueId>,
+    /// Header parameters passed through unchanged that nothing in the loop
+    /// reads once the hoisted work has left it.
+    dropped: HashSet<IrValueId>,
+    facts: HashMap<IrValueId, String>,
+    /// For a reference whose box the loop never replaces, every projection
+    /// of its referent inside the loop, mapped to the one the enclosing
+    /// function computes: (the header parameter, the block and index of that
+    /// projection's instruction).
+    pinned: Vec<(IrValueId, usize, usize)>,
+    replaced: HashMap<IrValueId, IrValueId>,
+    /// References whose every projection is hoisted, which the loop then
+    /// only hands on to itself through joins and its own back-edge place.
+    unread: HashSet<IrValueId>,
+    /// Header parameters every back edge passes through unchanged.
+    passed_through: HashSet<IrValueId>,
 }
 
 /// Which part of a split function is being emitted.
@@ -275,6 +373,9 @@ enum Role {
     HeaderValue,
     /// A value from before the loop.
     Invariant,
+    /// A header value the enclosing function computes once, because the
+    /// loop cannot change it.
+    Hoisted,
 }
 
 /// The emission state of one split function.
@@ -285,6 +386,25 @@ pub(super) struct DispatchEmission {
     arm_symbols: Vec<String>,
     table_symbol: String,
     parameters: Vec<(IrValueId, IrType, Role)>,
+    /// The header instructions, by index, that the enclosing function
+    /// computes once before calling the dispatch function.
+    hoisted: Vec<usize>,
+    /// The checked reference facts of a parameter that holds the same
+    /// pointer as one of the function's own parameters.
+    facts: HashMap<IrValueId, String>,
+    /// Box-referent projections of references whose box the loop keeps,
+    /// computed once by the enclosing function (see [`LoopInvariants`]).
+    pinned: Vec<(IrValueId, usize, usize)>,
+    replaced: HashMap<IrValueId, IrValueId>,
+    /// Whether the parts receive the handler table's address.
+    table_base: bool,
+    /// Values the loop cannot change that the parts read from the frame,
+    /// stored there by the enclosing function before the loop.
+    spilled: Vec<(IrValueId, IrType)>,
+    /// Header parameters no part receives. A join inside the loop may still
+    /// name one only to hand it back to itself, a value nothing reads, so
+    /// each part defines it as a frozen poison value.
+    dropped: Vec<(IrValueId, IrType)>,
     frame: bool,
     destination: bool,
     result: String,
@@ -356,28 +476,61 @@ impl FunctionEmitter<'_, '_> {
         destination: bool,
         result: &str,
     ) -> Result<Option<DispatchEmission>, BackendFailure> {
-        if self.function.waits()
-            || self.grain.is_some()
-            || self.sequential_clones.is_some()
-            || !self.function.overlaps().is_empty()
-            || self.function.synthesis().is_some()
-            || !super::contexts::context_group_prelude(self.function).is_empty()
-            || !super::shared::record_prelude(self.function).is_empty()
-        {
-            return Ok(None);
-        }
-        let Some(plan) = find(self.function, reachable) else {
+        let (found, rejections) = find(self.function, reachable);
+        let over = |matched: crate::IrNominalId| {
+            let name = self
+                .program
+                .nominal(matched)
+                .map_or("an enum", |nominal| nominal.name.as_str());
+            format!("{body_symbol}: not split: the loop over {name}")
+        };
+        let mut ledger: Vec<String> = rejections
+            .iter()
+            .map(|rejection| format!("{}: {}", over(rejection.matched), rejection.reason))
+            .collect();
+        let Some(plan) = found else {
+            self.dispatch_ledger.extend(ledger);
             return Ok(None);
         };
-        let header = self.block(plan.header)?;
+        let kind = if self.function.waits() {
+            Some("the function waits")
+        } else if self.grain.is_some() {
+            Some("it is a recursion-budget variant")
+        } else if self.sequential_clones.is_some() {
+            Some("it is a sequential clone")
+        } else if !self.function.overlaps().is_empty() {
+            Some("the function has overlap groups")
+        } else if self.function.synthesis().is_some() {
+            Some("the function is compiler-synthesized")
+        } else if !super::contexts::context_group_prelude(self.function).is_empty()
+            || !super::shared::record_prelude(self.function).is_empty()
+        {
+            Some("the function has a context or shared-record prelude")
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            ledger.push(format!("{}: {kind}", over(plan.matched)));
+            self.dispatch_ledger.extend(ledger);
+            return Ok(None);
+        }
+        let header = self.block(plan.header)?.clone();
+        let invariant = self.loop_invariants(&plan, &header, reachable);
         let mut parameters = Vec::new();
         for (value, ty) in header.parameters() {
-            if self.storage.slot(*value).is_none() {
+            if self.storage.slot(*value).is_none() && !invariant.dropped.contains(value) {
                 parameters.push((*value, *ty, Role::Carried));
             }
         }
+        let header_values: Vec<IrValueId> = plan
+            .header_values
+            .iter()
+            .copied()
+            .filter(|value| !invariant.hoisted_values.contains(value))
+            .collect();
         for (values, role) in [
-            (&plan.header_values, Role::HeaderValue),
+            (&invariant.passed, Role::Hoisted),
+            (&header_values, Role::HeaderValue),
             (&plan.invariants, Role::Invariant),
         ] {
             for value in values {
@@ -394,24 +547,137 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         let (convention, registers) = convention(self.target.triple());
-        let mut types = Vec::new();
         let mut scratch = References::default();
-        if destination {
-            types.push("ptr".to_owned());
+        let mut typed: Vec<(IrValueId, String)> = Vec::new();
+        for (value, ty, _) in &parameters {
+            typed.push((
+                *value,
+                llvm_type_with_references(self.program, *ty, &mut scratch.types)?,
+            ));
         }
-        for (_, ty, _) in &parameters {
-            types.push(llvm_type_with_references(
-                self.program,
-                *ty,
-                &mut scratch.types,
-            )?);
+        let frame_before = !self.frame.target.is_empty();
+        let types_without = |spilled: &HashSet<IrValueId>| {
+            let mut types = Vec::new();
+            if destination {
+                types.push("ptr".to_owned());
+            }
+            types.extend(
+                typed
+                    .iter()
+                    .filter(|(value, _)| !spilled.contains(value))
+                    .map(|(_, ty)| ty.clone()),
+            );
+            if frame_before || !spilled.is_empty() {
+                types.push("ptr".to_owned());
+            }
+            types
+        };
+        // Past the registers, the values the loop cannot change go to the
+        // frame, the one the fewest arms read first; carried values and header
+        // values, which change on every dispatch, never do.
+        let mut spilled: HashSet<IrValueId> = HashSet::new();
+        if ArgumentRegisters::demand(&types_without(&spilled))
+            .is_ok_and(|demand| !registers.fits(demand))
+        {
+            let mut candidates: Vec<(usize, IrValueId)> = parameters
+                .iter()
+                .filter(|(value, _, role)| {
+                    matches!(role, Role::Invariant | Role::Hoisted)
+                        || (*role == Role::Carried && invariant.passed_through.contains(value))
+                })
+                .map(|(value, _, _)| (self.arms_reading(&plan, &header, *value), *value))
+                .collect();
+            candidates.sort();
+            for (_, value) in candidates {
+                spilled.insert(value);
+                if ArgumentRegisters::demand(&types_without(&spilled))
+                    .is_ok_and(|demand| registers.fits(demand))
+                {
+                    break;
+                }
+            }
         }
-        if !self.frame.target.is_empty() {
-            types.push("ptr".to_owned());
+        let mut types = types_without(&spilled);
+        // The handler table's address travels as a parameter where a register
+        // is left for it, instead of being formed again in every arm.
+        let mut with_base = types.clone();
+        with_base.push("ptr".to_owned());
+        let table_base = spilled.is_empty()
+            && ArgumentRegisters::demand(&with_base).is_ok_and(|demand| registers.fits(demand));
+        if table_base {
+            types = with_base;
         }
-        if !registers.admit(&types) {
+        let triple = self.target.triple();
+        let name = if convention.is_empty() {
+            "C"
+        } else {
+            "preserve_none"
+        };
+        let demand = match ArgumentRegisters::demand(&types) {
+            Ok(demand) => demand,
+            Err(ty) => {
+                ledger.push(format!(
+                    "{}: a part's parameter of type {ty} has no argument register class",
+                    over(plan.matched)
+                ));
+                self.dispatch_ledger.extend(ledger);
+                return Ok(None);
+            }
+        };
+        if !registers.fits(demand) {
+            ledger.push(format!(
+                "{}: its parts need {} integer and {} floating argument registers, over the {} that {name} has on {triple}",
+                over(plan.matched),
+                demand.0,
+                demand.1,
+                registers.describe()
+            ));
+            self.dispatch_ledger.extend(ledger);
             return Ok(None);
         }
+        let spills: Vec<(IrValueId, IrType)> = parameters
+            .iter()
+            .filter(|(value, _, _)| spilled.contains(value))
+            .map(|(value, ty, _)| (*value, *ty))
+            .collect();
+        if !spills.is_empty() {
+            self.frame = FunctionFramePlan::build(
+                self.target,
+                self.program,
+                self.function,
+                super::FunctionFrameContents {
+                    storage: &self.storage,
+                    result_slot: self.result_slot,
+                    spills: &spills,
+                },
+            )?;
+            parameters.retain(|(value, _, _)| !spilled.contains(value));
+        }
+        let matched = self
+            .program
+            .nominal(plan.matched)
+            .map_or("an enum", |nominal| nominal.name.as_str());
+        if !spills.is_empty() {
+            ledger.insert(
+                0,
+                format!(
+                    "{body_symbol}: keeps {} value{} the loop cannot change in the frame",
+                    spills.len(),
+                    if spills.len() == 1 { "" } else { "s" }
+                ),
+            );
+        }
+        ledger.insert(
+            0,
+            format!(
+                "{body_symbol}: split: the loop over {matched} into {} arms, taking {} integer and {} floating of the {} argument registers that {name} has on {triple}",
+                plan.arms.len(),
+                demand.0,
+                demand.1,
+                registers.describe()
+            ),
+        );
+        self.dispatch_ledger.extend(ledger);
         let enclosing = self.frame.render_split(
             self.program,
             &mut self.output.references,
@@ -431,6 +697,18 @@ impl FunctionEmitter<'_, '_> {
             arm_symbols,
             table_symbol: format!("{body_symbol}.dispatch.table"),
             parameters,
+            hoisted: invariant.hoisted,
+            facts: invariant.facts,
+            pinned: invariant.pinned,
+            replaced: invariant.replaced,
+            spilled: spills,
+            table_base,
+            dropped: header
+                .parameters()
+                .iter()
+                .filter(|(value, _)| invariant.dropped.contains(value))
+                .copied()
+                .collect(),
             frame,
             destination,
             result: result.to_owned(),
@@ -462,6 +740,17 @@ impl FunctionEmitter<'_, '_> {
         let dispatch = self.dispatch.as_ref().ok_or(BackendFailure::InvalidIr)?;
         let parameters = dispatch.parameters.clone();
         let (destination, frame) = (dispatch.destination, dispatch.frame);
+        let base = dispatch.table_base.then(|| {
+            if dispatch.part == Part::Enclosing {
+                format!("ptr @{}", dispatch.table_symbol)
+            } else {
+                "ptr %wf.dispatch.base".to_owned()
+            }
+        });
+        if dispatch.table_base && dispatch.part == Part::Enclosing {
+            let table = dispatch.table_symbol.clone();
+            self.output.symbol(table);
+        }
         let mut arguments = Vec::new();
         if destination {
             arguments.push(format!("ptr {RESULT_POINTER}"));
@@ -478,10 +767,11 @@ impl FunctionEmitter<'_, '_> {
                     self.value_name(argument)
                 }
                 Role::HeaderValue if !into_arm => "poison".to_owned(),
-                Role::HeaderValue | Role::Invariant => self.value_name(value),
+                Role::HeaderValue | Role::Invariant | Role::Hoisted => self.value_name(value),
             };
             arguments.push(format!("{ty_name} {operand}"));
         }
+        arguments.extend(base);
         if frame {
             arguments.push("ptr %wf.frame".to_owned());
         }
@@ -523,6 +813,105 @@ impl FunctionEmitter<'_, '_> {
             .map(|(parameter, _)| *parameter)
             .zip(arguments.iter().copied())
             .collect();
+        if !tail {
+            // The hoisted header values, computed once from the arguments
+            // this edge gives the header's parameters.
+            let hoisted = self
+                .dispatch
+                .as_ref()
+                .map(|dispatch| dispatch.hoisted.clone())
+                .unwrap_or_default();
+            let header = header.clone();
+            let pinned = self
+                .dispatch
+                .as_ref()
+                .map(|dispatch| dispatch.pinned.clone())
+                .unwrap_or_default();
+            // The header's parameters, and the joins inside the loop that are
+            // the same values, are not defined in the enclosing function:
+            // each one the hoisted work reads is named there as this edge's
+            // argument for the header parameter it stands for.
+            let mut read: Vec<(IrValueId, IrValueId)> = Vec::new();
+            for index in &hoisted {
+                if let Some(instruction) = header.instructions().get(*index) {
+                    for operand in instruction.operands() {
+                        read.push((operand, operand));
+                    }
+                }
+            }
+            for (parameter, block, index) in &pinned {
+                let instruction = self
+                    .function
+                    .blocks()
+                    .get(*block)
+                    .and_then(|block| block.instructions().get(*index))
+                    .ok_or(BackendFailure::InvalidIr)?;
+                for operand in instruction.operands() {
+                    read.push((operand, *parameter));
+                }
+            }
+            let mut named: HashSet<IrValueId> = HashSet::new();
+            for (value, stands_for) in read {
+                let Some(position) = header
+                    .parameters()
+                    .iter()
+                    .position(|(parameter, _)| *parameter == stands_for)
+                else {
+                    continue;
+                };
+                if !named.insert(value) || self.storage.slot(stands_for).is_some() {
+                    continue;
+                }
+                let ty = self
+                    .output
+                    .type_name(self.program, header.parameters()[position].1)?;
+                let argument = self.value_name(carried[position].1);
+                writeln!(
+                    self.output,
+                    "  {} = select i1 true, {ty} {argument}, {ty} {argument}",
+                    value_name(value)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            for index in hoisted {
+                let instruction = header
+                    .instructions()
+                    .get(index)
+                    .ok_or(BackendFailure::InvalidIr)?;
+                self.emit_instruction(target, index, instruction)?;
+            }
+            for (_, block, index) in pinned {
+                let block_id =
+                    IrBlockId::from_index(block).ok_or(BackendFailure::CounterOverflow)?;
+                let instruction = self
+                    .function
+                    .blocks()
+                    .get(block)
+                    .and_then(|block| block.instructions().get(index))
+                    .ok_or(BackendFailure::InvalidIr)?
+                    .clone();
+                self.emit_instruction(block_id, index, &instruction)?;
+            }
+        }
+        if !tail {
+            let spilled = self
+                .dispatch
+                .as_ref()
+                .map(|dispatch| dispatch.spilled.clone())
+                .unwrap_or_default();
+            for (value, ty) in spilled {
+                // A passed-through header parameter is this edge's argument.
+                let source = carried
+                    .iter()
+                    .find(|(parameter, _)| *parameter == value)
+                    .map_or(value, |(_, argument)| *argument);
+                let slot = self.entry_slot(FunctionSlot::Spill(value))?;
+                let ty = self.output.type_name(self.program, ty)?;
+                let operand = self.value_name(source);
+                writeln!(self.output, "  store {ty} {operand}, ptr {slot}")
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
+        }
         self.emit_place_edge(target, arguments, drops)?;
         let list = self.dispatch_arguments(&carried, false)?;
         self.output.symbol(symbol.clone());
@@ -554,7 +943,12 @@ impl FunctionEmitter<'_, '_> {
         if dispatch.part != Part::Header || block != dispatch.plan.header {
             return Ok(false);
         }
-        let table = dispatch.table_symbol.clone();
+        let table = if dispatch.table_base {
+            "%wf.dispatch.base".to_owned()
+        } else {
+            format!("@{}", dispatch.table_symbol)
+        };
+        let table_symbol = dispatch.table_symbol.clone();
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
@@ -569,7 +963,7 @@ impl FunctionEmitter<'_, '_> {
         let list = self.dispatch_arguments(&carried, true)?;
         let slot = self.next_temporary()?;
         let handler = self.next_temporary()?;
-        self.output.symbol(table.clone());
+        self.output.symbol(table_symbol);
         // A tag narrower than the index is zero-extended: a two-variant
         // tag-only enum's `i1` tag would otherwise index as -1.
         let index = self.next_temporary()?;
@@ -580,7 +974,7 @@ impl FunctionEmitter<'_, '_> {
         };
         write!(
             text,
-            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr @{table}, i64 0, i64 %{index}\n  %{handler} = load ptr, ptr %{slot}\n"
+            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr {table}, i64 0, i64 %{index}\n  %{handler} = load ptr, ptr %{slot}\n"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         if result == "void" {
@@ -613,7 +1007,17 @@ impl FunctionEmitter<'_, '_> {
             } else {
                 value_name(*value)
             };
-            parameters.push(Parameter::named(ty, name));
+            // A range arrives in the parts as its `{ ptr, i64 }` pair, which
+            // carries no pointer attribute; only a pointer takes the facts.
+            let facts = if ty == "ptr" {
+                dispatch.facts.get(value).map_or("", String::as_str)
+            } else {
+                ""
+            };
+            parameters.push(Parameter::named(format!("{ty}{facts}"), name));
+        }
+        if dispatch.table_base {
+            parameters.push(Parameter::named("ptr", "%wf.dispatch.base"));
         }
         if dispatch.frame {
             parameters.push(Parameter::named("ptr", "%wf.frame"));
@@ -645,6 +1049,8 @@ impl FunctionEmitter<'_, '_> {
         let arms: Vec<(IrBlockId, Vec<bool>)> = dispatch.plan.arms.clone();
         let table = dispatch.plan.table.clone();
         let table_symbol = dispatch.table_symbol.clone();
+        let dropped = dispatch.dropped.clone();
+        let spilled = dispatch.spilled.clone();
         let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
 
         self.set_part(Part::Header);
@@ -655,8 +1061,15 @@ impl FunctionEmitter<'_, '_> {
         self.materialized.clear();
         self.output.open_block(block_label(header));
         let block = self.block(header)?.clone();
+        let hoisted = self
+            .dispatch
+            .as_ref()
+            .map(|dispatch| dispatch.hoisted.clone())
+            .unwrap_or_default();
         for (index, instruction) in block.instructions().iter().enumerate() {
-            self.emit_instruction(header, index, instruction)?;
+            if !hoisted.contains(&index) {
+                self.emit_part_instruction(header, index, instruction)?;
+            }
         }
         self.emit_terminator(header, block.terminator())?;
         self.output.finish_ir_block(header)?;
@@ -683,7 +1096,7 @@ impl FunctionEmitter<'_, '_> {
                 self.output.open_block(block_label(block_id));
                 self.emit_block_parameters(block_id, member)?;
                 for (instruction_index, instruction) in member.instructions().iter().enumerate() {
-                    self.emit_instruction(block_id, instruction_index, instruction)?;
+                    self.emit_part_instruction(block_id, instruction_index, instruction)?;
                 }
                 self.emit_terminator(block_id, member.terminator())?;
                 self.output.finish_ir_block(block_id)?;
@@ -711,9 +1124,20 @@ impl FunctionEmitter<'_, '_> {
                         && !matches!(key, FunctionSlot::Address(_))
                 })
                 .collect();
-            let prelude =
+            let mut prelude =
                 self.frame
                     .render_split(self.program, &mut body.references, false, &locals)?;
+            for (value, ty) in &spilled {
+                let slot = self.frame.slot(FunctionSlot::Spill(*value))?;
+                let ty = llvm_type_with_references(self.program, *ty, &mut body.references.types)?;
+                writeln!(prelude, "  {} = load {ty}, ptr {slot}", value_name(*value))
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            for (value, ty) in &dropped {
+                let ty = llvm_type_with_references(self.program, *ty, &mut body.references.types)?;
+                writeln!(prelude, "  {} = freeze {ty} poison", value_name(*value))
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
             module.define(signature.define(body, &prelude)?);
             module.text("\n");
         }
@@ -737,6 +1161,394 @@ impl FunctionEmitter<'_, '_> {
             references,
         );
         Ok(())
+    }
+
+    /// What the loop cannot change. A header parameter is passed through
+    /// when every edge back to the header gives it its own value; it holds
+    /// a read-only reference when the one edge into the loop gives it one of
+    /// the function's read-only reference parameters, whose referents the
+    /// function does not write [EFF-2, EFF-5]. A header instruction that
+    /// projects a box's referent or reads a container's measure through such
+    /// a reference, or through a value so hoisted, is hoisted into the
+    /// enclosing function. A passed-through parameter nothing else in the
+    /// loop reads is dropped, and one holding the same pointer as a function
+    /// parameter carries that parameter's checked facts.
+    fn loop_invariants(
+        &self,
+        plan: &DispatchLoop,
+        header: &IrBlock,
+        reachable: &[bool],
+    ) -> LoopInvariants {
+        let mut result = LoopInvariants::default();
+        let blocks = self.function.blocks();
+        let parameters: Vec<IrValueId> = header
+            .parameters()
+            .iter()
+            .map(|(value, _)| *value)
+            .collect();
+        let mut entries = Vec::new();
+        let mut backedges = Vec::new();
+        for (index, block) in blocks.iter().enumerate() {
+            if let IrTerminator::Jump {
+                target, arguments, ..
+            } = block.terminator()
+                && *target == plan.header
+                && reachable[index]
+            {
+                if plan.region[index] {
+                    backedges.push(arguments.clone());
+                } else {
+                    entries.push(arguments.clone());
+                }
+            }
+        }
+        let [entry] = entries.as_slice() else {
+            return result;
+        };
+        // A block parameter inside the loop whose every incoming value is the
+        // same value, as at the join of an `if` in an arm, is that value.
+        let mut incoming: HashMap<IrValueId, Vec<IrValueId>> = HashMap::new();
+        for (index, block) in blocks.iter().enumerate() {
+            if !plan.region[index] {
+                continue;
+            }
+            if let IrTerminator::Jump {
+                target, arguments, ..
+            } = block.terminator()
+                && plan.region[target.index()]
+            {
+                for ((parameter, _), argument) in
+                    blocks[target.index()].parameters().iter().zip(arguments)
+                {
+                    incoming.entry(*parameter).or_default().push(*argument);
+                }
+            }
+        }
+        let mut same: HashMap<IrValueId, IrValueId> = HashMap::new();
+        loop {
+            let mut changed = false;
+            for (parameter, arguments) in &incoming {
+                let roots: HashSet<IrValueId> = arguments
+                    .iter()
+                    .map(|argument| *same.get(argument).unwrap_or(argument))
+                    .collect();
+                if let [root] = roots.into_iter().collect::<Vec<_>>().as_slice()
+                    && root != parameter
+                    && same.get(parameter) != Some(root)
+                {
+                    same.insert(*parameter, *root);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let root = |value: &IrValueId| *same.get(value).unwrap_or(value);
+        let passed_through: Vec<bool> = (0..parameters.len())
+            .map(|position| {
+                backedges.iter().all(|arguments| {
+                    arguments.get(position).map(root) == Some(parameters[position])
+                })
+            })
+            .collect();
+        result.passed_through = parameters
+            .iter()
+            .zip(&passed_through)
+            .filter(|(_, through)| **through)
+            .map(|(parameter, _)| *parameter)
+            .collect();
+        let function_parameters: Vec<IrValueId> = self
+            .function
+            .parameters()
+            .iter()
+            .map(|(value, _)| *value)
+            .collect();
+        let readonly: HashSet<IrValueId> = self
+            .function
+            .readonly_reference_parameters
+            .iter()
+            .copied()
+            .collect();
+        let mut rooted: HashSet<IrValueId> = HashSet::new();
+        for (position, parameter) in parameters.iter().enumerate() {
+            // A parameter held in a frame slot is no SSA value the enclosing
+            // function could name for the hoisted work.
+            if !passed_through[position] || self.storage.slot(*parameter).is_some() {
+                continue;
+            }
+            let Some(argument) = entry.get(position) else {
+                continue;
+            };
+            if readonly.contains(argument) {
+                rooted.insert(*parameter);
+            }
+            if let Some(index) = function_parameters
+                .iter()
+                .position(|value| value == argument)
+                && let Some((_, ty)) = self.function.parameters().get(index)
+                && let Ok(facts) = self.reference_parameter_facts(index, *ty)
+                && !facts.is_empty()
+            {
+                result.facts.insert(*parameter, facts);
+            }
+        }
+        for value in &plan.invariants {
+            if readonly.contains(value) {
+                rooted.insert(*value);
+            }
+        }
+        for (index, instruction) in header.instructions().iter().enumerate() {
+            let IrInstruction::Define {
+                result: value,
+                operation,
+                ..
+            } = instruction
+            else {
+                continue;
+            };
+            let hoist = match operation {
+                crate::IrOperation::ProjectAddress {
+                    address,
+                    projection: crate::IrPlaceStep::BoxReferent { .. },
+                } if rooted.contains(address) => {
+                    rooted.insert(*value);
+                    true
+                }
+                crate::IrOperation::ContainerMeasure { container, .. }
+                    if rooted.contains(container) =>
+                {
+                    true
+                }
+                _ => false,
+            };
+            if hoist {
+                result.hoisted.push(index);
+                result.hoisted_values.insert(*value);
+            }
+        }
+        // What the loop still reads once the hoisted work leaves it: the
+        // header's remaining instructions and terminator and every block of
+        // the loop, apart from a back edge's argument for the parameter it
+        // passes through.
+        let mut reads: HashSet<IrValueId> = HashSet::new();
+        for (index, instruction) in header.instructions().iter().enumerate() {
+            if !result.hoisted.contains(&index) {
+                reads.extend(instruction.operands());
+            }
+        }
+        reads.extend(header.terminator().operands());
+        for (index, block) in blocks.iter().enumerate() {
+            if !plan.region[index] {
+                continue;
+            }
+            for instruction in block.instructions() {
+                reads.extend(instruction.operands());
+            }
+            match block.terminator() {
+                IrTerminator::Jump {
+                    target,
+                    arguments,
+                    drops,
+                } if *target == plan.header => {
+                    for (position, argument) in arguments.iter().enumerate() {
+                        if !passed_through.get(position).copied().unwrap_or(false)
+                            || root(argument) != *argument
+                        {
+                            reads.insert(*argument);
+                        }
+                    }
+                    reads.extend(drops.iter().map(|drop| drop.operand()));
+                }
+                terminator => reads.extend(terminator.operands()),
+            }
+        }
+        // A passed-through reference the loop uses only to project its box's
+        // referent, or hands on unchanged to a join's parameter that is the
+        // same value or to its own place on a back edge, keeps one box for
+        // the whole loop: nothing in the loop can replace that box, and no
+        // other reference reaches it [EFF-5]. Its projections are hoisted.
+        for (position, parameter) in parameters.iter().enumerate() {
+            if !passed_through[position] || self.storage.slot(*parameter).is_some() {
+                continue;
+            }
+            let mut projections: Vec<(usize, usize, IrValueId)> = Vec::new();
+            let mut pinned = true;
+            let blocks_in_loop = blocks
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| plan.region[*index] || *index == plan.header.index());
+            for (index, block) in blocks_in_loop {
+                for (position_in_block, instruction) in block.instructions().iter().enumerate() {
+                    let operands = instruction.operands();
+                    if !operands.iter().any(|value| root(value) == *parameter) {
+                        continue;
+                    }
+                    match instruction {
+                        IrInstruction::Define {
+                            result: value,
+                            operation:
+                                crate::IrOperation::ProjectAddress {
+                                    address,
+                                    projection: crate::IrPlaceStep::BoxReferent { .. },
+                                },
+                            ..
+                        } if root(address) == *parameter && operands.len() == 1 => {
+                            projections.push((index, position_in_block, *value));
+                        }
+                        _ => pinned = false,
+                    }
+                }
+                match block.terminator() {
+                    IrTerminator::Jump {
+                        target,
+                        arguments,
+                        drops,
+                    } => {
+                        let target_parameters = blocks[target.index()].parameters();
+                        for (argument_position, argument) in arguments.iter().enumerate() {
+                            if root(argument) != *parameter {
+                                continue;
+                            }
+                            let onward = target_parameters
+                                .get(argument_position)
+                                .map(|(value, _)| *value);
+                            let own_place = *target == plan.header && argument_position == position;
+                            let alias = plan.region[target.index()]
+                                && onward.is_some_and(|value| root(&value) == *parameter);
+                            pinned &= own_place || alias;
+                        }
+                        pinned &= !drops.iter().any(|drop| root(&drop.operand()) == *parameter);
+                    }
+                    terminator => {
+                        pinned &= !terminator
+                            .operands()
+                            .iter()
+                            .any(|value| root(value) == *parameter);
+                    }
+                }
+            }
+            if !pinned || projections.is_empty() {
+                continue;
+            }
+            // Every projection of this reference is now computed before the
+            // loop, whether by the read-only rule above or here, so what is
+            // left of it in the loop only passes it on to itself.
+            let hoisted_already = projections
+                .iter()
+                .filter(|(_, _, projected)| result.hoisted_values.contains(projected))
+                .count();
+            if hoisted_already == projections.len() {
+                result.unread.insert(*parameter);
+                continue;
+            }
+            if hoisted_already > 0 {
+                // The header's hoisted projection stands for the arms' ones.
+                let Some(canonical) = projections
+                    .iter()
+                    .map(|(_, _, projected)| *projected)
+                    .find(|projected| result.hoisted_values.contains(projected))
+                else {
+                    continue;
+                };
+                for (_, _, projected) in &projections {
+                    if !result.hoisted_values.contains(projected) {
+                        result.replaced.insert(*projected, canonical);
+                    }
+                }
+                result.unread.insert(*parameter);
+                if !result.passed.contains(&canonical) {
+                    result.passed.push(canonical);
+                }
+                continue;
+            }
+            result.unread.insert(*parameter);
+            let (block, index, canonical) = projections[0];
+            for (_, _, projected) in &projections {
+                result.replaced.insert(*projected, canonical);
+            }
+            result.pinned.push((*parameter, block, index));
+            result.passed.push(canonical);
+        }
+        for (position, parameter) in parameters.iter().enumerate() {
+            if passed_through[position]
+                && (!reads.contains(parameter) || result.unread.contains(parameter))
+            {
+                result.dropped.insert(*parameter);
+            }
+        }
+        let pinned_passed = std::mem::take(&mut result.passed);
+        result.passed = result
+            .hoisted
+            .iter()
+            .filter_map(|index| match header.instructions().get(*index) {
+                Some(IrInstruction::Define { result: value, .. }) if reads.contains(value) => {
+                    Some(*value)
+                }
+                _ => None,
+            })
+            .collect();
+        // A pinned canonical may also be a hoisted value the loop reads.
+        for value in pinned_passed {
+            if !result.passed.contains(&value) {
+                result.passed.push(value);
+            }
+        }
+        result
+    }
+
+    /// Emits one instruction of a part: a hoisted box-referent projection is
+    /// the parameter the part receives, and another projection of the same
+    /// box is a name for it.
+    fn emit_part_instruction(
+        &mut self,
+        block: IrBlockId,
+        index: usize,
+        instruction: &IrInstruction,
+    ) -> Result<(), BackendFailure> {
+        if let IrInstruction::Define { result, .. } = instruction
+            && let Some(canonical) = self
+                .dispatch
+                .as_ref()
+                .and_then(|dispatch| dispatch.replaced.get(result).copied())
+        {
+            if canonical != *result {
+                writeln!(
+                    self.output,
+                    "  {} = select i1 true, ptr {}, ptr {}",
+                    value_name(*result),
+                    value_name(canonical),
+                    value_name(canonical)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            return Ok(());
+        }
+        self.emit_instruction(block, index, instruction)
+    }
+
+    /// How many arms read a value: every arm when the header reads it.
+    fn arms_reading(&self, plan: &DispatchLoop, header: &IrBlock, value: IrValueId) -> usize {
+        let reads = |block: &IrBlock| {
+            block
+                .instructions()
+                .iter()
+                .any(|instruction| instruction.operands().contains(&value))
+                || block.terminator().operands().contains(&value)
+        };
+        if reads(header) {
+            return plan.arms.len();
+        }
+        plan.arms
+            .iter()
+            .filter(|(_, blocks)| {
+                self.function
+                    .blocks()
+                    .iter()
+                    .enumerate()
+                    .any(|(index, block)| blocks[index] && reads(block))
+            })
+            .count()
     }
 
     fn set_part(&mut self, part: Part) {
