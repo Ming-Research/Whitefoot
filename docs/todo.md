@@ -3240,6 +3240,18 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **`make -C compiler format` depends on the host's stable rustfmt.**
+  `compiler/rust-toolchain.toml` pins only the `stable` channel, and
+  rustfmt 1.10.0 (2026-09-28, on the 14900K host) reformats five files that
+  rustfmt 1.9.0 (2026-09-01, on the M1) leaves alone: `driver/packages.rs`,
+  `driver/tests.rs`, `graph.rs`, `prelude.rs` and
+  `tests/conformance/adapter.rs`. Formatting is an authoring command, not a
+  gate, so no check fails, but an author on the newer toolchain must revert
+  unrelated hunks by hand. The change: pin the channel to a dated release, or
+  reformat once with the newer rustfmt when every host has it. Validate with
+  `cargo fmt --all -- --check` clean on both hosts. Reopen when a formatting
+  diff next lands in an unrelated change.
+
 - **The local app-build cache never evicts.** Outside CI the corpus tests
   build firn with the compiler's incremental cache under
   `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`
