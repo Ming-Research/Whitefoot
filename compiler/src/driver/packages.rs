@@ -13,8 +13,7 @@ use crate::graph::{
     form_package_graph, graph_bindings, registered_paths,
 };
 use crate::{
-    CanonicalSyntaxUnit, DiscoveryFailure, GRAPH_FILE_NAME, ModuleGraph, Package,
-    read_graph_record,
+    CanonicalSyntaxUnit, DiscoveryFailure, GRAPH_FILE_NAME, ModuleGraph, Package, read_graph_record,
 };
 
 /// Why a module program's packages cannot be formed: a rejection of one of

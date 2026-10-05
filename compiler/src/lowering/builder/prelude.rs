@@ -61,8 +61,8 @@ impl IrBuilder<'_> {
             "free_empty" => self.row_free_empty(),
             "shared_new" => self.row_shared_new(),
             "shared_share" => self.row_shared_share(),
-            "keyed_table_new" => self.row_keyed_table_new(),
-            "keyed_table_count" => self.row_keyed_table_count(),
+            "shared_map_new" => self.row_shared_map_new(),
+            "map_count" => self.row_map_count(),
             "key_set_new" => self.row_key_set_new(),
             "key_set_insert" => self.row_key_set_insert(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
@@ -156,23 +156,23 @@ impl IrBuilder<'_> {
         self.return_value(object)
     }
 
-    /// `keyed_table_new<V>(capacity: u64) -> KeyedTable<V>`: a table holding
+    /// `shared_map_new<V>(capacity: u64) -> Shared<ConcurrentHashMap<V>>`: a table holding
     /// no entry, sized for `capacity` keys [SHARE-1].
-    fn row_keyed_table_new(&mut self) -> Result<(), LoweringFailure> {
+    fn row_shared_map_new(&mut self) -> Result<(), LoweringFailure> {
         let [capacity] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {
             return Err(LoweringFailure::InvalidCheckedProgram);
         };
         let table = self.define(
             self.result,
-            IrOperation::KeyedTableNew { nominal, capacity },
+            IrOperation::ConcurrentHashMapNew { nominal, capacity },
         )?;
         self.return_value(table)
     }
 
-    /// `keyed_table_count<V>(table: &KeyedTable<V>) -> u64`: how many entries
+    /// `map_count<V>(map: &ConcurrentHashMap<V>) -> u64`: how many entries
     /// of the table the argument names hold `Some` [SHARE-1].
-    fn row_keyed_table_count(&mut self) -> Result<(), LoweringFailure> {
+    fn row_map_count(&mut self) -> Result<(), LoweringFailure> {
         let [table] = self.row_parameters()?;
         let IrType::Address(referent @ IrAddressed::Nominal(_)) = self.value_type(table)? else {
             return Err(LoweringFailure::InvalidCheckedProgram);
@@ -184,7 +184,7 @@ impl IrBuilder<'_> {
                 referent,
             },
         )?;
-        let count = self.define(self.result, IrOperation::KeyedTableCount { table })?;
+        let count = self.define(self.result, IrOperation::ConcurrentHashMapCount { table })?;
         self.return_value(count)
     }
 
@@ -616,23 +616,18 @@ impl IrBuilder<'_> {
         // instead, since a statement on another unit of a shared state reads
         // a table's address without a lock
         // (compiler/waiting-contexts/state-locks).
-        let mut stored_first = held_second;
-        let mut stored_second = held_first;
-        for path in self.table_paths(referent.ty())? {
-            let table_first = self.table_at(held_first, &path)?;
-            let table_second = self.table_at(held_second, &path)?;
+        if self.table_nominal(referent.ty()).is_some() {
             self.define(
                 IrType::Unit,
-                IrOperation::KeyedTableSwap {
-                    first: table_first,
-                    second: table_second,
+                IrOperation::ConcurrentHashMapSwap {
+                    first: held_first,
+                    second: held_second,
                 },
             )?;
-            stored_first = self.with_table_at(stored_first, &path, table_first)?;
-            stored_second = self.with_table_at(stored_second, &path, table_second)?;
+        } else {
+            self.store_addressed(first, held_second, referent)?;
+            self.store_addressed(second, held_first, referent)?;
         }
-        self.store_addressed(first, stored_first, referent)?;
-        self.store_addressed(second, stored_second, referent)?;
         self.return_unit()
     }
 
@@ -716,7 +711,7 @@ fn ceiling_pair(
         // A key set is its count and its store's pointer; the entries an
         // entry binding names are the statement's record [SHARE-1, SHARE-2].
         IrType::KeySet => (Finite(16), 8),
-        IrType::KeyedEntries { .. } => (Finite(24), 8),
+        IrType::Entries { .. } => (Finite(24), 8),
         IrType::Address(_) => (Finite(8), 8),
         // This compiler-only task capture has no source layout ceiling.
         IrType::RuntimeBoxPayload { .. } => return None,

@@ -1,0 +1,34 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer",
+          "value": 65
+        },
+        {
+          "type": "integer",
+          "value": 66
+        },
+        {
+          "type": "integer",
+          "value": 67
+        }
+      ]
+    },
+    {
+      "type": "bulk",
+      "bytes": "\u0000A\u00ff"
+    },
+    {
+      "type": "integer",
+      "value": 99
+    },
+    {
+      "type": "integer",
+      "value": 0
+    }
+  ]
+}

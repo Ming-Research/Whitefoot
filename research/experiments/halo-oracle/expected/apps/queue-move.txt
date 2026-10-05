@@ -1,0 +1,38 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "job-a"
+    },
+    {
+      "type": "bulk",
+      "bytes": "job-b"
+    },
+    {
+      "type": "nil",
+      "kind": "bulk"
+    },
+    {
+      "type": "array",
+      "items": []
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "older"
+        },
+        {
+          "type": "bulk",
+          "bytes": "job-a"
+        },
+        {
+          "type": "bulk",
+          "bytes": "job-b"
+        }
+      ]
+    }
+  ]
+}

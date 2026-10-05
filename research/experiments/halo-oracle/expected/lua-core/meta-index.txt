@@ -1,0 +1,21 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "integer",
+      "value": 3
+    },
+    {
+      "type": "integer",
+      "value": 7
+    },
+    {
+      "type": "bulk",
+      "bytes": "fallback:hello"
+    },
+    {
+      "type": "integer",
+      "value": 1
+    }
+  ]
+}

@@ -164,12 +164,16 @@ fn collect_direct_calls<'checked>(
                 collect_direct_calls(body, callee, calls);
             }
             CheckedStatement::Atomic {
-                target,
+                targets,
                 guard,
                 body,
                 ..
             } => {
-                record(target, callee, calls);
+                for target in targets {
+                    for operand in target.expressions() {
+                        record(operand, callee, calls);
+                    }
+                }
                 if let Some(guard) = guard {
                     record(guard, callee, calls);
                 }

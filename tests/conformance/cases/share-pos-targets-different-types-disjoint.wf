@@ -1,0 +1,17 @@
+fn bump_both(first: &u8, second: &u16) -> result: unit writes(first), writes(second) {
+  set first^ = first^ +wrap 1_u8;
+  set second^ = second^ +wrap 1_u16;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let x = shared_new::<u8>(value: 2_u8);
+  let y = shared_new::<u16>(value: 3_u16);
+  let total = 0_u8;
+  atomic a = &x, b = &y {
+    bump_both(first: a, second: b);
+    let low = cvt.wrap::<u16, u8>(b^);
+    set total = a^ +wrap low;
+  }
+  return std::process::exit_status(code: total);
+}

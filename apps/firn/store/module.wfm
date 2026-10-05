@@ -51,12 +51,6 @@ public struct Meta {
   public random: u64;
 }
 
-public struct KeyspaceState {
-  doc "The keyspace every client reaches through atomic statements: its keys, a table whose entries statements on different keys hold without waiting for each other, then what the keyspace keeps beside them, declared after the table so that a statement on a key takes it only where its block reaches it, after the key's entry.";
-  public map: KeyedTable<Entry>;
-  public meta: Meta;
-}
-
 public struct ServerState {
   doc "What the server keeps beside the keyspace that every connection reaches: the password clients must give, empty for none, and how many seconds a silent client is kept, zero for no limit, which CONFIG SET changes; the values of the parameters whose only effect in Redis is on its internal encodings, which CONFIG SET sets and CONFIG GET reports and firn does not use, in the order of their names: hash-max-listpack-entries, hash-max-listpack-value, list-compress-depth, list-max-listpack-size, set-max-intset-entries, stream-node-max-bytes, stream-node-max-entries, zset-max-listpack-entries and zset-max-listpack-value; how many connections the server has accepted since it started or CONFIG RESETSTAT last ran; and the calendar time in milliseconds at which it started, which INFO's uptime counts from.";
   public password: Bytes;
@@ -67,8 +61,9 @@ public struct ServerState {
 }
 
 public struct Keyspace {
-  doc "One context's handle to the keyspace and to the server's state beside it, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
-  public state: Shared<KeyspaceState>;
+  doc "One context's handles to the keyspace's keys, to its metadata and to the server's state, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
+  public keys: Shared<ConcurrentHashMap<Entry>>;
+  public meta: Shared<Meta>;
   public server: Shared<ServerState>;
   public logging: Bool;
 }
@@ -92,9 +87,9 @@ public binding DueOrder : PriorityOrder<Due, KeyEnv> {
   compare = due_order;
 }
 
-public fn keyspace_table() -> made: KeyedTable<Entry> pure doc "An empty table of entries sized for 2^18 keys, as a new keyspace's table is, and as FLUSHALL's is.";
+public const keyspace_capacity: u64 = 262144_u64;
 
-public fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64, started: u64) -> made: Keyspace pure doc "An empty keyspace, its table made by keyspace_table, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed, beside a server's state that requires the password, none when it is empty, keeps a silent client timeout seconds, none when it is zero, holds Redis 7.0.15's defaults for the encoding parameters, and records started, the calendar time in milliseconds at which the server started.";
+public fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64, started: u64) -> made: Keyspace pure doc "An empty keyspace, its keys a shared map sized for keyspace_capacity keys, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed, beside a server's state that requires the password, none when it is empty, keeps a silent client timeout seconds, none when it is zero, holds Redis 7.0.15's defaults for the encoding parameters, and records started, the calendar time in milliseconds at which the server started.";
 
 public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "Another context's handle to the same keyspace.";
 

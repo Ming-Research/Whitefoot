@@ -14,8 +14,8 @@ use super::with_semantics;
 fn atomic_forms(statements: &[CheckedStatement], out: &mut Vec<bool>) {
     for statement in statements {
         match statement {
-            CheckedStatement::Atomic { entries, body, .. } => {
-                out.extend(entries.iter().map(|entry| entry.reads));
+            CheckedStatement::Atomic { targets, body, .. } => {
+                out.extend(targets.iter().map(|entry| entry.reads));
                 atomic_forms(body, out);
             }
             CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => {
@@ -63,14 +63,6 @@ struct Pair {
   right: u8;
 }
 
-struct Bytes {
-  map: KeyedTable<u8>;
-}
-
-struct Pairs {
-  map: KeyedTable<Pair>;
-}
-
 fn bump(value: &u8) -> result: unit writes(value) {
   set value^ = value^ +wrap 1_u8;
   return unit;
@@ -97,17 +89,17 @@ fn a_statement_that_writes_through_its_binder_holds_its_entry_alone() {
     let source = format!(
         "{PRELUDE}{}",
         r#"
-fn replaces(store: &Shared<Bytes>) -> result: unit reads(store) waits {
+fn replaces(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     set slot^ = Some<u8>(value: 1_u8);
   }
   return unit;
 }
 
-fn writes_a_payload(store: &Shared<Bytes>) -> result: unit reads(store) waits {
+fn writes_a_payload(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     match slot^ {
       Some(value: seen) => {
         set seen^ = 2_u8;
@@ -119,9 +111,9 @@ fn writes_a_payload(store: &Shared<Bytes>) -> result: unit reads(store) waits {
   return unit;
 }
 
-fn calls_a_payload_writer(store: &Shared<Bytes>) -> result: unit reads(store) waits {
+fn calls_a_payload_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     match slot^ {
       Some(value: seen) => {
         bump(value: seen);
@@ -133,17 +125,17 @@ fn calls_a_payload_writer(store: &Shared<Bytes>) -> result: unit reads(store) wa
   return unit;
 }
 
-fn calls_an_entry_writer(store: &Shared<Bytes>) -> result: unit reads(store) waits {
+fn calls_an_entry_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     clear(held: slot);
   }
   return unit;
 }
 
-fn writes_on_one_branch(store: &Shared<Bytes>, flag: Bool) -> result: unit reads(store) waits {
+fn writes_on_one_branch(store: &Shared<ConcurrentHashMap<u8>>, flag: Bool) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     if flag {
       set slot^ = None<u8>();
     }
@@ -151,9 +143,9 @@ fn writes_on_one_branch(store: &Shared<Bytes>, flag: Bool) -> result: unit reads
   return unit;
 }
 
-fn writes_in_a_loop(store: &Shared<Bytes>) -> result: unit reads(store) waits {
+fn writes_in_a_loop(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     for (i in 0_u64..3_u64) {
       match slot^ {
         Some(value: seen) => {
@@ -167,9 +159,9 @@ fn writes_in_a_loop(store: &Shared<Bytes>) -> result: unit reads(store) waits {
   return unit;
 }
 
-fn writes_a_field(store: &Shared<Pairs>) -> result: unit reads(store) waits {
+fn writes_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     match slot^ {
       Some(value: pair) => {
         set pair^.right = 3_u8;
@@ -181,18 +173,18 @@ fn writes_a_field(store: &Shared<Pairs>) -> result: unit reads(store) waits {
   return unit;
 }
 
-fn writes_through_a_copy(store: &Shared<Bytes>) -> result: unit reads(store) waits {
+fn writes_through_a_copy(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     let same = slot;
     set same^ = Some<u8>(value: 1_u8);
   }
   return unit;
 }
 
-fn writes_through_a_copied_payload(store: &Shared<Bytes>) -> result: unit reads(store) waits {
+fn writes_through_a_copied_payload(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     match slot^ {
       Some(value: seen) => {
         let same = seen;
@@ -235,9 +227,9 @@ fn a_statement_that_writes_only_other_places_reads_its_entry() {
     let source = format!(
         "{PRELUDE}{}",
         r#"
-fn copies_out(store: &Shared<Bytes>, out: &u8) -> result: unit reads(store), writes(out) waits {
+fn copies_out(store: &Shared<ConcurrentHashMap<u8>>, out: &u8) -> result: unit reads(store), writes(out) waits {
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     match slot^ {
       Some(value: seen) => {
         set out^ = seen^;
@@ -249,10 +241,10 @@ fn copies_out(store: &Shared<Bytes>, out: &u8) -> result: unit reads(store), wri
   return unit;
 }
 
-fn calls_a_reader(store: &Shared<Bytes>) -> result: u8 reads(store) waits {
+fn calls_a_reader(store: &Shared<ConcurrentHashMap<u8>>) -> result: u8 reads(store) waits {
   let total = 0_u8;
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     match slot^ {
       Some(value: seen) => {
         set total = peek(value: seen);
@@ -264,10 +256,10 @@ fn calls_a_reader(store: &Shared<Bytes>) -> result: u8 reads(store) waits {
   return total;
 }
 
-fn reads_a_field(store: &Shared<Pairs>) -> result: u8 reads(store) waits {
+fn reads_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: u8 reads(store) waits {
   let right = 0_u8;
   let held = &key[0_u64..2_u64];
-  atomic s = &store^, slot = &s^.map[held] {
+  atomic slot = &store^[held] {
     match slot^ {
       Some(value: pair) => {
         set right = pair^.right;
@@ -289,5 +281,127 @@ fn reads_a_field(store: &Shared<Pairs>) -> result: u8 reads(store) waits {
     assert!(
         writers.is_empty(),
         "these write nothing of their entry, so each reads it: {writers:?}"
+    );
+}
+
+/// The implementation's type order compares const arguments by numeric value.
+#[test]
+fn atomic_type_order_uses_const_values() {
+    with_semantics(
+        br#"fn make_box<T: drop>(value: T) -> result: Box<T> pure {
+  return box_new::<T>(value: move value);
+}
+
+struct Sized<const n: u64> {
+  value: u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let two_value = Sized<2>(value: 0_u8);
+  let ten_value = Sized<10>(value: 0_u8);
+  let two = shared_new::<Sized<2>>(value: two_value);
+  let ten = shared_new::<Sized<10>>(value: ten_value);
+  let boxed = make_box::<u8>(value: 0_u8);
+  let cell = shared_new::<Box<u8>>(value: move boxed);
+  atomic a = &ten, b = &two, c = &cell {
+    set a^.value = 1_u8;
+    set b^.value = 2_u8;
+    set c^.inner = 3_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("must check: {outcome:?}");
+            };
+            // [TYPE-9] neither a symbolic Box<T> nor its concrete Box<u8>
+            // instance carries a region that could separate shared-state roots.
+            let mut boxes = 0;
+            for nominal in &checked.data.nominals {
+                if let super::super::model::CheckedNominalKind::Box { region, .. } = nominal.kind {
+                    assert!(region.is_none(), "Box carries no brand");
+                    assert!(checked.data.nominal_confinement[nominal.id.0 as usize].is_empty());
+                    boxes += 1;
+                }
+            }
+            assert!(boxes >= 2, "symbolic and concrete Boxes were checked");
+            let main = checked
+                .data
+                .functions
+                .iter()
+                .find(|f| f.name == "main")
+                .expect("main");
+            let targets = main
+                .body
+                .as_deref()
+                .expect("body")
+                .iter()
+                .find_map(|s| {
+                    if let CheckedStatement::Atomic { targets, .. } = s {
+                        Some(targets)
+                    } else {
+                        None
+                    }
+                })
+                .expect("targets");
+            assert!(
+                targets[1].lock_order < targets[0].lock_order,
+                "capacity 2 must precede 10"
+            );
+            assert!(
+                targets[2].lock_order < targets[1].lock_order,
+                "prelude Box must precede a source nominal"
+            );
+        },
+    );
+}
+
+/// Host-module nominals share the module-path/name order with source nominals.
+#[test]
+fn atomic_type_order_uses_host_module_path_then_name() {
+    with_semantics(
+        br#"alias ExitStatus = std::process::ExitStatus;
+alias ArgError = std::text::ArgError;
+
+fn main() -> status: ExitStatus pure waits {
+  let process_value = std::process::exit_status(code: 0_u8);
+  let process = shared_new::<ExitStatus>(value: move process_value);
+  let error_value = ArgError::InvalidIndex();
+  let environment = shared_new::<ArgError>(value: error_value);
+  atomic p = &process, e = &environment {
+    set p^ = std::process::exit_status(code: 1_u8);
+    let error = e^;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("host states must check: {outcome:?}");
+            };
+            let main = checked
+                .data
+                .functions
+                .iter()
+                .find(|f| f.name == "main")
+                .expect("main");
+            let targets = main
+                .body
+                .as_deref()
+                .expect("body")
+                .iter()
+                .find_map(|s| {
+                    if let CheckedStatement::Atomic { targets, .. } = s {
+                        Some(targets)
+                    } else {
+                        None
+                    }
+                })
+                .expect("targets");
+            assert_eq!(targets[0].lock_order, ["100", "std.process", "ExitStatus"]);
+            assert_eq!(targets[1].lock_order, ["100", "std.text", "ArgError"]);
+            assert!(targets[0].lock_order < targets[1].lock_order);
+        },
     );
 }

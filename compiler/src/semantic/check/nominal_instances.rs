@@ -756,7 +756,7 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
-                    if matches!(template.name.as_str(), "Shared" | "KeyedTable")
+                    if matches!(template.name.as_str(), "Shared" | "ConcurrentHashMap")
                         && self
                             .types
                             .declarations
@@ -773,7 +773,7 @@ impl<'unit> Checker<'_, 'unit> {
                             self.types
                                 .intern_prelude_nominal(PreludeType::Option(state))?,
                         );
-                        CheckedShared::Table { entry }
+                        CheckedShared::Map { entry }
                     };
                     CheckedNominalKind::Shared { state, shape }
                 }
@@ -853,7 +853,12 @@ impl<'unit> Checker<'_, 'unit> {
                 .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
             self.ensure_nominal_type(check_context, ty, substitution)?;
             let parsed = self.parse_type_with(check_context, ty, substitution)?;
-            self.types.reject_inline_runtime_capacity(ty, parsed)?;
+            self.types.reject_placement(
+                ty,
+                parsed,
+                super::types::Placement::Value,
+                substitution,
+            )?;
             // [TYPE-2, GRAM-2] `field := "readonly"? IDENT ":" type ";"`: the
             // written modifier is what makes the field unassignable.
             let readonly = self
@@ -929,7 +934,12 @@ impl<'unit> Checker<'_, 'unit> {
                         .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
                     self.ensure_nominal_type(check_context, ty, substitution)?;
                     let parsed = self.parse_type_with(check_context, ty, substitution)?;
-                    self.types.reject_inline_runtime_capacity(ty, parsed)?;
+                    self.types.reject_placement(
+                        ty,
+                        parsed,
+                        super::types::Placement::Value,
+                        substitution,
+                    )?;
                     // [GRAM-2] a `vfield` carries no modifier: `readonly` is
                     // a `field` alternative and an enum payload has none.
                     fields.push(CheckedField {
@@ -1014,7 +1024,7 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedType::Segments { element } => CheckedType::Segments {
                 element: self.substitute_element_regions(check_context, element, regions)?,
             },
-            CheckedType::KeyedEntries { element } => CheckedType::KeyedEntries {
+            CheckedType::Entries { element } => CheckedType::Entries {
                 element: self.substitute_element_regions(check_context, element, regions)?,
             },
             CheckedType::KeySet => ty,

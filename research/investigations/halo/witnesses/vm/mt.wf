@@ -1,0 +1,56 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Cell {
+  Inc(a: u8);
+  Jmp(target: u64);
+  Ret(a: u8);
+}
+
+fn step(code: &Box<Slots<Cell>>, regs: &Box<Slots<u64>>, pc: u64, base: u64, budget: u64) -> r: u64 reads(code), writes(regs) contract {
+  requires pc < code^.inner.len;
+  requires base + 256_u64 <= regs^.inner.len;
+} {
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Inc(a: av) => {
+      let aw = cvt::<u8, u64>(av^);
+      let ra = base + aw;
+      let v = regs^.inner[ra];
+      set regs^.inner[ra] = v +wrap 1_u64;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail step(code: code, regs: regs, pc: next, base: base, budget: budget);
+      }
+      return 0_u64;
+    }
+    Jmp(target: tv) => {
+      if budget == 0_u64 {
+        return 1_u64;
+      }
+      let t = tv^;
+      let left = budget - 1_u64;
+      if t < n {
+        return musttail step(code: code, regs: regs, pc: t, base: base, budget: left);
+      }
+      return 0_u64;
+    }
+    Ret(a: av) => {
+      let aw = cvt::<u8, u64>(av^);
+      let ra = base + aw;
+      let v = regs^.inner[ra];
+      return v;
+    }
+  }
+}
+
+fn hash_number(x: f64) -> h: u64 pure {
+  let bits = reinterpret::<f64, u64>(x);
+  let folded = bits *wrap 11400714819323198485_u64;
+  return folded;
+}
+
+fn main() -> status: ExitStatus pure {
+  let h = hash_number(x: 1.5_f64);
+  return exit_status(code: 0_u8);
+}

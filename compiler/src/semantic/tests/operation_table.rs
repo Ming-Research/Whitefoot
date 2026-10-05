@@ -594,7 +594,7 @@ fn the_wf_measures_table_and_the_compilers_measure_table_agree() {
         (MeasuredKind::RuntimeRing, "Ring<T>"),
         (MeasuredKind::Segments, "Segments<T>"),
         (MeasuredKind::KeySet, "KeySet"),
-        (MeasuredKind::KeyedEntries, "KeyedEntries<V>"),
+        (MeasuredKind::Entries, "Entries<V>"),
         (MeasuredKind::Range, "&[T]"),
     ];
     assert_eq!(

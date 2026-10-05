@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Op {
+  a: u8;
+  b: u8;
+  c: u8;
+}
+
+struct Code {
+  ops: Box<Slots<Op>>;
+}
+
+fn run(code: &Code, regs: &Box<Slots<u64>>, base: u64) -> r: u64 reads(code), writes(regs) contract {
+  requires base + 256_u64 <= regs^.inner.len;
+} {
+  let n = code^.ops.inner.len;
+  for (pc in 0_u64..n) {
+    let op = code^.ops.inner[pc];
+    let a = cvt::<u8, u64>(op.a);
+    let b = cvt::<u8, u64>(op.b);
+    let ra = base + a;
+    let rb = base + b;
+    let v = regs^.inner[rb];
+    set regs^.inner[ra] = v;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

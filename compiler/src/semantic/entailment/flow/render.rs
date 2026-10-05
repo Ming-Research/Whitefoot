@@ -618,6 +618,7 @@ impl Input<'_, '_> {
     /// expression in an obligation's residual.
     pub(super) fn render_storage_place(&self, root: &CheckedContainerRoot) -> String {
         let mut rendered = self.render_place(&ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: root.root,
             path: Vec::new(),
         });

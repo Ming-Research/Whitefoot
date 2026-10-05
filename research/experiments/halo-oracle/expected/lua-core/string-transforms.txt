@@ -1,0 +1,33 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "bcd"
+    },
+    {
+      "type": "bulk",
+      "bytes": "def"
+    },
+    {
+      "type": "bulk",
+      "bytes": ""
+    },
+    {
+      "type": "bulk",
+      "bytes": "ABC"
+    },
+    {
+      "type": "bulk",
+      "bytes": "abc"
+    },
+    {
+      "type": "bulk",
+      "bytes": "ababab"
+    },
+    {
+      "type": "bulk",
+      "bytes": "cba"
+    }
+  ]
+}

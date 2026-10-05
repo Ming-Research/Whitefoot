@@ -1,0 +1,44 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "a"
+        },
+        {
+          "type": "bulk",
+          "bytes": "1"
+        }
+      ]
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "b"
+        },
+        {
+          "type": "bulk",
+          "bytes": "22"
+        }
+      ]
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "c"
+        },
+        {
+          "type": "bulk",
+          "bytes": "333"
+        }
+      ]
+    }
+  ]
+}

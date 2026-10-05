@@ -10,6 +10,8 @@ Decision: Ordered parameter groups are declared with `interface` and concrete ar
 
 Decision: Forwarded groups, concrete argument groups and qualified member calls keep their existing argument-position spelling without an `interface` prefix, because those positions do not declare type parameters and have no corresponding ambiguity, instead of adding a marker at every use of a group.
 
+Decision: A type argument is judged at every placement its parameter takes in the instantiated declaration, because a generic reference or shared handle preserves the storage's admitted home while a by-value parameter, result or field stores it, instead of refusing a restricted type merely because it is written as a type argument [TYPE-9, FN-2].
+
 Rejected:
 - Keeping the bounds `T: linear` and `T: affine`: rejected because they read backwards, a bound after a type parameter saying what the argument must be, so that `T: linear` reads as "T must be linear" while it accepted every class.
 - A word for the no-capability case, such as `T: any`: rejected because the absence of a bound already says that nothing is required of the argument.

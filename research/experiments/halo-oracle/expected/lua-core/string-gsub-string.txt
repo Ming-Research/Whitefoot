@@ -1,0 +1,26 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "12:ab:%:ab12 cd34"
+    },
+    {
+      "type": "integer",
+      "value": 1
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "bAnAnA"
+        },
+        {
+          "type": "integer",
+          "value": 3
+        }
+      ]
+    }
+  ]
+}

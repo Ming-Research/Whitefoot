@@ -1,0 +1,17 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "status",
+      "bytes": "OK"
+    },
+    {
+      "type": "bulk",
+      "bytes": "41"
+    },
+    {
+      "type": "integer",
+      "value": 42
+    }
+  ]
+}

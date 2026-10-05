@@ -1,6 +1,7 @@
 alias Bytes = pkg::bytes::Bytes;
 alias Client = pkg::protocol::Client;
 alias Due = pkg::store::Due;
+alias Entry = pkg::store::Entry;
 alias ServerState = pkg::store::ServerState;
 alias Span = pkg::protocol::Span;
 alias Keyspace = pkg::store::Keyspace;
@@ -9,7 +10,7 @@ alias bytes_new = pkg::bytes::bytes_new;
 alias read_integer = pkg::bytes::read_integer;
 alias reply_decimal = pkg::protocol::reply_decimal;
 alias ceiling = pkg::store::ceiling;
-alias keyspace_table = pkg::store::keyspace_table;
+alias keyspace_capacity = pkg::store::keyspace_capacity;
 alias log_command = pkg::store::log_command;
 alias priority_queue_new = std::collections::priority_queue::priority_queue_new;
 alias reply_ok = pkg::protocol::reply_ok;
@@ -144,21 +145,21 @@ fn flush_mode(input: &[u8], args: &Box<Slots<Span>>, from: u64) -> known: Bool r
 }
 
 fn run_flush(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(store), reads(input), reads(args), writes(client) waits {
-  doc "FLUSHALL and FLUSHDB [ASYNC | SYNC], firn's one database being all of them: empties the keyspace in one atomic statement, which exchanges the table whole for an empty one and the queued expiries for none, and appends the command as the client sent it to the append-only file's pending bytes when the keyspace keeps them, also when the keyspace was already empty, as Redis logs both. Any other argument, or more than one, is a syntax error. The table and queue taken out are released when run_flush returns, after the statement and before the reply is sent, whichever option was given: unlike Redis's ASYNC, no other context frees them, but no other statement waits for their release either.";
+  doc "FLUSHALL and FLUSHDB [ASYNC | SYNC], firn's one database being all of them: empties the keyspace in one atomic statement, which exchanges the keyspace's map whole for a fresh one and the queued expiries for none, and appends the command as the client sent it to the append-only file's pending bytes when the keyspace keeps them, also when the keyspace was already empty, as Redis logs both. Any other argument, or more than one, is a syntax error. The map and queue taken out are released at the end of the successful branch, after the statement and before the reply is sent, whichever option was given: unlike Redis's ASYNC, no other context frees them, but no other statement waits for their release either.";
   let known = flush_mode(input: input, args: args, from: 1_u64);
   if known {
+    let fresh = shared_map_new::<Entry>(capacity: keyspace_capacity);
+    let none_due = priority_queue_new::<Due, ceiling>();
+    atomic t = &store^.keys, f = &fresh, m = &store^.meta {
+      swap(first: t, second: f);
+      swap(first: &m^.due, second: &none_due);
+      if store^.logging {
+        log_command(log: &m^.log, input: input, args: args);
+      }
+    }
   } else {
     reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
     return unit;
-  }
-  let fresh = keyspace_table();
-  let none_due = priority_queue_new::<Due, ceiling>();
-  atomic s = &store^.state {
-    swap(first: &s^.map, second: &fresh);
-    swap(first: &s^.meta.due, second: &none_due);
-    if store^.logging {
-      log_command(log: &s^.meta.log, input: input, args: args);
-    }
   }
   reply_ok(client: client);
   return unit;
@@ -202,8 +203,8 @@ fn run_function(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
     return unit;
   }
   if store^.logging {
-    atomic s = &store^.state {
-      log_command(log: &s^.meta.log, input: input, args: args);
+    atomic m = &store^.meta {
+      log_command(log: &m^.log, input: input, args: args);
     }
   }
   reply_ok(client: client);
