@@ -2364,6 +2364,22 @@ rarely insert at the same place.
   the place would remove the copy everywhere. Low priority; reopen if a
   profile shows the copy outside split loops.
 
+- **Interpreter state is pinned only through the calling convention.** A
+  split loop keeps its changing values in registers because every part
+  shares one prototype, so the pinning has the convention's register count,
+  one mapping for the whole loop, and needs `preserve_none`, which only
+  arm64 and x86-64 have. E0's single-function computed goto lost to the
+  split form once state grew (`research/experiments/match-dispatch/RESULTS.md`,
+  "What the results say about the lowering"). An alternative within LLVM IR:
+  one function with an indirect branch per handler, and empty inline-asm
+  operands with physical-register constraints at each handler's entry and
+  exit, which fixes where the state lives at every boundary with no count
+  limit and lets regions differ. Validate first in C beside E0's kernels:
+  the asm-pinned goto form against `tailpn` in the checked and `u8` forms,
+  worth a compiler change only if it is no more than 2% slower there.
+  Reopen when the wasm interpreter's profile shows register pressure the
+  convention cannot hold, or when a target without `preserve_none` matters.
+
 ## Code structure
 
 - **Five parallel substitution walkers over a type invariant.**
