@@ -844,10 +844,11 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
-    /// Diagnostic provenance is not part of function or nominal instance
+    /// Generic argument diagnostic provenance is not part of function or nominal instance
     /// identity. The retained substitution names the binding directly; an
     /// independently attached region vector is not an argument of a
-    /// function-kind formal and does not select its binding site.
+    /// formal and does not select its binding site. Type arguments share these
+    /// records so placement refusals point to the argument that supplied them.
     pub(super) fn record_behavior_binding_sites(
         &self,
         substitution: &GenericSubstitution,

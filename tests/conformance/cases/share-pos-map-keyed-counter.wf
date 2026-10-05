@@ -1,0 +1,45 @@
+const key: Array<u8, 1> =[107_u8];
+
+fn add(counts: Shared<ConcurrentHashMap<u8>>) -> result: unit pure waits {
+  let name = &key[0_u64..1_u64];
+  atomic slot = &counts[name] {
+    match slot^ {
+      Some(value: seen) => {
+        let next = seen^ +wrap 1_u8;
+        set slot^ = Some<u8>(value: next);
+      }
+      None() => {
+        set slot^ = Some<u8>(value: 1_u8);
+      }
+    }
+  }
+  return unit;
+}
+
+fn add_three(counts: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(counts) waits {
+  for @start (index in 0_u64..3_u64) {
+    let handle = shared_share::<ConcurrentHashMap<u8>>(shared: counts);
+    spawn add(counts: move handle);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let counts = shared_map_new::<u8>(capacity: 0_u64);
+  let name = &key[0_u64..1_u64];
+  atomic slot = &counts[name] {
+    set slot^ = Some<u8>(value: 4_u8);
+  }
+  add_three(counts: &counts);
+  let seen = 0_u8;
+  atomic slot = &counts[name] {
+    match slot^ {
+      Some(value: held) => {
+        set seen = held^;
+      }
+      None() => {
+      }
+    }
+  }
+  return std::process::exit_status(code: seen);
+}

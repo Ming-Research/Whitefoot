@@ -852,7 +852,7 @@ impl Report for SemanticIssueKind {
             LinearityBoundMismatch { parameter, bound, argument, actual };
             LivenessJoinDisagreement { binding, live_predecessor, dead_predecessor, mechanical_fix };
             LinearAssignmentTarget { target_type, mechanical_fix };
-            InlineRuntimeCapacityShape { spelling, mechanical_fix };
+            InvalidRestrictedTypePlacement { spelling, mechanical_fix };
             SwapOverCopyPlace { place_type, mechanical_fix };
             HeapTypeUnderNoHeap { spelling, mechanical_fix };
             InvalidElementMove { mechanical_fix };
@@ -867,7 +867,7 @@ impl Report for SemanticIssueKind {
             ReferenceToReferenceVariable { mechanical_fix };
             EscapingReference { mechanical_fix };
             RangeOverRing { mechanical_fix };
-            RangeOverKeyedEntries { mechanical_fix };
+            RangeOverEntries { mechanical_fix };
             MoveOutOfSlot { mechanical_fix };
             MissingDereference { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
@@ -900,6 +900,8 @@ impl Report for SemanticIssueKind {
             WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
+            TableOffsetNotKey { mechanical_fix };
+            TableEntriesNotBorrowed { mechanical_fix };
             AtomicKeyNotBytes { found, mechanical_fix };
             AtomicKeyReadsTheState { mechanical_fix };
             AtomicBindingUnused { binding, mechanical_fix };

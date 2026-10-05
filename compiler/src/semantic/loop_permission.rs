@@ -158,6 +158,19 @@ pub(crate) struct LoopPermission {
     /// The judgment does not decide that anything is emitted: lowering reads
     /// this, applies its own emission conditions, and may still decline.
     pub(crate) actualization: Option<LoopActualization>,
+    /// Resolved places written by the body, retained for capture permissions
+    /// in the context executing an actualized chunk.
+    pub(crate) written_places: Vec<ResolvedPlace>,
+}
+
+impl LoopPermission {
+    /// Retained writes conservatively overlap this resolved selection using
+    /// the ordinary place relation; lowering adds no separation proof.
+    pub(crate) fn writes_overlap(&self, place: &ResolvedPlace) -> bool {
+        self.written_places
+            .iter()
+            .any(|written| super::places::places_overlap(&UnprovedSeparations, place, written))
+    }
 }
 
 /// The two disjoint actualization shapes produced by the counted judgment.
@@ -391,6 +404,7 @@ fn judge<'check>(
         inner_loops: Vec::new(),
         reads: Vec::new(),
         accumulates: Vec::new(),
+        written_places: Vec::new(),
         carried: None,
         shared: None,
         unresolved: None,
@@ -509,6 +523,7 @@ struct Survey<'check, 'run> {
     /// Every read occurrence, with multiplicity and resolved places.
     reads: Vec<ReadOccurrence>,
     accumulates: Vec<Accumulate>,
+    written_places: Vec<ResolvedPlace>,
     carried: Option<NodePath>,
     shared: Option<NodePath>,
     unresolved: Option<NodePath>,
@@ -680,6 +695,7 @@ impl<'check> Survey<'check, '_> {
         }
         let affine_map = self.proven_affine_map(target);
         for write in &footprint.writes {
+            self.record_written_place(&write.place);
             if self.is_iteration_own(&write.place) {
                 continue;
             }
@@ -861,6 +877,7 @@ impl<'check> Survey<'check, '_> {
             return;
         };
         let origin = ResolvedPlace {
+            atomic_aliases: place.atomic_aliases.clone(),
             root: place.root,
             path: place.path[..place.path.len() - 1].to_vec(),
         };
@@ -937,6 +954,7 @@ impl<'check> Survey<'check, '_> {
         }
         self.certified_writes.push(CertifiedElementWrite {
             root: ResolvedPlace {
+                atomic_aliases: place.atomic_aliases.clone(),
                 root: place.root,
                 path: place.path[..first].to_vec(),
             },
@@ -1326,6 +1344,7 @@ impl<'check> Survey<'check, '_> {
             });
         }
         for write in &footprint.writes {
+            self.record_written_place(&write.place);
             if self.is_iteration_own(&write.place) {
                 continue;
             }
@@ -1351,6 +1370,12 @@ impl<'check> Survey<'check, '_> {
                 continue;
             }
             self.shared.get_or_insert(write.argument.clone());
+        }
+    }
+
+    fn record_written_place(&mut self, place: &ResolvedPlace) {
+        if !self.written_places.contains(place) {
+            self.written_places.push(place.clone());
         }
     }
 
@@ -1442,6 +1467,7 @@ impl<'check> Survey<'check, '_> {
             combines,
             advises_split,
             actualization,
+            written_places: self.written_places,
         }
     }
 
@@ -1667,10 +1693,12 @@ fn element_prefix(place: &ResolvedPlace, after: usize) -> Option<(ResolvedPlace,
         })?;
     Some((
         ResolvedPlace {
+            atomic_aliases: place.atomic_aliases.clone(),
             root: place.root,
             path: place.path[..position].to_vec(),
         },
         ResolvedPlace {
+            atomic_aliases: place.atomic_aliases.clone(),
             root: place.root,
             path: place.path[..=position].to_vec(),
         },
@@ -1814,7 +1842,9 @@ fn collect_introduced(statements: &[CheckedStatement], out: &mut Vec<BindingId>)
                 out.extend(bindings.iter().map(|(binding, _, _)| *binding));
             }
             CheckedStatement::CountedRange { binder, .. } => out.push(*binder),
-            CheckedStatement::Atomic { binding, .. } => out.push(*binding),
+            CheckedStatement::Atomic { targets, .. } => {
+                out.extend(targets.iter().map(|t| t.binding))
+            }
             _ => {}
         }
         if let CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } =

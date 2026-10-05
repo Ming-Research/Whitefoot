@@ -130,8 +130,7 @@ impl Input<'_, '_> {
             // [SHARE-2] the target and guard execute before the block, which
             // falls through to the statement's successor.
             CheckedStatement::Atomic {
-                target,
-                entries,
+                targets,
                 guard,
                 body,
                 ..
@@ -139,10 +138,9 @@ impl Input<'_, '_> {
                 let reaches =
                     self.collect_continuing_loop_kills(body, normal_reaches, reachability, kills);
                 if reaches {
-                    self.collect_loop_expression_kills(target, kills);
-                    for key in entries
+                    for key in targets
                         .iter()
-                        .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                        .flat_map(crate::semantic::CheckedTarget::expressions)
                     {
                         self.collect_loop_expression_kills(key, kills);
                     }

@@ -8,7 +8,8 @@
 use std::collections::HashSet;
 
 use crate::semantic::{
-    BindingId, CheckedExpression, CheckedFunction, CheckedSetTarget, CheckedStatement,
+    BindingId, CheckedExpression, CheckedFunction, CheckedPlaceRoot, CheckedResolvedPlace,
+    CheckedSetTarget, CheckedStatement,
 };
 
 use super::*;
@@ -75,16 +76,14 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
                 collect_statements(body, bindings);
             }
             CheckedStatement::Atomic {
-                target,
-                entries,
+                targets,
                 guard,
                 body,
                 ..
             } => {
-                collect_expression(target, bindings);
-                for key in entries
+                for key in targets
                     .iter()
-                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                    .flat_map(crate::semantic::CheckedTarget::expressions)
                 {
                     collect_expression(key, bindings);
                 }
@@ -292,6 +291,14 @@ impl IrBuilder<'_> {
         &mut self,
         root: &crate::semantic::CheckedContainerRoot,
     ) -> Result<IrValueId, LoweringFailure> {
+        self.lower_place_address_access(root, true)
+    }
+
+    pub(super) fn lower_place_address_access(
+        &mut self,
+        root: &crate::semantic::CheckedContainerRoot,
+        write: bool,
+    ) -> Result<IrValueId, LoweringFailure> {
         let address = match root.root {
             crate::semantic::CheckedPlaceRoot::Binding(binding) => self
                 .bindings
@@ -313,13 +320,30 @@ impl IrBuilder<'_> {
                 )?
             }
         };
-        let address = self.project_address_path(address, &root.path)?;
+        let address = self.project_address_path_access(address, &root.path, write)?;
         let referent = IrAddressed::of(lower_type(self.erasure, root.ty)?)
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
         if self.value_type(address)? != IrType::Address(referent) {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
         Ok(address)
+    }
+
+    pub(super) fn borrow_may_write(&self, writable: bool, places: &[CheckedResolvedPlace]) -> bool {
+        writable
+            && places.iter().all(|place| match place.root {
+                CheckedPlaceRoot::Binding(root) => !self.readonly_atomic_roots.contains(&root),
+                CheckedPlaceRoot::Constant(_) => true,
+            })
+            && self.capture_write_contexts.iter().all(|context| {
+                places.iter().all(|place| {
+                    let captured = match place.root {
+                        CheckedPlaceRoot::Binding(binding) => context.captured.contains(&binding),
+                        CheckedPlaceRoot::Constant(_) => false,
+                    };
+                    !captured || context.permission.writes_overlap(place)
+                })
+            })
     }
 
     /// Lowers the address carried by a checked borrowed-place expression.
@@ -338,14 +362,24 @@ impl IrBuilder<'_> {
             | CheckedExpression::DerefAddressed { binding, .. } => {
                 self.lower_addressed_borrow(*binding, ty)?
             }
-            CheckedExpression::BorrowAddressed { root, .. } => self.lower_place_address(root)?,
+            CheckedExpression::BorrowAddressed {
+                root,
+                writable,
+                write_places,
+                ..
+            } => {
+                let write = self.borrow_may_write(*writable, write_places);
+                self.lower_place_address_access(root, write)?
+            }
             CheckedExpression::BorrowRangeIndex { place, .. } => self.lower_range_address(
                 &place.root,
                 &place.offset,
                 &place.path,
                 place.target_domain,
             )?,
-            CheckedExpression::ReadStorage { root, .. } => self.lower_place_address(root)?,
+            CheckedExpression::ReadStorage { root, .. } => {
+                self.lower_place_address_access(root, false)?
+            }
             CheckedExpression::BoxDeref {
                 nominal,
                 referent,
@@ -425,8 +459,17 @@ impl IrBuilder<'_> {
 
     pub(super) fn project_address_path(
         &mut self,
+        address: IrValueId,
+        path: &[crate::semantic::CheckedPlaceStep],
+    ) -> Result<IrValueId, LoweringFailure> {
+        self.project_address_path_access(address, path, true)
+    }
+
+    fn project_address_path_access(
+        &mut self,
         mut address: IrValueId,
         path: &[crate::semantic::CheckedPlaceStep],
+        write: bool,
     ) -> Result<IrValueId, LoweringFailure> {
         for step in path {
             let IrType::Address(base) = self.value_type(address)? else {
@@ -466,7 +509,49 @@ impl IrBuilder<'_> {
                 }
                 crate::semantic::CheckedPlaceStep::Subscript(subscript) => {
                     let offset = self.expression(&subscript.offset)?;
-                    let projection = match lower_type(self.erasure, subscript.base_type)? {
+                    let base_type = lower_type(self.erasure, subscript.base_type)?;
+                    if let IrType::Nominal(nominal) = base_type {
+                        let table = self.define(
+                            base_type,
+                            IrOperation::Load {
+                                address,
+                                referent: base,
+                            },
+                        )?;
+                        let ty = lower_type(self.erasure, subscript.element_type)?;
+                        let referent =
+                            IrAddressed::of(ty).ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                        if let IrType::Entries { element } = ty {
+                            let record = self.record(IrRecordKind::Entries)?;
+                            let read_record = if write {
+                                None
+                            } else {
+                                Some(self.record(IrRecordKind::TableHold)?)
+                            };
+                            address = self.define(
+                                IrType::Address(referent),
+                                IrOperation::TableHeldEntries {
+                                    table,
+                                    set: offset,
+                                    record,
+                                    read_record,
+                                    element,
+                                },
+                            )?;
+                        } else {
+                            address = self.define(
+                                IrType::Address(referent),
+                                IrOperation::TableHeldEntry {
+                                    nominal,
+                                    table,
+                                    key: offset,
+                                    write,
+                                },
+                            )?;
+                        }
+                        continue;
+                    }
+                    let projection = match base_type {
                         IrType::Array { .. } => IrPlaceStep::ArrayElement {
                             offset,
                             target_domain: subscript.target_domain.into(),
@@ -479,7 +564,7 @@ impl IrBuilder<'_> {
                             offset,
                             target_domain: subscript.target_domain.into(),
                         },
-                        IrType::KeyedEntries { .. } => IrPlaceStep::KeyedEntriesElement { offset },
+                        IrType::Entries { .. } => IrPlaceStep::EntriesElement { offset },
                         _ => return Err(LoweringFailure::InvalidCheckedProgram),
                     };
                     (

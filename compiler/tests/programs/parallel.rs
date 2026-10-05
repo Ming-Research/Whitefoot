@@ -453,48 +453,48 @@ fn key_sets_built_on_compute_workers_keep_their_contents() {
 }
 
 /// [SHARE-1, SHARE-2, SHARE-3] eight contexts adding to the entries under
-/// eight keys of a state's table, and to the state's total in the same
+/// eight keys of a shared map, and to a separate total object's state in the same
 /// statement, while two others hold all eight entries through a key set and
 /// compare their sum with the total, reach the counts every order of their
 /// statements gives, on one driver and on four. An entry not locked alone
 /// loses increments (status 2), a statement that took its entries and the
 /// total apart lets a reader see the sum and the total disagree (status 5),
-/// and a count that did not hold the table whole miscounts (status 1).
+/// and a count that did not hold the map whole miscounts (status 1).
 #[test]
-fn keyed_tables_keep_every_update_on_one_driver_and_on_four() {
-    run_on_one_driver_and_on_four("keyed_tables.wf", 3);
+fn shared_maps_keep_every_update_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("shared_maps.wf", 3);
 }
 
-/// [SHARE-3] guards that read entries of a table: four pairs pass values
+/// [SHARE-3] guards that read entries of a map: four pairs pass values
 /// through one entry each, a sender waiting for its entry to be empty and a
 /// taker for it to hold a value, and two contexts wait on a guard reading an
-/// entry and the state's own field together, on one driver and on four. A
-/// guard that missed a write to the table it read would wait for ever, and a
+/// entry and a separate closed flag together, on one driver and on four. A
+/// guard that missed a write to the map it read would wait for ever, and a
 /// value passed twice or lost leaves the total wrong (status 1).
 #[test]
-fn guards_on_table_entries_wake_on_every_write_on_one_driver_and_on_four() {
-    run_on_one_driver_and_on_four("keyed_table_watch.wf", 2);
+fn guards_on_map_entries_wake_on_every_write_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("map_watch.wf", 2);
 }
 
-/// [SHARE-1, SHARE-3] a state's table replaced whole and exchanged with
+/// [SHARE-1, SHARE-3] a shared map exchanged with
 /// another while other statements lock its entries one key at a time keeps
 /// its entries' sum equal to the state's total, on one driver and on four. A
 /// statement that locked the table it read before the replacement would add
-/// to a table no longer the state's (status 1 or 3), and a hold whose
+/// to entries detached from the held map (status 1 or 3), and a hold whose
 /// entries an exchange moved away still locked would leave the next
 /// statement on those keys waiting for ever
 /// (compiler/waiting-contexts/state-locks).
 #[test]
-fn a_table_replaced_whole_keeps_its_identity_on_one_driver_and_on_four() {
-    run_on_one_driver_and_on_four("keyed_table_resets.wf", 2);
+fn a_map_swapped_whole_keeps_its_identity_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("map_resets.wf", 2);
 }
 
-/// [SHARE-3] statements whose blocks meet a state's units in opposite
+/// [SHARE-3] statements whose blocks meet several objects in opposite
 /// orders, and a statement that reaches a unit only on one path, end and
 /// keep every count on one driver and on four: each statement takes the
-/// units in their declared order, so none waits for another in a cycle
+/// objects in type order and equal-type objects by identity, so none waits for another in a cycle
 /// (compiler/waiting-contexts/state-locks).
 #[test]
-fn units_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
-    run_on_one_driver_and_on_four("keyed_table_order.wf", 2);
+fn objects_met_in_any_order_are_taken_in_one_on_one_driver_and_on_four() {
+    run_on_one_driver_and_on_four("map_lock_order.wf", 2);
 }

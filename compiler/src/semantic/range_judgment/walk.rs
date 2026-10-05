@@ -628,19 +628,27 @@ impl<'program> Walker<'program> {
                 None
             }
             CheckedStatement::Atomic {
+                targets,
                 node_path,
-                target,
-                binding,
                 guard,
                 body,
                 continues,
                 ..
             } => {
                 self.cite = node_path.clone();
-                let _ = self.eval(&mut state, target);
+                for target in targets
+                    .iter()
+                    .flat_map(crate::semantic::CheckedTarget::expressions)
+                {
+                    let _ = self.eval(&mut state, target);
+                }
                 state.havoc_everything(&mut self.world);
                 self.unplaced(None, true, true);
-                state.values.insert(*binding, Value::Ref(View::Unknown));
+                for target in targets {
+                    state
+                        .values
+                        .insert(target.binding, Value::Ref(View::Unknown));
+                }
                 if let Some(guard) = guard {
                     let _ = self.eval(&mut state, guard);
                 }
