@@ -38,13 +38,6 @@ void wf_prim_wait_signal(wf_prim_wait *wait);
 int wf_prim_thread_start(wf_prim_thread *thread, void (*entry)(void *), void *argument, size_t stack_bytes);
 void wf_prim_floor_attach(void);
 void wf_prim_yield(void);
-/* A barrier on every thread of the process: once wf_prim_process_barrier_enable
- * has answered nonzero, wf_prim_process_barrier returns only after each thread
- * has executed a full memory barrier, so a thread that orders its own store
- * and later load by the compiler alone pairs with a caller that issues it.
- * Enabling answers zero where the host has no such barrier. */
-int wf_prim_process_barrier_enable(void);
-void wf_prim_process_barrier(void);
 unsigned wf_prim_online_cpus(void);
 /* How many distinct performance levels the CPUs this process may run on are
  * drawn from. One means they are all alike, and one is also the answer when

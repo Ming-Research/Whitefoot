@@ -18,7 +18,6 @@
 #endif
 #include "prim.h"
 #include <fcntl.h>
-#include <stdatomic.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,10 +26,6 @@
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
-#endif
-#if defined(__linux__)
-#include <linux/membarrier.h>
-#include <sys/syscall.h>
 #endif
 
 static void *wf_prim_thread_main(void *opaque) {
@@ -273,27 +268,3 @@ void wf_prim_wait_lock(wf_prim_wait *wait) { pthread_mutex_lock(&wait->lock); }
 void wf_prim_wait_unlock(wf_prim_wait *wait) { pthread_mutex_unlock(&wait->lock); }
 void wf_prim_wait_sleep(wf_prim_wait *wait) { pthread_cond_wait(&wait->signal, &wait->lock); }
 void wf_prim_wait_signal(wf_prim_wait *wait) { pthread_cond_signal(&wait->signal); }
-
-/* Linux's expedited private membarrier interrupts each CPU running a thread
- * of the process; registering once makes it available, and a kernel or a
- * sandbox without it leaves the barrier off. macOS has no such call. */
-int wf_prim_process_barrier_enable(void) {
-#if defined(__linux__)
-    static _Atomic int registered;
-    int state = atomic_load_explicit(&registered, memory_order_acquire);
-    if (state == 0) {
-        state = syscall(SYS_membarrier, MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED, 0, 0) == 0 ? 1 : -1;
-        atomic_store_explicit(&registered, state, memory_order_release);
-    }
-    return state > 0;
-#else
-    return 0;
-#endif
-}
-
-void wf_prim_process_barrier(void) {
-#if defined(__linux__)
-    if (syscall(SYS_membarrier, MEMBARRIER_CMD_PRIVATE_EXPEDITED, 0, 0) != 0)
-        abort();
-#endif
-}

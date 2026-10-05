@@ -266,7 +266,3 @@ void wf_prim_wait_sleep(wf_prim_wait *wait) {
     if (!SleepConditionVariableSRW(&wait->signal, &wait->lock, INFINITE, 0)) abort();
 }
 void wf_prim_wait_signal(wf_prim_wait *wait) { WakeConditionVariable(&wait->signal); }
-/* FlushProcessWriteBuffers interrupts each processor running a thread of the
- * process; every supported Windows has it. */
-int wf_prim_process_barrier_enable(void) { return 1; }
-void wf_prim_process_barrier(void) { FlushProcessWriteBuffers(); }

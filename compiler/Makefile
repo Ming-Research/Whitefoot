@@ -399,7 +399,7 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 # it can drive interleavings through the map's own steps.
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c src/backend/concurrent_map_test.c \
 	src/backend/concurrent_map.h $(COMPLETION_DIR)/bridge.h
-CONCURRENT_MAP_VARIANTS := copy-out locked collide asymmetric
+CONCURRENT_MAP_VARIANTS := copy-out locked collide
 concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v))
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do "$(COMPLETION_TMP)/concurrent-map-test-$$v"; done
 $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile
@@ -408,11 +408,6 @@ $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefi
 $(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_LOCKED_READ src/backend/concurrent_map_test.c -o "$@"
-# Keyed statements marked without a fence, paired with a process-wide
-# barrier in whole holds, where the host has one (Linux).
-$(COMPLETION_TMP)/concurrent-map-test-asymmetric: $(CONCURRENT_MAP_SOURCES) Makefile
-	@mkdir -p "$(dir $@)"
-	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_TEST_ASYMMETRIC src/backend/concurrent_map_test.c -o "$@"
 # Entries' hashes narrowed to four bits, so that most keys share one.
 $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"

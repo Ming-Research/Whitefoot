@@ -39,13 +39,6 @@
  * build a set too, and every thread that is no driver counts as driver 0. */
 static _Thread_local void *wf_key_set_spare;
 #define WF_CMAP_SPARE_KEYS() (wf_key_set_spare)
-/* Keyed statements pay no fence where the host has a process-wide barrier,
- * which a hold of a whole table then issues (concurrent_map.c, enter_keyed). */
-#ifndef WF_CMAP_BARRIER_ENABLE
-#include "sched/prim.h"
-#define WF_CMAP_BARRIER_ENABLE() wf_prim_process_barrier_enable()
-#define WF_CMAP_BARRIER() wf_prim_process_barrier()
-#endif
 #include "concurrent_map.c"
 
 /* What a statement on one key keeps in its frame: the entry's unlock, the
