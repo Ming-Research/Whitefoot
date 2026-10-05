@@ -217,6 +217,7 @@ impl Input<'_, '_> {
         support: &GoalSupport,
     ) -> (ResolvedPlace, Vec<BindingId>) {
         let mut resolved = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: PlaceRoot::Binding(support.root),
             path: Vec::new(),
         };
@@ -1035,6 +1036,7 @@ impl Reasoning<'_, '_, '_> {
                     continue;
                 };
                 let window = ResolvedPlace {
+                    atomic_aliases: place.atomic_aliases.clone(),
                     root: place.root,
                     path: place.path[..depth].to_vec(),
                 };
@@ -1060,6 +1062,7 @@ impl Reasoning<'_, '_, '_> {
                         continue;
                     };
                     let window = ResolvedPlace {
+                        atomic_aliases: resolved.atomic_aliases.clone(),
                         root: resolved.root,
                         path: resolved.path[..depth].to_vec(),
                     };

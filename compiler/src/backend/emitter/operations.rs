@@ -89,7 +89,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             | IrAddressed::Array { .. }
             | IrAddressed::Window { .. }
             | IrAddressed::KeySet
-            | IrAddressed::KeyedEntries { .. } => true,
+            | IrAddressed::Entries { .. } => true,
         })
     }
 

@@ -1673,16 +1673,14 @@ pub(super) fn collect_statement_calls(
                 collect_statement_calls(caller, body, calls);
             }
             CheckedStatement::Atomic {
-                target,
-                entries,
+                targets,
                 guard,
                 body,
                 ..
             } => {
-                collect_expression_calls(caller, target, calls);
-                for key in entries
+                for key in targets
                     .iter()
-                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                    .flat_map(crate::semantic::CheckedTarget::expressions)
                 {
                     collect_expression_calls(caller, key, calls);
                 }

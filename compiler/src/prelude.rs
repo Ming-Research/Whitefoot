@@ -90,9 +90,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
     // bindings of an atomic statement, so it declares no field; `V: drop`
     // because releasing a table drops every value its entries hold.
     (
-        "prelude/KeyedTable.wf",
+        "prelude/ConcurrentHashMap.wf",
         PreludeSource::Opaque,
-        r#"opaque nocopy struct KeyedTable<V: drop> {
+        r#"opaque nocopy struct ConcurrentHashMap<V: drop> {
 }
 "#,
     ),
@@ -107,9 +107,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
-        "prelude/KeyedEntries.wf",
+        "prelude/Entries.wf",
         PreludeSource::Opaque,
-        r#"opaque nocopy struct KeyedEntries<V: drop> {
+        r#"opaque nocopy struct Entries<V: drop> {
   readonly len: u64;
 }
 "#,
@@ -309,21 +309,21 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/shared_map_new.wf",
+        PreludeSource::Function,
+        r#"fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
+"#,
+    ),
+    (
         "prelude/shared_share.wf",
         PreludeSource::Function,
         r#"fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 "#,
     ),
     (
-        "prelude/keyed_table_new.wf",
+        "prelude/map_count.wf",
         PreludeSource::Function,
-        r#"fn keyed_table_new<V: drop>(capacity: u64) -> result: KeyedTable<V> pure;
-"#,
-    ),
-    (
-        "prelude/keyed_table_count.wf",
-        PreludeSource::Function,
-        r#"fn keyed_table_count<V: drop>(table: &KeyedTable<V>) -> count: u64 reads(table);
+        r#"fn map_count<V: drop>(map: &ConcurrentHashMap<V>) -> count: u64 reads(map);
 "#,
     ),
     (
@@ -416,10 +416,7 @@ mod tests {
         // every other row is generic, and [FN-2] gives it a checked function
         // only per concrete instance, of which this unit, calling none of
         // them, has none.
-        let ungeneric = [
-            "key_set_insert",
-            "key_set_new",
-        ];
+        let ungeneric = ["key_set_insert", "key_set_new"];
         assert_eq!(signatures, ungeneric);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
             assert_eq!(

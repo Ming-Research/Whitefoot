@@ -401,7 +401,10 @@ CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c
 	src/backend/concurrent_map.h $(COMPLETION_DIR)/bridge.h
 CONCURRENT_MAP_VARIANTS := copy-out locked collide
 concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v))
-	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do "$(COMPLETION_TMP)/concurrent-map-test-$$v"; done
+	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do \
+		"$(COMPLETION_TMP)/concurrent-map-test-$$v" selection; \
+		"$(COMPLETION_TMP)/concurrent-map-test-$$v"; \
+	done
 $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/concurrent_map_test.c -o "$@"

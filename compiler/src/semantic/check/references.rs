@@ -3,9 +3,8 @@
 //! A reference is a local name for a path [REF-1]. It is not storage of its
 //! own, it carries no permission marker, no region and no loan, and it never
 //! escapes the function that formed it [REF-3]. What the checker therefore
-//! has to carry for a reference binding is exactly three things: the set of
-//! paths it names, whether it is a `&T` or a `&[T]` [REF-4], and whether it
-//! is still valid [REF-2].
+//! carries each reference's possible paths and kind [REF-4], validity
+//! [REF-2], preservation dependencies and atomic-header origins [SHARE-2].
 //!
 //! The validity fact is threaded through the statement walk rather than
 //! recomputed on demand, because [REF-2]'s closing sentence puts it outside
@@ -185,6 +184,7 @@ pub(super) struct ReferenceInfo {
     /// set an entry binder's entries follow [SHARE-2], whose elements a write
     /// through the binder does not write.
     pub(super) anchors: Vec<ResolvedPlace>,
+    /// The current validity of the paths and anchors.
     pub(super) validity: ReferenceValidity,
     /// Header validity variables this reference still depends on. A freshly
     /// formed reference has none. Copying a reference name retains the
@@ -195,6 +195,11 @@ pub(super) struct ReferenceInfo {
     /// Conjunctive event-site questions needed to preserve this reference.
     /// They become obligations only when the reference is used.
     pub(super) preservations: Vec<CheckedCallSeparation>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct LoopReferenceSummary {
+    pub(super) paths: Vec<ResolvedPlace>,
 }
 
 impl ReferenceInfo {
@@ -533,6 +538,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// [REF-1] one root is added once; a differing shape becomes a cone
     /// whose finite anchor can only shorten. Repeated visits cannot unroll
     /// its unknown tail or mint additional captured identities.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn join_loop_reference_summary(
         &mut self,
         check_context: &CheckContext<'_>,
@@ -556,17 +562,21 @@ impl<'unit> Checker<'_, 'unit> {
             contributions.push((path, readonly));
         }
         let summaries = &mut self.body.loop_reference_summaries;
-        let paths = match summaries.entry(token) {
+        let summary = match summaries.entry(token) {
             std::collections::hash_map::Entry::Vacant(entry) => {
                 // Preserve all static entry alternatives until a contribution
                 // leaves those shapes. Merely entering a loop must not lose
                 // a previously established sibling-field separation.
-                entry.insert(contributions.into_iter().map(|(path, _)| path).collect());
+                entry.insert(LoopReferenceSummary {
+                    paths: contributions.into_iter().map(|(path, _)| path).collect(),
+                });
                 return Ok(true);
             }
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
         };
         let mut changed = false;
+
+        let paths = &mut summary.paths;
         for (incoming, incoming_readonly) in contributions {
             if !incoming.has_descendant()
                 && paths.iter().any(|current| {
@@ -599,6 +609,7 @@ impl<'unit> Checker<'_, 'unit> {
                 prefix.truncate(shared);
             }
             let mut joined = ResolvedPlace {
+                atomic_aliases: incoming.atomic_aliases.clone(),
                 root: incoming.root,
                 path: prefix,
             };
@@ -1100,8 +1111,11 @@ impl<'unit> Checker<'_, 'unit> {
                 );
             }
             (Some(last), ty) => {
-                let (rest, ty, more) =
-                    self.resolve_storage_path(context, &[last], ty, bindings, loop_depth, true)?;
+                let previous = self.body.table_set_borrow.replace(last);
+                let resolved =
+                    self.resolve_storage_path(context, &[last], ty, bindings, loop_depth, true);
+                self.body.table_set_borrow = previous;
+                let (rest, ty, more) = resolved?;
                 path.extend(rest);
                 carried.effects = carried.effects.union(more.effects);
                 carried.accesses.extend(more.accesses);
@@ -1110,6 +1124,7 @@ impl<'unit> Checker<'_, 'unit> {
             (None, ty) => ty,
         };
         let place = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root,
             path: path.iter().map(CheckedPlaceStep::place_step).collect(),
         };
@@ -1132,10 +1147,36 @@ impl<'unit> Checker<'_, 'unit> {
         } else {
             vec![place]
         };
+        let mut reference = ReferenceInfo::formed_paths(ReferenceKind::Single, places.clone());
+        if let Some(CheckedPlaceStep::Subscript(index)) = path.last()
+            && matches!(ty, CheckedType::Entries { .. })
+            && let CheckedExpression::BorrowAddressed { root: keys, .. } = &index.offset
+        {
+            let key_place = ResolvedPlace {
+                atomic_aliases: Vec::new(),
+                root: keys.root,
+                path: keys.path.iter().map(CheckedPlaceStep::place_step).collect(),
+            };
+            let anchors = self.replace_reference_roots_for_entries(key_place, bindings);
+            reference
+                .anchors
+                .extend(anchors.into_iter().map(|mut anchor| {
+                    anchor.path.push(PlaceStep::Index(CapturedValue::unknown()));
+                    anchor
+                }));
+        }
         let kind = ReferenceKind::Single;
+        // Retain the point-current ownership judgment, not the function-wide
+        // union of a rebound holder's origins. Lowering refines captured places from their completed statements' write footprints.
+        let writable = places.iter().try_fold(true, |writable, place| {
+            self.reference_row_writes(context.function, place, bindings)
+                .map(|allowed| writable && allowed)
+        })?;
         let expression = CheckedExpression::BorrowAddressed {
             carrier: self.types.declarations.tree.path(carrier)?.clone(),
             root: CheckedContainerRoot { root, path, ty },
+            writable,
+            write_places: places.clone(),
         };
         let mut accesses = carried
             .accesses
@@ -1152,11 +1193,35 @@ impl<'unit> Checker<'_, 'unit> {
                 ReferenceKind::Single => CheckedMode::Reference,
                 ReferenceKind::Range => CheckedMode::Range,
             },
-            reference: Some(ReferenceInfo::formed_paths(kind, places)),
+            reference: Some(reference),
             reference_value: true,
             effects: carried.effects,
             accesses,
         })
+    }
+
+    fn replace_reference_roots_for_entries(
+        &self,
+        place: ResolvedPlace,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Vec<ResolvedPlace> {
+        if let PlaceRoot::Binding(root) = place.root
+            && let Some(reference) = bindings
+                .values()
+                .find(|local| local.binding == root)
+                .and_then(|local| local.reference.as_ref())
+        {
+            return reference
+                .paths
+                .iter()
+                .cloned()
+                .map(|mut p| {
+                    p.path.extend(place.path.iter().copied());
+                    p
+                })
+                .collect();
+        }
+        vec![place]
     }
 
     /// Which selection of a `Segments<T>` place one suffix writes: `Some(true)`
@@ -1231,6 +1296,7 @@ impl<'unit> Checker<'_, 'unit> {
             };
         let step = segment.place_step();
         let formed = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: base.root,
             path: base
                 .path
@@ -1460,11 +1526,11 @@ impl<'unit> Checker<'_, 'unit> {
                 CheckedType::Buffer { element } => self.types.element_type(element)?,
                 // [REF-4] keyed entries are each where its key's node keeps
                 // it, no run of storage [SHARE-2].
-                CheckedType::KeyedEntries { .. } => {
+                CheckedType::Entries { .. } => {
                     return self.types.declarations.issue_node(
                         SemanticRule::Ref4,
                         suffix,
-                        SemanticIssueKind::RangeOverKeyedEntries {
+                        SemanticIssueKind::RangeOverEntries {
                             mechanical_fix: REF4_KEYED_ENTRIES,
                         },
                     );
@@ -1481,6 +1547,7 @@ impl<'unit> Checker<'_, 'unit> {
                 }
             };
             let base = ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root,
                 path: path.iter().map(CheckedPlaceStep::place_step).collect(),
             };
@@ -1863,6 +1930,7 @@ impl<'unit> TypeContext<'unit> {
                 .get(&root)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             return Ok(vec![ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Constant(constant),
                 path: Vec::new(),
             }]);

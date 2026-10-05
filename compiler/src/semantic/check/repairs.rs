@@ -439,15 +439,12 @@ fn collect_definitions(
                 definitions.push(Definition::of(*binder, &[lower, upper], editable));
                 collect_definitions(body, give, editable, definitions);
             }
-            CheckedStatement::Atomic {
-                binding,
-                target,
-                body,
-                ..
-            } => {
+            CheckedStatement::Atomic { targets, body, .. } => {
                 // The key is read when the statement begins and defines
                 // nothing the binder holds.
-                definitions.push(Definition::of(*binding, &[target], editable));
+                for target in targets {
+                    definitions.push(Definition::of(target.binding, &[&target.handle], editable));
+                }
                 collect_definitions(body, give, editable, definitions);
             }
             CheckedStatement::Evaluate { .. }

@@ -335,7 +335,7 @@ void wf__shared_seen(unsigned moment);
  * given stays as it is until the hold is taken. */
 #define WF_TABLE_ENTRY_SIZE 40u
 #define WF_TABLE_ENTRY_ALIGN 8u
-#define WF_TABLE_HOLD_SIZE 280u
+#define WF_TABLE_HOLD_SIZE 304u
 #define WF_TABLE_HOLD_ALIGN 8u
 struct wf_key_set;
 struct wf_table_entry;
@@ -357,7 +357,7 @@ void wf__key_set_free(void *store);
  * `a` whole or shares neither, and the entries of a hold of `a` taken whole
  * before the swap are settled first, each slot's tag read as
  * `wf__table_hold_release` reads it, and go with the other table. */
-void *wf__keyed_table_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
+void *wf__shared_map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
 uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 uint64_t *wf__keyed_table_drain(void *table);
 void wf__keyed_table_free(void *table);
@@ -386,6 +386,11 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * waits out every statement holding its entries and keeps new ones out
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
+void wf__atomic_group_take(void *record, uint64_t count);
+void wf__atomic_group_release(void *record, uint64_t count);
+void wf__table_hold_read(void *hold);
+void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write);
+void wf__table_held_entries(void *table, const struct wf_key_set *set, uint64_t *entries, void *read_record);
 void wf__table_hold_begin(void *hold, void *table);
 void wf__table_hold_whole(void *hold);
 uint64_t wf__table_hold_key(void *hold, const unsigned char *key, uint64_t length);

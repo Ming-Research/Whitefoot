@@ -2063,6 +2063,7 @@ mod range_argument_kill_tests {
 
     fn place(path: Vec<PlaceStep>) -> ResolvedPlace {
         ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: PlaceRoot::Binding(ORIGIN),
             path,
         }

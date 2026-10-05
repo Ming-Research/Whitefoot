@@ -729,17 +729,15 @@ impl<'check> Program<'check> {
                 requires
             }
             CheckedStatement::Atomic {
-                target,
-                entries,
+                targets,
                 guard,
                 body,
                 ..
             } => {
-                expression(target)
-                    || entries
-                        .iter()
-                        .flat_map(crate::semantic::CheckedEntryBinding::expressions)
-                        .any(expression)
+                targets
+                    .iter()
+                    .flat_map(crate::semantic::CheckedTarget::expressions)
+                    .any(expression)
                     || guard.as_deref().is_some_and(expression)
                     || block(body, inner)
             }
@@ -1518,6 +1516,7 @@ impl SeparationOracle for PairSeparationOracle<'_> {
         let mut path = window.path.clone();
         path.push(PlaceStep::Measure(CheckedMeasure::Length));
         let length = ResolvedPlace {
+            atomic_aliases: window.atomic_aliases.clone(),
             root: window.root,
             path,
         };
@@ -1967,6 +1966,7 @@ fn collect_operand_reads(
             CheckedArrayRoot::Constant(id) => read(
                 footprint,
                 vec![ResolvedPlace {
+                    atomic_aliases: Vec::new(),
                     root: PlaceRoot::Constant(*id),
                     path: Vec::new(),
                 }],

@@ -357,7 +357,7 @@ typedef struct guard_frame {
     _Alignas(8) unsigned char entry[WF_TABLE_ENTRY_SIZE];
 } guard_frame;
 
-static void *guard_table, *guard_object;
+static void *guard_table, *guard_map_object, *guard_object;
 static _Atomic uint64_t watch_written, watch_early;
 static _Atomic int w_released, g_wrote;
 static uint64_t w_evaluations, w_parks, w_seen;
@@ -476,7 +476,8 @@ static void launch_guard(test_frame *root, void (*step)(test_frame *)) {
 
 static void guard_phase_begin(test_frame *root) {
     clock_gettime(CLOCK_MONOTONIC, &guard_started);
-    guard_table = wf__keyed_table_new(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
+    guard_map_object = wf__shared_map_new(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
+    guard_table = *(void **)((char *)guard_map_object + WF_SHARED_STATE_OFFSET);
     guard_object = wf__shared_new(sizeof(uint64_t));
     *state_of(guard_object) = 0;
     put_entry("j0", 1);
@@ -512,6 +513,8 @@ static void guard_phase_end(void) {
     while (wf__keyed_table_drain(guard_table) != NULL) {
     }
     wf__keyed_table_free(guard_table);
+    if (wf__shared_release(guard_map_object))
+        wf__shared_free(guard_map_object);
     if (wf__shared_release(guard_object))
         wf__shared_free(guard_object);
 }
