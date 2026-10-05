@@ -329,3 +329,44 @@ causal-speedup, isolated-decrement and full-gate limits remain open.
   stale single-native-dispatch attribution. No compiler or VM fix was made.
 - The pre-existing full-package check cost remains open; this build's total
   time and contention do not isolate that cause.
+
+## Halo cost repair criteria (recorded before measurement)
+
+Requested scope: persistent embedding root bridges and an inline not-due
+collector path; no compiler, language, oracle or normative expectation change.
+Keep a candidate only after the unchanged 80 scripts at budgets 1, 7, 1000
+pass all 240 comparisons. Stress replies and per-case collection counts must
+remain identical at those budgets. Recheck local roots, the isolated frame
+and suspended-stack witnesses, the embedding lifecycle probe, and a missing
+root negative control.
+
+1. Roots-only: loop(100,000,000), budget 1000, median at most 1.15 times
+   the same binary's unlimited median. Report `(budget time - unlimited
+   time) / 100000` before and after as total incremental time per suspension,
+   including budget charging, rather than isolated resume latency.
+2. Inline safepoint: loop unlimited median at least 5% lower than the
+   roots-only binary in alternating same-source pairs; otherwise restore the
+   safepoint change and retain its negative result.
+3. Final P1: unchanged seven kernels, binary-trees depth 14, six alternating
+   PUC/Halo pairs each, with matching checksums and unchanged collection counts.
+
+Calibrate each selected comparison with one pair then three pairs, inspect
+spread, and use six pairs unless uncertainty crosses a decision threshold.
+Native timing builds use the supplied gate compiler and full LTO. Build
+observations are separate from program timings. Before/after native pairs
+use identical stdin bytes and alternate launch order, with independent PUC
+checksum validation. Generated logs/binaries stay in `target/`; retained raw
+observations serve this experiment until reproduction is no longer needed.
+
+Structural assessment before implementation: keep the bridge in its existing
+constant-pool tail so the collector's one constants argument and VM roots stay
+unchanged. Per-script dirty flags invalidate all tails on root-set edits;
+boolean invalidation cannot wrap as a generation can. Rebuild directly from
+original constant lengths and pins, with geometric reserve; stale inactive
+tails are never sources. A separate root registry and collector argument would
+change that boundary without improving this experiment's required observation.
+Keep the collection body separate and gate it at its callers using the exact
+existing three-trigger predicate; a combined allocation/budget counter would
+couple separate semantics and is not selected here. Public storage mutations
+outside the embedding operations are outside this invalidation contract;
+embedding clients must use compile/pin/unpin/forget_all for root-set changes.
