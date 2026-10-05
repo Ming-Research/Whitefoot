@@ -34,6 +34,8 @@ struct Trans {
   results: u64;
   last: u64;
   last_pos: u64;
+  copy_d: u64;
+  copy_s: u64;
   failed: Bool;
   cslot: u64;
   cbase: u64;
@@ -1121,7 +1123,20 @@ fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab:
   if ctls^.inner.len == 0_u64 {
     return 2_u64;
   }
-  flush(st: st, provs: provs, code: code);
+  let innermost = ctls^.inner.len - 1_u64;
+  let closing = ctls^.inner[innermost];
+  let result_slot = temp_slot(st: st, pos: closing.height);
+  if closing.kind == 0_u64 {
+    let k = st^.results;
+    let filled = closing.height < provs^.inner.len;
+    if k == 1_u64 {
+      if filled {
+        set result_slot = source(st: st, provs: provs, code: code, pos: closing.height);
+      }
+    }
+  } else {
+    flush(st: st, provs: provs, code: code);
+  }
   let c = take_back(window: &ctls^.inner);
   let depth = ctls^.inner.len;
   let here = code^.inner.len;
@@ -1130,8 +1145,7 @@ fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab:
     if k > 1_u64 {
       return 2_u64;
     }
-    let first = c.height;
-    let s = temp_slot(st: st, pos: first);
+    let s = result_slot;
     let s16 = slot16(value: s);
     let k16 = slot16(value: k);
     let l16 = slot16(value: st^.l);
@@ -1247,6 +1261,39 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     }
     return 2_u64;
   }
+  if op == 14_u8 {
+    let top = top_pos(provs: provs, depth: 0_u64);
+    let cond = source(st: st, provs: provs, code: code, pos: top);
+    pop_prov(st: st, provs: provs, count: 1_u64);
+    flush(st: st, provs: provs, code: code);
+    let ok = emit_table(r: r, bytes: bytes, st: st, cond: cond, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
+    set st^.dead = True();
+    if ok {
+      return 0_u64;
+    }
+    return 2_u64;
+  }
+  if op == 15_u8 {
+    let k = st^.results;
+    if k > 1_u64 {
+      return 2_u64;
+    }
+    let first = top_pos(provs: provs, depth: 0_u64);
+    if k == 0_u64 {
+      set first = 0_u64;
+    }
+    let s = temp_slot(st: st, pos: first);
+    if k != 0_u64 {
+      set s = source(st: st, provs: provs, code: code, pos: first);
+    }
+    let s16 = slot16(value: s);
+    let k16 = slot16(value: k);
+    let l16 = slot16(value: st^.l);
+    let o = Op::Return(s: s16, k: k16, l: l16);
+    emit_plain(st: st, code: code, op: o);
+    set st^.dead = True();
+    return 0_u64;
+  }
   flush(st: st, provs: provs, code: code);
   if op == 0_u8 {
     let o = Op::Unreachable();
@@ -1275,6 +1322,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     }
     let height = provs^.inner.len -wrap p;
     let target = code^.inner.len;
+    set st^.last = 18446744073709551615_u64;
     let marks = fixes^.inner.len;
     let c = Ctl(kind: kind, height: height, params: p, brk: brk, results: q, target: target, fixes: marks, else_at: else_at, c: cond, cmp: fused_cmp, fb: fused_b);
     push_ctl(cell: ctls, value: c);
@@ -1321,35 +1369,6 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       return 0_u64;
     }
     return 2_u64;
-  }
-  if op == 14_u8 {
-    let top = top_pos(provs: provs, depth: 0_u64);
-    let cond = temp_slot(st: st, pos: top);
-    pop_prov(st: st, provs: provs, count: 1_u64);
-    let ok = emit_table(r: r, bytes: bytes, st: st, cond: cond, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
-    set st^.dead = True();
-    if ok {
-      return 0_u64;
-    }
-    return 2_u64;
-  }
-  if op == 15_u8 {
-    let k = st^.results;
-    if k > 1_u64 {
-      return 2_u64;
-    }
-    let first = top_pos(provs: provs, depth: 0_u64);
-    if k == 0_u64 {
-      set first = 0_u64;
-    }
-    let s = temp_slot(st: st, pos: first);
-    let s16 = slot16(value: s);
-    let k16 = slot16(value: k);
-    let l16 = slot16(value: st^.l);
-    let o = Op::Return(s: s16, k: k16, l: l16);
-    emit_plain(st: st, code: code, op: o);
-    set st^.dead = True();
-    return 0_u64;
   }
   if op == 16_u8 {
     let fi = read_uleb(r: r, bytes: bytes);
@@ -1429,8 +1448,26 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
   let li = slot16(value: local);
   if p.kind == 1_u64 {
     let s = slot16(value: p.value);
+    let length = code^.inner.len;
+    let latest = length -wrap 1_u64;
+    let paired = st^.last == latest;
+    let moved = st^.last_pos == 18446744073709551614_u64;
+    if band(paired, moved) {
+      if latest < code^.inner.len {
+        let d0 = slot16(value: st^.copy_d);
+        let s0 = slot16(value: st^.copy_s);
+        let o = Op::Copy2(d: d0, s: s0, e: li, t: s);
+        set code^.inner[latest] = o;
+        set st^.last = 18446744073709551615_u64;
+        return True();
+      }
+    }
     let o = Op::Copy(d: li, s: s);
     emit_plain(st: st, code: code, op: o);
+    set st^.last = latest +wrap 1_u64;
+    set st^.last_pos = 18446744073709551614_u64;
+    set st^.copy_d = local;
+    set st^.copy_s = p.value;
     return True();
   }
   if p.kind == 2_u64 {
@@ -1862,7 +1899,7 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
   }
   let base = l +wrap 2_u64;
   let no = False();
-  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, failed: no, cslot: pl, cbase: cbase, cn: cn);
+  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, copy_d: 0_u64, copy_s: 0_u64, failed: no, cslot: pl, cbase: cbase, cn: cn);
   let top = Ctl(kind: 0_u64, height: 0_u64, params: 0_u64, brk: f.results, results: f.results, target: 0_u64, fixes: 0_u64, else_at: 18446744073709551615_u64, c: 0_u64, cmp: 0_u64, fb: 0_u64);
   push_ctl(cell: ctls, value: top);
   loop @ops {

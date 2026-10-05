@@ -10,8 +10,10 @@ translator and the WASI driver) are written by hand. With --count the
 interpreter also counts its dispatches and prints the count on standard
 error when _start returns, for attributing a change to the dispatch count;
 with --profile it counts each operation kind, in the order --names prints.
+With --inline each handler's body is written into its arm, except a body
+that delivers a value from a match, which stays a helper call.
 
-    python3 gen.py interp.wf [--count]
+    python3 gen.py interp.wf [--count | --profile] [--inline]
     whitefootc interp.wf -o wasm-interp
     ./wasm-interp coremark.wasm 0x0 0x0 0x66 2000
 """
@@ -391,6 +393,81 @@ def fused_arm(name, op, sign):
     return o
 
 
+
+def inline_helpers(arms, helpers):
+    """The --inline variant: each arm carries its helper's body in place of
+    the call, the helper's parameters bound by `let` from the call's
+    arguments; `return True()` becomes the arm's advance, `return False()`
+    its trap, and a comparison's `return z;` binds `taken`."""
+    import re
+    bodies = {}
+    text = "\n".join(helpers)
+    for match in re.finditer(r"^fn (op_\w+)\((.*?)\) -> (\w+): \w+ .*?\{\n(?:.*?\n)*?\} \{\n((?:  .*\n)*?)\}\n", text, re.M):
+        name, params, result, body = match.group(1), match.group(2), match.group(3), match.group(4)
+        bodies[name] = (result, [line[2:] for line in body.rstrip("\n").split("\n")])
+    out = []
+    kept = set()
+    i = 0
+    while i < len(arms):
+        line = arms[i]
+        call = re.search(r"(op_\w+)\((.*)\);$", line)
+        if not call or call.group(1) not in bodies:
+            out.append(line)
+            i += 1
+            continue
+        name, arguments = call.group(1), call.group(2)
+        result, body = bodies[name]
+        if any("give " in b for b in body):
+            # A body that delivers a value from a match stays a call: the
+            # checker's delivery of such values grows with the function
+            # (docs/todo.md, "Checking a function with many value deliveries").
+            out.append(line)
+            kept.add(name)
+            i += 1
+            continue
+        indent = line[: len(line) - len(line.lstrip())]
+        binds = []
+        for argument in arguments.split(", "):
+            formal, actual = argument.split(": ", 1)
+            if formal != actual:
+                binds.append(f"{indent}let {formal} = {actual};")
+        if result == "ok":
+            # let ok = op(...); if ok { ADVANCE } return trap(...);
+            opener = arms[i + 1]
+            closer = opener[: len(opener) - len(opener.lstrip())] + "}"
+            j = i + 2
+            advance = []
+            while arms[j] != closer:
+                advance.append(arms[j][2:])
+                j += 1
+            failure = arms[j + 1].strip()
+            out += binds
+            for b in body:
+                if b.strip() == "return True();":
+                    pad = b[: len(b) - len(b.lstrip())]
+                    out += [indent + pad + a[len(indent):] for a in advance]
+                elif b.strip() == "return False();":
+                    pad = b[: len(b) - len(b.lstrip())]
+                    out.append(indent + pad + failure)
+                else:
+                    out.append(indent + b)
+            if body and body[-1].strip() == "return True();":
+                out.append(indent + failure)
+            i = j + 2
+        elif result == "taken":
+            out += binds
+            for b in body:
+                if b.strip() == "return z;":
+                    out.append(indent + "let taken = z;")
+                else:
+                    out.append(indent + b)
+            i += 1
+        else:
+            out += binds
+            out += [indent + b for b in body if b.strip() != "return unit;"]
+            i += 1
+    return out, kept
+
 def count_dispatches(program):
     """The --count variant: a counter cell passed to the interpreter function
     and incremented at every dispatch, printed when _start returns."""
@@ -470,7 +547,7 @@ def profile_dispatches(program, variants):
 CONTROL = ["Unreachable()", "Jump(t: u32)", "Br(t: u32, s: u16, d: u16)", "BrIf(t: u32, c: u16)",
            "BrIfMove(c: u16, e: u32)", "BrUnless(t: u32, c: u16)", "BrTable(c: u16, start: u32, count: u32)",
            "Return(s: u16, k: u16, l: u16)", "Call(f: u32, at: u16)", "CallIndirect(canon: u32, at: u16, i: u16)",
-           "Host(id: u16, at: u16)", "Select(d: u16, a: u16, b: u16, c: u16)", "Copy(d: u16, s: u16)",
+           "Host(id: u16, at: u16)", "Select(d: u16, a: u16, b: u16, c: u16)", "Copy(d: u16, s: u16)", "Copy2(d: u16, s: u16, e: u16, t: u16)",
            "GlobalGet(d: u16, i: u32)", "GlobalSet(s: u16, i: u32)", "MemorySize(d: u16)",
            "MemoryGrow(d: u16, s: u16)", "MemoryCopy(d: u16, s: u16, n: u16)",
            "MemoryFill(d: u16, v: u16, n: u16)", "Const(d: u16, v: u64)"]
@@ -632,11 +709,18 @@ for sub, name, ins, outty, lines in FC:
     arms += numeric_arm(name, ins, outty, lines)
 for code, nm, op, sign in FUSED:
     arms += fused_arm(f"BrI32{nm}", op, sign)
+if "--inline" in sys.argv:
+    arms, kept = inline_helpers(arms, HELPERS)
+    import re as _re
+    chunks = [chunk.strip("\n") for chunk in "\n".join(HELPERS).split("\n\n") if chunk.strip()]
+    HELPERS = ["\n\n".join(chunk for chunk in chunks
+                             if (_re.match(r"fn (op_\w+)\(", chunk) or [None, None])[1] in kept)]
 here = os.path.dirname(os.path.abspath(__file__))
 head = open(os.path.join(here, "interp_head.wf")).read()
 tail_text = open(os.path.join(here, "interp_tail.wf")).read().strip("\n")
 aliases_end = head.index("\n\n") + 2
-program = (head[:aliases_end] + OPS + "\n\n" + "\n".join(HELPERS).strip("\n") + "\n\n"
+helper_text = "\n".join(HELPERS).strip("\n")
+program = (head[:aliases_end] + OPS + "\n\n" + (helper_text + "\n\n" if helper_text else "")
            + head[aliases_end:].rstrip("\n") + "\n" + "\n".join(arms).strip("\n") + "\n  }\n}\n\n" + tail_text + "\n")
 if "--names" in sys.argv:
     print("\n".join(name for name, _, _ in variants))

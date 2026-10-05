@@ -443,6 +443,46 @@ launch with correct CRCs; Silverfir-nano's spread includes one slow launch:
 
 The score rises 3.8%, above the 2% criterion.
 
+### v2e, handler bodies written into their arms
+
+`gen.py --inline` writes each helper's body into its arm, binding the
+helper's parameters with `let`, except a body that delivers a value from a
+`match` (`give`), which stays a call: the checker's handling of such
+deliveries grows faster than linearly with the function, and the fully
+inlined interpreter took 313 s to check where this form takes 3.5 s
+(`docs/todo.md`, "Checking one function grows faster than its size"). Built
+by the compiler with stack-box pinning and active-term closures merged, the
+`I32Add` arm's machine code is the same seventeen instructions as v2d's: by
+v2d the helpers were already inlined by LLVM, so writing them into the
+source changes the checker's work, not the dispatch. Its median in the v2f
+run below is 2635.0.
+
+### v2f, fewer copies
+
+`gen.py --profile` with each copy site given its own operation kind
+attributed v2e's 77 million `Copy` dispatches: 64 million from a
+`local.get` followed by a `local.set` (a copy between locals, 20.6 million
+of them directly after another such copy), 12.5 million from operands put
+in their temporaries before control flow, 9.2 million of those before a
+`br_table` and 2.1 million before a `return`. v2f reads the operand a
+`br_table` or `return` consumes, and the result at a function's end, from
+its local in place (a `return` and a function's end no longer put any
+other operand in its temporary), and merges a copy between locals emitted
+directly after another into one `Copy2(d, s, e, t)`, which moves `s` to
+`d` and then `t` to `e`; a loop's start, a branch target, ends the merging.
+Criterion, set before measuring: adopt if the median score rises at least
+2%, as for v2d. Dispatches fell from 551,583,984 to 523,297,303 (5.1%),
+`Copy` and `Copy2` together to 49 million. Seven alternating launches
+([run-wasm-v2f.tsv](run-wasm-v2f.tsv)), every launch with correct CRCs,
+and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2e | 2635.0 | 3.6% | 11,229,455,758 | 2,420,843,786 |
+| v2f | 2706.4 | 2.4% | 10,906,830,435 | 2,354,421,800 |
+
+The score rises 2.7%, meeting the criterion, with cycles down 2.7%.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which
