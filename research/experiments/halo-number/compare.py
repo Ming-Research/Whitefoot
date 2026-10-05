@@ -14,6 +14,10 @@ import subprocess
 import tempfile
 import time
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 MASK = (1 << 64) - 1
@@ -260,6 +264,7 @@ def main():
     parser.add_argument('--samples', type=int, default=10000)
     parser.add_argument('--musl-source', type=Path, help='optional local musl src/math path for independent port comparison')
     parser.add_argument('--results', type=Path, help='write measured Markdown results')
+    cache_arguments(parser, 'halo-number', timing=True)
     args = parser.parse_args()
     compiler, lua = args.compiler.resolve(), args.lua.resolve()
     if args.samples < 1:
@@ -271,7 +276,7 @@ def main():
         scratch = Path(temporary)
         adapter = scratch/'check'
         _, build_seconds = run([str(compiler), '--graph', 'lib/halo/number/tests/modules.wfg',
-                                '--entry', 'check', '-o', str(adapter)], cwd=ROOT)
+                                '--entry', 'check', '-o', str(adapter)] + cache_flags(args), cwd=ROOT)
         host = scratch/'oracle'
         run(['cc', '-std=c11', '-O2', '-I'+str(lua.parent), str(HERE/'bits.c'),
              str(lua.parent/'liblua.a'), '-lm', '-o', str(host)])

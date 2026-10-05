@@ -1,5 +1,16 @@
 # Halo heap core comparisons
 
+Compiler builds and checks have a persistent cache at
+`${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-heap-core`.
+`--cache DIR` overrides it; `--no-cache` disables caching. Cache paths must be
+outside the repository and survive scratch-executable cleanup.
+This runner reports program execution times, so native builds default to
+`--full-lto`. The compiler rejects combining `--full-lto` with `--cache`;
+`--incremental` selects the persistent cache instead. Cached runtime timings
+have unvalidated differences from full LTO and are only sizing observations.
+Use the default or explicit `--full-lto` for runtime performance measurements.
+Reused binaries must have been built with the corresponding mode.
+
 This explicitly invoked experiment compares the Halo heap with Redis 7.0.15's
 bundled PUC Lua 5.1.5. It is not a gate dependency. The fixture binds the real
 Halo package under MOD-11. `run.py` requires acceptance of every Halo module,
@@ -10,7 +21,7 @@ native tools and compares observations; it does not implement a table.
 From the repository root, provide the existing compiler and reference Lua:
 
 ```sh
-python3 research/experiments/halo-heap-core/run.py --compiler "$WF_COMPILER" --lua "$LUA" --report "$SCRATCH/report.md"
+python3 research/experiments/halo-heap-core/run.py --compiler "$WF_COMPILER" --full-lto --lua "$LUA" --report "$SCRATCH/report.md"
 ```
 
 Use the Lua executable built from Redis's bundled sources, rather than stock

@@ -12,14 +12,19 @@ import subprocess
 import tempfile
 import time
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 p = argparse.ArgumentParser(description=__doc__)
-p.add_argument('--compiler', type=Path, default=Path('/private/tmp/wf-halo/compiler/target/gate/whitefootc'))
+p.add_argument('--compiler', type=Path, default=ROOT / 'compiler/target/gate/whitefootc')
 p.add_argument('--lua-source', type=Path, default=Path('/private/tmp/wf-redis-7.0.15/deps/lua/src'))
 p.add_argument('--sample', type=int, help='Only the first N cases; size the run before full comparison')
 p.add_argument('--halo-dump', type=Path, help='Use an already-built Whitefoot dump executable')
 p.add_argument('--output', type=Path, help='Write JSON results to a scratch path')
+cache_arguments(p, 'halo-lex', timing=True)
 a = p.parse_args()
 if a.sample is not None and a.sample <= 0:
     p.error("--sample must be positive")
@@ -124,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix='halo-lex-', dir='/private/tmp') as tmp:
     halo = a.halo_dump or scratch / 'halo-dump'
     if not a.halo_dump:
         start = time.monotonic()
-        run(['perl', ROOT / '.github/run-check.pl', 'halo-lex-build', a.compiler, '--graph', HERE / 'modules.wfg', '--entry', 'dump', '-o', halo], cwd=ROOT)
+        run(['perl', ROOT / '.github/run-check.pl', 'halo-lex-build', a.compiler, '--graph', HERE / 'modules.wfg', '--entry', 'dump', '-o', halo] + cache_flags(a), cwd=ROOT)
         print(f'Whitefoot native build: {time.monotonic() - start:.3f}s', flush=True)
     cases = [(str(f.relative_to(ROOT)), f.read_bytes()) for f in corpus_paths(ROOT / 'research/experiments/halo-oracle/scripts')]
     cases += tricky()

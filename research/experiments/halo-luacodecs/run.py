@@ -11,6 +11,10 @@ import time
 from collections import Counter
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 spec = importlib.util.spec_from_file_location('e2e', HERE.parent / 'halo-e2e/run.py')
@@ -160,10 +164,25 @@ local function reply(v,depth)
  local t={};local i=1;while v[i]~=nil do t[#t+1]=reply(v[i],depth+1);i=i+1 end
  return '{"type":"array","items":['..table.concat(t,',')..']}'
 end
+-- Error metadata follows Redis 7.0.15 eval.c's __redis__err__handler;
+-- the final suffix follows script_lua.c's luaCallFunction error reply.
+local function reference_error(err)
+ local i=debug.getinfo(2,'nSl')
+ if i and i.what=='C' then i=debug.getinfo(3,'nSl') end
+ if type(err)~='table' then err={err='ERR '..tostring(err)} end
+ if i then err.source=i.source;err.line=i.currentline end
+ return err
+end
 local f,e=loadstring(s,'@user_script');local ok,v
-if f then ok,v=pcall(f) else ok,v=false,e end
+if f then ok,v=xpcall(f,reference_error)
+else ok,v=false,{err='ERR Error compiling script (new function): '..e} end
 if ok then io.write(reply(v,0),'\n') else
- v=tostring(v):gsub('[\r\n]',' '):match('^[^%z]*');io.write('{"type":"error","bytes":'..quote('ERR '..v)..'}\n') end
+ local message=tostring(v.err):gsub('[\r\n]',' '):match('^[^%z]*')
+ if v.source and v.line then
+  message=message..' script: '..arg[2]..', on '..v.source..':'..v.line..'.'
+ end
+ io.write('{"type":"error","bytes":'..quote(message)..'}\n')
+end
 """
 
 
@@ -188,6 +207,7 @@ def build_reference(source, scratch):
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--compiler',required=True);ap.add_argument('--redis-source',type=Path,required=True);ap.add_argument('--binary',type=Path);ap.add_argument('--filter',default='');ap.add_argument('--report',type=Path,default=HERE/'RESULTS.md');ap.add_argument('--actual',type=Path)
+    cache_arguments(ap, 'halo-luacodecs', timing=False)
     args=ap.parse_args();e2e.sensitivity()
     rows=[(n,s) for n,s in corpus() if n.startswith(args.filter)]
     if not rows: ap.error('filter matched no snippets')
@@ -199,13 +219,13 @@ def main():
         binary=args.binary.resolve() if args.binary else scratch/'halo'
         build_seconds=0
         if not args.binary:
-            start=time.monotonic();build=subprocess.run([args.compiler,'--graph',str(HERE.parent/'halo-e2e/modules.wfg'),'--entry','test','-o',str(binary)],cwd=ROOT,capture_output=True);build_seconds=time.monotonic()-start
+            start=time.monotonic();build=subprocess.run([args.compiler,'--graph',str(HERE.parent/'halo-e2e/modules.wfg'),'--entry','test','-o',str(binary)]+cache_flags(args),cwd=ROOT,capture_output=True);build_seconds=time.monotonic()-start
             print(f'Halo build exit {build.returncode}, {build_seconds:.3f}s',flush=True)
             if build.returncode: print((build.stdout+build.stderr).decode());return 2
         wrapper=scratch/'reference.lua';wrapper.write_text(REFERENCE);chunk=scratch/'chunk.lua'
         for name,source in rows:
             chunk.write_text(source)
-            ref=subprocess.run([str(lua),str(wrapper),str(chunk)],capture_output=True)
+            ref=subprocess.run([str(lua),str(wrapper),str(chunk),hashlib.sha1(source.encode()).hexdigest()],capture_output=True)
             if ref.returncode: raise RuntimeError(ref.stderr.decode())
             expected=json.loads(ref.stdout)
             actual_run=subprocess.run([str(binary),'seven','seven'],input=b'KEYS={};ARGV={}\0'+source.encode(),capture_output=True,timeout=30)

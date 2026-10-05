@@ -7,6 +7,10 @@ import tempfile
 import time
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 
@@ -33,15 +37,16 @@ def main():
     parser.add_argument('--compiler', required=True)
     parser.add_argument('--lua', required=True)
     parser.add_argument('--report', type=Path)
+    cache_arguments(parser, 'halo-heap-core', timing=True)
     args = parser.parse_args()
-    checks, seconds = run([args.compiler, '--graph', 'lib/halo/modules.wfg', '--check-modules'])
+    checks, seconds = run([args.compiler, '--graph', 'lib/halo/modules.wfg', '--check-modules'] + cache_flags(args, check=True))
     report = [f'Module check exit: {checks.returncode}; seconds: {seconds:.3f}', checks.stdout + checks.stderr]
     if checks.returncode:
         print('\n'.join(report))
         return 2
     with tempfile.TemporaryDirectory(prefix='scratch-', dir=HERE) as temporary:
         scratch = Path(temporary)
-        command = [args.compiler, '--graph', str(HERE / 'modules.wfg'), '--function', 'pkg::test::main']
+        command = [args.compiler, '--graph', str(HERE / 'modules.wfg'), '--function', 'pkg::test::main'] + cache_flags(args)
         report += ['Mode: bound module program.']
         binary = scratch / 'trace'
         build, seconds = run(command + ['-o', str(binary)])

@@ -1,5 +1,16 @@
 # Halo compiler oracle
 
+Compiler builds and checks have a persistent cache at
+`${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-compile`.
+`--cache DIR` overrides it; `--no-cache` disables caching. Cache paths must be
+outside the repository and survive scratch-executable cleanup.
+This runner reports program execution times, so native builds default to
+`--full-lto`. The compiler rejects combining `--full-lto` with `--cache`;
+`--incremental` selects the persistent cache instead. Cached runtime timings
+have unvalidated differences from full LTO and are only sizing observations.
+Use the default or explicit `--full-lto` for runtime performance measurements.
+Reused binaries must have been built with the corresponding mode.
+
 This experiment compares the public `halo::compile::compile` result against
 Redis 7.0.15's bundled PUC Lua 5.1 compiler. The `dump` Whitefoot module is
 its consumer. `run.py` supplies the existing Halo oracle corpus, generated
@@ -7,20 +18,16 @@ small programs, and malformed programs. These files remain useful until this
 port is replaced or Halo is retired; they run explicitly and are outside the
 repository gate.
 
-Build the candidate with the supplied Whitefoot compiler, then first run a
+The runner builds the candidate with the supplied Whitefoot compiler; first run a
 small sample. Heavy commands use the repository's host-wide verification lock:
 
 ```sh
-perl .github/run-check.pl halo-compile-dump \
-  "$WHITEFOOTC" --cache "$SCRATCH/cache" \
-  --graph research/experiments/halo-compile/modules.wfg --entry dump \
-  -o "$SCRATCH/halo-dump"
-perl .github/run-check.pl halo-compile-oracle python3 \
-  research/experiments/halo-compile/run.py --halo-dump "$SCRATCH/halo-dump" \
-  --lua-source "$LUA_SOURCE" --sample 3 --output "$SCRATCH/sample.json"
-perl .github/run-check.pl halo-compile-oracle python3 \
-  research/experiments/halo-compile/run.py --halo-dump "$SCRATCH/halo-dump" \
-  --lua-source "$LUA_SOURCE" --output "$SCRATCH/results.json"
+perl .github/run-check.pl halo-compile-oracle python3 -B \
+  research/experiments/halo-compile/run.py --compiler "$WHITEFOOTC" \
+  --incremental --lua-source "$LUA_SOURCE" --sample 3 --output "$SCRATCH/sample.json"
+perl .github/run-check.pl halo-compile-oracle python3 -B \
+  research/experiments/halo-compile/run.py --compiler "$WHITEFOOTC" \
+  --full-lto --lua-source "$LUA_SOURCE" --output "$SCRATCH/results.json"
 ```
 
 `WHITEFOOTC` names an existing Whitefoot executable; `LUA_SOURCE` names the
@@ -28,7 +35,7 @@ Redis Lua `src` directory; `SCRATCH` is an existing directory outside this
 repository. No Cargo build or network access is used. The runner copies only
 C sources and headers into temporary storage, times a single `lcode.c` build,
 and builds `luac` there. `--luac` can reuse an already-built scratch oracle.
-`--filter TEXT` selects case names. Missing or empty corpora fail the run.
+`--halo-dump PATH` reuses a prebuilt candidate. `--filter TEXT` selects case names. Missing or empty corpora fail the run.
 The candidate dump reads one complete source from stdin and uses `=stdin` as
 its chunk name, matching `luac`'s stdin source name. The runner also checks
 interning exhaustion on string/name tokens, lookahead names/strings and synthetic

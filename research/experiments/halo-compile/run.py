@@ -7,6 +7,10 @@ listing, not to implement Lua parsing or compile the Whitefoot module.
 from pathlib import Path
 import argparse, difflib, hashlib, json, re, shutil, subprocess, tempfile, time
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 OPS = ['MOVE','LOADK','LOADBOOL','LOADNIL','GETUPVAL','GETGLOBAL','GETTABLE','SETGLOBAL','SETUPVAL','SETTABLE','NEWTABLE','SELF','ADD','SUB','MUL','DIV','MOD','POW','UNM','NOT','LEN','CONCAT','JMP','EQ','LT','LE','TEST','TESTSET','CALL','TAILCALL','RETURN','FORLOOP','FORPREP','TFORLOOP','SETLIST','CLOSE','CLOSURE','VARARG']
@@ -230,11 +234,13 @@ def digest():
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--lua-source',type=Path,help='Redis Lua C source directory; required unless --luac is supplied')
-    ap.add_argument('--halo-dump',type=Path,required=True)
+    ap.add_argument('--compiler',type=Path,default=ROOT/'compiler/target/gate/whitefootc')
+    ap.add_argument('--halo-dump',type=Path,help='reuse an already-built Halo dump')
     ap.add_argument('--luac',type=Path,help='Use an already-built scratch oracle; otherwise build PUC from sources')
     ap.add_argument('--sample',type=int)
     ap.add_argument('--filter')
     ap.add_argument('--output',type=Path)
+    cache_arguments(ap, 'halo-compile', timing=True)
     a=ap.parse_args()
     if a.luac is None and a.lua_source is None:ap.error("--lua-source is required unless --luac is supplied")
     if a.sample is not None and a.sample <= 0:ap.error('--sample must be positive')
@@ -249,6 +255,14 @@ def main():
     # The controls change actual candidate output and must be rejected.
     controls=0
     with tempfile.TemporaryDirectory(prefix='halo-compile-oracle-') as tmp:
+        if a.halo_dump is None:
+            a.halo_dump = Path(tmp)/'halo-dump'
+            started = time.monotonic()
+            subprocess.run([str(a.compiler), '--graph', str(HERE/'modules.wfg'),
+                            '--entry', 'dump', '-o', str(a.halo_dump)] + cache_flags(a),
+                           cwd=ROOT, check=True, timeout=900)
+            report['halo_build_seconds'] = time.monotonic()-started
+            print(f"Halo build: {report['halo_build_seconds']:.3f}s", flush=True)
         luac = a.luac
         if luac is None:
             build=Path(tmp)/'puc';build.mkdir()
@@ -302,22 +316,22 @@ def main():
                 print('MISMATCH',name, diff[:2500],flush=True)
             report['case_seconds'].append(round(time.monotonic()-start,6))
             report['cases'].append({'name':name,'source_sha256':hashlib.sha256(source).hexdigest(),'oracle_sha256':hashlib.sha256(oracle.stdout+oracle.stderr).hexdigest(),'matched':got==expected})
-    memory_cases = [
-        ('string-token', b'return "x"', ['exhaust']),
-        ('identifier-token', b'local x', ['exhaust']),
-        ('synthetic-arg-local', b'return function(...) end', ['exhaust']),
-        ('lookahead-name', b'return {a b}', ['exhaust', 'after-one']),
-        ('lookahead-string', b'return {a "b"}', ['exhaust', 'after-one']),
-        ('synthetic-for-local', b'for i=1,2 do end', ['exhaust', 'after-one']),
-    ]
-    report['intern_exhaustion_checks'] = []
-    for name, source, arguments in memory_cases:
-        candidate = subprocess.run([str(a.halo_dump)] + arguments, input=source, capture_output=True, timeout=30)
-        if candidate.returncode:raise RuntimeError(f'{name}: dump exit {candidate.returncode}')
-        expected = [['E', '1', b'not enough memory'.hex()]]
-        actual = parse_halo(candidate.stdout)
-        if actual != expected:raise AssertionError(f'{name}: expected {expected}, got {actual}')
-        report['intern_exhaustion_checks'].append(name)
+        memory_cases = [
+            ('string-token', b'return "x"', ['exhaust']),
+            ('identifier-token', b'local x', ['exhaust']),
+            ('synthetic-arg-local', b'return function(...) end', ['exhaust']),
+            ('lookahead-name', b'return {a b}', ['exhaust', 'after-one']),
+            ('lookahead-string', b'return {a "b"}', ['exhaust', 'after-one']),
+            ('synthetic-for-local', b'for i=1,2 do end', ['exhaust', 'after-one']),
+        ]
+        report['intern_exhaustion_checks'] = []
+        for name, source, arguments in memory_cases:
+            candidate = subprocess.run([str(a.halo_dump)] + arguments, input=source, capture_output=True, timeout=30)
+            if candidate.returncode:raise RuntimeError(f'{name}: dump exit {candidate.returncode}')
+            expected = [['E', '1', b'not enough memory'.hex()]]
+            actual = parse_halo(candidate.stdout)
+            if actual != expected:raise AssertionError(f'{name}: expected {expected}, got {actual}')
+            report['intern_exhaustion_checks'].append(name)
     assert digest()==d,'implementation changed during comparison'
     report['mutation_controls_detected']=controls
     if a.output:a.output.write_text(json.dumps(report,indent=2)+'\n')

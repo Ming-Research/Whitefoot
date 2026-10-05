@@ -1,6 +1,6 @@
 # Experiments Index
 
-Current experiment bundles are self-contained: sources, a Makefile or run
+Current experiment bundles contain their sources, a Makefile or run
 script, and a RESULTS.md with measured numbers and honest caveats.
 Binaries/corpora are regenerable and gitignored. Some retained historical
 bundles below still name the retired democ toolchain; their RESULTS and source
@@ -15,6 +15,12 @@ These bundles follow the [research boundary](../README.md): execution is
 explicitly requested, and useful daily regression checks are extracted into
 formal test ownership with their required inputs and oracles. Existing caller
 descriptions do not grant an exception to that boundary.
+
+Halo and standalone codec Python runners share [compiler_cache.py](compiler_cache.py)
+for persistent cache paths and cache/full-LTO mode flags. The helper is removed
+when its last experiment consumer is retired; it is outside the gate.
+The [VM](halo-vm/README.md), [pattern](halo-patterns/README.md) and
+[MessagePack](msgpack/README.md) guides document their build and sample commands.
 
 ## Language design models
 

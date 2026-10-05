@@ -1,11 +1,23 @@
 # Redis Lua codec compatibility experiment
 
-`python3 -B research/experiments/halo-luacodecs/run.py --compiler /path/to/whitefootc --redis-source /path/to/redis-7.0.15`
+Compiler builds and checks have a persistent cache at
+`${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-luacodecs`.
+`--cache DIR` overrides it; `--no-cache` disables caching. Cache paths must be
+outside the repository and survive scratch-executable cleanup.
+Native builds use the cache by default. `--full-lto` selects a whole-build
+LTO link without caching; this runner reports build time, not program speed.
+
+`python3 -B research/experiments/halo-luacodecs/run.py --compiler /path/to/whitefootc --incremental --redis-source /path/to/redis-7.0.15`
 builds a scratch standalone reference from Redis’s bundled Lua and all four
 libraries, compiles the existing Halo end-to-end driver, and compares typed
 RESP2 replies for a generated corpus, including binary strings and errors.
 Use `--binary` to reuse the Halo executable and `--filter` for a small sample.
 The runner never uses the network or changes either general codec package.
+
+The local reference uses the error-handler stack metadata from Redis 7.0.15
+`eval.c` and the final error suffix from `script_lua.c`. Python supplies SHA-1
+of the exact snippet bytes independently with `hashlib`; error source, line
+and digest remain part of the strict byte comparison.
 
 The new library files implement the requested Redis compatibility in the
 existing VM home; remove them only if Halo no longer provides those libraries.

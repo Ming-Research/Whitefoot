@@ -10,6 +10,10 @@ import subprocess
 import tempfile
 import time
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 CORPUS = ('numeric', 'base', 'strings', 'tables', 'math', 'random', 'errors', 'boundaries')
@@ -53,10 +57,10 @@ def main():
     p.add_argument('--lua', type=Path, required=True)
     p.add_argument('--redis-source', type=Path, required=True, help='Redis 7.0.15 source tree for rand.c and bundled Lua headers')
     p.add_argument('--cc', default='cc')
-    p.add_argument('--cache', type=Path)
     p.add_argument('--adapter', type=Path, help='reuse an already built adapter')
     p.add_argument('--sample', action='store_true', help='size the run with numeric.lua only')
     p.add_argument('--results', type=Path)
+    cache_arguments(p, 'halo-lib', timing=True)
     a = p.parse_args()
     controls()
     names = ('numeric',) if a.sample else CORPUS
@@ -81,8 +85,7 @@ def main():
         adapter = a.adapter or Path(scratch) / 'run'
         if not a.adapter:
             command = [a.compiler, '--graph', HERE / 'modules.wfg', '--entry', 'run', '-o', adapter]
-            if a.cache:
-                command += ['--cache', a.cache]
+            command += cache_flags(a)
             started = time.monotonic()
             run(command, cwd=ROOT)
             print(f'Native build: {time.monotonic() - started:.3f}s', flush=True)

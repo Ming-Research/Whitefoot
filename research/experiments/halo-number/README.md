@@ -1,5 +1,16 @@
 # Halo number comparison with PUC Lua
 
+Compiler builds and checks have a persistent cache at
+`${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-number`.
+`--cache DIR` overrides it; `--no-cache` disables caching. Cache paths must be
+outside the repository and survive scratch-executable cleanup.
+This runner reports program execution times, so native builds default to
+`--full-lto`. The compiler rejects combining `--full-lto` with `--cache`;
+`--incremental` selects the persistent cache instead. Cached runtime timings
+have unvalidated differences from full LTO and are only sizing observations.
+Use the default or explicit `--full-lto` for runtime performance measurements.
+Reused binaries must have been built with the corresponding mode.
+
 This explicitly invoked experiment checks `lib/halo/number` against the local
 Redis 7.0.15 bundled PUC Lua 5.1.5. It is not wired into a compiler gate.
 `compare.py` builds the standalone Whitefoot adapter in
@@ -10,15 +21,23 @@ From the repository root, using an existing v0.90 compiler and the reference
 Lua executable with its adjacent headers and `liblua.a`:
 
 ```sh
-whitefootc --graph lib/halo/modules.wfg --check-modules
+whitefootc --cache "${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-number" \
+  --graph lib/halo/modules.wfg --check-modules
 python3 research/experiments/halo-number/compare.py \
-  --compiler /path/to/whitefootc --lua /path/to/lua/src/lua --samples 100
+  --compiler /path/to/whitefootc --incremental --lua /path/to/lua/src/lua --samples 100
 perl .github/run-check.pl halo-number-oracle \
   python3 research/experiments/halo-number/compare.py \
-  --compiler /path/to/whitefootc --lua /path/to/lua/src/lua \
+  --compiler /path/to/whitefootc --full-lto --lua /path/to/lua/src/lua \
   --samples 10000 --musl-source /path/to/musl/src/math \
   --results research/experiments/halo-number/RESULTS.md
 ```
+
+On macOS, the current formatter follows Linux/glibc's signed-NaN spelling:
+two fixed format cases produce `-nan` where the local Lua oracle produces `nan`.
+The `--samples 1` cached and uncached full-LTO runs both exit 1 with identical
+mismatch groups and examples. This is the existing platform difference
+recorded under [Later change](RESULTS.md#later-change); it is not normalized
+away by the runner. Linux reference qualification remains separate.
 
 The small run sizes the batch first. The program builds and temporary files
 stay beneath this experiment directory and are deleted after each run. Python

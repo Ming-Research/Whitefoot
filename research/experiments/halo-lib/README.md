@@ -1,5 +1,16 @@
 # Halo slice 1 library comparison
 
+Compiler builds and checks have a persistent cache at
+`${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-lib`.
+`--cache DIR` overrides it; `--no-cache` disables caching. Cache paths must be
+outside the repository and survive scratch-executable cleanup.
+This runner reports program execution times, so native builds default to
+`--full-lto`. The compiler rejects combining `--full-lto` with `--cache`;
+`--incremental` selects the persistent cache instead. Cached runtime timings
+have unvalidated differences from full LTO and are only sizing observations.
+Use the default or explicit `--full-lto` for runtime performance measurements.
+Reused binaries must have been built with the corresponding mode.
+
 This experiment compiles Lua source with `pkg::compile`, runs it with
 `pkg::vm::start`, and compares printed text with Redis's bundled Lua 5.1.5.
 It serves the slice 1 library and number wiring described in
@@ -29,16 +40,16 @@ are known:
 
 ```sh
 python3 research/experiments/halo-lib/run.py \
-  --compiler /path/to/whitefootc --lua /path/to/lua \
+  --compiler /path/to/whitefootc --incremental --lua /path/to/lua \
   --redis-source /path/to/redis-7.0.15 --sample
 python3 research/experiments/halo-lib/run.py \
-  --compiler /path/to/whitefootc --lua /path/to/lua \
+  --compiler /path/to/whitefootc --full-lto --lua /path/to/lua \
   --redis-source /path/to/redis-7.0.15 \
   --results research/experiments/halo-lib/RESULTS.md
 ```
 
-`--adapter` reuses an existing native adapter; `--cache` selects a scratch
-compiler cache. The runner checks process exit codes directly, compares bytes
+`--adapter` reuses an existing native adapter; `--cache` overrides the persistent
+compiler cache directory used by `--incremental`. The runner checks process exit codes directly, compares bytes
 and prints unified diffs. A correctness run uses budgets unlimited, 7 and 1.
 Comparator controls change an output byte, remove a line and reorder lines;
 each must turn an equal comparison into a mismatch. Builds and generated

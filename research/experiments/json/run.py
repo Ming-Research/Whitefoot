@@ -16,6 +16,9 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 ROOT = Path(__file__).resolve().parents[3]
 NUMBER = re.compile(rb'-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?')
 MESSAGES = {
@@ -404,12 +407,13 @@ def main():
     ap.add_argument('--samples',type=int,default=4000)
     ap.add_argument('--seed',type=int,default=8259)
     ap.add_argument('--report',type=Path)
+    cache_arguments(ap, 'json', timing=True)
     args=ap.parse_args()
     build_seconds=None
     if args.build:
         start=time.monotonic()
         subprocess.run([str(args.compiler),'--graph',str(ROOT/'research/experiments/json/modules.wfg'),
-                        '--entry','check','-o',str(args.binary)],cwd=ROOT,check=True)
+                        '--entry','check','-o',str(args.binary)]+cache_flags(args),cwd=ROOT,check=True)
         build_seconds=time.monotonic()-start
     cases=fixtures(args.samples,args.seed)
     framed=b''.join(struct.pack('<BQQ',op,len(data),depth)+data for op,data,depth,_ in cases)+bytes(17)

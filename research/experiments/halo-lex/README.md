@@ -1,5 +1,16 @@
 # Halo / PUC Lua 5.1 lexer comparison
 
+Compiler builds and checks have a persistent cache at
+`${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-lex`.
+`--cache DIR` overrides it; `--no-cache` disables caching. Cache paths must be
+outside the repository and survive scratch-executable cleanup.
+This runner reports program execution times, so native builds default to
+`--full-lto`. The compiler rejects combining `--full-lto` with `--cache`;
+`--incremental` selects the persistent cache instead. Cached runtime timings
+have unvalidated differences from full LTO and are only sizing observations.
+Use the default or explicit `--full-lto` for runtime performance measurements.
+Reused binaries must have been built with the corresponding mode.
+
 This experiment checks `lib/halo/lex` against Redis 7.0.15's bundled PUC
 Lua 5.1.5 `llex.c`. It serves the Halo parser's token and diagnostic boundary;
 it is explicitly invoked research, not a dependency of the compiler gate.
@@ -38,8 +49,8 @@ presence and error text are distinguished by the equality comparator.
 From the worktree root, first size a one-file sample, then run the full set:
 
 ```sh
-perl .github/run-check.pl halo-lex-sample python3 research/experiments/halo-lex/run.py --sample 1
-perl .github/run-check.pl halo-lex-compare python3 research/experiments/halo-lex/run.py --output /private/tmp/halo-lex-results.json
+perl .github/run-check.pl halo-lex-sample python3 research/experiments/halo-lex/run.py --incremental --sample 1
+perl .github/run-check.pl halo-lex-compare python3 research/experiments/halo-lex/run.py --full-lto --output /private/tmp/halo-lex-results.json
 ```
 
 Defaults match the supplied task environment. Override `--compiler` and

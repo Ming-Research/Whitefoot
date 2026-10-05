@@ -2404,6 +2404,19 @@ rarely insert at the same place.
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
 
+- **Avoid rebuilds caused only by graph display-path spelling.** Halo cache
+  validation exposed a relative-path invocation missing an entry emitted by
+  the same graph's absolute-path invocation; `push_records` in
+  `compiler/src/driver.rs` includes `SourceInput::display_path` in composition
+  key material. The alternate spelling repeated front-end work even while
+  reusing proof receipts and native objects. Assess separating semantic input
+  identity from diagnostic display paths, retaining the right paths for fresh
+  and reused diagnostics. Validate relative, absolute and symlink spellings
+  against unchanged-build hits and byte-identical acceptance, plus changed
+  source and graph invalidation. Defer from the runner-only cache update;
+  reopen when incremental compiler work next targets invocation identity.
+  Remove this entry when that assessment and its selected repair land.
+
 ## Interpreter dispatch lowering
 
 - **A dispatch loop past the argument registers is emitted whole.**

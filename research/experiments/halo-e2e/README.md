@@ -1,5 +1,16 @@
 # Halo embedding comparison
 
+Compiler builds and checks have a persistent cache at
+`${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-e2e`.
+`--cache DIR` overrides it; `--no-cache` disables caching. Cache paths must be
+outside the repository and survive scratch-executable cleanup.
+This runner reports program execution times, so native builds default to
+`--full-lto`. The compiler rejects combining `--full-lto` with `--cache`;
+`--incremental` selects the persistent cache instead. Cached runtime timings
+have unvalidated differences from full LTO and are only sizing observations.
+Use the default or explicit `--full-lto` for runtime performance measurements.
+Reused binaries must have been built with the corresponding mode.
+
 This explicitly invoked experiment runs the unchanged Halo oracle scripts through
 `pkg::embed` and an in-memory Whitefoot Redis test host. It compares typed RESP2
 JSON with the existing Redis 7.0.15 observations; it never regenerates them.
@@ -18,8 +29,27 @@ removed from the corpus. See RESULTS.md for the measured coverage and gaps.
 Run from the repository root, using an existing compiler (no Cargo):
 
 ```sh
-python3 -B research/experiments/halo-e2e/run.py --compiler /path/to/whitefootc --budgets 1,7,1000 --report /private/tmp/halo-e2e-results.md --actual /private/tmp/halo-e2e-replies
+python3 -B research/experiments/halo-e2e/run.py --compiler /path/to/whitefootc --incremental --filter lua-core/assert --budgets 1,7,1000 --report /private/tmp/halo-e2e-sample.md
+python3 -B research/experiments/halo-e2e/run.py --compiler /path/to/whitefootc --full-lto --budgets 1,7,1000 --report /private/tmp/halo-e2e-results.md --actual /private/tmp/halo-e2e-replies
 ```
+
+On 2026-10-05, macOS 26.6.2 arm64, the supplied gate compiler (SHA-256
+`8d391bd75e31dbd2068f30e586c22cea59f10ef16b21b3f587d4364fec2beeb2`) built this worktree over parent
+`4fcb0b289e8b5c76fcbb2f44031e29b6bf0f8acf` with `--incremental --budgets 1,7,1000`:
+**480.935 s cold, 0.124 s unchanged, 233.842 s after a one-line body edit**.
+Every run passed **240/240** comparisons. The default `halo-e2e` cache was
+initially absent and retained between runs. The edit swapped `used + 1_u64`
+for `1_u64 + used` in `lib/halo/embed/sha1.wf` and was reverted afterward.
+These are compiler-invocation times, excluding oracle execution; cached runtime
+speed relative to full LTO was not measured.
+
+The module-fragment trial required an unchanged-build improvement before
+adoption: ordinary cached linking took 0.133 s;
+`--fragments module` took 9.573 s to populate and
+0.221 s warm, and its binary passed 240/240. These single
+trials did not show an improvement, so runners retain ordinary cached linking.
+A separate relative-graph-path trial missed the absolute-path entry cache and
+repeated front-end work; keep graph spelling consistent across measurements.
 
 The runner builds the Whitefoot test executable once and runs every script with a
 fresh engine/store. `--filter GROUP/NAME` selects a small sample. `--binary PATH`

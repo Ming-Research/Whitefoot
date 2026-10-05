@@ -10,6 +10,10 @@ import subprocess
 import tempfile
 import time
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 ORACLE = ROOT / 'research/experiments/halo-oracle'
@@ -212,6 +216,7 @@ def main():
     parser.add_argument('--report', type=Path)
     parser.add_argument('--actual', type=Path, help='scratch directory for typed replies')
     parser.add_argument('--budgets', default='1000', help='comma-separated: 1,7,1000')
+    cache_arguments(parser, 'halo-e2e', timing=True)
     args = parser.parse_args()
     sensitivity()
     budgets = [int(x) for x in args.budgets.split(',')]
@@ -228,7 +233,7 @@ def main():
         if required != present:
             raise ValueError('missing or surplus baseline files')
     source_files = sorted((ROOT / 'lib/halo').rglob('*.wf')) + sorted((ROOT / 'lib/halo').rglob('*.wfm'))
-    source_files += [ROOT / 'lib/halo/modules.wfg', HERE / 'modules.wfg', HERE / 'run.py']
+    source_files += [ROOT / 'lib/halo/modules.wfg', HERE / 'modules.wfg', HERE / 'run.py', HERE.parent / 'compiler_cache.py']
     source_files += sorted((HERE / 'test').glob('*'))
     source_files += cases + [case_root / 'expected' / p.relative_to(case_root / 'scripts').with_suffix('.txt') for p in cases]
     digest = hashlib.sha256()
@@ -243,7 +248,8 @@ def main():
         scratch = Path(temporary)
         binary = args.binary.resolve() if args.binary else scratch / 'test'
         if not args.binary:
-            build, seconds = run([args.compiler, '--graph', str(HERE / 'modules.wfg'), '--entry', 'test', '-o', str(binary)])
+            build, seconds = run([args.compiler, '--graph', str(HERE / 'modules.wfg'), '--entry', 'test', '-o', str(binary)] + cache_flags(args))
+            print(f'Native build exit {build.returncode}, {seconds:.3f} seconds.', flush=True)
             report += [f'Native build exit {build.returncode}, {seconds:.3f} seconds.', '']
             if build.returncode:
                 print((build.stdout + build.stderr).decode('utf8', 'replace'))

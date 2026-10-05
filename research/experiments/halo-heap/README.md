@@ -24,7 +24,7 @@ mkdir -p "$SCRATCH" "$LUA_SCRATCH/redis/deps" "$LUA_SCRATCH/redis/src"
 perl .github/run-check.pl halo-e1-c-build \
   cc -O2 research/experiments/halo-heap/binarytrees.c -o "$SCRATCH/binarytrees-c"
 perl .github/run-check.pl halo-e1-wf-build \
-  "$WF_COMPILER" research/experiments/halo-heap/heap.wf -o "$SCRATCH/heap"
+  "$WF_COMPILER" --full-lto research/experiments/halo-heap/heap.wf -o "$SCRATCH/heap"
 
 cp -R "$REDIS_SOURCE/deps/lua" "$LUA_SCRATCH/redis/deps/lua"
 cp "$REDIS_SOURCE/src/solarisfixes.h" "$LUA_SCRATCH/redis/src/solarisfixes.h"
@@ -33,6 +33,13 @@ perl .github/run-check.pl halo-e1-lua-build \
   make -C "$LUA_SCRATCH/redis/deps/lua/src" lua MYCFLAGS=-DLUA_USE_POSIX
 "$LUA_SCRATCH/redis/deps/lua/src/lua" -v
 ```
+
+The measured heap executable uses `--full-lto`. For correctness-only incremental
+builds, replace that flag with
+`--cache "${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-heap"`.
+The cache persists outside the repository. Omit the cache flag to disable it;
+`--no-cache` is a runner option, not a compiler option. Full LTO and caching
+cannot be combined; cached runtime differences remain unmeasured.
 
 Use fresh scratch directories when reproducing the copy commands. Redis's `lua_cjson.c` includes `../../../src/solarisfixes.h`, so the copy preserves that relative layout and includes the header. A flat copy failed at that include; the successful build above compiles the original Redis Lua sources without changes, with `-O2 -Wall -DLUA_USE_POSIX`. The interpreter reports Lua 5.1.5. The system/Homebrew Lua 5.4 is not used.
 

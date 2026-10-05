@@ -31,8 +31,14 @@ From the repository root, regenerate and then compare without rewriting:
 
 ```sh
 research/experiments/halo-oracle/run.sh --generate
+research/experiments/halo-oracle/run.sh --check --filter lua-core/assert
 research/experiments/halo-oracle/run.sh --check
 ```
+
+This runner only executes Redis and never builds or checks Whitefoot code.
+Compiler cache, `--no-cache` and `--full-lto` options belong to the
+[Halo comparison runner](../halo-e2e/README.md), not this RESP2 client.
+It uses a local TCP connection, so omit it from runs that prohibit network access.
 
 The default server is `/private/tmp/wf-redis-7.0.15/src/redis-server`.
 Python 3 and that executable are the only dependencies. `--server PATH`

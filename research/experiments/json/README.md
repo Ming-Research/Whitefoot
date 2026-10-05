@@ -1,5 +1,16 @@
 # Standalone JSON package experiment
 
+Compiler builds and checks have a persistent cache at
+`${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/json`.
+`--cache DIR` overrides it; `--no-cache` disables caching. Cache paths must be
+outside the repository and survive scratch-executable cleanup.
+This runner reports program execution times, so native builds default to
+`--full-lto`. The compiler rejects combining `--full-lto` with `--cache`;
+`--incremental` selects the persistent cache instead. Cached runtime timings
+have unvalidated differences from full LTO and are only sizing observations.
+Use the default or explicit `--full-lto` for runtime performance measurements.
+Reused binaries must have been built with the corresponding mode.
+
 The package graph is [lib/json/modules.wfg](../../../lib/json/modules.wfg).
 Its four modules depend only on each other. The native adapter in `check/`
 imports the package plus standard process/IO modules; the Python runner is an
@@ -9,10 +20,10 @@ cases into maintained library tests when the package acquires that test owner.
 
 ```sh
 python3 -B research/experiments/json/run.py \
-  --compiler /path/to/whitefootc --binary /tmp/json-check \
+  --compiler /path/to/whitefootc --full-lto --binary /tmp/json-check \
   --build --samples 20
 python3 -B research/experiments/json/run.py \
-  --compiler /path/to/whitefootc --binary /tmp/json-check \
+  --compiler /path/to/whitefootc --full-lto --binary /tmp/json-check \
   --samples 4000 --report /tmp/json-results.json
 ```
 

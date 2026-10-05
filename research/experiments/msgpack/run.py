@@ -12,6 +12,10 @@ import struct
 import subprocess
 import time
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from compiler_cache import add_arguments as cache_arguments, flags as cache_flags
+
 MASK = (1 << 64) - 1
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -372,6 +376,7 @@ def main():
     parser.add_argument('--lua-lib', type=Path, required=True, help='bundled Lua liblua.a')
     parser.add_argument('--scratch', type=Path, required=True)
     parser.add_argument('--generated', type=int, default=3000)
+    cache_arguments(parser, 'msgpack', timing=True)
     args = parser.parse_args()
     require(args.generated >= 0, 'generated count must be nonnegative')
     scratch = args.scratch.resolve()
@@ -379,7 +384,7 @@ def main():
     scratch.mkdir(parents=True, exist_ok=True)
     wf, reference = scratch / 'msgpack-check', scratch / 'msgpack-reference'
     _, build = command([args.compiler.resolve(), '--graph', HERE / 'modules.wfg',
-                        '--entry', 'check', '-o', wf], timeout=60)
+                        '--entry', 'check', '-o', wf] + cache_flags(args), timeout=900)
     _, c_build = command(['cc', '-O2', '-I' + str(args.redis_src.resolve()),
                           HERE / 'reference.c', args.lua_lib.resolve(), '-lm', '-o', reference],
                          timeout=60)

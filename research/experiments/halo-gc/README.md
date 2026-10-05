@@ -9,9 +9,15 @@ D, E and s2 are freed and interning "s1" again returns the same handle; with
 no root, all eight cells are freed.
 
 ```sh
-whitefootc --graph research/experiments/halo-gc/modules.wfg --function pkg::test::main -o /tmp/gctest
+whitefootc --cache "${WHITEFOOT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/whitefoot}/halo-gc" \
+  --graph research/experiments/halo-gc/modules.wfg --function pkg::test::main -o /tmp/gctest
 /tmp/gctest   # exit 0 when every check holds, otherwise the failing check
 ```
+
+The cache persists outside the repository. For this direct compiler command,
+omit `--cache DIR` to disable caching; the comparison runners expose
+`--no-cache`. A program-speed measurement must replace `--cache DIR` with
+`--full-lto` because cached runtime differences have not been measured.
 
 Exit codes: 1 A freed, 2 B freed, 3 C kept, 4 D kept, 5 s1 not kept,
 6 F freed, 20 wrong rooted count, 30 wrong unrooted count.
