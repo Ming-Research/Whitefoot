@@ -209,15 +209,19 @@ def main():
     parser.add_argument('--binary', type=Path, help='reuse an already built test executable')
     parser.add_argument('--verify-memory', action='store_true', help='check 64 MiB exhaustion and a following script on the same engine')
     parser.add_argument('--isolate-frames', action='store_true', help='remove redundant frame function-slot aliases at budget checkpoints for sole-root testing')
+    parser.add_argument('--omit-suspended-root', action='store_true', help='negative control: hide the parked snapshot only during the suspended collection probe')
     parser.add_argument('--collect-suspended', action='store_true', help='probe collection while callback stack is parked, before resume')
     parser.add_argument('--gc-stress', action='store_true', help='force full collection at every collector safepoint')
     parser.add_argument('--cases', type=Path, default=ORACLE, help='case root with scripts/GROUP/*.lua and expected/GROUP/*.txt')
     parser.add_argument('--filter', default='')
     parser.add_argument('--report', type=Path)
     parser.add_argument('--actual', type=Path, help='scratch directory for typed replies')
+    parser.add_argument('--scratch-root', type=Path, default=Path('/private/tmp'), help='existing directory for temporary build and fixture files')
     parser.add_argument('--budgets', default='1000', help='comma-separated: 1,7,1000')
     cache_arguments(parser, 'halo-e2e', timing=True)
     args = parser.parse_args()
+    if args.omit_suspended_root and not (args.collect_suspended and args.gc_stress):
+        parser.error('root omission requires --collect-suspended and --gc-stress')
     sensitivity()
     budgets = [int(x) for x in args.budgets.split(',')]
     if any(b not in (1, 7, 1000) for b in budgets):
@@ -242,9 +246,9 @@ def main():
     revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True, capture_output=True, check=True).stdout.strip()
     report = ['# Halo end-to-end comparison', '',
               f'Local parent revision: `{revision}`. Source digest: `{digest.hexdigest()}`.',
-              f'GC stress: {args.gc_stress}; suspended checkpoint probe: {args.collect_suspended}; frame alias isolation: {args.isolate_frames}.',
+              f'GC stress: {args.gc_stress}; suspended checkpoint probe: {args.collect_suspended}; frame alias isolation: {args.isolate_frames}; parked root omitted: {args.omit_suspended_root}.',
               'The digest includes every Halo module, the graph, host and runner; it identifies uncommitted source bytes too.', '']
-    with tempfile.TemporaryDirectory(prefix='halo-e2e-', dir='/private/tmp') as temporary:
+    with tempfile.TemporaryDirectory(prefix='halo-e2e-', dir=args.scratch_root) as temporary:
         scratch = Path(temporary)
         binary = args.binary.resolve() if args.binary else scratch / 'test'
         if not args.binary:
@@ -281,6 +285,8 @@ def main():
                     extra += ['--isolate-frames']
                 if args.collect_suspended:
                     extra += ['--collect-suspended']
+                if args.omit_suspended_root:
+                    extra += ['--omit-suspended-root']
                 collections = None
                 try:
                     result, seconds = run([str(binary)] + extra, input=fixture(source))

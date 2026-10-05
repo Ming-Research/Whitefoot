@@ -27,7 +27,7 @@ fn invalidate_roots(engine: &Engine) -> r: unit writes(engine.roots_valid) {
 }
 
 fn refresh_roots(engine: &Engine, slot: u64) -> r: unit writes(engine) {
-  doc "Each pool retains its root bridge until compile, pin or unpin invalidates it. Only original constant prefixes source a rebuild; inactive bridge tails never become roots.";
+  doc "Each pool retains its root bridge until compile, pin or unpin invalidates it. Only original constant prefixes source a rebuild; inactive bridge tails are never read during rebuilds.";
   if slot < engine^.roots_valid.inner.len {
     if engine^.roots_valid.inner[slot] {
       return unit;

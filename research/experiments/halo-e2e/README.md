@@ -109,3 +109,12 @@ before resume. `--isolate-frames` clears dead function-slot aliases at budget
 checkpoints, leaving frame records to root executing closures. These last two
 are explicit root-isolation probes; both default off. Their use and limits
 are recorded in the F4 experiment.
+
+`--omit-suspended-root --collect-suspended --gc-stress` selects the parked-root
+negative control at budget 1: the harness hides the snapshot during collection
+and restores it before resume. The suspended-stack comparison is expected to
+fail with the original expected reply unchanged. Ordinary runs omit this flag.
+
+`--scratch-root DIR` keeps temporary build and fixture files under an existing
+chosen directory. The cost-repair runs use the benchmark's `target/` so all
+new artifacts stay in the requested worktree; the default remains `/private/tmp`.

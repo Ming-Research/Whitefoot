@@ -104,3 +104,11 @@ Consumed suspended snapshots are released after restoration; a host-stopped
 snapshot stays available through nested stop unwinding and is released on
 reset. The [final validation](RESULTS.md#final-committed-collector-validation)
 includes that retention guard, added after this preliminary comparison.
+
+The cost-repair control adds `--omit-suspended-root` together with
+`--collect-suspended --gc-stress`, budget 1. It swaps the parked snapshot into
+an untraced harness local only during the synthetic collection, restores it
+before resume, and keeps the VM continuation and expected `zzz` reply. The
+comparison must fail when that sole root is omitted. This opt-in control
+serves the cost repair's root guarantee; remove it when a maintained root test
+owns this observation or this research probe is retired.

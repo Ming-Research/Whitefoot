@@ -2268,8 +2268,11 @@ rarely insert at the same place.
   call, but the full-LTO native baseline already has per-arm functions and
   indirect tail jumps; a single native dispatch point is not the measured
   cause ([P1 results](../research/experiments/halo-bench/RESULTS.md#value-width-handles-and-native-dispatch-inspected-first)).
-  Impact: the six unscaled workloads are 1.964–4.081 times PUC; depth-14
-  binary-trees is 1.910 times. Numeric profiles expose dispatch/continuation
+  Impact: the initial six unscaled workloads measured 1.964–4.081 times PUC;
+  depth-14 binary-trees measured 1.910 times. The
+  [repair rerun](../research/experiments/halo-bench/RESULTS.md#p1-rerun-after-the-retained-changes)
+  still misses P1 after removing repeated resume copying and guarding the
+  collector call on the not-due path. Numeric profiles expose dispatch/continuation
   traffic, tag tests, repeated window tests and safepoint predicate work;
   table rehash, concat and sorting have separate substantial costs. Change:
   compare the VM.md C1–C6 candidates and library/heap paths with same-source,
@@ -2456,21 +2459,6 @@ rarely insert at the same place.
   source and graph invalidation. Defer from the runner-only cache update;
   reopen when incremental compiler work next targets invocation identity.
   Remove this entry when that assessment and its selected repair land.
-
-- **Halo's budget resumes rebuild and copy the root bridge.** The
-  [P1 budget comparison](../research/experiments/halo-bench/RESULTS.md#budget-1000)
-  raises the 1e8 loop's median from 1.363583 s at the unlimited sentinel to
-  3.043277 s at budget 1000, with 100000 suspensions and no collections.
-  In one budgeted profile, `embed.refresh_roots` and descendants account for
-  1267 of 2355 worker samples, including copying and allocation/free work.
-  `lib/halo/embed/engine.wf` rebuilds the constant/pin bridge on each resume;
-  its append helper reserves one slot at a time. Impact: this embedding's
-  measured decrement-plus-resume cost is far above VM.md's eventual 1%
-  budget target; isolated decrement cost remains unknown. Change: measure
-  bulk reservation or retaining the bridge until roots change, preserving
-  every cached constant, pin and active-script root. Reopen with the next
-  budget/embedding performance work; require interleaved same-source budget
-  pairs, unchanged checksums and collector-root controls before selection.
 
 - **Halo's instruction Cell stride differs from the proposed eight bytes.**
   The [P1 native inspection](../research/experiments/halo-bench/RESULTS.md#value-width-handles-and-native-dispatch-inspected-first)

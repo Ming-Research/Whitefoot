@@ -137,7 +137,7 @@ fn mark_roots(vm: &Vm, stack: &Box<Slots<Value>>, consts: &Box<Slots<Value>>, li
 fn collect_if_due(vm: &Vm, stack: &Box<Slots<Value>>, consts: &Box<Slots<Value>>) -> r: Bool reads(consts), writes(vm), writes(stack) contract {
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
-  doc "A safepoint: at a loop back-edge or call every live value is in a stack slot or a root, so a due collection marks the roots, clears the stack above the live part as Lua 5.1's traversestack does, and sweeps.";
+  doc "Call sites gate the slow path with the same stress/limit/allocation predicate as heap.gc_due; this check also preserves the helper's standalone behavior. A safepoint: at a loop back-edge or call every live value is in a stack slot or a root, so a due collection marks the roots, clears the stack above the live part as Lua 5.1's traversestack does, and sweeps.";
   let due = pkg::heap::gc_due(heap: &vm^.heap);
   if bnot(due) {
     return True();

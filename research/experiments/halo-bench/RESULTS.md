@@ -416,3 +416,193 @@ large budgeted gain. A subsequent budget three-pair run was interrupted
 launch completed and produced no result JSON. Its partial log is retained
 but none of those launches enters a selected median. The interruption's
 cause is unknown; the repeat uses a noninteractive wrapper.
+
+### Roots-only selection
+
+Six alternating before/roots pairs at budget 1000 give before 3.049088 s
+(3.032233–3.079309), roots 1.360235 s (1.355972–1.376209), a 55.39% reduction.
+Six separate alternating unlimited/budget pairs on the roots binary give
+1.359659 s (1.353488–1.363208) and 1.361283 s (1.358142–1.367504), ratio
+1.001194×: **passes 1.15×; retain the roots change**. Relative ranges are
+0.71% unlimited and 0.69% budgeted, far from the decision boundary.
+Every launch exits 0, matches independent PUC, has zero collections and
+100,000 budgeted suspensions. Incremental time per suspension changes from
+16.881 microseconds in the fresh before control to 0.016 microseconds here.
+That after point estimate is smaller than launch variation; it is not a
+precise isolated resume or decrement latency, nor a proof of P3's 1% target.
+The resolved resume-copying TODO is removed; full-package construction cost
+and unrelated P1 hot paths remain deferred.
+
+The initial safepoint authoring build exited 1 in 1.39 s at GRAM-9, refusing
+nested `bor` calls in atom positions. A second authoring build exited 1 in 1.39 s at GRAM-5 because comparisons
+also require binders in call argument positions. Binding all three comparisons
+and the intermediate boolean values preserves the proposed predicate; no timing from that failed build is used.
+
+### Inline safepoint measurement
+
+The full-LTO timing build exits 0 in 477.21 s. The first new-binary launch
+(1.485965 s) is calibration only. Three warm pairs give relative ranges
+0.53% roots-only / 0.54% inline. Six selected alternating pairs give
+roots-only 1.387613 s (1.383352–1.389477), inline 1.245011 s
+(1.237761–1.248955), ratio 0.897232×, **10.28% faster: passes the 5%
+performance criterion**. Relative ranges 0.44% / 0.90% cannot move the
+conclusion across the threshold. Both sides use identical loop source bytes,
+match independently executed PUC, exit 0, suspend zero times and collect zero
+times. The final embedding oracle and stress checks below also pass; retain the
+inline safepoint change.
+
+The three tests of the paired runner distinguish valid data (exit 0), unequal
+collection counts (exit 1), and wrong native checksums (exit 1); agreeing wrong
+native outputs also fail against independent PUC (exit 1). Missing required
+root-control flags fail with argparse exit 2. Lock-contention exits 75 launch
+no build or benchmark; retrying acquisition never bypasses the host-wide lock.
+
+### Final correctness and retained changes
+
+Both changes are retained. The final full-LTO embedding build exits 0 in
+457.89 s. Final ordinary oracle 240/240, stress oracle 240/240, local roots
+9/9, frame isolation 1/1, suspended snapshot 1/1 and the extended lifecycle
+probe pass. A tool compares every case/budget/status/collection row with the
+fresh before control and finds identical outcomes and counts. Stress totals
+remain 20,450 at each budget; local-root totals 25, isolated frame 9 and
+parked snapshot 14. The independent every-allocation verifier remains open.
+
+The parked-root omission control returns native exit 0 with a Lua error,
+`attempt to index a function value`, instead of the unchanged expected bulk
+`zzz`; the comparison exits 1 as required (5 collections before the error).
+The positive witness returns `zzz` with 14 collections. Only the harness's
+parked root visibility changes during the synthetic collection; the snapshot
+is restored before resume and the ordinary collector and continuation are
+used. No expected reply or oracle source is changed.
+
+The 64 MiB memory exhaustion and same-engine/store recovery witnesses pass
+with stress off, before and after, at budgets 1, 7 and 1000: the same
+`not enough memory` error followed by bulk `alive`, 8 completed collections
+and 9,846 recovered heap bytes at every budget. This separately exercises the
+nonzero-limit path rather than hiding it behind stress's always-due trigger.
+These existing F4 fixtures were sized by their recorded sub-second executions;
+construction and execution remain separate. Q1 is still open: the readonly
+root-storage boundary is a recommendation in the live tree, not an approval.
+
+### P1 rerun after the retained changes
+
+Every workload was first launched once and then in three alternating pairs
+at the unchanged P1 counts (binary-trees depth 14). Calibration relative ranges
+(PUC / Halo):
+
+| Kernel | PUC range % | Halo range % |
+|---|---:|---:|
+| fib | 0.62 | 0.45 |
+| loop | 16.71 | 2.45 |
+| integer-table | 1.73 | 0.81 |
+| string-key | 1.51 | 2.24 |
+| concat | 0.76 | 2.41 |
+| sort | 0.92 | 2.85 |
+| binary-trees | 0.75 | 1.45 |
+
+The loop reference's 16.71% calibration range does not approach the P1 ratio
+boundary; six pairs still distinguish P1 failure on every workload. These
+calibrations are retained and excluded from the table. The final six-pair
+run alternates PUC/Halo and Halo/PUC and verifies equal source hashes,
+checksums and completed collections against the initial baseline.
+
+| Kernel | Before PUC s | Before Halo s | Before ratio | After PUC s | After Halo s | After ratio | After PUC min–max s | After Halo min–max s | Pairs |
+|---|---:|---:|---:|---:|---:|---:|---|---|---:|
+| fib | 0.077791 | 0.223039 | 2.867 | 0.080212 | 0.227613 | 2.838 | 0.080107–0.080977 | 0.225034–0.228453 | 6 |
+| loop | 0.460990 | 1.363583 | 2.958 | 0.473806 | 1.249755 | 2.638 | 0.472441–0.474899 | 1.247932–1.274765 | 6 |
+| integer-table | 0.201466 | 0.822095 | 4.081 | 0.206035 | 0.802504 | 3.895 | 0.204913–0.207563 | 0.801091–0.934778 | 6 |
+| string-key | 0.026168 | 0.057557 | 2.200 | 0.027376 | 0.059457 | 2.172 | 0.026830–0.028418 | 0.058630–0.059922 | 6 |
+| concat | 0.055690 | 0.208976 | 3.752 | 0.057729 | 0.213089 | 3.691 | 0.057574–0.058078 | 0.205546–0.216955 | 6 |
+| sort | 0.379271 | 0.744996 | 1.964 | 0.391232 | 0.759584 | 1.942 | 0.387766–0.400727 | 0.752823–0.768441 | 6 |
+| binary-trees | 1.278944 | 2.442658 | 1.910 | 1.326630 | 2.491015 | 1.878 | 1.314767–1.331011 | 2.476898–2.513080 | 6 |
+
+All native and reference exits are 0; every unlimited launch has zero
+suspensions. Collections remain fib 0, loop 0, integer-table 5, string-key 0,
+concat 0, sort 3 and binary-trees 176 in all six launches. P1 still fails on
+all seven workloads. Before and after P1 tables are separate sessions;
+reference medians changed too, so their absolute differences do not isolate
+causal gains on the other kernels. Only the alternating native source pairs
+above isolate the selected mechanisms. No post-change profiles were collected;
+baseline sample percentages are not current occupancies. Depth 16 and real
+Redis end-to-end performance remain unmeasured here.
+
+### Budget comparison before and after
+
+Final-binary calibration uses one pair and then three; the latter ranges are
+1.15% unlimited and 4.02% budgeted. Even the observed extremes are below the
+1.15× limit, so six pairs suffice for the requested criterion. All selected
+budgeted launches have exactly 100,000 suspensions and zero collections;
+unlimited launches suspend and collect zero times.
+
+| Version | Unlimited median s | Budget 1000 median s | Budget / unlimited | Incremental µs / suspension | Unlimited min–max s | Budget min–max s | Pairs |
+|---|---:|---:|---:|---:|---|---|---:|
+| Before | 1.356240 | 3.044296 | 2.244658 | 16.881 | 1.355378–1.367506 | 3.035735–3.052223 | 6 |
+| Roots only | 1.359659 | 1.361283 | 1.001194 | 0.016 | 1.353488–1.363208 | 1.358142–1.367504 | 6 |
+| Both retained changes | 1.255465 | 1.279899 | 1.019462 | 0.244 | 1.245278–1.265214 | 1.255019–1.294559 | 6 |
+
+The final binary's ratio 1.019462× also passes the root criterion. Its
+incremental estimate is 0.244 microseconds per suspension, including all
+100 million budget charges, startup and embedding work divided by 100,000
+suspensions. Final relative ranges are 1.59% unlimited / 3.09% budgeted;
+paired delta variation and the roots-only estimate's near-zero size prevent
+interpreting these as isolated resume latencies. The final median budget cost
+is 1.95%, so this experiment does not establish P3's under-1% target. No extra
+runs were selected to answer that separate question.
+
+### Repair commands, identity and validation
+
+[Cost measurements](cost-measurements.json) retain all 30 calibration/selected
+run records with launch order, source/tool hashes, exits, checksums, stats and
+spreads, complete oracle/root reports, memory observations, construction logs
+and admission controls. This file serves reproducibility of the retained
+repairs and is removed when that need ends. The final library manifest names
+every Halo source digest. Reused binaries are identified by their SHA-256,
+not an assumption that a launch record's HEAD describes uncommitted code.
+Before/roots native sources correspond to the initial baseline and the roots
+milestone respectively; final timing sources include only the safepoint code
+change beyond the roots implementation, plus a doc clarification. The final
+embedding host also includes the new root-omission control and lifecycle probe.
+The supplemental before-memory report's working-tree source digest is from the
+later runner; its reused binary hash identifies the original before host.
+
+Commands below ran locally; `<reference-root>` is the existing Redis 7.0.15
+checkout. Native construction and measurement run through
+`perl .github/run-check.pl LABEL COMMAND ...`. Lock acquisition retries only
+exit 75, never a failed executed command. Scratch fixture files are directed
+into the benchmark's existing `target/` (earlier runs used a one-shot in-process
+temporary-directory redirect; later ones use `--scratch-root`). No network,
+Cargo, push or PR command was used.
+
+- `compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --entry test --full-lto -o research/experiments/halo-bench/target/e2e-before|e2e-roots|e2e-after`: all exit 0, wrapper walls 464.06 / 453.77 / 457.89 s.
+- `compiler/target/gate/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o research/experiments/halo-bench/target/halo-roots|halo-after`: exits 0, 448.25 / 477.21 s. The before timing binary is the retained P1 full-LTO binary. Two preliminary syntax probes exit 1 (GRAM-9 and GRAM-5, each 1.39 s), with no timing admitted.
+- `python3 -B research/experiments/halo-bench/run.py --lua <reference-root>/redis/deps/lua/src/lua --before-binary BEFORE --binary AFTER --kernels loop --runs 1|3|6 --out target/NAME.json`, adding `--before-budget large|realistic --budget large|realistic` for the mode pairs: every completed run exits 0. Selected files are `before-budget-six`, `roots-six`, `roots-budget-six`, `safepoint-six` and `after-budget-six`. The incomplete budget calibration exits 129, outer shell 143; those observations are excluded. Native wrong-checksum/count admission controls exit 1 as required; valid data exit 0.
+- `python3 -B research/experiments/halo-bench/run.py --lua <reference-root>/redis/deps/lua/src/lua --binary research/experiments/halo-bench/target/halo-after --kernels fib,loop,integer-table,string-key,concat,sort,binary-trees --scale binary-trees=14 --runs 6 --out research/experiments/halo-bench/target/after-p1.json`: exit 0. Per-kernel one/three calibration uses the same flags and selected single kernel; all exits 0.
+- `python3 -B research/experiments/halo-e2e/run.py --scratch-root research/experiments/halo-bench/target --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/e2e-after --budgets 1,7,1000 --report target/REPORT.md`: exit 0, 240/240; add `--gc-stress`: exit 0, 240/240. The before and roots hosts also pass both 240-comparison modes.
+- Same runner with `--cases research/experiments/halo-gc/cases --gc-stress --budgets 1,7,1000`: exit 0, 9/9. Add `--filter gc/frame-closure --isolate-frames --budgets 1`: exit 0, 1/1. Add `--filter gc/suspended-stack --collect-suspended --budgets 1`: exit 0, 1/1. These pass on before, roots and final hosts. Adding `--omit-suspended-root` to the final suspended run exits 1 on the intended reply mismatch, native exit 0. Missing required omission flags exit 2 (expected).
+- `research/experiments/halo-bench/target/e2e-before|e2e-roots|e2e-after a b c`: lifecycle probes exit 0 (roots/final include the suspended root-set update extension).
+- Same e2e runner with before/final host, `--filter lua-core/counter-closure --verify-memory --budgets 1,7,1000`: exits 0, independently expected exhaustion and recovery replies and equal counts/bytes.
+- RESP2 sensitivity and paired validator controls: exit 0 for the checking harness; deliberate rejected invocations have the exits described above. `git diff --check`: exit 0.
+- `make design-lint`: exit 0, 7.99 s sizing run; `make static`: all seven stages exit 0, wrapper 32.77 s. Static uses a task scratch directory for native temporary files. No `make check` ran because it invokes prohibited Cargo; no ready/merge check or approval log was written. No specification or conformance rules changed.
+
+Validation above ran on working source over parent `41a6fee1c9ddeae319d31aa1feef32e0c9954d2d`; binary and
+source hashes identify the tested content. The final handoff commit also adds
+the result prose and review record. Publication is explicitly out of scope.
+
+### Found during the repair
+
+- Fixed: repeated root bridge allocation/copying; one-slot append growth;
+  unconditional collector-helper calls when no trigger holds. Their two
+  requested criteria and independent replies/counts select the changes.
+- Fixed on recommendation Q1: public root-storage writes could bypass
+  invalidation. Root fields are public readonly; inspection remains available
+  and embedding operations own writes. The owner ruling is still open.
+- Fixed in the existing experiment home: suspended pin/compile/unpin changes
+  lacked a lifecycle observation; the probe now covers additions and release.
+  A parked-root omission control separates correct rooting from a reply pass
+  without collection. A scratch-root option keeps fixture outputs in this
+  worktree. Each remains until a maintained test takes over or this experiment
+  is retired.
+- Removed the resolved resume-copying TODO and updated the P1 TODO/status;
+  other hot paths, Cell stride, the every-allocation verifier and compiler
+  construction cost remain recorded in `docs/todo.md`. This task does not
+  select C1–C6 or claim current profile occupancy for them.

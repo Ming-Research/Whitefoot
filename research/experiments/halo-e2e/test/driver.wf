@@ -289,7 +289,7 @@ fn callback_line(vm: &Vm) -> r: u64 reads(vm) {
   return 0_u64;
 }
 
-fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64, collect_suspended: Bool, isolate_frames: Bool) -> r: Outcome writes(engine), writes(env) {
+fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64, collect_suspended: Bool, isolate_frames: Bool, omit_suspended_root: Bool) -> r: Outcome writes(engine), writes(env) {
   let out_v62 = halo::embed::start::<TestHost>(engine: engine, env: env, script: id, budget: budget);
   let steps_v63 = 0_u64;
   loop {
@@ -312,7 +312,7 @@ fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64, collect_sus
         }
         if collect_suspended {
           if engine^.vm.suspended {
-            collect_checkpoint(engine: engine, env: env, id: id);
+            collect_checkpoint(engine: engine, env: env, id: id, omit_root: omit_suspended_root);
           }
         }
         set out_v62 = halo::embed::resume::<TestHost>(engine: engine, env: env, budget: budget);
@@ -418,6 +418,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let modes = std::text::args_count(args: &args_v99);
   let stress = False();
   let collect_suspended = False();
+  let omit_suspended_root = False();
   let isolate_frames = False();
   let recover = False();
   let positional = 0_u64;
@@ -426,6 +427,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       set stress = True();
     } else if argument_is(args: &args_v99, index: index, text: &suspended_option[0_u64..19_u64]) {
       set collect_suspended = True();
+    } else if argument_is(args: &args_v99, index: index, text: &omit_root_option[0_u64..21_u64]) {
+      set omit_suspended_root = True();
     } else if argument_is(args: &args_v99, index: index, text: &frames_option[0_u64..16_u64]) {
       set isolate_frames = True();
     } else if argument_is(args: &args_v99, index: index, text: &recovery_option[0_u64..17_u64]) {
@@ -474,7 +477,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       return std::process::exit_status(code: 3_u8);
     }
     Ok(value: id_v122) => {
-      let outcome_v123 = run_script(engine: &engine_v114, env: &env_v117, id: id_v122, budget: budget_v119, collect_suspended: collect_suspended, isolate_frames: isolate_frames);
+      let outcome_v123 = run_script(engine: &engine_v114, env: &env_v117, id: id_v122, budget: budget_v119, collect_suspended: collect_suspended, isolate_frames: isolate_frames, omit_suspended_root: omit_suspended_root);
       match outcome_v123 {
         Done(..) => {
         }
@@ -525,7 +528,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
             push(out: &out_v118, byte: 125_u8);
           }
           Ok(value: id_v128) => {
-            let outcome_v129 = run_script(engine: &engine_v114, env: &env_v117, id: id_v128, budget: budget_v119, collect_suspended: collect_suspended, isolate_frames: isolate_frames);
+            let outcome_v129 = run_script(engine: &engine_v114, env: &env_v117, id: id_v128, budget: budget_v119, collect_suspended: collect_suspended, isolate_frames: isolate_frames, omit_suspended_root: omit_suspended_root);
             match outcome_v129 {
               Done(count: count_v130) => {
                 let v_v131 = Value::Nil();
@@ -591,6 +594,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
 }
 
 const frames_option: Array<u8, 16> = "--isolate-frames";
+
+const omit_root_option: Array<u8, 21> = "--omit-suspended-root";
 
 const suspended_option: Array<u8, 19> = "--collect-suspended";
 
@@ -668,13 +673,17 @@ fn write_bytes(factory: &HandleFactory, output: &OutputStream, bytes: &Box<Slots
   return False();
 }
 
-fn collect_checkpoint(engine: &Engine, env: &Env, id: ScriptId) -> r: unit writes(engine), writes(env) {
+fn collect_checkpoint(engine: &Engine, env: &Env, id: ScriptId, omit_root: Bool) -> r: unit writes(engine), writes(env) {
   doc "Runs one synthetic back-edge on the parked VM before resume, preserving its saved continuation and using the active pool's mirrored roots. This is an explicitly selected research probe.";
   let slot = id.slot;
   let code = box_slots_new::<halo::value::Cell>(capacity: 1_u64);
   let jump = halo::value::Cell::Jmp(target: 0_u32);
   if code.inner.len < code.inner.cap {
     place_back(window: &code.inner, value: jump);
+  }
+  let parked = box_slots_new::<Value>(capacity: 0_u64);
+  if omit_root {
+    swap(first: &parked, second: &engine^.vm.stopped_stack);
   }
   let budget = engine^.vm.budget;
   set engine^.vm.budget = 1_u64;
@@ -688,6 +697,9 @@ fn collect_checkpoint(engine: &Engine, env: &Env, id: ScriptId) -> r: unit write
     }
   }
   set engine^.vm.budget = budget;
+  if omit_root {
+    swap(first: &parked, second: &engine^.vm.stopped_stack);
+  }
   return unit;
 }
 
