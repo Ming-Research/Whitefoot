@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
 use crate::syntax::{FinalizedExtent, FinalizedTopology, NodeId};
@@ -327,6 +327,8 @@ fn build_tables(syntax: &CanonicalSyntaxUnit) -> Result<Tables, BuildStop> {
     let classified = syntax.classified_bundle();
     let bundle = classified.source_bundle();
     let items = item_keys(topology, &roles, bundle)?;
+    let public_writers = fixed_terminal_writers(topology, classified, FixedTerminal::Public);
+    let body_writers = fixed_terminal_writers(topology, classified, FixedTerminal::LeftBrace);
     {
         let mut declarations = Vec::new();
         let mut dependent_declarations = Vec::new();
@@ -415,7 +417,7 @@ fn build_tables(syntax: &CanonicalSyntaxUnit) -> Result<Tables, BuildStop> {
                     let public = top_level
                         && !prelude_source
                         && publishing_node
-                            .is_some_and(|node| declares_public(topology, classified, node));
+                            .is_some_and(|node| declares_public(topology, &public_writers, node));
                     let function_form =
                         if declaration_role == DeclarationRole::Function && !prelude_source {
                             let node = role
@@ -423,7 +425,7 @@ fn build_tables(syntax: &CanonicalSyntaxUnit) -> Result<Tables, BuildStop> {
                                 .first()
                                 .copied()
                                 .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
-                            if has_body(topology, classified, node) {
+                            if body_writers.contains(&node) {
                                 FunctionForm::Definition
                             } else {
                                 FunctionForm::Declaration { definition: None }
@@ -1373,10 +1375,11 @@ fn declaration_key(
     })
 }
 
-/// Whether the item that owns this declaration node writes `public` [MOD-6].
+/// Whether the item that owns this declaration node writes `public` [MOD-6];
+/// `public_writers` holds every node that writes `public` directly.
 fn declares_public(
     topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle,
+    public_writers: &HashSet<NodeId>,
     declaration: NodeId,
 ) -> bool {
     topology
@@ -1387,38 +1390,30 @@ fn declares_public(
                 .node(*item)
                 .is_some_and(|record| record.production == Production::Item)
         })
-        .is_some_and(|item| writes_fixed(topology, classified, item, FixedTerminal::Public))
+        .is_some_and(|item| public_writers.contains(&item))
 }
 
-/// Whether a `fn_decl` writes a body rather than ending in `;` or its `doc`
-/// entry [GRAM-2, MOD-7].
-fn has_body(
+/// The nodes that write this fixed terminal directly, gathered in one pass
+/// over the terminals. A `fn_decl` among the `{` writers writes a body rather
+/// than ending in `;` or its `doc` entry [GRAM-2, MOD-7].
+fn fixed_terminal_writers(
     topology: &FinalizedTopology,
     classified: &crate::ClassifiedBundle,
-    declaration: NodeId,
-) -> bool {
-    writes_fixed(topology, classified, declaration, FixedTerminal::LeftBrace)
-}
-
-/// Whether one node writes this fixed terminal directly.
-fn writes_fixed(
-    topology: &FinalizedTopology,
-    classified: &crate::ClassifiedBundle,
-    node: NodeId,
     terminal: FixedTerminal,
-) -> bool {
+) -> HashSet<NodeId> {
     topology
         .terminals
         .iter()
         .enumerate()
-        .any(|(index, record)| {
-            record.owner == Some(node)
-                && classified.tokens().get(index).is_some_and(|token| {
-                    token
-                        .terminals()
-                        .contains(TerminalPredicate::Fixed(terminal))
-                })
+        .filter(|(index, _)| {
+            classified.tokens().get(*index).is_some_and(|token| {
+                token
+                    .terminals()
+                    .contains(TerminalPredicate::Fixed(terminal))
+            })
         })
+        .filter_map(|(_, record)| record.owner)
+        .collect()
 }
 
 fn declaration_classes(role: DeclarationRole) -> Vec<DeclarationClass> {

@@ -969,11 +969,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let mut dependencies = vec![Vec::new(); nodes.len()];
         for (index, node) in nodes.iter().enumerate() {
             let owner = self.tree.path(*node)?.components().to_vec();
-            for usage in self.resolved.lexical_uses() {
-                let path = usage.origin().node().components();
-                if path.len() < owner.len() || !path.starts_with(&owner) {
-                    continue;
-                }
+            for usage in self.resolved.lexical_uses_under(&owner) {
                 if let crate::ResolvedTarget::Source {
                     declaration,
                     class: crate::DeclarationClass::NamedConst,
@@ -3813,19 +3809,16 @@ impl<'unit> TypeContext<'unit> {
         if self
             .declarations
             .resolved
-            .lexical_uses()
-            .iter()
+            .lexical_uses_under(owner)
+            .into_iter()
             .any(|usage| {
-                let path = usage.origin().node().components();
-                path.len() >= owner.len()
-                    && path.starts_with(owner)
-                    && matches!(
-                        usage.target(),
-                        crate::ResolvedTarget::Source {
-                            declaration,
-                            class: crate::DeclarationClass::NamedConst,
-                        } if !self.constants.contains_key(&declaration)
-                    )
+                matches!(
+                    usage.target(),
+                    crate::ResolvedTarget::Source {
+                        declaration,
+                        class: crate::DeclarationClass::NamedConst,
+                    } if !self.constants.contains_key(&declaration)
+                )
             })
         {
             return Ok(false);

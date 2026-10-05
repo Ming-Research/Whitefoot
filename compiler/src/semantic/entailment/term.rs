@@ -196,6 +196,10 @@ pub(crate) struct TermTable {
     ids: WordHashMap<TermKind, TermId>,
     measure_bounds: WordHashMap<TermId, MeasureBound>,
     revision: usize,
+    /// How many registrations replaced a different standing measure fact of
+    /// an already registered measure term, which can weaken that term's
+    /// implicit bounds rather than only add to them.
+    measure_replacements: usize,
 }
 
 impl TermTable {
@@ -205,6 +209,7 @@ impl TermTable {
             ids: WordHashMap::default(),
             measure_bounds: WordHashMap::default(),
             revision: 0,
+            measure_replacements: 0,
         };
         let zero = table.intern(TermKind::Zero);
         debug_assert_eq!(zero, ZERO);
@@ -212,7 +217,14 @@ impl TermTable {
     }
 
     pub(crate) fn set_measure_bound(&mut self, term: TermId, bound: MeasureBound) {
-        if self.measure_bounds.insert(term, bound) != Some(bound) {
+        let previous = self.measure_bounds.insert(term, bound);
+        if previous.is_some_and(|previous| previous != bound) {
+            self.measure_replacements = self
+                .measure_replacements
+                .checked_add(1)
+                .expect("measure replacement count fits usize");
+        }
+        if previous != Some(bound) {
             self.revision = self
                 .revision
                 .checked_add(1)
@@ -223,6 +235,11 @@ impl TermTable {
     /// Changes whenever registered terms or their standing measure facts change.
     pub(crate) fn revision(&self) -> usize {
         self.revision
+    }
+
+    /// Changes whenever a standing measure fact replaces a different one.
+    pub(crate) fn measure_replacements(&self) -> usize {
+        self.measure_replacements
     }
 
     pub(crate) fn measure_bound(&self, term: TermId) -> Option<MeasureBound> {

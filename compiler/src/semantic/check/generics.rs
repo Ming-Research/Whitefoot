@@ -570,30 +570,25 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .declarations
             .resolved
-            .lexical_uses()
-            .iter()
-            .any(|usage| {
-                let path = usage.origin().node().components();
-                path.len() >= owner.len()
-                    && path.starts_with(owner)
-                    && match usage.target() {
-                        ResolvedTarget::Source {
-                            declaration,
-                            class: DeclarationClass::NamedConst,
-                        } => !self.types.constants.contains_key(&declaration),
-                        ResolvedTarget::Source {
-                            declaration,
-                            class: DeclarationClass::NominalType,
-                        } => {
-                            self.analysis
-                                .postcondition_declaration_unavailable(declaration)
-                                || !self
-                                    .types
-                                    .nominal_templates_by_declaration
-                                    .contains_key(&declaration)
-                        }
-                        _ => false,
-                    }
+            .lexical_uses_under(owner)
+            .into_iter()
+            .any(|usage| match usage.target() {
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::NamedConst,
+                } => !self.types.constants.contains_key(&declaration),
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::NominalType,
+                } => {
+                    self.analysis
+                        .postcondition_declaration_unavailable(declaration)
+                        || !self
+                            .types
+                            .nominal_templates_by_declaration
+                            .contains_key(&declaration)
+                }
+                _ => false,
             })
         {
             return Ok(false);
@@ -938,30 +933,25 @@ impl<'unit> Checker<'_, 'unit> {
                 .types
                 .declarations
                 .resolved
-                .lexical_uses()
-                .iter()
-                .any(|usage| {
-                    let usage_path = usage.origin().node().components();
-                    usage_path.len() >= path.len()
-                        && usage_path.starts_with(path)
-                        && match usage.target() {
-                            ResolvedTarget::Source {
-                                declaration,
-                                class: DeclarationClass::NamedConst,
-                            } => !self.types.constants.contains_key(&declaration),
-                            ResolvedTarget::Source {
-                                declaration,
-                                class: DeclarationClass::NominalType,
-                            } => {
-                                self.analysis
-                                    .postcondition_declaration_unavailable(declaration)
-                                    || !self
-                                        .types
-                                        .nominal_templates_by_declaration
-                                        .contains_key(&declaration)
-                            }
-                            _ => false,
-                        }
+                .lexical_uses_under(path)
+                .into_iter()
+                .any(|usage| match usage.target() {
+                    ResolvedTarget::Source {
+                        declaration,
+                        class: DeclarationClass::NamedConst,
+                    } => !self.types.constants.contains_key(&declaration),
+                    ResolvedTarget::Source {
+                        declaration,
+                        class: DeclarationClass::NominalType,
+                    } => {
+                        self.analysis
+                            .postcondition_declaration_unavailable(declaration)
+                            || !self
+                                .types
+                                .nominal_templates_by_declaration
+                                .contains_key(&declaration)
+                    }
+                    _ => false,
                 })
             {
                 return Ok(false);

@@ -1382,6 +1382,9 @@ pub(crate) struct NodeRecords {
     dependent_declarations: NodeIndex,
     lexical_uses: NodeIndex,
     deferred_uses: NodeIndex,
+    /// Lexical-use positions sorted by origin path, record order among equal
+    /// paths, so the uses inside one subtree form one contiguous range.
+    lexical_uses_by_path: Vec<usize>,
 }
 
 impl NodeRecords {
@@ -1395,7 +1398,16 @@ impl NodeRecords {
         lexical_uses: &[LexicalUseRecord],
         deferred_uses: &[DeferredUseRecord],
     ) -> Self {
+        let mut lexical_uses_by_path = (0..lexical_uses.len()).collect::<Vec<_>>();
+        lexical_uses_by_path.sort_by(|left, right| {
+            lexical_uses[*left]
+                .origin()
+                .node()
+                .components()
+                .cmp(lexical_uses[*right].origin().node().components())
+        });
         Self {
+            lexical_uses_by_path,
             declarations: NodeIndex::build(
                 nodes,
                 declarations
@@ -1584,6 +1596,22 @@ impl ResolvedSyntaxUnit {
             .at(node)
             .iter()
             .map(|index| &records[*index])
+    }
+
+    /// The lexical uses whose origin path starts with `prefix`, that is every
+    /// use inside the subtree at that path, in record order.
+    pub(crate) fn lexical_uses_under(&self, prefix: &[u32]) -> Vec<&LexicalUseRecord> {
+        let records = &self.lexical_uses;
+        let sorted = &self.by_node.lexical_uses_by_path;
+        let path = |index: &usize| records[*index].origin().node().components();
+        let start = sorted.partition_point(|index| path(index) < prefix);
+        let mut positions = sorted[start..]
+            .iter()
+            .take_while(|index| path(index).starts_with(prefix))
+            .copied()
+            .collect::<Vec<_>>();
+        positions.sort_unstable();
+        positions.into_iter().map(|index| &records[index]).collect()
     }
 
     /// The deferred uses whose origin is `node`, in record order.

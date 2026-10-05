@@ -2578,7 +2578,11 @@ impl BoundStore {
         self.bounds[index] = bound;
         self.proofs[index] = proof;
         self.present[index] = true;
-        self.extra.remove(&(left, right));
+        // A fresh store has no further candidates; skipping the probe keeps
+        // building a materialized closure free of one hash lookup per cell.
+        if !self.extra.is_empty() {
+            self.extra.remove(&(left, right));
+        }
     }
 
     fn clear(&mut self, pair: (TermId, TermId)) {
@@ -2616,9 +2620,38 @@ struct ClosedViewKey {
     terms: usize,
     term_revision: usize,
     term_count: usize,
+    measure_replacements: usize,
     goals: usize,
     goal_revision: usize,
     ledger: usize,
+}
+
+/// The remembered closed view of a state with no closure record, kept while
+/// the state only gains relations: the view is the closure of the state's
+/// facts when it was taken, so the closure now is that view with the gained
+/// bound cells and any later term's implicit bounds inserted as edges.
+#[derive(Clone)]
+struct ViewSeed {
+    /// The term table and derivation ledger the view read, by identity, and
+    /// the term table's standing-measure replacements then. Terms registered
+    /// since are fresh; a replaced standing fact could weaken an implicit
+    /// bound the view already used, so it ends the seed.
+    terms: usize,
+    ledger: usize,
+    measure_replacements: usize,
+    closed: Rc<ClosedState>,
+    /// Cells whose selected bound has become strictly smaller since the
+    /// view was taken.
+    fresh_cells: Vec<(TermId, TermId)>,
+}
+
+impl std::fmt::Debug for ViewSeed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ViewSeed")
+            .field("fresh_cells", &self.fresh_cells)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One bound cell `left - right <= bound` an [ENT-5] kill removed, with its
@@ -2650,6 +2683,10 @@ pub(crate) struct FactState {
     /// contradiction clears it; its key names the term, goal and derivation
     /// tables and their revisions, so a registered term or goal also misses.
     closed_view: std::cell::RefCell<Option<ClosedView>>,
+    /// While the closure record is unknown and the state has only gained
+    /// bound relations since a closed view was taken, that view, as the
+    /// starting point of the next closure. Any other change ends it.
+    view_seed: Option<ViewSeed>,
     /// Whether some bound or disequality candidate may depend on a
     /// postcondition call. A state without one has nothing for a
     /// postcondition-candidate removal to remove.
@@ -2695,6 +2732,7 @@ impl FactState {
             closure: ClosureRecord::Unknown,
             ordinary_closure: ClosureRecord::Unknown,
             closed_view: std::cell::RefCell::new(None),
+            view_seed: None,
             postcondition_candidates: false,
             all_derivable: false,
             contradiction: None,
@@ -2712,9 +2750,42 @@ impl FactState {
 
     /// Makes the state the absorbing contradiction proved by `contradiction`.
     pub(crate) fn promote_to_contradiction(&mut self, contradiction: Option<DerivationId>) {
-        self.closed_view.take();
+        self.forget_closed_view();
         self.all_derivable = true;
         self.contradiction = contradiction;
+    }
+
+    /// Drops the remembered closed view and any seed: the change about to be
+    /// made can remove or weaken a relation, or add a disequality, which a
+    /// seed does not carry forward.
+    fn forget_closed_view(&mut self) {
+        self.closed_view.take();
+        self.view_seed = None;
+    }
+
+    /// Drops the remembered closed view, keeping it as the seed of the next
+    /// closure while the closure record is unknown; `fresh` is a bound cell
+    /// about to become strictly smaller.
+    fn keep_view_as_seed(&mut self, fresh: Option<(TermId, TermId)>) {
+        let view = self.closed_view.take();
+        if !matches!(self.closure, ClosureRecord::Unknown) {
+            self.view_seed = None;
+            return;
+        }
+        if let Some(view) = view
+            && !view.closed.all_derivable
+        {
+            self.view_seed = Some(ViewSeed {
+                terms: view.key.terms,
+                ledger: view.key.ledger,
+                measure_replacements: view.key.measure_replacements,
+                closed: view.closed,
+                fresh_cells: Vec::new(),
+            });
+        }
+        if let (Some(seed), Some(cell)) = (&mut self.view_seed, fresh) {
+            seed.fresh_cells.push(cell);
+        }
     }
 
     pub(crate) fn contradictory(contradiction: DerivationId) -> Self {
@@ -2961,7 +3032,9 @@ impl FactState {
         event: FlowEventId,
     ) -> DerivationId {
         let fact = (goal, sign);
-        self.closed_view.take();
+        // A signed goal decides no bound or disequality, so the closed view
+        // stays a seed of the next closure.
+        self.keep_view_as_seed(None);
         let proof = ledger.intern(DerivationNode::SourceGoal { goal, sign, event });
         if !self.all_derivable
             && (self.opaque.insert(fact) || ledger.better(proof, self.opaque_proofs[&fact]))
@@ -3010,15 +3083,15 @@ impl FactState {
         if self.bounds.contains_candidate(pair, (bound, proof)) {
             return;
         }
-        self.closed_view.take();
         // A new proof candidate must remain available to later support kills,
         // but only a stronger numeric bound changes this layer's closure.
         // Result transport routinely imports already-known ordinary bounds.
-        if self
+        let stronger = self
             .bounds
             .get(left, right)
-            .is_none_or(|(old, _)| bound < old)
-        {
+            .is_none_or(|(old, _)| bound < old);
+        self.keep_view_as_seed(stronger.then_some(pair));
+        if stronger {
             self.closure.mark_fresh_cell(pair);
         }
         if ledger.depends_on_postcondition_call(proof) {
@@ -3046,7 +3119,7 @@ impl FactState {
         {
             return;
         }
-        self.closed_view.take();
+        self.forget_closed_view();
         if !self.distinct.contains(&pair) {
             self.closure.mark_fresh_cell(pair);
             self.closure.mark_fresh_cell((pair.1, pair.0));
@@ -3111,7 +3184,7 @@ impl FactState {
         if self.all_derivable {
             return Vec::new();
         }
-        self.closed_view.take();
+        self.forget_closed_view();
         // The predicate depends only on the term, and matrix-sized key scans
         // would otherwise call it twice per cell.
         let mut verdicts: Vec<Option<bool>> = Vec::new();
@@ -3203,7 +3276,7 @@ impl FactState {
         if self.all_derivable {
             return false;
         }
-        self.closed_view.take();
+        self.forget_closed_view();
         let mut changed = false;
         let mut weakened = Vec::new();
         // Each pair's selection depends only on its own candidates, and the
@@ -3315,6 +3388,7 @@ impl FactState {
         self.postcondition_candidates = false;
         // Every remaining selection is now its ordinary selection.
         self.closure = self.ordinary_closure.clone();
+        self.view_seed = None;
         changed
     }
 
@@ -3369,7 +3443,7 @@ impl FactState {
         if self.all_derivable {
             return;
         }
-        self.closed_view.take();
+        self.keep_view_as_seed(None);
         self.opaque.retain(|(goal, _)| !killed(*goal));
         self.opaque_proofs.retain(|(goal, _), _| !killed(*goal));
         self.goal_origins.retain(|_, goal| !killed(*goal));
@@ -3902,6 +3976,7 @@ pub(crate) fn close(
         terms: std::ptr::from_ref(terms) as usize,
         term_revision: terms.revision(),
         term_count: terms.ids().count(),
+        measure_replacements: terms.measure_replacements(),
         goals: std::ptr::from_ref(goals) as usize,
         goal_revision: goals.revision(),
         ledger: std::ptr::from_ref(ledger) as usize,
@@ -4280,6 +4355,16 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         }
         return closed;
     }
+    if excluded.is_none()
+        && !REFERENCE_PRODUCT
+        && let Some(closed) = close_from_view_seed(state, terms, goals, ledger)
+    {
+        #[cfg(test)]
+        if tests::verifying_seeded_closures() {
+            tests::assert_seeded_closure_matches_complete(state, terms, goals, ledger, &closed);
+        }
+        return closed;
+    }
     if excluded.is_none() && state.closure.is_closed_over(term_count) {
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::Closed);
@@ -4579,8 +4664,8 @@ fn insert_fresh_edges<P: ClosureProofs>(
     }
     let width = term_count;
     let mut dense = DenseClosureBounds::values_from_store(width, &state.bounds);
-    let mut distinct = (*state.distinct).clone();
-    let mut distinct_proofs = (*state.distinct_proofs).clone();
+    let distinct = (*state.distinct).clone();
+    let distinct_proofs = (*state.distinct_proofs).clone();
 
     let mut fresh = vec![false; width];
     for term in fresh_terms {
@@ -4595,24 +4680,7 @@ fn insert_fresh_edges<P: ClosureProofs>(
     // other facts are gone) or stronger than their cell — a measure's
     // standing bound can be registered after the core closed — then every
     // fresh cell at its current value.
-    let mut pending: std::collections::VecDeque<(TermId, TermId, i128, DerivationId)> =
-        std::collections::VecDeque::new();
-    for id in terms.ids() {
-        for_each_implicit_bound(terms, id, |left, right, bound, kind| {
-            if fresh[left.0 as usize]
-                || fresh[right.0 as usize]
-                || dense.get(left, right).is_none_or(|(held, _)| bound < held)
-            {
-                let proof = ledger.intern(DerivationNode::ImplicitBound {
-                    left,
-                    right,
-                    bound,
-                    kind,
-                });
-                pending.push_back((left, right, bound, proof));
-            }
-        });
-    }
+    let mut pending = pending_implicit_edges(terms, &fresh, &dense, ledger);
     let mut weakened = weakened_cells.to_vec();
     weakened.sort_unstable();
     weakened.dedup();
@@ -4693,56 +4761,106 @@ fn insert_fresh_edges<P: ClosureProofs>(
         }
     }
 
+    Some(insert_pending_edges(
+        dense,
+        distinct,
+        distinct_proofs,
+        pending,
+        ledger,
+    ))
+}
+
+/// The pending edge list's first part: every implicit bound touching a
+/// fresh term, whose other facts are gone, or stronger than its cell — a
+/// measure's standing bound can be registered after the core closed.
+fn pending_implicit_edges<P: ClosureProofs>(
+    terms: &TermTable,
+    fresh: &[bool],
+    dense: &DenseClosureBounds,
+    ledger: &mut P,
+) -> PendingEdges {
+    let mut pending = PendingEdges::new();
+    for id in terms.ids() {
+        for_each_implicit_bound(terms, id, |left, right, bound, kind| {
+            if fresh[left.0 as usize]
+                || fresh[right.0 as usize]
+                || dense.get(left, right).is_none_or(|(held, _)| bound < held)
+            {
+                let proof = ledger.intern(DerivationNode::ImplicitBound {
+                    left,
+                    right,
+                    bound,
+                    kind,
+                });
+                pending.push_back((left, right, bound, proof));
+            }
+        });
+    }
+    pending
+}
+
+/// Edges `left - right <= bound` waiting to enter a closed matrix, in order.
+type PendingEdges = std::collections::VecDeque<(TermId, TermId, i128, DerivationId)>;
+
+/// Inserts each pending edge into a matrix that is closed apart from those
+/// edges, as [`insert_fresh_edges`] describes, until none remains.
+fn insert_pending_edges<P: ClosureProofs>(
+    mut dense: DenseClosureBounds,
+    mut distinct: WordHashSet<(TermId, TermId)>,
+    mut distinct_proofs: WordHashMap<(TermId, TermId), DerivationId>,
+    mut pending: PendingEdges,
+    ledger: &mut P,
+) -> EdgeClosure {
+    let width = dense.dimension;
     // A cell improved by insertion: record its disequality or strengthening
     // consequence, exactly the (2) rule and the strict-bound disequality the
     // fixed point applies.
-    let settle =
-        |dense: &DenseClosureBounds,
-         distinct: &mut WordHashSet<(TermId, TermId)>,
-         distinct_proofs: &mut WordHashMap<(TermId, TermId), DerivationId>,
-         pending: &mut std::collections::VecDeque<(TermId, TermId, i128, DerivationId)>,
-         ledger: &mut P,
-         left: TermId,
-         right: TermId| {
-            if left == right {
-                return;
-            }
-            let Some((bound, proof)) = dense.get(left, right) else {
-                return;
-            };
-            let pair = ordered(left, right);
-            if bound <= -1 && !distinct.contains(&pair) {
-                let node = ledger.intern(DerivationNode::DisequalityFromStrictBound {
-                    left: pair.0,
-                    right: pair.1,
-                    parent: proof,
-                });
-                distinct.insert(pair);
-                distinct_proofs.insert(pair, node);
-                if let Some((0, weak)) = dense.get(right, left) {
-                    let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
-                        left: right,
-                        right: left,
-                        bound: -1,
-                        weak,
-                        distinct: node,
-                    });
-                    pending.push_back((right, left, -1, strengthened));
-                }
-            }
-            if bound == 0
-                && let Some(parent) = distinct_proofs.get(&pair).copied()
-            {
-                let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
-                    left,
-                    right,
-                    bound: -1,
-                    weak: proof,
-                    distinct: parent,
-                });
-                pending.push_back((left, right, -1, strengthened));
-            }
+    let settle = |dense: &DenseClosureBounds,
+                  distinct: &mut WordHashSet<(TermId, TermId)>,
+                  distinct_proofs: &mut WordHashMap<(TermId, TermId), DerivationId>,
+                  pending: &mut PendingEdges,
+                  ledger: &mut P,
+                  left: TermId,
+                  right: TermId| {
+        if left == right {
+            return;
+        }
+        let Some((bound, proof)) = dense.get(left, right) else {
+            return;
         };
+        let pair = ordered(left, right);
+        if bound <= -1 && !distinct.contains(&pair) {
+            let node = ledger.intern(DerivationNode::DisequalityFromStrictBound {
+                left: pair.0,
+                right: pair.1,
+                parent: proof,
+            });
+            distinct.insert(pair);
+            distinct_proofs.insert(pair, node);
+            if let Some((0, weak)) = dense.get(right, left) {
+                let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
+                    left: right,
+                    right: left,
+                    bound: -1,
+                    weak,
+                    distinct: node,
+                });
+                pending.push_back((right, left, -1, strengthened));
+            }
+        }
+        if bound == 0
+            && let Some(parent) = distinct_proofs.get(&pair).copied()
+        {
+            let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
+                left,
+                right,
+                bound: -1,
+                weak: proof,
+                distinct: parent,
+            });
+            pending.push_back((left, right, -1, strengthened));
+        }
+    };
 
     let mut tight_rows = Vec::new();
     let mut improving_columns = Vec::new();
@@ -4860,11 +4978,11 @@ fn insert_fresh_edges<P: ClosureProofs>(
         }
     }
 
-    Some(EdgeClosure {
+    EdgeClosure {
         dense,
         distinct,
         distinct_proofs,
-    })
+    }
 }
 
 /// The settled matrix and disequalities of [`insert_fresh_edges`].
@@ -4918,6 +5036,111 @@ fn close_by_edge_insertion(
     } = insert_fresh_edges(state, terms, ledger)?;
     #[cfg(test)]
     tests::record_route(tests::ClosureRoute::InsertionWithProofs);
+    let mut contradiction = None;
+    for id in terms.ids() {
+        if let Some((bound, parent)) = dense.get(id, id) {
+            if bound >= 0 {
+                continue;
+            }
+            let candidate = ledger.intern(DerivationNode::L0Contradiction { term: id, parent });
+            if contradiction.is_none_or(|current| ledger.better(candidate, current)) {
+                contradiction = Some(candidate);
+            }
+        }
+    }
+    let closed = ClosedState {
+        all_derivable: contradiction.is_some(),
+        contradiction,
+        matrix: dense,
+        distinct,
+        distinct_proofs,
+        opaque: state.opaque.clone(),
+        opaque_proofs: state.opaque_proofs.clone(),
+    };
+    Some(close_goal_contradictions(closed, goals, ledger))
+}
+
+/// Closes a state with no closure record from its view seed: the remembered
+/// closed view, widened to the current term universe, receives the cells
+/// that became strictly smaller since and every later term's implicit
+/// bounds as edges. Returns `None` without a seed this ledger and term table
+/// can continue.
+///
+/// The view is the complete closure of the facts the state then held, and
+/// since then the state has only gained bound candidates, so inserting the
+/// gained cells closes the current facts exactly as [`insert_fresh_edges`]
+/// closes a recorded core. Only strictly smaller bounds replace a cell, so
+/// the view's proofs are retained, as a seeded closure retains a core's.
+fn close_from_view_seed(
+    state: &FactState,
+    terms: &TermTable,
+    goals: &GoalTable,
+    ledger: &mut DerivationLedger,
+) -> Option<ClosedState> {
+    let seed = state.view_seed.as_ref()?;
+    if !matches!(state.closure, ClosureRecord::Unknown)
+        || seed.terms != std::ptr::from_ref(terms) as usize
+        || seed.ledger != std::ptr::from_ref(ledger) as usize
+        || seed.measure_replacements != terms.measure_replacements()
+    {
+        return None;
+    }
+    #[cfg(test)]
+    tests::record_route(tests::ClosureRoute::ViewSeed);
+    let width = terms.ids().count();
+    let view = &seed.closed;
+    let core_terms = view.matrix.dimension;
+    let mut dense = DenseClosureBounds::new(width);
+    for row in 0..core_terms {
+        let (from, to) = (row * core_terms, row * width);
+        dense.bounds[to..to + core_terms]
+            .copy_from_slice(&view.matrix.bounds[from..from + core_terms]);
+        dense.proofs[to..to + core_terms]
+            .copy_from_slice(&view.matrix.proofs[from..from + core_terms]);
+        for column in 0..core_terms {
+            if view.matrix.stamps[from + column] != 0 {
+                dense.stamps[to + column] = 1;
+                dense.live += 1;
+            }
+        }
+    }
+    let mut fresh = vec![false; width];
+    for slot in fresh.iter_mut().skip(core_terms) {
+        *slot = true;
+    }
+    let mut pending = pending_implicit_edges(terms, &fresh, &dense, ledger);
+    let mut cells = seed.fresh_cells.clone();
+    cells.sort_unstable();
+    cells.dedup();
+    for (left, right) in cells {
+        // The state's own selection, which the view may already improve on.
+        if let Some((bound, proof)) = state.bounds.get(left, right) {
+            pending.push_back((left, right, bound, proof));
+            if bound == 0
+                && let Some(parent) = view.distinct_proofs.get(&ordered(left, right)).copied()
+            {
+                let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
+                    left,
+                    right,
+                    bound: -1,
+                    weak: proof,
+                    distinct: parent,
+                });
+                pending.push_back((left, right, -1, strengthened));
+            }
+        }
+    }
+    let EdgeClosure {
+        dense,
+        distinct,
+        distinct_proofs,
+    } = insert_pending_edges(
+        dense,
+        view.distinct.clone(),
+        view.distinct_proofs.clone(),
+        pending,
+        ledger,
+    );
     let mut contradiction = None;
     for id in terms.ids() {
         if let Some((bound, parent)) = dense.get(id, id) {
@@ -5684,6 +5907,7 @@ pub(crate) fn materialize_closure_at(
         closure: ClosureRecord::closed(terms.ids().count()),
         ordinary_closure: ClosureRecord::closed(terms.ids().count()),
         closed_view: std::cell::RefCell::new(None),
+        view_seed: None,
         // The wrapped closure proofs keep the ancestry they wrap.
         postcondition_candidates: needs_ordinary_fallback,
         all_derivable: false,
@@ -6039,6 +6263,7 @@ fn join_at_once(
         closure: ClosureRecord::closed(terms.ids().count()),
         ordinary_closure: ClosureRecord::closed(terms.ids().count()),
         closed_view: std::cell::RefCell::new(None),
+        view_seed: None,
         // A merged ordinary candidate adds no postcondition ancestry.
         postcondition_candidates,
         all_derivable: false,
@@ -6071,9 +6296,10 @@ pub(crate) mod tests {
         Repair,
         LargeFallback,
         RepairFallback,
+        ViewSeed,
     }
 
-    const CLOSURE_ROUTES: [ClosureRoute; 9] = [
+    const CLOSURE_ROUTES: [ClosureRoute; 10] = [
         ClosureRoute::Remembered,
         ClosureRoute::Closed,
         ClosureRoute::Unseeded,
@@ -6083,6 +6309,7 @@ pub(crate) mod tests {
         ClosureRoute::Repair,
         ClosureRoute::LargeFallback,
         ClosureRoute::RepairFallback,
+        ClosureRoute::ViewSeed,
     ];
 
     thread_local! {
@@ -6131,6 +6358,7 @@ pub(crate) mod tests {
     ) {
         let mut unseeded = state.clone();
         unseeded.closure = ClosureRecord::Unknown;
+        unseeded.view_seed = None;
         let mut complete_ledger = ledger.clone();
         let complete =
             close_with_excluded_term(&unseeded, terms, goals, &mut complete_ledger, None);
@@ -7430,6 +7658,7 @@ pub(crate) mod tests {
             .map(|state| {
                 let mut state = state.clone();
                 state.closure = ClosureRecord::Unknown;
+                state.view_seed = None;
                 close_with_excluded_term(&state, terms, goals, ledger, None)
             })
             .collect::<Vec<_>>();
@@ -7583,6 +7812,7 @@ pub(crate) mod tests {
             }
             views[1].closure = ClosureRecord::Unknown;
             views[1].closed_view.take();
+            views[1].view_seed = None;
             let fast = close(&views[0], terms, goals, &mut ledgers[0]);
             let reference = close(&views[1], terms, goals, &mut ledgers[1]);
             assert_eq!(
