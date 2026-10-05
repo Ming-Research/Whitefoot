@@ -1040,6 +1040,10 @@ pub(crate) struct DerivationLedger {
     /// Parent IDs precede children, so this is computed
     /// once at interning rather than rediscovered by every kill/join query.
     postcondition_call_ancestry: Vec<bool>,
+    /// Parallel to `nodes`: whether the derivation rests on [ENT-2] implicit
+    /// bounds alone through closure rules, so its conclusion holds at every
+    /// program point and no kill or join boundary can remove it.
+    implicit_only: Vec<bool>,
     interned: InternIndex,
     pub(crate) metrics: DerivationMetrics,
 }
@@ -1205,10 +1209,12 @@ impl DerivationLedger {
             .map_or(0, |maximum| maximum.saturating_add(1));
         let postcondition_call_ancestry =
             self.node_has_postcondition_dependency(&node, &self.postcondition_call_ancestry);
+        let implicit_only = node_is_implicit_only(&node, &self.implicit_only);
         self.nodes.push(node);
         self.depths.push(depth);
         self.postcondition_call_ancestry
             .push(postcondition_call_ancestry);
+        self.implicit_only.push(implicit_only);
         self.interned.entries.insert(key, id);
         id
     }
@@ -1280,6 +1286,12 @@ impl DerivationLedger {
     /// the candidate-removal dependency. All parents remain in the ledger.
     pub(crate) fn depends_on_postcondition_call(&self, id: DerivationId) -> bool {
         self.postcondition_call_ancestry[id.0 as usize]
+    }
+
+    /// Whether this proof rests on implicit bounds alone, so its conclusion
+    /// holds at every program point.
+    pub(crate) fn implicit_only(&self, id: DerivationId) -> bool {
+        self.implicit_only[id.0 as usize]
     }
 
     /// Whether a closed L0 proof depends on one established relation rather
@@ -1372,6 +1384,7 @@ impl DerivationLedger {
         self.nodes.shrink_to_fit();
         self.depths.shrink_to_fit();
         self.postcondition_call_ancestry.shrink_to_fit();
+        self.implicit_only.shrink_to_fit();
         self.interned.entries = HashMap::default();
     }
 
@@ -1418,6 +1431,7 @@ impl DerivationLedger {
         self.nodes = nodes;
         let mut depths = Vec::with_capacity(self.nodes.len());
         let mut postcondition_call_ancestry = Vec::with_capacity(self.nodes.len());
+        let mut implicit_only = Vec::with_capacity(self.nodes.len());
         for node in &self.nodes {
             let depth = node
                 .maximum_parent_depth(&depths)
@@ -1425,9 +1439,11 @@ impl DerivationLedger {
             depths.push(depth);
             postcondition_call_ancestry
                 .push(self.node_has_postcondition_dependency(node, &postcondition_call_ancestry));
+            implicit_only.push(node_is_implicit_only(node, &implicit_only));
         }
         self.depths = depths;
         self.postcondition_call_ancestry = postcondition_call_ancestry;
+        self.implicit_only = implicit_only;
         self.interned.entries.clear();
         self.interned.entries.shrink_to_fit();
         let event_remap = self.prune_events(event_roots);
@@ -1441,6 +1457,7 @@ impl DerivationLedger {
 
     fn validate_integrity(&self) {
         assert_eq!(self.postcondition_call_ancestry.len(), self.nodes.len());
+        assert_eq!(self.implicit_only.len(), self.nodes.len());
         for (index, node) in self.nodes.iter().enumerate() {
             node.for_each_parent(|parent| {
                 assert!(parent.0 < index as u32);
@@ -1513,6 +1530,7 @@ impl DerivationLedger {
             + self.roots.capacity() * size_of::<DerivationRoot>()
             + self.depths.capacity() * size_of::<u32>()
             + self.postcondition_call_ancestry.capacity() * size_of::<bool>()
+            + self.implicit_only.capacity() * size_of::<bool>()
             + self
                 .nodes
                 .iter()
@@ -1608,6 +1626,23 @@ impl DerivationLedger {
                 .map(|path| path.components.capacity() * size_of::<u32>())
                 .sum::<usize>();
         metrics
+    }
+}
+
+/// Whether a node is an [ENT-2] implicit bound, or an [ENT-4] closure rule
+/// whose every parent is one of these, given the flags of earlier nodes.
+fn node_is_implicit_only(node: &DerivationNode, flags: &[bool]) -> bool {
+    match node {
+        DerivationNode::ImplicitBound { .. } => true,
+        DerivationNode::TransitiveBound { .. }
+        | DerivationNode::StrengthenedBound { .. }
+        | DerivationNode::SubsumedBound { .. }
+        | DerivationNode::DisequalityFromStrictBound { .. } => {
+            let mut implicit = true;
+            node.for_each_parent(|parent| implicit &= flags[parent.0 as usize]);
+            implicit
+        }
+        _ => false,
     }
 }
 
@@ -5832,8 +5867,13 @@ fn materialized_bound_proof(
     bound: i128,
     event: FlowEventId,
     parent: DerivationId,
+    wrap_implicit: bool,
 ) -> DerivationId {
-    if ledger.materializes_bound(parent, left, right, bound) {
+    // A bound resting on implicit bounds alone holds at every program point,
+    // so it is already independently live without a snapshot boundary.
+    if (!wrap_implicit && ledger.implicit_only(parent))
+        || ledger.materializes_bound(parent, left, right, bound)
+    {
         return parent;
     }
     ledger.intern(DerivationNode::MaterializedBound {
@@ -5859,6 +5899,31 @@ pub(crate) fn materialize_closure_at(
     ledger: &mut DerivationLedger,
     event: FlowEventId,
 ) -> FactState {
+    materialize_closure(state, terms, goals, ledger, event, false)
+}
+
+/// [`materialize_closure_at`] for S11's preheader snapshot, which files a
+/// materialized proof at this event for every closed relation, implicit ones
+/// included, because each counted root it captures names that snapshot as
+/// its proof point.
+pub(crate) fn materialize_counted_preheader_at(
+    state: &FactState,
+    terms: &TermTable,
+    goals: &GoalTable,
+    ledger: &mut DerivationLedger,
+    event: FlowEventId,
+) -> FactState {
+    materialize_closure(state, terms, goals, ledger, event, true)
+}
+
+fn materialize_closure(
+    state: &FactState,
+    terms: &TermTable,
+    goals: &GoalTable,
+    ledger: &mut DerivationLedger,
+    event: FlowEventId,
+    wrap_implicit: bool,
+) -> FactState {
     let closed = close(state, terms, goals, ledger);
     if closed.all_derivable {
         let parent = closed.contradiction.expect("contradictory closure proof");
@@ -5872,19 +5937,25 @@ pub(crate) fn materialize_closure_at(
     let needs_ordinary_fallback = closed.selected_relations_depend_on_postcondition_call(ledger);
     let mut bounds = BoundStore::with_terms(terms.ids().count());
     for (left, right, bound, parent) in closed.matrix.cells() {
-        let proof = materialized_bound_proof(ledger, left, right, bound, event, parent);
+        let proof =
+            materialized_bound_proof(ledger, left, right, bound, event, parent, wrap_implicit);
         bounds.store_single(left, right, bound, proof);
     }
     let mut distinct_proofs = HashMap::default();
     let mut distinct_keys: Vec<_> = closed.distinct.iter().copied().collect();
     distinct_keys.sort_unstable();
     for (left, right) in distinct_keys {
-        let proof = ledger.intern(DerivationNode::MaterializedDistinct {
-            left,
-            right,
-            event,
-            parent: closed.distinct_proofs[&(left, right)],
-        });
+        let parent = closed.distinct_proofs[&(left, right)];
+        let proof = if !wrap_implicit && ledger.implicit_only(parent) {
+            parent
+        } else {
+            ledger.intern(DerivationNode::MaterializedDistinct {
+                left,
+                right,
+                event,
+                parent,
+            })
+        };
         distinct_proofs.insert((left, right), proof);
     }
     let mut opaque_proofs = HashMap::default();
@@ -5947,7 +6018,8 @@ pub(crate) fn materialize_closure_at(
             if !ledger.depends_on_postcondition_call(selected) {
                 continue;
             }
-            let proof = materialized_bound_proof(ledger, left, right, bound, event, parent);
+            let proof =
+                materialized_bound_proof(ledger, left, right, bound, event, parent, wrap_implicit);
             materialized.add_bound(left, right, bound, proof, ledger);
         }
         let mut keys = ordinary_closed
@@ -5958,12 +6030,17 @@ pub(crate) fn materialize_closure_at(
             .collect::<Vec<_>>();
         keys.sort_unstable();
         for (left, right) in keys {
-            let proof = ledger.intern(DerivationNode::MaterializedDistinct {
-                left,
-                right,
-                event,
-                parent: ordinary_closed.distinct_proofs[&(left, right)],
-            });
+            let parent = ordinary_closed.distinct_proofs[&(left, right)];
+            let proof = if !wrap_implicit && ledger.implicit_only(parent) {
+                parent
+            } else {
+                ledger.intern(DerivationNode::MaterializedDistinct {
+                    left,
+                    right,
+                    event,
+                    parent,
+                })
+            };
             materialized.add_distinct_candidate((left, right), proof, ledger);
         }
     }
@@ -6090,14 +6167,14 @@ fn join_at_once(
             // closures select it, the join must record when its conclusion
             // became independently live. Reuse only existing live facts or
             // implicit bounds, which hold at every program point.
-            let independently_live = matches!(
-                ledger.nodes[shared.0 as usize],
-                DerivationNode::SourceBound { left: l, right: r, bound: b, .. }
-                    | DerivationNode::ImplicitBound { left: l, right: r, bound: b, .. }
-                    | DerivationNode::JoinBound { left: l, right: r, bound: b, .. }
-                    | DerivationNode::MaterializedBound { left: l, right: r, bound: b, .. }
-                    if (l, r, b) == (left, right, bound)
-            );
+            let independently_live = ledger.implicit_only(shared)
+                || matches!(
+                    ledger.nodes[shared.0 as usize],
+                    DerivationNode::SourceBound { left: l, right: r, bound: b, .. }
+                        | DerivationNode::JoinBound { left: l, right: r, bound: b, .. }
+                        | DerivationNode::MaterializedBound { left: l, right: r, bound: b, .. }
+                        if (l, r, b) == (left, right, bound)
+                );
             if contributing.len() == closed.len() && same_proof && independently_live {
                 bounds.store_single(left, right, bound, shared);
                 continue;
@@ -6139,13 +6216,14 @@ fn join_at_once(
     for pair in distinct_keys {
         if contributing.len() == closed.len() {
             let shared = first.distinct_proofs[&pair];
-            let independently_live = matches!(
-                ledger.nodes[shared.0 as usize],
-                DerivationNode::SourceDistinct { left, right, .. }
-                    | DerivationNode::JoinDistinct { left, right, .. }
-                    | DerivationNode::MaterializedDistinct { left, right, .. }
-                    if ordered(left, right) == pair
-            );
+            let independently_live = ledger.implicit_only(shared)
+                || matches!(
+                    ledger.nodes[shared.0 as usize],
+                    DerivationNode::SourceDistinct { left, right, .. }
+                        | DerivationNode::JoinDistinct { left, right, .. }
+                        | DerivationNode::MaterializedDistinct { left, right, .. }
+                        if ordered(left, right) == pair
+                );
             if independently_live
                 && rest_indices
                     .iter()

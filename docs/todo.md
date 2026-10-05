@@ -159,7 +159,10 @@ rarely insert at the same place.
   about 25 million), the entailment schedule of the function inventory
   (`analyze_function_inventory` in `compiler/src/semantic/check.rs`, about 11
   million), instantiation-cycle rejection (7 million) and concrete signature
-  collection (6 million). Impact: every check of a module that names a
+  collection (6 million). Resolution's per-declaration scans of every
+  terminal for `public` and a function body are now one pass
+  ([compile-speed](../research/investigations/compile-speed/DESIGN.md#attribution));
+  the comparison below has not been repeated since. Impact: every check of a module that names a
   library module, and every program returning `ExitStatus`, pays per
   function for declarations it does not use. Change: find in each the work
   repeated per function over every declaration or signature of the closure
@@ -605,6 +608,36 @@ rarely insert at the same place.
   payload suffix under the arm's live refinement with its [REF-2] witness, or
   meanwhile report it as unsupported, with a conformance case either way.
   Reopen when a program needs a payload read without a binder.
+
+- **Edge insertion recomposes every row for a term with an exact value.**
+  Inserting the two implicit edges of a constant, or of a measure with a
+  standing constant value, finds every row tight and recomposes all n columns
+  of each, n² products that improve no cell, in `insert_pending_edges` in
+  [`semantic/entailment/state.rs`](../compiler/src/semantic/entailment/state.rs).
+  It is 46% of the samples of Snowghost's `pkg::style` check, now its slowest
+  module ([compile-speed remaining costs](../research/investigations/compile-speed/DESIGN.md#remaining-costs)).
+  Change: fill such a term's closed row and column from zero's, shifted by
+  its value, with the transitive proof through zero, after showing that the
+  insertion order still closes the matrix. Validate with the seeded-closure
+  verification, byte-identical Snowghost LLVM and at least 1.2x on the
+  `pkg::style` module check. Reopen when that module limits a build.
+
+- **An entry composition analyzes its uncovered functions on one thread.**
+  After its concurrent module verdicts, a composition analyzes the functions
+  no receipt covers one after another (about 14 s of a 44 s fresh-cache
+  `style_oracle` check on four processors). Functions of one postcondition
+  component read only earlier components' summaries, so independent
+  components could run concurrently if the analysis and its receipt key read
+  only a function's callees' summaries, which is unverified. Validate that
+  first, then require unchanged receipts and LLVM. Reopen when the
+  composition is a build's critical path.
+
+- **A cacheless entry check analyzes every function body twice.** Without
+  `--cache`, a composition cannot reuse the analyses its own module verdicts
+  just made, so `style_oracle` takes 190 s instead of the fresh-cache 95 s
+  on the baseline ([compile-speed baseline](../research/investigations/compile-speed/DESIGN.md#baseline)).
+  Change: an in-memory receipt store for one invocation. Reopen when a
+  workflow builds without a cache.
 
 ## Containers and storage lowering
 

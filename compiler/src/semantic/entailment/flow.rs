@@ -101,6 +101,7 @@ use super::state::{
     RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
     SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
     contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
+    materialize_counted_preheader_at,
 };
 use super::term::{
     CountedCaptureSide, MeasureBound, MeasurePlacement, PlaceRoot, TermId, TermKind, TermTable,
