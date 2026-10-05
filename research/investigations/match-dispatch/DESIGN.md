@@ -343,18 +343,17 @@ its own.
 
 Register-form operations on frame slots (v2a), constants in frame slots
 (v2b), fused compare-and-branch operations (v2c), the stack box kept across
-helper calls (v2d), handler bodies written into their arms (v2e) and fewer
-copies (v2f) bring the median score to 2706.4
-([results](../../experiments/match-dispatch/RESULTS.md#v2f-fewer-copies)),
-about 0.47x of Silverfir-nano's 5714.3 median in the v2d run. Each step
-since v2b removed dispatches or instructions per dispatch, but at 4.5
+helper calls (v2d), handler bodies written into their arms (v2e), fewer
+copies (v2f) and address additions folded into loads and stores (v2g)
+bring the median score to 2832.9
+([results](../../experiments/match-dispatch/RESULTS.md#v2g-address-additions-folded-into-loads-and-stores)),
+about 0.50x of Silverfir-nano's 5714.3 median in the v2d run. Each step
+since v2b removed dispatches or instructions per dispatch, but at about 4.5
 cycles per dispatch the remaining cost is still both the number of
 dispatches and each handler's instructions beyond its operation: the
 next-cell address recomputed from its index and the frame base added to
 each slot index (`docs/todo.md`, "Interpreter dispatch lowering").
-Silverfir-nano's translator also fuses an address-forming `i32.add` into
-the load or store that uses it, keeps one operand in an accumulator
-register, and moves pairs of locals in one operation, so its dispatches
-are fewer as well as cheaper. The checker's growth with function size
-still limits the interpreter's form: a handler that delivers a value from
-a `match` stays a helper function.
+Silverfir-nano's translator also keeps one operand in an accumulator
+register, so its dispatches are cheaper as well. The checker's growth with
+function size still limits the interpreter's form: a handler that delivers
+a value from a `match` stays a helper function.

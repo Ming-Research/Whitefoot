@@ -483,6 +483,35 @@ and one `/usr/bin/time -l` launch each:
 
 The score rises 2.7%, meeting the criterion, with cycles down 2.7%.
 
+### v2g, address additions folded into loads and stores
+
+An i32 load or store whose address is the temporary an `i32.add` emitted
+just before it wrote takes that addition's two operand slots instead
+(`I32LoadIx(d, a, b, o)` loads from `a + b + o`, the sum wrapping to 32
+bits as the `i32.add` did, and likewise the other i32 loads and stores), and
+the addition is not emitted; a store qualifies when its value comes from a
+local, so that no copy is emitted between the addition and the store.
+Silverfir-nano's translator folds such additions the same way. Predicted
+before measuring: 25-35 million fewer dispatches, from the 37.7 million
+`I32Add` dispatches directly followed by a load or store in v2e's
+operation-pair profile; criterion: adopt if the median score rises at
+least 2%. Dispatches fell from 523,297,303 to 506,088,437 (3.3%), below the
+prediction: 17.2 million additions folded. A load's only operand is its
+address, so an addition directly before an eligible load that was not
+folded wrote a local (`local.set` or `local.tee` took over its
+destination), which the fold does not reach, as for all but 586 of the 8.7
+million additions before an `I32Load8U`; before a store, the addition may
+also be the stored value, or the value a constant. Seven
+alternating launches ([run-wasm-v2g.tsv](run-wasm-v2g.tsv)), every launch
+with correct CRCs, and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2f | 2739.7 | 3.0% | 10,906,796,639 | 2,348,767,399 |
+| v2g | 2832.9 | 3.2% | 10,648,499,411 | 2,284,244,384 |
+
+The score rises 3.4%, meeting the criterion.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which
