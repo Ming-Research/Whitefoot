@@ -49,6 +49,49 @@ struct Line {
   state: u64;
 }
 
+fn short_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
+  doc "Reads the line after a marker byte when it is one digit, or two without a leading zero, then a carriage return and one more byte, all held: state 1 with the number and where its carriage return is, and state 0, leaving the line to the caller's general reading, for every other line.";
+  let first = marker +wrap 1_u64;
+  let second = marker +wrap 2_u64;
+  let third = marker +wrap 3_u64;
+  let fourth = marker +wrap 4_u64;
+  let lead = byte_at(input: input, index: first);
+  let next = byte_at(input: input, index: second);
+  let lead_low = lead >= 48_u8;
+  let lead_high = lead <= 57_u8;
+  let lead_digit = band(lead_low, lead_high);
+  let lead_value = lead -wrap 48_u8;
+  let lead_wide = cvt::<u8, u64>(lead_value);
+  let one_end = next == 13_u8;
+  let one_held = third < held;
+  let one_shaped = band(lead_digit, one_end);
+  let one = band(one_shaped, one_held);
+  if one {
+    let single = cvt.wrap::<u64, i64>(lead_wide);
+    return Line(value: single, end: second, state: 1_u64);
+  }
+  let next_low = next >= 48_u8;
+  let next_high = next <= 57_u8;
+  let next_digit = band(next_low, next_high);
+  let unpadded = lead != 48_u8;
+  let after = byte_at(input: input, index: third);
+  let two_end = after == 13_u8;
+  let two_held = fourth < held;
+  let digits = band(lead_digit, next_digit);
+  let leading = band(digits, unpadded);
+  let shaped = band(leading, two_end);
+  let two = band(shaped, two_held);
+  if two {
+    let next_value = next -wrap 48_u8;
+    let next_wide = cvt::<u8, u64>(next_value);
+    let tens = lead_wide *wrap 10_u64;
+    let both = tens +wrap next_wide;
+    let double = cvt.wrap::<u64, i64>(both);
+    return Line(value: double, end: third, state: 1_u64);
+  }
+  return Line(value: 0_i64, end: marker, state: 0_u64);
+}
+
 fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
   doc "Reads a count or length line as read_line_full does, first trying the common line of one to nine digits without a sign or leading zero, whose carriage return and the byte after it are held. A marker byte that is a zero byte or a carriage return ends the line at the marker, as strchr ends it, so that line is left to read_line_full.";
   let position = marker +wrap 1_u64;
@@ -62,6 +105,10 @@ fn read_line(input: &[u8], marker: u64, held: u64) -> line: Line reads(input) {
       let line = read_line_full(input: input, marker: marker, held: held);
       return line;
     }
+  }
+  let short = short_line(input: input, marker: marker, held: held);
+  if short.state == 1_u64 {
+    return short;
   }
   loop @digits {
     if position >= held {
@@ -206,7 +253,15 @@ fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>,
     let size = 0_i64;
     let line_end = 0_u64;
     let quick = False();
-    if dollar == 36_u8 {
+    let short = short_line(input: input, marker: position, held: held);
+    let dollared = dollar == 36_u8;
+    let shortened = short.state == 1_u64;
+    let ready = band(dollared, shortened);
+    if ready {
+      set size = short.value;
+      set line_end = short.end;
+      set quick = True();
+    } else if dollared {
       let first = position +wrap 1_u64;
       let scan = first;
       let value = 0_u64;
