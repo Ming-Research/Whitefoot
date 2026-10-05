@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
+
+Nodes: compiler/verification
+
+Owner-approved: In the session of 2026-10-05, written in Chinese: Q16, "keep it locally, turn it off on CI; that way both routes are tested and local runs are faster" (translated); after the handoff of PR #226 at `a5fc19e9a`, which showed the decision's text, "Confirmed" (translated).
+
+Summary: Outside CI a program case builds an app under `apps/` with the compiler executable and a persistent incremental cache, reusing the checked module and objects when neither the app nor the compiler changed; under CI it compiles the app in-process as before. A cache record is keyed by the compiler's identity and its exact inputs and every assertion reruns, so this is not the cached test verdict the existing reuse decision refuses, and alternating the routes keeps both builds under test.
+
 ## 2026-10-05 Hoisted dispatch invariants, the frame past the registers and the ledger
 
 Nodes: compiler/match-dispatch-lowering

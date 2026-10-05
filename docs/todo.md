@@ -3186,6 +3186,17 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **The local app-build cache never evicts.** Outside CI the corpus tests
+  build firn with the compiler's incremental cache under
+  `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`
+  in `compiler/tests/programs/support.rs`). Each new compiler binary adds
+  records beside the old ones, which no later build reads, and an
+  interrupted write leaves its `.partial` file, so the directory grows
+  until someone removes it. The change: drop records of other compiler
+  identities and stale partial files when the cache opens, or prune by age.
+  Validate with the directory's size staying flat across compiler rebuilds.
+  Reopen when the cache directory's growth is noticed on a developer host.
+
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on
   the 14900K under WSL2, every case at once, failed one of firn's cases in
