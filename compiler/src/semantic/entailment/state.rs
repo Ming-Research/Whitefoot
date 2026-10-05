@@ -2360,6 +2360,9 @@ impl<'a, T: Copy + PartialEq> IntoIterator for &'a Candidates<T> {
     }
 }
 
+/// Slot marker of a term a matrix holds no row for.
+const NO_SLOT: u32 = u32::MAX;
+
 /// The selected difference bounds of a fact state, dense over the state's
 /// active terms.
 ///
@@ -2375,6 +2378,9 @@ impl<'a, T: Copy + PartialEq> IntoIterator for &'a Candidates<T> {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BoundStore {
     slots: Vec<TermId>,
+    /// The slot of each registered term, `NO_SLOT` where the store holds no
+    /// relation on it; indexed by `TermId`, grown as terms are activated.
+    slot_of: Vec<u32>,
     stride: usize,
     bounds: Vec<i128>,
     proofs: Vec<DerivationId>,
@@ -2389,13 +2395,30 @@ impl BoundStore {
         &self.slots
     }
 
+    /// A store with rows for `slots`, ascending, and no cell yet: the shape a
+    /// materialization or join fills in.
+    fn with_slots(slots: Vec<TermId>) -> Self {
+        let mut store = Self::default();
+        store.relayout(slots);
+        store
+    }
+
     /// Whether the store holds a row for `term`.
     pub(crate) fn is_active(&self, term: TermId) -> bool {
-        self.slots.binary_search(&term).is_ok()
+        self.slot(term).is_some()
     }
 
     fn slot(&self, term: TermId) -> Option<usize> {
-        self.slots.binary_search(&term).ok()
+        let slot = *self.slot_of.get(term.0 as usize)?;
+        (slot != NO_SLOT).then_some(slot as usize)
+    }
+
+    fn record_slot(&mut self, term: TermId, slot: usize) {
+        let index = term.0 as usize;
+        if self.slot_of.len() <= index {
+            self.slot_of.resize(index + 1, NO_SLOT);
+        }
+        self.slot_of[index] = u32::try_from(slot).expect("store slot fits the u32 identity");
     }
 
     fn index(&self, left: TermId, right: TermId) -> Option<usize> {
@@ -2438,6 +2461,7 @@ impl BoundStore {
         if let Err(position) = self.slots.binary_search(&term) {
             if position == self.slots.len() && position < self.stride {
                 self.slots.push(term);
+                self.record_slot(term, position);
             } else {
                 let mut slots = self.slots.clone();
                 slots.insert(position, term);
@@ -2482,6 +2506,10 @@ impl BoundStore {
             proofs[index] = proof;
             present[index] = true;
             live += 1;
+        }
+        self.slot_of.clear();
+        for (slot, term) in slots.iter().enumerate() {
+            self.record_slot(*term, slot);
         }
         self.slots = slots;
         self.stride = stride;
@@ -5219,6 +5247,10 @@ fn closure_universe(
 struct DenseClosureBounds {
     /// The universe, ascending; row and column `i` belong to `slots[i]`.
     slots: Vec<TermId>,
+    /// The slot of each registered term, `NO_SLOT` for a term outside the
+    /// universe; indexed by `TermId`, so the transitivity cube finds a row
+    /// with one load.
+    slot_of: Vec<u32>,
     /// Registered terms when the closure was taken; a later term is not
     /// answered.
     term_count: usize,
@@ -5297,9 +5329,30 @@ impl DenseClosureBounds {
         ledger: &impl ClosureProofs,
     ) -> Self {
         let mut dense = Self::new(universe, ranges);
-        for (left, right, bound, proof) in store.cells() {
-            if dense.slot(left).is_some() && dense.slot(right).is_some() {
-                dense.set(left, right, bound, proof, ledger.depth(proof));
+        let columns = store
+            .slots
+            .iter()
+            .map(|term| dense.slot(*term))
+            .collect::<Vec<_>>();
+        for (row, &left) in store.slots.iter().enumerate() {
+            if columns[row].is_none() {
+                continue;
+            }
+            let source = row * store.stride;
+            for (column, target) in columns.iter().enumerate() {
+                let Some(_) = target else {
+                    continue;
+                };
+                if store.present[source + column] {
+                    let proof = store.proofs[source + column];
+                    dense.set(
+                        left,
+                        store.slots[column],
+                        store.bounds[source + column],
+                        proof,
+                        ledger.depth(proof),
+                    );
+                }
             }
         }
         dense
@@ -5313,15 +5366,29 @@ impl DenseClosureBounds {
         store: &BoundStore,
     ) -> Self {
         let mut dense = Self::new(universe, ranges);
-        for (left, right, bound, proof) in store.cells() {
-            let (Some(row), Some(column)) = (dense.slot(left), dense.slot(right)) else {
+        let columns = store
+            .slots
+            .iter()
+            .map(|term| dense.slot(*term))
+            .collect::<Vec<_>>();
+        for row in 0..store.slots.len() {
+            let Some(target_row) = columns[row] else {
                 continue;
             };
-            let index = row * dense.dimension + column;
-            dense.bounds[index] = bound;
-            dense.proofs[index] = proof;
-            dense.stamps[index] = 1;
-            dense.live += 1;
+            let source = row * store.stride;
+            let target = target_row * dense.dimension;
+            for (column, target_column) in columns.iter().enumerate() {
+                let Some(target_column) = target_column else {
+                    continue;
+                };
+                if store.present[source + column] {
+                    let index = target + target_column;
+                    dense.bounds[index] = store.bounds[source + column];
+                    dense.proofs[index] = store.proofs[source + column];
+                    dense.stamps[index] = 1;
+                    dense.live += 1;
+                }
+            }
         }
         dense
     }
@@ -5350,8 +5417,15 @@ impl DenseClosureBounds {
         let count = dimension
             .checked_mul(dimension)
             .expect("ENT closure matrix exceeds the address space");
+        let mut slot_of = vec![NO_SLOT; term_count];
+        for (slot, term) in slots.iter().enumerate() {
+            if let Some(entry) = slot_of.get_mut(term.0 as usize) {
+                *entry = u32::try_from(slot).expect("closure slot fits the u32 identity");
+            }
+        }
         Self {
             slots,
+            slot_of,
             term_count,
             excluded,
             ranges,
@@ -5366,7 +5440,8 @@ impl DenseClosureBounds {
     }
 
     fn slot(&self, term: TermId) -> Option<usize> {
-        self.slots.binary_search(&term).ok()
+        let slot = *self.slot_of.get(term.0 as usize)?;
+        (slot != NO_SLOT).then_some(slot as usize)
     }
 
     fn row_of(&self, term: TermId) -> usize {
@@ -5948,7 +6023,7 @@ pub(crate) fn materialize_closure_at(
         };
     }
     let needs_ordinary_fallback = closed.selected_relations_depend_on_postcondition_call(ledger);
-    let mut bounds = BoundStore::default();
+    let mut bounds = BoundStore::with_slots(closed.matrix.slots.clone());
     for (left, right, bound, parent) in closed.matrix.cells() {
         let proof = materialized_bound_proof(ledger, left, right, bound, event, parent);
         bounds.store_single(left, right, bound, proof);
@@ -6173,7 +6248,7 @@ fn join_at_once(
         .collect();
     universe.sort_unstable();
     universe.dedup();
-    let mut bounds = BoundStore::default();
+    let mut bounds = BoundStore::with_slots(universe.clone());
     for &left in &universe {
         for &right in &universe {
             let pair = (left, right);
