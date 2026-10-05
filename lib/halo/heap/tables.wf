@@ -531,14 +531,39 @@ fn rehash(heap: &Heap, ti: u64, extra: Value) -> r: Bool writes(heap) {
     let nums = array_filled::<u64, 27>(value: 0_u64);
     let total = 1_u64;
     histogram(nums: &nums, key: extra);
-    for (i in 0_u64..heap^.tables.inner[ti].payload.array.inner.len) {
-      if is_nil(v: heap^.tables.inner[ti].payload.array.inner[i]) {
-      } else {
-        let k = i + 1_u64;
-        let f = cvt.nearest::<u64, f64>(k);
-        let key = Value::Num(n: f);
-        histogram(nums: &nums, key: key);
-        set total = total +sat 1_u64;
+    let array_length = heap^.tables.inner[ti].payload.array.inner.len;
+    let lower = 0_u64;
+    let upper = 1_u64;
+    for (bin in 0_u64..27_u64) {
+      let limit = upper;
+      if limit > array_length {
+        set limit = array_length;
+      }
+      let live = 0_u64;
+      for (i in lower..limit) {
+        if i < heap^.tables.inner[ti].payload.array.inner.len {
+          if is_nil(v: heap^.tables.inner[ti].payload.array.inner[i]) {
+          } else {
+            set live = live +sat 1_u64;
+          }
+        }
+      }
+      set nums[bin] = nums[bin] +sat live;
+      set total = total +sat live;
+      set lower = limit;
+      if lower >= array_length {
+        break;
+      }
+      if upper <= 33554432_u64 {
+        set upper = upper * 2_u64;
+      }
+    }
+    for (i in lower..array_length) {
+      if i < heap^.tables.inner[ti].payload.array.inner.len {
+        if is_nil(v: heap^.tables.inner[ti].payload.array.inner[i]) {
+        } else {
+          set total = total +sat 1_u64;
+        }
       }
     }
     for (i in 0_u64..heap^.tables.inner[ti].payload.nodes.inner.len) {
@@ -571,11 +596,20 @@ fn rehash(heap: &Heap, ti: u64, extra: Value) -> r: Bool writes(heap) {
           return False();
         }
       }
-      let array = values_new(n: size);
+      let array = box_slots_new::<Value>(capacity: size);
+      for (i in 0_u64..size) {
+        let val = Value::Nil();
+        if i < heap^.tables.inner[ti].payload.array.inner.len {
+          set val = heap^.tables.inner[ti].payload.array.inner[i];
+        }
+        if array.inner.len < array.inner.cap {
+          place_back(window: &array.inner, value: val);
+        }
+      }
       let nodes = nodes_new(n: cap);
       let lastfree = cap;
       let node_count = 0_u32;
-      for (i in 0_u64..heap^.tables.inner[ti].payload.array.inner.len) {
+      for (i in size..heap^.tables.inner[ti].payload.array.inner.len) {
         let val = heap^.tables.inner[ti].payload.array.inner[i];
         if is_nil(v: val) {
         } else {
