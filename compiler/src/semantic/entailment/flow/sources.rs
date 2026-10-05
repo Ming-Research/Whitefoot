@@ -566,10 +566,12 @@ impl Input<'_, '_> {
             CheckedExpression::Project {
                 binding, fields, ..
             } => Some(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(*binding),
                 path: fields.iter().copied().map(PlaceStep::Field).collect(),
             }),
             CheckedExpression::BoxTake { binding, path, .. } => Some(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(*binding),
                 path: path.iter().map(CheckedPlaceStep::place_step).collect(),
             }),

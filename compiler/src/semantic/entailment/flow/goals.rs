@@ -594,6 +594,7 @@ impl Input<'_, '_> {
             | GoalDatum::Literal(_) => return None,
         };
         Some(ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root,
             path: projections
                 .iter()

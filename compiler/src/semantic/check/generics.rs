@@ -1706,7 +1706,10 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
             }
-            if matches!(value, GenericArgument::Function(_)) {
+            if matches!(
+                value,
+                GenericArgument::Type(_) | GenericArgument::Function(_)
+            ) {
                 binding_sites.push((parameter.key(), source));
             }
             bindings.push((parameter.key(), value));
@@ -1900,6 +1903,26 @@ impl<'unit> TypeContext<'unit> {
         let mut out = String::new();
         self.write_substitution_identity(substitution, &mut out, true, &mut HashSet::new())?;
         Ok(out)
+    }
+
+    /// Constant and function-kind arguments in a runtime type order must use
+    /// source identities, never this compilation's dense instance numbers.
+    pub(super) fn stable_argument_spelling(
+        &self,
+        key: GenericParameterKey,
+        argument: GenericArgument,
+    ) -> Result<String, CheckStop> {
+        if matches!(
+            argument,
+            GenericArgument::Function(super::behavior::FunctionArgument::Parameter(_))
+        ) {
+            // Symbolic bodies are checked but are not lowered to runtime groups.
+            return Ok(format!("{argument:?}"));
+        }
+        let substitution = GenericSubstitution::from_bindings(vec![(key, argument)])?;
+        let mut spelling = String::new();
+        self.write_substitution_identity(&substitution, &mut spelling, false, &mut HashSet::new())?;
+        Ok(spelling)
     }
 
     pub(super) fn stable_type_spelling(&self, ty: CheckedType) -> Option<String> {

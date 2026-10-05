@@ -1,0 +1,68 @@
+fn forward(x: Shared<u64>, y: Shared<u32>, p: Shared<u16>, q: Shared<u16>) -> result: unit pure waits {
+  for @round (index in 0_u64..300_u64) {
+    atomic a = &x, b = &y {
+      set a^ = a^ +wrap 1_u64;
+      set b^ = b^ +wrap 1_u32;
+    }
+    atomic c = &p, d = &q {
+      set c^ = c^ +wrap 1_u16;
+      set d^ = d^ +wrap 1_u16;
+    }
+  }
+  return unit;
+}
+
+fn backward(x: Shared<u64>, y: Shared<u32>, p: Shared<u16>, q: Shared<u16>) -> result: unit pure waits {
+  for @round (index in 0_u64..300_u64) {
+    atomic b = &y, a = &x {
+      set b^ = b^ +wrap 1_u32;
+      set a^ = a^ +wrap 1_u64;
+    }
+    atomic d = &q, c = &p {
+      set d^ = d^ +wrap 1_u16;
+      set c^ = c^ +wrap 1_u16;
+    }
+  }
+  return unit;
+}
+
+fn run(x: &Shared<u64>, y: &Shared<u32>, p: &Shared<u16>, q: &Shared<u16>) -> result: unit reads(x), reads(y), reads(p), reads(q) waits {
+  let x1 = shared_share::<u64>(shared: x);
+  let y1 = shared_share::<u32>(shared: y);
+  let p1 = shared_share::<u16>(shared: p);
+  let q1 = shared_share::<u16>(shared: q);
+  spawn forward(x: move x1, y: move y1, p: move p1, q: move q1);
+  let x2 = shared_share::<u64>(shared: x);
+  let y2 = shared_share::<u32>(shared: y);
+  let p2 = shared_share::<u16>(shared: p);
+  let q2 = shared_share::<u16>(shared: q);
+  spawn backward(x: move x2, y: move y2, p: move p2, q: move q2);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let x = shared_new::<u64>(value: 0_u64);
+  let y = shared_new::<u32>(value: 0_u32);
+  let p = shared_new::<u16>(value: 0_u16);
+  let q = shared_new::<u16>(value: 0_u16);
+  run(x: &x, y: &y, p: &p, q: &q);
+  let wrong = 0_u8;
+  atomic a = &x, b = &y, c = &p, d = &q {
+    if a^ != 600_u64 {
+      set wrong = 1_u8;
+    }
+    if b^ != 600_u32 {
+      set wrong = 1_u8;
+    }
+    if c^ != 600_u16 {
+      set wrong = 1_u8;
+    }
+    if d^ != 600_u16 {
+      set wrong = 1_u8;
+    }
+  }
+  if wrong != 0_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 6_u8);
+}

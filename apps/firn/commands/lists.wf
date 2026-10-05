@@ -221,7 +221,7 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   if front {
     set client^.low = 0_i64;
   }
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = push_items(env: client, value: held);
@@ -233,7 +233,7 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       set slot^ = None<Entry>();
       set client^.state = state_absent;
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     let create = client^.state == state_absent;
@@ -255,7 +255,7 @@ fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     if client^.state == state_done {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -366,7 +366,7 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   if counted {
     set client^.high = 1_i64;
   }
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = pop_items(env: client, value: held);
@@ -382,7 +382,7 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     }
     if lapsed {
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     let done = client^.state == state_done;
@@ -391,7 +391,7 @@ fn run_pop(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let recorded = band(changed, popped);
     if recorded {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -498,7 +498,7 @@ fn run_lrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.state = state_absent;
   set client^.low = start.value;
   set client^.high = stop.value;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = range_items(env: client, value: held);
@@ -560,7 +560,7 @@ fn run_llen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = list_length(env: client, value: held);
@@ -679,7 +679,7 @@ fn run_lindex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.state = state_absent;
   set client^.low = index.value;
   set client^.number = index.state;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = index_item(env: client, value: held);
@@ -767,7 +767,7 @@ fn run_lset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.state = state_absent;
   set client^.low = index.value;
   set client^.number = index.state;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = set_item(env: client, value: held, element: move element);
@@ -779,12 +779,12 @@ fn run_lset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if client^.state == state_expired {
       set slot^ = None<Entry>();
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if client^.state == state_done {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -914,7 +914,7 @@ fn run_lrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.state = state_absent;
   set client^.number = 0_u64;
   set client^.low = count.value;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = remove_items(env: client, value: held, input: input, element: element);
@@ -931,7 +931,7 @@ fn run_lrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if lapsed {
       set client^.number = 0_u64;
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     let done = client^.state == state_done;
@@ -940,7 +940,7 @@ fn run_lrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     let recorded = band(changed, removed);
     if recorded {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -1052,7 +1052,7 @@ fn run_ltrim(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.number = 0_u64;
   set client^.low = start.value;
   set client^.high = stop.value;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = trim_items(env: client, value: held);
@@ -1069,12 +1069,12 @@ fn run_ltrim(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
     if lapsed {
       set client^.number = 0_u64;
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if client^.number > 0_u64 {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -1181,7 +1181,7 @@ fn run_linsert(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = insert_item(env: client, value: held, input: input, pivot: pivot, element: move element, after: after);
@@ -1193,12 +1193,12 @@ fn run_linsert(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
     if client^.state == state_expired {
       set slot^ = None<Entry>();
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if client^.state == state_done {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -1368,7 +1368,7 @@ fn run_lpos(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let key = &input^[place.start..place.end];
   let seek = Seek(rank: rank, count: wanted, counted: counted, maxlen: maxlen, now: time^.check, state: state_absent);
   let positions = box_slots_new::<u64>(capacity: 0_u64);
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = seek_items(env: &seek, value: held, input: input, element: element, positions: &positions);
@@ -1550,7 +1550,7 @@ fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   let destination = key_set_insert(keys: &keys, key: destination_key);
   let now = time^.check;
   set client^.state = state_absent;
-  atomic s = &store^.state, slots = &s^.map[keys] {
+  atomic slots = &store^.keys[keys], m = &store^.meta {
     let found = entry_none;
     if source < keys.len {
       set found = list_kind(slot: &slots^[source], now: now);
@@ -1560,7 +1560,7 @@ fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
         set slots^[source] = None<Entry>();
       }
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: source_key);
+        log_removal(log: &m^.log, key: source_key);
       }
     }
     if found == entry_other {
@@ -1576,7 +1576,7 @@ fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
           set slots^[destination] = None<Entry>();
         }
         if store^.logging {
-          log_removal(log: &s^.meta.log, key: destination_key);
+          log_removal(log: &m^.log, key: destination_key);
         }
       }
       if target == entry_other {
@@ -1599,7 +1599,7 @@ fn run_lmove(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
             }
             set client^.state = state_done;
             if store^.logging {
-              log_command(log: &s^.meta.log, input: input, args: args);
+              log_command(log: &m^.log, input: input, args: args);
             }
           }
           None() => {

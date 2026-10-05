@@ -43,8 +43,8 @@ use crate::{
     IrAddressed, IrAllocationObligations, IrArrayRoot, IrBlock, IrBlockId, IrBooleanOperation,
     IrConstant, IrConversionMode, IrDrop, IrDropSubject, IrEnumType, IrFloatOperation, IrFunction,
     IrGlobalValue, IrInstruction, IrIntegerOperation, IrNominal, IrNominalId, IrNominalKind,
-    IrOperation, IrOverlap, IrProgram, IrTargetDomainObligation, IrTerminator, IrType, IrValueId,
-    IrWindowShape,
+    IrOperation, IrOverlap, IrProgram, IrShared, IrTargetDomainObligation, IrTerminator, IrType,
+    IrValueId, IrWindowShape,
 };
 use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
@@ -808,6 +808,33 @@ fn aliasing_admitted_row(name: &str) -> bool {
 }
 
 fn emit_global_constants(output: &mut Module, program: &IrProgram) -> Result<(), BackendFailure> {
+    let mut none_types = BTreeSet::new();
+    for nominal in program.nominals() {
+        if let IrNominalKind::Shared {
+            shape: IrShared::Map {
+                entry: IrType::Nominal(option),
+            },
+            ..
+        } = nominal.kind()
+            && none_types.insert(option.index())
+        {
+            let option = program.nominal(*option).ok_or(BackendFailure::InvalidIr)?;
+            let mut references = References::default();
+            let ty = llvm_type_with_references(
+                program,
+                IrType::Nominal(option.id()),
+                &mut references.types,
+            )?;
+            output.global(
+                format!(".wf_table_none.{}", option.link_name()),
+                "unnamed_addr constant",
+                ty,
+                "zeroinitializer".to_owned(),
+                None,
+                references,
+            );
+        }
+    }
     for constant in program.constants() {
         output.text(format!("; const {}\n", constant.name()));
         let mut references = References::default();
@@ -2449,11 +2476,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.emit_shared_wait(result, *object, "wf__shared_watch", "watch")
             }
             IrOperation::SharedUnlock { object } => self.emit_shared_unlock(result, *object),
-            IrOperation::KeyedTableNew { nominal, capacity } => {
+            IrOperation::ConcurrentHashMapNew { nominal, capacity } => {
                 self.emit_keyed_table_new(result, ty, *nominal, *capacity)
             }
-            IrOperation::KeyedTableCount { table } => self.emit_keyed_table_count(result, *table),
-            IrOperation::KeyedTableSwap { first, second } => {
+            IrOperation::AtomicGroupTarget {
+                record,
+                index,
+                object,
+                hold,
+            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold),
+            IrOperation::AtomicGroupTake { record } => {
+                self.emit_atomic_group_call(result, *record, None, true)
+            }
+            IrOperation::AtomicGroupRelease { record, nominal } => {
+                self.emit_atomic_group_call(result, *record, *nominal, false)
+            }
+            IrOperation::TableHoldRead { record } => {
+                self.emit_table_hold_call(result, *record, "wf__table_hold_read")
+            }
+            IrOperation::ConcurrentHashMapCount { table } => {
+                self.emit_keyed_table_count(result, *table)
+            }
+            IrOperation::ConcurrentHashMapSwap { first, second } => {
                 self.emit_keyed_table_swap(result, *first, *second)
             }
             IrOperation::TableLockEntry {
@@ -2461,13 +2505,27 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 table,
                 key,
                 read,
-            } => self.emit_table_lock_entry(result, *record, *table, *key, *read),
+                stable_absence,
+            } => self.emit_table_lock_entry(result, *record, *table, *key, *read, *stable_absence),
             IrOperation::TableEntrySlot { nominal, record } => {
                 self.emit_table_entry_slot(result, *nominal, *record)
             }
             IrOperation::TableUnlockEntry {
                 nominal, record, ..
             } => self.emit_table_unlock_entry(result, *nominal, *record),
+            IrOperation::TableHeldEntry {
+                nominal,
+                table,
+                key,
+                write,
+            } => self.emit_table_held_entry(result, *nominal, *table, *key, *write),
+            IrOperation::TableHeldEntries {
+                table,
+                set,
+                record,
+                read_record,
+                ..
+            } => self.emit_table_held_entries(result, *table, *set, *record, *read_record),
             IrOperation::TableHoldBegin { record, table } => {
                 self.emit_table_hold_begin(result, *record, *table)
             }
@@ -2491,10 +2549,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::TableHoldRelease { nominal, record } => {
                 self.emit_table_hold_release(result, *nominal, *record)
             }
-            IrOperation::KeyedEntriesRecord { record, .. } => {
+            IrOperation::EntriesRecord { record, .. } => {
                 self.emit_keyed_entries_record(result, *record)
             }
-            IrOperation::KeyedEntriesFill {
+            IrOperation::EntriesFill {
                 entries,
                 hold,
                 position,
@@ -3021,7 +3079,7 @@ pub(super) fn llvm_type_with_references(
         // statement's record of its hold, the set's first position in it and
         // the set's count [SHARE-2].
         IrType::KeySet => Ok("{ i64, ptr }".to_owned()),
-        IrType::KeyedEntries { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
+        IrType::Entries { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // compiler/storage-representation: a runtime-capacity `Array<T>` is
         // one block `[len | elements]`, header first, exactly as a boxed
         // window block is. An `Array`'s `len` equals its `cap` [WIN-1], so

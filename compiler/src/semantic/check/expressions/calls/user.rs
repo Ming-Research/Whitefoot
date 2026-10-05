@@ -450,6 +450,7 @@ impl<'unit> Checker<'_, 'unit> {
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
             argument_atoms.push(atom);
+
             actual_paths.push(paths);
             actual_captures.push(
                 self.body.note_capture(
@@ -515,6 +516,31 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
+        if self
+            .types
+            .declarations
+            .tree
+            .is_prelude_node(signature.node)?
+        {
+            for parameter in &signature.parameters {
+                self.types.reject_placement(
+                    node,
+                    parameter.ty,
+                    if parameter.mode == CheckedMode::Own {
+                        super::super::super::types::Placement::Value
+                    } else {
+                        super::super::super::types::Placement::Reference
+                    },
+                    &signature.substitution,
+                )?;
+            }
+            self.types.reject_placement(
+                node,
+                signature.result,
+                super::super::super::types::Placement::Value,
+                &signature.substitution,
+            )?;
+        }
         let result = signature.result;
         let result_mode = signature.result_mode;
         let (formal_effects, formal_contract) = match formal {
@@ -582,6 +608,7 @@ impl<'unit> Checker<'_, 'unit> {
             let ordinal =
                 u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
             places.push(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(BindingId(ordinal)),
                 path: Checker::substitute_effect_steps(signature, formal, &captures)?,
             });
@@ -882,6 +909,7 @@ impl<'unit> Checker<'_, 'unit> {
                     };
                     candidates.push(position);
                     window = Some(ResolvedPlace {
+                        atomic_aliases: left.atomic_aliases.clone(),
                         root: left.root,
                         path: left.path[..depth].to_vec(),
                     });
@@ -1247,6 +1275,7 @@ impl<'unit> TypeContext<'unit> {
                 },
                 self.goal_referent_image(
                     &ResolvedPlace {
+                        atomic_aliases: Vec::new(),
                         root: root.root,
                         path: root.place_path(),
                     },
@@ -1549,6 +1578,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 continue;
             }
             let window = ResolvedPlace {
+                atomic_aliases: entry.place.atomic_aliases.clone(),
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };

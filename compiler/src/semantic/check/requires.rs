@@ -957,7 +957,7 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Array { element, length } => (Some(element), Some(length)),
             CheckedType::Buffer { element }
             | CheckedType::Segments { element }
-            | CheckedType::KeyedEntries { element } => (Some(element), None),
+            | CheckedType::Entries { element } => (Some(element), None),
             // [SHARE-1] a key set's keys are no element type of the program.
             CheckedType::KeySet => (None, None),
             _ if range_referent => (Some(self.intern_element(ty)?), None),

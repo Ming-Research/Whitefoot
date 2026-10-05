@@ -1,0 +1,19 @@
+fn touch<const n: u64>(first: &Array<u8, n>, second: &Array<u8, 4>) -> result: unit writes(first), writes(second) {
+  let left = array_filled::<u8, n>(value: 1_u8);
+  let right = array_filled::<u8, 4>(value: 2_u8);
+  set first^ = left;
+  set second^ = right;
+  return unit;
+}
+
+fn fill<const n: u64>(first: &Shared<Array<u8, n>>, second: &Shared<Array<u8, 4>>) -> result: unit reads(first), reads(second) waits {
+  atomic a = &first^, b = &second^ {
+    touch::<n>(first: a, second: b);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "SHARE-2, EFF-5: a const parameter may instantiate to the concrete capacity beside it. Array<u8,n> and Array<u8,4> therefore have possibly identical roots, and one call may not write both whole targets.";
+  return std::process::exit_status(code: 0_u8);
+}

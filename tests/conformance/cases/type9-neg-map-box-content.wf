@@ -1,0 +1,7 @@
+fn keep(cell: &Box<ConcurrentHashMap<u8>>) -> result: unit reads(cell) {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

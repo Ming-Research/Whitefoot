@@ -1305,7 +1305,7 @@ impl<'unit> Checker<'_, 'unit> {
     /// [SET-1], and a reference-parameter root needs this callable's declared
     /// row to carry `writes` of the path, which is the same fact [EFF-5]
     /// substitutes at every call.
-    fn reference_row_writes(
+    pub(in crate::semantic::check) fn reference_row_writes(
         &self,
         function: &FunctionSignature,
         place: &ResolvedPlace,
@@ -2148,9 +2148,9 @@ impl<'unit> TypeContext<'unit> {
                 )
             }
             CheckedType::KeySet => "KeySet".to_owned(),
-            // [PRE-1] `KeyedEntries<V>` is written with the value type, and
+            // [PRE-1] `Entries<V>` is written with the value type, and
             // its element is the `Option<V>` each entry is [SHARE-2].
-            CheckedType::KeyedEntries { element } => {
+            CheckedType::Entries { element } => {
                 let entry = self.element_type(element)?;
                 let value = match entry {
                     CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
@@ -2167,7 +2167,7 @@ impl<'unit> TypeContext<'unit> {
                     _ => None,
                 }
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                format!("KeyedEntries<{}>", self.checked_type_name(value)?)
+                format!("Entries<{}>", self.checked_type_name(value)?)
             }
             CheckedType::Buffer { element } => {
                 format!(

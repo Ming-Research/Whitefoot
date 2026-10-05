@@ -585,6 +585,7 @@ impl Reasoning<'_, '_, '_> {
         let mut pairs = Vec::with_capacity(roots.len());
         for (root, path, measure, ty) in roots {
             let place = ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(binding),
                 path: path.clone(),
             };

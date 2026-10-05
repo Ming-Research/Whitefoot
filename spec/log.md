@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-05 v0.92: shared maps and several objects per atomic statement
+
+Rules: TYPE-6, TYPE-9, TYPE-10, TYPE-11, REF-1, REF-4, OWN-7, OP-4, OP-9, ENT-2, MSR-1, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1
+
+Owner-approved: In the session of 2026-10-05, written in Chinese; the same rulings as the design log entry "Shared maps and several objects per atomic statement" of 2026-10-05, the last of them Q28 ("agree", TYPE-9 to be written simply), Q29, Q30 ("A"), Q31 and Q32 ("Q32 agree") after the handoff of PR #231.
+
+Summary: SHARE-1 makes `ConcurrentHashMap<V>` the state of a shared object made by `shared_map_new` and counted by `map_count`; SHARE-2 replaces the one target and its table bindings with a header of targets, admits several entry targets on one handle and refuses a handle held whole beside its entries, defines `t^[k]` and `&t^[ks]` on any `&ConcurrentHashMap<V>` place, and treats targets whose types may be one type at some instance as possibly overlapping; SHARE-3 orders all atomic statements of an execution; WAIT-2 and TYPE-11 are stated over every target's state; REF-1 and OWN-7 let same-type targets be one root; TYPE-9 states one placement table and judges a type argument where it lands; the other rules rename `KeyedTable`, `KeyedEntries` and `keyed_table_count` to `ConcurrentHashMap`, `Entries` and `map_count`. Selection: the owner's rulings above; amendment A, never released, is replaced within v0.92.
+
 ## 2026-10-04 v0.91: key sets in insertion order
 
 Rules: changed SHARE-1, PRE-1, TYPE-10, MSR-1

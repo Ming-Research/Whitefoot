@@ -100,10 +100,13 @@ macro_rules! operation_operands {
             | IrOperation::SharedNew { .. }
             | IrOperation::TableEntrySlot { .. }
             | IrOperation::TableUnlockEntry { .. }
+            | IrOperation::TableHoldRead { .. }
+            | IrOperation::AtomicGroupTake { .. }
+            | IrOperation::AtomicGroupRelease { .. }
             | IrOperation::TableHoldWhole { .. }
             | IrOperation::TableHoldTake { .. }
             | IrOperation::TableHoldRelease { .. }
-            | IrOperation::KeyedEntriesRecord { .. }
+            | IrOperation::EntriesRecord { .. }
             | IrOperation::WatchBegin { .. }
             | IrOperation::WatchPark { .. } => Vec::new(),
             IrOperation::Call { arguments, .. }
@@ -130,10 +133,11 @@ macro_rules! operation_operands {
             | IrOperation::SharedWatch { object: value }
             | IrOperation::SharedTake { object: value }
             | IrOperation::SharedUnlock { object: value }
-            | IrOperation::KeyedTableNew {
+            | IrOperation::ConcurrentHashMapNew {
                 capacity: value, ..
             }
-            | IrOperation::KeyedTableCount { table: value }
+            | IrOperation::AtomicGroupTarget { object: value, .. }
+            | IrOperation::ConcurrentHashMapCount { table: value }
             | IrOperation::TableHoldBegin { table: value, .. }
             | IrOperation::TableHoldKey { key: value, .. }
             | IrOperation::TableHoldKeys { set: value, .. }
@@ -143,9 +147,15 @@ macro_rules! operation_operands {
             | IrOperation::KeySetNew { capacity: value }
             | IrOperation::WatchObject { object: value, .. }
             | IrOperation::WatchTable { table: value, .. } => vec![$value(value)],
-            IrOperation::KeyedTableSwap { first, second } => vec![$value(first), $value(second)],
-            IrOperation::TableLockEntry { table, key, .. } => vec![$value(table), $value(key)],
-            IrOperation::KeyedEntriesFill {
+            IrOperation::ConcurrentHashMapSwap { first, second } => {
+                vec![$value(first), $value(second)]
+            }
+            IrOperation::TableHeldEntries {
+                table, set: key, ..
+            }
+            | IrOperation::TableHeldEntry { table, key, .. }
+            | IrOperation::TableLockEntry { table, key, .. } => vec![$value(table), $value(key)],
+            IrOperation::EntriesFill {
                 entries,
                 position,
                 set,
@@ -227,7 +237,7 @@ macro_rules! operation_operands {
                 super::IrPlaceStep::RunElement { offset, .. }
                 | super::IrPlaceStep::ArrayElement { offset, .. }
                 | super::IrPlaceStep::BufferElement { offset, .. }
-                | super::IrPlaceStep::KeyedEntriesElement { offset } => {
+                | super::IrPlaceStep::EntriesElement { offset } => {
                     vec![$value(address), $value(offset)]
                 }
             },

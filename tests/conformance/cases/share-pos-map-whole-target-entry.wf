@@ -1,0 +1,28 @@
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 2_u64);
+  let tally = shared_new::<u8>(value: 0_u8);
+  let got = 0_u8;
+  let counted = 0_u64;
+  atomic t = &store, c = &tally {
+    let first = &names[0_u64..1_u64];
+    set t^[first] = Some<u8>(value: 5_u8);
+    let second = &names[1_u64..2_u64];
+    match t^[second] {
+      Some(value: v) => {
+        set got = v^;
+      }
+      None() => {
+        set got = 2_u8;
+      }
+    }
+    set t^[second] = Some<u8>(value: 4_u8);
+    set counted = map_count::<u8>(map: t);
+    set c^ = got;
+  }
+  let tens = got *wrap 10_u8;
+  let ones = cvt.wrap::<u64, u8>(counted);
+  let code = tens +wrap ones;
+  return std::process::exit_status(code: code);
+}

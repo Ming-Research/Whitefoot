@@ -1,0 +1,19 @@
+fn put<T: copy>(first: &T, second: &u8, value: T) -> result: unit writes(first), writes(second) {
+  set first^ = value;
+  set second^ = 1_u8;
+  return unit;
+}
+
+fn fill<T: copy>(cell: &Shared<T>, flag: &Shared<u8>, value: T) -> result: unit reads(cell), reads(flag) waits {
+  atomic a = &cell^, b = &flag^ {
+    put::<T>(first: a, second: b, value: value);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u16>(value: 0_u16);
+  let flag = shared_new::<u8>(value: 0_u8);
+  fill::<u16>(cell: &cell, flag: &flag, value: 5_u16);
+  return std::process::exit_status(code: 0_u8);
+}

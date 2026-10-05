@@ -427,6 +427,7 @@ impl Input<'_, '_> {
             return None;
         }
         let receiver = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: PlaceRoot::Binding(target.binding),
             path: Vec::new(),
         };
@@ -593,6 +594,7 @@ impl Vocabulary {
             .map(|projection| projection.place_step())
             .collect::<Vec<_>>();
         let path = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root,
             path: projections,
         };
@@ -1431,6 +1433,7 @@ impl Reasoning<'_, '_, '_> {
         Some(self.measure_term(
             measure,
             ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root,
                 path: projections,
             },

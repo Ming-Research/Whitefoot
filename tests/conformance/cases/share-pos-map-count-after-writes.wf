@@ -1,0 +1,34 @@
+const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let first = &names[0_u64..1_u64];
+  let second = &names[1_u64..2_u64];
+  let third = &names[2_u64..3_u64];
+  atomic a = &store[first] {
+    set a^ = Some<u8>(value: 1_u8);
+  }
+  let grown = 0_u64;
+  let shrunk = 0_u64;
+  atomic t = &store {
+    set t^[second] = Some<u8>(value: 2_u8);
+    set t^[third] = Some<u8>(value: 3_u8);
+    set grown = map_count::<u8>(map: t);
+    set t^[first] = None<u8>();
+    set shrunk = map_count::<u8>(map: t);
+  }
+  let after = 0_u64;
+  atomic t = &store {
+    set after = map_count::<u8>(map: t);
+  }
+  if grown != 3_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if shrunk != 2_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if after != 2_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 5_u8);
+}
