@@ -2366,11 +2366,10 @@ rarely insert at the same place.
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
   is 10-30% above the pointer form with every other mechanism equal
-  (E1 in `research/experiments/match-dispatch/RESULTS.md`). Frame slots
-  `regs[base + a]` are now addressed from a pointer each part derives at
-  entry (compiler/match-dispatch-lowering), but the stage-3 interpreter's
-  arms still form the next cell's address from `pc` (`add x3, x25, x8,
-  lsl #4`) and test it against the code length on every dispatch. When
+  (E1 in `research/experiments/match-dispatch/RESULTS.md`). What remains
+  is the carried index itself: the stage-3 interpreter's arms form the next
+  cell's address from `pc` and test it against the code length on every
+  dispatch. When
   every use of a carried index addresses one array and the index changes
   only by offsets and stores of checked values, the parts could carry the
   derived address beside the index. A sum computed in the dispatch header

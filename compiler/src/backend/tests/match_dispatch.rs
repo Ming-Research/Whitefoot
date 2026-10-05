@@ -1096,3 +1096,129 @@ fn an_arm_addresses_frame_slots_from_a_pointer_its_prelude_derives() {
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
+
+/// The frame interpreter with every slot access under a bounds test and
+/// `fp` 100 on a three-element frame: the `Add` and `Halt` arms' prelude
+/// derives a pointer to element 100, out of bounds and never used, since
+/// their accesses do not run. `Peek` adds 1 to a value it loads, an offset
+/// with no operand the part has from its entry, and writes element 2.
+/// `Add; Peek; Halt` returns 70 plus that element, 77.
+const GUARDED_FRAME: &str = r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Add();
+  Peek();
+  Halt();
+}
+
+fn framed(code: &Box<Slots<Op>>, regs: &Box<Array<u64>>, pc: u64, fp: u64) -> r: u64 reads(code), writes(regs) contract {
+  requires pc < code^.inner.len;
+  requires fp <= 1000_u64;
+} {
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Add() => {
+      let at = fp + 1_u64;
+      if at < regs^.inner.len {
+        let a = regs^.inner[at];
+        let b = a +wrap 3_u64;
+        set regs^.inner[at] = b;
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail framed(code: code, regs: regs, pc: next, fp: fp);
+      }
+      return 0_u64;
+    }
+    Peek() => {
+      if 0_u64 < regs^.inner.len {
+        let v = regs^.inner[0_u64];
+        if v < 1000_u64 {
+          let at = v + 1_u64;
+          if at < regs^.inner.len {
+            set regs^.inner[at] = 7_u64;
+          }
+        }
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail framed(code: code, regs: regs, pc: next, fp: fp);
+      }
+      return 0_u64;
+    }
+    Halt() => {
+      let at = fp + 1_u64;
+      if at < regs^.inner.len {
+        let a = regs^.inner[at];
+        return a;
+      }
+      if 2_u64 < regs^.inner.len {
+        let c = regs^.inner[2_u64];
+        let r = c +wrap 70_u64;
+        return r;
+      }
+      return 0_u64;
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 3_u64);
+  let c0 = Op::Add();
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Peek();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Halt();
+  let p2 = push(code: &code, op: c2);
+  let regs = box_array_filled::<u64>(count: 3_u64, value: 0_u64);
+  if code.inner.len > 0_u64 {
+    if regs.inner.len >= 3_u64 {
+      set regs.inner[0_u64] = 1_u64;
+      let r = framed(code: &code, regs: &regs, pc: 0_u64, fp: 100_u64);
+      if r == 77_u64 {
+        return exit_status(code: 0_u8);
+      }
+      return exit_status(code: 1_u8);
+    }
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn a_derived_pointer_past_the_frame_is_never_used_and_other_offsets_keep_their_form() {
+    // `Add` and `Halt` offset from `fp`, a part parameter, so their preludes
+    // derive the pointer to element 100 although the frame has three
+    // elements; the accesses under the bounds tests never run, and the
+    // program returns 77. `Peek`'s offset is a loaded value plus 1, with no
+    // operand from the part's entry, so it is addressed from the block.
+    let module = emit(GUARDED_FRAME.as_bytes());
+    assert_split(&module, "wf_framed", 3);
+    for (arm, derives) in [(0, true), (1, false), (2, true)] {
+        let part = definition(&module, &format!("wf_framed.arm.{arm}"));
+        let (prelude, body) = part
+            .split_once("  br label %")
+            .expect("the prelude ends in the branch to the arm");
+        assert_eq!(
+            prelude.contains("%wf.derived."),
+            derives,
+            "arm {arm} derives a pointer exactly when its offset adds to fp: {part}"
+        );
+        assert_eq!(
+            body.contains("getelementptr inbounds { i64, [0 x i64] }"),
+            !derives,
+            "arm {arm} addresses the block itself exactly when it derives nothing: {part}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
