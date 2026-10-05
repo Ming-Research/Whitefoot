@@ -60,7 +60,7 @@ use super::postcondition::CheckedPostconditionSelector;
 use super::tree::TreeView;
 use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
-use generics::{GenericParameter, GenericSubstitution};
+use generics::{GenericArgument, GenericParameter, GenericSubstitution};
 use inventory::InventoryView;
 use references::ReferenceInfo;
 
@@ -656,6 +656,10 @@ struct AnalysisState {
     /// Per concrete function: whether its analysis stands on a receipt
     /// rather than a fresh run [FN-9].
     reused_analyses: Vec<bool>,
+    /// Per symbolic instance: whether it took the summary of a renamed
+    /// instance's analysis rather than analyzing its body [FN-2]. Such a
+    /// summary is already settled and is not finalized again.
+    renamed_summaries: Vec<bool>,
     /// The receipt key of each function analyzed afresh, recorded once its
     /// analysis is accepted.
     receipt_keys: Vec<(usize, Vec<u8>)>,
@@ -1224,6 +1228,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             optimistic_batch,
             Some(&ordinary),
             true,
+            None,
         )?;
         let baseline_functions = function_inventory
             .iter()
@@ -2058,16 +2063,21 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // again by the concrete phase, so analyzing them here would repeat
         // that whole cost for a result nothing reads.
         let analyzed = Checker::generic_validation_scope(functions, canonical)?;
+        let mut judged = vec![false; functions.len()];
+        for (index, _) in canonical {
+            judged[*index] = true;
+        }
         self.analyze_function_inventory(
             functions,
             callees,
             optimistic_batch,
             Some(&analyzed),
             false,
+            Some(&judged),
         )?;
         if optimistic_batch {
-            for (checked, analyzed) in functions.iter_mut().zip(&analyzed) {
-                if *analyzed {
+            for (index, (checked, analyzed)) in functions.iter_mut().zip(&analyzed).enumerate() {
+                if *analyzed && !self.analysis.renamed_summaries[index] {
                     finalize_function_entailment(&mut checked.function.entailment);
                 }
             }
@@ -2122,6 +2132,12 @@ impl<'check, 'unit> Checker<'check, 'unit> {
 
     /// Analyzes every function of the inventory, or only those `analyzed`
     /// marks. A caller that restricts the set must close it under callees.
+    ///
+    /// Symbolic validation passes `judged`, the canonical instances whose own
+    /// analysis is judged. Every other symbolic instance is analyzed only for
+    /// the summaries its callers read, so one that renames an instance of the
+    /// same declaration already analyzed in an earlier component takes that
+    /// analysis's summary instead of analyzing the same body again [FN-2].
     fn analyze_function_inventory(
         &mut self,
         functions: &mut [CheckedFunctionInventory],
@@ -2129,8 +2145,19 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         optimistic_batch: bool,
         analyzed: Option<&[bool]>,
         allow_receipts: bool,
+        judged: Option<&[bool]>,
     ) -> Result<PostconditionSchedule, CheckStop> {
         let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
+        let renaming_classes = (0..functions.len())
+            .map(|index| {
+                judged
+                    .filter(|judged| !judged[index])
+                    .and_then(|_| self.types.signatures.get(index))
+                    .and_then(symbolic_renaming_class)
+            })
+            .collect::<Vec<_>>();
+        let mut renamed_analyses: HashMap<(DeclarationId, Vec<u8>), (u32, usize)> = HashMap::new();
+        self.analysis.renamed_summaries = vec![false; functions.len()];
         let contract_queries = self.analysis.contract_queries.clone();
         let const_parameter_types = self.types.const_generic_types().collect();
         // [MOD-8] the concrete inventory's analyses may stand on receipts;
@@ -2257,7 +2284,17 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                         ),
                         _ => None,
                     };
-                    let entailment = if let Some(entailment) = recorded {
+                    let class = renaming_classes[function_index].clone();
+                    let renamed = class
+                        .as_ref()
+                        .and_then(|class| renamed_analyses.get(class))
+                        .filter(|(ordinal, _)| *ordinal < component.ordinal)
+                        .map(|(_, representative)| {
+                            summary_entailment(&functions[*representative].function.entailment)
+                        });
+                    let recorded_none = recorded.is_none();
+                    let analyzed_here = recorded_none && renamed.is_none();
+                    let entailment = if let Some(entailment) = recorded.or(renamed) {
                         entailment
                     } else {
                         let context = EntailmentContext {
@@ -2278,6 +2315,13 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     drop(verified_postconditions);
                     drop(verified_postcondition_proofs);
                     functions[function_index].function.entailment = entailment;
+                    self.analysis.renamed_summaries[function_index] =
+                        !analyzed_here && recorded_none;
+                    if analyzed_here && let Some(class) = class {
+                        renamed_analyses
+                            .entry(class)
+                            .or_insert((component.ordinal, function_index));
+                    }
                 }
 
                 let publish = component.functions.iter().all(|function| {
@@ -3947,5 +3991,52 @@ impl<'unit> TypeContext<'unit> {
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),
         }
+    }
+}
+
+/// The renaming class of a symbolic function instance: its declaration and
+/// the kind of each argument, when every argument is a distinct symbolic
+/// parameter. Two instances of one class differ only by a one-to-one
+/// renaming of those parameters, so their bodies prove the same summaries.
+fn symbolic_renaming_class(signature: &FunctionSignature) -> Option<(DeclarationId, Vec<u8>)> {
+    if signature.formal_parameter.is_some() || !signature.substitution.region_arguments().is_empty()
+    {
+        return None;
+    }
+    let mut kinds = Vec::with_capacity(signature.substitution.len());
+    let mut arguments = Vec::with_capacity(signature.substitution.len());
+    for (_, argument) in signature.substitution.bindings() {
+        let kind = match argument {
+            GenericArgument::Type(CheckedType::Generic(_)) => 0,
+            GenericArgument::Type(CheckedType::GenericInt(_)) => 1,
+            GenericArgument::Type(CheckedType::GenericFloat(_)) => 2,
+            GenericArgument::Const(CheckedConst::Parameter(_)) => 3,
+            GenericArgument::Function(behavior::FunctionArgument::Parameter(_)) => 4,
+            _ => return None,
+        };
+        if arguments.contains(argument) {
+            return None;
+        }
+        arguments.push(*argument);
+        kinds.push(kind);
+    }
+    (!kinds.is_empty()).then_some((signature.declaration, kinds))
+}
+
+/// What a symbolic instance's callers read of another instance's analysis:
+/// its body disposition, invariant outcomes and postcondition proofs, with
+/// no published summary until this instance's own component publishes one.
+fn summary_entailment(
+    entailment: &super::entailment::FunctionEntailment,
+) -> super::entailment::FunctionEntailment {
+    let mut postconditions = entailment.postconditions.clone();
+    for proof in &mut postconditions {
+        proof.summary = None;
+    }
+    super::entailment::FunctionEntailment {
+        body_disposition: entailment.body_disposition,
+        loop_invariants: entailment.loop_invariants.clone(),
+        postconditions,
+        ..super::entailment::FunctionEntailment::default()
     }
 }

@@ -1834,14 +1834,11 @@ pub fn entry_verdict(
 const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 /// `work` applied to every item, on up to one thread per available processor,
-/// with the results in item order. `WHITEFOOT_JOBS` names a smaller or larger
-/// thread count; one thread runs every item on the calling thread.
+/// with the results in item order; one thread runs every item on the calling
+/// thread.
 fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    let jobs = std::env::var("WHITEFOOT_JOBS")
-        .ok()
-        .and_then(|jobs| jobs.parse::<usize>().ok())
-        .filter(|jobs| *jobs > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
+    let jobs = std::thread::available_parallelism()
+        .map_or(1, usize::from)
         .min(items.len());
     if jobs <= 1 {
         return items.iter().map(work).collect();

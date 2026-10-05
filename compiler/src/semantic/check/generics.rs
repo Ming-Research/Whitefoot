@@ -141,6 +141,11 @@ impl GenericSubstitution {
         self.bindings.len()
     }
 
+    /// Every parameter's argument, in binding order.
+    pub(super) fn bindings(&self) -> &[(GenericParameterKey, GenericArgument)] {
+        &self.bindings
+    }
+
     pub(super) fn region_arguments(&self) -> &[(DeclarationId, DeclarationId)] {
         &self.regions
     }

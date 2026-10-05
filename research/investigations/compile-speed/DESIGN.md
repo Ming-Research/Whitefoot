@@ -119,6 +119,19 @@ implicit bounds, through closure rules. Such a conclusion holds at every
 program point, so wrapping it at a snapshot event adds a node and records
 nothing a kill or a join could use.
 
+### Renamed symbolic instances
+
+Halo, the Lua engine on branch `claude/halo-slice1`, is a second workload.
+Its `research/experiments/halo-e2e` entry `test` exhausted memory on the
+baseline-plus-candidates compiler (killed after 151.9 s at 13.9 GB). The
+module check of `pkg::vm` alone reached a 12 GB limit after 131 s and 4134
+function analyses, during symbolic generic validation. Every interpreter
+helper takes `interface Host<E>`, and each generic template's symbolic
+validation instantiates the helpers it reaches at its own symbolic
+parameter: `slow` was analyzed 40 times (31.5 s), `library_base` 39 times
+(18.2 s) and `prepare` 40 times (14.3 s). Those instances differ only by a
+renaming of symbolic parameters, and their callers read only their summaries.
+
 ## Candidates and selection
 
 Each candidate changes work only. The selection criteria are that every
@@ -135,7 +148,7 @@ before these criteria were written; their results below are the same runs.
    returned in record order; a fresh bound store skips the extra-candidate
    probe. Routine fixes under unchanged design.
 2. **Concurrent module verdicts.** An entry composition computes its module
-   verdicts on one thread per processor (`WHITEFOOT_JOBS` overrides) and
+   verdicts on one thread per processor and
    reports the first rejection or failure in module order. Unlike the
    sequential walk, every module is checked even after an earlier one
    rejects, and a panic in any of them propagates. The build cache's
@@ -155,6 +168,14 @@ before these criteria were written; their results below are the same runs.
    root it captures names that snapshot as its proof point; the corpus's
    counted-root checker caught this when the first implementation skipped it
    there too.
+
+5. **Renamed symbolic instances.** A non-canonical symbolic instance whose
+   arguments are distinct symbolic parameters takes the body disposition,
+   invariant outcomes and postcondition proofs of an instance of the same
+   declaration and argument kinds analyzed in an earlier component; its own
+   component still decides publication. A temporary patch that analyzed every
+   such instance anyway and compared the two found all 7088 reused instances
+   of Halo's `pkg::vm` check identical (456 of them with postconditions).
 
 Rejected alternatives:
 
@@ -194,6 +215,17 @@ candidate 4. The LLVM of `png_oracle`, `css_selectors_oracle`,
 `html_tree_oracle` and `style_oracle` is byte-identical to the baseline's
 after candidates 2, 3 and 4, and that of `layout_oracle` after candidate 4,
 the only one at which it was compared.
+
+Separating the two kinds of gain, a single-thread run of the final
+compiler (the thread count then forced to one) took 66.5 s for
+`style_oracle` and 196.2 s for `layout_oracle`: the algorithmic candidates
+give 1.44x and 1.40x, and concurrency on four processors the rest (1.74x and
+2.13x).
+
+With candidate 5, Halo's `pkg::vm` module check takes 57.9 s and 2.2 GB
+instead of exhausting 12 GB, and the `test` entry's fresh-cache check is
+accepted in 122.6 s at 3.3 GB peak RSS. The Snowghost LLVM of all five
+entries stays byte-identical.
 
 ## Remaining costs
 
