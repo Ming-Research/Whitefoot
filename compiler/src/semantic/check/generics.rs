@@ -2308,3 +2308,52 @@ impl<'unit> DeclarationInventory<'unit> {
         Ok(count)
     }
 }
+
+/// The renaming class of a symbolic function instance: its declaration and
+/// the kind of each argument, when every argument is a distinct symbolic
+/// parameter. Two instances of one class differ only by a one-to-one
+/// renaming of those parameters, so their bodies prove the same summaries.
+pub(super) fn symbolic_renaming_class(
+    signature: &FunctionSignature,
+) -> Option<(DeclarationId, Vec<u8>)> {
+    if signature.formal_parameter.is_some() || !signature.substitution.region_arguments().is_empty()
+    {
+        return None;
+    }
+    let mut kinds = Vec::with_capacity(signature.substitution.len());
+    let mut arguments = Vec::with_capacity(signature.substitution.len());
+    for (_, argument) in signature.substitution.bindings() {
+        let kind = match argument {
+            GenericArgument::Type(CheckedType::Generic(_)) => 0,
+            GenericArgument::Type(CheckedType::GenericInt(_)) => 1,
+            GenericArgument::Type(CheckedType::GenericFloat(_)) => 2,
+            GenericArgument::Const(CheckedConst::Parameter(_)) => 3,
+            GenericArgument::Function(super::behavior::FunctionArgument::Parameter(_)) => 4,
+            _ => return None,
+        };
+        if arguments.contains(argument) {
+            return None;
+        }
+        arguments.push(*argument);
+        kinds.push(kind);
+    }
+    (!kinds.is_empty()).then_some((signature.declaration, kinds))
+}
+
+/// What a symbolic instance's callers read of another instance's analysis:
+/// its body disposition, invariant outcomes and postcondition proofs, with
+/// no published summary until this instance's own component publishes one.
+pub(super) fn summary_entailment(
+    entailment: &super::super::entailment::FunctionEntailment,
+) -> super::super::entailment::FunctionEntailment {
+    let mut postconditions = entailment.postconditions.clone();
+    for proof in &mut postconditions {
+        proof.summary = None;
+    }
+    super::super::entailment::FunctionEntailment {
+        body_disposition: entailment.body_disposition,
+        loop_invariants: entailment.loop_invariants.clone(),
+        postconditions,
+        ..super::super::entailment::FunctionEntailment::default()
+    }
+}

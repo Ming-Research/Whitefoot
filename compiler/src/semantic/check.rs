@@ -60,7 +60,9 @@ use super::postcondition::CheckedPostconditionSelector;
 use super::tree::TreeView;
 use super::{CheckStop, CheckedProgram};
 use control::{ControlCounters, ControlScope};
-use generics::{GenericArgument, GenericParameter, GenericSubstitution};
+use generics::{
+    GenericParameter, GenericSubstitution, summary_entailment, symbolic_renaming_class,
+};
 use inventory::InventoryView;
 use references::ReferenceInfo;
 
@@ -3991,52 +3993,5 @@ impl<'unit> TypeContext<'unit> {
             nominals_by_declaration: Default::default(),
             signatures: Default::default(),
         }
-    }
-}
-
-/// The renaming class of a symbolic function instance: its declaration and
-/// the kind of each argument, when every argument is a distinct symbolic
-/// parameter. Two instances of one class differ only by a one-to-one
-/// renaming of those parameters, so their bodies prove the same summaries.
-fn symbolic_renaming_class(signature: &FunctionSignature) -> Option<(DeclarationId, Vec<u8>)> {
-    if signature.formal_parameter.is_some() || !signature.substitution.region_arguments().is_empty()
-    {
-        return None;
-    }
-    let mut kinds = Vec::with_capacity(signature.substitution.len());
-    let mut arguments = Vec::with_capacity(signature.substitution.len());
-    for (_, argument) in signature.substitution.bindings() {
-        let kind = match argument {
-            GenericArgument::Type(CheckedType::Generic(_)) => 0,
-            GenericArgument::Type(CheckedType::GenericInt(_)) => 1,
-            GenericArgument::Type(CheckedType::GenericFloat(_)) => 2,
-            GenericArgument::Const(CheckedConst::Parameter(_)) => 3,
-            GenericArgument::Function(behavior::FunctionArgument::Parameter(_)) => 4,
-            _ => return None,
-        };
-        if arguments.contains(argument) {
-            return None;
-        }
-        arguments.push(*argument);
-        kinds.push(kind);
-    }
-    (!kinds.is_empty()).then_some((signature.declaration, kinds))
-}
-
-/// What a symbolic instance's callers read of another instance's analysis:
-/// its body disposition, invariant outcomes and postcondition proofs, with
-/// no published summary until this instance's own component publishes one.
-fn summary_entailment(
-    entailment: &super::entailment::FunctionEntailment,
-) -> super::entailment::FunctionEntailment {
-    let mut postconditions = entailment.postconditions.clone();
-    for proof in &mut postconditions {
-        proof.summary = None;
-    }
-    super::entailment::FunctionEntailment {
-        body_disposition: entailment.body_disposition,
-        loop_invariants: entailment.loop_invariants.clone(),
-        postconditions,
-        ..super::entailment::FunctionEntailment::default()
     }
 }
