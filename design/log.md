@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 Closure matrices over each state's active terms
+
+Nodes: compiler/incremental-closure
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #232 at `ccb71f1ef`, which presented the active-term matrices as decision Q20 and the deferral of a pre-existing materialization gap as Q23: "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated).
+
+Summary: Selected bounds and closed views use dense matrices over each state's active terms, the terms holding a stored bound or disequality or an implicit fact against another non-Z term, and a term outside that set is answered through Z from its implicit bounds, because matrices over every registered term filled every cell with bounds composed through Z, so a `match` of N arms closed, materialized and joined a number of cells quadratic in N a number of times linear in N; a term with only its reflexive and Z bounds cannot shorten a path between two others, so the closure derives the same bounds (Q20). Measurements and the oracle are in [the incremental-closure record](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#active-term-matrices). The pre-existing gap, an ordinary fact weaker than its pair's call-dependent selection not materialized before a kill, stays deferred in `docs/todo.md` (Q23).
+
 ## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
 
 Nodes: compiler/verification
