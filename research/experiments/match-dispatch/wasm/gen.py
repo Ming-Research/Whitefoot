@@ -189,6 +189,16 @@ STORES = [(0x36, "I32Store", 4), (0x37, "I64Store", 8), (0x38, "F32Store", 4),
           (0x39, "F64Store", 8), (0x3a, "I32Store8", 1), (0x3b, "I32Store16", 2),
           (0x3c, "I64Store8", 1), (0x3d, "I64Store16", 2), (0x3e, "I64Store32", 4)]
 
+
+# Compare-and-branch operations: a br_if on an i32 comparison computed just
+# before it, or an if on its negation (opcode, name, operator, signedness).
+FUSED = [(0x46, "Eq", "==", "u"), (0x47, "Ne", "!=", "u"), (0x48, "LtS", "<", "i"),
+         (0x49, "LtU", "<", "u"), (0x4a, "GtS", ">", "i"), (0x4b, "GtU", ">", "u"),
+         (0x4c, "LeS", "<=", "i"), (0x4d, "LeU", "<=", "u"), (0x4e, "GeS", ">=", "i"),
+         (0x4f, "GeU", ">=", "u")]
+NEGATE = {0x46: 0x47, 0x47: 0x46, 0x48: 0x4e, 0x4e: 0x48, 0x49: 0x4f, 0x4f: 0x49,
+          0x4a: 0x4c, 0x4c: 0x4a, 0x4b: 0x4d, 0x4d: 0x4b, 0x45: 0xa8, 0xa8: 0x45}
+
 ARGS = "code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals"
 
 # The frame contract every handler and helper relies on: the 65536 slots
@@ -365,6 +375,22 @@ def store_arm(name, nbytes):
     return o
 
 
+
+def fused_arm(name, op, sign):
+    fn = snake(name)
+    ty = sign + "32"
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, fp: u64, a: u16, b: u16) -> taken: Bool reads(stack) contract {{", FRAME, "} {"]
+    b = slot("a", "a") + ["let xw = stack^.inner[at];"] + decode("x", "xw", ty)
+    b += slot("b", "b") + ["let yw = stack^.inner[bt];"] + decode("y", "yw", ty)
+    b += [f"let z = x {op} y;", "return z;"]
+    HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
+    o = [f"    {name}(a: av, b: bv, t: tv) => {{",
+         f"      let taken = {fn}(stack: stack, fp: fp, a: av^, b: bv^);",
+         "      let next = pc + 1_u64;", "      if taken {", "        set next = cvt::<u32, u64>(tv^);", "      }",
+         "      if next < n {"] + tail("next", 8) + ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
+    return o
+
+
 def count_dispatches(program):
     """The --count variant: a counter cell passed to the interpreter function
     and incremented at every dispatch, printed when _start returns."""
@@ -476,6 +502,9 @@ for code, name, ins, *_ in N:
 for sub, name, *_ in FC:
     w(f"  {name}(d: u16, a: u16);")
     variants.append((name, ["d", "a"], True))
+for code, nm, _, _ in FUSED:
+    w(f"  BrI32{nm}(a: u16, b: u16, t: u32);")
+    variants.append((f"BrI32{nm}", ["a", "b", "t"], False))
 w("}")
 w("")
 
@@ -546,6 +575,50 @@ w("  }")
 w("}")
 w("")
 
+w("fn compare_code(op: Op) -> (code: u64, a: u16, b: u16) pure {")
+w('  doc "An i32 comparison\'s opcode and operand slots, 0x45 for eqz, or zero for any other operation.";')
+w("  match op {")
+compares = {f"I32{nm}": c for c, nm, _, _ in FUSED}
+compares["I32Eqz"] = 0x45
+for name, fields, dest in variants:
+    if name in compares:
+        binds = ", ".join(f"{f}: x_{f}" for f in fields)
+        second = "x_b" if "b" in fields else "0_u16"
+        w(f"    {name}({binds}) => {{")
+        w(f"      return {compares[name]}_u64, x_a, {second};")
+        w("    }")
+    else:
+        w(f"    {name}(..) => {{")
+        w("      return 0_u64, 0_u16, 0_u16;")
+        w("    }")
+w("  }")
+w("}")
+w("")
+w("fn negate_compare(code: u64) -> negated: u64 pure {")
+w('  doc "The comparison true exactly when code\'s is false; 0xa8 stands for a value tested nonzero.";')
+for a, b in NEGATE.items():
+    w(f"  if code == {a}_u64 {{")
+    w(f"    return {b}_u64;")
+    w("  }")
+w("  return 0_u64;")
+w("}")
+w("")
+w("fn fused_branch(code: u64, a: u16, b: u16, t: u32) -> op: Op pure {")
+w('  doc "The branch to t taken when comparison code holds of slots a and b: eqz is BrUnless, nonzero is BrIf.";')
+for c, nm, _, _ in FUSED:
+    w(f"  if code == {c}_u64 {{")
+    w(f"    let o = Op::BrI32{nm}(a: a, b: b, t: t);")
+    w("    return o;")
+    w("  }")
+w("  if code == 69_u64 {")
+w("    let o = Op::BrUnless(t: t, c: a);")
+w("    return o;")
+w("  }")
+w("  let o = Op::BrIf(t: t, c: a);")
+w("  return o;")
+w("}")
+w("")
+
 OPS = "\n".join(out).strip("\n")
 
 arms = []
@@ -557,6 +630,8 @@ for code, name, ins, outty, lines in N:
     arms += numeric_arm(name, ins, outty, lines)
 for sub, name, ins, outty, lines in FC:
     arms += numeric_arm(name, ins, outty, lines)
+for code, nm, op, sign in FUSED:
+    arms += fused_arm(f"BrI32{nm}", op, sign)
 here = os.path.dirname(os.path.abspath(__file__))
 head = open(os.path.join(here, "interp_head.wf")).read()
 tail_text = open(os.path.join(here, "interp_tail.wf")).read().strip("\n")

@@ -373,6 +373,27 @@ other two are the derived-address item already there. Writing the handlers'
 bodies back into the arms, which would avoid the reload, does not check: the
 interpreter function then grows past what the checker handles in minutes.
 
+### v2c, compare and branch fused
+
+A `br_if` whose condition is the i32 comparison emitted just before it, and
+that moves no result, becomes one compare-and-branch operation
+(`BrI32Ne(a, b, t)` and the other nine); an `if` on such a comparison
+branches on its negation, and `eqz` maps onto the existing `BrUnless` and
+`BrIf`. The condition no longer reaches a temporary, so a condition held in
+a local is tested in place. Predicted: about 11% fewer dispatches than v2b,
+score about 0.42x. Seven alternating launches
+([run-wasm-v2c.tsv](run-wasm-v2c.tsv)), every launch with correct CRCs:
+
+| Build | Median score | Ratio to Silverfir-nano | Dispatches | Instructions per dispatch | Cycles per dispatch |
+|---|---:|---:|---:|---:|---:|
+| v2b | 2239.6 | 0.390 | 652,267,155 | 20.9 | 4.35 |
+| v2c | 2534.9 | 0.441 | 551,583,965 | 21.6 | 4.53 |
+
+The dispatches fell 15.4%, more than predicted, because `Copy` also fell
+from 107 to 77 million: conditions held in locals no longer needed one. The
+largest remaining kinds are `I32Add` (102 million), `Copy` (77 million),
+`I32Load` (53 million) and `I32And` (43 million).
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which

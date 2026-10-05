@@ -22,6 +22,8 @@ struct Ctl {
   fixes: u64;
   else_at: u64;
   c: u64;
+  cmp: u64;
+  fb: u64;
 }
 
 struct Trans {
@@ -588,7 +590,7 @@ fn slot16(value: u64) -> n: u16 pure {
 }
 
 fn branch_op(form: u64, target: u64, s: u64, d: u64, c: u64) -> op: Op pure {
-  doc "The branch operation of a form: 0 Jump, 1 Br moving slot s to d, 2 BrIf on slot c, 4 BrUnless on slot c.";
+  doc "The branch operation of a form: 0 Jump, 1 Br moving slot s to d, 2 BrIf on slot c, 4 BrUnless on slot c, 5 a branch on comparison c of slots s and d.";
   let t = narrow(value: target);
   if form == 1_u64 {
     let s16 = slot16(value: s);
@@ -605,6 +607,11 @@ fn branch_op(form: u64, target: u64, s: u64, d: u64, c: u64) -> op: Op pure {
     let c16 = slot16(value: c);
     let o = Op::BrUnless(t: t, c: c16);
     return o;
+  }
+  if form == 5_u64 {
+    let s16 = slot16(value: s);
+    let d16 = slot16(value: d);
+    return fused_branch(code: c, a: s16, b: d16, t: t);
   }
   let o = Op::Jump(t: t);
   return o;
@@ -930,7 +937,59 @@ fn top_pos(provs: &Box<Slots<Prov>>, depth: u64) -> pos: u64 reads(provs) {
   return h -wrap above;
 }
 
-fn emit_branch(st: &Trans, depth: u64, cond: u64, conditional: Bool, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(provs), reads(ctls), writes(st), writes(code), writes(brtab), writes(fixes) {
+fn take_compare(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> (cmp: u64, a: u64, b: u64) reads(provs), writes(st), writes(code) {
+  doc "When the top operand is the temporary the last emitted operation, an i32 comparison, just wrote, removes that operation and returns its comparison and operand slots for a branch to test directly; otherwise returns comparison zero.";
+  let h = provs^.inner.len;
+  if h == 0_u64 {
+    return 0_u64, 0_u64, 0_u64;
+  }
+  let top = h - 1_u64;
+  let p = provs^.inner[top];
+  if p.kind != 0_u64 {
+    return 0_u64, 0_u64, 0_u64;
+  }
+  let length = code^.inner.len;
+  if length == 0_u64 {
+    return 0_u64, 0_u64, 0_u64;
+  }
+  let latest = length - 1_u64;
+  let fresh = st^.last == latest;
+  let same = st^.last_pos == top;
+  let fused = band(fresh, same);
+  if bnot(fused) {
+    return 0_u64, 0_u64, 0_u64;
+  }
+  let old = code^.inner[latest];
+  let (c, a16, b16) = compare_code(op: old);
+  if c == 0_u64 {
+    return 0_u64, 0_u64, 0_u64;
+  }
+  let gone = take_back(window: &code^.inner);
+  set st^.last = 18446744073709551615_u64;
+  let a = cvt::<u16, u64>(a16);
+  let b = cvt::<u16, u64>(b16);
+  return c, a, b;
+}
+
+fn branch_moves(st: &Trans, depth: u64, height: u64, ctls: &Box<Slots<Ctl>>) -> moves: Bool reads(st), reads(ctls) {
+  doc "Whether a branch to the label depth frames out, with height operands below it, must move a result into the label's slot.";
+  let nctl = ctls^.inner.len;
+  if depth >= nctl {
+    return True();
+  }
+  let up = nctl - depth;
+  let ci = up - 1_u64;
+  let c = ctls^.inner[ci];
+  if c.brk == 0_u64 {
+    return False();
+  }
+  let top = height -wrap 1_u64;
+  let value_slot = temp_slot(st: st, pos: top);
+  let label_slot = temp_slot(st: st, pos: c.height);
+  return value_slot != label_slot;
+}
+
+fn emit_branch(st: &Trans, depth: u64, cond: u64, cmp: u64, fa: u64, fb: u64, conditional: Bool, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(provs), reads(ctls), writes(st), writes(code), writes(brtab), writes(fixes) {
   doc "A branch to the label depth frames out, every operand already in its temporary: a plain jump when the label's result already sits in the label's slot, a moving branch otherwise; a block's target is patched at its end, a loop's is known.";
   let nctl = ctls^.inner.len;
   if depth >= nctl {
@@ -977,8 +1036,17 @@ fn emit_branch(st: &Trans, depth: u64, cond: u64, conditional: Bool, provs: &Box
     }
   }
   let form = 0_u64;
+  let ps = value_slot;
+  let pd = label_slot;
+  let pc_ = cond;
   if conditional {
     set form = 2_u64;
+    if cmp != 0_u64 {
+      set form = 5_u64;
+      set ps = fa;
+      set pd = fb;
+      set pc_ = cmp;
+    }
   } else if moves {
     set form = 1_u64;
   }
@@ -988,10 +1056,10 @@ fn emit_branch(st: &Trans, depth: u64, cond: u64, conditional: Bool, provs: &Box
   } else {
     let at = code^.inner.len;
     let no = False();
-    let pend = Pending(depth: ci, at: at, table: no, form: form, s: value_slot, d: label_slot, c: cond);
+    let pend = Pending(depth: ci, at: at, table: no, form: form, s: ps, d: pd, c: pc_);
     push_pending(cell: fixes, value: pend);
   }
-  let o = branch_op(form: form, target: target, s: value_slot, d: label_slot, c: cond);
+  let o = branch_op(form: form, target: target, s: ps, d: pd, c: pc_);
   emit_plain(st: st, code: code, op: o);
   return True();
 }
@@ -1073,7 +1141,11 @@ fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab:
   if c.kind == 3_u64 {
     if c.else_at != 18446744073709551615_u64 {
       let no = False();
-      let p = Pending(depth: depth, at: c.else_at, table: no, form: 4_u64, s: 0_u64, d: 0_u64, c: c.c);
+      let p = if c.cmp == 0_u64 {
+        give Pending(depth: depth, at: c.else_at, table: no, form: 4_u64, s: 0_u64, d: 0_u64, c: c.c);
+      } else {
+        give Pending(depth: depth, at: c.else_at, table: no, form: 5_u64, s: c.c, d: c.fb, c: c.cmp);
+      }
       patch(code: code, brtab: brtab, p: p, target: here);
     }
   }
@@ -1115,6 +1187,66 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
   if op == 11_u8 {
     return end_block(st: st, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
   }
+  if op == 4_u8 {
+    let (p, q) = block_type(r: r, bytes: bytes, types: types);
+    let (cmp, fa, fb) = take_compare(st: st, provs: provs, code: code);
+    let top = top_pos(provs: provs, depth: 0_u64);
+    let cond = 0_u64;
+    if cmp == 0_u64 {
+      set cond = source(st: st, provs: provs, code: code, pos: top);
+    }
+    pop_prov(st: st, provs: provs, count: 1_u64);
+    flush(st: st, provs: provs, code: code);
+    let else_at = code^.inner.len;
+    let fused_cmp = 0_u64;
+    let fused_b = 0_u64;
+    if cmp == 0_u64 {
+      let c16 = slot16(value: cond);
+      let o = Op::BrUnless(t: 0_u32, c: c16);
+      emit_plain(st: st, code: code, op: o);
+    } else {
+      set fused_cmp = negate_compare(code: cmp);
+      set cond = fa;
+      set fused_b = fb;
+      let a16 = slot16(value: fa);
+      let b16 = slot16(value: fb);
+      let o = fused_branch(code: fused_cmp, a: a16, b: b16, t: 0_u32);
+      emit_plain(st: st, code: code, op: o);
+    }
+    let height = provs^.inner.len -wrap p;
+    let target = code^.inner.len;
+    let marks = fixes^.inner.len;
+    let c = Ctl(kind: 3_u64, height: height, params: p, brk: q, results: q, target: target, fixes: marks, else_at: else_at, c: cond, cmp: fused_cmp, fb: fused_b);
+    push_ctl(cell: ctls, value: c);
+    return 0_u64;
+  }
+  if op == 13_u8 {
+    let depth = read_uleb(r: r, bytes: bytes);
+    let below = provs^.inner.len -wrap 1_u64;
+    let moves = branch_moves(st: st, depth: depth, height: below, ctls: ctls);
+    let cmp = 0_u64;
+    let fa = 0_u64;
+    let fb = 0_u64;
+    if bnot(moves) {
+      let (c, a, b) = take_compare(st: st, provs: provs, code: code);
+      set cmp = c;
+      set fa = a;
+      set fb = b;
+    }
+    let top = top_pos(provs: provs, depth: 0_u64);
+    let cond = 0_u64;
+    if cmp == 0_u64 {
+      set cond = source(st: st, provs: provs, code: code, pos: top);
+    }
+    pop_prov(st: st, provs: provs, count: 1_u64);
+    flush(st: st, provs: provs, code: code);
+    let yes = True();
+    let ok = emit_branch(st: st, depth: depth, cond: cond, cmp: cmp, fa: fa, fb: fb, conditional: yes, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
+    if ok {
+      return 0_u64;
+    }
+    return 2_u64;
+  }
   flush(st: st, provs: provs, code: code);
   if op == 0_u8 {
     let o = Op::Unreachable();
@@ -1129,24 +1261,13 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
   if op == 3_u8 {
     set opening = True();
   }
-  if op == 4_u8 {
-    set opening = True();
-  }
   if opening {
     let (p, q) = block_type(r: r, bytes: bytes, types: types);
     let else_at = 18446744073709551615_u64;
     let cond = 0_u64;
+    let fused_cmp = 0_u64;
+    let fused_b = 0_u64;
     let kind = 1_u64;
-    if op == 4_u8 {
-      set kind = 3_u64;
-      let top = top_pos(provs: provs, depth: 0_u64);
-      set cond = temp_slot(st: st, pos: top);
-      pop_prov(st: st, provs: provs, count: 1_u64);
-      set else_at = code^.inner.len;
-      let c16 = slot16(value: cond);
-      let o = Op::BrUnless(t: 0_u32, c: c16);
-      emit_plain(st: st, code: code, op: o);
-    }
     let brk = q;
     if op == 3_u8 {
       set kind = 2_u64;
@@ -1155,7 +1276,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let height = provs^.inner.len -wrap p;
     let target = code^.inner.len;
     let marks = fixes^.inner.len;
-    let c = Ctl(kind: kind, height: height, params: p, brk: brk, results: q, target: target, fixes: marks, else_at: else_at, c: cond);
+    let c = Ctl(kind: kind, height: height, params: p, brk: brk, results: q, target: target, fixes: marks, else_at: else_at, c: cond, cmp: fused_cmp, fb: fused_b);
     push_ctl(cell: ctls, value: c);
     return 0_u64;
   }
@@ -1177,7 +1298,11 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     emit_plain(st: st, code: code, op: o);
     let here = code^.inner.len;
     let no2 = False();
-    let unless = Pending(depth: top, at: c.else_at, table: no2, form: 4_u64, s: 0_u64, d: 0_u64, c: c.c);
+    let unless = if c.cmp == 0_u64 {
+      give Pending(depth: top, at: c.else_at, table: no2, form: 4_u64, s: 0_u64, d: 0_u64, c: c.c);
+    } else {
+      give Pending(depth: top, at: c.else_at, table: no2, form: 5_u64, s: c.c, d: c.fb, c: c.cmp);
+    }
     patch(code: code, brtab: brtab, p: unless, target: here);
     if top < ctls^.inner.len {
       set ctls^.inner[top].else_at = 18446744073709551615_u64;
@@ -1190,20 +1315,8 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
   if op == 12_u8 {
     let depth = read_uleb(r: r, bytes: bytes);
     let no = False();
-    let ok = emit_branch(st: st, depth: depth, cond: 0_u64, conditional: no, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
+    let ok = emit_branch(st: st, depth: depth, cond: 0_u64, cmp: 0_u64, fa: 0_u64, fb: 0_u64, conditional: no, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     set st^.dead = True();
-    if ok {
-      return 0_u64;
-    }
-    return 2_u64;
-  }
-  if op == 13_u8 {
-    let depth = read_uleb(r: r, bytes: bytes);
-    let top = top_pos(provs: provs, depth: 0_u64);
-    let cond = temp_slot(st: st, pos: top);
-    pop_prov(st: st, provs: provs, count: 1_u64);
-    let yes = True();
-    let ok = emit_branch(st: st, depth: depth, cond: cond, conditional: yes, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     if ok {
       return 0_u64;
     }
@@ -1750,7 +1863,7 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
   let base = l +wrap 2_u64;
   let no = False();
   let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, failed: no, cslot: pl, cbase: cbase, cn: cn);
-  let top = Ctl(kind: 0_u64, height: 0_u64, params: 0_u64, brk: f.results, results: f.results, target: 0_u64, fixes: 0_u64, else_at: 18446744073709551615_u64, c: 0_u64);
+  let top = Ctl(kind: 0_u64, height: 0_u64, params: 0_u64, brk: f.results, results: f.results, target: 0_u64, fixes: 0_u64, else_at: 18446744073709551615_u64, c: 0_u64, cmp: 0_u64, fb: 0_u64);
   push_ctl(cell: ctls, value: top);
   loop @ops {
     let failed = r^.failed;
