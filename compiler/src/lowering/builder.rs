@@ -708,8 +708,8 @@ struct IrBuilder<'program> {
     atomics: Vec<atomic::AtomicRegion>,
     /// Atomic entry roots whose completed statements permit concurrent readers.
     readonly_atomic_sources: std::collections::HashSet<BindingId>,
-    /// Captured storage roots the executing split body does not write.
-    readonly_capture_roots: std::collections::HashSet<BindingId>,
+    /// Executing split contexts, including enclosing chunks' permissions.
+    capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -774,7 +774,7 @@ impl<'program> IrBuilder<'program> {
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
             readonly_atomic_sources: std::collections::HashSet::new(),
-            readonly_capture_roots: std::collections::HashSet::new(),
+            capture_write_contexts: Vec::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -2001,10 +2001,10 @@ impl<'program> IrBuilder<'program> {
                 root,
                 writable,
                 atomic_sources,
-                write_roots,
+                write_places,
                 ..
             } => {
-                let write = self.borrow_may_write(*writable, atomic_sources, write_roots);
+                let write = self.borrow_may_write(*writable, atomic_sources, write_places);
                 self.lower_place_address_access(root, write)
             }
             CheckedExpression::DerefAddressed { binding, ty, .. } => {

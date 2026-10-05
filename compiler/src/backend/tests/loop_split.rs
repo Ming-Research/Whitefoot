@@ -66,9 +66,29 @@ const PERMITTED_FOLD: &[u8] = include_bytes!("../../../../tests/programs/paralle
 const TABLE_READ_FOLD: &[u8] =
     include_bytes!("../../../../tests/programs/parallel/table_read_fold.wf");
 
+fn table_read_fold_with_sibling_writes() -> String {
+    let source = std::str::from_utf8(TABLE_READ_FOLD).expect("UTF-8 table reader");
+    format!(
+        "struct Store {{\n  map: KeyedTable<u8>;\n  marks: Array<u64, 256>;\n}}\n\n{}",
+        source
+            .replace("4000000_u64", "256_u64")
+            .replace("8000000_u64", "512_u64")
+            .replace(
+                "  let t = &table;",
+                "  let marks = array_filled::<u64, 256>(value: 0_u64);\n  let store = Store(map: move table, marks: marks);\n  let t = &store.map;",
+            )
+            .replace("    set sum = sum +wrap v;", "    set store.marks[i] = v;\n    set sum = sum +wrap v;")
+    )
+}
+
 #[test]
 fn split_table_read_fold_uses_read_selections() {
-    let module = emit_with_overlap(TABLE_READ_FOLD);
+    assert_chunk_table_selections_read(TABLE_READ_FOLD);
+    assert_chunk_table_selections_read(table_read_fold_with_sibling_writes().as_bytes());
+}
+
+fn assert_chunk_table_selections_read(source: &[u8]) {
+    let module = emit_with_overlap(source);
     let chunks = synthesized_symbols(&module, "@wf__par_chunk_");
     assert!(!chunks.is_empty(), "the table reader must split");
     let mut selections = 0;

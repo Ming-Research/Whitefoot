@@ -64,7 +64,10 @@
 //! here, at compile time, and a loop that does not fit declines with a line
 //! naming the width. Every decline in [`Decline`] is reported the same way.
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use crate::semantic::{
     BindingId, CheckedDrop, CheckedLoopId, CheckedStatement, LoopActualization, LoopCombine,
@@ -132,6 +135,14 @@ struct Capture {
     binding: BindingId,
     ty: IrType,
     reconstruction: CaptureReconstruction,
+}
+
+/// A split's capture boundary and its already-judged body write footprint.
+/// Paths stay intact so a mapped field does not authorize sibling tables.
+#[derive(Clone)]
+pub(super) struct CaptureWriteContext<'program> {
+    pub(super) captured: HashSet<BindingId>,
+    pub(super) permission: &'program LoopPermission,
 }
 
 impl Decline {
@@ -381,7 +392,7 @@ impl<'program> IrBuilder<'program> {
             actualization,
             result_type,
             &captures,
-            &permission.written_roots,
+            permission,
             prune_captures,
         )?;
         captures = captures
@@ -575,7 +586,7 @@ impl<'program> IrBuilder<'program> {
         actualization: LoopActualization,
         result_type: IrType,
         captures: &[Capture],
-        written_roots: &[BindingId],
+        permission: &'program LoopPermission,
         prune_captures: bool,
     ) -> Result<BuiltChunk, LoweringFailure> {
         #[cfg(test)]
@@ -594,17 +605,15 @@ impl<'program> IrBuilder<'program> {
             .readonly_atomic_sources
             .clone_from(&self.readonly_atomic_sources);
         builder
-            .readonly_capture_roots
-            .clone_from(&self.readonly_capture_roots);
-        // The parent owns these roots, but chunks only read a captured root
-        // absent from the body's resolved write footprint. Keep formation's
-        // judgment and refine its execution context in borrow_may_write.
-        builder.readonly_capture_roots.extend(
-            captures
-                .iter()
-                .map(|capture| capture.binding)
-                .filter(|binding| !written_roots.contains(binding)),
-        );
+            .capture_write_contexts
+            .clone_from(&self.capture_write_contexts);
+        // The parent owns these roots, but chunks only read captured places
+        // outside the body's resolved writes. Refine formation's judgment in
+        // borrow_may_write, preserving paths and enclosing chunk contexts.
+        builder.capture_write_contexts.push(CaptureWriteContext {
+            captured: captures.iter().map(|capture| capture.binding).collect(),
+            permission,
+        });
         let seed = builder.new_parameter(result_type)?;
         let lower = builder.new_parameter(U64)?;
         let upper = builder.new_parameter(U64)?;

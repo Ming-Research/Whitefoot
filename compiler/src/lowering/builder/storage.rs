@@ -8,7 +8,8 @@
 use std::collections::HashSet;
 
 use crate::semantic::{
-    BindingId, CheckedExpression, CheckedFunction, CheckedSetTarget, CheckedStatement,
+    BindingId, CheckedExpression, CheckedFunction, CheckedPlaceRoot, CheckedResolvedPlace,
+    CheckedSetTarget, CheckedStatement,
 };
 
 use super::*;
@@ -334,15 +335,21 @@ impl IrBuilder<'_> {
         &self,
         writable: bool,
         sources: &[BindingId],
-        roots: &[BindingId],
+        places: &[CheckedResolvedPlace],
     ) -> bool {
         writable
             && sources
                 .iter()
                 .all(|source| !self.readonly_atomic_sources.contains(source))
-            && roots
-                .iter()
-                .all(|root| !self.readonly_capture_roots.contains(root))
+            && self.capture_write_contexts.iter().all(|context| {
+                places.iter().all(|place| {
+                    let captured = match place.root {
+                        CheckedPlaceRoot::Binding(binding) => context.captured.contains(&binding),
+                        CheckedPlaceRoot::Constant(_) => false,
+                    };
+                    !captured || context.permission.writes_overlap(place)
+                })
+            })
     }
 
     /// Lowers the address carried by a checked borrowed-place expression.
@@ -365,10 +372,10 @@ impl IrBuilder<'_> {
                 root,
                 writable,
                 atomic_sources,
-                write_roots,
+                write_places,
                 ..
             } => {
-                let write = self.borrow_may_write(*writable, atomic_sources, write_roots);
+                let write = self.borrow_may_write(*writable, atomic_sources, write_places);
                 self.lower_place_address_access(root, write)?
             }
             CheckedExpression::BorrowRangeIndex { place, .. } => self.lower_range_address(

@@ -15,7 +15,7 @@ mod obligations;
 pub(crate) mod permission;
 mod permission_ledger;
 mod places;
-pub(crate) use places::PlaceRoot as CheckedPlaceRoot;
+pub(crate) use places::{PlaceRoot as CheckedPlaceRoot, ResolvedPlace as CheckedResolvedPlace};
 mod postcondition;
 mod range_facts;
 mod range_judgment;

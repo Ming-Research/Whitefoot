@@ -158,9 +158,19 @@ pub(crate) struct LoopPermission {
     /// The judgment does not decide that anything is emitted: lowering reads
     /// this, applies its own emission conditions, and may still decline.
     pub(crate) actualization: Option<LoopActualization>,
-    /// Resolved roots written by the body, retained for capture permissions
+    /// Resolved places written by the body, retained for capture permissions
     /// in the context executing an actualized chunk.
-    pub(crate) written_roots: Vec<BindingId>,
+    pub(crate) written_places: Vec<ResolvedPlace>,
+}
+
+impl LoopPermission {
+    /// Retained writes conservatively overlap this resolved selection using
+    /// the ordinary place relation; lowering adds no separation proof.
+    pub(crate) fn writes_overlap(&self, place: &ResolvedPlace) -> bool {
+        self.written_places
+            .iter()
+            .any(|written| super::places::places_overlap(&UnprovedSeparations, place, written))
+    }
 }
 
 /// The two disjoint actualization shapes produced by the counted judgment.
@@ -394,7 +404,7 @@ fn judge<'check>(
         inner_loops: Vec::new(),
         reads: Vec::new(),
         accumulates: Vec::new(),
-        written_roots: Vec::new(),
+        written_places: Vec::new(),
         carried: None,
         shared: None,
         unresolved: None,
@@ -513,7 +523,7 @@ struct Survey<'check, 'run> {
     /// Every read occurrence, with multiplicity and resolved places.
     reads: Vec<ReadOccurrence>,
     accumulates: Vec<Accumulate>,
-    written_roots: Vec<BindingId>,
+    written_places: Vec<ResolvedPlace>,
     carried: Option<NodePath>,
     shared: Option<NodePath>,
     unresolved: Option<NodePath>,
@@ -685,7 +695,7 @@ impl<'check> Survey<'check, '_> {
         }
         let affine_map = self.proven_affine_map(target);
         for write in &footprint.writes {
-            self.record_written_root(&write.place);
+            self.record_written_place(&write.place);
             if self.is_iteration_own(&write.place) {
                 continue;
             }
@@ -1332,7 +1342,7 @@ impl<'check> Survey<'check, '_> {
             });
         }
         for write in &footprint.writes {
-            self.record_written_root(&write.place);
+            self.record_written_place(&write.place);
             if self.is_iteration_own(&write.place) {
                 continue;
             }
@@ -1361,11 +1371,9 @@ impl<'check> Survey<'check, '_> {
         }
     }
 
-    fn record_written_root(&mut self, place: &ResolvedPlace) {
-        if let PlaceRoot::Binding(binding) = place.root
-            && !self.written_roots.contains(&binding)
-        {
-            self.written_roots.push(binding);
+    fn record_written_place(&mut self, place: &ResolvedPlace) {
+        if !self.written_places.contains(place) {
+            self.written_places.push(place.clone());
         }
     }
 
@@ -1457,7 +1465,7 @@ impl<'check> Survey<'check, '_> {
             combines,
             advises_split,
             actualization,
-            written_roots: self.written_roots,
+            written_places: self.written_places,
         }
     }
 

@@ -2413,10 +2413,10 @@ pub(crate) enum CheckedExpression {
         /// Atomic sources are refined by their statement's completed write set.
         writable: bool,
         atomic_sources: Vec<BindingId>,
-        /// Resolved storage roots at formation, including every alternative
-        /// of a reference. Split lowering refines captured roots from the
+        /// Resolved places at formation, including every alternative
+        /// of a reference. Split lowering refines captured places from the
         /// body's completed write footprint without resolving aliases again.
-        write_roots: Vec<BindingId>,
+        write_places: Vec<super::places::ResolvedPlace>,
     },
     /// The referent value read through such a holder [TYPE-7]. The holder
     /// itself stays a distinct expression, so lowering never has to guess
