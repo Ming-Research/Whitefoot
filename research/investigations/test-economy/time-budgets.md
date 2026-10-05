@@ -382,6 +382,22 @@ replay suites, and `compiler/test-corpus` inside the group stayed within its
 145 s (125.1 s). 1.25 times the slower run, rounded up to 5 s, is 265 s,
 which the owner approved on 2026-10-04 (Q37, "37 agreed", translated from Chinese); macOS stays at 255 s.
 
+**`compiler/test-unit` on ubuntu, raised to 115 s.** The shared-objects
+change (PR #231) took the stage on ubuntu to 107.3 s at main's `a23a3f1f4`
+and 111.3 s at `bfe5d652b`, against its 105 s budget. Before that change
+main ran 75.7 s to 104.8 s (`bb37e03c0`, `c3d26643c`). On the 14900K VM, at
+the CI's four test threads, the library's cases went from 55.2 s to 59.9 s
+across that change, and their summed times from 219.6 s to 238.3 s. Almost
+all of the growth was in two cases:
+- `shared_maps::whole_map_witnesses_detect_read_selection_in_write_position`,
+  new, 11.8 s: it builds, damages, links and runs five witnesses in turn;
+- `stack_ledger::the_reported_ceiling_is_the_measured_one`, from 7.3 s to
+  10.7 s.
+
+Every other case changed by under 0.3 s. On 2026-10-05 the owner approved
+both a raise to 115 s and splitting that witness case into one case per
+witness, so that the five can run on separate threads ("两者都做", "both").
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases
