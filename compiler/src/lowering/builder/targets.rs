@@ -157,13 +157,6 @@ impl IrBuilder<'_> {
         }))
     }
 
-    /// [SHARE-1] a commit over a live value in storage that holds tables at
-    /// paths of fields keeps each table where it is
-    /// (compiler/waiting-contexts/state-locks): a statement on another unit
-    /// of a shared state reads a table's address without a lock, so the
-    /// address stored must not change. Each new table's entries are
-    /// exchanged into the old table, the value written keeps the old tables,
-    /// and the release takes the new ones, which now hold the old entries.
     fn check_target_offset(
         &self,
         offset: IrValueId,

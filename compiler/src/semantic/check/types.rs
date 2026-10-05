@@ -1636,7 +1636,7 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Unit => (10, None),
             CheckedType::Array { element, length } => {
                 result.extend(self.atomic_type_order(self.elements[element.0 as usize])?);
-                result.push(format!("{length:?}"));
+                result.push(self.atomic_const_order(length)?);
                 (11, None)
             }
             CheckedType::Buffer { element } => (11, Some(element)),
@@ -1646,7 +1646,9 @@ impl<'unit> TypeContext<'unit> {
                 capacity,
             } => {
                 result.extend(self.atomic_type_order(self.elements[element.0 as usize])?);
-                result.push(format!("{capacity:?}"));
+                if let Some(capacity) = capacity {
+                    result.push(self.atomic_const_order(capacity)?);
+                }
                 (if shape == WindowShape::Slots { 12 } else { 13 }, None)
             }
             CheckedType::Segments { element } => (14, Some(element)),
@@ -1654,6 +1656,12 @@ impl<'unit> TypeContext<'unit> {
             CheckedType::Entries { element } => (19, Some(element)),
             CheckedType::Bool => (20, None),
             CheckedType::Nominal(id) => {
+                if let CheckedNominalKind::Box { referent, .. } = self.nominals[id.0 as usize].kind
+                {
+                    result.push("015".to_owned());
+                    result.extend(self.atomic_type_order(referent)?);
+                    return Ok(result);
+                }
                 if let Some((template, substitution)) =
                     &self.source_nominal_instances[id.0 as usize]
                 {
@@ -1681,7 +1689,12 @@ impl<'unit> TypeContext<'unit> {
                     for (key, argument) in substitution.entries() {
                         match argument {
                             GenericArgument::Type(t) => result.extend(self.atomic_type_order(*t)?),
-                            _ => result.push(self.stable_argument_spelling(*key, *argument)?),
+                            GenericArgument::Const(value) => {
+                                result.push(self.atomic_const_order(*value)?)
+                            }
+                            GenericArgument::Function(_) => {
+                                result.push(self.stable_argument_spelling(*key, *argument)?)
+                            }
                         }
                     }
                     return Ok(result);
@@ -1715,80 +1728,332 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(result)
     }
-    pub(super) fn types_unify(&self, left: CheckedType, right: CheckedType) -> bool {
+    fn atomic_const_order(&self, value: CheckedConst) -> Result<String, CheckStop> {
+        Ok(match value {
+            // Fixed-width decimal preserves u64 value order in the string key.
+            CheckedConst::Value(value) => format!("C{value:020}"),
+            _ => format!("S{}", self.checked_const_name(value)?),
+        })
+    }
+    pub(super) fn types_unify(
+        &self,
+        left: CheckedType,
+        right: CheckedType,
+    ) -> Result<bool, CheckStop> {
+        use super::behavior::FunctionArgument;
         use super::generics::GenericArgument;
-        if left == right
-            || matches!(
-                left,
-                CheckedType::Generic(_) | CheckedType::GenericInt(_) | CheckedType::GenericFloat(_)
-            )
-            || matches!(
-                right,
-                CheckedType::Generic(_) | CheckedType::GenericInt(_) | CheckedType::GenericFloat(_)
-            )
-        {
-            return true;
-        }
-        match (left, right) {
-            (CheckedType::Nominal(l), CheckedType::Nominal(r)) => {
-                match (
-                    &self.source_nominal_instances[l.0 as usize],
-                    &self.source_nominal_instances[r.0 as usize],
-                ) {
-                    (Some((lt, la)), Some((rt, ra))) if lt == rt => la
-                        .entries()
-                        .iter()
-                        .zip(ra.entries())
-                        .all(|((_, a), (_, b))| match (a, b) {
-                            (GenericArgument::Type(a), GenericArgument::Type(b)) => {
-                                self.types_unify(*a, *b)
+        use std::collections::HashMap;
+        // One substitution per comparison, never a transitive class of targets.
+        let mut bindings = HashMap::new();
+        let mut pending = vec![(GenericArgument::Type(left), GenericArgument::Type(right))];
+        let mut deferred_constants = Vec::new();
+        while let Some((left, right)) = pending.pop() {
+            let left = dereference_argument(left, &bindings);
+            let right = dereference_argument(right, &bindings);
+            if left == right {
+                continue;
+            }
+            if std::mem::discriminant(&left) != std::mem::discriminant(&right) {
+                return Ok(false);
+            }
+            if let (GenericArgument::Const(left), GenericArgument::Const(right)) = (left, right)
+                && (matches!(left, CheckedConst::Derived(_))
+                    || matches!(right, CheckedConst::Derived(_)))
+            {
+                deferred_constants.push((left, right));
+                continue;
+            }
+            if let Some(parameter) = argument_parameter(left).or_else(|| argument_parameter(right))
+            {
+                let value = if argument_parameter(left) == Some(parameter) {
+                    right
+                } else {
+                    left
+                };
+                if self.atomic_argument_contains(parameter, value, &bindings)? {
+                    return Ok(false);
+                }
+                bindings.insert(parameter, value);
+                continue;
+            }
+            let same = match (left, right) {
+                (GenericArgument::Type(left), GenericArgument::Type(right)) => {
+                    match (left, right) {
+                        (CheckedType::Nominal(left), CheckedType::Nominal(right)) => {
+                            match (
+                                &self.source_nominal_instances[left.0 as usize],
+                                &self.source_nominal_instances[right.0 as usize],
+                            ) {
+                                (Some((lt, la)), Some((rt, ra))) if lt == rt => {
+                                    if la.entries().len() != ra.entries().len()
+                                        || la.region_arguments() != ra.region_arguments()
+                                    {
+                                        return Ok(false);
+                                    }
+                                    pending.extend(
+                                        la.entries()
+                                            .iter()
+                                            .zip(ra.entries())
+                                            .map(|((_, a), (_, b))| (*a, *b)),
+                                    );
+                                    true
+                                }
+                                _ => match (
+                                    &self.nominals[left.0 as usize].kind,
+                                    &self.nominals[right.0 as usize].kind,
+                                ) {
+                                    (
+                                        CheckedNominalKind::Box {
+                                            referent: a,
+                                            region: ar,
+                                            ..
+                                        },
+                                        CheckedNominalKind::Box {
+                                            referent: b,
+                                            region: br,
+                                            ..
+                                        },
+                                    ) if ar == br => {
+                                        pending.push((
+                                            GenericArgument::Type(*a),
+                                            GenericArgument::Type(*b),
+                                        ));
+                                        true
+                                    }
+                                    _ => {
+                                        match (self.prelude_type(left), self.prelude_type(right)) {
+                                            (
+                                                Some(PreludeType::Option(a)),
+                                                Some(PreludeType::Option(b)),
+                                            ) => {
+                                                pending.push((
+                                                    GenericArgument::Type(a),
+                                                    GenericArgument::Type(b),
+                                                ));
+                                                true
+                                            }
+                                            (
+                                                Some(PreludeType::Result(a, b)),
+                                                Some(PreludeType::Result(c, d)),
+                                            ) => {
+                                                pending.push((
+                                                    GenericArgument::Type(a),
+                                                    GenericArgument::Type(c),
+                                                ));
+                                                pending.push((
+                                                    GenericArgument::Type(b),
+                                                    GenericArgument::Type(d),
+                                                ));
+                                                true
+                                            }
+                                            _ => false,
+                                        }
+                                    }
+                                },
                             }
-                            _ => a == b,
-                        }),
-                    _ => match (self.prelude_type(l), self.prelude_type(r)) {
-                        (Some(PreludeType::Option(a)), Some(PreludeType::Option(b))) => {
-                            self.types_unify(a, b)
                         }
-                        (Some(PreludeType::Result(a, b)), Some(PreludeType::Result(c, d))) => {
-                            self.types_unify(a, c) && self.types_unify(b, d)
+                        (
+                            CheckedType::Array {
+                                element: a,
+                                length: x,
+                            },
+                            CheckedType::Array {
+                                element: b,
+                                length: y,
+                            },
+                        ) => {
+                            pending.push((GenericArgument::Const(x), GenericArgument::Const(y)));
+                            pending.push((
+                                GenericArgument::Type(self.elements[a.0 as usize]),
+                                GenericArgument::Type(self.elements[b.0 as usize]),
+                            ));
+                            true
+                        }
+                        (
+                            CheckedType::Buffer { element: a },
+                            CheckedType::Buffer { element: b },
+                        )
+                        | (
+                            CheckedType::Segments { element: a },
+                            CheckedType::Segments { element: b },
+                        )
+                        | (
+                            CheckedType::Entries { element: a },
+                            CheckedType::Entries { element: b },
+                        ) => {
+                            pending.push((
+                                GenericArgument::Type(self.elements[a.0 as usize]),
+                                GenericArgument::Type(self.elements[b.0 as usize]),
+                            ));
+                            true
+                        }
+                        (
+                            CheckedType::Window {
+                                shape: a,
+                                element: x,
+                                capacity: c,
+                            },
+                            CheckedType::Window {
+                                shape: b,
+                                element: y,
+                                capacity: d,
+                            },
+                        ) if a == b => {
+                            match (c, d) {
+                                (Some(c), Some(d)) => pending
+                                    .push((GenericArgument::Const(c), GenericArgument::Const(d))),
+                                (None, None) => {}
+                                _ => return Ok(false),
+                            }
+                            pending.push((
+                                GenericArgument::Type(self.elements[x.0 as usize]),
+                                GenericArgument::Type(self.elements[y.0 as usize]),
+                            ));
+                            true
                         }
                         _ => false,
-                    },
+                    }
                 }
+                (
+                    GenericArgument::Const(CheckedConst::Value(left)),
+                    GenericArgument::Const(CheckedConst::Value(right)),
+                ) => left == right,
+                (GenericArgument::Function(left), GenericArgument::Function(right)) => {
+                    match (left, right) {
+                        (
+                            FunctionArgument::Source { reference: a, .. },
+                            FunctionArgument::Source { reference: b, .. },
+                        ) => {
+                            let a = self.function_reference(a)?;
+                            let b = self.function_reference(b)?;
+                            if a.declaration != b.declaration
+                                || a.substitution.entries().len() != b.substitution.entries().len()
+                            {
+                                return Ok(false);
+                            }
+                            pending.extend(
+                                a.substitution
+                                    .entries()
+                                    .iter()
+                                    .zip(b.substitution.entries())
+                                    .map(|((_, a), (_, b))| (*a, *b)),
+                            );
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            if !same {
+                return Ok(false);
             }
-            (
-                CheckedType::Array {
-                    element: a,
-                    length: x,
-                },
-                CheckedType::Array {
-                    element: b,
-                    length: y,
-                },
-            ) if x == y => {
-                self.types_unify(self.elements[a.0 as usize], self.elements[b.0 as usize])
-            }
-            (CheckedType::Buffer { element: a }, CheckedType::Buffer { element: b })
-            | (CheckedType::Segments { element: a }, CheckedType::Segments { element: b })
-            | (CheckedType::Entries { element: a }, CheckedType::Entries { element: b }) => {
-                self.types_unify(self.elements[a.0 as usize], self.elements[b.0 as usize])
-            }
-            (
-                CheckedType::Window {
-                    shape: a,
-                    element: x,
-                    capacity: c,
-                },
-                CheckedType::Window {
-                    shape: b,
-                    element: y,
-                    capacity: d,
-                },
-            ) if a == b && c == d => {
-                self.types_unify(self.elements[x.0 as usize], self.elements[y.0 as usize])
-            }
-            _ => false,
         }
+        Ok(deferred_constants.into_iter().all(|(left, right)| {
+            match (
+                self.atomic_const_value(left, &bindings),
+                self.atomic_const_value(right, &bindings),
+            ) {
+                (Some(left), Some(right)) => left == right,
+                // Unknown arithmetic cannot establish distinct state types.
+                _ => true,
+            }
+        }))
+    }
+    fn atomic_const_value(
+        &self,
+        value: CheckedConst,
+        bindings: &AtomicSubstitutions,
+    ) -> Option<u64> {
+        match dereference_argument(super::generics::GenericArgument::Const(value), bindings) {
+            super::generics::GenericArgument::Const(CheckedConst::Value(value)) => Some(value),
+            super::generics::GenericArgument::Const(CheckedConst::Derived(id)) => {
+                let value = self.derived_consts[id.0 as usize];
+                evaluate_const_operation(
+                    value.operation,
+                    self.atomic_const_value(value.left, bindings)?,
+                    self.atomic_const_value(value.right, bindings)?,
+                )
+            }
+            _ => None,
+        }
+    }
+    fn atomic_argument_contains(
+        &self,
+        parameter: AtomicParameter,
+        argument: super::generics::GenericArgument,
+        bindings: &AtomicSubstitutions,
+    ) -> Result<bool, CheckStop> {
+        use super::behavior::FunctionArgument;
+        use super::generics::GenericArgument;
+        let mut pending = vec![argument];
+        let mut visited = HashSet::new();
+        while let Some(argument) = pending.pop() {
+            let argument = dereference_argument(argument, bindings);
+            if argument_parameter(argument) == Some(parameter) {
+                return Ok(true);
+            }
+            if !visited.insert(argument) {
+                continue;
+            }
+            match argument {
+                GenericArgument::Type(CheckedType::Nominal(id)) => {
+                    if let Some((_, arguments)) = &self.source_nominal_instances[id.0 as usize] {
+                        pending.extend(arguments.entries().iter().map(|(_, a)| *a));
+                    } else {
+                        match self.prelude_type(id) {
+                            Some(PreludeType::Option(a)) => pending.push(GenericArgument::Type(a)),
+                            Some(PreludeType::Result(a, b)) => {
+                                pending.extend([GenericArgument::Type(a), GenericArgument::Type(b)])
+                            }
+                            _ => {
+                                if let CheckedNominalKind::Box { referent, .. } =
+                                    self.nominals[id.0 as usize].kind
+                                {
+                                    pending.push(GenericArgument::Type(referent));
+                                }
+                            }
+                        }
+                    }
+                }
+                GenericArgument::Type(CheckedType::Array { element, length }) => {
+                    pending.extend([
+                        GenericArgument::Type(self.elements[element.0 as usize]),
+                        GenericArgument::Const(length),
+                    ]);
+                }
+                GenericArgument::Type(CheckedType::Window {
+                    element, capacity, ..
+                }) => {
+                    pending.push(GenericArgument::Type(self.elements[element.0 as usize]));
+                    if let Some(capacity) = capacity {
+                        pending.push(GenericArgument::Const(capacity));
+                    }
+                }
+                GenericArgument::Type(
+                    CheckedType::Buffer { element }
+                    | CheckedType::Segments { element }
+                    | CheckedType::Entries { element },
+                ) => pending.push(GenericArgument::Type(self.elements[element.0 as usize])),
+                GenericArgument::Function(FunctionArgument::Source { reference, .. }) => pending
+                    .extend(
+                        self.function_reference(reference)?
+                            .substitution
+                            .entries()
+                            .iter()
+                            .map(|(_, a)| *a),
+                    ),
+                GenericArgument::Const(CheckedConst::Derived(id)) => {
+                    let value = self.derived_consts[id.0 as usize];
+                    pending.extend([
+                        GenericArgument::Const(value.left),
+                        GenericArgument::Const(value.right),
+                    ]);
+                }
+                _ => {}
+            }
+        }
+        Ok(false)
     }
     /// [EFF-1] one written row: every `reads` entry before every `writes`
     /// entry, each entry naming exactly one path, each path written at most
@@ -2248,4 +2513,42 @@ impl<'unit> TypeContext<'unit> {
             _ => Err(SemanticCompilerFailure::InvalidCanonicalTree.into()),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum AtomicParameter {
+    Type(crate::DeclarationId),
+    Const(crate::DeclarationId),
+    Function(super::generics::GenericParameterKey),
+}
+type AtomicSubstitutions =
+    std::collections::HashMap<AtomicParameter, super::generics::GenericArgument>;
+fn argument_parameter(argument: super::generics::GenericArgument) -> Option<AtomicParameter> {
+    use super::generics::GenericArgument;
+    match argument {
+        GenericArgument::Type(
+            CheckedType::Generic(parameter)
+            | CheckedType::GenericInt(parameter)
+            | CheckedType::GenericFloat(parameter),
+        ) => Some(AtomicParameter::Type(parameter)),
+        GenericArgument::Const(CheckedConst::Parameter(parameter)) => {
+            Some(AtomicParameter::Const(parameter))
+        }
+        GenericArgument::Function(super::behavior::FunctionArgument::Parameter(parameter)) => {
+            Some(AtomicParameter::Function(parameter))
+        }
+        _ => None,
+    }
+}
+fn dereference_argument(
+    mut argument: super::generics::GenericArgument,
+    bindings: &AtomicSubstitutions,
+) -> super::generics::GenericArgument {
+    while let Some(parameter) = argument_parameter(argument) {
+        let Some(value) = bindings.get(&parameter) else {
+            break;
+        };
+        argument = *value;
+    }
+    argument
 }

@@ -134,7 +134,6 @@ pub(super) enum InvalidationEvent {
     /// A call's substituted row writes a proper prefix of the path
     /// [EFF-5 clause 3].
     CallWrite,
-    /// A call writes a whole binding's table or a prefix [SHARE-2].
     /// The scope of the local variable the path starts at ended.
     RootScopeEnded,
     /// A window operation moved the boundary or the logical origin the
@@ -185,8 +184,7 @@ pub(super) struct ReferenceInfo {
     /// set an entry binder's entries follow [SHARE-2], whose elements a write
     /// through the binder does not write.
     pub(super) anchors: Vec<ResolvedPlace>,
-    /// Header bindings through which this reference was formed. Joins keep
-    /// every origin: sharing a physical target does not transfer a grant.
+    /// The current validity of the paths and anchors.
     pub(super) validity: ReferenceValidity,
     /// Header validity variables this reference still depends on. A freshly
     /// formed reference has none. Copying a reference name retains the

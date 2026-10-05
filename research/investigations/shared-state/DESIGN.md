@@ -845,6 +845,9 @@ numbers are exact declared exits, not counts of assertions.
 | type9-neg-runtime-capacity-type-argument-value | reject TYPE-9 |
 | type9-pos-map-type-argument-behind-a-handle | run 3 |
 | type9-pos-runtime-capacity-type-argument-reference | run 0 |
+| share-pos-targets-repeated-type-parameter-disjoint | accept |
+| share-neg-targets-const-parameter-overlaps | reject EFF-5 |
+| share-neg-targets-const-expression-overlaps | reject EFF-5 |
 
 ### Firn entry-path IR comparison
 
@@ -900,3 +903,55 @@ succeeded, but its maintained network tests are Linux-only (the macOS filter
 selected zero), and a supplemental macOS smoke attempt stopped at loopback
 bind with `Operation not permitted`. Its network and replay behavior remains
 unverified on this host.
+
+### Review of derived roots and type arguments
+
+The independent review found that resolved loop and window prefixes discarded
+possible atomic aliases. The pre-fix compiler's permission ledger permitted
+and split a loop writing `a^[i]` and `b^[i+1]` through two handles to one array.
+Those families overlap across iterations. Prefixes now retain the complete
+relation; the maintained compiler test also requires that two writes at the
+same iteration index remain permitted. Entailment-window and call-window
+prefixes were corrected for the same reason. All other empty alias inventories
+are initial unresolved spellings or constant roots and are resolved before
+storage judgments; they do not project an already resolved place.
+
+The pre-fix checker also rejected `Pair<T,T>` beside `Pair<u8,u16>` with EFF-5,
+although no single substitution makes those types equal, and accepted the
+corresponding simultaneous write through `Array<u8,n>` and `Array<u8,4>`.
+The root judgment now retains one substitution across the two types, including
+const and function arguments, with an occurrence check so dereferencing a
+substitution terminates. It remains pairwise rather than merging targets into
+classes. The concrete lock key pads numeric const values so their order is
+numeric: 2 before 10. Stable symbolic spellings never select a concrete lock
+order because FN-2 evaluates the concrete instance's const arguments.
+The order test also exposed that compiler-native Box types lacked a source
+nominal inventory entry and fell through to the source-nominal rank. Box now
+uses its PRE-1 position and recursively orders its referent; the same test
+requires Box to precede a source nominal.
+
+Unresolved symbolic const expressions need a ground separate from ordinary
+syntactic unification: `n + 1` and `4` can name one capacity. The provisional
+choice is to consider an unresolved comparison possibly equal, while comparing
+values when the retained substitutions evaluate both sides. This avoids
+assuming distinct storage without an arithmetic judgment, at the cost of
+refusing some generic-body calls, such as two capacities `n + 1` and `n + 2`.
+The open design question is whether to retain this conservative judgment or
+specify syntactic const-term unification. The precision cost and reopening
+condition are in `docs/todo.md`. No SMT or acceptance work limit is introduced.
+The additional witnesses above state the judgments directly.
+
+The review also found stale comments from header grants and table-value
+replacement; they were removed, and map construction's IR comment now names
+its owned Shared handle. A remaining checker-tree sentence claiming an
+atomic row restriction was removed because SHARE-2 now derives the callee
+whole-map condition from placement and ordinary reference formation.
+
+After these repairs, `make -C compiler format lint build`, the numeric-order
+test, the split-loop alias test and the focused native conformance adapter all
+returned 0. The adapter exercised 92 share-/type9- cases. The numeric-order
+test was also run once with the numeric padding deliberately replaced by
+lexical ordering: it failed with the required 2-before-10 assertion, and the
+correct implementation was restored. The old compiler's contradictory
+results above were observed before changing it; the new cases retain those
+distinguishing observations.

@@ -2201,6 +2201,15 @@ rarely insert at the same place.
   cancellation implementation that ignores the deadline still fails. Reopen
   when it fails in CI or before changing deadline reads.
 
+- **Symbolic const expressions in atomic root comparison are conservative.**
+  An unresolved capacity expression can equal a concrete capacity, so the
+  comparison treats it as possibly equal without solving arithmetic. It can
+  also refuse a call through `Array<u8, n + 1>` and `Array<u8, n + 2>` that
+  no concrete instance aliases. Define a specification-fixed comparison if
+  a writer needs that distinction; validate equal-value expressions still
+  overlap and the distinct-capacity witness is admitted. Reopen with the
+  first shared generic storage algorithm needing that call.
+
 ## Modules and libraries
 
 - **Whole-map iteration.** Shared maps provide selections, counting and swaps,

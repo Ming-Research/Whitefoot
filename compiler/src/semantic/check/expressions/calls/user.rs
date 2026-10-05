@@ -909,7 +909,7 @@ impl<'unit> Checker<'_, 'unit> {
                     };
                     candidates.push(position);
                     window = Some(ResolvedPlace {
-                        atomic_aliases: Vec::new(),
+                        atomic_aliases: left.atomic_aliases.clone(),
                         root: left.root,
                         path: left.path[..depth].to_vec(),
                     });
@@ -1578,7 +1578,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 continue;
             }
             let window = ResolvedPlace {
-                atomic_aliases: Vec::new(),
+                atomic_aliases: entry.place.atomic_aliases.clone(),
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };

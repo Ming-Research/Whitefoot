@@ -964,7 +964,7 @@ fn paths_overlap(
         // The window a [WIN-2] answer is read of is the place the two steps
         // hang below, which is the common prefix walked so far.
         let window = ResolvedPlace {
-            atomic_aliases: Vec::new(),
+            atomic_aliases: place.atomic_aliases.clone(),
             root: place.root,
             path: place.path[..depth].to_vec(),
         };
@@ -1009,7 +1009,7 @@ pub(crate) fn overlaps_at_every_position(left: &ResolvedPlace, right: &ResolvedP
     }
     for (depth, (left_step, right_step)) in left.path.iter().zip(&right.path).enumerate() {
         let window = ResolvedPlace {
-            atomic_aliases: Vec::new(),
+            atomic_aliases: left.atomic_aliases.clone(),
             root: left.root,
             path: left.path[..depth].to_vec(),
         };
@@ -1078,7 +1078,7 @@ pub(crate) fn range_separation_candidate(
     let oracle = UnprovedSeparations;
     for (depth, (left_step, right_step)) in left.path.iter().zip(&right.path).enumerate() {
         let window = ResolvedPlace {
-            atomic_aliases: Vec::new(),
+            atomic_aliases: left.atomic_aliases.clone(),
             root: left.root,
             path: left.path[..depth].to_vec(),
         };

@@ -1036,7 +1036,7 @@ impl Reasoning<'_, '_, '_> {
                     continue;
                 };
                 let window = ResolvedPlace {
-                    atomic_aliases: Vec::new(),
+                    atomic_aliases: place.atomic_aliases.clone(),
                     root: place.root,
                     path: place.path[..depth].to_vec(),
                 };
@@ -1062,7 +1062,7 @@ impl Reasoning<'_, '_, '_> {
                         continue;
                     };
                     let window = ResolvedPlace {
-                        atomic_aliases: Vec::new(),
+                        atomic_aliases: resolved.atomic_aliases.clone(),
                         root: resolved.root,
                         path: resolved.path[..depth].to_vec(),
                     };

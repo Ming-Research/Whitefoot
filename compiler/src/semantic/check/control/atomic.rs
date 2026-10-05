@@ -233,11 +233,12 @@ impl Checker<'_, '_> {
         }
         // Pairwise root relation, never a transitive class [SHARE-2].
         for (declaration, target) in declarations.iter().zip(&targets) {
-            let aliases = targets
-                .iter()
-                .filter(|other| self.types.types_unify(target.state, other.state))
-                .map(|t| t.binding)
-                .collect::<Vec<_>>();
+            let mut aliases = Vec::new();
+            for other in &targets {
+                if self.types.types_unify(target.state, other.state)? {
+                    aliases.push(other.binding);
+                }
+            }
             let reference = block_bindings
                 .get_mut(&declaration.id())
                 .and_then(|l| l.reference.as_mut())

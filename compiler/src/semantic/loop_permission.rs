@@ -877,7 +877,7 @@ impl<'check> Survey<'check, '_> {
             return;
         };
         let origin = ResolvedPlace {
-            atomic_aliases: Vec::new(),
+            atomic_aliases: place.atomic_aliases.clone(),
             root: place.root,
             path: place.path[..place.path.len() - 1].to_vec(),
         };
@@ -954,7 +954,7 @@ impl<'check> Survey<'check, '_> {
         }
         self.certified_writes.push(CertifiedElementWrite {
             root: ResolvedPlace {
-                atomic_aliases: Vec::new(),
+                atomic_aliases: place.atomic_aliases.clone(),
                 root: place.root,
                 path: place.path[..first].to_vec(),
             },
@@ -1693,12 +1693,12 @@ fn element_prefix(place: &ResolvedPlace, after: usize) -> Option<(ResolvedPlace,
         })?;
     Some((
         ResolvedPlace {
-            atomic_aliases: Vec::new(),
+            atomic_aliases: place.atomic_aliases.clone(),
             root: place.root,
             path: place.path[..position].to_vec(),
         },
         ResolvedPlace {
-            atomic_aliases: Vec::new(),
+            atomic_aliases: place.atomic_aliases.clone(),
             root: place.root,
             path: place.path[..=position].to_vec(),
         },

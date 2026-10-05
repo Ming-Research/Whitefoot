@@ -1174,9 +1174,9 @@ pub enum IrOperation {
     SharedUnlock {
         object: IrValueId,
     },
-    /// [SHARE-1] a new keyed table of `nominal`, whose entries are its
-    /// `Option<V>`, sized for `capacity` keys and holding none. Defines the
-    /// table, one pointer to the runtime's index.
+    /// [SHARE-1] a new shared map object of `nominal`, whose entries are
+    /// `Option<V>`, sized for `capacity` keys and holding none. Defines its
+    /// owned `Shared<ConcurrentHashMap<V>>` handle.
     ConcurrentHashMapNew {
         nominal: IrNominalId,
         capacity: IrValueId,

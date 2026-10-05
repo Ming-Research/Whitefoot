@@ -283,3 +283,61 @@ fn reads_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: u8 reads(st
         "these write nothing of their entry, so each reads it: {writers:?}"
     );
 }
+
+/// The implementation's type order compares const arguments by numeric value.
+#[test]
+fn atomic_type_order_uses_const_values() {
+    with_semantics(
+        br#"struct Sized<const n: u64> {
+  value: u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let two_value = Sized<2>(value: 0_u8);
+  let ten_value = Sized<10>(value: 0_u8);
+  let two = shared_new::<Sized<2>>(value: two_value);
+  let ten = shared_new::<Sized<10>>(value: ten_value);
+  let boxed = box_new::<u8>(value: 0_u8);
+  let cell = shared_new::<Box<u8>>(value: move boxed);
+  atomic a = &ten, b = &two, c = &cell {
+    set a^.value = 1_u8;
+    set b^.value = 2_u8;
+    set c^.inner = 3_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("must check: {outcome:?}");
+            };
+            let main = checked
+                .data
+                .functions
+                .iter()
+                .find(|f| f.name == "main")
+                .expect("main");
+            let targets = main
+                .body
+                .as_deref()
+                .expect("body")
+                .iter()
+                .find_map(|s| {
+                    if let CheckedStatement::Atomic { targets, .. } = s {
+                        Some(targets)
+                    } else {
+                        None
+                    }
+                })
+                .expect("targets");
+            assert!(
+                targets[1].lock_order < targets[0].lock_order,
+                "capacity 2 must precede 10"
+            );
+            assert!(
+                targets[2].lock_order < targets[1].lock_order,
+                "prelude Box must precede a source nominal"
+            );
+        },
+    );
+}
