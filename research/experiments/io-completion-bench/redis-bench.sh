@@ -505,11 +505,30 @@ server_ticks() {
 # the run's wall time, the server's CPU microseconds per request, and the
 # client's p50 and p99. redis-benchmark's own rate divides by a clock that
 # ticks every 250 ms, a step of 5% in a five-second run, so it is not used.
+# COMPARE_CLIENT=threads runs one redis-benchmark with CLIENT_THREADS
+# threads instead of one process per client CPU.
 compare_client() {
     ticks=$(server_ticks)
     begin=$(date +%s%N)
-    taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" --threads "$CLIENT_THREADS" \
-        -c 50 -n "$3" -r 100000 -d 3 -P "$2" -t "$1" --csv >"$OUT/compare-client.csv" 2>"$OUT/compare-client.err"
+    if [ "${COMPARE_CLIENT:-procs}" = threads ]; then
+        taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" --threads "$CLIENT_THREADS" \
+            -c 50 -n "$3" -r 100000 -d 3 -P "$2" -t "$1" --csv >"$OUT/compare-client.csv" 2>"$OUT/compare-client.err"
+    else
+        # One process per client CPU, three connections each: one process's
+        # threads stop near 6.6M requests a second on the 14900K, below what
+        # four server CPUs answer. The first process's latencies are kept.
+        pids=
+        index=0
+        for cpu in $(echo "$CLIENT_CPUS" | tr ',' ' '); do
+            taskset -c "$cpu" redis-benchmark -p "$PORT" -c 3 -n $(($3 / CLIENT_THREADS)) \
+                -r 100000 -d 3 -P "$2" -t "$1" --csv >"$OUT/compare-client-$index.csv" 2>"$OUT/compare-client.err" &
+            pids="$pids $!"
+            index=$((index + 1))
+        done
+        wait $pids
+        cp "$OUT/compare-client-0.csv" "$OUT/compare-client.csv"
+        set -- "$1" "$2" $(($3 / CLIENT_THREADS * CLIENT_THREADS))
+    fi
     end=$(date +%s%N)
     ticks=$(($(server_ticks) - ticks))
     # The fields between the first and last quoted ones hold no quote.
