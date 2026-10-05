@@ -555,6 +555,7 @@ without and with the change; every launch with correct CRCs:
 |---|---:|---:|---:|---:|---:|---:|---:|
 | v2e ([run](run-derived-v2e.tsv)) | 7 | 2567.4 | 2594.0 | 11,230,506,405 | 10,654,763,608 | 2,423,045,295 | 2,414,653,203 |
 | v2g ([run](run-derived-v2g.tsv)) | 15 | 2762.4 | 2820.9 | 10,649,927,045 | 10,072,938,212 | 2,291,486,095 | 2,235,379,256 |
+| v2h ([run](run-wasm-v2h-nano.tsv)) | 7 | 2971.8 | 2998.5 | 9,716,197,938 | 9,397,630,140 | 2,125,190,385 | 2,110,365,739 |
 
 The instructions fall 5.1% and 5.4%. On v2e the cycles and score do not
 move beyond the spread (score +1.0%, cycles -0.3%); on v2g, whose folded
@@ -562,7 +563,10 @@ loads and stores each address two or three slots, the cycles fall 2.4% and
 the score rises 2.1%, meeting the criterion. A seven-launch v2g run
 before this one gave +1.9%, within its 2% spread, which is why the
 fifteen-launch run decides; two `/usr/bin/time -l` launches of each v2g
-build gave cycles within 0.1% of each other.
+build gave cycles within 0.1% of each other. On v2h, whose accumulator
+forms already drop many slot accesses, the instructions fall 3.3% and the
+score rises 0.9% with cycles 0.7% lower, below the criterion: the gain
+shrinks as fewer slots are addressed per dispatch.
 
 ### v2h, an accumulator register
 
@@ -604,6 +608,12 @@ v2h launch faster than every v2g launch; instructions fall 8.8% and cycles
 indirect branch, `I32AddA` 16 and `I32AddAD` 14: a form reading `acc`
 drops its operand's index load and slot load, and a form writing it drops
 its destination's index load, address and store.
+
+Against Silverfir-nano in one run of seven alternating launches
+([run-wasm-v2h-nano.tsv](run-wasm-v2h-nano.tsv)), every launch with correct
+CRCs, v2h's median is 2971.8 (spread 0.3%) and Silverfir-nano's 5730.7
+(0.9%), a ratio of 0.519; v2h compiled by the compiler with derived
+frame-slot addresses as well, below, scores 2998.5 (0.3%), 0.523.
 
 ## Argument registers
 
