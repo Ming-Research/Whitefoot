@@ -6141,11 +6141,28 @@ pub(crate) mod tests {
         if complete.all_derivable {
             return;
         }
-        assert_eq!(
-            bound_values(seeded),
-            bound_values(&complete),
-            "seeded closure bounds differ from the complete closure"
-        );
+        // Every ordered pair of registered terms is compared through the
+        // same queries the flow asks, so a bound the view answers without a
+        // stored cell is held to the cell the complete closure derives.
+        for left in terms.ids() {
+            for right in terms.ids() {
+                assert_eq!(
+                    seeded.tight_bound(left, right),
+                    complete.tight_bound(left, right),
+                    "seeded closure bound {left:?} - {right:?} differs from the complete closure"
+                );
+                let distinct = Relation::Distinct {
+                    left,
+                    right,
+                    difference: 0,
+                };
+                assert_eq!(
+                    seeded.derives(&distinct),
+                    complete.derives(&distinct),
+                    "seeded closure disequality {left:?} != {right:?} differs from the complete closure"
+                );
+            }
+        }
         assert_eq!(
             seeded.distinct, complete.distinct,
             "seeded closure disequalities differ from the complete closure"
