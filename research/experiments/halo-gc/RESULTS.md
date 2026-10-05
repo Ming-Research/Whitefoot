@@ -224,7 +224,7 @@ executable SHA-256:
 ## Final committed-collector validation
 
 The native inputs are those at `d02e723a80e8e2188ec32cd6464f9281767da77c`;
-subsequent edits only complete the research records and TODO. The final
+subsequent edits only change documentation and the design record. The final
 native build exited 0 in 413.40 s (user 323.75 s, system 44.32 s), with
 module caching enabled. The smaller heap-graph build exited 0 in 0.52 s
 (user 0.47 s, system 0.07 s). Build time is excluded from all execution rows.
@@ -333,6 +333,7 @@ executable, never the final executable.
 | `git diff --exit-code -- lib/halo/vm/collect.wf` | 0 | Collector restored exactly |
 | `make design-lint` | 0 | Small structural sample, 7.40 s before `make static` |
 | `make static` | 0 | All static stages, 32.39 s |
+| `make static` at `f90aeae389d849ddab78e6877d63f52b8463f959` | 0 | Provisional node included, all static stages, 32.57 s |
 | `git diff --check` | 0 | Patch whitespace |
 
 The earlier open/frame/constants evidence above was recovered from the
@@ -373,7 +374,8 @@ not broadened into compatibility claims. The every-allocation verifier gap
 is also recorded there with an explicit reopening condition. CJSON instance
 configuration reclamation remains a separate existing TODO.
 
-No specification, conformance expectation, oracle reply, or collector source
-was changed by this finishing session. A complete repository `make check`
+No specification, conformance expectation or oracle reply was changed by
+this finishing session. Its final collector source is byte-for-byte the
+committed `74f4f521b` version. A complete repository `make check`
 was not run: this task uses the supplied compiler and forbids Cargo. The
 experiment establishes these observations on Darwin arm64 only.

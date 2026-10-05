@@ -2217,7 +2217,8 @@ rarely insert at the same place.
   `local f=bit.tobit; return f(false)` and operations on `cjson.null`.
   Halo reports the builtin's static name or a generic userdata error;
   Redis reports the local or field name. `pkg::value::Script` carries lines
-  but no local-name ranges. Change: preserve the compiler's local names and
+  but no local-name ranges. Impact: alias and field-call error text differs
+  from Redis. Change: preserve the compiler's local names and
   Lua's register-origin information, then use them in argument and type
   errors. Validate alias, field, upvalue and unnamed calls against Redis.
   Reopen before claiming byte-exact Lua library error compatibility.
@@ -2237,8 +2238,9 @@ rarely insert at the same place.
   self-tail call; this halved the vm module's check time (about 60 s for the
   package on an M1 Pro) but gives the match-dispatch lowering one shared
   dispatch point instead of a tail jump per arm. Globals always take the slow
-  executor; coercion and numeric power already use `lib/halo/number`. Change:
-  once a lowering and a benchmark exist (VM.md P1, P2),
+  executor; coercion and numeric power already use `lib/halo/number`. Impact:
+  shared dispatch and slow global access may limit interpreter throughput.
+  Change: once a lowering and a benchmark exist (VM.md P1, P2),
   measure, then move the epilogue into each arm or inline the handlers, and
   add fast paths where the census shows them hot. Reopen with the first Halo
   performance measurement.
@@ -2246,9 +2248,9 @@ rarely insert at the same place.
   checked in roughly 60 s with the dispatch core alone and 156 s once the
   slice-1 library joined it (M1 Pro, 2026-10-04), almost all of it the vm
   module (one match of 73 arms over one function family, plus the
-  library). Attribute the
-  cost by stage (formation, derivation, certificates, propagation) before
-  restructuring source for the checker's sake. Reopen when a Halo edit-check
+  library). Impact: full-package checks slow the Halo edit/check loop.
+  Change: attribute the cost by stage (formation, derivation, certificates,
+  propagation) before restructuring source for the checker's sake. Reopen when a Halo edit-check
   loop becomes the bottleneck or with the next checker cost work.
 - **Halo's number library and oracle corpus were checked on macOS only.**
   `lib/halo/number` matches Redis 7.0.15's bundled Lua built on macOS
@@ -2257,7 +2259,8 @@ rarely insert at the same place.
   `string.format`'s NaN text in `lib/halo/vm`; its `strtod`
   details (NaN payloads, hexadecimal forms, range errors) and the oracle
   corpus (research/experiments/halo-oracle) were produced against macOS
-  builds. Rerun both comparisons on the x86-64 Linux runner against a glibc
+  builds. Impact: Linux formatting and parsing parity remains unverified.
+  Change: rerun both comparisons on the x86-64 Linux runner against a glibc
   build of Redis 7.0.15 and its Lua, and adopt glibc's behavior wherever they
   differ. Reopen before Halo's first release or when firn's EVAL lands.
 - **Reconcile the Halo embedding boundary record with current work.**
