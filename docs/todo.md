@@ -93,9 +93,15 @@ rarely insert at the same place.
   Change: find what the closure's cost scales with (the function's term
   count against the facts live on the path being checked) and bound it by
   the latter. Validate with the 10/20/40-arm series growing linearly and the
-  interpreter's verdicts unchanged. Reopen when the next stage-3 step needs
-  repeated checks of the interpreter, or another program meets the same
-  growth.
+  interpreter's verdicts unchanged. A second path grows the same way: a
+  helper that delivers a value from a `match` (`give`), down to the
+  encoding `if z { give 1 } else { give 0 }`, costs the function a
+  contradiction search per delivery (`value_delivery_image` through
+  `contradiction_without_proofs`), so the interpreter with every helper body
+  written into its arm took 313 s to check, against 3.5 s with the
+  delivering helpers kept as calls (`gen.py --inline`). Reopen when the
+  next stage-3 step needs repeated checks of the interpreter, or another
+  program meets the same growth.
 
 - **A table subscripted in a block is refused without a repair.** `s^.map[k]`
   in an atomic block is OP-4's type mismatch, "an indexable base", against

@@ -386,6 +386,19 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       }
       return trap(code: 1_u32, pc: pc);
     }
+    Copy2(d: dv, s: sv, e: ev, t: tv) => {
+      let si = cvt::<u16, u64>(sv^);
+      let di = cvt::<u16, u64>(dv^);
+      move_slot(stack: stack, fp: fp, s: si, d: di);
+      let ti = cvt::<u16, u64>(tv^);
+      let ei = cvt::<u16, u64>(ev^);
+      move_slot(stack: stack, fp: fp, s: ti, d: ei);
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
     GlobalGet(d: dv, i: iv) => {
       let iw = cvt::<u32, u64>(iv^);
       if iw < globals^.inner.len {

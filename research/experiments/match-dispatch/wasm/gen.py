@@ -10,8 +10,10 @@ translator and the WASI driver) are written by hand. With --count the
 interpreter also counts its dispatches and prints the count on standard
 error when _start returns, for attributing a change to the dispatch count;
 with --profile it counts each operation kind, in the order --names prints.
+With --inline each handler's body is written into its arm, except a body
+that delivers a value from a match, which stays a helper call.
 
-    python3 gen.py interp.wf [--count]
+    python3 gen.py interp.wf [--count | --profile] [--inline]
     whitefootc interp.wf -o wasm-interp
     ./wasm-interp coremark.wasm 0x0 0x0 0x66 2000
 """
@@ -185,6 +187,9 @@ LOADS = [(0x28, "I32Load", 4, False, "u32"), (0x29, "I64Load", 8, False, "u64"),
          (0x30, "I64Load8S", 1, True, "u64"), (0x31, "I64Load8U", 1, False, "u64"),
          (0x32, "I64Load16S", 2, True, "u64"), (0x33, "I64Load16U", 2, False, "u64"),
          (0x34, "I64Load32S", 4, True, "u64"), (0x35, "I64Load32U", 4, False, "u64")]
+# The i32 loads and stores that also take their address as the sum of two
+# slots, an i32.add just emitted for the address folded into them.
+INDEXED = ["I32Load", "I32Load8S", "I32Load8U", "I32Load16S", "I32Load16U", "I32Store", "I32Store8", "I32Store16"]
 STORES = [(0x36, "I32Store", 4), (0x37, "I64Store", 8), (0x38, "F32Store", 4),
           (0x39, "F64Store", 8), (0x3a, "I32Store8", 1), (0x3b, "I32Store16", 2),
           (0x3c, "I64Store8", 1), (0x3d, "I64Store16", 2), (0x3e, "I64Store32", 4)]
@@ -304,11 +309,19 @@ def memory_address(nbytes):
             f"let lim = ea + {nbytes}_u64;"]
 
 
-def load_arm(name, nbytes, signed, out):
+def indexed_address(nbytes):
+    return ["let bw = stack^.inner[bt];", "let x32 = cvt.wrap::<u64, u32>(aw);", "let y32 = cvt.wrap::<u64, u32>(bw);",
+            "let a32 = x32 +wrap y32;"] + memory_address(nbytes)[1:]
+
+
+def load_arm(name, nbytes, signed, out, indexed=False):
     fn = snake(name)
-    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, d: u16, a: u16, offset: u32) -> ok: Bool reads(mem), writes(stack.inner) contract {{",
+    second = "b: u16, " if indexed else ""
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, d: u16, a: u16, {second}offset: u32) -> ok: Bool reads(mem), writes(stack.inner) contract {{",
          FRAME, KEEPS, "} {"]
-    b = slot("a", "a") + ["let aw = stack^.inner[at];"] + memory_address(nbytes) + ["if lim <= mem^.inner.len {"]
+    address = slot("a", "a") + (slot("b", "b") if indexed else []) + ["let aw = stack^.inner[at];"]
+    address += indexed_address(nbytes) if indexed else memory_address(nbytes)
+    b = address + ["if lim <= mem^.inner.len {"]
     inner = []
     for i in range(nbytes):
         if i == 0:
@@ -343,18 +356,22 @@ def load_arm(name, nbytes, signed, out):
     inner += slot("d", "d") + ["set stack^.inner[dt] = zw;", "return True();"]
     b += ["  " + l for l in inner] + ["}", "return False();"]
     HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
-    o = [f"    {name}(d: dv, a: av, o: ov) => {{",
-         f"      let ok = {fn}(stack: stack, mem: mem, fp: fp, d: dv^, a: av^, offset: ov^);", "      if ok {"]
+    pat, arg = ("b: bv, ", "b: bv^, ") if indexed else ("", "")
+    o = [f"    {name}(d: dv, a: av, {pat}o: ov) => {{",
+         f"      let ok = {fn}(stack: stack, mem: mem, fp: fp, d: dv^, a: av^, {arg}offset: ov^);", "      if ok {"]
     o += advance(8)
     o += ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
     return o
 
 
-def store_arm(name, nbytes):
+def store_arm(name, nbytes, indexed=False):
     fn = snake(name)
-    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, a: u16, v: u16, offset: u32) -> ok: Bool reads(stack), writes(mem.inner) contract {{",
+    second = "b: u16, " if indexed else ""
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, a: u16, {second}v: u16, offset: u32) -> ok: Bool reads(stack), writes(mem.inner) contract {{",
          FRAME, "  ensures mem^.inner.len == entry(mem)^.inner.len;", "} {"]
-    b = slot("a", "a") + slot("v", "v") + ["let aw = stack^.inner[at];", "let vw = stack^.inner[vt];"] + memory_address(nbytes) + ["if lim <= mem^.inner.len {"]
+    address = slot("a", "a") + (slot("b", "b") if indexed else []) + slot("v", "v") + ["let aw = stack^.inner[at];", "let vw = stack^.inner[vt];"]
+    address += indexed_address(nbytes) if indexed else memory_address(nbytes)
+    b = address + ["if lim <= mem^.inner.len {"]
     inner = []
     for i in range(nbytes):
         if i == 0:
@@ -368,8 +385,9 @@ def store_arm(name, nbytes):
     inner.append("return True();")
     b += ["  " + l for l in inner] + ["}", "return False();"]
     HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
-    o = [f"    {name}(a: av, v: vv, o: ov) => {{",
-         f"      let ok = {fn}(stack: stack, mem: mem, fp: fp, a: av^, v: vv^, offset: ov^);", "      if ok {"]
+    pat, arg = ("b: bv, ", "b: bv^, ") if indexed else ("", "")
+    o = [f"    {name}(a: av, {pat}v: vv, o: ov) => {{",
+         f"      let ok = {fn}(stack: stack, mem: mem, fp: fp, a: av^, {arg}v: vv^, offset: ov^);", "      if ok {"]
     o += advance(8)
     o += ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
     return o
@@ -390,6 +408,81 @@ def fused_arm(name, op, sign):
          "      if next < n {"] + tail("next", 8) + ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
     return o
 
+
+
+def inline_helpers(arms, helpers):
+    """The --inline variant: each arm carries its helper's body in place of
+    the call, the helper's parameters bound by `let` from the call's
+    arguments; `return True()` becomes the arm's advance, `return False()`
+    its trap, and a comparison's `return z;` binds `taken`."""
+    import re
+    bodies = {}
+    text = "\n".join(helpers)
+    for match in re.finditer(r"^fn (op_\w+)\((.*?)\) -> (\w+): \w+ .*?\{\n(?:.*?\n)*?\} \{\n((?:  .*\n)*?)\}\n", text, re.M):
+        name, params, result, body = match.group(1), match.group(2), match.group(3), match.group(4)
+        bodies[name] = (result, [line[2:] for line in body.rstrip("\n").split("\n")])
+    out = []
+    kept = set()
+    i = 0
+    while i < len(arms):
+        line = arms[i]
+        call = re.search(r"(op_\w+)\((.*)\);$", line)
+        if not call or call.group(1) not in bodies:
+            out.append(line)
+            i += 1
+            continue
+        name, arguments = call.group(1), call.group(2)
+        result, body = bodies[name]
+        if any("give " in b for b in body):
+            # A body that delivers a value from a match stays a call: the
+            # checker's delivery of such values grows with the function
+            # (docs/todo.md, "Checking a function with many value deliveries").
+            out.append(line)
+            kept.add(name)
+            i += 1
+            continue
+        indent = line[: len(line) - len(line.lstrip())]
+        binds = []
+        for argument in arguments.split(", "):
+            formal, actual = argument.split(": ", 1)
+            if formal != actual:
+                binds.append(f"{indent}let {formal} = {actual};")
+        if result == "ok":
+            # let ok = op(...); if ok { ADVANCE } return trap(...);
+            opener = arms[i + 1]
+            closer = opener[: len(opener) - len(opener.lstrip())] + "}"
+            j = i + 2
+            advance = []
+            while arms[j] != closer:
+                advance.append(arms[j][2:])
+                j += 1
+            failure = arms[j + 1].strip()
+            out += binds
+            for b in body:
+                if b.strip() == "return True();":
+                    pad = b[: len(b) - len(b.lstrip())]
+                    out += [indent + pad + a[len(indent):] for a in advance]
+                elif b.strip() == "return False();":
+                    pad = b[: len(b) - len(b.lstrip())]
+                    out.append(indent + pad + failure)
+                else:
+                    out.append(indent + b)
+            if body and body[-1].strip() == "return True();":
+                out.append(indent + failure)
+            i = j + 2
+        elif result == "taken":
+            out += binds
+            for b in body:
+                if b.strip() == "return z;":
+                    out.append(indent + "let taken = z;")
+                else:
+                    out.append(indent + b)
+            i += 1
+        else:
+            out += binds
+            out += [indent + b for b in body if b.strip() != "return unit;"]
+            i += 1
+    return out, kept
 
 def count_dispatches(program):
     """The --count variant: a counter cell passed to the interpreter function
@@ -470,7 +563,7 @@ def profile_dispatches(program, variants):
 CONTROL = ["Unreachable()", "Jump(t: u32)", "Br(t: u32, s: u16, d: u16)", "BrIf(t: u32, c: u16)",
            "BrIfMove(c: u16, e: u32)", "BrUnless(t: u32, c: u16)", "BrTable(c: u16, start: u32, count: u32)",
            "Return(s: u16, k: u16, l: u16)", "Call(f: u32, at: u16)", "CallIndirect(canon: u32, at: u16, i: u16)",
-           "Host(id: u16, at: u16)", "Select(d: u16, a: u16, b: u16, c: u16)", "Copy(d: u16, s: u16)",
+           "Host(id: u16, at: u16)", "Select(d: u16, a: u16, b: u16, c: u16)", "Copy(d: u16, s: u16)", "Copy2(d: u16, s: u16, e: u16, t: u16)",
            "GlobalGet(d: u16, i: u32)", "GlobalSet(s: u16, i: u32)", "MemorySize(d: u16)",
            "MemoryGrow(d: u16, s: u16)", "MemoryCopy(d: u16, s: u16, n: u16)",
            "MemoryFill(d: u16, v: u16, n: u16)", "Const(d: u16, v: u64)"]
@@ -492,6 +585,14 @@ for code, name, *_ in LOADS:
 for code, name, _ in STORES:
     w(f"  {name}(a: u16, v: u16, o: u32);")
     variants.append((name, ["a", "v", "o"], False))
+for code, name, *_ in LOADS:
+    if name in INDEXED:
+        w(f"  {name}Ix(d: u16, a: u16, b: u16, o: u32);")
+        variants.append((name + "Ix", ["d", "a", "b", "o"], True))
+for code, name, _ in STORES:
+    if name in INDEXED:
+        w(f"  {name}Ix(a: u16, b: u16, v: u16, o: u32);")
+        variants.append((name + "Ix", ["a", "b", "v", "o"], False))
 for code, name, ins, *_ in N:
     if len(ins) == 2:
         w(f"  {name}(d: u16, a: u16, b: u16);")
@@ -575,6 +676,51 @@ w("  }")
 w("}")
 w("")
 
+w("fn indexed_op(code: u8, first: u16, a: u16, b: u16, offset: u32) -> found: Option<Op> pure {")
+w('  doc "The i32 load (first the destination) or store (first the value) at address a + b, or None for an operation without that form.";')
+for code, name, *_ in LOADS:
+    if name in INDEXED:
+        w(f"  if code == {code}_u8 {{")
+        w(f"    let o = Op::{name}Ix(d: first, a: a, b: b, o: offset);")
+        w("    return Some<Op>(value: o);")
+        w("  }")
+for code, name, _ in STORES:
+    if name in INDEXED:
+        w(f"  if code == {code}_u8 {{")
+        w(f"    let o = Op::{name}Ix(a: a, b: b, v: first, o: offset);")
+        w("    return Some<Op>(value: o);")
+        w("  }")
+w("  return None<Op>();")
+w("}")
+w("")
+w("fn indexed(code: u8) -> yes: Bool pure {")
+w('  doc "Whether the load or store opcode has a form taking its address as a sum.";')
+for code, name, *_ in LOADS + STORES:
+    if name in INDEXED:
+        w(f"  if code == {code}_u8 {{")
+        w("    return True();")
+        w("  }")
+w("  return False();")
+w("}")
+w("")
+w("fn add_operands(op: Op) -> (found: Bool, a: u16, b: u16) pure {")
+w('  doc "An i32.add\'s operand slots, found false for any other operation.";')
+w("  match op {")
+for name, fields, dest in variants:
+    if name == "I32Add":
+        w("    I32Add(d: x_d, a: x_a, b: x_b) => {")
+        w("      let yes = True();")
+        w("      return yes, x_a, x_b;")
+        w("    }")
+    else:
+        w(f"    {name}(..) => {{")
+        w("      let no = False();")
+        w("      return no, 0_u16, 0_u16;")
+        w("    }")
+w("  }")
+w("}")
+w("")
+
 w("fn compare_code(op: Op) -> (code: u64, a: u16, b: u16) pure {")
 w('  doc "An i32 comparison\'s opcode and operand slots, 0x45 for eqz, or zero for any other operation.";')
 w("  match op {")
@@ -626,17 +772,30 @@ for code, name, nbytes, signed, outty in LOADS:
     arms += load_arm(name, nbytes, signed, outty)
 for code, name, nbytes in STORES:
     arms += store_arm(name, nbytes)
+for code, name, nbytes, signed, outty in LOADS:
+    if name in INDEXED:
+        arms += load_arm(name + "Ix", nbytes, signed, outty, indexed=True)
+for code, name, nbytes in STORES:
+    if name in INDEXED:
+        arms += store_arm(name + "Ix", nbytes, indexed=True)
 for code, name, ins, outty, lines in N:
     arms += numeric_arm(name, ins, outty, lines)
 for sub, name, ins, outty, lines in FC:
     arms += numeric_arm(name, ins, outty, lines)
 for code, nm, op, sign in FUSED:
     arms += fused_arm(f"BrI32{nm}", op, sign)
+if "--inline" in sys.argv:
+    arms, kept = inline_helpers(arms, HELPERS)
+    import re as _re
+    chunks = [chunk.strip("\n") for chunk in "\n".join(HELPERS).split("\n\n") if chunk.strip()]
+    HELPERS = ["\n\n".join(chunk for chunk in chunks
+                             if (_re.match(r"fn (op_\w+)\(", chunk) or [None, None])[1] in kept)]
 here = os.path.dirname(os.path.abspath(__file__))
 head = open(os.path.join(here, "interp_head.wf")).read()
 tail_text = open(os.path.join(here, "interp_tail.wf")).read().strip("\n")
 aliases_end = head.index("\n\n") + 2
-program = (head[:aliases_end] + OPS + "\n\n" + "\n".join(HELPERS).strip("\n") + "\n\n"
+helper_text = "\n".join(HELPERS).strip("\n")
+program = (head[:aliases_end] + OPS + "\n\n" + (helper_text + "\n\n" if helper_text else "")
            + head[aliases_end:].rstrip("\n") + "\n" + "\n".join(arms).strip("\n") + "\n  }\n}\n\n" + tail_text + "\n")
 if "--names" in sys.argv:
     print("\n".join(name for name, _, _ in variants))

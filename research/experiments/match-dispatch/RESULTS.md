@@ -443,6 +443,75 @@ launch with correct CRCs; Silverfir-nano's spread includes one slow launch:
 
 The score rises 3.8%, above the 2% criterion.
 
+### v2e, handler bodies written into their arms
+
+`gen.py --inline` writes each helper's body into its arm, binding the
+helper's parameters with `let`, except a body that delivers a value from a
+`match` (`give`), which stays a call: the checker's handling of such
+deliveries grows faster than linearly with the function, and the fully
+inlined interpreter took 313 s to check where this form takes 3.5 s
+(`docs/todo.md`, "Checking one function grows faster than its size"). Built
+by the compiler with stack-box pinning and active-term closures merged, the
+`I32Add` arm's machine code is the same seventeen instructions as v2d's: by
+v2d the helpers were already inlined by LLVM, so writing them into the
+source changes the checker's work, not the dispatch. Its median in the v2f
+run below is 2635.0.
+
+### v2f, fewer copies
+
+`gen.py --profile` with each copy site given its own operation kind
+attributed v2e's 77 million `Copy` dispatches: 64 million from a
+`local.get` followed by a `local.set` (a copy between locals, 20.6 million
+of them directly after another such copy), 12.5 million from operands put
+in their temporaries before control flow, 9.2 million of those before a
+`br_table` and 2.1 million before a `return`. v2f reads the operand a
+`br_table` or `return` consumes, and the result at a function's end, from
+its local in place (a `return` and a function's end no longer put any
+other operand in its temporary), and merges a copy between locals emitted
+directly after another into one `Copy2(d, s, e, t)`, which moves `s` to
+`d` and then `t` to `e`; a loop's start, a branch target, ends the merging.
+Criterion, set before measuring: adopt if the median score rises at least
+2%, as for v2d. Dispatches fell from 551,583,984 to 523,297,303 (5.1%),
+`Copy` and `Copy2` together to 49 million. Seven alternating launches
+([run-wasm-v2f.tsv](run-wasm-v2f.tsv)), every launch with correct CRCs,
+and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2e | 2635.0 | 3.6% | 11,229,455,758 | 2,420,843,786 |
+| v2f | 2706.4 | 2.4% | 10,906,830,435 | 2,354,421,800 |
+
+The score rises 2.7%, meeting the criterion, with cycles down 2.7%.
+
+### v2g, address additions folded into loads and stores
+
+An i32 load or store whose address is the temporary an `i32.add` emitted
+just before it wrote takes that addition's two operand slots instead
+(`I32LoadIx(d, a, b, o)` loads from `a + b + o`, the sum wrapping to 32
+bits as the `i32.add` did, and likewise the other i32 loads and stores), and
+the addition is not emitted; a store qualifies when its value comes from a
+local, so that no copy is emitted between the addition and the store.
+Silverfir-nano's translator folds such additions the same way. Predicted
+before measuring: 25-35 million fewer dispatches, from the 37.7 million
+`I32Add` dispatches directly followed by a load or store in v2e's
+operation-pair profile; criterion: adopt if the median score rises at
+least 2%. Dispatches fell from 523,297,303 to 506,088,437 (3.3%), below the
+prediction: 17.2 million additions folded. A load's only operand is its
+address, so an addition directly before an eligible load that was not
+folded wrote a local (`local.set` or `local.tee` took over its
+destination), which the fold does not reach, as for all but 586 of the 8.7
+million additions before an `I32Load8U`; before a store, the addition may
+also be the stored value, or the value a constant. Seven
+alternating launches ([run-wasm-v2g.tsv](run-wasm-v2g.tsv)), every launch
+with correct CRCs, and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2f | 2739.7 | 3.0% | 10,906,796,639 | 2,348,767,399 |
+| v2g | 2832.9 | 3.2% | 10,648,499,411 | 2,284,244,384 |
+
+The score rises 3.4%, meeting the criterion.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which
