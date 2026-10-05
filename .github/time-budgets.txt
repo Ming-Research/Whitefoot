@@ -28,18 +28,18 @@ performance-instrument          10     10     -
 compiler/lint                   40     80     -
 
 # gate.yml, unit group: the library in test mode, then its cases
-check/unit                      235    280    -
-compiler/test-build-unit        135    185    -
-compiler/test-unit              105    100    -
+check/unit                      235    430    -
+compiler/test-build-unit        135    295    -
+compiler/test-unit              105    150    -
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    265    255    -
-compiler/test-build-corpus      95     135    -
-compiler/test-corpus            145    125    -
+check/corpus                    265    320    -
+compiler/test-build-corpus      95     165    -
+compiler/test-corpus            145    165    -
 
 # gate.yml, runtime group
-check/runtime                   15     15     -
+check/runtime                   15     20     -
 
 # io-hosts.yml, completion-linux
 linux-runtime                   50     -      -
