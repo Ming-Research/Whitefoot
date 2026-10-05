@@ -2450,9 +2450,9 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 8,662 lines, including a
+  `compiler/src/semantic/entailment/state.rs` has 8,668 lines, including a
   2,086-line inline test module, and the tests in
-  `compiler/src/semantic/tests/entailment.rs` have 11,049 lines and 158
+  `compiler/src/semantic/tests/entailment.rs` have 11,124 lines and 159
   tests. The flow itself is divided into its sub-contexts and component
   modules (`design/compiler/engine-components.md`), none over 3,200 lines.
   `state.rs` can move its test module to its own file and its dense-closure
