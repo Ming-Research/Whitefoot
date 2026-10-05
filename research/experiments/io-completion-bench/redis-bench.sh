@@ -577,33 +577,36 @@ if [ "$MODE" = compare ]; then
             pass=$((pass + 1))
         done
         if [ -n "$PERF" ]; then
-            set -- ${COMPARE_PROFILE:-mset 16}
-            requests=$(awk -v t="$1" -v d="$2" '$1 == t && $2 == d { print $3 }' "$sizes")
-            for name in $names; do
-                start "image-$name"
-                # With PERF_CALLERS set, each sample carries a DWARF-unwound
-                # stack, since firn keeps no frame pointers.
-                "$PERF" record ${PERF_CALLERS:+--call-graph dwarf,16384} -F "${PERF_FREQUENCY:-4999}" \
-                    -p "$server" -o "$OUT/perf-$name-$n.data" >/dev/null 2>&1 &
-                recorder=$!
-                sleep 1
-                compare_client "$1" "$2" "$requests" | sed "s/^/profiled,$name,$n,/"
-                kill -INT "$recorder"
-                wait "$recorder" || true
-                stop
-                "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
-                    --sort dso,symbol --percent-limit 0.01 -g none >"$OUT/profile-$name-$n.txt" 2>/dev/null
-                for symbol in $PERF_ANNOTATE; do
-                    "$PERF" annotate -i "$OUT/perf-$name-$n.data" --stdio -s "$symbol" \
-                        >"$OUT/annotate-$name-$n-$symbol.txt" 2>/dev/null || true
+            # COMPARE_PROFILE lists test and depth pairs, separated by ';'.
+            echo "${COMPARE_PROFILE:-mset 16}" | tr ';' '\n' | while read -r ptest pdepth; do
+                test -n "$ptest" || continue
+                requests=$(awk -v t="$ptest" -v d="$pdepth" '$1 == t && $2 == d { print $3 }' "$sizes")
+                test -n "$requests" || { echo "skip,profile,$ptest $pdepth not measured"; continue; }
+                for name in $names; do
+                    start "image-$name"
+                    # With PERF_CALLERS set, each sample carries a DWARF-unwound
+                    # stack, since firn keeps no frame pointers.
+                    "$PERF" record ${PERF_CALLERS:+--call-graph dwarf,16384} -F "${PERF_FREQUENCY:-4999}" \
+                        -p "$server" -o "$OUT/perf-$name-$n-$ptest.data" >/dev/null 2>&1 &
+                    recorder=$!
+                    sleep 1
+                    compare_client "$ptest" "$pdepth" "$requests" | sed "s/^/profiled,$name,$n,$ptest,/"
+                    kill -INT "$recorder"
+                    wait "$recorder" || true
+                    stop
+                    "$PERF" report -i "$OUT/perf-$name-$n-$ptest.data" --stdio --no-children \
+                        --sort dso,symbol --percent-limit 0.01 -g none >"$OUT/profile-$name-$n-$ptest.txt" 2>/dev/null
+                    for symbol in $PERF_ANNOTATE; do
+                        "$PERF" annotate -i "$OUT/perf-$name-$n-$ptest.data" --stdio -s "$symbol" \
+                            >"$OUT/annotate-$name-$n-$ptest-$symbol.txt" 2>/dev/null || true
+                    done
+                    if [ -n "$PERF_CALLERS" ]; then
+                        "$PERF" report -i "$OUT/perf-$name-$n-$ptest.data" --stdio --no-children \
+                            --sort dso,symbol --percent-limit 0.3 -g caller,0.5,callee,function,percent \
+                            >"$OUT/callers-$name-$n-$ptest.txt" 2>/dev/null
+                    fi
+                    rm -f "$OUT/perf-$name-$n-$ptest.data"
                 done
-                if [ -n "$PERF_CALLERS" ]; then
-                    "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
-                        --sort dso,symbol --percent-limit 0.3 -g caller,0.5,callee,function,percent \
-                        >"$OUT/callers-$name-$n.txt" 2>/dev/null
-                    "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --children \
-                        --sort symbol --percent-limit 1 -g none >"$OUT/inclusive-$name-$n.txt" 2>/dev/null
-                fi
             done
         fi
     done
