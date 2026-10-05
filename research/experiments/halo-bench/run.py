@@ -76,6 +76,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--lua', type=Path, required=True)
     parser.add_argument('--binary', type=Path, default=HERE/'target/halo')
+    parser.add_argument('--before-binary', type=Path, help='pair two Halo binaries; validate both against an independent PUC launch')
+    parser.add_argument('--before-budget', choices=('large', 'realistic'), default='large')
     parser.add_argument('--kernels', required=True, help='comma-separated explicit selection')
     parser.add_argument('--runs', type=int, required=True)
     parser.add_argument('--scale', action='append', default=[], help='kernel=N; same replacement for both VMs')
@@ -84,6 +86,8 @@ def main():
     parser.add_argument('--profile', action='store_true', help='sample Halo; exclude these timings from baseline')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
+    if args.before_binary and (args.reference_only or args.profile):
+        parser.error('native before/after pairs cannot be reference-only or profiled')
     self_check()
     if args.runs < 1:
         parser.error('runs must be positive')
@@ -98,6 +102,8 @@ def main():
         scales[name] = int(count)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     binary, lua = args.binary.resolve(), args.lua.resolve()
+    before = args.before_binary.resolve() if args.before_binary else None
+    reference_key = 'before' if before else 'puc'
     data = dict(revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                 host=platform.platform(), started_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
                 binary_sha256=digest(binary), lua_sha256=digest(lua),
@@ -105,6 +111,8 @@ def main():
                 host_sources_sha256={str(path.relative_to(HERE)): digest(path) for path in
                                      (HERE/'modules.wfg', HERE/'host/module.wfm', HERE/'host/driver.wf')},
                 budget=args.budget, profile=args.profile, reference_only=args.reference_only, scales=scales, kernels={}, launches=[])
+    if before:
+        data.update(before_binary_sha256=digest(before), before_budget=args.before_budget)
     failure = None
     try:
         for name in names:
@@ -114,11 +122,19 @@ def main():
                 assert replacements == 1
             record = dict(source_sha256=hashlib.sha256(source).hexdigest(), pairs=[])
             data['kernels'][name] = record
+            if before:
+                reference = subprocess.run([str(lua), '-e', WRAPPER], input=source, capture_output=True, timeout=180)
+                if reference.returncode:
+                    raise RuntimeError(f'{name}/PUC-check: exit={reference.returncode}')
+                record['independent_reference'] = dict(exit=reference.returncode, stdout=reference.stdout.decode('ascii'))
             for run in range(args.runs):
                 pair = {}
-                order = ('PUC',) if args.reference_only else (('PUC', 'Halo') if run % 2 == 0 else ('Halo', 'PUC'))
+                first = 'Before' if before else 'PUC'
+                order = ('PUC',) if args.reference_only else ((first, 'Halo') if run % 2 == 0 else ('Halo', first))
                 for engine in order:
-                    command = [str(lua), '-e', WRAPPER] if engine == 'PUC' else [str(binary)] + (['1000'] if args.budget == 'realistic' else [])
+                    mode = args.before_budget if engine == 'Before' else args.budget
+                    native = before if engine == 'Before' else binary
+                    command = [str(lua), '-e', WRAPPER] if engine == 'PUC' else [str(native)] + (['1000'] if mode == 'realistic' else [])
                     start = time.perf_counter()
                     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     profiler = None
@@ -151,16 +167,23 @@ def main():
                 if args.reference_only:
                     record['pairs'].append(dict(puc=pair['PUC']['seconds'], checksum=pair['PUC']['stdout'].strip()))
                     continue
-                suspends, collections = validate(pair['PUC']['stdout'].encode(), pair['Halo']['stdout'].encode(), pair['Halo']['stderr'].encode(), args.budget == 'realistic')
-                record['pairs'].append(dict(puc=pair['PUC']['seconds'], halo=pair['Halo']['seconds'],
-                                            checksum=pair['PUC']['stdout'].strip(), suspends=suspends, collections=collections))
-            record['puc'] = summary([x['puc'] for x in record['pairs']])
+                expected = reference.stdout if before else pair['PUC']['stdout'].encode()
+                suspends, collections = validate(expected, pair['Halo']['stdout'].encode(), pair['Halo']['stderr'].encode(), args.budget == 'realistic')
+                item = dict(halo=pair['Halo']['seconds'], checksum=expected.decode().strip(), suspends=suspends, collections=collections)
+                item[reference_key] = pair[first]['seconds']
+                if before:
+                    bs, bc = validate(expected, pair['Before']['stdout'].encode(), pair['Before']['stderr'].encode(), args.before_budget == 'realistic')
+                    item.update(before_suspends=bs, before_collections=bc)
+                    if bc != collections:
+                        raise ValueError(f'{name}: collection counts changed: {bc} -> {collections}')
+                record['pairs'].append(item)
+            record[reference_key] = summary([x[reference_key] for x in record['pairs']])
             if args.reference_only:
                 print(f'{name}: PUC sizing={record["puc"]}', flush=True)
                 continue
             record['halo'] = summary([x['halo'] for x in record['pairs']])
-            record['ratio'] = record['halo']['median'] / record['puc']['median']
-            print(f'{name}: ratio={record["ratio"]:.3f} PUC={record["puc"]} Halo={record["halo"]}', flush=True)
+            record['ratio'] = record['halo']['median'] / record[reference_key]['median']
+            print(f'{name}: ratio={record["ratio"]:.3f} {reference_key}={record[reference_key]} Halo={record["halo"]}', flush=True)
     except Exception as error:
         failure = str(error)
         data['failure'] = failure

@@ -17,9 +17,10 @@ public struct ScriptId {
 public struct Engine {
   public vm: Vm;
   public stack: Box<Slots<Value>>;
-  public scripts: Box<Slots<Script>>;
-  public constant_lengths: Box<Slots<u64>>;
-  public pins: Box<Slots<Value>>;
+  public readonly scripts: Box<Slots<Script>>;
+  public readonly constant_lengths: Box<Slots<u64>>;
+  public readonly pins: Box<Slots<Value>>;
+  public readonly roots_valid: Box<Slots<Bool>>;
   public generation: u64;
   public active: Option<ScriptId>;
   public result_count: u64;

@@ -69,7 +69,8 @@ bypasses readonly, while script writes raise and absent reads call a rejecting
 
 The `smoke` entry and `test` executable with three arguments run the embedding
 probe (stdin is unused): cache, flush, reset, budget resumption, host outcomes,
-and forced collection of pins and cached constants. A nonzero exit is the
+and forced collection of pins and cached constants, including pin/compile/unpin
+changes between suspended budget checkpoints. A nonzero exit is the
 probe's numbered failed observation. [GAPS.md](GAPS.md) names limits and concrete
 reopening conditions. None of these research commands is a compiler gate.
 

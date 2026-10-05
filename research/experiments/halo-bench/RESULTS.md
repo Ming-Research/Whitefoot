@@ -1,9 +1,10 @@
 # Halo P1 baseline — 2026-10-05
 
-P1 fails on all six unscaled workloads and on the scaled binary-trees
-workload. Every timed pair has matching checksums. No performance candidate
-was implemented or selected; no compiler, Halo library, specification or
-conformance file changed.
+The initial P1 baseline below fails on all six unscaled workloads and on
+the scaled binary-trees workload. Every timed pair has matching checksums.
+At baseline no performance candidate was implemented or selected; no compiler,
+Halo library, specification or conformance file changed. The later Halo cost
+repair records its criteria and comparisons separately below.
 
 ## Environment and identity
 
@@ -367,6 +368,51 @@ tails are never sources. A separate root registry and collector argument would
 change that boundary without improving this experiment's required observation.
 Keep the collection body separate and gate it at its callers using the exact
 existing three-trigger predicate; a combined allocation/budget counter would
-couple separate semantics and is not selected here. Public storage mutations
-outside the embedding operations are outside this invalidation contract;
-embedding clients must use compile/pin/unpin/forget_all for root-set changes.
+couple separate semantics and is not selected here. Q1, raised during the invalidation audit: make root storage public readonly,
+retaining inspection while routing mutations through compile/pin/unpin/forget_all.
+Otherwise external writes could bypass invalidation and lose a root. This is
+the recommendation under test; owner ruling remains open. No mutable-constants
+API is introduced without a concrete consumer.
+
+### Fresh before control
+
+The retained P1 timing binary, gate compiler and Redis Lua hashes match the
+baseline identities above. A fresh full-LTO embedding host built successfully
+in 464.06 s (exit 0); this construction scale was sized by the existing P1 and
+F4 full-package build observations, rather than opening an hours-long batch.
+Its one-script cold stress calibration passed in 0.245067 s. Warm whole-corpus
+execution is sized separately from construction. The fresh before control
+passes 240/240 ordinary comparisons and 240/240 stress comparisons. Stress
+collections total 20,450 at each budget; local roots total 25 at each budget;
+the isolated frame and parked-stack witnesses have 9 and 14 respectively.
+The lifecycle probe exits 0. These fresh per-case counts, rather than an
+assumption about historical outputs, are the preservation reference.
+
+The loop budget comparison used one pair (cold unlimited 1.610025 s), then
+three warm pairs (relative ranges 0.84% unlimited / 0.35% budget 1000).
+Six selected pairs give 1.356240 s unlimited (1.355378–1.367506) and
+3.044296 s at budget 1000 (3.035735–3.052223), ratio 2.245×, 100,000
+suspensions and no collections per budgeted launch. Incremental time per
+suspension is 16.881 microseconds. Calibration is retained, not pooled into
+the selected medians. Every checksum agrees with independently executed PUC.
+
+### Roots-only correctness milestone
+
+The roots-only timing host and embedding host built with full LTO, exits 0,
+448.25 s and 453.77 s respectively. Ordinary oracle 240/240, stress oracle
+240/240, local roots 9/9, isolated frame 1/1 and parked snapshot 1/1 pass.
+A tool comparison of every case/budget/status/collection row against the
+fresh before control is identical, including 20,450 stress collections at
+all three budgets, local totals 25, frame 9 and parked snapshot 14.
+The extended lifecycle probe exits 0, checking that pin and compile while
+suspended add roots before collection, and unpin while suspended releases its
+sole pinned value at the next collection. Final selection awaits the complete
+six-pair criterion measurement; the first same-binary budget pair is 1.007×.
+
+The three-pair native before/roots calibration completed (exit 0), with a
+0.43% before range and 5.92% roots range; even that full range separates the
+large budgeted gain. A subsequent budget three-pair run was interrupted
+(exit 129; outer interactive measurement shell exit 143) before its last
+launch completed and produced no result JSON. Its partial log is retained
+but none of those launches enters a selected median. The interruption's
+cause is unknown; the repeat uses a noninteractive wrapper.

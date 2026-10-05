@@ -8,7 +8,8 @@ numeric loop triggers attribution, inspecting value width and handle checks
 first. Profile every measured kernel above 1.5; report sampled work in
 value/handle access, dispatch, slow execution, GC and budget handling. Sampling
 cannot establish the causal speedup of removing that work. C1–C6 remain
-candidates; this experiment selects and implements none.
+candidates. The later cost-repair experiment below evaluates embedding roots
+and the collector predicate separately from those candidates.
 
 The seven `kernels/*.lua` are standalone Lua 5.1 scripts printing one numeric
 checksum. Integer-table fills and then reads every entry. String-key rotates
@@ -67,3 +68,20 @@ nonzero sampled execution worker, including when
 `sample` itself exits 0. Short processes may finish before attachment;
 report this limitation or choose a longer recorded profiling workload. Raw
 data and supported attribution are in [RESULTS.md](RESULTS.md).
+
+## Same-source Halo cost pairs
+
+`--before-binary PATH` alternates Before/Halo then Halo/Before launches,
+feeding identical source bytes to both. A separate PUC launch supplies the
+independent checksum; both native outputs and stats must validate, and their
+collection counts must agree. `--before-budget large|realistic` selects the
+first binary's budget independently of `--budget` for the second. Before/after
+pairs cannot be profiled or reference-only. `before` replaces `puc` in this
+mode's timing summaries; the PUC check is not a timed pair member.
+
+```sh
+perl .github/run-check.pl halo-repair-pair python3 -B research/experiments/halo-bench/run.py --lua /path/to/redis/deps/lua/src/lua --before-binary research/experiments/halo-bench/target/halo-before --binary research/experiments/halo-bench/target/halo-roots --before-budget realistic --budget realistic --kernels loop --runs 1 --out research/experiments/halo-bench/target/roots-one.json
+```
+
+The runner and retained cost observations serve the P1 cost-repair criteria in
+RESULTS.md and are removed when those comparisons no longer need reproduction.

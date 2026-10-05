@@ -8,7 +8,8 @@ fn append_value(out: &Box<Slots<Value>>, value: Value) -> r: unit writes(out) {
   let n = out^.inner.len;
   if n < 18446744073709551615_u64 {
     if n == out^.inner.cap {
-      let cap = n + 1_u64;
+      let twice = n +sat n;
+      let cap = imax(twice, 16_u64);
       grow(cell: out, capacity: cap);
     }
     if out^.inner.len < out^.inner.cap {
@@ -18,46 +19,56 @@ fn append_value(out: &Box<Slots<Value>>, value: Value) -> r: unit writes(out) {
   return unit;
 }
 
+fn invalidate_roots(engine: &Engine) -> r: unit writes(engine.roots_valid) {
+  for (i in 0_u64..engine^.roots_valid.inner.len) {
+    set engine^.roots_valid.inner[i] = False();
+  }
+  return unit;
+}
+
 fn refresh_roots(engine: &Engine, slot: u64) -> r: unit writes(engine) {
-  doc "The active pool's unused tail is the collector root bridge. Rebuild, never accumulate; original constant lengths remain authoritative.";
-  let roots = box_slots_new::<Value>(capacity: 0_u64);
-  for (s in 0_u64..engine^.scripts.inner.len) {
-    if s < engine^.scripts.inner.len {
-      if s < engine^.constant_lengths.inner.len {
-        let n = engine^.constant_lengths.inner[s];
-        for (i in 0_u64..n) {
-          if s < engine^.scripts.inner.len {
-            if i < engine^.scripts.inner[s].consts.inner.len {
-              let v = engine^.scripts.inner[s].consts.inner[i];
-              append_value(out: &roots, value: v);
-            }
-          }
-        }
-      }
+  doc "Each pool retains its root bridge until compile, pin or unpin invalidates it. Only original constant prefixes source a rebuild; inactive bridge tails never become roots.";
+  if slot < engine^.roots_valid.inner.len {
+    if engine^.roots_valid.inner[slot] {
+      return unit;
     }
-  }
-  for (i in 0_u64..engine^.pins.inner.len) {
-    let v = engine^.pins.inner[i];
-    append_value(out: &roots, value: v);
-  }
-  if slot < engine^.constant_lengths.inner.len {
-    let n = engine^.constant_lengths.inner[slot];
-    if slot < engine^.scripts.inner.len {
-      loop {
-        if slot < engine^.scripts.inner.len {
-          if engine^.scripts.inner[slot].consts.inner.len > n {
-            let dropped = take_back(window: &engine^.scripts.inner[slot].consts.inner);
+    if slot < engine^.constant_lengths.inner.len {
+      let n = engine^.constant_lengths.inner[slot];
+      if slot < engine^.scripts.inner.len {
+        loop {
+          if slot < engine^.scripts.inner.len {
+            if engine^.scripts.inner[slot].consts.inner.len > n {
+              let dropped = take_back(window: &engine^.scripts.inner[slot].consts.inner);
+            } else {
+              break;
+            }
           } else {
             break;
           }
-        } else {
-          break;
         }
-      }
-      for (i in 0_u64..roots.inner.len) {
-        if slot < engine^.scripts.inner.len {
-          let v = roots.inner[i];
-          append_value(out: &engine^.scripts.inner[slot].consts, value: v);
+        for (s in 0_u64..engine^.scripts.inner.len) {
+          if s < engine^.constant_lengths.inner.len {
+            let count = engine^.constant_lengths.inner[s];
+            for (i in 0_u64..count) {
+              if s < engine^.scripts.inner.len {
+                if i < engine^.scripts.inner[s].consts.inner.len {
+                  let v = engine^.scripts.inner[s].consts.inner[i];
+                  if slot < engine^.scripts.inner.len {
+                    append_value(out: &engine^.scripts.inner[slot].consts, value: v);
+                  }
+                }
+              }
+            }
+          }
+        }
+        for (i in 0_u64..engine^.pins.inner.len) {
+          let v = engine^.pins.inner[i];
+          if slot < engine^.scripts.inner.len {
+            append_value(out: &engine^.scripts.inner[slot].consts, value: v);
+          }
+        }
+        if slot < engine^.roots_valid.inner.len {
+          set engine^.roots_valid.inner[slot] = True();
         }
       }
     }
@@ -71,9 +82,10 @@ fn new_engine(limit: u64) -> r: Engine pure {
   let scripts = box_slots_new::<Script>(capacity: 0_u64);
   let lengths = box_slots_new::<u64>(capacity: 0_u64);
   let pins = box_slots_new::<Value>(capacity: 0_u64);
+  let valid = box_slots_new::<Bool>(capacity: 0_u64);
   let active = None<ScriptId>();
   let no = False();
-  let engine = Engine(vm: move vm, stack: move stack, scripts: move scripts, constant_lengths: move lengths, pins: move pins, generation: 0_u64, active: active, result_count: 0_u64, resumable: no);
+  let engine = Engine(vm: move vm, stack: move stack, scripts: move scripts, constant_lengths: move lengths, pins: move pins, roots_valid: move valid, generation: 0_u64, active: active, result_count: 0_u64, resumable: no);
   install_core(engine: &engine);
   pkg::vm::install_libraries(vm: &engine.vm);
   return move engine;
@@ -112,11 +124,19 @@ fn compile(engine: &Engine, chunk_name: &[u8], source: &[u8]) -> r: Result<Scrip
         if cap > engine^.constant_lengths.inner.cap {
           grow(cell: &engine^.constant_lengths, capacity: cap);
         }
+        if cap > engine^.roots_valid.inner.cap {
+          grow(cell: &engine^.roots_valid, capacity: cap);
+        }
         let len = script.consts.inner.len;
         if engine^.scripts.inner.len < engine^.scripts.inner.cap {
           place_back(window: &engine^.scripts.inner, value: move script);
           if engine^.constant_lengths.inner.len < engine^.constant_lengths.inner.cap {
             place_back(window: &engine^.constant_lengths.inner, value: len);
+            if engine^.roots_valid.inner.len < engine^.roots_valid.inner.cap {
+              let no = False();
+              place_back(window: &engine^.roots_valid.inner, value: no);
+            }
+            invalidate_roots(engine: engine);
             let id = ScriptId(slot: n, generation: engine^.generation);
             return Ok<ScriptId, CompileError>(value: id);
           }
@@ -153,6 +173,12 @@ fn forget_all(engine: &Engine) -> r: unit writes(engine) {
       break;
     }
     let dropped = take_back(window: &engine^.constant_lengths.inner);
+  }
+  loop {
+    if engine^.roots_valid.inner.len == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &engine^.roots_valid.inner);
   }
   set engine^.generation = engine^.generation +sat 1_u64;
   return unit;
@@ -236,6 +262,7 @@ fn pin(engine: &Engine, value: Value) -> r: Option<u64> writes(engine) {
   if n < 18446744073709551615_u64 {
     append_value(out: &engine^.pins, value: value);
     if n < engine^.pins.inner.len {
+      invalidate_roots(engine: engine);
       return Some<u64>(value: n);
     }
   }
@@ -245,6 +272,7 @@ fn pin(engine: &Engine, value: Value) -> r: Option<u64> writes(engine) {
 fn unpin(engine: &Engine, token: u64) -> r: unit writes(engine) {
   if token < engine^.pins.inner.len {
     set engine^.pins.inner[token] = Value::Nil();
+    invalidate_roots(engine: engine);
   }
   return unit;
 }
