@@ -156,8 +156,15 @@ fn expire_key(store: &Keyspace, key: &[u8], at: u64) -> result: unit reads(store
 }
 
 fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits {
-  doc "Removes the key when its expiry has passed at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does; a key set again since keeps its value.";
+  doc "Removes the key when its expiry has passed at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does, with its bytes prepared before taking the entry; a key set again since keeps its value.";
   let logged = store^.logging;
+  let prepared = None<Box<Slots<u8>>>();
+  if logged {
+    let removal = box_slots_new::<u8>(capacity: 0_u64);
+    log_removal(log: &removal, key: key);
+    set prepared = Some<Box<Slots<u8>>>(value: move removal);
+  }
+  let record = &prepared;
   atomic s = &store^.state, slot = &s^.map[key] {
     let lapsed = False();
     match slot^ {
@@ -169,8 +176,14 @@ fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(
     }
     if lapsed {
       set slot^ = None<Entry>();
-      if logged {
-        log_removal(log: &s^.meta.log, key: key);
+      match record^ {
+        Some(value: removal) => {
+          let length = removal^.inner.len;
+          let window = &removal^.inner[0_u64..length];
+          log_prepared(log: &s^.meta.log, prepared: window);
+        }
+        None() => {
+        }
       }
     }
   }
@@ -353,6 +366,17 @@ fn log_decimal(log: &Box<Slots<u8>>, value: u64) -> result: unit writes(log) {
   log_length(log: log, length: digits);
   log_number(log: log, value: value);
   log_crlf(log: log);
+  return unit;
+}
+
+fn log_prepared(log: &Box<Slots<u8>>, prepared: &[u8]) -> result: unit reads(prepared), writes(log) {
+  doc "Appends already formatted AOF bytes, reserving their space once; no RESP lengths or argument spans are computed while the shared log is held.";
+  let count = prepared^.len;
+  log_reserve(log: log, needed: count);
+  for @bytes (index in 0_u64..count) {
+    let byte = prepared^[index];
+    log_byte(log: log, value: byte);
+  }
   return unit;
 }
 
