@@ -683,19 +683,6 @@ rarely insert at the same place.
   against direct C and the current WF implementation. No new language operation
   is selected yet.
 
-- **A frame holding a one-byte slot keeps every slot in one aggregate.**
-  `plan_target_frame` (`compiler/src/target.rs`) gives a function's slots
-  separate allocations only when they share one alignment, so a function
-  with an atomic statement's `i1` unit flags gets one frame aggregate, and
-  LLVM keeps copies into its fields that separate allocations would let it
-  remove: firn's `run_pop` copies the 72-byte entry slot into the frame to
-  match on its tag (`lower_match` loads a borrowed scrutinee whole). With
-  separate allocations at the frame's alignment the copy goes, but `RPOP`'s
-  rate did not change measurably. Give mixed-alignment slots separate
-  allocations, or match a borrowed scrutinee's tag through its address,
-  with the stack ledger's frame size checked unchanged; reopen when a
-  measured path pays for such a copy.
-
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn
@@ -1206,22 +1193,6 @@ rarely insert at the same place.
   ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
   The cause is unattributed: the host had no `perf`. Validate by a profile
   of both on four drivers. Reopen with firn's next performance work.
-
-- **firn answers fewer `RPOP`s of one list on four drivers than before the
-  keyed tables.** On the 14900K VM with 4 server CPUs and 16 client
-  processes, firn at `d6f895cfa` answered about 5.85M `RPOP`s a second
-  against 6.2M at `cea9188d4`, the CPUs busy in both; on one driver they
-  match. Merges bisected on main place the loss in the shared-state
-  redesign (#208); the redesign's first commit that builds firn already has
-  it. Building `cea9188d4` with the head's concurrent map, or with its
-  completion bridge, does not reproduce it; the entry is held for the same
-  time, about 180 cycles, in both; an empty list's `RPOP`, `INCR` and
-  `RPOP`s over 100,000 lists differ by 1-2% or less; moving the reply and
-  the element's release out of the statement, a single malloc arena, and a
-  lock call split by readers change nothing measurable. The added CPU is
-  waiting in `try_entry`, about 23 ns a request, and 4 ns in the entry
-  lock's wrapper. Compare the two builds' emitted request paths and frame
-  layouts next. Reopen with firn's next performance work.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
