@@ -957,6 +957,43 @@ fn build_postcondition_records(
         (source, start, end, path)
     });
 
+    // Each clause's roles, variant field roles, entry uses and variant uses,
+    // gathered in one pass each, in their original order: a scan of every
+    // role and use per clause is quadratic in the bundle.
+    let mut roles_by_owner: HashMap<NodeId, Vec<&ClassifiedRole>> = HashMap::new();
+    let mut field_roles_by_block: HashMap<NodeId, Vec<&ClassifiedRole>> = HashMap::new();
+    for role in roles {
+        roles_by_owner.entry(role.owner).or_default().push(role);
+        if matches!(
+            role.kind,
+            RawRoleKind::Selector(SelectorRole::VariantField)
+                | RawRoleKind::Selector(SelectorRole::VariantCandidate)
+        ) && let Some(block) =
+            ancestor_with_production(topology, role.owner, Production::EnsuresClause)
+        {
+            field_roles_by_block.entry(block).or_default().push(role);
+        }
+    }
+    let mut entry_uses_by_block: HashMap<NodeId, Vec<&UseMeta>> = HashMap::new();
+    for use_record in entry_uses {
+        if let Some(block) =
+            ancestor_with_production(topology, use_record.owner, Production::EnsuresClause)
+        {
+            entry_uses_by_block
+                .entry(block)
+                .or_default()
+                .push(use_record);
+        }
+    }
+    let mut variant_targets = HashMap::new();
+    for usage in lexical_uses {
+        if usage.role() == LexicalUseRole::EnsuresVariant {
+            variant_targets
+                .entry(usage.origin().node().components().to_vec())
+                .or_insert_with(|| usage.target());
+        }
+    }
+    let no_roles = Vec::new();
     let mut out = Vec::with_capacity(blocks.len());
     for block in blocks {
         let function = function_owner(topology, block)
@@ -981,11 +1018,7 @@ fn build_postcondition_records(
             .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
         let mut result_binders = Vec::with_capacity(result_bindings.len());
         for binding in &result_bindings {
-            let [candidate] = roles
-                .iter()
-                .filter(|role| role.owner == *binding)
-                .collect::<Vec<_>>()[..]
-            else {
+            let [candidate] = roles_by_owner.get(binding).unwrap_or(&no_roles)[..] else {
                 return Err(ResolutionCompilerFailure::InvalidRoleShape.into());
             };
             if !matches!(
@@ -1018,7 +1051,7 @@ fn build_postcondition_records(
             });
         let selector = route.unwrap_or(result_binding);
         let selector_path = scopes.path(selector)?;
-        let selector_roles: Vec<_> = roles.iter().filter(|role| role.owner == selector).collect();
+        let selector_roles = roles_by_owner.get(&selector).unwrap_or(&no_roles);
         // An unrouted clause's selector node is the first result binder, whose
         // candidate role is one of `result_binders` above; a routed clause's
         // selector node is the route, which carries its variant and its
@@ -1045,13 +1078,9 @@ fn build_postcondition_records(
             ) {
                 return Err(ResolutionCompilerFailure::InvalidRoleShape.into());
             }
-            let target = lexical_uses
-                .iter()
-                .find(|usage| {
-                    usage.role() == LexicalUseRole::EnsuresVariant
-                        && usage.origin().node() == selector_path
-                })
-                .map(LexicalUseRecord::target)
+            let target = variant_targets
+                .get(selector_path.components())
+                .cloned()
                 .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
             (
                 PostconditionSelectorClass::Variant,
@@ -1060,17 +1089,10 @@ fn build_postcondition_records(
             )
         };
 
-        let mut field_roles: Vec<_> = roles
-            .iter()
-            .filter(|role| {
-                matches!(
-                    role.kind,
-                    RawRoleKind::Selector(SelectorRole::VariantField)
-                        | RawRoleKind::Selector(SelectorRole::VariantCandidate)
-                ) && ancestor_with_production(topology, role.owner, Production::EnsuresClause)
-                    == Some(block)
-            })
-            .collect();
+        let mut field_roles = field_roles_by_block
+            .get(&block)
+            .cloned()
+            .unwrap_or_default();
         field_roles.sort_by_key(|role| EventKey::from_origin(&role.origin));
         let mut fields = Vec::new();
         for pair in field_roles.chunks(2) {
@@ -1116,10 +1138,12 @@ fn build_postcondition_records(
             .collect();
         let mut ordinary_entry_uses = Vec::new();
         let mut selector_uses = Vec::new();
-        for use_record in entry_uses.iter().filter(|use_record| {
-            ancestor_with_production(topology, use_record.owner, Production::EnsuresClause)
-                == Some(block)
-        }) {
+        for use_record in entry_uses_by_block
+            .get(&block)
+            .into_iter()
+            .flatten()
+            .copied()
+        {
             if use_record.role == LexicalUseRole::PlaceBase
                 && candidate_spellings.contains(&use_record.spelling.as_str())
             {
@@ -1396,7 +1420,7 @@ fn declares_public(
 /// The nodes that write this fixed terminal directly, gathered in one pass
 /// over the terminals. A `fn_decl` among the `{` writers writes a body rather
 /// than ending in `;` or its `doc` entry [GRAM-2, MOD-7].
-fn fixed_terminal_writers(
+pub(super) fn fixed_terminal_writers(
     topology: &FinalizedTopology,
     classified: &crate::ClassifiedBundle,
     terminal: FixedTerminal,

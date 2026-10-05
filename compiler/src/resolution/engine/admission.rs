@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::syntax::terminal::{FixedTerminal, TerminalPredicate};
 use crate::syntax::{FinalizedExtent, FinalizedTopology, NodeId};
 use crate::{Production, SourceRole, SyntaxCoordinate};
@@ -384,18 +386,10 @@ pub(super) fn check_public_closure<'a>(
     {
         return Ok(None);
     }
-    let writes = |node: NodeId, fixed: FixedTerminal| {
-        topology
-            .terminals
-            .iter()
-            .enumerate()
-            .any(|(index, terminal)| {
-                terminal.owner == Some(node)
-                    && classified.tokens().get(index).is_some_and(|token| {
-                        token.terminals().contains(TerminalPredicate::Fixed(fixed))
-                    })
-            })
-    };
+    // One pass over the terminals: a scan per declaration and field is
+    // quadratic in the bundle.
+    let public_writers = super::fixed_terminal_writers(topology, classified, FixedTerminal::Public);
+    let writes_public = |node: NodeId| public_writers.contains(&node);
     let children_with = |node: NodeId, production: Production| -> Vec<NodeId> {
         topology
             .node_children(node)
@@ -414,7 +408,7 @@ pub(super) fn check_public_closure<'a>(
         .node_children(topology.root)
         .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
     {
-        if !writes(*item, FixedTerminal::Public) {
+        if !writes_public(*item) {
             continue;
         }
         let [declaration] = topology
@@ -434,7 +428,7 @@ pub(super) fn check_public_closure<'a>(
             Production::StructDecl => published.extend(
                 children_with(*declaration, Production::Field)
                     .into_iter()
-                    .filter(|field| writes(*field, FixedTerminal::Public)),
+                    .filter(|field| writes_public(*field)),
             ),
             Production::EnumDecl => {
                 for variant in children_with(*declaration, Production::Variant) {
@@ -442,7 +436,7 @@ pub(super) fn check_public_closure<'a>(
                         published.extend(
                             children_with(list, Production::Vfield)
                                 .into_iter()
-                                .filter(|field| writes(*field, FixedTerminal::Public)),
+                                .filter(|field| writes_public(*field)),
                         );
                     }
                 }
@@ -450,14 +444,14 @@ pub(super) fn check_public_closure<'a>(
             _ => {}
         }
     }
-    let mut paths = Vec::with_capacity(published.len());
+    let mut paths = HashSet::with_capacity(published.len());
     for node in published {
-        paths.push(scopes.path(node)?.components().to_vec());
+        paths.insert(scopes.path(node)?.components().to_vec());
     }
     let mut issues = Vec::new();
     for usage in uses {
         let use_path = usage.origin().node().components();
-        if !paths.iter().any(|path| use_path.starts_with(path)) {
+        if !(0..=use_path.len()).any(|length| paths.contains(&use_path[..length])) {
             continue;
         }
         let super::super::ResolvedTarget::Source { declaration, .. } = usage.target() else {
