@@ -619,16 +619,6 @@ rarely insert at the same place.
   verification, byte-identical Snowghost LLVM and at least 1.2x on the
   `pkg::style` module check. Reopen when that module limits a build.
 
-- **An entry composition analyzes its uncovered functions on one thread.**
-  After its concurrent module verdicts, a composition analyzes the functions
-  no receipt covers one after another (about 14 s of a 44 s fresh-cache
-  `style_oracle` check on four processors). Functions of one postcondition
-  component read only earlier components' summaries, so independent
-  components could run concurrently if the analysis and its receipt key read
-  only a function's callees' summaries, which is unverified. Validate that
-  first, then require unchanged receipts and LLVM. Reopen when the
-  composition is a build's critical path.
-
 - **A cacheless entry check analyzes every function body twice.** Without
   `--cache`, a composition cannot reuse the analyses its own module verdicts
   just made, so `style_oracle` takes 190 s instead of the fresh-cache 95 s

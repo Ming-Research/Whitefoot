@@ -145,6 +145,32 @@ implicit bounds; the squared widths differ by 11.3x. In Snowghost's
 `pkg::style` the same count gives 253 terms and 180 such rows at the median
 of the widest closures, a 2x difference.
 
+### Dormant terms
+
+After candidate 6, `library_builtin` still took 9.3 s in its concrete and
+9.6 s in its symbolic analysis, measured by a temporary per-function timer.
+A generated function of the same shape, N arms of
+`if index == k { let a = array_filled(...); set a[0..4] = ...; return Some(Row(...)); }`,
+reproduces it: 0.8 s, 4.2 s and 28.1 s for 25, 50 and 100 arms, roughly
+cubic. A temporary trace of each pre-kill snapshot showed why. A snapshot
+stores every closed cell, including those its endpoints' implicit bounds
+imply through zero, such as `index - a.len <= -31` from `index <= 1` and
+`a.len == 32`. The closure universe admitted every endpoint of a stored
+cell, and every endpoint of an implicit edge between two nonzero terms, such
+as `a.len <= a.cap` of every array the body ever named. So the next snapshot
+stored those terms' cells again: at the sixth arm of a six-arm function, a
+snapshot closed 48 of the 79 registered terms, where the index, the arm's
+literals and the arm's own locals are all that facts reach.
+
+With the universe narrowed (candidate 7), the arrays laid out over every
+registered term dominated instead. At 100 arms a closure's matrix was
+allocated over about 1,200 terms for a universe of about 18, and the fact
+state's store, laid out the same way, was 30 MB per copy-on-write copy; in
+samples, `libc` (allocation and copying) took 48% and the store's cell scan
+28%. With both laid out over their own terms, the remaining per-closure work
+over every registered term took over: recomputing each term's implicit bounds
+(21% in `passive_bounds`, 15% in `closure_middle_terms`).
+
 ## Candidates and selection
 
 Each candidate changes work only. The selection criteria are that every
@@ -201,6 +227,26 @@ before these criteria were written; their results below are the same runs.
    promoting a signed goal's contradiction when the record was closed, which
    this candidate made reachable and which is fixed.
 
+7. **Implied facts and dormant components.** A live relation no tighter than
+   the path through zero, from its endpoints' own bounds through zero, or
+   whose proof rests on implicit bounds alone, admits no endpoint; an
+   implicit edge between two nonzero terms admits its endpoints' whole
+   component, and only when it is tighter than that path and a fact reaches
+   the component. A dormant component's members read the component's own
+   closure, with proofs rebuilt from it. Closures load no stored cell with
+   an endpoint outside the universe. The generated-flow test now also
+   registers a length, capacity and head of one place that relations reach
+   and of another they never do, and its reference uses every term as a
+   middle; it failed when the dormant closure skipped its transitive step and
+   when a stored cell one unit tighter than that path admitted nothing.
+8. **Slot layouts and a cached implicit structure.** A closure's matrix is
+   laid out over its universe's terms and a fact state's store over the terms
+   that have a cell, both in term order; a store copy drops the slots of terms
+   whose cells are gone. The term table keeps each term's bounds through zero,
+   the implicit components and their closures up to date from a log of the
+   terms whose implicit bounds may have changed, rebuilding when a standing
+   measure fact is replaced.
+
 Rejected alternatives:
 
 - Per-function concurrency first: the critical path is one function, not
@@ -210,11 +256,20 @@ Rejected alternatives:
   `pkg::html::tree_builder` repeat the previous state, by a count of
   consecutive snapshots with the same store and term count, and the shortcut
   would reuse one snapshot event for several flow points.
-- Storing only bounds stronger than their terms' implied bounds: the
-  existing [incremental-closure decision](../../../design/compiler/incremental-closure.md)
+- Storing only bounds stronger than their terms' implied bounds, for terms
+  that have a row: the existing [incremental-closure decision](../../../design/compiler/incremental-closure.md)
   refuses it for the separate arguments kills, joins and deliveries would
   each need; candidate 4 removes most of the same cost at snapshots without
-  them.
+  them. Candidate 7 omits such cells only where every fact of a term is
+  implied through zero, which the closure-universe argument covers.
+- Applying a kill batch that kills no term of the closure universe and no
+  live signed goal without materializing first. The closure after the batch
+  is the same either way, and with candidates 7 and 8 the rule skipped 3,256
+  of the 4,000 batches it decided in Halo's `pkg::vm` check, by a temporary
+  count, but disabling it changed that check from 16.4 s to 16.6 s,
+  `pkg::style` from 14.1 s to 13.7 s and the 100-arm function from 0.91 s to
+  1.02 s: below the 1.2x criterion, so the rule and its argument were
+  removed.
 
 ## Results
 
@@ -256,7 +311,36 @@ With candidate 6, the module checks take 29.2 s for Halo's `pkg::vm` (was
 `pkg::html::tree_builder` (was 13.2 s) and 18.3 s for `pkg::style` (was
 23.3 s); the Snowghost LLVM of all five entries stays byte-identical.
 
+With candidates 7 and 8, against the compiler before them (`c1d7d598`), on
+this host in one run each:
+
+| Check | before | after |
+|---|---:|---:|
+| Halo `pkg::vm` | 37.2 s, 1.9 GB | 16.6 s, 1.2 GB |
+| `pkg::html::tree_builder` | 9.0 s, 0.9 GB | 4.4 s, 0.4 GB |
+| `pkg::style` | 21.6 s, 0.7 GB | 14.3 s, 0.6 GB |
+| `style_oracle` entry, fresh cache | 34.4 s, 1.6 GB | 26.9 s, 1.0 GB |
+| `layout_oracle` entry, fresh cache | 72.2 s, 2.6 GB | 46.8 s, 1.7 GB |
+| 100-arm generated function | 27.6 s, 0.7 GB | 0.92 s, 0.09 GB |
+
+Concurrency inside the `pkg::vm` check, its dependencies' module verdicts
+and the analyses of one postcondition level (up to 148 functions in one level
+there, by a temporary count), gives 1.36x: 23.5 s pinned to one of the four
+processors with `taskset`, 17.2 s on all four.
+
+`library_builtin` now takes 0.34 s in each analysis. The generated function
+takes 0.19 s, 0.88 s and 5.2 s for 50, 100 and 200 arms, still superlinear.
+The LLVM of all five Snowghost entries stays byte-identical.
+
 ## Remaining costs
+
+- **Symbolic validation on Halo's critical path.** In `pkg::vm` the
+  module-verdict thread now spends about 44% of its samples in generic
+  validation (28% type-checking the symbolic view, 14% discovering and
+  instantiating its signatures), against 25% for the concrete type check and
+  10% reading declarations; the symbolic view checks every function body,
+  nongeneric ones included. About 30% of that thread's samples are in the C
+  library's allocator and copying.
 
 - **Edge insertion of constant terms.** In `pkg::style`, now the slowest
   module, 46% of samples are edge insertion during pre-kill materialization.
@@ -267,11 +351,5 @@ With candidate 6, the module checks take 29.2 s for Halo's `pkg::vm` (was
   shifted; filling them directly, with the transitive proof through zero,
   would remove that work. It needs its own argument that the insertion order
   still closes the matrix.
-- **The composition's own analyses.** After its module verdicts, the
-  `style_oracle` composition analyzes on one thread the functions no receipt
-  covers, about 14 s here. Functions of one postcondition component read
-  only earlier components' summaries, so a component level could run
-  concurrently once the receipt key is shown to depend only on a function's
-  callees.
 - **No-cache builds analyze every body twice.** An in-memory receipt store
   would let a cacheless entry check reuse its module verdicts' analyses.

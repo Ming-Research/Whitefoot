@@ -2404,14 +2404,22 @@ impl<'a, T: Copy + PartialEq> IntoIterator for &'a Candidates<T> {
     }
 }
 
-/// The selected difference bounds of a fact state, dense over term identities.
+/// The selected difference bounds of a fact state, dense over the terms that
+/// have a cell.
 ///
-/// Row-major cells are in sorted `(left, right)` order. The stride leaves room
-/// for terms registered later, so a new term rarely re-lays the store out.
+/// Each such term has a slot, and slots follow term order, so row-major cells
+/// are in sorted `(left, right)` order. The stride leaves room for more slots,
+/// so a cell naming a term registered after the others, the usual new term,
+/// rarely re-lays the store out. A term whose cells are all gone keeps its
+/// slot until the store is next copied or re-laid out, which drops it.
 /// A relation's selected candidate is its cell; any further independently live
 /// candidates of the same pair are kept, in order, in `extra`.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct BoundStore {
+    /// Each term's slot by term identity, or [`NO_SLOT`].
+    slots: Vec<u32>,
+    /// Each slot's term, ascending.
+    terms: Vec<TermId>,
     stride: usize,
     bounds: Vec<i128>,
     proofs: Vec<DerivationId>,
@@ -2420,16 +2428,28 @@ pub(crate) struct BoundStore {
     extra: WordHashMap<(TermId, TermId), Vec<(i128, DerivationId)>>,
 }
 
+impl Clone for BoundStore {
+    /// The copy holds slots only for the terms that still have a cell.
+    fn clone(&self) -> Self {
+        let mut copy = Self {
+            extra: self.extra.clone(),
+            ..Self::default()
+        };
+        copy.lay_out_from(self, self.live_terms());
+        copy
+    }
+}
+
 impl BoundStore {
-    fn with_terms(terms: usize) -> Self {
-        let mut store = Self::default();
-        store.reserve(terms);
-        store
+    fn slot(&self, term: TermId) -> Option<usize> {
+        self.slots
+            .get(term.0 as usize)
+            .filter(|slot| **slot != NO_SLOT)
+            .map(|slot| *slot as usize)
     }
 
     fn index(&self, left: TermId, right: TermId) -> Option<usize> {
-        let (left, right) = (left.0 as usize, right.0 as usize);
-        (left < self.stride && right < self.stride).then_some(left * self.stride + right)
+        Some(self.slot(left)? * self.stride + self.slot(right)?)
     }
 
     /// The selected bound and proof of `left - right`, if any.
@@ -2444,46 +2464,125 @@ impl BoundStore {
 
     /// Every selected bound in sorted `(left, right)` order.
     pub(crate) fn cells(&self) -> impl Iterator<Item = (TermId, TermId, i128, DerivationId)> + '_ {
-        let stride = self.stride.max(1);
-        self.present
-            .iter()
-            .enumerate()
-            .filter(|(_, present)| **present)
-            .map(move |(index, _)| {
-                (
-                    TermId(
-                        u32::try_from(index / stride).expect("term index fits the u32 identity"),
-                    ),
-                    TermId(
-                        u32::try_from(index % stride).expect("term index fits the u32 identity"),
-                    ),
-                    self.bounds[index],
-                    self.proofs[index],
-                )
+        let count = self.terms.len();
+        (0..count).flat_map(move |row| {
+            let first = row * self.stride;
+            (0..count).filter_map(move |column| {
+                let index = first + column;
+                self.present[index].then(|| {
+                    (
+                        self.terms[row],
+                        self.terms[column],
+                        self.bounds[index],
+                        self.proofs[index],
+                    )
+                })
             })
+        })
     }
 
-    fn reserve(&mut self, terms: usize) {
-        if terms <= self.stride {
-            return;
+    /// The terms with at least one cell, ascending.
+    fn live_terms(&self) -> Vec<TermId> {
+        let count = self.terms.len();
+        let mut live = vec![false; count];
+        for row in 0..count {
+            for column in 0..count {
+                if self.present[row * self.stride + column] {
+                    live[row] = true;
+                    live[column] = true;
+                }
+            }
         }
-        let stride = (terms + terms / 2).max(16);
+        self.terms
+            .iter()
+            .zip(live)
+            .filter_map(|(term, live)| live.then_some(*term))
+            .collect()
+    }
+
+    /// Lays this store out with a slot for each of `terms`, ascending, and
+    /// copies `source`'s cells among them.
+    fn lay_out_from(&mut self, source: &Self, terms: Vec<TermId>) {
+        let stride = (terms.len() + terms.len() / 2).max(16);
         let count = stride
             .checked_mul(stride)
             .expect("ENT bound store exceeds the address space");
         let mut bounds = vec![0; count];
         let mut proofs = vec![DerivationId(0); count];
         let mut present = vec![false; count];
-        for (left, right, bound, proof) in self.cells() {
-            let index = left.0 as usize * stride + right.0 as usize;
-            bounds[index] = bound;
-            proofs[index] = proof;
-            present[index] = true;
+        let width = terms.last().map_or(0, |term| term.0 as usize + 1);
+        let mut slots = vec![NO_SLOT; width];
+        for (slot, term) in terms.iter().enumerate() {
+            slots[term.0 as usize] = u32::try_from(slot).expect("slot fits the u32 identity");
         }
+        let sources = terms
+            .iter()
+            .map(|term| source.slot(*term))
+            .collect::<Vec<_>>();
+        let mut live = 0;
+        for (row, source_row) in sources.iter().enumerate() {
+            let Some(source_row) = source_row else {
+                continue;
+            };
+            for (column, source_column) in sources.iter().enumerate() {
+                let Some(source_column) = source_column else {
+                    continue;
+                };
+                let from = source_row * source.stride + source_column;
+                if source.present[from] {
+                    let to = row * stride + column;
+                    bounds[to] = source.bounds[from];
+                    proofs[to] = source.proofs[from];
+                    present[to] = true;
+                    live += 1;
+                }
+            }
+        }
+        self.slots = slots;
+        self.terms = terms;
         self.stride = stride;
         self.bounds = bounds;
         self.proofs = proofs;
         self.present = present;
+        self.live = live;
+    }
+
+    /// Gives both terms of a pair a slot: appended when the new ones follow
+    /// every slotted term and the stride has room, otherwise by re-laying the
+    /// store out over its live terms and these two.
+    fn slots_for(&mut self, left: TermId, right: TermId) {
+        let mut missing = [left, right]
+            .into_iter()
+            .filter(|term| self.slot(*term).is_none())
+            .collect::<Vec<_>>();
+        missing.sort_unstable();
+        missing.dedup();
+        let Some(first) = missing.first() else {
+            return;
+        };
+        if self.terms.last().is_none_or(|last| last < first)
+            && self.terms.len() + missing.len() <= self.stride
+        {
+            for term in missing {
+                let index = term.0 as usize;
+                if index >= self.slots.len() {
+                    self.slots.resize(index + 1, NO_SLOT);
+                }
+                self.slots[index] =
+                    u32::try_from(self.terms.len()).expect("slot fits the u32 identity");
+                self.terms.push(term);
+            }
+            return;
+        }
+        let mut terms = self.live_terms();
+        for term in [left, right] {
+            if let Err(position) = terms.binary_search(&term) {
+                terms.insert(position, term);
+            }
+        }
+        let mut source = std::mem::take(self);
+        self.extra = std::mem::take(&mut source.extra);
+        self.lay_out_from(&source, terms);
     }
 
     /// Every independently live candidate of one pair, the selected one first.
@@ -2603,10 +2702,8 @@ impl BoundStore {
 
     /// Selects a pair's only candidate.
     fn store_single(&mut self, left: TermId, right: TermId, bound: i128, proof: DerivationId) {
-        self.reserve(left.0.max(right.0) as usize + 1);
-        let index = self
-            .index(left, right)
-            .expect("store reserved for the pair");
+        self.slots_for(left, right);
+        let index = self.index(left, right).expect("both terms have slots");
         if !self.present[index] {
             self.live += 1;
         }
@@ -3520,62 +3617,399 @@ pub(crate) struct ClosedState {
     /// registered when the closure was taken. Row-major order is the sorted
     /// `(left, right)` order every deterministic consumer iterates in.
     matrix: DenseClosureBounds,
-    /// The implicit bounds through zero of each term the closure computed no
-    /// row for, by term identity: such a term's closed row and column are
-    /// zero's, shifted by these bounds [ENT-2, ENT-4].
-    passive: Vec<Option<PassiveBounds>>,
+    /// The bounds through zero of each term the closure computed no row for,
+    /// by term identity: such a term's closed row and column are zero's,
+    /// shifted by these bounds, except toward another member of its dormant
+    /// implicit component [ENT-2, ENT-4].
+    passive: PassiveReading,
     distinct: WordHashSet<(TermId, TermId)>,
     distinct_proofs: WordHashMap<(TermId, TermId), DerivationId>,
     opaque: WordHashSet<(GoalId, GoalSign)>,
     opaque_proofs: WordHashMap<(GoalId, GoalSign), DerivationId>,
 }
 
-/// The tightest implicit bounds of a term with no other fact:
+/// The closed bounds through zero of a term the closure computed no row for:
 /// `term - Z <= upper` and `Z - term <= lower`.
 #[derive(Clone, Copy, Debug)]
 struct PassiveBounds {
-    upper: (i128, ImplicitBoundKind),
-    lower: (i128, ImplicitBoundKind),
+    upper: i128,
+    lower: i128,
+    source: PassiveSource,
 }
 
-/// The implicit bounds of every term outside `universe` other than zero, and
-/// of no term inside it or excluded from the closure.
+/// Where a passive term's bounds come from: its own implicit bounds, or the
+/// closure of the dormant implicit component it belongs to.
+#[derive(Clone, Copy, Debug)]
+enum PassiveSource {
+    Implicit {
+        upper: ImplicitBoundKind,
+        lower: ImplicitBoundKind,
+    },
+    /// The component's index in [`PassiveReading::clusters`] and the term's
+    /// position among its members.
+    Cluster { cluster: u32, position: u32 },
+}
+
+/// The closure of one dormant component over its members and zero, at
+/// position 0. Each cell keeps how its bound was reached, from which its
+/// proof is rebuilt on demand.
+#[derive(Clone, Debug)]
+struct DormantCluster {
+    members: Vec<TermId>,
+    cells: Vec<Option<(i128, ClusterHop)>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ClusterHop {
+    Implicit(ImplicitBoundKind),
+    Through(u32),
+}
+
+impl DormantCluster {
+    fn cell(&self, from: usize, to: usize) -> Option<(i128, ClusterHop)> {
+        self.cells[from * self.members.len() + to]
+    }
+
+    fn proof(&self, from: usize, to: usize, ledger: &mut DerivationLedger) -> (i128, DerivationId) {
+        let (bound, hop) = self
+            .cell(from, to)
+            .expect("a dormant cluster cell on a closed path");
+        let (left, right) = (self.members[from], self.members[to]);
+        let proof = match hop {
+            ClusterHop::Implicit(kind) => ledger.intern(DerivationNode::ImplicitBound {
+                left,
+                right,
+                bound,
+                kind,
+            }),
+            ClusterHop::Through(middle) => {
+                let middle = middle as usize;
+                let (_, first) = self.proof(from, middle, ledger);
+                let (_, second) = self.proof(middle, to, ledger);
+                ledger.intern(DerivationNode::TransitiveBound {
+                    left,
+                    middle: self.members[middle],
+                    right,
+                    bound,
+                    first,
+                    second,
+                })
+            }
+        };
+        (bound, proof)
+    }
+}
+
+/// How a closed view reads the terms it computed no row for.
+#[derive(Clone, Debug, Default)]
+struct PassiveReading {
+    bounds: Vec<Option<PassiveBounds>>,
+    clusters: Vec<Rc<DormantCluster>>,
+}
+
+type ZeroBounds = (
+    Option<(i128, ImplicitBoundKind)>,
+    Option<(i128, ImplicitBoundKind)>,
+);
+
+/// What the term table alone decides about [ENT-2] implicit bounds, kept up
+/// to date from the table's change log: each term's bounds through zero, the
+/// components of the implicit edges between nonzero terms that are tighter
+/// than the path through zero (see [`closure_middle_terms`]), and the closure
+/// of each component of more than one term.
+///
+/// A term registered later or given a standing measure fact later can only
+/// add an edge or tighten a bound, so the components only merge; an edge a
+/// later bound makes dominated keeps its merge, which leaves a component
+/// larger than needed and every reading still exact. A replaced standing
+/// fact can weaken a bound and rebuilds the structure.
+#[derive(Debug, Default)]
+pub(crate) struct ImplicitStructure {
+    consumed: usize,
+    measure_replacements: usize,
+    zero: Vec<ZeroBounds>,
+    parent: Vec<u32>,
+    /// The members of each component of more than one term, ascending, by
+    /// representative.
+    members: WordHashMap<u32, Vec<TermId>>,
+    clusters: WordHashMap<u32, Rc<DormantCluster>>,
+}
+
+impl ImplicitStructure {
+    fn find(&mut self, term: TermId) -> u32 {
+        let mut root = term.0;
+        while self.parent[root as usize] != root {
+            root = self.parent[root as usize];
+        }
+        let mut current = term.0;
+        while self.parent[current as usize] != root {
+            let next = self.parent[current as usize];
+            self.parent[current as usize] = root;
+            current = next;
+        }
+        root
+    }
+
+    fn union(&mut self, left: TermId, right: TermId) {
+        let (left, right) = (self.find(left), self.find(right));
+        if left == right {
+            return;
+        }
+        let (root, child) = (left.min(right), left.max(right));
+        self.parent[child as usize] = root;
+        let mut members = self
+            .members
+            .remove(&root)
+            .unwrap_or_else(|| vec![TermId(root)]);
+        members.extend(
+            self.members
+                .remove(&child)
+                .unwrap_or_else(|| vec![TermId(child)]),
+        );
+        members.sort_unstable();
+        self.members.insert(root, members);
+    }
+
+    fn upper(&self, term: TermId) -> Option<i128> {
+        self.zero[term.0 as usize].0.map(|(bound, _)| bound)
+    }
+
+    fn lower(&self, term: TermId) -> Option<i128> {
+        self.zero[term.0 as usize].1.map(|(bound, _)| bound)
+    }
+
+    /// Whether `left - right <= bound` between two nonzero terms is tighter
+    /// than the path through zero.
+    fn tighter_than_zero(&self, left: TermId, right: TermId, bound: i128) -> bool {
+        self.upper(left)
+            .zip(self.lower(right))
+            .is_none_or(|(upper, lower)| bound < compose_transitive_bounds(upper, lower))
+    }
+}
+
+/// The term table's implicit structure, first brought up to date.
+fn implicit_structure(terms: &TermTable) -> std::cell::RefMut<'_, ImplicitStructure> {
+    let mut structure = terms.implicit_cache().borrow_mut();
+    if structure.measure_replacements != terms.measure_replacements() {
+        *structure = ImplicitStructure {
+            measure_replacements: terms.measure_replacements(),
+            ..ImplicitStructure::default()
+        };
+    }
+    let log = terms.implicit_log();
+    if structure.consumed == log.len() {
+        return structure;
+    }
+    let count = terms.ids().count();
+    structure.zero.resize(count, (None, None));
+    let known = structure.parent.len();
+    structure.parent.extend(
+        (known..count).map(|term| u32::try_from(term).expect("term index fits the u32 identity")),
+    );
+    let changed = log[structure.consumed..].to_vec();
+    structure.consumed = log.len();
+    for term in &changed {
+        structure.zero[term.0 as usize] = implicit_zero_bounds(terms, *term);
+    }
+    let mut touched = changed.clone();
+    for term in changed {
+        // A capacity term emits the orderings toward its length and head,
+        // so a newly registered length or head reaches it through there.
+        let capacity = terms.sibling_measure(term, CheckedMeasure::Capacity);
+        for emitter in std::iter::once(term).chain(capacity) {
+            let mut edges = Vec::new();
+            for_each_implicit_bound(terms, emitter, |left, right, bound, _| {
+                if left != right && left != ZERO && right != ZERO {
+                    edges.push((left, right, bound));
+                }
+            });
+            for (left, right, bound) in edges {
+                if structure.tighter_than_zero(left, right, bound) {
+                    structure.union(left, right);
+                    touched.extend([left, right]);
+                }
+            }
+        }
+    }
+    for term in touched {
+        let root = structure.find(term);
+        structure.clusters.remove(&root);
+    }
+    structure
+}
+
+/// The reading of every term outside `universe` other than zero, and of no
+/// term inside it or excluded from the closure. A term alone in its implicit
+/// component reads its own implicit bounds; the members of a larger dormant
+/// component read that component's closure, which no path through any other
+/// term can improve, since every edge leaving the component is a dominated
+/// implicit edge or reaches zero.
 fn passive_bounds(
     terms: &TermTable,
     universe: &ActiveMiddles,
     excluded: Option<TermId>,
-) -> Vec<Option<PassiveBounds>> {
-    terms
+) -> PassiveReading {
+    let passive = |id: TermId| id != ZERO && !universe.contains(id) && Some(id) != excluded;
+    let mut structure = implicit_structure(terms);
+    let mut reading = PassiveReading::default();
+    let mut cluster_of = HashMap::<u32, u32>::default();
+    reading.bounds = terms
         .ids()
         .map(|id| {
-            if id == ZERO || universe.contains(id) || Some(id) == excluded {
+            if !passive(id) {
                 return None;
             }
-            let mut upper: Option<(i128, ImplicitBoundKind)> = None;
-            let mut lower: Option<(i128, ImplicitBoundKind)> = None;
-            for_each_implicit_bound(terms, id, |left, right, bound, kind| {
-                let slot = if (left, right) == (id, ZERO) {
-                    &mut upper
-                } else if (left, right) == (ZERO, id) {
-                    &mut lower
-                } else {
-                    return;
-                };
-                if slot.is_none_or(|(held, _)| bound < held) {
-                    *slot = Some((bound, kind));
+            let component = structure.find(id);
+            let Some(members) = structure.members.get(&component) else {
+                let ((upper, upper_kind), (lower, lower_kind)) = (
+                    structure.zero[id.0 as usize].0?,
+                    structure.zero[id.0 as usize].1?,
+                );
+                return Some(PassiveBounds {
+                    upper,
+                    lower,
+                    source: PassiveSource::Implicit {
+                        upper: upper_kind,
+                        lower: lower_kind,
+                    },
+                });
+            };
+            let cluster = match cluster_of.get(&component) {
+                Some(cluster) => *cluster,
+                None => {
+                    let closure = if excluded.is_some_and(|excluded| members.contains(&excluded)) {
+                        let kept = members
+                            .iter()
+                            .copied()
+                            .filter(|member| Some(*member) != excluded)
+                            .collect::<Vec<_>>();
+                        Rc::new(dormant_cluster(terms, &kept))
+                    } else if let Some(closure) = structure.clusters.get(&component) {
+                        closure.clone()
+                    } else {
+                        let closure = Rc::new(dormant_cluster(terms, members));
+                        structure.clusters.insert(component, closure.clone());
+                        closure
+                    };
+                    reading.clusters.push(closure);
+                    let cluster =
+                        u32::try_from(reading.clusters.len() - 1).expect("cluster count fits u32");
+                    cluster_of.insert(component, cluster);
+                    cluster
                 }
-            });
+            };
+            let closure = &reading.clusters[cluster as usize];
+            let position = closure
+                .members
+                .iter()
+                .position(|member| *member == id)
+                .expect("a passive term is a member of its cluster");
+            let (upper, _) = closure.cell(position, 0)?;
+            let (lower, _) = closure.cell(0, position)?;
             Some(PassiveBounds {
-                upper: upper?,
-                lower: lower?,
+                upper,
+                lower,
+                source: PassiveSource::Cluster {
+                    cluster,
+                    position: u32::try_from(position).expect("cluster size fits u32"),
+                },
             })
         })
-        .collect()
+        .collect();
+    reading
+}
+
+/// The closure of the implicit edges among `members` and zero.
+fn dormant_cluster(terms: &TermTable, members: &[TermId]) -> DormantCluster {
+    let members = std::iter::once(ZERO)
+        .chain(members.iter().copied())
+        .collect::<Vec<_>>();
+    let width = members.len();
+    let position = |term: TermId| members.iter().position(|member| *member == term);
+    let mut cells = vec![None; width * width];
+    for member in &members {
+        for_each_implicit_bound(terms, *member, |left, right, bound, kind| {
+            let (Some(from), Some(to)) = (position(left), position(right)) else {
+                return;
+            };
+            let cell: &mut Option<(i128, ClusterHop)> = &mut cells[from * width + to];
+            if cell.is_none_or(|(held, _)| bound < held) {
+                *cell = Some((bound, ClusterHop::Implicit(kind)));
+            }
+        });
+    }
+    for middle in 0..width {
+        for from in 0..width {
+            let Some((first, _)) = cells[from * width + middle] else {
+                continue;
+            };
+            for to in 0..width {
+                let Some((second, _)) = cells[middle * width + to] else {
+                    continue;
+                };
+                let via = compose_transitive_bounds(first, second);
+                let cell = &mut cells[from * width + to];
+                if cell.is_none_or(|(held, _)| via < held) {
+                    *cell = Some((
+                        via,
+                        ClusterHop::Through(u32::try_from(middle).expect("cluster size fits u32")),
+                    ));
+                }
+            }
+        }
+    }
+    DormantCluster { members, cells }
+}
+
+/// A term's tightest implicit bounds through zero, `term - Z <= upper` and
+/// `Z - term <= lower`, each with the kind that gives it.
+fn implicit_zero_bounds(terms: &TermTable, id: TermId) -> ZeroBounds {
+    let mut upper: Option<(i128, ImplicitBoundKind)> = None;
+    let mut lower: Option<(i128, ImplicitBoundKind)> = None;
+    for_each_implicit_bound(terms, id, |left, right, bound, kind| {
+        let slot = if (left, right) == (id, ZERO) {
+            &mut upper
+        } else if (left, right) == (ZERO, id) {
+            &mut lower
+        } else {
+            return;
+        };
+        if slot.is_none_or(|(held, _)| bound < held) {
+            *slot = Some((bound, kind));
+        }
+    });
+    (upper, lower)
 }
 
 impl ClosedState {
     fn passive(&self, term: TermId) -> Option<PassiveBounds> {
-        self.passive.get(term.0 as usize).copied().flatten()
+        self.passive.bounds.get(term.0 as usize).copied().flatten()
+    }
+
+    /// The two members' cluster and positions when both belong to the same
+    /// dormant component.
+    fn same_cluster(
+        &self,
+        from: PassiveBounds,
+        to: PassiveBounds,
+    ) -> Option<(&DormantCluster, usize, usize)> {
+        match (from.source, to.source) {
+            (
+                PassiveSource::Cluster {
+                    cluster,
+                    position: from,
+                },
+                PassiveSource::Cluster {
+                    cluster: other,
+                    position: to,
+                },
+            ) if cluster == other => Some((
+                &self.passive.clusters[cluster as usize],
+                from as usize,
+                to as usize,
+            )),
+            _ => None,
+        }
     }
 
     /// The closed bound `left - right`, read from the matrix or, for a term
@@ -3586,24 +4020,66 @@ impl ClosedState {
         }
         match (self.passive(left), self.passive(right)) {
             (Some(_), _) | (_, Some(_)) if left == right => Some(0),
-            (Some(from), Some(to)) => Some(compose_transitive_bounds(from.upper.0, to.lower.0)),
+            (Some(from), Some(to)) => match self.same_cluster(from, to) {
+                Some((cluster, from, to)) => cluster.cell(from, to).map(|(bound, _)| bound),
+                None => Some(compose_transitive_bounds(from.upper, to.lower)),
+            },
             (Some(from), None) => self
                 .matrix
                 .lookup(ZERO, right)
-                .map(|(bound, _)| compose_transitive_bounds(from.upper.0, bound))
-                .or_else(|| (right == ZERO).then_some(from.upper.0)),
+                .map(|(bound, _)| compose_transitive_bounds(from.upper, bound))
+                .or_else(|| (right == ZERO).then_some(from.upper)),
             (None, Some(to)) => self
                 .matrix
                 .lookup(left, ZERO)
-                .map(|(bound, _)| compose_transitive_bounds(bound, to.lower.0))
-                .or_else(|| (left == ZERO).then_some(to.lower.0)),
+                .map(|(bound, _)| compose_transitive_bounds(bound, to.lower))
+                .or_else(|| (left == ZERO).then_some(to.lower)),
             (None, None) => None,
+        }
+    }
+
+    /// A passive term's bound toward zero, `term - Z` when `upward`, else
+    /// `Z - term`, with its proof.
+    fn passive_zero_cell(
+        &self,
+        term: TermId,
+        bounds: PassiveBounds,
+        upward: bool,
+        ledger: &mut DerivationLedger,
+    ) -> (i128, DerivationId) {
+        match bounds.source {
+            PassiveSource::Implicit { upper, lower } => {
+                let (left, right, bound, kind) = if upward {
+                    (term, ZERO, bounds.upper, upper)
+                } else {
+                    (ZERO, term, bounds.lower, lower)
+                };
+                (
+                    bound,
+                    ledger.intern(DerivationNode::ImplicitBound {
+                        left,
+                        right,
+                        bound,
+                        kind,
+                    }),
+                )
+            }
+            PassiveSource::Cluster { cluster, position } => {
+                let cluster = &self.passive.clusters[cluster as usize];
+                let position = position as usize;
+                if upward {
+                    cluster.proof(position, 0, ledger)
+                } else {
+                    cluster.proof(0, position, ledger)
+                }
+            }
         }
     }
 
     /// The closed bound `left - right` with its proof; a bound read through
     /// zero for a term without a row is proved by transitivity through zero
-    /// from that term's implicit bound.
+    /// from that term's implicit bound, and one between two members of a
+    /// dormant component by that component's closure.
     fn cell(
         &self,
         left: TermId,
@@ -3613,41 +4089,43 @@ impl ClosedState {
         if let Some(cell) = self.matrix.lookup(left, right) {
             return Some(cell);
         }
-        let implicit = |ledger: &mut DerivationLedger, left, right, (bound, kind)| {
-            (
-                bound,
-                ledger.intern(DerivationNode::ImplicitBound {
-                    left,
-                    right,
-                    bound,
-                    kind,
-                }),
-            )
-        };
         let (first, second) = match (self.passive(left), self.passive(right)) {
             (Some(_), _) | (_, Some(_)) if left == right => {
-                return Some(implicit(
-                    ledger,
-                    left,
-                    right,
-                    (0, ImplicitBoundKind::Reflexive),
+                return Some((
+                    0,
+                    ledger.intern(DerivationNode::ImplicitBound {
+                        left,
+                        right,
+                        bound: 0,
+                        kind: ImplicitBoundKind::Reflexive,
+                    }),
                 ));
             }
             (Some(from), _) if right == ZERO => {
-                return Some(implicit(ledger, left, ZERO, from.upper));
+                return Some(self.passive_zero_cell(left, from, true, ledger));
             }
-            (_, Some(to)) if left == ZERO => return Some(implicit(ledger, ZERO, right, to.lower)),
-            (Some(from), Some(to)) => (
-                implicit(ledger, left, ZERO, from.upper),
-                implicit(ledger, ZERO, right, to.lower),
-            ),
+            (_, Some(to)) if left == ZERO => {
+                return Some(self.passive_zero_cell(right, to, false, ledger));
+            }
+            (Some(from), Some(to)) => {
+                if let Some((cluster, from, to)) = self.same_cluster(from, to) {
+                    return cluster
+                        .cell(from, to)
+                        .is_some()
+                        .then(|| cluster.proof(from, to, ledger));
+                }
+                (
+                    self.passive_zero_cell(left, from, true, ledger),
+                    self.passive_zero_cell(right, to, false, ledger),
+                )
+            }
             (Some(from), None) => (
-                implicit(ledger, left, ZERO, from.upper),
+                self.passive_zero_cell(left, from, true, ledger),
                 self.matrix.lookup(ZERO, right)?,
             ),
             (None, Some(to)) => (
                 self.matrix.lookup(left, ZERO)?,
-                implicit(ledger, ZERO, right, to.lower),
+                self.passive_zero_cell(right, to, false, ledger),
             ),
             (None, None) => return None,
         };
@@ -4328,10 +4806,13 @@ fn restore_implicit_bound(
     kind: ImplicitBoundKind,
     ledger: &mut DerivationLedger,
 ) {
-    if closed
-        .matrix
-        .lookup(left, right)
-        .is_some_and(|(current, _)| current <= bound)
+    // A bound toward a term read through zero is already that reading.
+    if !closed.matrix.holds(left)
+        || !closed.matrix.holds(right)
+        || closed
+            .matrix
+            .lookup(left, right)
+            .is_some_and(|(current, _)| current <= bound)
     {
         return;
     }
@@ -4364,7 +4845,7 @@ pub(crate) fn contradiction_without_proofs(
     }) = insert_fresh_edges(
         state,
         terms,
-        &closure_universe(state, terms, goals),
+        &closure_universe(state, terms, goals, None),
         &mut NoProofs,
     ) {
         #[cfg(test)]
@@ -4387,7 +4868,7 @@ pub(crate) fn contradiction_without_proofs(
     }
     let dimension = terms.ids().count();
     let ids = terms.ids().collect::<Vec<_>>();
-    let active_middles = closure_middle_terms(state, terms, goals, &ids);
+    let active_middles = closure_middle_terms(state, terms, goals, &ids, None);
     let cells = dimension
         .checked_mul(dimension)
         .expect("ENT contradiction matrix exceeds the address space");
@@ -4502,7 +4983,7 @@ fn goal_contradiction_without_proofs(
         all_derivable: false,
         contradiction: None,
         matrix,
-        passive: Vec::new(),
+        passive: PassiveReading::default(),
         distinct,
         distinct_proofs: HashMap::default(),
         opaque: state.opaque.clone(),
@@ -4553,7 +5034,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
             all_derivable: true,
             contradiction: state.contradiction,
             matrix: DenseClosureBounds::new(0),
-            passive: Vec::new(),
+            passive: PassiveReading::default(),
             distinct: HashSet::default(),
             distinct_proofs: HashMap::default(),
             opaque: HashSet::default(),
@@ -4561,7 +5042,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         };
     }
     let term_count = terms.ids().count();
-    let universe = closure_universe(state, terms, goals);
+    let universe = closure_universe(state, terms, goals, Some(ledger));
     if excluded.is_none()
         && !REFERENCE_PRODUCT
         && let Some(closed) = close_by_edge_insertion(state, terms, goals, &universe, ledger)
@@ -4588,7 +5069,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         let mut closed = ClosedState {
             all_derivable: false,
             contradiction: None,
-            matrix: DenseClosureBounds::values_from_store(term_count, &state.bounds),
+            matrix: DenseClosureBounds::values_from_store(term_count, &state.bounds, &universe),
             passive: passive_bounds(terms, &universe, None),
             distinct: (*state.distinct).clone(),
             distinct_proofs: (*state.distinct_proofs).clone(),
@@ -4618,7 +5099,8 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
     // maps once from the settled matrix keeps their exact content while
     // dropping one hashed pair insert per accepted candidate, of which
     // `tests/programs/wfgrep.wf` accepts eighteen million.
-    let mut dense_bounds = DenseClosureBounds::from_store(term_count, &state.bounds, ledger);
+    let mut dense_bounds =
+        DenseClosureBounds::from_store(term_count, &state.bounds, &universe, ledger);
     // A closed core seeds the fixed point: its cells start stale, so the first
     // round visits only triples through a fresh cell, and a candidate must
     // strictly lower a bound. Equal-bound candidates would replace the core's
@@ -4634,13 +5116,18 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         .ids()
         .filter(|id| Some(*id) != excluded && universe.contains(*id))
         .collect::<Vec<_>>();
-    let active_middles = closure_middle_terms(state, terms, goals, &ids);
+    let active_middles = closure_middle_terms(state, terms, goals, &ids, Some(ledger));
     {
         let mut add = |left: TermId,
                        right: TermId,
                        bound: i128,
                        kind: ImplicitBoundKind,
                        ledger: &mut DerivationLedger| {
+            // A bound toward a term read through zero is already that
+            // reading.
+            if !dense_bounds.holds(left) || !dense_bounds.holds(right) {
+                return;
+            }
             let node = DerivationNode::ImplicitBound {
                 left,
                 right,
@@ -4890,7 +5377,7 @@ fn insert_fresh_edges<P: ClosureProofs>(
         return None;
     }
     let width = term_count;
-    let mut dense = DenseClosureBounds::values_from_store(width, &state.bounds);
+    let mut dense = DenseClosureBounds::values_from_store(width, &state.bounds, universe);
     let distinct = (*state.distinct).clone();
     let distinct_proofs = (*state.distinct_proofs).clone();
 
@@ -4929,29 +5416,30 @@ fn insert_fresh_edges<P: ClosureProofs>(
         }
         passes += 1;
         let mut repaired = false;
+        let slots = dense.dimension;
         for &(left, right) in &weakened {
-            let (row, column) = (left.0 as usize, right.0 as usize);
-            if row == column || row >= width || column >= width {
+            let (Some(row), Some(column)) = (dense.slot(left), dense.slot(right)) else {
+                continue;
+            };
+            if row == column {
                 continue;
             }
-            for middle in 0..width {
+            for middle in 0..slots {
                 if middle == row || middle == column {
                     continue;
                 }
-                let (first, second) = (row * width + middle, middle * width + column);
+                let (first, second) = (row * slots + middle, middle * slots + column);
                 if dense.stamps[first] == 0 || dense.stamps[second] == 0 {
                     continue;
                 }
                 let via = compose_transitive_bounds(dense.bounds[first], dense.bounds[second]);
-                let target = row * width + column;
+                let target = row * slots + column;
                 if dense.stamps[target] != 0 && via >= dense.bounds[target] {
                     continue;
                 }
                 let node = ledger.intern(DerivationNode::TransitiveBound {
                     left,
-                    middle: TermId(
-                        u32::try_from(middle).expect("term index fits the u32 identity"),
-                    ),
+                    middle: dense.terms[middle],
                     right,
                     bound: via,
                     first: dense.proofs[first],
@@ -5093,7 +5581,12 @@ fn insert_pending_edges<P: ClosureProofs>(
     let mut tight_rows = Vec::new();
     let mut improving_columns = Vec::new();
     while let Some((a, b, weight, proof)) = pending.pop_front() {
-        let edge_cell = a.0 as usize * width + b.0 as usize;
+        // An edge with a term read through zero is never tighter than that
+        // reading (see [`closure_middle_terms`]).
+        let (Some(a_slot), Some(b_slot)) = (dense.slot(a), dense.slot(b)) else {
+            continue;
+        };
+        let edge_cell = a_slot * width + b_slot;
         if dense.stamps[edge_cell] != 0 && dense.bounds[edge_cell] < weight {
             continue;
         }
@@ -5116,21 +5609,19 @@ fn insert_pending_edges<P: ClosureProofs>(
         tight_rows.push(a);
         // Column pass: i - a <= x and a - b <= w give i - b <= x + w.
         for i in 0..width {
-            let into_a = i * width + a.0 as usize;
-            if i == a.0 as usize || dense.stamps[into_a] == 0 {
+            let into_a = i * width + a_slot;
+            if i == a_slot || dense.stamps[into_a] == 0 {
                 continue;
             }
             let via = compose_transitive_bounds(dense.bounds[into_a], weight);
-            let target = i * width + b.0 as usize;
+            let target = i * width + b_slot;
             if dense.stamps[target] != 0 && via >= dense.bounds[target] {
                 if via == dense.bounds[target] {
-                    tight_rows.push(TermId(
-                        u32::try_from(i).expect("term index fits the u32 identity"),
-                    ));
+                    tight_rows.push(dense.terms[i]);
                 }
                 continue;
             }
-            let left = TermId(u32::try_from(i).expect("term index fits the u32 identity"));
+            let left = dense.terms[i];
             let node = ledger.intern(DerivationNode::TransitiveBound {
                 left,
                 middle: a,
@@ -5156,12 +5647,12 @@ fn insert_pending_edges<P: ClosureProofs>(
         // a - j is already dominated by i - a and a - j, a triangle composed
         // when its later-set premise was set; only the other columns are
         // scanned. A fresh term's implicit edge thus fills one column.
-        let b_row = b.0 as usize * width;
-        let a_row = a.0 as usize * width;
+        let b_row = b_slot * width;
+        let a_row = a_slot * width;
         improving_columns.clear();
         for j in 0..width {
             let out_of_b = b_row + j;
-            if j == b.0 as usize || dense.stamps[out_of_b] == 0 {
+            if j == b_slot || dense.stamps[out_of_b] == 0 {
                 continue;
             }
             let through_b = compose_transitive_bounds(weight, dense.bounds[out_of_b]);
@@ -5170,8 +5661,8 @@ fn insert_pending_edges<P: ClosureProofs>(
             }
         }
         for &left in &tight_rows {
-            let left_row = left.0 as usize * width;
-            let into_b = left_row + b.0 as usize;
+            let left_row = dense.slots[left.0 as usize] as usize * width;
+            let into_b = left_row + b_slot;
             if dense.stamps[into_b] == 0 {
                 continue;
             }
@@ -5183,7 +5674,7 @@ fn insert_pending_edges<P: ClosureProofs>(
                 if dense.stamps[target] != 0 && via >= dense.bounds[target] {
                     continue;
                 }
-                let right = TermId(u32::try_from(j).expect("term index fits the u32 identity"));
+                let right = dense.terms[j];
                 let node = ledger.intern(DerivationNode::TransitiveBound {
                     left,
                     middle: b,
@@ -5320,19 +5811,26 @@ fn close_from_view_seed(
     tests::record_route(tests::ClosureRoute::ViewSeed);
     let width = terms.ids().count();
     let view = &seed.closed;
-    let core_terms = view.matrix.dimension;
+    let core_terms = view.matrix.term_count;
     // The term table only grows, so the view covers a prefix of its terms.
     debug_assert!(core_terms <= width);
-    let mut dense = DenseClosureBounds::new(width);
-    for row in 0..core_terms {
-        let (from, to) = (row * core_terms, row * width);
-        dense.bounds[to..to + core_terms]
-            .copy_from_slice(&view.matrix.bounds[from..from + core_terms]);
-        dense.proofs[to..to + core_terms]
-            .copy_from_slice(&view.matrix.proofs[from..from + core_terms]);
-        for column in 0..core_terms {
-            if view.matrix.stamps[from + column] != 0 {
-                dense.stamps[to + column] = 1;
+    // A term the gained relations made passive leaves its cells behind: they
+    // are read through zero.
+    let mut dense = DenseClosureBounds::over(width, universe);
+    let (slots, view_slots) = (dense.dimension, view.matrix.dimension);
+    for row in 0..slots {
+        let Some(from_row) = view.matrix.slot(dense.terms[row]) else {
+            continue;
+        };
+        for column in 0..slots {
+            let Some(from_column) = view.matrix.slot(dense.terms[column]) else {
+                continue;
+            };
+            let (from, to) = (from_row * view_slots + from_column, row * slots + column);
+            if view.matrix.stamps[from] != 0 {
+                dense.bounds[to] = view.matrix.bounds[from];
+                dense.proofs[to] = view.matrix.proofs[from];
+                dense.stamps[to] = 1;
                 dense.live += 1;
             }
         }
@@ -5346,6 +5844,9 @@ fn close_from_view_seed(
     cells.sort_unstable();
     cells.dedup();
     for (left, right) in cells {
+        if !universe.contains(left) || !universe.contains(right) {
+            continue;
+        }
         // The state's own selection, which the view may already improve on.
         if let Some((bound, proof)) = state.bounds.get(left, right) {
             pending.push_back((left, right, bound, proof));
@@ -5438,13 +5939,18 @@ fn close_goal_contradictions(
 /// bounds through zero, so it is never a better middle than zero and its
 /// closed row and column are zero's shifted by those bounds, which
 /// [`ClosedState`] reads on demand instead of storing.
-fn closure_universe(state: &FactState, terms: &TermTable, goals: &GoalTable) -> ActiveMiddles {
+fn closure_universe(
+    state: &FactState,
+    terms: &TermTable,
+    goals: &GoalTable,
+    ledger: Option<&DerivationLedger>,
+) -> ActiveMiddles {
     #[cfg(test)]
     if tests::closing_every_term() {
         return ActiveMiddles(vec![true; terms.ids().count()]);
     }
     let ids = terms.ids().collect::<Vec<_>>();
-    closure_middle_terms(state, terms, goals, &ids)
+    closure_middle_terms(state, terms, goals, &ids, ledger)
 }
 
 /// Terms that can improve a transitive path beyond the direct implicit path
@@ -5458,12 +5964,26 @@ fn closure_universe(state: &FactState, terms: &TermTable, goals: &GoalTable) -> 
 /// distinct nonzero terms, including measure aliases and length/capacity
 /// orderings. Opaque goals are included because their opposite sign can be proved
 /// from a projected or normalized relation and form a contradiction.
+///
+/// Two kinds of edge admit no endpoint, because a path through `ZERO` is as
+/// tight as each: an implicit edge `l - r <= b` between nonzero terms with
+/// `b >= upper(l) + lower(r)`, the two terms' own implicit bounds through
+/// zero, as `len <= cap` of a fixed-size place; and, given the ledger, a live
+/// relation whose proof rests on implicit bounds alone. A path through a term
+/// whose every edge is of these kinds is replaced, edge pair by edge pair, by
+/// a path through zero of no greater bound, since the term's own range is
+/// nonempty. Without these, a snapshot that stores the implicit cells among
+/// the measures of every place the body ever named keeps all of them middles
+/// for the rest of the body.
 fn closure_middle_terms(
     state: &FactState,
     terms: &TermTable,
     goals: &GoalTable,
     ids: &[TermId],
+    ledger: Option<&DerivationLedger>,
 ) -> ActiveMiddles {
+    let implicit_only =
+        |proof: DerivationId| ledger.is_some_and(|ledger| ledger.implicit_only(proof));
     // `TermId` is the dense function-local term identity, so membership is a
     // direct index rather than a hashed probe. The old sets answered one probe
     // per live relation endpoint of every closure.
@@ -5472,6 +5992,12 @@ fn closure_middle_terms(
     for id in ids {
         available[id.0 as usize] = true;
     }
+    // The reference every elided closure is compared with uses every term
+    // as a middle.
+    #[cfg(test)]
+    if tests::closing_every_term() {
+        return ActiveMiddles(available);
+    }
     let mut active = ActiveMiddles(vec![false; width]);
     let admit = |term: TermId, active: &mut ActiveMiddles| {
         if available[term.0 as usize] {
@@ -5479,13 +6005,50 @@ fn closure_middle_terms(
         }
     };
     admit(ZERO, &mut active);
-    for (left, right, _, _) in state.bounds.cells() {
-        admit(left, &mut active);
-        admit(right, &mut active);
+    // A term's bounds through zero: its stored zero cell where that is
+    // tighter than its implicit bound. A stored zero cell no tighter than
+    // the implicit bound says nothing the implicit bound does not.
+    let mut structure = implicit_structure(terms);
+    let upper = |term: TermId| {
+        let implicit = structure.upper(term);
+        match (state.bounds.get(term, ZERO), implicit) {
+            (Some((stored, _)), Some(implicit)) => Some(stored.min(implicit)),
+            (stored, implicit) => stored.map(|(bound, _)| bound).or(implicit),
+        }
+    };
+    let lower = |term: TermId| {
+        let implicit = structure.lower(term);
+        match (state.bounds.get(ZERO, term), implicit) {
+            (Some((stored, _)), Some(implicit)) => Some(stored.min(implicit)),
+            (stored, implicit) => stored.map(|(bound, _)| bound).or(implicit),
+        }
+    };
+    for (left, right, bound, proof) in state.bounds.cells() {
+        let through_zero = if left == right {
+            Some(0)
+        } else if right == ZERO {
+            structure.upper(left)
+        } else if left == ZERO {
+            structure.lower(right)
+        } else {
+            upper(left)
+                .zip(lower(right))
+                .map(|(upper, lower)| compose_transitive_bounds(upper, lower))
+        };
+        if !implicit_only(proof) && through_zero.is_none_or(|path| bound < path) {
+            admit(left, &mut active);
+            admit(right, &mut active);
+        }
     }
     for &(left, right) in state.distinct.iter() {
-        admit(left, &mut active);
-        admit(right, &mut active);
+        if !state
+            .distinct_proofs
+            .get(&(left, right))
+            .is_some_and(|proof| implicit_only(*proof))
+        {
+            admit(left, &mut active);
+            admit(right, &mut active);
+        }
     }
 
     let mut pending_goals = state
@@ -5520,13 +6083,26 @@ fn closure_middle_terms(
     // as a middle loses that proof until an unrelated source read happens to
     // mention it. Derive this inventory from the complete implicit edge set,
     // so future measure rows cannot silently evade the same fixed point.
+    // A component of the implicit edges that are tighter than the path
+    // through zero enters whole when a fact admits one of its members, since
+    // a path through it can then improve that member's relations. A component
+    // no fact reaches is dormant: every edge leaving it reaches zero or is
+    // dominated, so its members are read from its own closure through zero.
+    let mut entered = Vec::new();
     for id in ids {
-        for_each_implicit_bound(terms, *id, |left, right, _, _| {
-            if left != right && left != ZERO && right != ZERO {
-                admit(left, &mut active);
-                admit(right, &mut active);
+        if active.contains(*id) {
+            let component = structure.find(*id);
+            if structure.members.contains_key(&component) {
+                entered.push(component);
             }
-        });
+        }
+    }
+    entered.sort_unstable();
+    entered.dedup();
+    for component in entered {
+        for member in &structure.members[&component] {
+            admit(*member, &mut active);
+        }
     }
     active
 }
@@ -5558,8 +6134,16 @@ struct ClosedBoundCandidate {
 /// facts or proofs.
 #[derive(Clone)]
 struct DenseClosureBounds {
+    /// The number of slots: the terms the closure computes rows for.
     dimension: usize,
-    /// Row-major cells. A bound or proof is meaningful only where `stamps`
+    /// The number of terms registered when the closure was taken.
+    term_count: usize,
+    /// Each term's slot, or [`NO_SLOT`] for a term read through zero. Slots
+    /// follow term order, so row-major order is sorted `(left, right)` order.
+    slots: Vec<u32>,
+    /// Each slot's term.
+    terms: Vec<TermId>,
+    /// Row-major cells over slots. A bound or proof is meaningful only where `stamps`
     /// marks the cell live; the transitivity cube reads the three columns of
     /// each probed cell from contiguous rows.
     bounds: Vec<i128>,
@@ -5569,9 +6153,16 @@ struct DenseClosureBounds {
     /// in from the state and one an implicit fact established before the
     /// first round, which is what makes round 1 complete.
     stamps: Vec<u32>,
+    /// Indexed by slot.
     rows: Vec<ClosureRowSummary>,
     live: usize,
     round: u32,
+}
+
+const NO_SLOT: u32 = u32::MAX;
+
+fn term_at(index: usize) -> TermId {
+    TermId(u32::try_from(index).expect("term index fits the u32 identity"))
 }
 
 /// Conservative bounds on one row's current cells. Maxima need not decrease
@@ -5622,27 +6213,48 @@ impl ClosureRowSummary {
 }
 
 impl DenseClosureBounds {
-    fn from_store(dimension: usize, store: &BoundStore, ledger: &impl ClosureProofs) -> Self {
-        let mut dense = Self::new(dimension);
+    /// The store's cells among the terms of `universe`. A cell with any
+    /// other endpoint is never tighter than that pair's reading through zero
+    /// (see [`closure_middle_terms`]), which [`ClosedState`] gives instead.
+    fn from_store(
+        term_count: usize,
+        store: &BoundStore,
+        universe: &ActiveMiddles,
+        ledger: &impl ClosureProofs,
+    ) -> Self {
+        let mut dense = Self::over(term_count, universe);
         for (left, right, bound, proof) in store.cells() {
-            dense.set(left, right, bound, proof, ledger.depth(proof));
+            if dense.holds(left) && dense.holds(right) {
+                dense.set(left, right, bound, proof, ledger.depth(proof));
+            }
         }
         dense
     }
 
-    /// The store's cells without the row summaries only the unseeded fixed
-    /// point's pruning reads; edge insertion and closed views never do.
-    fn values_from_store(dimension: usize, store: &BoundStore) -> Self {
-        let mut dense = Self::new(dimension);
-        let stride = store.stride;
-        for row in 0..dimension.min(stride) {
-            let source = row * stride;
-            let target = row * dimension;
-            for column in 0..dimension.min(stride) {
-                if store.present[source + column] {
-                    dense.bounds[target + column] = store.bounds[source + column];
-                    dense.proofs[target + column] = store.proofs[source + column];
-                    dense.stamps[target + column] = 1;
+    /// [`Self::from_store`] without the row summaries only the unseeded
+    /// fixed point's pruning reads; edge insertion and closed views never do.
+    fn values_from_store(term_count: usize, store: &BoundStore, universe: &ActiveMiddles) -> Self {
+        let mut dense = Self::over(term_count, universe);
+        let width = dense.dimension;
+        let sources = dense
+            .terms
+            .iter()
+            .map(|term| store.slot(*term))
+            .collect::<Vec<_>>();
+        for (row, source_row) in sources.iter().enumerate() {
+            let Some(source_row) = source_row else {
+                continue;
+            };
+            for (column, source_column) in sources.iter().enumerate() {
+                let Some(source_column) = source_column else {
+                    continue;
+                };
+                let source = source_row * store.stride + source_column;
+                let target = row * width + column;
+                if store.present[source] {
+                    dense.bounds[target] = store.bounds[source];
+                    dense.proofs[target] = store.proofs[source];
+                    dense.stamps[target] = 1;
                     dense.live += 1;
                 }
             }
@@ -5650,12 +6262,36 @@ impl DenseClosureBounds {
         dense
     }
 
-    fn new(dimension: usize) -> Self {
+    /// An empty matrix with a slot for every one of `term_count` terms.
+    fn new(term_count: usize) -> Self {
+        Self::with_terms(term_count, (0..term_count).map(term_at).collect())
+    }
+
+    /// An empty matrix with a slot for each term of `universe`.
+    fn over(term_count: usize, universe: &ActiveMiddles) -> Self {
+        Self::with_terms(
+            term_count,
+            (0..term_count)
+                .map(term_at)
+                .filter(|term| universe.contains(*term))
+                .collect(),
+        )
+    }
+
+    fn with_terms(term_count: usize, terms: Vec<TermId>) -> Self {
+        let dimension = terms.len();
         let count = dimension
             .checked_mul(dimension)
             .expect("ENT closure matrix exceeds the address space");
+        let mut slots = vec![NO_SLOT; term_count];
+        for (slot, term) in terms.iter().enumerate() {
+            slots[term.0 as usize] = u32::try_from(slot).expect("slot fits the u32 identity");
+        }
         Self {
             dimension,
+            term_count,
+            slots,
+            terms,
             bounds: vec![i128::MAX; count],
             proofs: vec![DerivationId(0); count],
             stamps: vec![0; count],
@@ -5663,6 +6299,18 @@ impl DenseClosureBounds {
             live: 0,
             round: 0,
         }
+    }
+
+    /// The slot of `term`, if the closure computes a row for it.
+    fn slot(&self, term: TermId) -> Option<usize> {
+        self.slots
+            .get(term.0 as usize)
+            .filter(|slot| **slot != NO_SLOT)
+            .map(|slot| *slot as usize)
+    }
+
+    fn holds(&self, term: TermId) -> bool {
+        self.slot(term).is_some()
     }
 
     fn begin_round(&mut self) {
@@ -5714,25 +6362,26 @@ impl DenseClosureBounds {
         };
         let mut fresh_rows = vec![false; width];
         for term in fresh_terms {
-            if let Some(row) = fresh_rows.get_mut(term.0 as usize) {
-                *row = true;
+            if let Some(slot) = self.slot(*term) {
+                fresh_rows[slot] = true;
             }
         }
-        for row in fresh_rows.iter_mut().skip(core_terms as usize) {
-            *row = true;
+        for (slot, term) in self.terms.iter().enumerate() {
+            if term.0 >= core_terms {
+                fresh_rows[slot] = true;
+            }
         }
-        for (term, fresh) in fresh_rows.iter().enumerate() {
+        for (slot, fresh) in fresh_rows.iter().enumerate() {
             if !*fresh {
                 continue;
             }
             for other in 0..width {
-                refresh(self, term * width + other);
-                refresh(self, other * width + term);
+                refresh(self, slot * width + other);
+                refresh(self, other * width + slot);
             }
         }
         for (left, right) in fresh_cells {
-            let (left, right) = (left.0 as usize, right.0 as usize);
-            if left < width && right < width {
+            if let (Some(left), Some(right)) = (self.slot(*left), self.slot(*right)) {
                 refresh(self, left * width + right);
             }
         }
@@ -5748,14 +6397,15 @@ impl DenseClosureBounds {
     }
 
     fn index(&self, left: TermId, right: TermId) -> usize {
-        let left = left.0 as usize;
-        let right = right.0 as usize;
-        assert!(left < self.dimension && right < self.dimension);
+        let (Some(left), Some(right)) = (self.slot(left), self.slot(right)) else {
+            panic!("ENT closure cell outside the closure's terms");
+        };
         left * self.dimension + right
     }
 
+    /// A present cell, or `None` for an absent one or a term without a slot.
     fn get(&self, left: TermId, right: TermId) -> Option<(i128, DerivationId)> {
-        let index = self.index(left, right);
+        let index = self.slot(left)? * self.dimension + self.slot(right)?;
         (self.stamps[index] != 0).then(|| (self.bounds[index], self.proofs[index]))
     }
 
@@ -5766,11 +6416,12 @@ impl DenseClosureBounds {
         first: i128,
         first_depth: u32,
     ) -> bool {
-        self.rows[left.0 as usize].rejects_product(
+        let (left, middle) = (self.slot(left), self.slot(middle));
+        self.rows[left.expect("a closure row term")].rejects_product(
             self.dimension,
             first,
             first_depth,
-            self.rows[middle.0 as usize].minimum,
+            self.rows[middle.expect("a closure middle term")].minimum,
         )
     }
 
@@ -5780,7 +6431,7 @@ impl DenseClosureBounds {
         if new_cell {
             self.live += 1;
         }
-        self.rows[left.0 as usize].observe(bound, depth, new_cell);
+        self.rows[index / self.dimension].observe(bound, depth, new_cell);
         self.bounds[index] = bound;
         self.proofs[index] = proof;
         self.stamps[index] = self
@@ -5789,15 +6440,10 @@ impl DenseClosureBounds {
             .expect("ENT closure rounds fit the u32 stamp space");
     }
 
-    /// A cell of a closed matrix, or `None` for an absent cell or a term
-    /// registered after the closure was taken.
+    /// A cell of a closed matrix, or `None` for an absent cell, a term read
+    /// through zero, or a term registered after the closure was taken.
     fn lookup(&self, left: TermId, right: TermId) -> Option<(i128, DerivationId)> {
-        let (left, right) = (left.0 as usize, right.0 as usize);
-        if left >= self.dimension || right >= self.dimension {
-            return None;
-        }
-        let index = left * self.dimension + right;
-        (self.stamps[index] != 0).then(|| (self.bounds[index], self.proofs[index]))
+        self.get(left, right)
     }
 
     /// Every present cell in row-major, that is sorted `(left, right)`, order.
@@ -5809,8 +6455,8 @@ impl DenseClosureBounds {
             .filter(|(_, stamp)| **stamp != 0)
             .map(move |(index, _)| {
                 (
-                    TermId(u32::try_from(index / width).expect("term index fits the u32 identity")),
-                    TermId(u32::try_from(index % width).expect("term index fits the u32 identity")),
+                    self.terms[index / width],
+                    self.terms[index % width],
                     self.bounds[index],
                     self.proofs[index],
                 )
@@ -5846,7 +6492,8 @@ fn middle_products<const PRUNE_ROWS: bool, const STRICT: bool>(
 ) -> bool {
     let width = dense.dimension;
     let round = dense.round;
-    let middle_row = middle.0 as usize * width;
+    let middle_slot = dense.slot(middle).expect("a closure middle term");
+    let middle_row = middle_slot * width;
     let mut changed = false;
     // Columns whose second premise is fresh, for rows whose first premise is
     // not: the other columns of such a row are skipped. Only the middle's own
@@ -5855,13 +6502,15 @@ fn middle_products<const PRUNE_ROWS: bool, const STRICT: bool>(
         outgoing
             .iter()
             .copied()
-            .filter(|right| dense.stamps[middle_row + right.0 as usize] >= round)
+            .filter(|right| {
+                dense.stamps[middle_row + dense.slots[right.0 as usize] as usize] >= round
+            })
             .collect::<Vec<_>>()
     };
     let mut fresh_outgoing = None;
     for &left in incoming {
-        let left_row = left.0 as usize * width;
-        let first_cell = left_row + middle.0 as usize;
+        let left_row = dense.slots[left.0 as usize] as usize * width;
+        let first_cell = left_row + middle_slot;
         let first = dense.bounds[first_cell];
         let first_proof = dense.proofs[first_cell];
         let first_depth = ledger.depth(first_proof);
@@ -5876,7 +6525,7 @@ fn middle_products<const PRUNE_ROWS: bool, const STRICT: bool>(
                 .as_slice()
         };
         for &right in columns {
-            let column = right.0 as usize;
+            let column = dense.slots[right.0 as usize] as usize;
             let second_cell = middle_row + column;
             let via = first.saturating_add(dense.bounds[second_cell]);
             let current_cell = left_row + column;
@@ -6153,7 +6802,7 @@ fn materialize_closure(
         };
     }
     let needs_ordinary_fallback = closed.selected_relations_depend_on_postcondition_call(ledger);
-    let mut bounds = BoundStore::with_terms(terms.ids().count());
+    let mut bounds = BoundStore::default();
     for (left, right, bound, parent) in closed.matrix.cells() {
         let proof =
             materialized_bound_proof(ledger, left, right, bound, event, parent, wrap_implicit);
@@ -6404,7 +7053,7 @@ fn join_at_once(
         };
     };
     let first = &closed[first_index];
-    let mut bounds = BoundStore::with_terms(terms.ids().count());
+    let mut bounds = BoundStore::default();
     // Every pair of terms some predecessor computed a row for. A term no
     // predecessor has a row for joins as zero's row shifted again.
     let mut rows = vec![false; terms.ids().count()];
@@ -6717,7 +7366,7 @@ pub(crate) mod tests {
     /// Every closed bound over every pair of the closure's terms, stored or
     /// read through zero for a term without a row.
     fn bound_values(closed: &ClosedState) -> Vec<(TermId, TermId, i128)> {
-        let width = closed.matrix.dimension.max(closed.passive.len());
+        let width = closed.matrix.term_count.max(closed.passive.bounds.len());
         let ids = (0..width)
             .map(|id| TermId(u32::try_from(id).expect("term index fits the u32 identity")))
             .collect::<Vec<_>>();
@@ -6729,7 +7378,7 @@ pub(crate) mod tests {
 
     /// Every ordered pair whose disequality is held or derivable.
     fn distinct_pairs(closed: &ClosedState) -> Vec<(TermId, TermId)> {
-        let width = closed.matrix.dimension.max(closed.passive.len());
+        let width = closed.matrix.term_count.max(closed.passive.bounds.len());
         let ids = (0..width)
             .map(|id| TermId(u32::try_from(id).expect("term index fits the u32 identity")))
             .collect::<Vec<_>>();
@@ -6778,11 +7427,20 @@ pub(crate) mod tests {
         if complete.all_derivable {
             return;
         }
-        assert_eq!(
-            bound_values(seeded),
-            bound_values(&complete),
-            "seeded closure bounds differ from the complete closure"
-        );
+        let (seeded_bounds, complete_bounds) = (bound_values(seeded), bound_values(&complete));
+        if seeded_bounds != complete_bounds {
+            let differing = seeded_bounds
+                .iter()
+                .filter(|cell| !complete_bounds.contains(cell))
+                .chain(
+                    complete_bounds
+                        .iter()
+                        .filter(|cell| !seeded_bounds.contains(cell)),
+                )
+                .take(8)
+                .collect::<Vec<_>>();
+            panic!("seeded closure bounds differ from the complete closure: {differing:?}");
+        }
         assert_eq!(
             distinct_pairs(seeded),
             distinct_pairs(&complete),
@@ -8323,6 +8981,27 @@ pub(crate) mod tests {
             ));
             terms.set_measure_bound(measure, MeasureBound::Constant(7));
             places.push(measure);
+            // The place's capacity and head join its length in one implicit
+            // component through `len <= cap` and `head <= cap`, which the
+            // relations below sometimes reach and sometimes leave dormant;
+            // a second place's component no relation ever names.
+            for sibling in [CheckedMeasure::Capacity, CheckedMeasure::Head] {
+                places.push(terms.intern(TermKind::Measure(
+                    sibling,
+                    super::super::term::ResolvedPlace::binding(BindingId(100)),
+                )));
+            }
+            let dormant = terms.intern(TermKind::Measure(
+                CheckedMeasure::Length,
+                super::super::term::ResolvedPlace::binding(BindingId(102)),
+            ));
+            terms.set_measure_bound(dormant, MeasureBound::Constant(5));
+            for sibling in [CheckedMeasure::Capacity, CheckedMeasure::Head] {
+                terms.intern(TermKind::Measure(
+                    sibling,
+                    super::super::term::ResolvedPlace::binding(BindingId(102)),
+                ));
+            }
             let mut goals = GoalTable::default();
             let goal = goals.intern(
                 GoalExpression::Datum(super::super::super::goal::GoalDatum::Place {

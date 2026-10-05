@@ -200,6 +200,13 @@ pub(crate) struct TermTable {
     /// an already registered measure term, which can weaken that term's
     /// implicit bounds rather than only add to them.
     measure_replacements: usize,
+    /// Every registered term and every term given a different standing
+    /// measure fact, in order: the terms whose implicit bounds may have
+    /// changed since the structure below last read the log.
+    implicit_log: Vec<TermId>,
+    /// What this table alone decides about implicit bounds, brought up to
+    /// date from `implicit_log` when a closure reads it.
+    implicit: std::cell::RefCell<super::state::ImplicitStructure>,
 }
 
 impl TermTable {
@@ -210,6 +217,8 @@ impl TermTable {
             measure_bounds: WordHashMap::default(),
             revision: 0,
             measure_replacements: 0,
+            implicit_log: Vec::new(),
+            implicit: std::cell::RefCell::default(),
         };
         let zero = table.intern(TermKind::Zero);
         debug_assert_eq!(zero, ZERO);
@@ -229,7 +238,16 @@ impl TermTable {
                 .revision
                 .checked_add(1)
                 .expect("term revision fits usize");
+            self.implicit_log.push(term);
         }
+    }
+
+    pub(super) fn implicit_log(&self) -> &[TermId] {
+        &self.implicit_log
+    }
+
+    pub(super) fn implicit_cache(&self) -> &std::cell::RefCell<super::state::ImplicitStructure> {
+        &self.implicit
     }
 
     /// Changes whenever registered terms or their standing measure facts change.
@@ -279,6 +297,7 @@ impl TermTable {
         );
         self.terms.push(kind.clone());
         self.ids.insert(kind, id);
+        self.implicit_log.push(id);
         self.revision = self
             .revision
             .checked_add(1)
