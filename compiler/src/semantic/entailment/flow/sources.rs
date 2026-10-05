@@ -1784,7 +1784,7 @@ impl Vocabulary {
         let mut image = FactState::new();
         let mut explicit = HashMap::new();
         let carried = closed
-            .delivery_relations()
+            .relations_mentioning(context.carrier, &mut self.derivations)
             .into_iter()
             .filter(|(relation, parent)| {
                 // No fact on the fresh receiver takes part in selecting c -> x
