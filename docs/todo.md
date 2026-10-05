@@ -2317,19 +2317,22 @@ rarely insert at the same place.
 
 ## Interpreter dispatch lowering
 
-- **A `match` on a loaded payload enum value copies it before testing its
-  tag.** The emitter copies the matched value into a slot and reads the tag
-  (and binders) from there. In the stage-3 wasm interpreter the slot is
-  part-local and LLVM removes the copy, so its dispatch loads the tag from
-  the cell itself; in Halo's interpreter (`research/experiments/halo-bench/
-  RESULTS.md`, "Value width, handles and native dispatch inspected first",
-  on branch claude/halo-slice1) `AddRR` still copies both 16-byte `Value`
-  operands from the register file to stack temporaries (`ldr q0/q1;
-  stp q0, q1, [sp, #0x70]`) and reads tag and payload back from the stack.
-  The change: read the tag and payload fields from the matched place itself
-  when the scrutinee is a place, instead of a copy. Validate on Halo's `AddRR`
-  machine code and its fib and numeric-loop timings. Reopen with Halo's
-  minimal witness.
+- **Halo's `AddRR` arm copies its `Value` operands to the stack before
+  testing their tags, for a reason not yet attributed.** In Halo's
+  interpreter (worktree of branch claude/halo-slice1, `lib/halo/vm/
+  dispatch.wf` arm `AddRR` inlining `instruction_add_rr` from
+  `lib/halo/vm/handlers.wf`), the split arm copies both 16-byte operands
+  from the register file to stack temporaries (`ldr q0/q1; stp q0, q1,
+  [sp, #0x70]`) and reads tag and payload back from the stack. Two
+  standalone witnesses of the same `match` shapes (a nested `match` on
+  `regs^.inner[b]`, and `let` bindings handed to an out-of-line slow path)
+  read the tag from the slot itself, so the cause lies in the surrounding
+  `run` (eight parameters, an inlined handler, a large live set, or the
+  `Step` value the arms build), not in the `match` lowering alone. Impact:
+  two stores and two dependent reloads on Halo's hottest arm. The change:
+  reduce `run` until the copy disappears, then fix the lowering that causes
+  it. Validate on `run.body.arm.20`'s machine code and Halo's fib timing.
+  Reopen when Halo's dispatch is next measured.
 - **An enum's tag is an `i32` whatever its variant count.** Halo's `Cell`
   (a tag, three `u8` and one `u32` payload) has a 12-byte stride where a
   one-byte tag would pack it into 8; an interpreter's code array is then a
