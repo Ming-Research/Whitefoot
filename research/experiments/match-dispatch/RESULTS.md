@@ -564,6 +564,47 @@ before this one gave +1.9%, within its 2% spread, which is why the
 fifteen-launch run decides; two `/usr/bin/time -l` launches of each v2g
 build gave cycles within 0.1% of each other.
 
+### v2h, an accumulator register
+
+The interpreter function takes a `u64` parameter `acc`, carried by every
+tail call; the split lowering keeps it in a register (318 arms taking 16 of
+the 24 integer argument registers, `--dispatch-ledger`). Operations gain
+forms that leave their result in `acc` instead of slot `d` (`I32AddD`), take
+an operand from it (`I32AddA`, `I32StoreV`, `BrIfC`), or both
+(`I32AddAD`): 125 forms of the i32 arithmetic, comparisons, loads and
+stores, the compare-and-branch operations, `BrIf`, `BrUnless` and `Select`.
+When the translator emits an operation that pops the temporary the
+operation emitted just before it wrote, with no label between (the test
+the compare and address fusions use), and both have such forms, the
+earlier one leaves its result in `acc` and the later one reads it there.
+The operand stack's discipline gives that temporary no other reader; a
+result that `local.set` or `local.tee` retargeted to a local keeps its
+store. A form keeps its operation's fields, a field read from `acc`
+holding 65535, which is never a slot, so the compare and address fusions
+and the patching of forward branches carry it. Silverfir-nano's
+interpreter keeps such values in an accumulator register the same way. In
+v2g's profile 202 million of the 506 million dispatches read the slot the
+dispatch before them wrote, locals included. Predicted before measuring:
+the same dispatch count, 4-6% fewer instructions, 3-6% fewer cycles and a
+score 3-6% higher; criterion: adopt if the median score rises at least 2%.
+Dispatches: 506,088,440, of which 134.8 million leave their result in
+`acc`. Both builds compiled by the compiler with stack-box pinning and
+active-term closures; seven alternating launches
+([run-wasm-v2h.tsv](run-wasm-v2h.tsv)), every launch with correct CRCs,
+and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2g | 2805.0 | 0.8% | 10,649,237,559 | 2,287,685,521 |
+| v2h | 3016.6 | 4.1% | 9,715,057,852 | 2,126,003,548 |
+
+The score rises 7.5%, above the prediction and the criterion, with every
+v2h launch faster than every v2g launch; instructions fall 8.8% and cycles
+7.1%. In the same binary the `I32Add` arm is 19 instructions to its
+indirect branch, `I32AddA` 16 and `I32AddAD` 14: a form reading `acc`
+drops its operand's index load and slot load, and a form writing it drops
+its destination's index load, address and store.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which

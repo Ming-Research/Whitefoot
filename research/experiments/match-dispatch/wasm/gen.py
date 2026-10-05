@@ -11,7 +11,9 @@ interpreter also counts its dispatches and prints the count on standard
 error when _start returns, for attributing a change to the dispatch count;
 with --profile it counts each operation kind, in the order --names prints.
 With --inline each handler's body is written into its arm, except a body
-that delivers a value from a match, which stays a helper call.
+that delivers a value from a match, which stays a helper call. The forms
+that pass a value to the next operation in the interpreter function's acc
+parameter (the ACC table) are always written into their arms.
 
     python3 gen.py interp.wf [--count | --profile] [--inline]
     whitefootc interp.wf -o wasm-interp
@@ -212,14 +214,14 @@ FRAME = "  requires fp + 65536_u64 <= stack^.inner.len;"
 KEEPS = "  ensures stack^.inner.len == entry(stack)^.inner.len;"
 
 
-def tail(pc, ind):
+def tail(pc, ind, acc="acc"):
     p = " " * ind
-    return [f"{p}return musttail run({ARGS}, pc: {pc}, fp: fp);"]
+    return [f"{p}return musttail run({ARGS}, pc: {pc}, fp: fp, acc: {acc});"]
 
 
-def advance(ind):
+def advance(ind, acc="acc"):
     p = " " * ind
-    return [f"{p}let next = pc + 1_u64;", f"{p}if next < n {{"] + tail("next", ind + 2) + [f"{p}}}"]
+    return [f"{p}let next = pc + 1_u64;", f"{p}if next < n {{"] + tail("next", ind + 2, acc) + [f"{p}}}"]
 
 
 def decode(var, word, ty):
@@ -322,6 +324,20 @@ def load_arm(name, nbytes, signed, out, indexed=False):
     address = slot("a", "a") + (slot("b", "b") if indexed else []) + ["let aw = stack^.inner[at];"]
     address += indexed_address(nbytes) if indexed else memory_address(nbytes)
     b = address + ["if lim <= mem^.inner.len {"]
+    inner = load_value(nbytes, signed, out)
+    inner += slot("d", "d") + ["set stack^.inner[dt] = zw;", "return True();"]
+    b += ["  " + l for l in inner] + ["}", "return False();"]
+    HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
+    pat, arg = ("b: bv, ", "b: bv^, ") if indexed else ("", "")
+    o = [f"    {name}(d: dv, a: av, {pat}o: ov) => {{",
+         f"      let ok = {fn}(stack: stack, mem: mem, fp: fp, d: dv^, a: av^, {arg}offset: ov^);", "      if ok {"]
+    o += advance(8)
+    o += ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
+    return o
+
+
+def load_value(nbytes, signed, out):
+    """The lines of a load reading nbytes from ea and binding the slot word zw."""
     inner = []
     for i in range(nbytes):
         if i == 0:
@@ -353,15 +369,7 @@ def load_arm(name, nbytes, signed, out, indexed=False):
             inner.append("let zw = reinterpret::<i64, u64>(wv);")
     else:
         inner.append("let zw = v;" if acc == "u64" else f"let zw = cvt::<{acc}, u64>(v);")
-    inner += slot("d", "d") + ["set stack^.inner[dt] = zw;", "return True();"]
-    b += ["  " + l for l in inner] + ["}", "return False();"]
-    HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
-    pat, arg = ("b: bv, ", "b: bv^, ") if indexed else ("", "")
-    o = [f"    {name}(d: dv, a: av, {pat}o: ov) => {{",
-         f"      let ok = {fn}(stack: stack, mem: mem, fp: fp, d: dv^, a: av^, {arg}offset: ov^);", "      if ok {"]
-    o += advance(8)
-    o += ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
-    return o
+    return inner
 
 
 def store_arm(name, nbytes, indexed=False):
@@ -372,16 +380,7 @@ def store_arm(name, nbytes, indexed=False):
     address = slot("a", "a") + (slot("b", "b") if indexed else []) + slot("v", "v") + ["let aw = stack^.inner[at];", "let vw = stack^.inner[vt];"]
     address += indexed_address(nbytes) if indexed else memory_address(nbytes)
     b = address + ["if lim <= mem^.inner.len {"]
-    inner = []
-    for i in range(nbytes):
-        if i == 0:
-            inner.append("let b0 = cvt.wrap::<u64, u8>(vw);")
-            inner.append("set mem^.inner[ea] = b0;")
-        else:
-            inner.append(f"let r{i} = ishr.wrap(vw, {8 * i}_u32);")
-            inner.append(f"let b{i} = cvt.wrap::<u64, u8>(r{i});")
-            inner.append(f"let e{i} = ea + {i}_u64;")
-            inner.append(f"set mem^.inner[e{i}] = b{i};")
+    inner = store_value(nbytes)
     inner.append("return True();")
     b += ["  " + l for l in inner] + ["}", "return False();"]
     HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
@@ -392,6 +391,21 @@ def store_arm(name, nbytes, indexed=False):
     o += ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
     return o
 
+
+
+def store_value(nbytes):
+    """The lines of a store writing the low nbytes of vw at ea."""
+    inner = []
+    for i in range(nbytes):
+        if i == 0:
+            inner.append("let b0 = cvt.wrap::<u64, u8>(vw);")
+            inner.append("set mem^.inner[ea] = b0;")
+        else:
+            inner.append(f"let r{i} = ishr.wrap(vw, {8 * i}_u32);")
+            inner.append(f"let b{i} = cvt.wrap::<u64, u8>(r{i});")
+            inner.append(f"let e{i} = ea + {i}_u64;")
+            inner.append(f"set mem^.inner[e{i}] = b{i};")
+    return inner
 
 
 def fused_arm(name, op, sign):
@@ -408,6 +422,204 @@ def fused_arm(name, op, sign):
          "      if next < n {"] + tail("next", 8) + ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
     return o
 
+
+
+# ---- the accumulator ------------------------------------------------------
+# A value that the operation just before its single consumer computed into a
+# temporary passes in the interpreter function's acc parameter instead of a
+# frame slot. A form's letters name what moves: D its result goes to acc
+# only, A (B, V, C) its a (b, v, c) operand comes from acc. Every form keeps
+# its base operation's fields, so the compare and address fusions and the
+# patching of forward branches carry a form; the field a form reads from acc
+# holds the sentinel 65535, never a slot.
+ACC = {}
+for nm in ["I32Add", "I32Mul", "I32And", "I32Or", "I32Xor"]:
+    ACC[nm] = ["A", "D", "AD"]
+for nm in ["I32Sub", "I32Shl", "I32ShrU", "I32ShrS", "I32GtS"]:
+    ACC[nm] = ["A", "B", "D", "AD", "BD"]
+for nm in ["I32Eq", "I32Ne", "I32Eqz", "BrI32Eq", "BrI32Ne"]:
+    ACC[nm] = ["A"]
+for nm in ["LtS", "LtU", "GtU", "LeS", "LeU", "GeS", "GeU"]:
+    ACC["I32" + nm] = ["A", "B"]
+for nm in ["LtS", "LtU", "GtS", "GtU", "LeS", "LeU", "GeS", "GeU"]:
+    ACC["BrI32" + nm] = ["A", "B"]
+for nm in ["I32Extend8S", "I32Extend16S"]:
+    ACC[nm] = ["A", "D", "AD"]
+for nm in ["I32Load", "I32Load8U", "I32Load8S", "I32Load16U", "I32Load16S"]:
+    ACC[nm] = ["A", "D", "AD"]
+    ACC[nm + "Ix"] = ["A", "D", "AD"]
+for nm in ["I32Store", "I32Store8", "I32Store16"]:
+    ACC[nm] = ["A", "V"]
+    ACC[nm + "Ix"] = ["A"]
+ACC["BrIf"] = ["C"]
+ACC["BrUnless"] = ["C"]
+ACC["Select"] = ["C", "D", "CD"]
+# Operations whose a and b may trade places: a b operand from acc becomes
+# the A form with the operands swapped (an indexed address is a + b).
+SWAPS = {"I32Add", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Eq", "I32Ne", "BrI32Eq", "BrI32Ne",
+         "I32LoadIx", "I32Load8UIx", "I32Load8SIx", "I32Load16UIx", "I32Load16SIx",
+         "I32StoreIx", "I32Store8Ix", "I32Store16Ix"}
+# Branches take acc only through the sentinel the translator records for
+# them, since a forward branch is rebuilt when its target is known.
+BRANCHES = {"BrIf", "BrUnless"} | {"BrI32" + nm for _, nm, _, _ in FUSED}
+FIELD = {"A": "a", "B": "b", "V": "v", "C": "c"}
+SENT = "65535_u16"
+
+
+def acc_inputs(name):
+    return [l for l in "ABVC" if l in ACC[name]]
+
+
+def word(var, field, letter, form):
+    """Binds {var}w to the operand in field, from acc when the form reads it there."""
+    if letter in form:
+        return [f"let {var}w = acc;"]
+    return slot(var, f"{field}^") + [f"let {var}w = stack^.inner[{var}t];"]
+
+
+def result(form, ind):
+    """Stores zw in slot d, unless the form leaves it in acc, and advances."""
+    p = " " * ind
+    if "D" in form:
+        return advance(ind, "zw")
+    return [p + l for l in slot("d", "dv^") + ["set stack^.inner[dt] = zw;"]] + advance(ind)
+
+
+def acc_numeric_arm(name, ins, out, lines, form, fields):
+    binds = ", ".join(f"{f}: {f}v" for f in fields)
+    b = word("x", "av", "A", form) + decode("x", "xw", ins[0])
+    if len(ins) == 2:
+        b += word("y", "bv", "B", form) + decode("y", "yw", ins[1])
+    b += lines
+    b += (["let zw = 0_u64;", "if z {", "  set zw = 1_u64;", "}"] if out == "bool" else encode(out))
+    o = [f"    {name}{form}({binds}) => {{"] + ["      " + l for l in b] + result(form, 6)
+    return o + ["      return trap(code: 1_u32, pc: pc);", "    }"]
+
+
+def acc_load_arm(name, nbytes, signed, out, form, indexed):
+    pat = "b: bv, " if indexed else ""
+    b = ["let offset = ov^;"] + word("a", "av", "A", form)
+    if indexed:
+        b += slot("b", "bv^") + indexed_address(nbytes)
+    else:
+        b += memory_address(nbytes)
+    o = [f"    {name}{form}(d: dv, a: av, {pat}o: ov) => {{"] + ["      " + l for l in b]
+    o += ["      if lim <= mem^.inner.len {"] + ["        " + l for l in load_value(nbytes, signed, out)]
+    o += result(form, 8) + ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
+    return o
+
+
+def acc_store_arm(name, nbytes, form, indexed):
+    pat = "b: bv, " if indexed else ""
+    b = ["let offset = ov^;"] + word("a", "av", "A", form)
+    if indexed:
+        b += slot("b", "bv^")
+    b += word("v", "vv", "V", form)
+    b += indexed_address(nbytes) if indexed else memory_address(nbytes)
+    o = [f"    {name}{form}(a: av, {pat}v: vv, o: ov) => {{"] + ["      " + l for l in b]
+    o += ["      if lim <= mem^.inner.len {"] + ["        " + l for l in store_value(nbytes)]
+    o += advance(8) + ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
+    return o
+
+
+def acc_fused_arm(name, op, sign, form):
+    ty = sign + "32"
+    b = word("x", "av", "A", form) + decode("x", "xw", ty) + word("y", "bv", "B", form) + decode("y", "yw", ty)
+    b += [f"let taken = x {op} y;", "let next = pc + 1_u64;", "if taken {", "  set next = cvt::<u32, u64>(tv^);", "}"]
+    o = [f"    {name}{form}(a: av, b: bv, t: tv) => {{"] + ["      " + l for l in b]
+    return o + ["      if next < n {"] + tail("next", 8) + ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
+
+
+def acc_control_arms():
+    o = []
+    for name, test in [("BrIf", "!="), ("BrUnless", "==")]:
+        o += [f"    {name}C(t: tv, c: cv) => {{", "      let next = pc + 1_u64;", f"      if acc {test} 0_u64 {{",
+              "        set next = cvt::<u32, u64>(tv^);", "      }", "      if next < n {"] + tail("next", 8)
+        o += ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
+    for form in ACC["Select"]:
+        b = word("c", "cv", "C", form) + ["let pick = bv^;", "if cw != 0_u64 {", "  set pick = av^;", "}",
+                                          "let si = cvt::<u16, u64>(pick);"]
+        if "D" in form:
+            b += ["let st = fp + si;", "let zw = stack^.inner[st];"]
+            end = advance(6, "zw")
+        else:
+            b += ["let di = cvt::<u16, u64>(dv^);", "move_slot(stack: stack, fp: fp, s: si, d: di);"]
+            end = advance(6)
+        o += [f"    Select{form}(d: dv, a: av, b: bv, c: cv) => {{"] + ["      " + l for l in b] + end
+        o += ["      return trap(code: 1_u32, pc: pc);", "    }"]
+    return o
+
+
+def acc_functions(fields_of):
+    """The translator's view of the forms: acc_norm turns an operation with
+    the sentinel in a field into the form reading acc there; acc_input
+    turns one reading slot s into that form; acc_dest gives the form
+    leaving the result in acc; has_sentinel finds a sentinel no form took."""
+    w = []
+    w.append("fn acc_norm(op: Op) -> o: Op pure {")
+    w.append('  doc "The form of op reading acc where a field holds the sentinel 65535, or op itself.";')
+    w.append("  match op {")
+    for name, fields in fields_of:
+        if name not in ACC:
+            w += [f"    {name}(..) => {{", "      return op;", "    }"]
+            continue
+        binds = ", ".join(f"{f}: x_{f}" for f in fields)
+        w.append(f"    {name}({binds}) => {{")
+        for letter in acc_inputs(name):
+            f = FIELD[letter]
+            inits = ", ".join(f"{g}: x_{g}" for g in fields)
+            w += [f"      if x_{f} == {SENT} {{", f"        let o = Op::{name}{letter}({inits});", "        return o;", "      }"]
+        if name in SWAPS:
+            inits = ", ".join({"a": "a: x_b", "b": "b: x_a"}.get(g, f"{g}: x_{g}") for g in fields)
+            w += [f"      if x_b == {SENT} {{", f"        let o = Op::{name}A({inits});", "        return o;", "      }"]
+        w += ["      return op;", "    }"]
+    w += ["  }", "}", ""]
+    w.append("fn acc_input(op: Op, s: u16) -> found: Option<Op> pure {")
+    w.append('  doc "The form of op taking the operand it reads from slot s from acc instead, or None.";')
+    w.append("  match op {")
+    for name, fields in fields_of:
+        if name not in ACC or name in BRANCHES:
+            w += [f"    {name}(..) => {{", "      return None<Op>();", "    }"]
+            continue
+        binds = ", ".join(f"{f}: x_{f}" for f in fields)
+        w.append(f"    {name}({binds}) => {{")
+        reads = [FIELD[l] for l in acc_inputs(name)] + (["b"] if name in SWAPS else [])
+        for f in reads:
+            inits = ", ".join((f"{g}: {SENT}" if g == f else f"{g}: x_{g}") for g in fields)
+            w += [f"      if x_{f} == s {{", f"        let o = Op::{name}({inits});", "        let n = acc_norm(op: o);",
+                  "        return Some<Op>(value: n);", "      }"]
+        w += ["      return None<Op>();", "    }"]
+    w += ["  }", "}", ""]
+    w.append("fn acc_dest(op: Op) -> found: Option<Op> pure {")
+    w.append('  doc "The form of op leaving its result in acc instead of slot d, or None.";')
+    w.append("  match op {")
+    for name, fields in fields_of:
+        base, form = name, ""
+        for b in ACC:
+            for f in ACC[b]:
+                if name == b + f:
+                    base, form = b, f
+        target = form + "D"
+        if base in ACC and "D" not in form and target in ACC[base]:
+            binds = ", ".join(f"{f}: x_{f}" for f in fields)
+            w += [f"    {name}({binds}) => {{", f"      let o = Op::{base}{target}({binds});", "      return Some<Op>(value: o);", "    }"]
+        else:
+            w += [f"    {name}(..) => {{", "      return None<Op>();", "    }"]
+    w += ["  }", "}", ""]
+    w.append("fn has_sentinel(op: Op) -> yes: Bool pure {")
+    w.append('  doc "Whether an operation reading only slots holds the sentinel where it reads one.";')
+    w.append("  match op {")
+    for name, fields in fields_of:
+        if name not in ACC:
+            w += [f"    {name}(..) => {{", "      return False();", "    }"]
+            continue
+        binds = ", ".join(f"{f}: x_{f}" for f in fields)
+        w.append(f"    {name}({binds}) => {{")
+        for f in [FIELD[l] for l in acc_inputs(name)] + (["b"] if name in SWAPS else []):
+            w += [f"      if x_{f} == {SENT} {{", "        return True();", "      }"]
+        w += ["      return False();", "    }"]
+    w += ["  }", "}", ""]
+    return w
 
 
 def inline_helpers(arms, helpers):
@@ -487,7 +699,7 @@ def inline_helpers(arms, helpers):
 def count_dispatches(program):
     """The --count variant: a counter cell passed to the interpreter function
     and incremented at every dispatch, printed when _start returns."""
-    sig = ("globals: &Box<Slots<u64>>, pc: u64, fp: u64) -> r: Outcome reads(code), reads(funcs), "
+    sig = ("globals: &Box<Slots<u64>>, pc: u64, fp: u64, acc: u64) -> r: Outcome reads(code), reads(funcs), "
            "reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {")
     assert sig in program
     program = program.replace(sig, sig.replace("pc: u64,", "counter: &Box<Array<u64>>, pc: u64,")
@@ -497,8 +709,8 @@ def count_dispatches(program):
                               "  let n = code^.inner.len;\n  if 0_u64 < counter^.inner.len {\n"
                               "    let seen = counter^.inner[0_u64];\n"
                               "    set counter^.inner[0_u64] = seen +wrap 1_u64;\n  }\n  match code^.inner[pc] {")
-    program = program.replace("globals: &globals, pc: pc, fp: fp);",
-                              "globals: &globals, counter: &counter, pc: pc, fp: fp);")
+    program = program.replace("globals: &globals, pc: pc, fp: fp, acc: 0_u64);",
+                              "globals: &globals, counter: &counter, pc: pc, fp: fp, acc: 0_u64);")
     program = program.replace("  let max_pages = info.max_pages;\n  loop @drive {",
                               "  let max_pages = info.max_pages;\n"
                               "  let counter = box_array_filled::<u64>(count: 1_u64, value: 0_u64);\n  loop @drive {")
@@ -606,6 +818,11 @@ for sub, name, *_ in FC:
 for code, nm, _, _ in FUSED:
     w(f"  BrI32{nm}(a: u16, b: u16, t: u32);")
     variants.append((f"BrI32{nm}", ["a", "b", "t"], False))
+declared = {line.strip().split("(")[0]: line.strip()[len(line.strip().split("(")[0]):] for line in out[1:]}
+for name, fields, dest in list(variants):
+    for form in ACC.get(name, []):
+        w(f"  {name}{form}{declared[name]}")
+        variants.append((name + form, fields, dest and "D" not in form))
 w("}")
 w("")
 
@@ -707,8 +924,8 @@ w("fn add_operands(op: Op) -> (found: Bool, a: u16, b: u16) pure {")
 w('  doc "An i32.add\'s operand slots, found false for any other operation.";')
 w("  match op {")
 for name, fields, dest in variants:
-    if name == "I32Add":
-        w("    I32Add(d: x_d, a: x_a, b: x_b) => {")
+    if name in ("I32Add", "I32AddA"):
+        w(f"    {name}(d: x_d, a: x_a, b: x_b) => {{")
         w("      let yes = True();")
         w("      return yes, x_a, x_b;")
         w("    }")
@@ -726,6 +943,9 @@ w('  doc "An i32 comparison\'s opcode and operand slots, 0x45 for eqz, or zero f
 w("  match op {")
 compares = {f"I32{nm}": c for c, nm, _, _ in FUSED}
 compares["I32Eqz"] = 0x45
+for name in list(compares):
+    for form in ACC.get(name, []):
+        compares[name + form] = compares[name]
 for name, fields, dest in variants:
     if name in compares:
         binds = ", ".join(f"{f}: x_{f}" for f in fields)
@@ -754,16 +974,18 @@ w('  doc "The branch to t taken when comparison code holds of slots a and b: eqz
 for c, nm, _, _ in FUSED:
     w(f"  if code == {c}_u64 {{")
     w(f"    let o = Op::BrI32{nm}(a: a, b: b, t: t);")
-    w("    return o;")
+    w("    return acc_norm(op: o);")
     w("  }")
 w("  if code == 69_u64 {")
 w("    let o = Op::BrUnless(t: t, c: a);")
-w("    return o;")
+w("    return acc_norm(op: o);")
 w("  }")
 w("  let o = Op::BrIf(t: t, c: a);")
-w("  return o;")
+w("  return acc_norm(op: o);")
 w("}")
 w("")
+for line in acc_functions([(name, fields) for name, fields, _ in variants]):
+    w(line)
 
 OPS = "\n".join(out).strip("\n")
 
@@ -784,6 +1006,21 @@ for sub, name, ins, outty, lines in FC:
     arms += numeric_arm(name, ins, outty, lines)
 for code, nm, op, sign in FUSED:
     arms += fused_arm(f"BrI32{nm}", op, sign)
+for code, name, nbytes, signed, outty in LOADS:
+    for suffix, indexed in [("", False), ("Ix", True)]:
+        for form in ACC.get(name + suffix, []):
+            arms += acc_load_arm(name + suffix, nbytes, signed, outty, form, indexed)
+for code, name, nbytes in STORES:
+    for suffix, indexed in [("", False), ("Ix", True)]:
+        for form in ACC.get(name + suffix, []):
+            arms += acc_store_arm(name + suffix, nbytes, form, indexed)
+for code, name, ins, outty, lines in N:
+    for form in ACC.get(name, []):
+        arms += acc_numeric_arm(name, ins, outty, lines, form, ["d", "a", "b"] if len(ins) == 2 else ["d", "a"])
+for code, nm, op, sign in FUSED:
+    for form in ACC.get(f"BrI32{nm}", []):
+        arms += acc_fused_arm(f"BrI32{nm}", op, sign, form)
+arms += acc_control_arms()
 if "--inline" in sys.argv:
     arms, kept = inline_helpers(arms, HELPERS)
     import re as _re
