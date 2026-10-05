@@ -1,0 +1,17 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "a|2|c|4"
+    },
+    {
+      "type": "bulk",
+      "bytes": "2,c"
+    },
+    {
+      "type": "bulk",
+      "bytes": ""
+    }
+  ]
+}

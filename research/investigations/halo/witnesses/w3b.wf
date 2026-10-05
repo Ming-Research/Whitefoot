@@ -1,0 +1,28 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Code {
+  a_ops: Box<Slots<u64>>;
+  frame: u64;
+  invariant frame_cap(code): code.frame <= 250_u64;
+  invariant nonempty(code): code.a_ops.inner.len >= 1_u64;
+}
+
+fn step(code: &Code, frame: u64, regs: &Box<Slots<u64>>, base: u64) -> r: u64 reads(code), reads(regs) contract {
+  requires base + frame <= regs^.inner.len;
+  requires forall ok(i in 0_u64..code^.a_ops.inner.len): code^.a_ops.inner[i] < frame;
+} {
+  let total = 0_u64;
+  let n = code^.a_ops.inner.len;
+  for (pc in 0_u64..n) {
+    let a = code^.a_ops.inner[pc];
+    let at = base + a;
+    let v = regs^.inner[at];
+    set total = total +wrap v;
+  }
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

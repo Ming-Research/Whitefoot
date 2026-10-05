@@ -1,0 +1,29 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "integer",
+      "value": 15
+    },
+    {
+      "type": "integer",
+      "value": 19
+    },
+    {
+      "type": "integer",
+      "value": 240
+    },
+    {
+      "type": "integer",
+      "value": -2147483648
+    },
+    {
+      "type": "integer",
+      "value": 7
+    },
+    {
+      "type": "integer",
+      "value": 5
+    }
+  ]
+}

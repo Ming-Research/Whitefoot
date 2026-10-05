@@ -1,0 +1,21 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "integer",
+      "value": 0
+    },
+    {
+      "type": "integer",
+      "value": 1
+    },
+    {
+      "type": "integer",
+      "value": 0
+    },
+    {
+      "type": "nil",
+      "kind": "bulk"
+    }
+  ]
+}

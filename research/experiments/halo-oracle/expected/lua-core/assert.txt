@@ -1,0 +1,21 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "integer",
+      "value": 17
+    },
+    {
+      "type": "bulk",
+      "bytes": "kept"
+    },
+    {
+      "type": "nil",
+      "kind": "bulk"
+    },
+    {
+      "type": "bulk",
+      "bytes": "user_script:6: assertion-marker"
+    }
+  ]
+}

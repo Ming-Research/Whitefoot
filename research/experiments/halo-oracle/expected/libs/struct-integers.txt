@@ -1,0 +1,21 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "ff85ffff"
+    },
+    {
+      "type": "integer",
+      "value": -123
+    },
+    {
+      "type": "integer",
+      "value": 65535
+    },
+    {
+      "type": "integer",
+      "value": 5
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "a\nb\tc\r\\\""
+    },
+    {
+      "type": "bulk",
+      "bytes": "abc"
+    },
+    {
+      "type": "bulk",
+      "bytes": "literal\\ntext"
+    },
+    {
+      "type": "bulk",
+      "bytes": "\u0001\u00ff"
+    }
+  ]
+}

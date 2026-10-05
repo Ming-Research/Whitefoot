@@ -1,0 +1,13 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "integer",
+      "value": 25
+    },
+    {
+      "type": "integer",
+      "value": 31
+    }
+  ]
+}

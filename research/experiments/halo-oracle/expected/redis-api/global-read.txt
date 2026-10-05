@@ -1,0 +1,4 @@
+{
+  "type": "error",
+  "bytes": "ERR user_script:6: Script attempted to access nonexistent global variable 'halo_oracle_missing' script: 63c29e5ac482085acf187dbc971f53ec8f39f646, on @user_script:6."
+}

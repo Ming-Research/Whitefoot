@@ -1,0 +1,52 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer",
+          "value": 1
+        },
+        {
+          "type": "nil",
+          "kind": "bulk"
+        },
+        {
+          "type": "integer",
+          "value": 3
+        }
+      ]
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "integer",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "a"
+        },
+        {
+          "type": "bulk",
+          "bytes": "b"
+        }
+      ]
+    },
+    {
+      "type": "array",
+      "items": []
+    },
+    {
+      "type": "bulk",
+      "bytes": "tail"
+    }
+  ]
+}

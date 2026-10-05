@@ -1,0 +1,34 @@
+{
+  "type": "array",
+  "items": [
+    {
+      "type": "bulk",
+      "bytes": "abc"
+    },
+    {
+      "type": "array",
+      "items": [
+        {
+          "type": "bulk",
+          "bytes": "abc"
+        },
+        {
+          "type": "bulk",
+          "bytes": "123"
+        }
+      ]
+    },
+    {
+      "type": "bulk",
+      "bytes": "(a(b)c)"
+    },
+    {
+      "type": "bulk",
+      "bytes": "cat"
+    },
+    {
+      "type": "integer",
+      "value": 1
+    }
+  ]
+}
