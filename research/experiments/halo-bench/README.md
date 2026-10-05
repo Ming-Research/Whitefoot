@@ -20,7 +20,9 @@ and paired trees at each even depth. These files and the host serve P1;
 remove them when this baseline is superseded without needing reproduction.
 
 The native `host/` installs only numeric `print`, uses `pkg::embed` with a
-2 GiB logical live-heap limit, normal GC, and budget 2^64−1. Its stderr is
+2 GiB logical live-heap limit, normal GC, and budget 2^64−1 (the VM’s unlimited sentinel, which skips decrements).
+The budget-1000 comparison includes counter updates and embedding resume work;
+it does not isolate decrement cost. Its stderr is
 two numeric lines: suspension count and collection count. Any positional
 argument selects budget 1000 (the oracle corpus default). `run.py` drives
 existing native tools and validates their independently printed outputs;
@@ -37,7 +39,8 @@ Use `target/` for regenerable logs and profiler reports. Run the smallest
 sample first (`--kernels fib --runs 1`), then three interleaved pairs; inspect
 spread before choosing repetitions. The runner never launches a full matrix
 by default. Repeat the one/three calibration for each workload before a
-selected batch. If PUC is far above roughly two seconds, lower its `N` with
+selected batch. `--reference-only` sizes a PUC workload before risking a long
+Halo launch; those timings are calibration, not a checksum-verified baseline. If PUC is far above roughly two seconds, lower its `N` with
 `--scale`; the replacement applies to identical bytes on both engines and is
 recorded. `--budget realistic` measures Halo at 1000 instead of 2^64−1.
 

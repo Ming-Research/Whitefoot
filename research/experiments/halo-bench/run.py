@@ -64,6 +64,7 @@ def main():
     parser.add_argument('--runs', type=int, required=True)
     parser.add_argument('--scale', action='append', default=[], help='kernel=N; same replacement for both VMs')
     parser.add_argument('--budget', choices=('large', 'realistic'), default='large')
+    parser.add_argument('--reference-only', action='store_true', help='size PUC before selecting a slower workload scale')
     parser.add_argument('--profile', action='store_true', help='sample Halo; exclude these timings from baseline')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
@@ -85,7 +86,9 @@ def main():
                 host=platform.platform(), started_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
                 binary_sha256=digest(binary), lua_sha256=digest(lua),
                 compiler_sha256=digest(ROOT/'compiler/target/gate/whitefootc'),
-                budget=args.budget, profile=args.profile, scales=scales, kernels={}, launches=[])
+                host_sources_sha256={str(path.relative_to(HERE)): digest(path) for path in
+                                     (HERE/'modules.wfg', HERE/'host/module.wfm', HERE/'host/driver.wf')},
+                budget=args.budget, profile=args.profile, reference_only=args.reference_only, scales=scales, kernels={}, launches=[])
     failure = None
     try:
         for name in names:
@@ -97,7 +100,8 @@ def main():
             data['kernels'][name] = record
             for run in range(args.runs):
                 pair = {}
-                for engine in (('PUC', 'Halo') if run % 2 == 0 else ('Halo', 'PUC')):
+                order = ('PUC',) if args.reference_only else (('PUC', 'Halo') if run % 2 == 0 else ('Halo', 'PUC'))
+                for engine in order:
                     command = [str(lua), '-e', WRAPPER] if engine == 'PUC' else [str(binary)] + (['1000'] if args.budget == 'realistic' else [])
                     start = time.perf_counter()
                     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -122,12 +126,20 @@ def main():
                     data['launches'].append(item)
                     pair[engine] = item
                     print(f'{name} {run+1}/{args.runs} {engine}: {elapsed:.6f}s exit={process.returncode} checksum={stdout.strip()!r}', flush=True)
+                    if profiler is not None and (profiler.returncode or not report.exists()):
+                        raise RuntimeError(f'{name}: profiler exit={profiler.returncode}, report exists={report.exists()}')
                     if process.returncode:
                         raise RuntimeError(f'{name}/{engine}: exit={process.returncode}, stderr={stderr!r}')
+                if args.reference_only:
+                    record['pairs'].append(dict(puc=pair['PUC']['seconds'], checksum=pair['PUC']['stdout'].strip()))
+                    continue
                 suspends, collections = validate(pair['PUC']['stdout'].encode(), pair['Halo']['stdout'].encode(), pair['Halo']['stderr'].encode(), args.budget == 'realistic')
                 record['pairs'].append(dict(puc=pair['PUC']['seconds'], halo=pair['Halo']['seconds'],
                                             checksum=pair['PUC']['stdout'].strip(), suspends=suspends, collections=collections))
             record['puc'] = summary([x['puc'] for x in record['pairs']])
+            if args.reference_only:
+                print(f'{name}: PUC sizing={record["puc"]}', flush=True)
+                continue
             record['halo'] = summary([x['halo'] for x in record['pairs']])
             record['ratio'] = record['halo']['median'] / record['puc']['median']
             print(f'{name}: ratio={record["ratio"]:.3f} PUC={record["puc"]} Halo={record["halo"]}', flush=True)

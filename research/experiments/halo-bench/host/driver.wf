@@ -6,7 +6,10 @@ alias HandleFactory = std::io::HandleFactory;
 alias InputStream = std::io::InputStream;
 alias OutputStream = std::io::OutputStream;
 
-struct Output { bytes: Box<Slots<u8>>; printed: u64; }
+struct Output {
+  bytes: Box<Slots<u8>>;
+  printed: u64;
+}
 
 fn push(out: &Box<Slots<u8>>, byte: u8) -> r: unit writes(out) {
   let n = out^.inner.len;
@@ -15,7 +18,9 @@ fn push(out: &Box<Slots<u8>>, byte: u8) -> r: unit writes(out) {
       let cap = n +sat 4096_u64;
       grow(cell: out, capacity: cap);
     }
-    if out^.inner.len < out^.inner.cap { place_back(window: &out^.inner, value: byte); }
+    if out^.inner.len < out^.inner.cap {
+      place_back(window: &out^.inner, value: byte);
+    }
   }
   return unit;
 }
@@ -24,7 +29,9 @@ fn emit_number(out: &Box<Slots<u8>>, value: f64) -> r: unit writes(out) {
   let buffer = array_filled::<u8, 32>(value: 0_u8);
   let n = halo::number::format_number(value: value, out: &buffer[0_u64..32_u64]);
   for (i in 0_u64..n) {
-    if i < 32_u64 { push(out: out, byte: buffer[i]); }
+    if i < 32_u64 {
+      push(out: out, byte: buffer[i]);
+    }
   }
   push(out: out, byte: 10_u8);
   return unit;
@@ -42,17 +49,36 @@ fn print_call(env: &Output, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc:
           Num(n: number) => {
             emit_number(out: &env^.bytes, value: number);
             set env^.printed = env^.printed +sat 1_u64;
+            if func < stack^.inner.len {
+              set stack^.inner[func] = Value::Nil();
+            }
             return HostOutcome::Returned(count: 0_u64);
           }
-          Nil() => {} False() => {} True() => {} Str(..) => {} Tab(..) => {} Fun(..) => {} Builtin(..) => {}
+          Nil() => {
+          }
+          False() => {
+          }
+          True() => {
+          }
+          Str(..) => {
+          }
+          Tab(..) => {
+          }
+          Fun(..) => {
+          }
+          Builtin(..) => {
+          }
         }
       }
     }
   }
+  set vm^.error = Value::Num(n: -1.0_f64);
   return HostOutcome::Raised();
 }
 
-binding BenchHost : Host<Output> { call = print_call; }
+binding BenchHost : Host<Output> {
+  call = print_call;
+}
 
 fn read_source(factory: &HandleFactory, input: &InputStream, source: &Box<Slots<u8>>) -> success: Bool writes(factory), writes(input), writes(source) waits {
   doc "Read stdin in small host operations, preserving all binary bytes.";
@@ -108,8 +134,8 @@ fn write_bytes(factory: &HandleFactory, output: &OutputStream, bytes: &Box<Slots
   return False();
 }
 
-
 const print_name: Array<u8, 5> = "print";
+
 const chunk_name: Array<u8, 12> = "@user_script";
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
@@ -119,32 +145,48 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   let source = box_slots_new::<u8>(capacity: 0_u64);
   let read_ok = read_source(factory: &factory, input: &input, source: &source);
-  if bnot(read_ok) { return std::process::exit_status(code: 2_u8); }
+  if bnot(read_ok) {
+    return std::process::exit_status(code: 2_u8);
+  }
   let engine = halo::embed::new_engine(limit: 2147483648_u64);
   let bytes = box_slots_new::<u8>(capacity: 64_u64);
   let env = Output(bytes: move bytes, printed: 0_u64);
   let printer = Value::Builtin(id: 4096_u32);
   let installed = halo::embed::set_global(engine: &engine, name: &print_name[0_u64..5_u64], value: printer);
-  match installed { Err(..) => { return std::process::exit_status(code: 3_u8); } Ok(..) => {} }
+  match installed {
+    Err(..) => {
+      return std::process::exit_status(code: 3_u8);
+    }
+    Ok(..) => {
+    }
+  }
   let n = source.inner.len;
   let compiled = halo::embed::compile(engine: &engine, chunk_name: &chunk_name[0_u64..12_u64], source: &source.inner[0_u64..n]);
   let budget = 18446744073709551615_u64;
   let argc = std::text::args_count(args: &args);
-  if argc > 1_u64 { set budget = 1000_u64; }
+  if argc > 1_u64 {
+    set budget = 1000_u64;
+  }
   let suspends = 0_u64;
-  match compiled {
-    Err(..) => { return std::process::exit_status(code: 4_u8); }
+  match move compiled {
+    Err(..) => {
+      return std::process::exit_status(code: 4_u8);
+    }
     Ok(value: script) => {
       let outcome = halo::embed::start::<BenchHost>(engine: &engine, env: &env, script: script, budget: budget);
       loop {
         match outcome {
-          Done(..) => { break; }
+          Done(..) => {
+            break;
+          }
           Error() => {
             let message = halo::embed::format_error(engine: &engine, line: 0_u64);
             let wrote = write_bytes(factory: &factory, output: &errors, bytes: &message);
             return std::process::exit_status(code: 5_u8);
           }
-          HostStopped() => { return std::process::exit_status(code: 6_u8); }
+          HostStopped() => {
+            return std::process::exit_status(code: 6_u8);
+          }
           Budget() => {
             set suspends = suspends +sat 1_u64;
             set outcome = halo::embed::resume::<BenchHost>(engine: &engine, env: &env, budget: budget);
@@ -153,15 +195,25 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
       }
     }
   }
-  if env.printed != 1_u64 { return std::process::exit_status(code: 7_u8); }
+  if env.printed != 1_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
   let stats = box_slots_new::<u8>(capacity: 64_u64);
   let collections = halo::embed::collection_count(engine: &engine);
+  if suspends > 9007199254740992_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  if collections > 9007199254740992_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
   let suspend_number = cvt::<u64, f64>(suspends);
   let collection_number = cvt::<u64, f64>(collections);
   emit_number(out: &stats, value: suspend_number);
   emit_number(out: &stats, value: collection_number);
   let stats_ok = write_bytes(factory: &factory, output: &errors, bytes: &stats);
   let output_ok = write_bytes(factory: &factory, output: &output, bytes: &env.bytes);
-  if band(stats_ok, output_ok) { return std::process::exit_status(code: 0_u8); }
+  if band(stats_ok, output_ok) {
+    return std::process::exit_status(code: 0_u8);
+  }
   return std::process::exit_status(code: 8_u8);
 }
