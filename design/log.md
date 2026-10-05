@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 Shared maps and several objects per atomic statement
+
+Nodes: language/generics, language/waiting/shared-objects, language/waiting/shared-objects/keyed-tables, compiler/checker-facts, compiler/waiting-contexts/concurrent-map, compiler/waiting-contexts/state-locks
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, translated: the direction that a concurrent hash table is shared by nature and is created together with its guard ("KeyedTable is by nature a concurrent hash table, so it should by nature be shared"; "a type's behavior should not change with where it is put"); several objects per atomic statement ("why can atomic take only one? taking several at once is convenient"); Q11 ("agree"); Q14, Q15 (`ConcurrentHashMap`), Q18, Q20, Q23, Q24, Q25 and Q26 ("all agreed"); Q17, FLUSHALL by swapping in a fresh map ("obviously, map_clear is not needed at all"); Q21, a swap of two maps the statement holds ("swap inside atomic is fine, provided the atomic takes both"); after the handoff of PR #231 at `a5d7b3840`, Q28 ("agree", with TYPE-9 written simply), Q29 ("agree"), Q30 ("A"), Q31 ("agree") and Q32 ("Q32 agree").
+
+Summary: `ConcurrentHashMap<V>` replaces `KeyedTable<V>` and exists only as the state of a shared object, made with its guard by `shared_map_new`, so one type has one runtime regime; TYPE-9's placement table gives each restricted type one home, a reference takes no place, and a type argument is placed where its parameter lands in the instance. An atomic statement holds several objects, each header item a target (`&h`, `&h[k]`, `&h[ks]`); same-type targets may name one object, which the runtime holds once and the checker treats as possibly overlapping by the ordinary rules; locks follow a static order of types by identity, then object identity, with later groups taken at first use; FLUSHALL swaps in a fresh map. Amendment A's table bindings, header grants, provenance sets and local-table pending holds retire, and `map_clear`, `map_reserve` and a `shared struct` form are refused with their reasons in the nodes.
+
 ## 2026-10-05 Hoisted dispatch invariants, the frame past the registers and the ledger
 
 Nodes: compiler/match-dispatch-lowering
