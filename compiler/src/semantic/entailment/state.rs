@@ -3462,7 +3462,7 @@ impl FactState {
     }
 }
 
-fn ordered(left: TermId, right: TermId) -> (TermId, TermId) {
+pub(crate) fn ordered(left: TermId, right: TermId) -> (TermId, TermId) {
     if left <= right {
         (left, right)
     } else {
@@ -3569,13 +3569,16 @@ impl ClosedState {
         self.contradiction
     }
 
-    /// The closed L0 relations naming `term`, bounds in sorted `(left,
-    /// right)` order and then disequalities in sorted pair order, for bounded
-    /// `value_if` delivery. Opaque signed goals are deliberately absent. A
-    /// pair answered through Z is listed with its Z-path derivation; a pair
-    /// of two terms without a row is left out, since both its parents are
-    /// implicit bounds and delivery carries no relation whose derivation
-    /// depends on no established relation.
+    /// The closed L0 relations naming `term` among the closure's active
+    /// terms, bounds in sorted `(left, right)` order and then disequalities
+    /// in sorted pair order, for bounded `value_if` delivery. Opaque signed
+    /// goals are deliberately absent. A term without a row holds only its
+    /// bounds through Z: delivery leaves out a carrier bound the carrier's
+    /// Z bound and the other term's implicit bound imply, and the delivery
+    /// join evaluates a disequality such a bound implies through each image's
+    /// Z bound on the receiver, so neither is listed here; a carrier without
+    /// a row has its pairs with the active terms answered through Z, which
+    /// is the one way its relations reach the receiver.
     pub(crate) fn relations_mentioning(
         &self,
         term: TermId,
@@ -3584,15 +3587,10 @@ impl ClosedState {
         if self.all_derivable || !self.matrix.answers(term) {
             return Vec::new();
         }
-        let others = (0..self.matrix.term_count)
-            .map(|index| TermId(u32::try_from(index).expect("term index fits the u32 identity")));
         let active = self.matrix.slot(term).is_some();
         let mut bounds = Vec::new();
         let mut distinct = Vec::new();
-        for other in others {
-            if !active && self.matrix.slot(other).is_none() {
-                continue;
-            }
+        for &other in &self.matrix.slots {
             let pairs: &[(TermId, TermId)] = if other == term {
                 &[(term, term)]
             } else {
@@ -3603,23 +3601,31 @@ impl ClosedState {
                     bounds.push((Relation::Bound { left, right, bound }, proof));
                 }
             }
-            if other != term {
-                let pair = ordered(term, other);
-                if self.derives_distinct_pair(pair)
-                    && let Some(proof) = self.distinct_proof(pair, ledger)
-                {
-                    distinct.push((
-                        Relation::Distinct {
-                            left: pair.0,
-                            right: pair.1,
-                            difference: 0,
-                        },
-                        proof,
-                    ));
-                }
+            if other == term {
+                continue;
+            }
+            let pair = ordered(term, other);
+            let proof = if active {
+                self.distinct_proofs.get(&pair).copied()
+            } else if self.derives_distinct_pair(pair) {
+                self.distinct_proof(pair, ledger)
+            } else {
+                None
+            };
+            if let Some(proof) = proof {
+                distinct.push((
+                    Relation::Distinct {
+                        left: pair.0,
+                        right: pair.1,
+                        difference: 0,
+                    },
+                    proof,
+                ));
             }
         }
-        bounds.sort_by_key(|(relation, _)| relation.terms());
+        if active {
+            bounds.sort_by_key(|(relation, _)| relation.terms());
+        }
         distinct.sort_by_key(|(relation, _)| relation.terms());
         bounds.extend(distinct);
         bounds

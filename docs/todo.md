@@ -2470,9 +2470,9 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 8,662 lines, including a
+  `compiler/src/semantic/entailment/state.rs` has 8,668 lines, including a
   2,086-line inline test module, and the tests in
-  `compiler/src/semantic/tests/entailment.rs` have 11,049 lines and 158
+  `compiler/src/semantic/tests/entailment.rs` have 11,234 lines and 162
   tests. The flow itself is divided into its sub-contexts and component
   modules (`design/compiler/engine-components.md`), none over 3,200 lines.
   `state.rs` can move its test module to its own file and its dense-closure
@@ -3259,6 +3259,18 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **`make -C compiler format` depends on the host's stable rustfmt.**
+  `compiler/rust-toolchain.toml` pins only the `stable` channel, and
+  rustfmt 1.10.0 (2026-09-28, on the 14900K host) reformats five files that
+  rustfmt 1.9.0 (2026-09-01, on the M1) leaves alone: `driver/packages.rs`,
+  `driver/tests.rs`, `graph.rs`, `prelude.rs` and
+  `tests/conformance/adapter.rs`. Formatting is an authoring command, not a
+  gate, so no check fails, but an author on the newer toolchain must revert
+  unrelated hunks by hand. The change: pin the channel to a dated release, or
+  reformat once with the newer rustfmt when every host has it. Validate with
+  `cargo fmt --all -- --check` clean on both hosts. Reopen when a formatting
+  diff next lands in an unrelated change.
 
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on
