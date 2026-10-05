@@ -870,3 +870,36 @@ rows, after source hashes, native/compiler/report hashes and source equality
 at handoff. Only this review/result record changed after the reviewed
 revision; the measured implementation remains unchanged. Full `make check`
 and CI are unverified as stated above.
+
+## C2/C3 profile-directed bounded experiment
+
+Criteria fixed before measurement against the C1 source at
+`dc39d44d9811d65f92fc4262c7b7f5f8359a1812`: C2 is kept only if both fib(30)
+and loop(100,000,000) improve by at least 10%; C3 is kept only if each
+additional pinned local improves both numeric kernels by at least 5%.
+Improvement is `1 - median(after) / median(before)` from six alternating
+same-source full-LTO pairs. Measure all seven existing kernels (binary-trees
+depth 14), preserving independent PUC checksums and native collection counts.
+The median of three uncached `--graph lib/halo/modules.wfg --check-modules`
+runs may be at most 1.25 times C1's 241 s median (301.25 s). This is whole
+graph wall time, not an isolated vm stage. Size each command with one run
+and inspect three-run spread before selecting six pairs.
+
+First re-profile fib and integer-table on the C1 binary, with one sizing
+profile then three profiles, using the previously sized fib(34) attribution
+count. Profiles choose which candidate to try first; if frame work or table
+access is indicated instead, record that alternative's criterion before
+implementing or measuring it. Profile occupancy alone does not select a
+change. Stack slots remain authoritative at every safepoint and slow path.
+The unchanged oracle must pass all 240 comparisons at budgets 1, 7 and
+1000 in ordinary and GC-stress modes, and the local halo-gc witnesses and
+root omission controls must remain discriminating. No compiler, specification,
+or expected reply changes are in scope.
+
+Structural assessment: use the existing C1 callback-free boundary for any
+hot-path trial, preserving shared slow execution and collector enumeration.
+Assess a profile-selected frame/table alternative in its current owner
+before implementation. Generated binaries, profiles and logs belong in the
+existing ignored benchmark `target/`; retained observations belong in this
+experiment and remain only while the comparison needs reproduction. Work
+stays local: no network, Cargo, PR or push.
