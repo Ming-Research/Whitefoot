@@ -3824,7 +3824,6 @@ fn instruction_set_global_wide<interface Host<E>>(code: &Box<Slots<Cell>>, const
   return Step::Error();
 }
 
-// A fast miss leaves the instruction for its full handler.
 struct FastCursor {
   pc: u64;
   handled: Bool;
