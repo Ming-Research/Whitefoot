@@ -1447,3 +1447,37 @@ Final git diff --check passes (exit 0). The implementing agent rechecks
 current candidate/source/binary hashes, oracle input identity and each
 six-pair median and guard against the retained observations; all agree.
 All commits remain local and the final library is the measured candidate.
+
+
+## Bounded Lua call/return experiment
+
+### Call-path criterion recorded before implementation
+
+Task base: `8f69de69544fdc302f0defd216d791699532d95e`. Attribute fib(30)
+from Halo and Lua 5.1.5 source and a scratch counter build before selecting
+one smallest supported call/return trial. Keep only if fib improves at least
+10%, no other kernel regresses beyond noise, the vm module check-time median
+is at most 1.25 times the before median (the preceding measurements were
+about 241–251 s), ordinary and GC-stress oracle comparisons each pass
+240/240, and the Halo GC root witnesses still fail when their roots are
+removed. Any failed gate reverts the implementation; results remain.
+
+Use six alternating before/candidate full-LTO pairs per kernel, fib(30),
+binary-trees depth 14, other original counts. Improvement is
+`1 - median(candidate) / median(before)`. A regression exceeds noise if
+its median loss exceeds the larger before/candidate relative min–max range
+in the selected six pairs. Retain all selected launches. First size with
+one pair and three warm pairs. Size the vm check with one run, then choose
+repetition from its spread and distance to 1.25. Size oracle/root commands
+with a single relevant case before complete batches. Build time is separate
+from execution time. Every heavy command is a direct host-lock wrapper;
+exit 75 means wait and retry that same command.
+
+No compiler, specification, conformance, network, Cargo, push or PR actions.
+Temporary counter sources, executables and logs use the existing ignored
+benchmark target, serve only this attribution and its controls, and are
+removed after retaining reproducible observations. A retained evidence JSON
+in this experiment owns raw launches and counter input/output until this
+comparison is superseded. Any kept representation or dispatch choice belongs
+only in the Halo tree, provisionally pending the owner ruling. No approval
+log is inferred from the experiment instruction.
