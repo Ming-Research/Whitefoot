@@ -996,3 +996,80 @@ clock steps, with single rounds from 0.92 to 1.23; none fell below 1.00. The
 head is not slower than the measured binary on these tests, so the suite's
 results do not overstate it; whether it is faster is not established at this
 resolution.
+
+### Single-key commands against `cea9188d4`, after the shared-state redesign
+
+**The method.** The comparison is `io-bench.yml`'s `compare-firn` job on the
+14900K runner (Hyper-V VM, 32 vCPUs). It uses `redis-bench.sh compare` with
+one redis-benchmark process per client CPU, from #236. The inputs are:
+
+- revisions `base=cea9188d4 base-twin=cea9188d4 main=<main> hot=<head>`;
+- 1 and 4 server CPUs;
+- depth 16, 3 interleaved passes of 5 seconds.
+
+The twin measures the base image again, as a noise control. Its ratio stayed
+within ±2 to 3% at 4 server CPUs and ±4 to 5% at one. A choice between two
+builds of one test used 9 interleaved pairs instead, on the same host with
+the same client. Each pair:
+
+- starts the server with `WF_DRIVERS=4 taskset -c 0-3`;
+- for `RPOP` of a list holding elements, first runs `LPUSH` of 40M requests,
+  as 16 `taskset -c N redis-benchmark -c 3 -P 16 -r 100000 -d 3 -q` processes
+  on CPUs 4 to 19;
+- measures 20M requests the same way, reading the rate from wall time and
+  the server's CPU from `/proc/<pid>/stat`;
+- for `RPOP` of an emptied list, skips the `LPUSH`.
+
+The comparison's own `RPOP` pops an emptied list for about a fifth of its
+requests, since its sizes come from each test's own rate: 32.1M `RPOP`s
+against 26.1M `LPUSH`es at 4 CPUs.
+
+**Where the head stands.** At `aaac60010` (run 37283029440), 4 server CPUs,
+the head's rate against `cea9188d4`:
+
+| Test | Ratio |
+|---|---|
+| `ZADD` | 1.072 |
+| `LPUSH` | 1.071 |
+| `MSET` | 1.041 |
+| `SADD` | 1.024 |
+| `GET` | 1.010 |
+| `LRANGE_100` | 1.005 |
+| `HSET` | 1.003 |
+| `INCR` | 1.002 |
+| `SET` | 1.001 |
+| `RPOP` | 0.982 |
+
+At 16 server CPUs, `ZADD` measured 941,000 a second against Dragonfly's
+935,000 (median of 3 passes, `redis-bench.sh scale`).
+
+**`RPOP` of one list on four drivers.** Over 9 pairs, the head measured
+0.987 of `cea9188d4` (sd 0.007). An emptied list measured 0.997, and one
+driver is level. The loss came with #208, whose first commit that builds
+firn already shows it. Building `cea9188d4` with the head's concurrent map
+or with its completion bridge does not reproduce it. An instrumented build
+held the entry about 180 cycles in both, and the lock passed between
+drivers on 10.3 and 10.8 of every 100 takes.
+
+Work outside the statement costs about four times as much on a key four
+drivers share: about 130 ns more per request outside the statement cost 130
+ns at one driver and 520 ns at four.
+
+These changes, each against the head before it over 9 pairs, did not
+improve it:
+
+| Change | Ratio |
+|---|---|
+| Matching the entry in a helper, so the frame keeps no copy of the slot | 0.998 |
+| `RPOP` tested first in dispatch | 0.991 |
+| The entry lock split by readers | 0.992 |
+| The old push's element allocation | 0.993 |
+
+Two waits for a held cell were also worse. Rereading the cell after each
+pause took the rate from 5.85M to about 4.0M. Waits starting at 32 or 64
+pauses measured 5.74M and 5.84M against 5.83M.
+
+What remains is spread over the request path in pieces of 1 to 2 ns, below
+the ±1% that code placement alone moves a build. The VM has no hardware
+counters, so the next step is an instruction and cache-miss comparison on
+bare-metal Linux.

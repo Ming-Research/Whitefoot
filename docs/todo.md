@@ -691,8 +691,9 @@ rarely insert at the same place.
   it remove: firn's `run_pop` copies its 72-byte entry slot into the frame
   to match on the tag (`lower_match` loads a borrowed scrutinee whole). The
   copy costs nothing measurable: moving the match into a helper removed it
-  and `RPOP` measured 0.998 over 9 pairs. Giving every slot its own
-  allocation made `RPOP` 3% slower in three runs. Match a borrowed
+  and `RPOP` measured 0.998 over 9 pairs, and giving every slot its own
+  allocation did not make it faster
+  ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)). Match a borrowed
   scrutinee's tag through its address when a measured path pays for the
   copy.
 
@@ -1151,20 +1152,16 @@ rarely insert at the same place.
   rates on few cores become a goal, or with the next change to the
   completion wait.
 
-- **`ZADD` is held near a million a second by one key's critical section.**
-  firn answered 907,000 to 1,127,000 a second at every server CPU count on
-  the 14900K, 0.88 of Dragonfly at 2 and 0.95 at 16
-  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
-  For a member already held, `add_ranked` (`apps/firn/commands/sorted.wf`)
-  copies the member twice, descends the order twice to remove and put it,
-  and hashes it again to store the score, inside the one key's statement.
-  The change: reuse the removed rank's member, store the score through the
-  first lookup, and profile what remains. The same session's rerun of the
-  branch with bounded waits (`9d1d5dfcd`, reported in PR #202's comments)
-  answered `ZADD` about 10% lower at 4 and 8 server CPUs (1,011,000 against
-  1,127,000 at 4, two of its three passes lower), so the profile should
-  also say what a waiting statement's patience counting costs on one hot
-  key. Validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
+- **`ZADD` on one key may lose about 10% to the bounded waits' patience
+  counting.** The branch with bounded waits (`9d1d5dfcd`, reported in PR
+  #202's comments) answered `ZADD` about 10% lower at 4 and 8 server CPUs
+  (1,011,000 against 1,127,000 at 4, two of its three passes lower). Since
+  then `add_ranked` (`apps/firn/commands/sorted.wf`) changes a held member's
+  score in one probe and moves it without copies, and firn's `ZADD` at 16
+  server CPUs measured 941,000 a second against Dragonfly's 935,000
+  ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)).
+  Profile what a waiting statement's patience counting costs on one hot key,
+  and validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
   CPUs. Reopen with firn's next performance work.
 
 - **A statement that holds a table whole takes turns by ticket.** A block
@@ -1218,26 +1215,27 @@ rarely insert at the same place.
   The cause is unattributed: the host had no `perf`. Validate by a profile
   of both on four drivers. Reopen with firn's next performance work.
 
+- **firn's `execute` routes by a hand-balanced tree of name codes.**
+  `apps/firn/commands/dispatch.wf` compares each command's packed name code
+  with `<` and `==` against about 116 `code_*` constants, whose numeric order
+  the source does not show, and repeats the four-line admission check at
+  every leaf. A command placed out of order is unreachable and answers
+  "unknown command" with no error from the compiler. The tree routes every
+  command as the `if` chain before it did, checked by walking each leaf's
+  path conditions. Generate the tree and its constants from one command
+  table, or add a test that sends every command name and refuses "unknown
+  command". Reopen before the next command is added to dispatch.
+
 - **firn answers about 1.3% fewer `RPOP`s of one list on four drivers than
-  `cea9188d4`.** Over 9 interleaved pairs on the 14900K VM (4 server CPUs,
-  16 client processes, a list holding elements), the head measured 0.987
-  of `cea9188d4`; an emptied list's `RPOP` and one driver are level. The
-  loss came with #208, whose first commit that builds firn already has it.
-  Building `cea9188d4` with the head's concurrent map or its completion
-  bridge does not reproduce it. The entry is held about 180 cycles in both,
-  and the lock passes between drivers on 10.3 and 10.8 of every 100 takes.
-  Each of these changed nothing: removing the frame's slot copy, testing
-  `RPOP` first in dispatch, splitting the entry lock by readers, the old
-  push allocation, polling or longer waits for a held cell, and a
-  fence-free keyed mark, which `membarrier`'s registration made worse
-  ([concurrent map](../research/investigations/concurrent-map/DESIGN.md#a-keyed-statements-mark-without-a-fence-tried-and-withdrawn)).
-  Work outside the statement costs about four times as much on a key four
-  drivers share: 130 ns more per request at one driver cost 520 ns at
-  four. The remaining difference is spread over the request path in pieces
-  of 1 to 2 ns, below the ±1% that code placement alone moves a build, and
-  the VM has no hardware counters. Compare one request's instructions and
-  cache misses on bare-metal Linux with `perf stat` and `perf c2c`. Reopen
-  when that host is available.
+  `cea9188d4`.** The difference came with #208. It shows only on a list four
+  drivers share that holds elements, and it is not in the concurrent map,
+  the completion bridge or the time the entry is held. What remains is
+  spread over the request path below the resolution of a build's code
+  placement ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)).
+  Compare one request's instructions and cache misses against
+  `cea9188d4` on bare-metal Linux with `perf stat` and `perf c2c`; a
+  difference there names the code to change. Reopen when that host is
+  available.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
