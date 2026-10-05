@@ -512,6 +512,35 @@ with correct CRCs, and one `/usr/bin/time -l` launch each:
 
 The score rises 3.4%, meeting the criterion.
 
+### Frame slots addressed from a derived pointer
+
+The interpreter's handlers address frame slots as `stack^.inner[fp + k]`,
+so each split part formed `fp + k` for every slot it touched and the stack
+block's first element again. Branch `claude/derived-addresses` addresses an
+element whose offset is a checked sum, computed in the part, of a value the
+part has from its entry (here `fp`) and another value, from a pointer to
+element `fp` that the part's prelude derives once
+(compiler/match-dispatch-lowering). The `I32Add` arm's machine code goes
+from seventeen instructions to fifteen: its three `fp + k` additions are
+gone, and the block's first element and `fp`'s scaling fold into two
+additions at the top of the arm. Criterion, set before the v2g
+measurement: adopt if the median score rises at least 2%. Each build
+compiled by the compiler with stack-box pinning and active-term closures,
+without and with the change; every launch with correct CRCs:
+
+| Interpreter | Launches | Median score, without | with | Instructions, without | with | Cycles, without | with |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| v2e ([run](run-derived-v2e.tsv)) | 7 | 2567.4 | 2594.0 | 11,230,506,405 | 10,654,763,608 | 2,423,045,295 | 2,414,653,203 |
+| v2g ([run](run-derived-v2g.tsv)) | 15 | 2762.4 | 2820.9 | 10,649,927,045 | 10,072,938,212 | 2,291,486,095 | 2,235,379,256 |
+
+The instructions fall 5.1% and 5.4%. On v2e the cycles and score do not
+move beyond the spread (score +1.0%, cycles -0.3%); on v2g, whose folded
+loads and stores each address two or three slots, the cycles fall 2.4% and
+the score rises 2.1%, meeting the criterion. A seven-launch v2g run
+before this one gave +1.9%, within its 2% spread, which is why the
+fifteen-launch run decides; two `/usr/bin/time -l` launches of each v2g
+build gave cycles within 0.1% of each other.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which
