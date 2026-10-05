@@ -1200,7 +1200,8 @@ fn a_derived_pointer_past_the_frame_is_never_used_and_other_offsets_keep_their_f
     // derive the pointer to element 100 although the frame has three
     // elements; the accesses under the bounds tests never run, and the
     // program returns 77. `Peek`'s offset is a loaded value plus 1, with no
-    // operand from the part's entry, so it is addressed from the block.
+    // operand from the part's entry, so it is addressed from the block, as
+    // is `Halt`'s constant element 2.
     let module = emit(GUARDED_FRAME.as_bytes());
     assert_split(&module, "wf_framed", 3);
     for (arm, derives) in [(0, true), (1, false), (2, true)] {
@@ -1213,11 +1214,20 @@ fn a_derived_pointer_past_the_frame_is_never_used_and_other_offsets_keep_their_f
             derives,
             "arm {arm} derives a pointer exactly when its offset adds to fp: {part}"
         );
-        assert_eq!(
-            body.contains("getelementptr inbounds { i64, [0 x i64] }"),
-            !derives,
-            "arm {arm} addresses the block itself exactly when it derives nothing: {part}"
-        );
+        if derives {
+            assert!(
+                body.contains("= getelementptr inbounds i64, ptr %wf.derived."),
+                "arm {arm} addresses its fp slot from the derived pointer: {part}"
+            );
+        } else {
+            assert!(
+                body.lines().any(|line| {
+                    line.contains("getelementptr inbounds { i64, [0 x i64] }")
+                        && line.contains(", i32 1, i64 %")
+                }),
+                "arm {arm} addresses its loaded offset from the block: {part}"
+            );
+        }
     }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
