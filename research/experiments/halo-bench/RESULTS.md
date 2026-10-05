@@ -1101,3 +1101,34 @@ Static validation on the reverted library and complete evidence: the
 invariants, specification archives, translation, prose, guidance, compiler
 source-size records and tree form. `git diff --check` exits 0. The revision
 to be reviewed below preserves the C1 library byte for byte.
+
+### Independent review
+
+A separate read-only reviewer, configured as GPT-6.1-sol, reviewed
+`dc39d44d9811d65f92fc4262c7b7f5f8359a1812..51e58fc8ce90bec5d5e52896ab5cc33b82336066`
+under A, D, R, M and V, plus C for the archived experimental source delta.
+T was not applicable: no final specification, formal test or gate change.
+Publication was excluded by the task's explicit instruction. The reviewer
+read the full diff, experimental frame delta, evidence, all Halo tree nodes
+and the design-tree procedure, and independently checked library/input
+equality, baseline and candidate identities, medians and launch conditions,
+all eight excerpt hashes and sampled groups, oracle/count equality, root
+omission failures, check times and prior criterion commits. It ran no green
+suite and edited no file. Findings: **none within scope**. G1–G3 and DC1–DC4
+found no missing or contradictory retained decision: the trial preserves the
+existing frame owner and stack roots, is reverted, and C2/C3 are explicitly
+unmeasured. No decision card, other tree edit or specification rule delta
+is introduced by this task.
+
+The implementing agent rechecked all 71 baseline and 111 candidate identity
+hashes against their recorded source revisions (compiler against its actual
+bytes), and confirmed no task diff under lib, design, spec, tests, compiler
+or .github. The final prose-only review record adds no new implementation
+claim or change of direction.
+
+Final `make static`, after the review record, passes all seven stages in
+32.58 s (exit 0), within their macOS budgets. Active-owner contention returns
+75, waits, and retries this same command without overriding the lock.
+Final `git diff --check` passes (exit 0); the library and all design,
+specification, formal test, compiler and gate bytes remain unchanged from
+the task base. All task commits stay local.
