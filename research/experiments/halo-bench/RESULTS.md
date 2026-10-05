@@ -1481,3 +1481,69 @@ in this experiment owns raw launches and counter input/output until this
 comparison is superseded. Any kept representation or dispatch choice belongs
 only in the Halo tree, provisionally pending the owner ruling. No approval
 log is inferred from the experiment instruction.
+
+
+### Lua call attribution and structural assessment
+
+Lua's counter build selects the fib prototype by its line 2 definition,
+one parameter and four registers. fib(10) gives 177 calls/returns, 531 Nil
+stores and 177 result copies; fib(30) gives **2,692,537** calls/returns,
+**8,077,611** Nil stores and **2,692,537** result copies. These agree with
+`calls(n) = 2*F(n+1)-1`, an independent recursion-tree count. Both print the
+expected 55/832040. There are zero result fills and vararg adjustments.
+The full PUC run makes 2,692,537 stack checks, one stack growth and three
+CallInfo growths inside fib; the small run has zero stack growth and one
+CallInfo growth. Counts exclude the enclosing chunk and host calls.
+The counter reports `sizeof(CallInfo)=40`, `sizeof(TValue)=16`, and
+`sizeof(Proto)=120` on this ARM64 build. It links one instrumented ldo object
+with the supplied unmodified Lua objects/archive; it is not a timed baseline.
+
+Per fib invocation, the source paths perform:
+
+| Work | Halo before | PUC Lua 5.1.5 |
+|---|---|---|
+| Frame | 80 bytes, 11 named field initializations: func, base, return_pc, kbase, closure, nresults, activation, flags, varbase, varcount, frame_top; passed to push_frame and copied into frame storage; taken and passed to finish on return | 40 bytes, five new-frame writes: func, base, top, tailcalls, nresults; saves caller savedpc separately; savedpc is the sixth record field |
+| Function classification | Value to FuncView; iterator test; CJSON binding test | function tag, then Lua/C flag |
+| Closure/prototype validation | Three closure-bound and three live tests (iterator, CJSON, entry), two native-sentinel tests, one prototype-bound test; 16-byte Proto snapshot | Direct closure/prototype pointers, with no slab/live/index tests or whole Proto copy |
+| Stack/frame checks | Saturating base/room arithmetic, room sentinel, ensure_stack extent check for base+256; push_frame depth/capacity checks | luaD_checkstack for maxstack+numparams (5 slots); inc_ci capacity check |
+| Arguments | zero moves, zero missing-argument fills | zero moves, clamps top to parameter end |
+| Register initialization | three Nil Values, each source index guarded | three Nil tags, loop pointer bound |
+| Varargs/tail adjustment | zero moves; general entry branches on both flags | zero moves; branches on is_vararg; ordinary OP_CALL |
+| Return | close_upvalues, take 80-byte record; one 16-byte Value copy with source/destination bounds; protected/activation continuation checks | open-upvalue test, one TValue copy; result loop and hook checks, restores caller base/savedpc |
+
+Halo totals follow from these source operations and the independently counted
+recursion tree, not a Halo instrumentation build. These are source operations,
+not a claim that every field copy survives optimization or a cycle allocation.
+The retained native code reserves 464 bytes in enter_lua and 160 in push_frame;
+these are native helper storage, not Lua registers. Frame layout and transport
+are known, but their isolated runtime cost is still unmeasured. Startup stack
+growth differs: Halo reserves a 256-slot dispatch window, PUC requests five
+slots. No startup-growth count for Halo is claimed by the PUC counters.
+
+Avoidable without weakening checked conditions: classify ordinary live Lua
+closures once, prove their prototype exists once, and enter fixed-arity calls
+without transporting tail/vararg/native-path state. Frame transport might be
+reduced after a separate representation/continuation comparison. Copying the
+single result remains required when its source and destination differ;
+removing it outright would change behavior. Missing parameters and register
+initialization remain required, including their GC effects. PUC's pointer
+validity assumptions are not a reason to remove Halo handle checks.
+
+Selected single trial: a fixed-arity Lua entry helper called by ordinary
+instruction_call after its existing budget and collector safepoint. It
+qualifies the function Value, live closure, valid prototype and nonvararg
+status once; unsupported kinds use prepare unchanged. It retains room,
+stack extent and frame-depth checks, argument padding, all Frame fields,
+register clearing and the shared return path. This isolates ordinary-entry
+classification and native helper traffic against the current general path.
+The helper owns qualification plus fixed stack preparation; existing
+push_frame remains the frame-capacity owner and finish the result owner.
+A separate fast return path or smaller shared frame is viable, but would
+change another measured cost, so is deferred until this comparison decides
+whether ordinary entry alone meets the criterion. No public representation,
+interface, collector root or language rule changes are selected.
+
+Found during attribution: iterator classification and CJSON binding use the
+same no-prototype sentinel, and prepare tests iterator classification first.
+This pre-existing routing overlap is deferred in docs/todo.md; the trial
+qualifies only real prototypes and leaves both sentinel paths unchanged.

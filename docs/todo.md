@@ -2231,6 +2231,18 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **Halo iterator and CJSON closure routing share a sentinel.** Both
+  `library-pattern-api.wf::pattern_is_iterator` and
+  `library-cjson.wf::cjson_binding` select proto `no_handle`, while
+  `calls.wf::prepare` changes the view to a pattern builtin first.
+  Impact: a CJSON method closure can enter iterator handling before its native
+  binding is decoded. Change: distinguish these native closure payloads and
+  test extracted CJSON methods alongside gmatch iterators with independent
+  Lua replies. Reopen before changing native closure routing; the bounded
+  call-entry trial leaves sentinel paths unchanged. This source overlap
+  needs a minimal executable witness before selecting the repair.
+
+
 - **Halo F4 has no every-allocation reachability verifier.**
   The safepoint stress and four missing-root mutations in
   `research/experiments/halo-gc/RESULTS.md` distinguish selected root
