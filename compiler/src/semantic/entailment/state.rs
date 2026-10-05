@@ -6007,20 +6007,38 @@ fn closure_middle_terms(
     admit(ZERO, &mut active);
     // A term's bounds through zero: its stored zero cell where that is
     // tighter than its implicit bound. A stored zero cell no tighter than
-    // the implicit bound says nothing the implicit bound does not.
+    // the implicit bound says nothing the implicit bound does not. A zero
+    // cell whose proof depends on a postcondition call is not used: the
+    // ordinary layer, which removes such proofs, would otherwise lose a cell
+    // it implies, since a snapshot gives ordinary fallbacks only to the
+    // cells it stores. Without a ledger, as in the proof-free contradiction
+    // probe, which reads no ordinary layer, every stored zero cell is used.
     let mut structure = implicit_structure(terms);
+    let usable = |proof: DerivationId| {
+        ledger.is_none_or(|ledger| !ledger.depends_on_postcondition_call(proof))
+    };
     let upper = |term: TermId| {
         let implicit = structure.upper(term);
-        match (state.bounds.get(term, ZERO), implicit) {
-            (Some((stored, _)), Some(implicit)) => Some(stored.min(implicit)),
-            (stored, implicit) => stored.map(|(bound, _)| bound).or(implicit),
+        let stored = state
+            .bounds
+            .get(term, ZERO)
+            .filter(|(_, proof)| usable(*proof))
+            .map(|(bound, _)| bound);
+        match (stored, implicit) {
+            (Some(stored), Some(implicit)) => Some(stored.min(implicit)),
+            (stored, implicit) => stored.or(implicit),
         }
     };
     let lower = |term: TermId| {
         let implicit = structure.lower(term);
-        match (state.bounds.get(ZERO, term), implicit) {
-            (Some((stored, _)), Some(implicit)) => Some(stored.min(implicit)),
-            (stored, implicit) => stored.map(|(bound, _)| bound).or(implicit),
+        let stored = state
+            .bounds
+            .get(ZERO, term)
+            .filter(|(_, proof)| usable(*proof))
+            .map(|(bound, _)| bound);
+        match (stored, implicit) {
+            (Some(stored), Some(implicit)) => Some(stored.min(implicit)),
+            (stored, implicit) => stored.or(implicit),
         }
     };
     for (left, right, bound, proof) in state.bounds.cells() {
@@ -8702,6 +8720,36 @@ pub(crate) mod tests {
         let closed = close(&state, &terms, &goals, &mut ledger);
         assert!(!closed.derives_bound(measure, ZERO, 7));
         assert!(closed.derives_bound(measure, ZERO, 9));
+    }
+
+    /// `A - B <= 5` from the body is implied through zero by `A <= 5` from a
+    /// postcondition call and `B >= 0`, but the ordinary layer, without the
+    /// call, has only the body's cell; snapshots must keep it.
+    #[test]
+    fn a_cell_implied_through_a_postcondition_zero_cell_survives_snapshots() {
+        let mut terms = TermTable::new();
+        let mut place = |binding| {
+            terms.intern(TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                IntegerType::U8,
+            ))
+        };
+        let (a, b, c) = (place(0), place(1), place(2));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        let bound = |left, right, bound| Relation::Bound { left, right, bound };
+        let call = postcondition_call_proof(&mut ledger, bound(a, ZERO, 5));
+        state.establish_from_proof(&bound(a, ZERO, 5), call, &ledger);
+        state.establish(&bound(a, b, 5), &mut ledger, event);
+        materialize_closure_before_kill(&mut state, &terms, &goals, &mut ledger);
+        state.establish(&bound(c, ZERO, 9), &mut ledger, event);
+        materialize_closure_before_kill(&mut state, &terms, &goals, &mut ledger);
+        state.retain_non_postcondition_candidates(&ledger);
+        let closed = close(&state, &terms, &goals, &mut ledger);
+        assert!(closed.derives_bound(a, b, 5));
+        assert!(!closed.derives_bound(a, ZERO, 5));
     }
 
     fn postcondition_call_proof(ledger: &mut DerivationLedger, relation: Relation) -> DerivationId {

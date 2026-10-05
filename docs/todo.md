@@ -2416,8 +2416,9 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
-  1,729-line inline test module, and the tests in
+  `compiler/src/semantic/entailment/state.rs` has 9,223 lines, including a
+  1,901-line inline test module (the compile-speed work added its slot
+  layouts, dormant components and implicit structure), and the tests in
   `compiler/src/semantic/tests/entailment.rs` have 10,920 lines and 156
   tests. The flow itself is divided into its sub-contexts and component
   modules (`design/compiler/engine-components.md`), none over 3,200 lines.
@@ -2528,6 +2529,17 @@ rarely insert at the same place.
   differs from what the ownership judgment says the code touches.
 
 ## Open language questions
+
+- **A const argument of another integer type is accepted.** The checker
+  accepts `fn g<const m: u64>() -> r: u64 pure { return f::<m>(); }` for
+  `fn f<const n: u8>()`, and the reverse from `u8` to `u64`; [MSR-6] gives a
+  const generic its `gparam`'s exact type, but no rule found by reading says
+  whether an [FN-2] const argument must have the formal's exact type, fit it,
+  or be checked only at concrete instantiation. Symbolic summary reuse keys
+  renamed instances by each const parameter's written type, so this does not
+  affect it. Change: state the rule, then check it with a conformance case
+  either way. Found by the compile-speed review; reopen when a program passes
+  a const generic across integer types.
 
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.

@@ -2313,9 +2313,14 @@ impl<'unit> DeclarationInventory<'unit> {
 /// the kind of each argument, when every argument is a distinct symbolic
 /// parameter. Two instances of one class differ only by a one-to-one
 /// renaming of those parameters, so their bodies prove the same summaries.
+/// A declaration and, per argument, its kind and, for a const parameter,
+/// that parameter's written integer type.
+pub(super) type RenamingClass = (DeclarationId, Vec<(u8, Option<IntegerType>)>);
+
 pub(super) fn symbolic_renaming_class(
     signature: &FunctionSignature,
-) -> Option<(DeclarationId, Vec<u8>)> {
+    const_types: &HashMap<DeclarationId, IntegerType>,
+) -> Option<RenamingClass> {
     if signature.formal_parameter.is_some() || !signature.substitution.region_arguments().is_empty()
     {
         return None;
@@ -2323,12 +2328,16 @@ pub(super) fn symbolic_renaming_class(
     let mut kinds = Vec::with_capacity(signature.substitution.len());
     let mut arguments = Vec::with_capacity(signature.substitution.len());
     for (_, argument) in signature.substitution.bindings() {
+        // A const parameter's written type gives its symbolic value's range,
+        // which the analysis reads, so it is part of the class.
         let kind = match argument {
-            GenericArgument::Type(CheckedType::Generic(_)) => 0,
-            GenericArgument::Type(CheckedType::GenericInt(_)) => 1,
-            GenericArgument::Type(CheckedType::GenericFloat(_)) => 2,
-            GenericArgument::Const(CheckedConst::Parameter(_)) => 3,
-            GenericArgument::Function(super::behavior::FunctionArgument::Parameter(_)) => 4,
+            GenericArgument::Type(CheckedType::Generic(_)) => (0, None),
+            GenericArgument::Type(CheckedType::GenericInt(_)) => (1, None),
+            GenericArgument::Type(CheckedType::GenericFloat(_)) => (2, None),
+            GenericArgument::Const(CheckedConst::Parameter(declaration)) => {
+                (3, Some(*const_types.get(declaration)?))
+            }
+            GenericArgument::Function(super::behavior::FunctionArgument::Parameter(_)) => (4, None),
             _ => return None,
         };
         if arguments.contains(argument) {

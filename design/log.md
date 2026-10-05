@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 Cold compile speed: concurrent verdicts and analyses, reused renamed instances, narrower closures
+
+Nodes: compiler/incremental-closure, compiler/incremental-compilation, compiler/generic-validation-scope
+
+Owner-approved: In the session of 2026-10-05, written in Chinese: Q1, reusing a renamed symbolic instance's analysis ("Q1 agreed", translated); keeping the concurrency without a user-visible thread count ("keep the parallelism, do not expose WHITEFOOT_JOBS to users", translated); and, after the progress reports on PR #227 that listed these changes with their single-thread and four-thread measurements, "merge these optimizations into main once they are done" and "update the PR, then once CI is all green you can merge it yourself" (translated).
+
+Summary: An entry composition computes its module verdicts concurrently and an inventory analyzes one postcondition level's functions concurrently, under one worker budget and with no environment variable. A renamed symbolic instance takes the analysis of an instance of the same declaration, argument kinds and const parameter types. A fact state without a closure record closes from its remembered view; snapshots keep implicit-only proofs unwrapped; a closure computes rows only for terms a fact reaches through more than zero, reading every other term, and each dormant implicit component, through zero; matrices and stores are laid out over their own terms and the term table caches its implicit structure. Fresh-cache checks of Snowghost's `layout_oracle` went from 262 s to 77 s on one processor and to 34 s on four; measurements and refused alternatives are in [the compile-speed investigation](../research/investigations/compile-speed/DESIGN.md).
+
 ## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
 
 Nodes: compiler/verification

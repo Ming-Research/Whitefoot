@@ -247,6 +247,14 @@ before these criteria were written; their results below are the same runs.
    terms whose implicit bounds may have changed, rebuilding when a standing
    measure fact is replaced.
 
+9. **Indexed resolution passes.** The public-signature closure check finds
+   `public` writers in one pass over the terminals and published paths by
+   prefix lookup; a match binder finds its paired field through an index by
+   owner; each ensures clause takes its roles, variant fields, entry uses and
+   variant uses from groupings built in one pass. Routine fixes under
+   unchanged design; the serial composition phase of the `style_oracle`
+   check fell from 10.7 s to about 6 s in samples.
+
 Rejected alternatives:
 
 - Per-function concurrency first: the critical path is one function, not
@@ -296,7 +304,8 @@ after candidates 2, 3 and 4, and that of `layout_oracle` after candidate 4,
 the only one at which it was compared.
 
 Separating the two kinds of gain, a single-thread run of the final
-compiler (the thread count then forced to one) took 66.5 s for
+compiler (the thread count then forced to one through the `WHITEFOOT_JOBS`
+override that compiler had, since removed) took 66.5 s for
 `style_oracle` and 196.2 s for `layout_oracle`: the algorithmic candidates
 give 1.44x and 1.40x, and concurrency on four processors the rest (1.74x and
 2.13x).
@@ -325,12 +334,29 @@ this host in one run each:
 
 Concurrency inside the `pkg::vm` check, its dependencies' module verdicts
 and the analyses of one postcondition level (up to 148 functions in one level
-there, by a temporary count), gives 1.36x: 23.5 s pinned to one of the four
-processors with `taskset`, 17.2 s on all four.
+there, by an exploratory per-function timer patch not kept in the tree),
+gives 1.36x: 23.5 s pinned to one of the four processors with
+`taskset -c 0`, 17.2 s on all four.
 
 `library_builtin` now takes 0.34 s in each analysis. The generated function
 takes 0.19 s, 0.88 s and 5.2 s for 50, 100 and 200 arms, still superlinear.
 The LLVM of all five Snowghost entries stays byte-identical.
+
+With candidate 9 as well, each compiler pinned to one processor with
+`taskset -c 0` and then on all four, one run each on this host (seconds;
+the baseline cannot finish Halo's check, which exhausted 12 GB):
+
+| Check | baseline 1 / 4 | `c1d7d598` 1 / 4 | this branch 1 / 4 |
+|---|---:|---:|---:|
+| Halo `pkg::vm` | — | 43.7 / 35.9 | 18.2 / 15.8 |
+| `pkg::style` | 27.0 / 25.6 | 21.3 / 20.2 | 13.8 / 12.9 |
+| `style_oracle` entry | 102.9 / 101.8 | 47.5 / 33.0 | 30.2 / 20.2 |
+| `layout_oracle` entry | 261.7 / 262.1 | 141.7 / 66.9 | 76.7 / 34.3 |
+
+The baseline has no concurrency, so its one-processor column against this
+branch's gives the algorithmic gain alone: 3.4x for both entries and 2.0x for
+`pkg::style`; concurrency then adds 1.5x and 2.2x to the entries and little
+to a module check whose critical path is one module.
 
 ## Remaining costs
 

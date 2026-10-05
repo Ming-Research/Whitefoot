@@ -4,9 +4,8 @@
 
 use std::collections::HashMap;
 
-use super::generics::{summary_entailment, symbolic_renaming_class};
+use super::generics::{RenamingClass, summary_entailment, symbolic_renaming_class};
 use super::{CheckStop, CheckedFunctionInventory, Checker};
-use crate::DeclarationId;
 use crate::semantic::SemanticCompilerFailure;
 use crate::semantic::entailment::{
     EntailmentCallee, EntailmentContext, PostconditionSchedule, VerifiedPostconditionSummary,
@@ -32,19 +31,20 @@ impl Checker<'_, '_> {
         judged: Option<&[bool]>,
     ) -> Result<PostconditionSchedule, CheckStop> {
         let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
+        let const_parameter_types: HashMap<_, _> = self.types.const_generic_types().collect();
         let renaming_classes = (0..functions.len())
             .map(|index| {
                 judged
                     .filter(|judged| !judged[index])
                     .and_then(|_| self.types.signatures.get(index))
-                    .and_then(symbolic_renaming_class)
+                    .and_then(|signature| {
+                        symbolic_renaming_class(signature, &const_parameter_types)
+                    })
             })
             .collect::<Vec<_>>();
-        let mut renamed_analyses: HashMap<(DeclarationId, Vec<u8>), (usize, usize)> =
-            HashMap::new();
+        let mut renamed_analyses: HashMap<RenamingClass, (usize, usize)> = HashMap::new();
         self.analysis.renamed_summaries = vec![false; functions.len()];
         let contract_queries = self.analysis.contract_queries.clone();
-        let const_parameter_types = self.types.const_generic_types().collect();
         // [MOD-8] the concrete inventory's analyses may stand on receipts;
         // the symbolic validation of generic templates always runs afresh.
         let receipts = self
