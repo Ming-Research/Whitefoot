@@ -2527,7 +2527,10 @@ static void holds_across_maps(void) {
             sum += slot[0];
         wf_cmap_destroy(maps[m]);
     }
-    if (sum != atomic_load(&total) || atomic_load(&total) < COUNTERS * PAIR_COUNTS)
+    if (atomic_load(&total) < COUNTERS * PAIR_COUNTS)
+        fail("the counters ran fewer statements than their counts (counted, expected)", atomic_load(&total),
+             COUNTERS * PAIR_COUNTS);
+    if (sum != atomic_load(&total))
         fail("a change was lost across two maps (sum, counted)", sum, atomic_load(&total));
     set_patience(PATIENCE, PATIENCE);
 }
