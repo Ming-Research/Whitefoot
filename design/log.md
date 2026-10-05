@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 Delivery disequalities through Z evaluated at the join
+
+Nodes: compiler/checker-facts
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #235 at `b2d9af410`, which presented the delivery change as decision Q22: "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated).
+
+Summary: A value-initializer delivery image no longer stores the disequalities a constant carrier's Z bound implies with every registered term; the delivery join evaluates candidate disequalities through each image's view and delivers one only where edges bound the receiver strictly above and strictly below a term's range, the one case the joined Z bounds do not imply, including edges bounded on one side only. Materializing those disequalities gave each edge image a universe of every registered term and a cubic contradiction probe, which the decision's new Rejected item records; the inline-handler wasm interpreter's check fell from 310 s to 2.5 s with LLVM output unchanged, as [the delivery measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#delivery-disequalities-through-z) records (Q22).
+
 ## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
 
 Nodes: compiler/verification
