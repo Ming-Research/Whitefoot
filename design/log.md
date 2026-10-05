@@ -5,34 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
-## 2026-10-05 A box pinned across calls that cannot replace it; derived addresses refused
+## 2026-10-05 Dispatch pinning, checker closure scaling and delivery; cache pruning and derived addresses refused
 
-Nodes: compiler/match-dispatch-lowering
+Nodes: compiler/match-dispatch-lowering, compiler/incremental-compilation, compiler/incremental-closure, compiler/checker-facts
 
-Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #228 at `382e2b05e` and PR #233 at `312273610`, which presented the decisions on keeping a box pinned across calls (Q17) and on derived frame-slot addresses (Q21, recommending not to merge): "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated).
+Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff that presented decisions Q17-Q23 on PRs #228, #229, #232, #233 and #235 (heads `382e2b05e`, `357f343e4`, `ccb71f1ef`, `312273610` and `b2d9af410`): "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated), and then, asking for one combined PR: "just put all the content together, one PR, I'll look at it and merge if it is fine" (translated).
 
-Summary: A passed-through reference whose box the loop keeps stays pinned when the loop hands it to non-waiting callees whose every declared write lies below that box's content, each part handing such a callee a slot holding the hoisted projection, because such a callee cannot replace the box [EFF-1, EFF-5] and the stage-3 wasm interpreter otherwise reloaded the stack box's pointer on every dispatch; its removal raised the CoreMark score 3.8% (Q17). Addressing frame slots from a pointer each part derives at entry is refused for now: on the interpreter with an accumulator register it raised the score 0.9%, below its 2% criterion, and it reopens when another interpreter or an x86-64 measurement shows at least 2% (Q21). Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md).
-## 2026-10-05 Cache pruning refused
-
-Nodes: compiler/incremental-compilation
-
-Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #229 at `357f343e4`, which presented compiler-driven pruning of cache directories as decision Q18: "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated).
-
-Summary: The compiler does not prune a cache directory. The proposed pruning, removing other compiler identities' records and stale temporary files when a directory opens, is withdrawn and recorded under Rejected: a developer's local cache is the developer's to clean, and deleting files on a shared host is not the compiler's responsibility.
-## 2026-10-05 Closure matrices over each state's active terms
-
-Nodes: compiler/incremental-closure
-
-Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #232 at `ccb71f1ef`, which presented the active-term matrices as decision Q20 and the deferral of a pre-existing materialization gap as Q23: "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated).
-
-Summary: Selected bounds and closed views use dense matrices over each state's active terms, the terms holding a stored bound or disequality or an implicit fact against another non-Z term, and a term outside that set is answered through Z from its implicit bounds, because matrices over every registered term filled every cell with bounds composed through Z, so a `match` of N arms closed, materialized and joined a number of cells quadratic in N a number of times linear in N; a term with only its reflexive and Z bounds cannot shorten a path between two others, so the closure derives the same bounds (Q20). Measurements and the oracle are in [the incremental-closure record](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#active-term-matrices). The pre-existing gap, an ordinary fact weaker than its pair's call-dependent selection not materialized before a kill, stays deferred in `docs/todo.md` (Q23).
-## 2026-10-05 Delivery disequalities through Z evaluated at the join
-
-Nodes: compiler/checker-facts
-
-Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #235 at `b2d9af410`, which presented the delivery change as decision Q22: "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated).
-
-Summary: A value-initializer delivery image no longer stores the disequalities a constant carrier's Z bound implies with every registered term; the delivery join evaluates candidate disequalities through each image's view and delivers one only where edges bound the receiver strictly above and strictly below a term's range, the one case the joined Z bounds do not imply, including edges bounded on one side only. Materializing those disequalities gave each edge image a universe of every registered term and a cubic contradiction probe, which the decision's new Rejected item records; the inline-handler wasm interpreter's check fell from 310 s to 2.5 s with LLVM output unchanged, as [the delivery measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#delivery-disequalities-through-z) records (Q22).
+Summary: A passed-through reference whose box the loop keeps stays pinned when the loop hands it to non-waiting callees whose every declared write lies below that box's content, because such a callee cannot replace the box [EFF-1, EFF-5]; removing the stack box's per-dispatch reload raised the stage-3 wasm interpreter's CoreMark score 3.8% (Q17). Addressing frame slots from a pointer each split part derives at entry is refused for now: with an accumulator register it raised the score 0.9%, below its 2% criterion, and it reopens when another interpreter or an x86-64 measurement shows at least 2% (Q21). The compiler does not prune cache directories: a developer's local cache is the developer's to clean (Q18). Closure matrices index each state's active terms and answer the others through Z, so a `match` of N arms no longer closes a quadratic number of cells a linear number of times (Q20); a pre-existing materialization gap stays deferred in `docs/todo.md` (Q23). A value-initializer delivery evaluates through-Z disequalities at the join instead of storing them on every edge image, delivering one only where edges bound the receiver on opposite sides of a term's range; the inline-handler interpreter's check fell from 310 s to 2.5 s with LLVM output unchanged (Q22). Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md) and [the incremental-closure record](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md).
 
 ## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
 
