@@ -2366,12 +2366,17 @@ rarely insert at the same place.
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
   is 10-30% above the pointer form with every other mechanism equal
-  (E1 in `research/experiments/match-dispatch/RESULTS.md`). When every
-  use of a carried index addresses one array and the index changes only by
-  offsets and stores of checked values, the parts could carry the derived
-  address beside the index. Needs its own design and a falsifier; reopen
-  as the next dispatch-lowering change, the invariant-header work having
-  landed.
+  (E1 in `research/experiments/match-dispatch/RESULTS.md`). Frame slots
+  `regs[base + a]` are now addressed from a pointer each part derives at
+  entry (compiler/match-dispatch-lowering), but the stage-3 interpreter's
+  arms still form the next cell's address from `pc` (`add x3, x25, x8,
+  lsl #4`) and test it against the code length on every dispatch. When
+  every use of a carried index addresses one array and the index changes
+  only by offsets and stores of checked values, the parts could carry the
+  derived address beside the index. A sum computed in the dispatch header
+  and used in an arm, and elements of `Slots` windows and inline arrays,
+  are not derived either. Needs its own design and a falsifier; reopen as
+  the next dispatch-lowering change.
 
 - **Values kept in the frame past the registers are measured on one case
   only.** A split dispatch loop whose parts need more argument registers
