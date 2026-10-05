@@ -2328,15 +2328,6 @@ rarely insert at the same place.
 
 ## Interpreter dispatch lowering
 
-- **Build-time toolchain probes are not rerun when the toolchain changes.**
-  `compiler/build.rs` probes the assembler for the no-capture spelling and
-  for `preserve_none`, but declares no `rerun-if` dependency on the
-  assembler, so after a clang upgrade the recorded answers stay until the
-  build script reruns for another reason. A stale `preserve_none` answer
-  after a downgrade would emit a convention the assembler refuses. Track
-  the assembler's identity (its path and version output) as a rerun input.
-  Reopen when a host's clang changes under an existing build directory.
-
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
   is 10-30% above the pointer form with every other mechanism equal
@@ -2355,14 +2346,6 @@ rarely insert at the same place.
   twelve parameters on x86-64 or past eight under the C convention on
   arm64, comparing cycles with whole emission, and Halo's VM under the C
   convention. Reopen with the first consumer whose loop needs the frame.
-
-- **A `match` on a place copies the scrutinee into a frame slot.** The
-  emitter copies the matched value into a slot to read its tag while the
-  arms read their binders from the place itself. In one function the host
-  removes the copy; in a split loop it cost a store and a store-forwarded
-  load per dispatch until the slot became part-local. Reading the tag from
-  the place would remove the copy everywhere. Low priority; reopen if a
-  profile shows the copy outside split loops.
 
 - **Interpreter state is pinned only through the calling convention.** A
   split loop keeps its changing values in registers because every part
@@ -3185,17 +3168,6 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
-
-- **The local app-build cache never evicts.** Outside CI the corpus tests
-  build firn with the compiler's incremental cache under
-  `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`
-  in `compiler/tests/programs/support.rs`). Each new compiler binary adds
-  records beside the old ones, which no later build reads, and an
-  interrupted write leaves its `.partial` file, so the directory grows
-  until someone removes it. The change: drop records of other compiler
-  identities and stale partial files when the cache opens, or prune by age.
-  Validate with the directory's size staying flat across compiler rebuilds.
-  Reopen when the cache directory's growth is noticed on a developer host.
 
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on

@@ -67,6 +67,7 @@ pub const SPEC_SHA256_HEX: &str = "{hex}";
     let out = out.with_file_name("grammar_tables.rs");
     fs::write(&out, tables).unwrap_or_else(|error| panic!("write {}: {error}", out.display()));
 
+    watch_assembler();
     println!(
         "cargo::rustc-env=WHITEFOOT_NO_CAPTURE_ATTRIBUTE={}",
         no_capture_attribute()
@@ -100,18 +101,54 @@ fn preserve_none_supported() -> bool {
     {
         return false;
     }
-    // The assembler `whitefootc` hands its modules to (src/bin/whitefootc.rs).
-    let assembler = if env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows") {
-        "clang"
-    } else {
-        "/usr/bin/clang"
-    };
-    Command::new(assembler)
+    Command::new(assembler())
         .args(["-x", "ir", "-c", "-o"])
         .arg(Path::new(&directory).join("preserve_none_probe.o"))
         .arg(&probe)
         .output()
         .is_ok_and(|output| output.status.success())
+}
+
+/// The assembler `whitefootc` hands its modules to (`clang_executable` in
+/// src/bin/whitefootc.rs), which every probe below asks.
+fn assembler() -> &'static str {
+    if env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows") {
+        "clang"
+    } else {
+        "/usr/bin/clang"
+    }
+}
+
+/// Reruns this script when the assembler changes, so the probes answer for
+/// the toolchain `whitefootc` will run rather than for the one present when
+/// the build directory was first made. The file named, the file a symbolic
+/// link resolves to, and the `clang` in the directory the assembler reports
+/// installing from are watched: macOS's `/usr/bin/clang` is a stub that an
+/// update leaves untouched, while the tools it forwards to change. A
+/// bare name found on `PATH`, as on Windows, reruns when `PATH` changes.
+fn watch_assembler() {
+    let assembler = assembler();
+    let path = Path::new(assembler);
+    if path.is_absolute() {
+        println!("cargo::rerun-if-changed={assembler}");
+        if let Ok(resolved) = fs::canonicalize(path)
+            && resolved != path
+        {
+            println!("cargo::rerun-if-changed={}", resolved.display());
+        }
+    } else {
+        println!("cargo::rerun-if-env-changed=PATH");
+    }
+    if let Ok(output) = Command::new(assembler).arg("--version").output() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some(directory) = line.strip_prefix("InstalledDir: ") {
+                let installed = Path::new(directory.trim()).join("clang");
+                if installed.exists() {
+                    println!("cargo::rerun-if-changed={}", installed.display());
+                }
+            }
+        }
+    }
 }
 
 /// Which spelling of the no-capture parameter attribute the toolchain this
@@ -138,7 +175,7 @@ fn no_capture_attribute() -> &'static str {
     {
         return OLD;
     }
-    let accepted = Command::new(env::var("CC").as_deref().unwrap_or("clang"))
+    let accepted = Command::new(assembler())
         .args(["-x", "ir", "-c", "-o"])
         .arg(Path::new(&directory).join("captures_probe.o"))
         .arg(&probe)
