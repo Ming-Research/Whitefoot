@@ -2165,3 +2165,565 @@ Sort by top of stack, same collapsed (when >= 5):
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        6
         _xzm_free  (in libsystem_malloc.dylib)        5
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        5
+
+===== C1 re-profile: c23-profile-one-fib-0.sample.txt =====
+Analysis of sampling halo-c1 (pid 94402) every 1 millisecond
+Process:         halo-c1 [94402]
+Path:            /private/tmp/*/halo-c1
+Load Address:    0x104734000
+Identifier:      halo-c1
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [local pid]
+Target Type:     live task
+
+Date/Time:       2026-10-05 13:50:26.521 -0700
+Launch Time:     2026-10-05 13:50:26.481 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1031 Thread_172380343   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1031 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1031 wf__floor_run  (in halo-c1) + 604  [0x104734a18]
+    +     1031 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1031 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1031 Thread_172380346
+      1031 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1031 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1031 wf__floor_entry  (in halo-c1) + 32  [0x104734a48]
+            1031 wf__main_body  (in halo-c1) + 148  [0x104780af4]
+              409 wf_package.halo.vm.enter_lua  (in halo-c1) + 492,1020,...  [0x10474c270,0x10474c480,...]
+              174 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo-c1) + 128  [0x1047727cc]
+              ! 66 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1) + 0,28  [0x1047626b4,0x1047626d0]
+              ! 61 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 0,32  [0x10477076c,0x10477078c]
+              ! 41 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 0,28  [0x104766970,0x10476698c]
+              ! 6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 32  [0x1047701f8]
+              77 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 616,360,...  [0x1047709d4,0x1047708d4,...]
+              63 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1) + 184,52,...  [0x104760624,0x1047605a0,...]
+              61 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 512,620,...  [0x1047703d8,0x104770444,...]
+              58 wf_package.halo.vm.push_frame  (in halo-c1) + 292,256,...  [0x10475b114,0x10475b0f0,...]
+              43 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1) + 116,76,...  [0x104762728,0x104762700,...]
+              40 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 364  [0x1047708d8]
+              ! 40 wf_package.halo.vm.finish  (in halo-c1) + 112,156,...  [0x10474bd24,0x10474bd50,...]
+              29 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1) + 128,80,...  [0x10476e328,0x10476e2f8,...]
+              26 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 36,112,...  [0x104766994,0x1047669e0,...]
+              25 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1) + 112,180,...  [0x104767f10,0x104767f54,...]
+              19 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 288  [0x1047702f8]
+              ! 13 wf_package.halo.vm.enter_lua  (in halo-c1) + 28,12,...  [0x10474c0a0,0x10474c090,...]
+              ! 6 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1) + 32,24  [0x10476058c,0x104760584]
+              7 wf_package.halo.vm.enter_lua  (in halo-c1) + 1140  [0x10474c4f8]
+                7 wf_package.halo.vm.push_frame  (in halo-c1) + 32  [0x10475b010]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1031
+        wf_package.halo.vm.enter_lua  (in halo-c1)        422
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1)        138
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1)        109
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1)        69
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        67
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1)        67
+        wf_package.halo.vm.push_frame  (in halo-c1)        65
+        wf_package.halo.vm.finish  (in halo-c1)        40
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1)        29
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1)        25
+
+
+===== C1 re-profile: c23-profile-one-integer-table-0.sample.txt =====
+Analysis of sampling halo-c1 (pid 94411) every 1 millisecond
+Process:         halo-c1 [94411]
+Path:            /private/tmp/*/halo-c1
+Load Address:    0x10055c000
+Identifier:      halo-c1
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [local pid]
+Target Type:     live task
+
+Date/Time:       2026-10-05 13:50:28.131 -0700
+Launch Time:     2026-10-05 13:50:28.098 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    598 Thread_172380415   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 598 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   598 wf__floor_run  (in halo-c1) + 604  [0x10055ca18]
+    +     598 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       598 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    598 Thread_172380418
+      598 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        598 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          598 wf__floor_entry  (in halo-c1) + 32  [0x10055ca48]
+            598 wf__main_body  (in halo-c1) + 148  [0x1005a8af4]
+              196 wf_package.halo.heap.rehash  (in halo-c1) + 452,920,...  [0x100568f54,0x100569128,...]
+              115 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 644,988,...  [0x10058c970,0x10058cac8,...]
+              57 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 6020,808,...  [0x1005a58f8,0x1005a449c,...]
+              44 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo-c1) + 464,476,...  [0x10058bb2c,0x10058bb38,...]
+              44 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1) + 668,104,...  [0x100598ce0,0x100598aac,...]
+              41 wf_package.halo.heap.insert_parts  (in halo-c1) + 740,44,...  [0x100568d78,0x100568ac0,...]
+              22 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 112,180,...  [0x10058e9e0,0x10058ea24,...]
+              18 wf_package.halo.heap.table_set  (in halo-c1) + 276,440,...  [0x1005694d0,0x100569574,...]
+              16 wf_package.halo.vm.collect_if_due  (in halo-c1) + 1780  [0x100574c18]
+              ! 16 wf_package.halo.heap.gc_mark  (in halo-c1) + 28,16,...  [0x100567a30,0x100567a24,...]
+              12 wf_package.halo.vm.collect_if_due  (in halo-c1) + 1808,1764,...  [0x100574c34,0x100574c08,...]
+              12 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo-c1) + 128  [0x10059a7cc]
+              ! 12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1) + 32  [0x100598a64]
+              7 wf_package.halo.vm.raw_assign  (in halo-c1) + 60,76,...  [0x100582c00,0x100582c10,...]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 1000  [0x10058cad4]
+              ! 4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 32,24,...  [0x1005a4194,0x1005a418c,...]
+              3 wf_package.halo.vm.metamethod  (in halo-c1) + 368  [0x100582b8c]
+              3 wf_package.halo.vm.raw_assign  (in halo-c1) + 136  [0x100582c4c]
+              ! 3 wf_package.halo.heap.table_set  (in halo-c1) + 28,24  [0x1005693d8,0x1005693d4]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 4732  [0x1005a53f0]
+              ! 2 wf_package.halo.vm.raw_assign  (in halo-c1) + 24,32  [0x100582bdc,0x100582be4]
+              1 wf_package.halo.heap.rehash  (in halo-c1) + 1144  [0x100569208]
+              ! 1 wf_package.halo.heap.insert_parts  (in halo-c1) + 24  [0x100568aac]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 992  [0x1005a4554]
+                1 wf_package.halo.vm.metamethod  (in halo-c1) + 12  [0x100582a28]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        598
+        wf_package.halo.heap.rehash  (in halo-c1)        196
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1)        115
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1)        61
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1)        56
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo-c1)        44
+        wf_package.halo.heap.insert_parts  (in halo-c1)        42
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        22
+        wf_package.halo.heap.table_set  (in halo-c1)        21
+        wf_package.halo.heap.gc_mark  (in halo-c1)        16
+        wf_package.halo.vm.collect_if_due  (in halo-c1)        12
+        wf_package.halo.vm.raw_assign  (in halo-c1)        9
+
+
+===== C1 re-profile: c23-profile-three-fib-0.sample.txt =====
+Analysis of sampling halo-c1 (pid 94514) every 1 millisecond
+Process:         halo-c1 [94514]
+Path:            /private/tmp/*/halo-c1
+Load Address:    0x100920000
+Identifier:      halo-c1
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [local pid]
+Target Type:     live task
+
+Date/Time:       2026-10-05 13:50:49.438 -0700
+Launch Time:     2026-10-05 13:50:49.404 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1090 Thread_172381042   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1090 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1090 wf__floor_run  (in halo-c1) + 604  [0x100920a18]
+    +     1090 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1090 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1090 Thread_172381045
+      1090 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1090 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1090 wf__floor_entry  (in halo-c1) + 32  [0x100920a48]
+            1090 wf__main_body  (in halo-c1) + 148  [0x10096caf4]
+              453 wf_package.halo.vm.enter_lua  (in halo-c1) + 492,592,...  [0x100938270,0x1009382d4,...]
+              171 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo-c1) + 128  [0x10095e7cc]
+              ! 65 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1) + 0,28  [0x10094e6b4,0x10094e6d0]
+              ! 60 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 0,32  [0x10095c76c,0x10095c78c]
+              ! 33 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 0  [0x100952970]
+              ! 13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 32  [0x10095c1f8]
+              88 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 616,108,...  [0x10095c9d4,0x10095c7d8,...]
+              69 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 132,124,...  [0x10095c25c,0x10095c254,...]
+              64 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1) + 184,52,...  [0x10094c624,0x10094c5a0,...]
+              54 wf_package.halo.vm.push_frame  (in halo-c1) + 292,220,...  [0x100947114,0x1009470cc,...]
+              50 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 364  [0x10095c8d8]
+              ! 50 wf_package.halo.vm.finish  (in halo-c1) + 112,92,...  [0x100937d24,0x100937d10,...]
+              40 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1) + 128,184,...  [0x10095a328,0x10095a360,...]
+              39 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1) + 812,136,...  [0x10094e9e0,0x10094e73c,...]
+              29 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1) + 36,180,...  [0x100953ec4,0x100953f54,...]
+              16 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 288  [0x10095c2f8]
+              ! 12 wf_package.halo.vm.enter_lua  (in halo-c1) + 28,12,...  [0x1009380a0,0x100938090,...]
+              ! 4 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1) + 32  [0x10094c58c]
+              15 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 60,112,...  [0x1009529ac,0x1009529e0,...]
+              2 wf_package.halo.vm.enter_lua  (in halo-c1) + 1140  [0x1009384f8]
+                2 wf_package.halo.vm.push_frame  (in halo-c1) + 32  [0x100947010]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1090
+        wf_package.halo.vm.enter_lua  (in halo-c1)        465
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1)        148
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1)        104
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1)        82
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1)        68
+        wf_package.halo.vm.push_frame  (in halo-c1)        56
+        wf_package.halo.vm.finish  (in halo-c1)        50
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        48
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1)        40
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1)        29
+
+
+===== C1 re-profile: c23-profile-three-fib-1.sample.txt =====
+Analysis of sampling halo-c1 (pid 94526) every 1 millisecond
+Process:         halo-c1 [94526]
+Path:            /private/tmp/*/halo-c1
+Load Address:    0x100c80000
+Identifier:      halo-c1
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [local pid]
+Target Type:     live task
+
+Date/Time:       2026-10-05 13:50:50.848 -0700
+Launch Time:     2026-10-05 13:50:50.812 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1090 Thread_172381123: Main Thread   DispatchQueue_<multiple>
+    + 1090 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1090 wf__floor_run  (in halo-c1) + 604  [0x100c80a18]
+    +     1090 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1090 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1090 Thread_172381126
+      1090 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1090 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1090 wf__floor_entry  (in halo-c1) + 32  [0x100c80a48]
+            1090 wf__main_body  (in halo-c1) + 148  [0x100cccaf4]
+              421 wf_package.halo.vm.enter_lua  (in halo-c1) + 492,592,...  [0x100c98270,0x100c982d4,...]
+              182 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo-c1) + 128  [0x100cbe7cc]
+              ! 62 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 0,32  [0x100cbc76c,0x100cbc78c]
+              ! 61 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1) + 0,28  [0x100cae6b4,0x100cae6d0]
+              ! 48 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 0  [0x100cb2970]
+              ! 11 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 32  [0x100cbc1f8]
+              86 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 616,68,...  [0x100cbc9d4,0x100cbc7b0,...]
+              73 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 620,532,...  [0x100cbc444,0x100cbc3ec,...]
+              68 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1) + 184,52,...  [0x100cac624,0x100cac5a0,...]
+              59 wf_package.halo.vm.push_frame  (in halo-c1) + 292,60,...  [0x100ca7114,0x100ca702c,...]
+              49 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1) + 116,812,...  [0x100cae728,0x100cae9e0,...]
+              44 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 364  [0x100cbc8d8]
+              ! 44 wf_package.halo.vm.finish  (in halo-c1) + 92,156,...  [0x100c97d10,0x100c97d50,...]
+              40 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1) + 128,48,...  [0x100cba328,0x100cba2d8,...]
+              33 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1) + 180,60,...  [0x100cb3f54,0x100cb3edc,...]
+              16 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 112,36,...  [0x100cb29e0,0x100cb2994,...]
+              15 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 288  [0x100cbc2f8]
+              ! 9 wf_package.halo.vm.enter_lua  (in halo-c1) + 28,8  [0x100c980a0,0x100c9808c]
+              ! 6 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1) + 32,0  [0x100cac58c,0x100cac56c]
+              4 wf_package.halo.vm.enter_lua  (in halo-c1) + 1140  [0x100c984f8]
+                4 wf_package.halo.vm.push_frame  (in halo-c1) + 32,28  [0x100ca7010,0x100ca700c]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1090
+        wf_package.halo.vm.enter_lua  (in halo-c1)        430
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1)        148
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1)        110
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1)        84
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1)        74
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        64
+        wf_package.halo.vm.push_frame  (in halo-c1)        63
+        wf_package.halo.vm.finish  (in halo-c1)        44
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1)        40
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1)        33
+
+
+===== C1 re-profile: c23-profile-three-fib-2.sample.txt =====
+Analysis of sampling halo-c1 (pid 94596) every 1 millisecond
+Process:         halo-c1 [94596]
+Path:            /private/tmp/*/halo-c1
+Load Address:    0x100a9c000
+Identifier:      halo-c1
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [local pid]
+Target Type:     live task
+
+Date/Time:       2026-10-05 13:50:53.290 -0700
+Launch Time:     2026-10-05 13:50:53.259 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1122 Thread_172381317   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1122 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1122 wf__floor_run  (in halo-c1) + 604  [0x100a9ca18]
+    +     1122 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1122 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1122 Thread_172381320
+      1122 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1122 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1122 wf__floor_entry  (in halo-c1) + 32  [0x100a9ca48]
+            1122 wf__main_body  (in halo-c1) + 148  [0x100ae8af4]
+              406 wf_package.halo.vm.enter_lua  (in halo-c1) + 492,592,...  [0x100ab4270,0x100ab42d4,...]
+              212 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo-c1) + 128  [0x100ada7cc]
+              ! 73 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1) + 0,28  [0x100aca6b4,0x100aca6d0]
+              ! 71 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 0,32,...  [0x100ad876c,0x100ad878c,...]
+              ! 58 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 0,24  [0x100ace970,0x100ace988]
+              ! 9 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 32  [0x100ad81f8]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1) + 32  [0x100acfec0]
+              99 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 616,360,...  [0x100ad89d4,0x100ad88d4,...]
+              72 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1) + 184,52,...  [0x100ac8624,0x100ac85a0,...]
+              70 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 620,288,...  [0x100ad8444,0x100ad82f8,...]
+              55 wf_package.halo.vm.push_frame  (in halo-c1) + 292,256,...  [0x100ac3114,0x100ac30f0,...]
+              47 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1) + 364  [0x100ad88d8]
+              ! 47 wf_package.halo.vm.finish  (in halo-c1) + 112,92,...  [0x100ab3d24,0x100ab3d10,...]
+              45 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1) + 116,688,...  [0x100aca728,0x100aca964,...]
+              35 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1) + 196,48,...  [0x100ad636c,0x100ad62d8,...]
+              32 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1) + 180,60,...  [0x100acff54,0x100acfedc,...]
+              23 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 192,112,...  [0x100acea30,0x100ace9e0,...]
+              21 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1) + 288  [0x100ad82f8]
+              ! 12 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1) + 32,24  [0x100ac858c,0x100ac8584]
+              ! 9 wf_package.halo.vm.enter_lua  (in halo-c1) + 8,4,...  [0x100ab408c,0x100ab4088,...]
+              5 wf_package.halo.vm.enter_lua  (in halo-c1) + 1140  [0x100ab44f8]
+                5 wf_package.halo.vm.push_frame  (in halo-c1) + 32  [0x100ac3010]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1122
+        wf_package.halo.vm.enter_lua  (in halo-c1)        415
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo-c1)        170
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo-c1)        118
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo-c1)        84
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        81
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo-c1)        79
+        wf_package.halo.vm.push_frame  (in halo-c1)        60
+        wf_package.halo.vm.finish  (in halo-c1)        47
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1)        35
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1)        33
+
+
+===== C1 re-profile: c23-profile-three-integer-table-0.sample.txt =====
+Analysis of sampling halo-c1 (pid 94600) every 1 millisecond
+Process:         halo-c1 [94600]
+Path:            /private/tmp/*/halo-c1
+Load Address:    0x1024cc000
+Identifier:      halo-c1
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [local pid]
+Target Type:     live task
+
+Date/Time:       2026-10-05 13:50:54.936 -0700
+Launch Time:     2026-10-05 13:50:54.903 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    586 Thread_172381376   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 586 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   586 wf__floor_run  (in halo-c1) + 604  [0x1024cca18]
+    +     586 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       586 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    586 Thread_172381379
+      586 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        586 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          586 wf__floor_entry  (in halo-c1) + 32  [0x1024cca48]
+            586 wf__main_body  (in halo-c1) + 148  [0x102518af4]
+              188 wf_package.halo.heap.rehash  (in halo-c1) + 452,920,...  [0x1024d8f54,0x1024d9128,...]
+              102 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 644,988,...  [0x1024fc970,0x1024fcac8,...]
+              52 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1) + 668,508,...  [0x102508ce0,0x102508c40,...]
+              50 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 216,792,...  [0x10251424c,0x10251448c,...]
+              46 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo-c1) + 464,404,...  [0x1024fbb2c,0x1024fbaf0,...]
+              38 wf_package.halo.heap.insert_parts  (in halo-c1) + 80,740,...  [0x1024d8ae4,0x1024d8d78,...]
+              24 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 112,36,...  [0x1024fe9e0,0x1024fe994,...]
+              17 wf_package.halo.heap.table_set  (in halo-c1) + 276,440,...  [0x1024d94d0,0x1024d9574,...]
+              17 wf_package.halo.vm.collect_if_due  (in halo-c1) + 1808,1764,...  [0x1024e4c34,0x1024e4c08,...]
+              13 wf_package.halo.vm.collect_if_due  (in halo-c1) + 1780  [0x1024e4c18]
+              ! 13 wf_package.halo.heap.gc_mark  (in halo-c1) + 16,28  [0x1024d7a24,0x1024d7a30]
+              9 wf_package.halo.vm.metamethod  (in halo-c1) + 332,76,...  [0x1024f2b68,0x1024f2a68,...]
+              9 wf_package.halo.vm.raw_assign  (in halo-c1) + 404,40,...  [0x1024f2d58,0x1024f2bec,...]
+              9 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo-c1) + 128  [0x10250a7cc]
+              ! 9 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1) + 32  [0x102508a64]
+              4 wf_package.halo.vm.raw_assign  (in halo-c1) + 136  [0x1024f2c4c]
+              ! 4 wf_package.halo.heap.table_set  (in halo-c1) + 28  [0x1024d93d8]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 1000  [0x1024fcad4]
+              ! 4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 28,32  [0x102514190,0x102514194]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 4732  [0x1025153f0]
+              ! 2 wf_package.halo.vm.raw_assign  (in halo-c1) + 24,32  [0x1024f2bdc,0x1024f2be4]
+              1 wf_package.halo.heap.rehash  (in halo-c1) + 1144  [0x1024d9208]
+              ! 1 wf_package.halo.heap.insert_parts  (in halo-c1) + 24  [0x1024d8aac]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 992  [0x102514554]
+                1 wf_package.halo.vm.metamethod  (in halo-c1) + 12  [0x1024f2a28]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        586
+        wf_package.halo.heap.rehash  (in halo-c1)        188
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1)        102
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1)        61
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1)        54
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo-c1)        46
+        wf_package.halo.heap.insert_parts  (in halo-c1)        39
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        24
+        wf_package.halo.heap.table_set  (in halo-c1)        21
+        wf_package.halo.vm.collect_if_due  (in halo-c1)        17
+        wf_package.halo.heap.gc_mark  (in halo-c1)        13
+        wf_package.halo.vm.raw_assign  (in halo-c1)        11
+        wf_package.halo.vm.metamethod  (in halo-c1)        10
+
+
+===== C1 re-profile: c23-profile-three-integer-table-1.sample.txt =====
+Analysis of sampling halo-c1 (pid 94605) every 1 millisecond
+Process:         halo-c1 [94605]
+Path:            /private/tmp/*/halo-c1
+Load Address:    0x104b50000
+Identifier:      halo-c1
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [local pid]
+Target Type:     live task
+
+Date/Time:       2026-10-05 13:50:55.755 -0700
+Launch Time:     2026-10-05 13:50:55.722 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    588 Thread_172381406   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 588 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   588 wf__floor_run  (in halo-c1) + 604  [0x104b50a18]
+    +     588 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       588 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    588 Thread_172381409
+      588 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        588 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          588 wf__floor_entry  (in halo-c1) + 32  [0x104b50a48]
+            588 wf__main_body  (in halo-c1) + 148  [0x104b9caf4]
+              190 wf_package.halo.heap.rehash  (in halo-c1) + 452,920,...  [0x104b5cf54,0x104b5d128,...]
+              102 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 988,92,...  [0x104b80ac8,0x104b80748,...]
+              58 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 216,72,...  [0x104b9824c,0x104b981bc,...]
+              47 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo-c1) + 464,404,...  [0x104b7fb2c,0x104b7faf0,...]
+              47 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1) + 668,104,...  [0x104b8cce0,0x104b8caac,...]
+              39 wf_package.halo.heap.insert_parts  (in halo-c1) + 104,340,...  [0x104b5cafc,0x104b5cbe8,...]
+              19 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 112,216,...  [0x104b829e0,0x104b82a48,...]
+              17 wf_package.halo.heap.table_set  (in halo-c1) + 276,156,...  [0x104b5d4d0,0x104b5d458,...]
+              15 wf_package.halo.vm.collect_if_due  (in halo-c1) + 1808,1764,...  [0x104b68c34,0x104b68c08,...]
+              14 wf_package.halo.vm.collect_if_due  (in halo-c1) + 1780  [0x104b68c18]
+              ! 14 wf_package.halo.heap.gc_mark  (in halo-c1) + 28,16  [0x104b5ba30,0x104b5ba24]
+              14 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo-c1) + 128  [0x104b8e7cc]
+              ! 12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1) + 32  [0x104b8ca64]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 16,32  [0x104b806fc,0x104b8070c]
+              13 wf_package.halo.vm.raw_assign  (in halo-c1) + 40,136,...  [0x104b76bec,0x104b76c4c,...]
+              4 wf_package.halo.vm.raw_assign  (in halo-c1) + 136  [0x104b76c4c]
+              ! 4 wf_package.halo.heap.table_set  (in halo-c1) + 28  [0x104b5d3d8]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 1000  [0x104b80ad4]
+              ! 4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 24,28  [0x104b9818c,0x104b98190]
+              3 wf_package.halo.vm.metamethod  (in halo-c1) + 76,332,...  [0x104b76a68,0x104b76b68,...]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 992  [0x104b98554]
+              ! 1 wf_package.halo.vm.metamethod  (in halo-c1) + 12  [0x104b76a28]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 4732  [0x104b993f0]
+                1 wf_package.halo.vm.raw_assign  (in halo-c1) + 24  [0x104b76bdc]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        588
+        wf_package.halo.heap.rehash  (in halo-c1)        190
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1)        104
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1)        62
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1)        59
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo-c1)        47
+        wf_package.halo.heap.insert_parts  (in halo-c1)        39
+        wf_package.halo.heap.table_set  (in halo-c1)        21
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        19
+        wf_package.halo.vm.collect_if_due  (in halo-c1)        15
+        wf_package.halo.heap.gc_mark  (in halo-c1)        14
+        wf_package.halo.vm.raw_assign  (in halo-c1)        14
+
+
+===== C1 re-profile: c23-profile-three-integer-table-2.sample.txt =====
+Analysis of sampling halo-c1 (pid 94623) every 1 millisecond
+Process:         halo-c1 [94623]
+Path:            /private/tmp/*/halo-c1
+Load Address:    0x104d58000
+Identifier:      halo-c1
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [local pid]
+Target Type:     live task
+
+Date/Time:       2026-10-05 13:50:56.999 -0700
+Launch Time:     2026-10-05 13:50:56.966 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    588 Thread_172381469   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 588 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   588 wf__floor_run  (in halo-c1) + 604  [0x104d58a18]
+    +     588 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       588 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    588 Thread_172381472
+      588 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        588 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          588 wf__floor_entry  (in halo-c1) + 32  [0x104d58a48]
+            588 wf__main_body  (in halo-c1) + 148  [0x104da4af4]
+              183 wf_package.halo.heap.rehash  (in halo-c1) + 452,920,...  [0x104d64f54,0x104d65128,...]
+              109 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 644,988,...  [0x104d88970,0x104d88ac8,...]
+              62 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 216,84,...  [0x104da024c,0x104da01c8,...]
+              46 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1) + 104,668,...  [0x104d94aac,0x104d94ce0,...]
+              45 wf_package.halo.heap.insert_parts  (in halo-c1) + 80,44,...  [0x104d64ae4,0x104d64ac0,...]
+              40 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo-c1) + 76,404,...  [0x104d879a8,0x104d87af0,...]
+              26 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1) + 180,112,...  [0x104d8aa24,0x104d8a9e0,...]
+              20 wf_package.halo.vm.collect_if_due  (in halo-c1) + 1808,1764,...  [0x104d70c34,0x104d70c08,...]
+              14 wf_package.halo.heap.table_set  (in halo-c1) + 156,440,...  [0x104d65458,0x104d65574,...]
+              14 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo-c1) + 128  [0x104d967cc]
+              ! 12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1) + 32  [0x104d94a64]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 16,32  [0x104d886fc,0x104d8870c]
+              10 wf_package.halo.vm.collect_if_due  (in halo-c1) + 1780  [0x104d70c18]
+              ! 10 wf_package.halo.heap.gc_mark  (in halo-c1) + 16,28,...  [0x104d63a24,0x104d63a30,...]
+              6 wf_package.halo.vm.metamethod  (in halo-c1) + 76,332,...  [0x104d7ea68,0x104d7eb68,...]
+              5 wf_package.halo.vm.raw_assign  (in halo-c1) + 40,76,...  [0x104d7ebec,0x104d7ec10,...]
+              5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1) + 1000  [0x104d88ad4]
+              ! 5 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 28,24  [0x104da0190,0x104da018c]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1) + 4732  [0x104da13f0]
+              ! 2 wf_package.halo.vm.raw_assign  (in halo-c1) + 32  [0x104d7ebe4]
+              1 wf_package.halo.vm.raw_assign  (in halo-c1) + 136  [0x104d7ec4c]
+                1 wf_package.halo.heap.table_set  (in halo-c1) + 28  [0x104d653d8]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        588
+        wf_package.halo.heap.rehash  (in halo-c1)        183
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo-c1)        111
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo-c1)        67
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo-c1)        58
+        wf_package.halo.heap.insert_parts  (in halo-c1)        45
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo-c1)        40
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        26
+        wf_package.halo.vm.collect_if_due  (in halo-c1)        20
+        wf_package.halo.heap.table_set  (in halo-c1)        15
+        wf_package.halo.heap.gc_mark  (in halo-c1)        10
+        wf_package.halo.vm.raw_assign  (in halo-c1)        7
+        wf_package.halo.vm.metamethod  (in halo-c1)        6

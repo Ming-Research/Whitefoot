@@ -903,3 +903,39 @@ before implementation. Generated binaries, profiles and logs belong in the
 existing ignored benchmark `target/`; retained observations belong in this
 experiment and remain only while the comparison needs reproduction. Work
 stays local: no network, Cargo, PR or push.
+
+### Profile selection and frame-window criterion
+
+The C1 binary's retained source hashes all match the current inputs. One
+sizing profile then three profiles used fib(34) and integer-table(10,000,000).
+Fib has 1090, 1090 and 1122 worker samples: frame helpers occupy 54.01–58.62%,
+including `enter_lua` 36.99–42.66%; dispatch arms occupy the remainder.
+Integer-table has 586, 588 and 588 worker samples: table heap 41.33–42.52%,
+dispatch 38.95–39.97%, slow/assignment 12.80–13.61%, GC/safepoint 4.93–5.12%.
+Rehash alone occupies 31.12–32.31%. Exclusive counts subtract immediate
+children and sum to each worker total; main-thread waiting is excluded.
+Inlined predicates remain attributed to their containing arm. Profiles
+are occupancy, omit startup before attachment and can alias short loops;
+they do not predict a causal gain. Profile timing is excluded from pairs.
+The warm Halo ranges are 2.29% for fib and 0.81% for integer-table, adequate
+for these broad categories. The first sandboxed profile failed (`sample`
+255, runner 1, no report); local process-inspection access permits the
+sizing and three-run profiles, both runner exit 0.
+
+The authorized alternative is a bounded frame-window trial, instead of
+implementing C2 or C3 on evidence dominated by frame setup and table growth.
+C2/C3 remain unmeasured, not rejected by their performance criteria. Before
+implementation and timing, fix this criterion: keep frame-window clearing
+only if fib(30) improves at least 10% in six alternating full-LTO C1/candidate
+pairs and the three-check median is at most 301.25 s. Report all seven kernels;
+other gains do not substitute for fib. Preserve the complete oracle and root
+controls stated above.
+
+Structural assessment: retain `enter_lua` as the single frame-construction
+owner. Express its existing saturating room rejection as an equivalent
+base bound, reserve the same 256 slots, and clear the same range with proved
+ordinary addition. This removes repeated saturation and slot comparisons
+without changing frame fields, callback boundaries, collectors, or C1 arms.
+A separate fixed-arity dispatch handler would duplicate frame initialization
+and is not needed to test this arithmetic. No register is left uncleared and
+no value is cached outside the stack. Table growth remains a separate trial.

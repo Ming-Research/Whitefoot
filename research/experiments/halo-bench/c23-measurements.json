@@ -1,0 +1,647 @@
+{
+  "baseline_revision": "dc39d44d9811d65f92fc4262c7b7f5f8359a1812",
+  "baseline_identity": {
+    "revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae",
+    "sources": {
+      "compiler/target/gate/whitefootc": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+      "lib/halo/compile/assemble.wf": "7e272e23660b3ad4bebc3c7df3e8da3f6258be28bae893d9a777fcb6c3c78ff1",
+      "lib/halo/compile/bridge.wf": "5045ced98cb87533d3515dd7f946597be2c1e7f74fb6b44fae28d9b299320bfb",
+      "lib/halo/compile/code.wf": "4a0c75d59599654c91df1e79ac1724b6a3e63e8abf328f66bcfb2f8c07114861",
+      "lib/halo/compile/entry.wf": "734f82984a07eb424e579781af6e5dfda1122b6d16c293b807c2ee3099c14732",
+      "lib/halo/compile/expr.wf": "3ab2fc27cdfcd7085422ed7294838bd4595288aaba5970cc98c929d68ff9fc46",
+      "lib/halo/compile/module.wfm": "8d2fad42cabd09cfa9c2a7b4edb8c641a1f6c0b96800d282b3579dc1985d69f8",
+      "lib/halo/compile/parse_support.wf": "3ac5bebb5bfc12d35de68be96c439245b313323a08f8d4ac304a8cb277e0b429",
+      "lib/halo/compile/statements.wf": "272f81b0e03617c13d6449da1436cefcbe8ce108ee774fd78e6fdb9a87fa88d1",
+      "lib/halo/compile/support.wf": "4994946c342bbfc0a3712038e1a4702afae40bb6e1809ef2427753cea6976888",
+      "lib/halo/compile/verify.wf": "5b6656635ca8a04eb2debcde76fedb268b50e3ed146b95e2cccd2a056cda7adb",
+      "lib/halo/embed/engine.wf": "f328bea47550924792ab572f423eeac34a4d1a0929582c4bf1b4d673203ac4d2",
+      "lib/halo/embed/install.wf": "919ac491ea05e7995e6ac0eb886c4db19e1853d0f19805fde38edf8d82435f22",
+      "lib/halo/embed/module.wfm": "14c49e2a42c8968d244559f27ab2dd1a0771b9bbcafc2dd51b62216fed40dc3c",
+      "lib/halo/embed/redis-error.wf": "79a4ac2f71c36e011982f5169d4ffa91a9a8e1d689e3f33c3c4230af2cdd90cf",
+      "lib/halo/embed/sha1.wf": "6b41fa53fb8c78165d3352be10ee548c2e27c36a6bb59b540d3eefa3121e033c",
+      "lib/halo/embed/values.wf": "fd46f55b373a2c044224b9756f72520a7ee7e171d146f409217ac59e62ebe96d",
+      "lib/halo/heap/gc.wf": "020caee48b3badcfc3de5a80b532749b9b486021138f38ccb9665fe0550796f6",
+      "lib/halo/heap/module.wfm": "2b5e254d3e77c330c06b77c8bbd19fe0182a27e75380072eb332fa863371e372",
+      "lib/halo/heap/slabs.wf": "1a7833e5930f55050e4fa1e36297684a5374be7ace9133ca90fb5f7d56b0648d",
+      "lib/halo/heap/strings.wf": "625fc1cf41e830d5f95dba259f9f6c012a55d4e1b156bdd3047686eb7ee0e490",
+      "lib/halo/heap/tables.wf": "af0420e70b46ce75e1dedb1af97e21687388b2b1b6a1f9570c1668a70bcff186",
+      "lib/halo/lex/error.wf": "a232a9f535bf7bf6738cfd3e692dd49f7a6575634edd02e7b81439d2f9d37cda",
+      "lib/halo/lex/lex.wf": "16040b47766f2b14697e73b443d498b0e944aee43f2556c2b8cd98d845d2ad21",
+      "lib/halo/lex/module.wfm": "3d0bfdd23dadc80ff6b0b9e33163bb6add59ba25b028340287b8c171c67671d8",
+      "lib/halo/lex/scan.wf": "5eee71bbb14a8b5ea941a85019961bd20d74716bf22dba709e6829a03e15078d",
+      "lib/halo/lex/support.wf": "0dc9493c850c6f441e98f2db62786bd32d87a7018001027b9ed73f6ed739008c",
+      "lib/halo/modules.wfg": "b7a0b5e45424788921418b5133ea5dad51357b528e5eed1cbd83d55650691936",
+      "lib/halo/number/decimal.wf": "8f1589d6d0f5bfee3f870099b1b7103847028a19b5156f03c981bd97ebb86797",
+      "lib/halo/number/format.wf": "65340adf8f5fa8b6d7bdb2086fc19b5e3fab8656dcf54b5813b4895a06da1dbd",
+      "lib/halo/number/math.wf": "652541ec554ddfb5ee144e0b5d64ccd7b23dba0f5a85d407a7af8535f99f9907",
+      "lib/halo/number/module.wfm": "098558648ddeef2f0805414866e687b8e61711b84669fb0a588d8d495ab10a8c",
+      "lib/halo/number/pow-data.wf": "efb5c13631311e235c57199c49dba39e1e220597b37c3e2ae09f58a8234b6635",
+      "lib/halo/number/pow.wf": "b7d5ebd29d5abdfaab428995e5efc6d6ddbcb8455f3c4f420175e4ee1a7e2bf0",
+      "lib/halo/number/read.wf": "957326a7e7d532f467a54cd66d80f93f272913319118efbfbe0fe9d49716177d",
+      "lib/halo/number/tests/check/check.wf": "8a08486b0104779fa8f6d775188edc4163241975071695efa9965a0ca7c6b7d4",
+      "lib/halo/number/tests/check/module.wfm": "f86fe277b71d2b8166bc69f68364a215821ab11e63ff1bc5862016c2fcea4769",
+      "lib/halo/value/module.wfm": "ee3fcd96704819565545ef6ea419c47feb8fcc36ac5854e5fc5a3f31d0e1f149",
+      "lib/halo/value/value.wf": "56c836f7597f8f8ba392da6848712f45a068519d7b7f994825d047eb9635e206",
+      "lib/halo/vm/builtins.wf": "1837a0332383e1673893009df8c3984f524404919c8f235607ae56641e83847a",
+      "lib/halo/vm/calls.wf": "15c454adb82eb82c6be526a7138630d29854f0a3a35c54f950a20740feef003d",
+      "lib/halo/vm/collect.wf": "025519ef055751caa9417c3967fb2d1cc21613f262709a20c73e323ce432af93",
+      "lib/halo/vm/continuations.wf": "9d2feb734c7caed6d6d65817181aa04c879c1dd06302b697f916bf952f04c599",
+      "lib/halo/vm/dispatch.wf": "5795a027da9e9ef165f0a74903e9d3703be005852f03378ece436adf2a636150",
+      "lib/halo/vm/handlers.wf": "91da01298fa926b7805cd376f5a11d6b2621b29b3511c8499f36cb535849f6fb",
+      "lib/halo/vm/instructions.wf": "e215c7d624b10adac7a955253f8dab2556c04f2da9489f9635fd733296ad412f",
+      "lib/halo/vm/library-base.wf": "ab069dfa3fb7a4cdd08ded923c01f3fad3d4b389f7a1b9eaee8c23f6aeaacc9b",
+      "lib/halo/vm/library-bit.wf": "3e02ac3a8bccbe05310116f06962edb7aa7a1c3268cae8627c40133abea08a7d",
+      "lib/halo/vm/library-callbacks.wf": "e0cea17b590965be92cda158da014ac69b1535a9b6fc60287467a7a22eba103a",
+      "lib/halo/vm/library-cjson-decode.wf": "a4fa99abdd656f4d0d14218a7e935522a543008354cd0e395099b4e04d8730f7",
+      "lib/halo/vm/library-cjson.wf": "4425355d2a042ff1d4eac57121441a4e7054e73207d8f947643a9012555c6cf2",
+      "lib/halo/vm/library-cmsgpack.wf": "701ddeb9e0676433efeb6fc32bf677d11fdecb3e0e62360d0285486dc636c416",
+      "lib/halo/vm/library-codecs.wf": "02ea53d45fd8624f171807acb41065ec94756e5d5a0e62b282419d3314d8d99e",
+      "lib/halo/vm/library-decimal.wf": "0c01d351582ec88f6101dcad997c4a3bbd7fcde0ce410761489962b9214cf2a0",
+      "lib/halo/vm/library-dispatch.wf": "7e503f0b0227d638eb892c2b4bfe9d075e0fe176305e69e6c7a553e6aade3a1a",
+      "lib/halo/vm/library-format.wf": "0aad72db13d19244d37c5a17bfd69e5b3ef9a5f951b56ebaef0501dbe54419aa",
+      "lib/halo/vm/library-hyperbolic.wf": "df2c7425d93ca4907a6f3f5101ced4505a448e2a684dfcfd123bab0a95550bde",
+      "lib/halo/vm/library-libm.wf": "49ebf733338dd82c43d53e82f4fe5ff8ef2bcafb23fc3e1c8724cd079cfe9196",
+      "lib/halo/vm/library-math.wf": "5f942f6fa8b1241f0b22a6681e8bcbb22506e1702594e2f02a7669d997c02dc5",
+      "lib/halo/vm/library-pattern-api.wf": "356bc1e0d57ab37a5f3a9e1ed24c023b8344137aff2371716c49db7e215a3641",
+      "lib/halo/vm/library-pattern-sub.wf": "06b88a60947461918503a86852a0576cf582103479a1f4d03598720c9ea60398",
+      "lib/halo/vm/library-pattern.wf": "eea41fe800af855b7755c6fd0b6e43328ea6b8db330b4c78c926fd5ea6e029fc",
+      "lib/halo/vm/library-sort.wf": "c68c2f874d4bb5ec55c11624a80c40b16d3ad7d8e09590277eb0a9d91dde611c",
+      "lib/halo/vm/library-string.wf": "eccfb26c443a65e9bf2094efd381706491543261591a5c2f9fbc59d9c69059e7",
+      "lib/halo/vm/library-struct.wf": "17e2f91082b77e9aa71d1ebd4aa0c800480d2bcd362847d17823308b021bb41b",
+      "lib/halo/vm/library-table.wf": "e660685a348ad7b50b11289fa2c0df3eb378ac0d694b3b99d181d45318f62869",
+      "lib/halo/vm/library-trig.wf": "ec5fdbf5b2ae83cca40bd9028dbf17d686d4ff743a698c25a4cd08ec50b31605",
+      "lib/halo/vm/library.wf": "e1c709af0c9f04e9b830fa3d82d27d044b9d4c3f4533b91020f28c09379bdd61",
+      "lib/halo/vm/module.wfm": "31ceb9bfc6eb46c55d49e5a772f0dba831bb95cda493673bafb61260367f3620",
+      "lib/halo/vm/slow.wf": "23e71263f199e75a4e5d76df57ced44c15f728de6be5da940661b634b4eb0349",
+      "lib/halo/vm/state.wf": "1dd7e9cecbaec94e68cf287127ace3dcb37bb96f7927ae273c7443c852c614c9"
+    }
+  },
+  "profile_counts": [
+    {
+      "report": "c23-profile-three-fib-0.sample.txt",
+      "worker_samples": 1090,
+      "exclusive": {
+        "Thread_172381042   DispatchQueue_1: com.apple.main-thread  (serial)": 0,
+        "start": 0,
+        "wf__floor_run": 0,
+        "_pthread_join": 0,
+        "__ulock_wait": 1090,
+        "Thread_172381045": 0,
+        "thread_start": 0,
+        "_pthread_start": 0,
+        "wf__floor_entry": 0,
+        "wf__main_body": 0,
+        "wf_package.halo.vm.enter_lua": 465,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32": 0,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5": 104,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65": 148,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20": 48,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63": 82,
+        "wf_package.halo.vm.prepare$instance$2ead40aebe81bc32": 68,
+        "wf_package.halo.vm.push_frame": 56,
+        "wf_package.halo.vm.finish": 50,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54": 40,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25": 29
+      },
+      "groups": {
+        "frame helpers": 639,
+        "dispatch": 451
+      }
+    },
+    {
+      "report": "c23-profile-three-fib-1.sample.txt",
+      "worker_samples": 1090,
+      "exclusive": {
+        "Thread_172381123: Main Thread   DispatchQueue_<multiple>": 0,
+        "start": 0,
+        "wf__floor_run": 0,
+        "_pthread_join": 0,
+        "__ulock_wait": 1090,
+        "Thread_172381126": 0,
+        "thread_start": 0,
+        "_pthread_start": 0,
+        "wf__floor_entry": 0,
+        "wf__main_body": 0,
+        "wf_package.halo.vm.enter_lua": 430,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32": 0,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65": 148,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5": 110,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20": 64,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63": 84,
+        "wf_package.halo.vm.prepare$instance$2ead40aebe81bc32": 74,
+        "wf_package.halo.vm.push_frame": 63,
+        "wf_package.halo.vm.finish": 44,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54": 40,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25": 33
+      },
+      "groups": {
+        "frame helpers": 611,
+        "dispatch": 479
+      }
+    },
+    {
+      "report": "c23-profile-three-fib-2.sample.txt",
+      "worker_samples": 1122,
+      "exclusive": {
+        "Thread_172381317   DispatchQueue_1: com.apple.main-thread  (serial)": 0,
+        "start": 0,
+        "wf__floor_run": 0,
+        "_pthread_join": 0,
+        "__ulock_wait": 1122,
+        "Thread_172381320": 0,
+        "thread_start": 0,
+        "_pthread_start": 0,
+        "wf__floor_entry": 0,
+        "wf__main_body": 0,
+        "wf_package.halo.vm.enter_lua": 415,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32": 0,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5": 118,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65": 170,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20": 81,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63": 79,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25": 33,
+        "wf_package.halo.vm.prepare$instance$2ead40aebe81bc32": 84,
+        "wf_package.halo.vm.push_frame": 60,
+        "wf_package.halo.vm.finish": 47,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54": 35
+      },
+      "groups": {
+        "frame helpers": 606,
+        "dispatch": 516
+      }
+    },
+    {
+      "report": "c23-profile-three-integer-table-0.sample.txt",
+      "worker_samples": 586,
+      "exclusive": {
+        "Thread_172381376   DispatchQueue_1: com.apple.main-thread  (serial)": 0,
+        "start": 0,
+        "wf__floor_run": 0,
+        "_pthread_join": 0,
+        "__ulock_wait": 586,
+        "Thread_172381379": 0,
+        "thread_start": 0,
+        "_pthread_start": 0,
+        "wf__floor_entry": 0,
+        "wf__main_body": 0,
+        "wf_package.halo.heap.rehash": 188,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13": 102,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66": 61,
+        "wf_package.halo.vm.slow$instance$2ead40aebe81bc32": 54,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11": 46,
+        "wf_package.halo.heap.insert_parts": 39,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20": 24,
+        "wf_package.halo.heap.table_set": 21,
+        "wf_package.halo.vm.collect_if_due": 17,
+        "wf_package.halo.heap.gc_mark": 13,
+        "wf_package.halo.vm.metamethod": 10,
+        "wf_package.halo.vm.raw_assign": 11,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32": 0
+      },
+      "groups": {
+        "table heap": 248,
+        "dispatch": 233,
+        "slow/assignment": 75,
+        "GC/safepoint": 30
+      }
+    },
+    {
+      "report": "c23-profile-three-integer-table-1.sample.txt",
+      "worker_samples": 588,
+      "exclusive": {
+        "Thread_172381406   DispatchQueue_1: com.apple.main-thread  (serial)": 0,
+        "start": 0,
+        "wf__floor_run": 0,
+        "_pthread_join": 0,
+        "__ulock_wait": 588,
+        "Thread_172381409": 0,
+        "thread_start": 0,
+        "_pthread_start": 0,
+        "wf__floor_entry": 0,
+        "wf__main_body": 0,
+        "wf_package.halo.heap.rehash": 190,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13": 104,
+        "wf_package.halo.vm.slow$instance$2ead40aebe81bc32": 62,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11": 47,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66": 59,
+        "wf_package.halo.heap.insert_parts": 39,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20": 19,
+        "wf_package.halo.heap.table_set": 21,
+        "wf_package.halo.vm.collect_if_due": 15,
+        "wf_package.halo.heap.gc_mark": 14,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32": 0,
+        "wf_package.halo.vm.raw_assign": 14,
+        "wf_package.halo.vm.metamethod": 4
+      },
+      "groups": {
+        "table heap": 250,
+        "dispatch": 229,
+        "slow/assignment": 80,
+        "GC/safepoint": 29
+      }
+    },
+    {
+      "report": "c23-profile-three-integer-table-2.sample.txt",
+      "worker_samples": 588,
+      "exclusive": {
+        "Thread_172381469   DispatchQueue_1: com.apple.main-thread  (serial)": 0,
+        "start": 0,
+        "wf__floor_run": 0,
+        "_pthread_join": 0,
+        "__ulock_wait": 588,
+        "Thread_172381472": 0,
+        "thread_start": 0,
+        "_pthread_start": 0,
+        "wf__floor_entry": 0,
+        "wf__main_body": 0,
+        "wf_package.halo.heap.rehash": 183,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13": 111,
+        "wf_package.halo.vm.slow$instance$2ead40aebe81bc32": 67,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66": 58,
+        "wf_package.halo.heap.insert_parts": 45,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11": 40,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20": 26,
+        "wf_package.halo.vm.collect_if_due": 20,
+        "wf_package.halo.heap.table_set": 15,
+        "wf_package.halo.vm.run$instance$2ead40aebe81bc32": 0,
+        "wf_package.halo.heap.gc_mark": 10,
+        "wf_package.halo.vm.metamethod": 6,
+        "wf_package.halo.vm.raw_assign": 7
+      },
+      "groups": {
+        "table heap": 243,
+        "dispatch": 235,
+        "slow/assignment": 80,
+        "GC/safepoint": 30
+      }
+    }
+  ],
+  "profile_one": {
+    "revision": "16cd7def6b35f8c25356d21827d8fb4e0e826df4",
+    "host": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "started_utc": "2026-10-05T20:50:25Z",
+    "binary_sha256": "c2d6ff35f27f4c5817512d7639e495044a1f60fca401be64202f99c0419749f0",
+    "lua_sha256": "dd2f2bb469b8c423292e23a5ab0dea2c4f3ea23658b76d55cd5f296d5d94e91e",
+    "compiler_sha256": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+    "host_sources_sha256": {
+      "modules.wfg": "dae3b0320fcfb9d8223b537ee27b7d1342e277a639dddf4582b5736d4b865230",
+      "host/module.wfm": "6b555158bf47efd20cbd81a123f4906b55d5213364ee829b7c0253a89820a939",
+      "host/driver.wf": "bda376ab2c19d8fbd27b3e18cc28dc9cbc15b077f01c8120bf334e01704a5fbc"
+    },
+    "budget": "large",
+    "profile": true,
+    "reference_only": false,
+    "scales": {
+      "fib": 34
+    },
+    "kernels": {
+      "fib": {
+        "source_sha256": "e0ccb11dc5d15bc6fca91da7854dfa01ccd7580ba68ab0ab79ae4b16659744a5",
+        "pairs": [
+          {
+            "halo": 1.3975942907854915,
+            "checksum": "5702887",
+            "suspends": 0,
+            "collections": 0,
+            "puc": 0.5163532090373337
+          }
+        ],
+        "puc": {
+          "median": 0.5163532090373337,
+          "minimum": 0.5163532090373337,
+          "maximum": 0.5163532090373337,
+          "relative_range": 0.0,
+          "runs": 1
+        },
+        "halo": {
+          "median": 1.3975942907854915,
+          "minimum": 1.3975942907854915,
+          "maximum": 1.3975942907854915,
+          "relative_range": 0.0,
+          "runs": 1
+        },
+        "ratio": 2.7066633194574408
+      },
+      "integer-table": {
+        "source_sha256": "0281334766512a9e620a543d5b429f7c0d61b8ea2ff82927224d52b1e72ee3ce",
+        "pairs": [
+          {
+            "halo": 0.8239269996993244,
+            "checksum": "50000005000000",
+            "suspends": 0,
+            "collections": 5,
+            "puc": 0.20696466602385044
+          }
+        ],
+        "puc": {
+          "median": 0.20696466602385044,
+          "minimum": 0.20696466602385044,
+          "maximum": 0.20696466602385044,
+          "relative_range": 0.0,
+          "runs": 1
+        },
+        "halo": {
+          "median": 0.8239269996993244,
+          "minimum": 0.8239269996993244,
+          "maximum": 0.8239269996993244,
+          "relative_range": 0.0,
+          "runs": 1
+        },
+        "ratio": 3.9810032095255123
+      }
+    },
+    "launches": [
+      {
+        "kernel": "fib",
+        "run": 1,
+        "engine": "PUC",
+        "seconds": 0.5163532090373337,
+        "exit": 0,
+        "stdout": "5702887\n",
+        "stderr": ""
+      },
+      {
+        "kernel": "fib",
+        "run": 1,
+        "engine": "Halo",
+        "seconds": 1.3975942907854915,
+        "exit": 0,
+        "stdout": "5702887\n",
+        "stderr": "0\n0\n",
+        "profiler_exit": 0,
+        "profiler_report": "c23-profile-one-fib-0.sample.txt",
+        "profiler_output": "Sampling process 94402 for 10 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 94402 written to file <repository-root>/research/experiments/halo-bench/target/c23-profile-one-fib-0.sample.txt\n",
+        "worker_samples": 1031
+      },
+      {
+        "kernel": "integer-table",
+        "run": 1,
+        "engine": "PUC",
+        "seconds": 0.20696466602385044,
+        "exit": 0,
+        "stdout": "50000005000000\n",
+        "stderr": ""
+      },
+      {
+        "kernel": "integer-table",
+        "run": 1,
+        "engine": "Halo",
+        "seconds": 0.8239269996993244,
+        "exit": 0,
+        "stdout": "50000005000000\n",
+        "stderr": "0\n5\n",
+        "profiler_exit": 0,
+        "profiler_report": "c23-profile-one-integer-table-0.sample.txt",
+        "profiler_output": "Sampling process 94411 for 10 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 94411 written to file <repository-root>/research/experiments/halo-bench/target/c23-profile-one-integer-table-0.sample.txt\n",
+        "worker_samples": 598
+      }
+    ]
+  },
+  "profile_three": {
+    "revision": "16cd7def6b35f8c25356d21827d8fb4e0e826df4",
+    "host": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "started_utc": "2026-10-05T20:50:48Z",
+    "binary_sha256": "c2d6ff35f27f4c5817512d7639e495044a1f60fca401be64202f99c0419749f0",
+    "lua_sha256": "dd2f2bb469b8c423292e23a5ab0dea2c4f3ea23658b76d55cd5f296d5d94e91e",
+    "compiler_sha256": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+    "host_sources_sha256": {
+      "modules.wfg": "dae3b0320fcfb9d8223b537ee27b7d1342e277a639dddf4582b5736d4b865230",
+      "host/module.wfm": "6b555158bf47efd20cbd81a123f4906b55d5213364ee829b7c0253a89820a939",
+      "host/driver.wf": "bda376ab2c19d8fbd27b3e18cc28dc9cbc15b077f01c8120bf334e01704a5fbc"
+    },
+    "budget": "large",
+    "profile": true,
+    "reference_only": false,
+    "scales": {
+      "fib": 34
+    },
+    "kernels": {
+      "fib": {
+        "source_sha256": "e0ccb11dc5d15bc6fca91da7854dfa01ccd7580ba68ab0ab79ae4b16659744a5",
+        "pairs": [
+          {
+            "halo": 1.3961552078835666,
+            "checksum": "5702887",
+            "suspends": 0,
+            "collections": 0,
+            "puc": 0.5231404998339713
+          },
+          {
+            "halo": 1.3952579577453434,
+            "checksum": "5702887",
+            "suspends": 0,
+            "collections": 0,
+            "puc": 0.5237727919593453
+          },
+          {
+            "halo": 1.427275541704148,
+            "checksum": "5702887",
+            "suspends": 0,
+            "collections": 0,
+            "puc": 0.5161719582974911
+          }
+        ],
+        "puc": {
+          "median": 0.5231404998339713,
+          "minimum": 0.5161719582974911,
+          "maximum": 0.5237727919593453,
+          "relative_range": 0.014529239591021032,
+          "runs": 3
+        },
+        "halo": {
+          "median": 1.3961552078835666,
+          "minimum": 1.3952579577453434,
+          "maximum": 1.427275541704148,
+          "relative_range": 0.02293268239663705,
+          "runs": 3
+        },
+        "ratio": 2.6687958747729597
+      },
+      "integer-table": {
+        "source_sha256": "0281334766512a9e620a543d5b429f7c0d61b8ea2ff82927224d52b1e72ee3ce",
+        "pairs": [
+          {
+            "halo": 0.8140012919902802,
+            "checksum": "50000005000000",
+            "suspends": 0,
+            "collections": 5,
+            "puc": 0.20650599990040064
+          },
+          {
+            "halo": 0.8127463338896632,
+            "checksum": "50000005000000",
+            "suspends": 0,
+            "collections": 5,
+            "puc": 0.21945354202762246
+          },
+          {
+            "halo": 0.8073794171214104,
+            "checksum": "50000005000000",
+            "suspends": 0,
+            "collections": 5,
+            "puc": 0.20711991610005498
+          }
+        ],
+        "puc": {
+          "median": 0.20711991610005498,
+          "minimum": 0.20650599990040064,
+          "maximum": 0.21945354202762246,
+          "relative_range": 0.06251229901506505,
+          "runs": 3
+        },
+        "halo": {
+          "median": 0.8127463338896632,
+          "minimum": 0.8073794171214104,
+          "maximum": 0.8140012919902802,
+          "relative_range": 0.00814752966916336,
+          "runs": 3
+        },
+        "ratio": 3.924037577810932
+      }
+    },
+    "launches": [
+      {
+        "kernel": "fib",
+        "run": 1,
+        "engine": "PUC",
+        "seconds": 0.5231404998339713,
+        "exit": 0,
+        "stdout": "5702887\n",
+        "stderr": ""
+      },
+      {
+        "kernel": "fib",
+        "run": 1,
+        "engine": "Halo",
+        "seconds": 1.3961552078835666,
+        "exit": 0,
+        "stdout": "5702887\n",
+        "stderr": "0\n0\n",
+        "profiler_exit": 0,
+        "profiler_report": "c23-profile-three-fib-0.sample.txt",
+        "profiler_output": "Sampling process 94514 for 10 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 94514 written to file <repository-root>/research/experiments/halo-bench/target/c23-profile-three-fib-0.sample.txt\n",
+        "worker_samples": 1090
+      },
+      {
+        "kernel": "fib",
+        "run": 2,
+        "engine": "Halo",
+        "seconds": 1.3952579577453434,
+        "exit": 0,
+        "stdout": "5702887\n",
+        "stderr": "0\n0\n",
+        "profiler_exit": 0,
+        "profiler_report": "c23-profile-three-fib-1.sample.txt",
+        "profiler_output": "Sampling process 94526 for 10 seconds with 1 millisecond of run time between samples\nsample_remote_thread_with_frame_filter failed to get thread state for pid 94526 thread 17447Sampling completed, processing symbols...\nSample analysis of process 94526 written to file <repository-root>/research/experiments/halo-bench/target/c23-profile-three-fib-1.sample.txt\n",
+        "worker_samples": 1090
+      },
+      {
+        "kernel": "fib",
+        "run": 2,
+        "engine": "PUC",
+        "seconds": 0.5237727919593453,
+        "exit": 0,
+        "stdout": "5702887\n",
+        "stderr": ""
+      },
+      {
+        "kernel": "fib",
+        "run": 3,
+        "engine": "PUC",
+        "seconds": 0.5161719582974911,
+        "exit": 0,
+        "stdout": "5702887\n",
+        "stderr": ""
+      },
+      {
+        "kernel": "fib",
+        "run": 3,
+        "engine": "Halo",
+        "seconds": 1.427275541704148,
+        "exit": 0,
+        "stdout": "5702887\n",
+        "stderr": "0\n0\n",
+        "profiler_exit": 0,
+        "profiler_report": "c23-profile-three-fib-2.sample.txt",
+        "profiler_output": "Sampling process 94596 for 10 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 94596 written to file <repository-root>/research/experiments/halo-bench/target/c23-profile-three-fib-2.sample.txt\n",
+        "worker_samples": 1122
+      },
+      {
+        "kernel": "integer-table",
+        "run": 1,
+        "engine": "PUC",
+        "seconds": 0.20650599990040064,
+        "exit": 0,
+        "stdout": "50000005000000\n",
+        "stderr": ""
+      },
+      {
+        "kernel": "integer-table",
+        "run": 1,
+        "engine": "Halo",
+        "seconds": 0.8140012919902802,
+        "exit": 0,
+        "stdout": "50000005000000\n",
+        "stderr": "0\n5\n",
+        "profiler_exit": 0,
+        "profiler_report": "c23-profile-three-integer-table-0.sample.txt",
+        "profiler_output": "Sampling process 94600 for 10 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 94600 written to file <repository-root>/research/experiments/halo-bench/target/c23-profile-three-integer-table-0.sample.txt\n",
+        "worker_samples": 586
+      },
+      {
+        "kernel": "integer-table",
+        "run": 2,
+        "engine": "Halo",
+        "seconds": 0.8127463338896632,
+        "exit": 0,
+        "stdout": "50000005000000\n",
+        "stderr": "0\n5\n",
+        "profiler_exit": 0,
+        "profiler_report": "c23-profile-three-integer-table-1.sample.txt",
+        "profiler_output": "Sampling process 94605 for 10 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 94605 written to file <repository-root>/research/experiments/halo-bench/target/c23-profile-three-integer-table-1.sample.txt\n",
+        "worker_samples": 588
+      },
+      {
+        "kernel": "integer-table",
+        "run": 2,
+        "engine": "PUC",
+        "seconds": 0.21945354202762246,
+        "exit": 0,
+        "stdout": "50000005000000\n",
+        "stderr": ""
+      },
+      {
+        "kernel": "integer-table",
+        "run": 3,
+        "engine": "PUC",
+        "seconds": 0.20711991610005498,
+        "exit": 0,
+        "stdout": "50000005000000\n",
+        "stderr": ""
+      },
+      {
+        "kernel": "integer-table",
+        "run": 3,
+        "engine": "Halo",
+        "seconds": 0.8073794171214104,
+        "exit": 0,
+        "stdout": "50000005000000\n",
+        "stderr": "0\n5\n",
+        "profiler_exit": 0,
+        "profiler_report": "c23-profile-three-integer-table-2.sample.txt",
+        "profiler_output": "Sampling process 94623 for 10 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 94623 written to file <repository-root>/research/experiments/halo-bench/target/c23-profile-three-integer-table-2.sample.txt\n",
+        "worker_samples": 588
+      }
+    ]
+  },
+  "profile_excerpts_sha256": {
+    "c23-profile-one-fib-0.sample.txt": "2a071280b26e793c0ac780bef19f958a3be47fdf050eafc1069e3aae65a0c352",
+    "c23-profile-one-integer-table-0.sample.txt": "9ec18837f5b00fbe1e3c178704335e2b70498d171d12c9de79fae2096b3f1daf",
+    "c23-profile-three-fib-0.sample.txt": "017f4a84bf408b905335260cbcb890fee53fa621b860ee18df3adf75a88a24b2",
+    "c23-profile-three-fib-1.sample.txt": "ca4f9727146f7065eec5842ea75e485de138c62f1f20aa88c0ee48896ebde75f",
+    "c23-profile-three-fib-2.sample.txt": "1fc64cbe7ffe7441f032a92b2aec197d111463455d4cad03f1c3053ce02782bf",
+    "c23-profile-three-integer-table-0.sample.txt": "5f51d3c270e67e2a837e4b0efb150782933400ab5101b0c3d93909ad251a3712",
+    "c23-profile-three-integer-table-1.sample.txt": "01b4229e68ae9cca997c077ca5cbb7e4e77c875a1e572ddbe050203436857da5",
+    "c23-profile-three-integer-table-2.sample.txt": "9714d12a3c678494a633947ef3ae610c5de91b9529d62fdcd5ec192a6a89561f"
+  }
+}

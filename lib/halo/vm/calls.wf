@@ -164,11 +164,11 @@ fn enter_lua(vm: &Vm, stack: &Box<Slots<Value>>, h: u32, func: u64, argc: u64, w
         if p.is_vararg {
           set b = args +sat actual;
         }
-        let room = b +sat 256_u64;
-        if room == unlimited {
+        if b >= 18446744073709551359_u64 {
           let ignored = raise_text(vm: vm, text: &calls_text_0[0_u64..14_u64]);
           return Step::Error();
         }
+        let room = b + 256_u64;
         ensure_stack(stack: stack, size: room);
         if tail {
           let total = argc +sat 1_u64;
@@ -204,12 +204,10 @@ fn enter_lua(vm: &Vm, stack: &Box<Slots<Value>>, h: u32, func: u64, argc: u64, w
         }
         let maxstack = cvt::<u8, u64>(p.maxstack);
         for (i in fixed..maxstack) {
-          let j = b +sat i;
-          if j < stack^.inner.len {
-            set stack^.inner[j] = Value::Nil();
-          }
+          let j = b + i;
+          set stack^.inner[j] = Value::Nil();
         }
-        let top = b +sat maxstack;
+        let top = b + maxstack;
         let vb = args +sat fixed;
         let vc = 0_u64;
         if p.is_vararg {
