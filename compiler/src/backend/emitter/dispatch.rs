@@ -347,11 +347,36 @@ struct LoopInvariants {
     /// projection's instruction).
     pinned: Vec<(IrValueId, usize, usize)>,
     replaced: HashMap<IrValueId, IrValueId>,
+    /// For a reference whose box the loop keeps and which the loop hands to
+    /// callees that cannot replace that box: the reference and its hoisted
+    /// projection, which each part stores in a slot of its own.
+    pins: Vec<(IrValueId, IrValueId)>,
+    /// The call arguments that name such a reference, which each part
+    /// replaces by its slot.
+    pin_arguments: HashMap<IrValueId, IrValueId>,
     /// References whose every projection is hoisted, which the loop then
     /// only hands on to itself through joins and its own back-edge place.
     unread: HashSet<IrValueId>,
     /// Header parameters every back edge passes through unchanged.
     passed_through: HashSet<IrValueId>,
+}
+
+impl LoopInvariants {
+    /// Records that the parts hand `arguments`, each naming `parameter`, to
+    /// callees through a slot holding `canonical`, the box's hoisted
+    /// projection; a pinned reference the loop hands to no callee needs none.
+    fn pin(&mut self, parameter: IrValueId, canonical: IrValueId, arguments: &[IrValueId]) {
+        if arguments.is_empty() {
+            return;
+        }
+        self.pins.push((parameter, canonical));
+        for argument in arguments {
+            self.pin_arguments.insert(*argument, parameter);
+        }
+        if !self.passed.contains(&canonical) {
+            self.passed.push(canonical);
+        }
+    }
 }
 
 /// Which part of a split function is being emitted.
@@ -396,6 +421,9 @@ pub(super) struct DispatchEmission {
     /// computed once by the enclosing function (see [`LoopInvariants`]).
     pinned: Vec<(IrValueId, usize, usize)>,
     replaced: HashMap<IrValueId, IrValueId>,
+    /// See [`LoopInvariants::pins`] and [`LoopInvariants::pin_arguments`].
+    pins: Vec<(IrValueId, IrValueId)>,
+    pin_arguments: HashMap<IrValueId, IrValueId>,
     /// Whether the parts receive the handler table's address.
     table_base: bool,
     /// Values the loop cannot change that the parts read from the frame,
@@ -701,6 +729,8 @@ impl FunctionEmitter<'_, '_> {
             facts: invariant.facts,
             pinned: invariant.pinned,
             replaced: invariant.replaced,
+            pins: invariant.pins,
+            pin_arguments: invariant.pin_arguments,
             spilled: spills,
             table_base,
             dropped: header
@@ -1051,6 +1081,7 @@ impl FunctionEmitter<'_, '_> {
         let table_symbol = dispatch.table_symbol.clone();
         let dropped = dispatch.dropped.clone();
         let spilled = dispatch.spilled.clone();
+        let pins = dispatch.pins.clone();
         let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
 
         self.set_part(Part::Header);
@@ -1136,6 +1167,18 @@ impl FunctionEmitter<'_, '_> {
             for (value, ty) in &dropped {
                 let ty = llvm_type_with_references(self.program, *ty, &mut body.references.types)?;
                 writeln!(prelude, "  {} = freeze {ty} poison", value_name(*value))
+                    .map_err(|_| BackendFailure::TextEmission)?;
+            }
+            for (parameter, canonical) in &pins {
+                let slot = pin_slot_name(*parameter);
+                writeln!(prelude, "  {slot} = alloca ptr")
+                    .and_then(|()| {
+                        writeln!(
+                            prelude,
+                            "  store ptr {}, ptr {slot}",
+                            value_name(*canonical)
+                        )
+                    })
                     .map_err(|_| BackendFailure::TextEmission)?;
             }
             module.define(signature.define(body, &prelude)?);
@@ -1373,6 +1416,7 @@ impl FunctionEmitter<'_, '_> {
                 continue;
             }
             let mut projections: Vec<(usize, usize, IrValueId)> = Vec::new();
+            let mut kept_arguments: Vec<IrValueId> = Vec::new();
             let mut pinned = true;
             let blocks_in_loop = blocks
                 .iter()
@@ -1395,6 +1439,24 @@ impl FunctionEmitter<'_, '_> {
                             ..
                         } if root(address) == *parameter && operands.len() == 1 => {
                             projections.push((index, position_in_block, *value));
+                        }
+                        IrInstruction::Define {
+                            operation:
+                                crate::IrOperation::Call {
+                                    function,
+                                    arguments,
+                                },
+                            ..
+                        } if self.callee_keeps_box(*function, arguments, |value| {
+                            root(value) == *parameter
+                        }) =>
+                        {
+                            kept_arguments.extend(
+                                arguments
+                                    .iter()
+                                    .copied()
+                                    .filter(|argument| root(argument) == *parameter),
+                            );
                         }
                         _ => pinned = false,
                     }
@@ -1440,6 +1502,8 @@ impl FunctionEmitter<'_, '_> {
                 .count();
             if hoisted_already == projections.len() {
                 result.unread.insert(*parameter);
+                let canonical = projections[0].2;
+                result.pin(*parameter, canonical, &kept_arguments);
                 continue;
             }
             if hoisted_already > 0 {
@@ -1460,6 +1524,7 @@ impl FunctionEmitter<'_, '_> {
                 if !result.passed.contains(&canonical) {
                     result.passed.push(canonical);
                 }
+                result.pin(*parameter, canonical, &kept_arguments);
                 continue;
             }
             result.unread.insert(*parameter);
@@ -1469,6 +1534,7 @@ impl FunctionEmitter<'_, '_> {
             }
             result.pinned.push((*parameter, block, index));
             result.passed.push(canonical);
+            result.pin(*parameter, canonical, &kept_arguments);
         }
         for (position, parameter) in parameters.iter().enumerate() {
             if passed_through[position]
@@ -1497,6 +1563,43 @@ impl FunctionEmitter<'_, '_> {
         result
     }
 
+    /// Whether a call hands every argument `names` selects to a formal whose
+    /// declared writes all lie below its referent's box content, so the
+    /// call cannot replace that box [EFF-1, EFF-5]; a waiting callee never
+    /// qualifies, its call being a transfer rather than an ordinary call.
+    fn callee_keeps_box(
+        &self,
+        function: u32,
+        arguments: &[IrValueId],
+        names: impl Fn(&IrValueId) -> bool,
+    ) -> bool {
+        let Some(callee) = self.program.functions().get(function as usize) else {
+            return false;
+        };
+        if callee.waits() {
+            return false;
+        }
+        let keeping: HashSet<IrValueId> = callee
+            .box_keeping_reference_parameters
+            .iter()
+            .copied()
+            .collect();
+        let mut any = false;
+        for (position, argument) in arguments.iter().enumerate() {
+            if !names(argument) {
+                continue;
+            }
+            let Some((formal, _)) = callee.parameters().get(position) else {
+                return false;
+            };
+            if !keeping.contains(formal) {
+                return false;
+            }
+            any = true;
+        }
+        any
+    }
+
     /// Emits one instruction of a part: a hoisted box-referent projection is
     /// the parameter the part receives, and another projection of the same
     /// box is a name for it.
@@ -1523,6 +1626,35 @@ impl FunctionEmitter<'_, '_> {
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
             return Ok(());
+        }
+        if let IrInstruction::Define {
+            operation: crate::IrOperation::Call { arguments, .. },
+            ..
+        } = instruction
+        {
+            let renamed: Vec<(IrValueId, IrValueId)> = self
+                .dispatch
+                .as_ref()
+                .map(|dispatch| {
+                    arguments
+                        .iter()
+                        .filter_map(|argument| {
+                            dispatch
+                                .pin_arguments
+                                .get(argument)
+                                .map(|parameter| (*argument, *parameter))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !renamed.is_empty() {
+                for (argument, parameter) in &renamed {
+                    self.pin_names.insert(*argument, pin_slot_name(*parameter));
+                }
+                let emitted = self.emit_instruction(block, index, instruction);
+                self.pin_names.clear();
+                return emitted;
+            }
         }
         self.emit_instruction(block, index, instruction)
     }
@@ -1556,4 +1688,10 @@ impl FunctionEmitter<'_, '_> {
             dispatch.part = part;
         }
     }
+}
+
+/// The part-local slot holding the kept box of a pinned reference, which the
+/// part hands to callees in its place.
+fn pin_slot_name(parameter: IrValueId) -> String {
+    format!("%wf.pin.{}", parameter.ordinal())
 }

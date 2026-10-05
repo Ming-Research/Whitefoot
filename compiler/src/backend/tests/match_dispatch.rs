@@ -695,6 +695,36 @@ fn a_reference_handed_to_a_writer_is_reloaded_in_the_loop() {
     assert!(output.status.success(), "{output:?}");
 }
 
+#[test]
+fn a_reference_handed_to_a_content_writer_keeps_its_box() {
+    // `touch_content` writes only what the box holds, so it cannot replace
+    // the box `regs` reaches: each part hands it a slot holding the box the
+    // enclosing function projected, and no part loads the box again.
+    let source = REGISTER_FILE
+        .replace("NAME", "content")
+        .replace("DECREMENT", "let ignored = touch_content(regs: regs);")
+        .replace(
+            "fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {",
+            "fn touch_content(regs: &Box<Slots<u64>>) -> r: u64 writes(regs.inner) contract {",
+        );
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_content", 4);
+    assert!(
+        !some_part_reloads_a_box(&module, "wf_content", 4),
+        "no part reloads a box a content writer cannot replace: {module}"
+    );
+    let handed = (0..4).any(|arm| {
+        let part = definition(&module, &format!("wf_content.arm.{arm}"));
+        part.contains("= alloca ptr")
+            && part
+                .lines()
+                .any(|line| line.contains("@wf_touch_content(ptr %wf.pin."))
+    });
+    assert!(handed, "a part hands the callee its pin slot: {module}");
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
 /// An interpreter whose `Dec` arm replaces the box `regs` holds, returning
 /// its result through memory and carrying twenty-four values it never
 /// changes: `regs` cannot be kept, past the registers the unchanged values

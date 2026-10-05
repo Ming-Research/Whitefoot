@@ -1723,6 +1723,11 @@ pub struct IrFunction {
     /// writes and by-value consumption throughout the call. Scheduling uses
     /// those checked facts without inferring new lifetimes.
     pub(crate) readonly_reference_parameters: Vec<IrValueId>,
+    /// Original reference formals whose every declared write lies below the
+    /// referent's `Box` content (a path starting with `.inner`), copied from
+    /// checked effects, so a call cannot replace the box the formal reaches.
+    /// A formal with no declared write qualifies too.
+    pub(crate) box_keeping_reference_parameters: Vec<IrValueId>,
     /// Checked source modes, or `None` for a compiler-synthesized function.
     /// Internal transfer contracts must not be invented from representation.
     pub(crate) source_signature: Option<IrSourceSignature>,

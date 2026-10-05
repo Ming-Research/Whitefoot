@@ -21,9 +21,10 @@ use crate::CheckedProgram;
 use crate::NodePath;
 use crate::semantic::CheckedSetTarget;
 use crate::semantic::{
-    BindingId, CheckedArrayRoot, CheckedDrop, CheckedExpression, CheckedMatchArm, CheckedMeasure,
-    CheckedMode, CheckedNominalKind, CheckedParameter, CheckedProgramData, CheckedProjectedDrop,
-    CheckedShared, CheckedStatement, CheckedValue, FunctionPermissions, MeasureCell, MeasuredKind,
+    BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
+    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
+    CheckedProgramData, CheckedProjectedDrop, CheckedShared, CheckedStatement, CheckedValue,
+    FunctionPermissions, MeasureCell, MeasuredKind,
 };
 
 use super::*;
@@ -478,6 +479,15 @@ fn lower_function<'program>(
         {
             builder.readonly_reference_parameters.push(value);
         }
+        if parameter.mode == CheckedMode::Reference
+            && function
+                .declared_state_writes
+                .iter()
+                .filter(|path| path.root == parameter.declaration)
+                .all(|path| path.steps.first() == Some(&CheckedEffectStep::Deref))
+        {
+            builder.box_keeping_reference_parameters.push(value);
+        }
         if builder.bindings.insert(parameter.binding, value).is_some() {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
@@ -655,6 +665,7 @@ struct IrBuilder<'program> {
     bindings: HashMap<BindingId, IrValueId>,
     parameters: Vec<(IrValueId, IrType)>,
     readonly_reference_parameters: Vec<IrValueId>,
+    box_keeping_reference_parameters: Vec<IrValueId>,
     source_calls: Vec<IrSourceCall>,
     values: Vec<IrType>,
     blocks: Vec<BuildingBlock>,
@@ -750,6 +761,7 @@ impl<'program> IrBuilder<'program> {
             bindings: HashMap::new(),
             parameters: Vec::new(),
             readonly_reference_parameters: Vec::new(),
+            box_keeping_reference_parameters: Vec::new(),
             source_calls: Vec::new(),
             values: Vec::new(),
             blocks: Vec::new(),
@@ -819,6 +831,7 @@ impl<'program> IrBuilder<'program> {
             name,
             parameters: self.parameters,
             readonly_reference_parameters: self.readonly_reference_parameters,
+            box_keeping_reference_parameters: self.box_keeping_reference_parameters,
             source_signature: None,
             source_calls: self.source_calls,
             result: self.result,

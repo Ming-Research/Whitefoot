@@ -1380,6 +1380,10 @@ struct FunctionEmitter<'program, 'state> {
     /// Per-operation snapshots for legacy value consumers. Place operations
     /// read their actual storage directly; a snapshot never becomes an alias.
     materialized: HashMap<IrValueId, String>,
+    /// Arguments a split part hands to a callee through its pin slot
+    /// instead of the reference itself, for the duration of that call
+    /// (compiler/match-dispatch-lowering).
+    pin_names: HashMap<IrValueId, String>,
     temporary: u32,
     /// The module's outlined thunks, shared by every function that hands a
     /// call out.
@@ -1523,6 +1527,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             storage,
             result_slot,
             materialized: HashMap::new(),
+            pin_names: HashMap::new(),
             temporary: 0,
             parallel,
             overlap_handed_out,
@@ -2900,8 +2905,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     }
 
     fn value_name(&self, value: IrValueId) -> String {
-        self.materialized
+        self.pin_names
             .get(&value)
+            .or_else(|| self.materialized.get(&value))
             .cloned()
             .unwrap_or_else(|| value_name(value))
     }
