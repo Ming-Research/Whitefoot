@@ -449,8 +449,7 @@ The score rises 3.8%, above the 2% criterion.
 helper's parameters with `let`, except a body that delivers a value from a
 `match` (`give`), which stays a call: the checker's handling of such
 deliveries grows faster than linearly with the function, and the fully
-inlined interpreter took 313 s to check where this form takes 3.5 s
-(`docs/todo.md`, "Checking one function grows faster than its size"). Built
+inlined interpreter took 313 s to check where this form takes 3.5 s. Built
 by the compiler with stack-box pinning and active-term closures merged, the
 `I32Add` arm's machine code is the same seventeen instructions as v2d's: by
 v2d the helpers were already inlined by LLVM, so writing them into the
@@ -512,6 +511,30 @@ with correct CRCs, and one `/usr/bin/time -l` launch each:
 
 The score rises 3.4%, meeting the criterion.
 
+### Not adopted: pairs of additions
+
+v2g's operation-pair profile shows 33.3 million `I32Add` dispatches
+directly followed by another. Folding the second into the first's sum
+(`(a + b) + c`, when the second adds the temporary the first wrote) folded
+425: the additions are independent, each written to a local, as in a loop
+that advances two indices. Merging an `I32Add` emitted directly after
+another, with no branch target between them, into one `I32Add2(e, x, y, d,
+a, b)` that performs both in order (and splitting it again when a load or
+store folds the second), was predicted to remove 20-33 million dispatches;
+criterion: adopt if the median score rises at least 2%. It removed 18.4
+million (506,088,437 to 487,719,418, 3.6%); seven alternating launches
+([run-wasm-add-pairs.tsv](run-wasm-add-pairs.tsv)), every launch with
+correct CRCs:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2g | 2762.4 | 1.7% | 10,648,948,853 | 2,285,196,012 |
+| add-pairs | 2809.0 | 0.6% | 10,483,486,410 | 2,247,321,457 |
+
+The score rises 1.7%, short of the criterion with spreads that decide it,
+so the interpreter keeps v2g's form. A merged dispatch saves the indirect
+branch and the fetch but not the second addition's three slot accesses.
+
 ### Frame slots addressed from a derived pointer
 
 The interpreter's handlers address frame slots as `stack^.inner[fp + k]`,
@@ -532,6 +555,7 @@ without and with the change; every launch with correct CRCs:
 |---|---:|---:|---:|---:|---:|---:|---:|
 | v2e ([run](run-derived-v2e.tsv)) | 7 | 2567.4 | 2594.0 | 11,230,506,405 | 10,654,763,608 | 2,423,045,295 | 2,414,653,203 |
 | v2g ([run](run-derived-v2g.tsv)) | 15 | 2762.4 | 2820.9 | 10,649,927,045 | 10,072,938,212 | 2,291,486,095 | 2,235,379,256 |
+| v2h ([run](run-wasm-v2h-nano.tsv)) | 7 | 2971.8 | 2998.5 | 9,716,197,938 | 9,397,630,140 | 2,125,190,385 | 2,110,365,739 |
 
 The instructions fall 5.1% and 5.4%. On v2e the cycles and score do not
 move beyond the spread (score +1.0%, cycles -0.3%); on v2g, whose folded
@@ -539,7 +563,57 @@ loads and stores each address two or three slots, the cycles fall 2.4% and
 the score rises 2.1%, meeting the criterion. A seven-launch v2g run
 before this one gave +1.9%, within its 2% spread, which is why the
 fifteen-launch run decides; two `/usr/bin/time -l` launches of each v2g
-build gave cycles within 0.1% of each other.
+build gave cycles within 0.1% of each other. On v2h, whose accumulator
+forms already drop many slot accesses, the instructions fall 3.3% and the
+score rises 0.9% with cycles 0.7% lower, below the criterion: the gain
+shrinks as fewer slots are addressed per dispatch.
+
+### v2h, an accumulator register
+
+The interpreter function takes a `u64` parameter `acc`, carried by every
+tail call; the split lowering keeps it in a register (318 arms taking 16 of
+the 24 integer argument registers, `--dispatch-ledger`). Operations gain
+forms that leave their result in `acc` instead of slot `d` (`I32AddD`), take
+an operand from it (`I32AddA`, `I32StoreV`, `BrIfC`), or both
+(`I32AddAD`): 125 forms of the i32 arithmetic, comparisons, loads and
+stores, the compare-and-branch operations, `BrIf`, `BrUnless` and `Select`.
+When the translator emits an operation that pops the temporary the
+operation emitted just before it wrote, with no label between (the test
+the compare and address fusions use), and both have such forms, the
+earlier one leaves its result in `acc` and the later one reads it there.
+The operand stack's discipline gives that temporary no other reader; a
+result that `local.set` or `local.tee` retargeted to a local keeps its
+store. A form keeps its operation's fields, a field read from `acc`
+holding 65535, which is never a slot, so the compare and address fusions
+and the patching of forward branches carry it. Silverfir-nano's
+interpreter keeps such values in an accumulator register the same way. In
+v2g's profile 202 million of the 506 million dispatches read the slot the
+dispatch before them wrote, locals included. Predicted before measuring:
+the same dispatch count, 4-6% fewer instructions, 3-6% fewer cycles and a
+score 3-6% higher; criterion: adopt if the median score rises at least 2%.
+Dispatches: 506,088,440, of which 134.8 million leave their result in
+`acc`. Both builds compiled by the compiler with stack-box pinning and
+active-term closures; seven alternating launches
+([run-wasm-v2h.tsv](run-wasm-v2h.tsv)), every launch with correct CRCs,
+and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2g | 2805.0 | 0.8% | 10,649,237,559 | 2,287,685,521 |
+| v2h | 3016.6 | 4.1% | 9,715,057,852 | 2,126,003,548 |
+
+The score rises 7.5%, above the prediction and the criterion, with every
+v2h launch faster than every v2g launch; instructions fall 8.8% and cycles
+7.1%. In the same binary the `I32Add` arm is 19 instructions to its
+indirect branch, `I32AddA` 16 and `I32AddAD` 14: a form reading `acc`
+drops its operand's index load and slot load, and a form writing it drops
+its destination's index load, address and store.
+
+Against Silverfir-nano in one run of seven alternating launches
+([run-wasm-v2h-nano.tsv](run-wasm-v2h-nano.tsv)), every launch with correct
+CRCs, v2h's median is 2971.8 (spread 0.3%) and Silverfir-nano's 5730.7
+(0.9%), a ratio of 0.519; v2h compiled by the compiler with derived
+frame-slot addresses as well, below, scores 2998.5 (0.3%), 0.523.
 
 ## Argument registers
 

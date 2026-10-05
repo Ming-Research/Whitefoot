@@ -603,12 +603,12 @@ fn branch_op(form: u64, target: u64, s: u64, d: u64, c: u64) -> op: Op pure {
   if form == 2_u64 {
     let c16 = slot16(value: c);
     let o = Op::BrIf(t: t, c: c16);
-    return o;
+    return acc_norm(op: o);
   }
   if form == 4_u64 {
     let c16 = slot16(value: c);
     let o = Op::BrUnless(t: t, c: c16);
-    return o;
+    return acc_norm(op: o);
   }
   if form == 5_u64 {
     let s16 = slot16(value: s);
@@ -806,10 +806,79 @@ fn temp_slot(st: &Trans, pos: u64) -> slot: u64 reads(st) {
   return st^.base +wrap pos;
 }
 
+fn fresh_slot(st: &Trans, code: &Box<Slots<Op>>) -> slot: u64 reads(st), reads(code) {
+  doc "The temporary the last emitted operation wrote, when nothing was emitted or labeled since, or the largest u64.";
+  let length = code^.inner.len;
+  if length == 0_u64 {
+    return 18446744073709551615_u64;
+  }
+  let latest = length - 1_u64;
+  if st^.last != latest {
+    return 18446744073709551615_u64;
+  }
+  if st^.last_pos == 18446744073709551614_u64 {
+    return 18446744073709551615_u64;
+  }
+  return temp_slot(st: st, pos: st^.last_pos);
+}
+
+fn acc_feed(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> o: Op reads(st), writes(code) {
+  doc "An operation about to be emitted that pops the temporary the last emitted operation just wrote takes it from acc, and that operation leaves its result in acc, when both have such forms; the temporary is dead after its one consumer.";
+  let t = fresh_slot(st: st, code: code);
+  if t >= 65535_u64 {
+    return op;
+  }
+  let t16 = slot16(value: t);
+  match acc_input(op: op, s: t16) {
+    Some(value: o) => {
+      let latest = code^.inner.len -wrap 1_u64;
+      if latest < code^.inner.len {
+        match acc_dest(op: code^.inner[latest]) {
+          Some(value: p) => {
+            set code^.inner[latest] = p;
+            return o;
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return op;
+}
+
+fn acc_claim(st: &Trans, code: &Box<Slots<Op>>, slot: u64) -> s: u64 writes(st), writes(code) {
+  doc "A branch condition in the temporary the last emitted operation just wrote, popped by the branch: that operation leaves its result in acc and the condition becomes the sentinel 65535 standing for acc; otherwise slot.";
+  let t = fresh_slot(st: st, code: code);
+  if t != slot {
+    return slot;
+  }
+  if t >= 65535_u64 {
+    return slot;
+  }
+  let latest = code^.inner.len -wrap 1_u64;
+  if latest < code^.inner.len {
+    match acc_dest(op: code^.inner[latest]) {
+      Some(value: p) => {
+        set code^.inner[latest] = p;
+        set st^.last = 18446744073709551615_u64;
+        return 65535_u64;
+      }
+      None() => {
+      }
+    }
+  }
+  return slot;
+}
+
 fn emit_dest(st: &Trans, code: &Box<Slots<Op>>, op: Op, pos: u64) -> r: unit writes(st), writes(code) {
-  doc "Emits an operation writing the temporary of stack position pos and remembers it, so that a local.set right after it can take over its destination.";
+  doc "Emits an operation writing the temporary of stack position pos and remembers it, so that a local.set right after it can take over its destination, or the next operation popping it can take it from acc.";
   let at = code^.inner.len;
-  push_op(code: code, op: op);
+  let normal = acc_norm(op: op);
+  let fed = acc_feed(st: st, code: code, op: normal);
+  push_op(code: code, op: fed);
   set st^.last = at;
   set st^.last_pos = pos;
   return unit;
@@ -817,7 +886,9 @@ fn emit_dest(st: &Trans, code: &Box<Slots<Op>>, op: Op, pos: u64) -> r: unit wri
 
 fn emit_plain(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> r: unit writes(st), writes(code) {
   doc "Emits an operation writing no temporary.";
-  push_op(code: code, op: op);
+  let normal = acc_norm(op: op);
+  let fed = acc_feed(st: st, code: code, op: normal);
+  push_op(code: code, op: fed);
   set st^.last = 18446744073709551615_u64;
   return unit;
 }
@@ -1241,6 +1312,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let cond = 0_u64;
     if cmp == 0_u64 {
       set cond = source(st: st, provs: provs, code: code, pos: top);
+      set cond = acc_claim(st: st, code: code, slot: cond);
     }
     pop_prov(st: st, provs: provs, count: 1_u64);
     flush(st: st, provs: provs, code: code);
@@ -1284,6 +1356,9 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let cond = 0_u64;
     if cmp == 0_u64 {
       set cond = source(st: st, provs: provs, code: code, pos: top);
+      if bnot(moves) {
+        set cond = acc_claim(st: st, code: code, slot: cond);
+      }
     }
     pop_prov(st: st, provs: provs, count: 1_u64);
     flush(st: st, provs: provs, code: code);
@@ -2039,6 +2114,14 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
   if failed {
     return False();
   }
+  let end = code^.inner.len;
+  for (i in begin..end) {
+    if i < code^.inner.len {
+      if has_sentinel(op: code^.inner[i]) {
+        return False();
+      }
+    }
+  }
   return bnot(st.failed);
 }
 
@@ -2613,7 +2696,7 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
     if fp > room {
       return 70_u8;
     }
-    let outcome = run(code: &code, funcs: &funcs, brtab: &brtab, table: &table, consts: &consts, stack: &stack, mem: &mem, globals: &globals, pc: pc, fp: fp);
+    let outcome = run(code: &code, funcs: &funcs, brtab: &brtab, table: &table, consts: &consts, stack: &stack, mem: &mem, globals: &globals, pc: pc, fp: fp, acc: 0_u64);
     match outcome {
       Done() => {
         return 0_u8;

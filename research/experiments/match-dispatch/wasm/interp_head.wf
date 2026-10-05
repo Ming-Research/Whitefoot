@@ -180,11 +180,11 @@ fn enter(stack: &Box<Array<u64>>, consts: &Box<Slots<u64>>, fp: u64, at: u16, ca
   return base;
 }
 
-fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target>>, table: &Box<Slots<u64>>, consts: &Box<Slots<u64>>, stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, globals: &Box<Slots<u64>>, pc: u64, fp: u64) -> r: Outcome reads(code), reads(funcs), reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {
+fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target>>, table: &Box<Slots<u64>>, consts: &Box<Slots<u64>>, stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, globals: &Box<Slots<u64>>, pc: u64, fp: u64, acc: u64) -> r: Outcome reads(code), reads(funcs), reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {
   requires pc < code^.inner.len;
   requires fp + 65536_u64 <= stack^.inner.len;
 } {
-  doc "One operation per dispatch on frame slots: an operand names a slot by its distance from fp, below 65536, so the frame contract covers every slot access. Values are u64 words, an i32 kept zero-extended and a float as its bits; a frame is the parameters, locals and constants from fp, the caller's return pc and frame base after them, then the operand slots.";
+  doc "One operation per dispatch on frame slots: an operand names a slot by its distance from fp, below 65536, so the frame contract covers every slot access. Values are u64 words, an i32 kept zero-extended and a float as its bits; a frame is the parameters, locals and constants from fp, the caller's return pc and frame base after them, then the operand slots. acc carries a value from the operation that computed it to the next one, its single consumer, in place of a slot.";
   let n = code^.inner.len;
   match code^.inner[pc] {
     Unreachable() => {
@@ -193,7 +193,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
     Jump(t: tv) => {
       let target = cvt::<u32, u64>(tv^);
       if target < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -203,7 +203,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       move_slot(stack: stack, fp: fp, s: si, d: di);
       let target = cvt::<u32, u64>(tv^);
       if target < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -216,7 +216,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         set next = cvt::<u32, u64>(tv^);
       }
       if next < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -240,7 +240,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         }
       }
       if next < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -253,7 +253,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         set next = cvt::<u32, u64>(tv^);
       }
       if next < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -280,7 +280,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
           }
         }
         if target < n {
-          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp);
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp, acc: acc);
         }
       }
       return trap(code: 1_u32, pc: pc);
@@ -303,7 +303,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         let room = stack^.inner.len - 65536_u64;
         if caller <= room {
           if ret < n {
-            return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: ret, fp: caller);
+            return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: ret, fp: caller, acc: acc);
           }
         }
       }
@@ -319,7 +319,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         if nf <= room {
           let begin = callee.start;
           if begin < n {
-            return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: begin, fp: nf);
+            return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: begin, fp: nf, acc: acc);
           }
         }
       }
@@ -346,7 +346,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
             if nf <= room {
               let begin = callee.start;
               if begin < n {
-                return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: begin, fp: nf);
+                return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: begin, fp: nf, acc: acc);
               }
             }
           }
@@ -372,7 +372,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       move_slot(stack: stack, fp: fp, s: si, d: di);
       let next = pc + 1_u64;
       if next < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -382,7 +382,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       move_slot(stack: stack, fp: fp, s: si, d: di);
       let next = pc + 1_u64;
       if next < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -395,7 +395,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       move_slot(stack: stack, fp: fp, s: ti, d: ei);
       let next = pc + 1_u64;
       if next < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -408,7 +408,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         set stack^.inner[dt] = v;
         let next = pc + 1_u64;
         if next < n {
-          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
         }
       }
       return trap(code: 1_u32, pc: pc);
@@ -422,7 +422,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         set globals^.inner[iw] = v;
         let next = pc + 1_u64;
         if next < n {
-          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
         }
       }
       return trap(code: 1_u32, pc: pc);
@@ -435,7 +435,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       set stack^.inner[dt] = pages;
       let next = pc + 1_u64;
       if next < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }
@@ -457,7 +457,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       if copied {
         let next = pc + 1_u64;
         if next < n {
-          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
         }
       }
       return trap(code: 3_u32, pc: pc);
@@ -477,7 +477,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       if filled {
         let next = pc + 1_u64;
         if next < n {
-          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
         }
       }
       return trap(code: 3_u32, pc: pc);
@@ -488,7 +488,7 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
       set stack^.inner[dt] = vv^;
       let next = pc + 1_u64;
       if next < n {
-        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp);
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
       }
       return trap(code: 1_u32, pc: pc);
     }

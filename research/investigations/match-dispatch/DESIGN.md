@@ -344,16 +344,18 @@ its own.
 Register-form operations on frame slots (v2a), constants in frame slots
 (v2b), fused compare-and-branch operations (v2c), the stack box kept across
 helper calls (v2d), handler bodies written into their arms (v2e), fewer
-copies (v2f) and address additions folded into loads and stores (v2g)
-bring the median score to 2832.9
-([results](../../experiments/match-dispatch/RESULTS.md#v2g-address-additions-folded-into-loads-and-stores)),
-about 0.50x of Silverfir-nano's 5714.3 median in the v2d run. Each step
-since v2b removed dispatches or instructions per dispatch, but at about 4.5
-cycles per dispatch the remaining cost is still both the number of
-dispatches and each handler's instructions beyond its operation: the
-next-cell address recomputed from its index and the frame base added to
-each slot index (`docs/todo.md`, "Interpreter dispatch lowering").
-Silverfir-nano's translator also keeps one operand in an accumulator
-register, so its dispatches are cheaper as well. The checker's growth with
-function size still limits the interpreter's form: a handler that delivers
-a value from a `match` stays a helper function.
+copies (v2f), address additions folded into loads and stores (v2g) and an
+accumulator register (v2h) bring the interpreter to 0.519x of
+Silverfir-nano, 2971.8 against 5730.7 in one run
+([results](../../experiments/match-dispatch/RESULTS.md#v2h-an-accumulator-register)).
+Each step since v2b removed dispatches or instructions per dispatch; at
+about 4.2 cycles for each of 506 million dispatches the remaining cost is
+still both the number of dispatches and each handler's instructions
+beyond its operation, among them the next cell's address recomputed from
+its index on every dispatch (`docs/todo.md`, "Interpreter dispatch
+lowering"). Like Silverfir-nano's translator, v2h passes a value from the
+operation that computes it to the next one, its single consumer, in an
+accumulator register instead of a frame slot, for 135 million of the 506
+million dispatches. The checker's growth with function size still limits
+the interpreter's form: a handler that delivers a value from a `match`
+stays a helper function.
