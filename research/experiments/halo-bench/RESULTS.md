@@ -1559,3 +1559,59 @@ adds no public type or new module; its stack-slot requirement is discharged
 at instruction_call's existing dispatch window. The source trial changes
 only calls.wf and instruction_call in handlers.wf. Native sentinel closures,
 invalid handles/prototypes and varargs return to the unchanged general path.
+
+
+Candidate vm checks pass in 241.14 and 245.90 s (median 243.52 s,
+relative range 1.95%), versus before 244.19 s (range 4.94%): **0.997×**,
+a 0.27% median decrease, well below 1.25×. Two samples per variant suffice
+for this wide margin; this does not establish a checking-speed improvement.
+Early authoring commands reject comment syntax, nested constructors,
+indentation and a match binder matching its field name, all exit 1; the
+corrected source passes both checks. The first C counter compile rejects
+stdio included after Lua's getline macro; moving the include before Lua
+headers fixes it (compile/link exit 0). These failed commands and the busy
+counter attempt are retained separately, outside successful check medians.
+
+
+### Call-entry runtime result
+
+Full-LTO benchmark construction passes in 547.29 s (exit 0). One pair per
+kernel takes 12.41 s; the candidate's first fib launch is cold, 0.639257 s,
+versus its subsequent warm median. Three warm pairs take 30.64 s (exit 0),
+with fib improving 20.94% and ranges 9.89% before/0.97% candidate; this is
+well separated from 10%, so select the requested six pairs. These calibration
+launches remain outside the selected medians. The selected batch takes
+58.39 s (exit 0). All selected launches remain in the evidence.
+
+Process wall times include native startup, source compilation, execution and
+teardown, on the recorded M1 Pro/macOS host, normal GC, unlimited budget.
+Both binaries have full LTO; the before binary's source map and bytes match
+the task base. The candidate source map differs only in calls.wf and
+handlers.wf. Source/compiler/binary identities, individual pairs and order
+are retained in [call-path-measurements.json](call-path-measurements.json).
+
+| Kernel | Before median s | Candidate median s | Improvement | Before min–max s | Candidate min–max s | Before/candidate range |
+|---|---:|---:|---:|---|---|---|
+| fib | 0.197647 | 0.159160 | 19.47% | 0.196894–0.199182 | 0.157697–0.160452 | 1.16% / 1.73% |
+| loop | 0.569601 | 0.568215 | 0.24% | 0.566129–0.576614 | 0.565052–0.578396 | 1.84% / 2.35% |
+| integer-table | 0.568280 | 0.569914 | -0.29% | 0.560854–0.575519 | 0.549791–0.571468 | 2.58% / 3.80% |
+| string-key | 0.039413 | 0.040129 | -1.82% | 0.038873–0.039832 | 0.039674–0.041803 | 2.43% / 5.30% |
+| concat | 0.180638 | 0.185538 | -2.71% | 0.176327–0.188565 | 0.183825–0.187981 | 6.77% / 2.24% |
+| sort | 0.727381 | 0.717749 | 1.32% | 0.713762–0.829831 | 0.714480–0.727934 | 15.96% / 1.87% |
+| binary-trees | 2.466777 | 2.253587 | 8.64% | 2.448322–2.576820 | 2.238027–2.276540 | 5.21% / 1.71% |
+
+Fib improves **19.47%**, with ranges 1.16%/1.73%, passing the 10% gate.
+Integer-table loses 0.29%, string-key 1.82% and concat 2.71%; each loss is
+below its larger before/candidate range, 3.80%, 5.30% and 6.78% respectively.
+Thus no other kernel regresses beyond the pre-recorded guard. The wide sort
+range (15.96%) and short string-key/concat spread limit any stronger statement
+about those kernels. Every native/reference exit is 0; printed checksums,
+zero suspensions and completed-collection counts agree. Collections remain
+fib 0, loop 0, integer-table 5, string-key 0, concat 0, sort 3 and trees 176.
+
+This measures the combined fixed-entry qualification and helper-traffic
+change; it does not isolate repeated-check removal from native storage,
+branching or code-layout effects. Return and frame transport remain unchanged.
+The runtime and module-check gates pass; behavior/root gates are still pending.
+The oracle host uses the existing module cache for correctness builds, not
+for performance measurements; all timed benchmark binaries use full LTO.
