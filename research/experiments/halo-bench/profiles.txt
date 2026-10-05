@@ -2233,7 +2233,6 @@ Sort by top of stack, same collapsed (when >= 5):
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1)        29
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1)        25
 
-
 ===== C1 re-profile: c23-profile-one-integer-table-0.sample.txt =====
 Analysis of sampling halo-c1 (pid 94411) every 1 millisecond
 Process:         halo-c1 [94411]
@@ -2306,7 +2305,6 @@ Sort by top of stack, same collapsed (when >= 5):
         wf_package.halo.vm.collect_if_due  (in halo-c1)        12
         wf_package.halo.vm.raw_assign  (in halo-c1)        9
 
-
 ===== C1 re-profile: c23-profile-three-fib-0.sample.txt =====
 Analysis of sampling halo-c1 (pid 94514) every 1 millisecond
 Process:         halo-c1 [94514]
@@ -2373,7 +2371,6 @@ Sort by top of stack, same collapsed (when >= 5):
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo-c1)        48
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1)        40
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1)        29
-
 
 ===== C1 re-profile: c23-profile-three-fib-1.sample.txt =====
 Analysis of sampling halo-c1 (pid 94526) every 1 millisecond
@@ -2442,7 +2439,6 @@ Sort by top of stack, same collapsed (when >= 5):
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1)        40
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1)        33
 
-
 ===== C1 re-profile: c23-profile-three-fib-2.sample.txt =====
 Analysis of sampling halo-c1 (pid 94596) every 1 millisecond
 Process:         halo-c1 [94596]
@@ -2510,7 +2506,6 @@ Sort by top of stack, same collapsed (when >= 5):
         wf_package.halo.vm.finish  (in halo-c1)        47
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo-c1)        35
         wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo-c1)        33
-
 
 ===== C1 re-profile: c23-profile-three-integer-table-0.sample.txt =====
 Analysis of sampling halo-c1 (pid 94600) every 1 millisecond
@@ -2585,7 +2580,6 @@ Sort by top of stack, same collapsed (when >= 5):
         wf_package.halo.vm.raw_assign  (in halo-c1)        11
         wf_package.halo.vm.metamethod  (in halo-c1)        10
 
-
 ===== C1 re-profile: c23-profile-three-integer-table-1.sample.txt =====
 Analysis of sampling halo-c1 (pid 94605) every 1 millisecond
 Process:         halo-c1 [94605]
@@ -2656,7 +2650,6 @@ Sort by top of stack, same collapsed (when >= 5):
         wf_package.halo.vm.collect_if_due  (in halo-c1)        15
         wf_package.halo.heap.gc_mark  (in halo-c1)        14
         wf_package.halo.vm.raw_assign  (in halo-c1)        14
-
 
 ===== C1 re-profile: c23-profile-three-integer-table-2.sample.txt =====
 Analysis of sampling halo-c1 (pid 94623) every 1 millisecond

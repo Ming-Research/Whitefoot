@@ -2264,10 +2264,10 @@ rarely insert at the same place.
   use independent cjson instances.
 
 - **Halo's measured hot paths exceed the P1 median target.** The source
-  `lib/halo/vm/dispatch.wf` joins handler `Step` results before a self-tail
-  call, but the full-LTO native baseline already has per-arm functions and
-  indirect tail jumps; a single native dispatch point is not the measured
-  cause ([P1 results](../research/experiments/halo-bench/RESULTS.md#value-width-handles-and-native-dispatch-inspected-first)).
+  `lib/halo/vm/dispatch.wf` retains joined `Step` continuations on cold and
+  frame-changing paths; C1's 18 selected hot arms now tail-call directly.
+  The full-LTO native baseline already had per-arm functions and indirect
+  tail jumps; a single native dispatch point was not the measured cause ([P1 results](../research/experiments/halo-bench/RESULTS.md#value-width-handles-and-native-dispatch-inspected-first)).
   Impact: the initial six unscaled workloads measured 1.964–4.081 times PUC;
   depth-14 binary-trees measured 1.910 times. The
   [repair rerun](../research/experiments/halo-bench/RESULTS.md#p1-rerun-after-the-retained-changes)

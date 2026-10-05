@@ -939,3 +939,33 @@ without changing frame fields, callback boundaries, collectors, or C1 arms.
 A separate fixed-arity dispatch handler would duplicate frame initialization
 and is not needed to test this arithmetic. No register is left uncleared and
 no value is cached outside the stack. Table growth remains a separate trial.
+
+### Six-pair frame-window result
+
+One pair then three warm pairs sized all seven kernels. The first candidate
+fib launch was cold (3.1988 times before) and is calibration only. Three
+warm pairs give fib improvement 3.53%, with before/after ranges 3.60%/1.18%.
+Six pairs suffice to separate this result from the fixed 10% criterion; no
+calibration is pooled into the selected medians. Raw launches and identities
+are retained in [c23-measurements.json](c23-measurements.json); complete
+re-profile excerpts are appended to [profiles.txt](profiles.txt).
+
+| Kernel | C1 median s | Trial median s | Improvement | C1 min–max s | Trial min–max s | Pairs |
+|---|---:|---:|---:|---|---|---:|
+| fib | 0.199645 | 0.193672 | 2.99% | 0.198370–0.205063 | 0.191796–0.194708 | 6 |
+| loop | 0.572553 | 0.568471 | 0.71% | 0.568169–0.576355 | 0.565223–0.576784 | 6 |
+| integer-table | 0.760434 | 0.758343 | 0.27% | 0.751175–0.772991 | 0.755339–0.766632 | 6 |
+| string-key | 0.040090 | 0.040056 | 0.09% | 0.039993–0.040833 | 0.039953–0.040961 | 6 |
+| concat | 0.182554 | 0.182411 | 0.08% | 0.176662–0.189711 | 0.177668–0.186253 | 6 |
+| sort | 0.733036 | 0.729796 | 0.44% | 0.725248–0.748573 | 0.725477–0.749748 | 6 |
+| binary-trees | 2.476578 | 2.428629 | 1.94% | 2.450180–2.547833 | 2.418796–2.438365 | 6 |
+
+Fib improves **2.99%, failing 10%**. Its individual paired ratios and all
+launches remain in the JSON; even min/max variation does not support 10%.
+Every native/reference exit is 0, source bytes and printed checksums agree,
+suspensions are zero, and paired completed-collection counts agree: fib 0,
+loop 0, integer-table 5, string-key 0, concat 0, sort 3, binary-trees 176.
+These are same-source total process times on the recorded M1 Pro/macOS
+host; native placement can change along with the source arithmetic. No
+claim assigns the measured gain solely to check removal. This trial will
+be reverted after its cost/correctness observations; C2/C3 are unmeasured.
