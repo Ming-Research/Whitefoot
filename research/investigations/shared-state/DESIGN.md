@@ -764,3 +764,139 @@ before sending its reply, as its existing resource-release description promises.
 They now live in the successful branch, so both are released after the atomic
 statement and before the reply. The firn introduction now describes its separate
 objects rather than claiming that all commands on distinct keys never wait.
+
+The static lock key orders a source nominal's module path before its name,
+rather than comparing the two as one joined symbol. Constant and function-kind
+arguments use the existing stable source-identity spelling; compilation-local
+function instance numbers cannot order locks consistently across fragments.
+
+### Rewritten and new witnesses
+
+The mappings below retain the declared acceptance or rejection, except for the
+TYPE-9 reference judgment and the replacement witness described above. Run
+numbers are exact declared exits, not counts of assertions.
+
+| Old case | Amendment S case | Declared verdict |
+|---|---|---|
+| type9-neg-runtime-capacity-outside-box | type9-pos-runtime-capacity-reference | run 0 |
+| share-pos-table-keyed-counter | share-pos-map-keyed-counter | run 7 |
+| share-pos-table-entries-start-none | share-pos-map-entries-start-none | run 13 |
+| share-pos-table-key-set-entries | share-pos-map-key-set-entries | run 8 |
+| share-pos-key-set-insertion-order | share-pos-key-set-insertion-order | run 37 |
+| share-pos-key-set-insert-index | share-pos-key-set-insert-index | run 41 |
+| share-pos-table-two-keys-one-entry | share-pos-map-two-keys-one-entry | run 9 |
+| share-pos-table-beside-a-field | share-pos-map-entry-beside-an-object | run 80 |
+| share-pos-table-guard-on-entry | share-pos-map-guard-on-entry | run 9 |
+| share-pos-table-replaced | share-pos-map-swapped | run 22 |
+| share-pos-table-key-set-counts | share-pos-map-key-set-counts | run 6 |
+| share-pos-table-entry-through-a-copy | share-pos-map-entry-through-a-copy | run 6 |
+| share-pos-table-count-after-writes | share-pos-map-count-after-writes | run 5 |
+| share-neg-table-key-not-bytes | share-neg-map-key-not-bytes | reject SHARE-2 |
+| share-neg-table-binding-unused | share-neg-map-entry-target-unused | reject SHARE-2 |
+| share-neg-table-key-set-written | share-neg-map-key-set-written | reject REF-2 |
+| share-neg-table-entry-after-swap | share-neg-map-entry-after-swap | reject REF-2 |
+| share-neg-table-entries-past-the-set | share-neg-map-entries-past-the-set | reject OP-4 |
+| share-neg-table-key-read-outside-row | share-neg-map-key-read-outside-row | reject EFF-2 |
+| share-neg-table-entries-as-a-range | share-neg-map-entries-as-a-range | reject REF-4 |
+| share-neg-table-key-computed-in-block | share-neg-map-key-computed-in-block | reject TYPE-5 |
+| share-neg-table-key-reads-the-state | share-neg-map-key-reads-a-target | reject SHARE-2 |
+| share-neg-table-key-moved | share-neg-map-key-moved | reject SHARE-2 |
+| share-pos-table-as-the-state | share-pos-map-as-the-state | run 6 |
+| share-pos-table-entries-through-a-set-reference | share-pos-map-entries-through-a-set-reference | run 5 |
+| share-pos-table-key-written-in-the-block | share-pos-map-key-written-in-the-block | run 1 |
+| share-pos-table-entry-swapped | share-pos-map-entry-swapped | run 3 |
+| share-neg-table-key-range-reads-the-state | share-neg-map-key-range-reads-a-target | reject SHARE-2 |
+| share-pos-table-whole-binding-entry | share-pos-map-whole-target-entry | run 22 |
+| share-pos-table-whole-binding-entries-over-set | share-pos-map-whole-target-entries-over-set | run 3 |
+| share-pos-table-whole-binding-count-sees-own-writes | share-pos-map-whole-target-count-sees-own-writes | run 21 |
+| share-pos-table-whole-binding-passed-to-callee | share-pos-map-whole-target-passed-to-callee | run 1 |
+| share-pos-table-whole-binding-guard | share-pos-map-whole-target-guard | run 1 |
+| share-neg-table-mixed-entry-and-whole | share-neg-target-handle-twice | reject SHARE-2 |
+| share-neg-table-subscript-offset-not-a-key | share-neg-map-subscript-offset-not-a-key | reject OP-4 |
+| share-neg-table-entries-place-not-borrowed | share-neg-map-entries-place-not-borrowed | reject OP-4 |
+| share-neg-table-moved-key-set-offset | share-neg-map-moved-key-set-offset | reject OP-4 |
+| share-neg-table-whole-row-write-invalidates | share-neg-map-row-write-invalidates-entry | reject REF-2 |
+| share-neg-table-selected-key-set-write-invalidates | share-neg-map-selected-key-set-write-invalidates | reject REF-2 |
+| share-pos-table-whole-binding-alias | share-pos-map-whole-target-alias | run 22 |
+| share-neg-table-reference-key-set-offset | share-neg-map-reference-key-set-offset | reject OP-4 |
+| share-neg-table-key-write-invalidates-payload | share-neg-map-key-write-invalidates-payload | reject REF-2 |
+| share-neg-table-key-set-holder-offset | share-neg-map-key-set-holder-offset | reject OP-4 |
+| share-pos-table-nested-readers | share-pos-map-handle-in-an-entry | run 18 |
+
+| New case | Declared verdict |
+|---|---|
+| share-neg-target-index-not-a-map | reject SHARE-2 |
+| share-neg-target-reads-a-binding | reject SHARE-2 |
+| share-neg-target-unused | reject SHARE-2 |
+| share-neg-target-whole-handle-twice | reject SHARE-2 |
+| share-neg-targets-same-type-one-call | reject EFF-5 |
+| share-neg-targets-same-type-one-root | reject REF-2 |
+| share-neg-targets-type-parameter-overlaps | reject EFF-5 |
+| share-pos-map-two-handles-one-entry | run 9 |
+| share-pos-targets-different-types-disjoint | run 7 |
+| share-pos-targets-guard-over-two-objects | run 9 |
+| share-pos-targets-opposite-orders | run 6 |
+| share-pos-targets-same-map-whole-and-entry | run 71 |
+| share-pos-targets-same-object-two-handles | run 6 |
+| type9-neg-map-box-content | reject TYPE-9 |
+| type9-neg-map-entry-value | reject TYPE-9 |
+| type9-neg-map-field | reject TYPE-9 |
+| type9-neg-map-type-argument-in-a-result | reject TYPE-9 |
+| type9-neg-runtime-capacity-type-argument-value | reject TYPE-9 |
+| type9-pos-map-type-argument-behind-a-handle | run 3 |
+| type9-pos-runtime-capacity-type-argument-reference | run 0 |
+
+### Firn entry-path IR comparison
+
+The owner's criterion, stated before the comparison, is one entry lock and one
+unlock on each single-key path, with no additional hold bookkeeping between
+them and no added odd-alignment flag slot. This is an IR check, not a throughput
+measurement. The comparison uses the amendment A compiler and firn at
+`520759233bbdfd3556890c128693e30c3d0c7e48`, and amendment S at
+`d7fcb9efb2c99457b8c19dfa7fb44699e7f6375b`, on macOS arm64 with Apple clang 21.0.0 (clang-2100.3.34.2), target
+arm64-apple-darwin25.6.0.
+For each revision, build the gate compiler and emit firn with:
+
+```sh
+perl .github/run-check.pl ir/build make -C compiler build
+perl .github/run-check.pl ir/firn compiler/target/gate/whitefootc --emit-llvm --graph apps/firn/modules.wfg --entry firn -o /tmp/firn.ll
+perl .github/run-check.pl ir/opt /usr/bin/clang -x ir -O2 -Wno-override-module -S -emit-llvm /tmp/firn.ll -o /tmp/firn-O2.ll
+```
+
+The observed functions are `wf_commands.run_pop.resume` and
+`wf_commands.run_get.resume`. Count entry lock/unlock calls and 72-byte
+`llvm.memcpy`/`llvm.memmove` calls in those functions, and inspect their
+unoptimized frame allocations and the blocks containing each optimized copy.
+
+| Observation | Amendment A | Amendment S |
+|---|---|---|
+| Optimized run_pop entry lock / unlock | 1 / 1 | 1 / 1 |
+| Optimized run_get entry lock / unlock | 1 / 1 | 1 / 1 |
+| Optimized run_pop 72-byte copies | 3 | 1, only on removal/drop |
+| Optimized run_get 72-byte copies | 1 | 1 |
+| run_pop frame | aggregate with two i1 flags | independent eight-byte-aligned slots, one aligned i64 lazy-group word |
+| run_get frame | aggregate with i1 and existing i8 | aggregate with the existing i8, no hold flag |
+
+Both direct entry paths retain the same lock/body/unlock sequence. Ordinary
+entry work contains no added group descriptor, taken-state test or hold-state
+store. run_pop's normal live-list pop accesses the held cell directly; its
+remaining copy moves a removed value into its drop slot. The older raw IR had
+five run_pop lock call sites and two run_get sites from lazy acquisition; the
+new raw IR has one each. Those static counts do not mean the old execution took
+five or two locks: optimization already reduced each to one.
+
+The frame-alignment explanation is supported by `plan_target_frame` in
+`compiler/src/target.rs`: independent slots require common alignment without
+padding. Removing the atomic i1 slots lets run_pop take that path, whereas
+run_get's existing byte slot still prevents it. The remaining GET copy is
+recorded in `docs/todo.md`; this comparison does not claim it was removed.
+
+Found while checking the ports: the native guard harness retained a map handle
+in a local used by its later cleanup, and program fixtures retained constructor
+`move`s after their state became Copy, stale named-argument order and
+noncanonical indentation. These were corrected without changing assertions.
+All four ported map programs passed on one and four drivers. The firn build
+succeeded, but its maintained network tests are Linux-only (the macOS filter
+selected zero), and a supplemental macOS smoke attempt stopped at loopback
+bind with `Operation not permitted`. Its network and replay behavior remains
+unverified on this host.

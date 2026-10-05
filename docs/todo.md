@@ -606,7 +606,7 @@ rarely insert at the same place.
   the rows that allocate them, while a shared object's state, a keyed
   table's entries and a key set's store come from the context runtime's
   pool, which a no-heap bundle may still use through `shared_new`,
-  `keyed_table_new` and `key_set_insert`. The checker refused `KeySet` there
+  `shared_map_new` and `key_set_insert`. The checker refused `KeySet` there
   for a while, which [STOR-8] does not name; it no longer does. The
   question for the owner: whether the declaration means no allocation at
   all, which would withdraw those three types and their rows too, or no use
@@ -1081,7 +1081,7 @@ rarely insert at the same place.
   by `ZADD`'s server CPU per request on four drivers against one. Reopen
   with the work on `ZADD`'s rate.
 
-- **`KeyedTable<unit>` and tables of other payload-free values do not
+- **`ConcurrentHashMap<unit>` and maps of other payload-free values do not
   lower.** The emitter passes the runtime an entry's `Option` tag as the
   `i32` at offset 0 (`checked_entry` in
   `compiler/src/backend/emitter/shared.rs`) and refuses a tag-only enum,
@@ -2203,6 +2203,14 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
+- **Whole-map iteration.** Shared maps provide selections, counting and swaps,
+  but no iteration API. Firn's BGSAVE and SCAN need a whole-map traversal whose
+  references remain valid under the whole hold and whose yielded order has a
+  stated meaning. Design that interface and add independent snapshot/cursor
+  cases when either command is selected; do not infer an order from the runtime
+  hash index. Validate by enumerating each present key once across growth and
+  deletion, with missing keys excluded.
+
 - **Library capacity ceilings that existed for OP-9.**
   `GrowVector<T, const ceiling: u64>` in `lib/std/collections/vector`, the
   deque and slab constructors' ceilings, and `tests/programs/wfgrep.wf`'s
@@ -2370,6 +2378,16 @@ rarely insert at the same place.
   load per dispatch until the slot became part-local. Reading the tag from
   the place would remove the copy everywhere. Low priority; reopen if a
   profile shows the copy outside split loops.
+
+- **Firn GET retains an Entry copy because its existing byte slot makes the
+  frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
+  eliminates two 72-byte copies from `run_pop`, but `run_get` still has its
+  prior 72-byte copy: its ordinary `i8` slot fails
+  `plan_target_frame`'s independent-slot alignment test in
+  `compiler/src/target.rs`. Investigate separating slots with different
+  alignments without changing their lifetimes or alias facts. Reopen with
+  firn GET performance work; validate the normal GET path's optimized IR
+  loses the copy while the frame and borrow tests retain their observations.
 
 - **Interpreter state is pinned only through the calling convention.** A
   split loop keeps its changing values in registers because every part
