@@ -314,6 +314,11 @@ fn sorted_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
   return False();
 }
 
+struct PreparedRank {
+  rank: Option<Rank>;
+  kept: f64;
+}
+
 fn score_probe(env: &ScoreProbe, key: &Key, value: &f64) -> result: u64 reads(value), writes(env) {
   doc "Records a member's score.";
   set env^.score = value^;
@@ -321,80 +326,101 @@ fn score_probe(env: &ScoreProbe, key: &Key, value: &f64) -> result: u64 reads(va
   return 1_u64;
 }
 
-fn place_rank(sorted: &Sorted, member: Key, score: f64, keys: &KeyEnv) -> result: unit reads(keys), writes(sorted) {
-  doc "Puts a member at a score into the set's order and its scores, replacing the score a member it holds had there.";
-  let ranked_member = copy_key(key: &member);
-  let rank = Rank(score: score, member: move ranked_member);
-  let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: keys);
+fn place_rank(sorted: &Sorted, member: Key, prepared: &Option<Rank>, score: f64, keys: &KeyEnv) -> result: unit reads(keys), writes(sorted), writes(prepared) {
+  doc "Moves a prepared ordering key into the set at a score and stores the member's score, replacing the score a member it holds had there.";
+  let taken = None<Rank>();
+  swap(first: prepared, second: &taken);
+  match move taken {
+    Some(value: rank) => {
+      set rank.score = score;
+      let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: keys);
+    }
+    None() => {
+    }
+  }
   let stored = hash_map_put::<KeyHash, f64, ceiling>(map: &sorted^.scores, key: move member, value: score, env: keys);
   return unit;
 }
 
-fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding) -> result: unit writes(sorted), writes(client), writes(adding) {
-  doc "Gives every prepared member its prepared score as Redis's zsetAdd does under ZADD's options: NX passes over a member the set holds and XX one it does not; INCR adds the score to the member's, stopping the command with nan set when the sum is NaN; GT and LT pass over a member whose new score is not greater or not less than its score; a held member whose new score equals its score keeps it, counted as processed. A member is kept at its score as kept_score keeps it, moved to its new place in the order when its score changes.";
+fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding, copies: &Box<Slots<PreparedRank>>) -> result: unit writes(sorted), writes(client), writes(adding), writes(copies) {
+  doc "Gives every prepared member its prepared score, using its prepared copy for ordering, as Redis's zsetAdd does under ZADD's options: NX passes over a member the set holds and XX one it does not; INCR adds the score to the member's, stopping the command with nan set when the sum is NaN; GT and LT pass over a member whose new score is not greater or not less than its score; a held member whose new score equals its score keeps it, counted as processed. A member is kept at its score as kept_score keeps it, moved to its new place in the order when its score changes.";
   loop @pairs {
     let have_member = client^.items.inner.len > 0_u64;
     let have_score = client^.scores.inner.len > 0_u64;
-    let both = band(have_member, have_score);
+    let paired = band(have_member, have_score);
+    let copy_index = client^.items.inner.len -sat 1_u64;
+    let have_copy = copy_index < copies^.inner.len;
+    let both = band(paired, have_copy);
     if both {
     } else {
       break @pairs;
     }
-    let member = take_back(window: &client^.items.inner);
-    let score = take_back(window: &client^.scores.inner);
-    let keys = client^.keys;
-    let absent = False();
-    let probe = ScoreProbe(score: 0.0_f64, found: absent);
-    let seen = hash_map_lookup::<KeyHash, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
-    if probe.found {
-      let target = score;
-      if adding^.incr {
-        set target = fadd.strict(probe.score, score);
-      }
-      let number = feq(target, target);
-      let invalid = bnot(number);
-      let not_less = fge(target, probe.score);
-      let not_greater = fle(target, probe.score);
-      let lt_refuses = band(adding^.lt, not_less);
-      let gt_refuses = band(adding^.gt, not_greater);
-      let refused = bor(lt_refuses, gt_refuses);
-      if adding^.nx {
-        let passed = move member;
-      } else if invalid {
-        let stopped = move member;
-        set adding^.nan = True();
-        break @pairs;
-      } else if refused {
+    if copy_index < copies^.inner.len {
+      let member = take_back(window: &client^.items.inner);
+      let score = take_back(window: &client^.scores.inner);
+      let keys = client^.keys;
+      let absent = False();
+      let probe = ScoreProbe(score: 0.0_f64, found: absent);
+      let seen = hash_map_lookup::<KeyHash, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
+      if probe.found {
+        let target = score;
+        if adding^.incr {
+          set target = fadd.strict(probe.score, score);
+        }
+        let number = feq(target, target);
+        let invalid = bnot(number);
+        let not_less = fge(target, probe.score);
+        let not_greater = fle(target, probe.score);
+        let lt_refuses = band(adding^.lt, not_less);
+        let gt_refuses = band(adding^.gt, not_greater);
+        let refused = bor(lt_refuses, gt_refuses);
+        if adding^.nx {
+          let passed = move member;
+        } else if invalid {
+          let stopped = move member;
+          set adding^.nan = True();
+          break @pairs;
+        } else if refused {
+          let passed = move member;
+        } else {
+          set adding^.score = target;
+          set adding^.processed = adding^.processed +wrap 1_u64;
+          let changed = fne(target, probe.score);
+          if changed {
+            let prepared = &copies^.inner[copy_index].rank;
+            match prepared^ {
+              Some(value: old) => {
+                set old^.score = probe.score;
+                let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: old, env: &keys);
+              }
+              None() => {
+              }
+            }
+            let kept = copies^.inner[copy_index].kept;
+            if adding^.incr {
+              set kept = kept_score(score: target);
+            }
+            place_rank(sorted: sorted, member: move member, prepared: &copies^.inner[copy_index].rank, score: kept, keys: &keys);
+            set adding^.updated = adding^.updated +wrap 1_u64;
+          } else {
+            let unchanged = move member;
+          }
+        }
+      } else if adding^.xx {
         let passed = move member;
       } else {
-        set adding^.score = target;
+        let kept = copies^.inner[copy_index].kept;
+        place_rank(sorted: sorted, member: move member, prepared: &copies^.inner[copy_index].rank, score: kept, keys: &keys);
+        set adding^.score = score;
+        set adding^.added = adding^.added +wrap 1_u64;
         set adding^.processed = adding^.processed +wrap 1_u64;
-        let changed = fne(target, probe.score);
-        if changed {
-          let old_member = copy_key(key: &member);
-          let old = Rank(score: probe.score, member: move old_member);
-          let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &old, env: &keys);
-          let kept = kept_score(score: target);
-          place_rank(sorted: sorted, member: move member, score: kept, keys: &keys);
-          set adding^.updated = adding^.updated +wrap 1_u64;
-        } else {
-          let unchanged = move member;
-        }
       }
-    } else if adding^.xx {
-      let passed = move member;
-    } else {
-      let kept = kept_score(score: score);
-      place_rank(sorted: sorted, member: move member, score: kept, keys: &keys);
-      set adding^.score = score;
-      set adding^.added = adding^.added +wrap 1_u64;
-      set adding^.processed = adding^.processed +wrap 1_u64;
     }
   }
   return unit;
 }
 
-fn add_scores(env: &Client, value: &Entry, adding: &Adding) -> kind: u64 writes(env), writes(value), writes(adding) {
+fn add_scores(env: &Client, value: &Entry, adding: &Adding, copies: &Box<Slots<PreparedRank>>) -> kind: u64 writes(env), writes(value), writes(adding), writes(copies) {
   doc "Adds the prepared members at their scores to a live sorted set as add_ranked does, recording done; records wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -403,7 +429,7 @@ fn add_scores(env: &Client, value: &Entry, adding: &Adding) -> kind: u64 writes(
   }
   match value^.value {
     Ranked(ranked: sorted) => {
-      add_ranked(sorted: sorted, client: env, adding: adding);
+      add_ranked(sorted: sorted, client: env, adding: adding, copies: copies);
       set env^.state = state_done;
       return 5_u64;
     }
@@ -495,6 +521,7 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     return unit;
   }
   clear_items(client: client);
+  let copies = box_slots_new::<PreparedRank>(capacity: pairs);
   for @pairs (step in 0_u64..pairs) {
     let back = pairs -wrap step;
     let pair = back -wrap 1_u64;
@@ -510,6 +537,16 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       return unit;
     }
     let member = key_at(input: input, args: args, index: member_index);
+    let copied = copy_key(key: &member);
+    let kept = kept_score(score: score.value);
+    let rank = Rank(score: kept, member: move copied);
+    let ready = Some<Rank>(value: move rank);
+    let prepared = PreparedRank(rank: move ready, kept: kept);
+    if copies.inner.len < copies.inner.cap {
+      place_back(window: &copies.inner, value: move prepared);
+    } else {
+      let dropped_copy = move prepared;
+    }
     push_item(client: client, item: move member);
     push_score(client: client, score: score.value);
   }
@@ -519,17 +556,31 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.state = state_absent;
   let unset = False();
   let adding = Adding(nx: nx, xx: xx, gt: gt, lt: lt, incr: incr, added: 0_u64, updated: 0_u64, processed: 0_u64, score: 0.0_f64, nan: unset);
+  let spare = None<Entry>();
+  let capacity = imax(pairs, 4_u64);
+  let can_create = bnot(xx);
+  if can_create {
+    if capacity <= ceiling {
+      let order = ordered_map_new::<Rank, unit, ceiling>();
+      let scores = hash_map_new::<Key, f64, ceiling>(capacity: capacity);
+      let sorted = Sorted(order: move order, scores: move scores);
+      let made = Value::Ranked(ranked: move sorted);
+      let fresh = Entry(value: move made, expires: 0_u64);
+      set spare = Some<Entry>(value: move fresh);
+    }
+  }
+  let retired = None<Entry>();
   atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
-        let edited = add_scores(env: client, value: held, adding: &adding);
+        let edited = add_scores(env: client, value: held, adding: &adding, copies: &copies);
       }
       None() => {
       }
     }
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      set slot^ = None<Entry>();
+      swap(first: slot, second: &retired);
       if store^.logging {
         log_removal(log: &s^.meta.log, key: key);
       }
@@ -539,16 +590,26 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       if xx {
         set client^.state = state_done;
       } else {
-        let capacity = imax(pairs, 4_u64);
-        if capacity <= ceiling {
-          let order = ordered_map_new::<Rank, unit, ceiling>();
-          let scores = hash_map_new::<Key, f64, ceiling>(capacity: capacity);
-          let sorted = Sorted(order: move order, scores: move scores);
-          add_ranked(sorted: &sorted, client: client, adding: &adding);
-          let made = Value::Ranked(ranked: move sorted);
-          let fresh = Entry(value: move made, expires: 0_u64);
-          set slot^ = Some<Entry>(value: move fresh);
-          set client^.state = state_done;
+        swap(first: slot, second: &spare);
+        match slot^ {
+          Some(value: held) => {
+            match held^.value {
+              Fields(fields: collection) => {
+              }
+              Members(members: collection) => {
+              }
+              Ranked(ranked: collection) => {
+                add_ranked(sorted: collection, client: client, adding: &adding, copies: &copies);
+                set client^.state = state_done;
+              }
+              Text(bytes: collection) => {
+              }
+              Items(items: collection) => {
+              }
+            }
+          }
+          None() => {
+          }
         }
       }
     }

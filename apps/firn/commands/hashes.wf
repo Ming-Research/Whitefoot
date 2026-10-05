@@ -249,15 +249,44 @@ fn hash_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   return False();
 }
 
-fn put_fields(fields: &HashMap<Key, Bytes, ceiling>, client: &Client) -> added: u64 writes(fields), writes(client) {
-  doc "Stores every prepared field and value pair in the hash, the field taken first, and returns how many fields it did not already hold.";
+struct FieldPair {
+  field: Key;
+  value: Bytes;
+}
+
+fn prepare_fields(input: &[u8], args: &Box<Slots<Span>>) -> pairs: Box<Slots<FieldPair>> reads(input), reads(args) {
+  doc "Prepares owned hash fields and stored values in reverse argument order, hashing only fields, before the key is held.";
+  let count = args^.inner.len;
+  let many = count -sat 2_u64;
+  let size = many / 2_u64;
+  let pairs = box_slots_new::<FieldPair>(capacity: size);
+  for @pairs (step in 0_u64..size) {
+    let back = size -wrap step;
+    let pair = back -wrap 1_u64;
+    let doubled = pair *wrap 2_u64;
+    let index = doubled +wrap 2_u64;
+    let field = key_at(input: input, args: args, index: index);
+    let value_index = index +wrap 1_u64;
+    let span = arg(args: args, index: value_index);
+    let value = pkg::bytes::bytes_new(input: input, start: span.start, length: span.length);
+    let prepared = FieldPair(field: move field, value: move value);
+    if pairs.inner.len < pairs.inner.cap {
+      place_back(window: &pairs.inner, value: move prepared);
+    } else {
+      let unused = move prepared;
+    }
+  }
+  return move pairs;
+}
+
+fn put_fields(fields: &HashMap<Key, Bytes, ceiling>, pairs: &Box<Slots<FieldPair>>, keys: &KeyEnv) -> added: u64 reads(keys), writes(fields), writes(pairs) {
+  doc "Stores every prepared field and stored value in argument order and returns how many fields it did not already hold.";
   let added = 0_u64;
   loop @pairs {
-    if client^.items.inner.len >= 2_u64 {
-      let field = take_back(window: &client^.items.inner);
-      let prepared = take_back(window: &client^.items.inner);
-      let stored = key_text(key: move prepared);
-      let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: fields, key: move field, value: move stored, env: &client^.keys);
+    if pairs^.inner.len > 0_u64 {
+      let prepared = take_back(window: &pairs^.inner);
+      let FieldPair(field: field, value: stored) = move prepared;
+      let put = hash_map_put::<KeyHash, Bytes, ceiling>(map: fields, key: move field, value: move stored, env: keys);
       match move put {
         HashMapInserted() => {
           set added = added +wrap 1_u64;
@@ -272,8 +301,8 @@ fn put_fields(fields: &HashMap<Key, Bytes, ceiling>, client: &Client) -> added: 
   return added;
 }
 
-fn set_fields(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
-  doc "Stores the prepared pairs in a live hash, recording done and how many fields were new in number; records wrong for another kind and expired for an expired entry.";
+fn set_fields(env: &Client, value: &Entry, pairs: &Box<Slots<FieldPair>>) -> kind: u64 writes(env), writes(value), writes(pairs) {
+  doc "Stores prepared pairs in a live hash, recording done and how many fields were new in number; records wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
     set env^.state = state_expired;
@@ -281,7 +310,7 @@ fn set_fields(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(valu
   }
   match value^.value {
     Fields(fields: hash_of) => {
-      set env^.number = put_fields(fields: hash_of, client: env);
+      set env^.number = put_fields(fields: hash_of, pairs: pairs, keys: &env^.keys);
       set env^.state = state_done;
       return 4_u64;
     }
@@ -304,17 +333,40 @@ fn set_fields(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(valu
   }
 }
 
-fn fresh_hash(slot: &Option<Entry>, client: &Client) -> result: unit writes(slot), writes(client) {
-  doc "Stores a new hash of the prepared pairs in an entry that holds no live value, recording how many fields it holds in number and done.";
-  let pairs = client^.items.inner.len / 2_u64;
-  let capacity = imax(pairs, 4_u64);
+fn spare_hash(size: u64) -> spare: Option<Entry> pure {
+  doc "Allocates an empty hash entry of the request's capacity before its key is held; none when the capacity exceeds the collection ceiling.";
+  let capacity = imax(size, 4_u64);
   if capacity <= ceiling {
     let fields = hash_map_new::<Key, Bytes, ceiling>(capacity: capacity);
-    set client^.number = put_fields(fields: &fields, client: client);
     let made = Value::Fields(fields: move fields);
     let fresh = Entry(value: move made, expires: 0_u64);
-    set slot^ = Some<Entry>(value: move fresh);
-    set client^.state = state_done;
+    return Some<Entry>(value: move fresh);
+  }
+  return None<Entry>();
+}
+
+fn fresh_hash(slot: &Option<Entry>, client: &Client, pairs: &Box<Slots<FieldPair>>, spare: &Option<Entry>) -> result: unit writes(slot), writes(client), writes(pairs), writes(spare) {
+  doc "Moves the preallocated empty hash into an absent entry and stores its prepared pairs; the unused spare is dropped by the caller after the atomic statement.";
+  swap(first: slot, second: spare);
+  match slot^ {
+    Some(value: held) => {
+      match held^.value {
+        Fields(fields: collection) => {
+          set client^.number = put_fields(fields: collection, pairs: pairs, keys: &client^.keys);
+          set client^.state = state_done;
+        }
+        Members(members: collection) => {
+        }
+        Ranked(ranked: collection) => {
+        }
+        Text(bytes: collection) => {
+        }
+        Items(items: collection) => {
+        }
+      }
+    }
+    None() => {
+    }
   }
   return unit;
 }
@@ -328,30 +380,33 @@ fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     reply_arity(client: client, input: input, name: name);
     return unit;
   }
-  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  clear_items(client: client);
+  let pairs = prepare_fields(input: input, args: args);
+  let spare = spare_hash(size: pairs.inner.len);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
+  let retired = None<Entry>();
   atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
-        let edited = set_fields(env: client, value: held);
+        let edited = set_fields(env: client, value: held, pairs: &pairs);
       }
       None() => {
       }
     }
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      set slot^ = None<Entry>();
+      swap(first: slot, second: &retired);
       if store^.logging {
         log_removal(log: &s^.meta.log, key: key);
       }
       set create = True();
     }
     if create {
-      fresh_hash(slot: slot, client: client);
+      fresh_hash(slot: slot, client: client, pairs: &pairs, spare: &spare);
     }
     if client^.state == state_done {
       if store^.logging {
@@ -380,7 +435,7 @@ fn field_seen(env: &Client, key: &Key, value: &Bytes) -> result: u64 reads(value
   return 1_u64;
 }
 
-fn set_field_once(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
+fn set_field_once(env: &Client, value: &Entry, pairs: &Box<Slots<FieldPair>>) -> kind: u64 writes(env), writes(value), writes(pairs) {
   doc "Stores the prepared pair in a live hash when it does not hold the field, recording done and in number 1 when it stored it and 0 when the field was there; records wrong for another kind and expired for an expired entry.";
   let reached = expired(expires: value^.expires, now: env^.now);
   if reached {
@@ -389,18 +444,19 @@ fn set_field_once(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(
   }
   match value^.value {
     Fields(fields: hash_of) => {
-      if env^.items.inner.len >= 2_u64 {
-        let field = take_back(window: &env^.items.inner);
-        let keys = env^.keys;
-        let found = hash_map_lookup::<KeyHash, Bytes, Client, u64, fn field_seen, ceiling>(map: hash_of, key: &field, key_env: &keys, visit_env: env);
-        match found {
-          Ok(value: seen) => {
-            let kept = move field;
-            set env^.number = 0_u64;
-          }
-          Err(error: absent) => {
-            push_item(client: env, item: move field);
-            set env^.number = put_fields(fields: hash_of, client: env);
+      let size = pairs^.inner.len;
+      if size > 0_u64 {
+        let last = size -wrap 1_u64;
+        if last < pairs^.inner.len {
+          let keys = env^.keys;
+          let found = hash_map_lookup::<KeyHash, Bytes, Client, u64, fn field_seen, ceiling>(map: hash_of, key: &pairs^.inner[last].field, key_env: &keys, visit_env: env);
+          match found {
+            Ok(value: seen) => {
+              set env^.number = 0_u64;
+            }
+            Err(error: absent) => {
+              set env^.number = put_fields(fields: hash_of, pairs: pairs, keys: &env^.keys);
+            }
           }
         }
       }
@@ -428,30 +484,33 @@ fn set_field_once(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(
 
 fn run_hsetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "HSETNX key field value: stores the pair when the hash does not hold the field, creating the hash for an absent key, and answers 1 when it stored it and 0 otherwise; only a stored pair is appended to the file.";
-  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  clear_items(client: client);
+  let pairs = prepare_fields(input: input, args: args);
+  let spare = spare_hash(size: pairs.inner.len);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
+  let retired = None<Entry>();
   atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
-        let edited = set_field_once(env: client, value: held);
+        let edited = set_field_once(env: client, value: held, pairs: &pairs);
       }
       None() => {
       }
     }
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      set slot^ = None<Entry>();
+      swap(first: slot, second: &retired);
       if store^.logging {
         log_removal(log: &s^.meta.log, key: key);
       }
       set create = True();
     }
     if create {
-      fresh_hash(slot: slot, client: client);
+      fresh_hash(slot: slot, client: client, pairs: &pairs, spare: &spare);
     }
     if client^.state == state_done {
       if client^.number > 0_u64 {

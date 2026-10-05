@@ -154,6 +154,15 @@ fn run_sadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
+  let capacity = imax(client^.items.inner.len, 4_u64);
+  let spare = None<Entry>();
+  if capacity <= ceiling {
+    let members = hash_map_new::<Key, unit, ceiling>(capacity: capacity);
+    let made = Value::Members(members: move members);
+    let fresh = Entry(value: move made, expires: 0_u64);
+    set spare = Some<Entry>(value: move fresh);
+  }
+  let retired = None<Entry>();
   atomic s = &store^.state, slot = &s^.map[key] {
     match slot^ {
       Some(value: held) => {
@@ -164,22 +173,33 @@ fn run_sadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
     let create = client^.state == state_absent;
     if client^.state == state_expired {
-      set slot^ = None<Entry>();
+      swap(first: slot, second: &retired);
       set create = True();
       if store^.logging {
         log_removal(log: &s^.meta.log, key: key);
       }
     }
     if create {
-      let wanted = client^.items.inner.len;
-      let capacity = imax(wanted, 4_u64);
-      if capacity <= ceiling {
-        let members = hash_map_new::<Key, unit, ceiling>(capacity: capacity);
-        set client^.number = add_all(members: &members, client: client);
-        let made = Value::Members(members: move members);
-        let fresh = Entry(value: move made, expires: 0_u64);
-        set slot^ = Some<Entry>(value: move fresh);
-        set client^.state = state_done;
+      swap(first: slot, second: &spare);
+      match slot^ {
+        Some(value: held) => {
+          match held^.value {
+            Fields(fields: collection) => {
+            }
+            Members(members: collection) => {
+              set client^.number = add_all(members: collection, client: client);
+              set client^.state = state_done;
+            }
+            Ranked(ranked: collection) => {
+            }
+            Text(bytes: collection) => {
+            }
+            Items(items: collection) => {
+            }
+          }
+        }
+        None() => {
+        }
       }
     }
     if client^.state == state_done {
