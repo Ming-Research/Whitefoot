@@ -686,3 +686,15 @@ Commands use the existing gate compiler and each heavy command holds the
 host-wide lock separately. Generated C1 artifacts live in this experiment's
 existing ignored `target/`; retained observations serve reproduction and
 are retired when this comparison no longer needs reproduction.
+
+The implementation trial uses the existing handlers with a
+`Result<u64, Step>` return: `Ok` carries only the next pc and conditional
+postconditions for the pc and unchanged frame/constant windows; `Err`
+forwards the existing failure or unwind Step. Each selected arm matches that
+result and immediately self-tail-calls on `Ok`. This retains small handler
+bodies rather than expanding arithmetic, comparisons and table operations
+inside the already large dispatch function. It tests the window checks and
+continuation traffic: P1 already showed native per-arm dispatch in the joined
+source, so a gain cannot be attributed to creating per-arm native dispatch.
+Call/Return remain joined because their normal paths change frame bases;
+this bounded trial does not redesign `prepare`, `enter_lua` or `finish`.
