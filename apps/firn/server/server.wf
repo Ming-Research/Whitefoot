@@ -250,10 +250,10 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   doc "Serves one client, the id-th the server accepted, in a context of its own: reads requests into its input, which grows to hold a request larger than it, answers every complete request the input holds with one send, sending sooner once 16,384 bytes of replies are waiting, and keeps an incomplete one for the next read. Every command of one read sees the calendar clock as read once after it. A client silent for the idle limit the server's state holds, when it is not zero, is closed, its silence measured on the monotonic clock from the program's origin and counted from its last request or the replies to it, whichever came later, as Redis counts it from a client's last read or write: while a limit is set, each read waits no longer than the limit leaves and no longer than a second, and the client reads the limit again when that wait ends and at most once a second while it sends, so that a limit CONFIG SET changes reaches it within a second; a client that waits with no limit set reads none until it sends. A client that sends a malformed request is closed after its error, and one that sends QUIT after its reply. A client accepted while a password is required, when required is true, has not authenticated until it gives the password, as AUTH and HELLO record; until then it reads the password again before each request and must give it before other commands while one is set, as Redis's clients must.";
   let env = KeyEnv();
   let client = client_new(capacity: 16384_u64);
-  atomic s = &store.state {
-    set client.random = s^.meta.random;
-    let stepped = s^.meta.random *wrap 6364136223846793005_u64;
-    set s^.meta.random = stepped +wrap 1442695040888963407_u64;
+  atomic m = &store.meta {
+    set client.random = m^.random;
+    let stepped = m^.random *wrap 6364136223846793005_u64;
+    set m^.random = stepped +wrap 1442695040888963407_u64;
   }
   let args = box_slots_new::<Span>(capacity: 16_u64);
   let input = input_new(capacity: 16384_u64);
@@ -393,8 +393,8 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   let TcpConnection(receive: closing_receive, send: closing_send) = move connection;
   close_receive(factory: &factory, receive: move closing_receive);
   close_send(factory: &factory, send: move closing_send);
-  atomic s = &store.state {
-    set s^.meta.clients = s^.meta.clients -wrap 1_u64;
+  atomic m = &store.meta {
+    set m^.clients = m^.clients -wrap 1_u64;
   }
   return unit;
 }
@@ -411,8 +411,8 @@ fn expire_keys(store: Keyspace, clock: Clock, wall: WallClock) -> result: unit p
     let current = reading.time.unix_ms;
     let stop = False();
     loop @batches {
-      atomic s = &store.state {
-        set stop = s^.meta.stopping;
+      atomic m = &store.meta {
+        set stop = m^.stopping;
       }
       let more = expire_batch(store: &store, now: current, env: &env, batch: &batch);
       if more {
@@ -823,7 +823,7 @@ fn read_options(args: &std::text::Args) -> options: Options reads(args) {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "firn, a server of Redis's protocol for the commands apps/firn/README.md lists, over TCP in RESP2 or as inline commands, with pipelining. It serves each accepted client in a context of its own over one keyspace, a shared state every client reaches through atomic statements that hold the entries of the keys a command names, or the keyspace's table whole for DBSIZE, FLUSHALL, FLUSHDB and INFO. Its invocation, which read_options reads, names up to four arguments by position, the port, how many clients to accept, zero for no limit, the append-only file's name or - for none, and the idle limit, then options by name, --port, --bind, --timeout, --appendonly, --appendfilename, --requirepass and --clients; an invocation that does not read stops firn with status 1. firn listens on the address --bind names, the loopback address by default. An append-only file is replayed before firn listens and every change is appended to it, the file synced once a second. A client silent for the idle limit, when it is not zero, is closed, and while a password is required a client that has not authenticated, by giving it or by being accepted while none was required, must give it before other commands; CONFIG SET changes both while firn runs, in the server's state beside the keyspace. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
+  doc "firn, a server of Redis's protocol for the commands apps/firn/README.md lists, over TCP in RESP2 or as inline commands, with pipelining. It serves each accepted client in a context of its own over one keyspace, a shared state every client reaches through atomic statements that hold the entries of the keys a command names, or the keyspace's map whole for DBSIZE, FLUSHALL, FLUSHDB and INFO. Its invocation, which read_options reads, names up to four arguments by position, the port, how many clients to accept, zero for no limit, the append-only file's name or - for none, and the idle limit, then options by name, --port, --bind, --timeout, --appendonly, --appendfilename, --requirepass and --clients; an invocation that does not read stops firn with status 1. firn listens on the address --bind names, the loopback address by default. An append-only file is replayed before firn listens and every change is appended to it, the file synced once a second. A client silent for the idle limit, when it is not zero, is closed, and while a password is required a client that has not authenticated, by giving it or by being accepted while none was required, must give it before other commands; CONFIG SET changes both while firn runs, in the server's state beside the keyspace. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
   let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   let options = read_options(args: &args);
@@ -904,8 +904,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
             let serving_wall = wall_clock_share(clock: &wall_clock);
             let serving_settings = settings_copy(settings: &settings);
             let id = accepted +wrap 1_u64;
-            atomic s = &keyspace.state {
-              set s^.meta.clients = s^.meta.clients +wrap 1_u64;
+            atomic m = &keyspace.meta {
+              set m^.clients = m^.clients +wrap 1_u64;
             }
             let required = False();
             atomic v = &keyspace.server {
@@ -927,8 +927,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       set listened = False();
     }
   }
-  atomic s = &keyspace.state when s^.meta.clients == 0_u64 {
-    set s^.meta.stopping = True();
+  atomic m = &keyspace.meta when m^.clients == 0_u64 {
+    set m^.stopping = True();
   }
   if listened {
     return exit_status(code: 0_u8);

@@ -713,7 +713,7 @@ fn run_zrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = range_ranked(env: client, value: held, walk: &walk);
@@ -792,7 +792,7 @@ fn run_zcount(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key] {
     match slot^ {
       Some(value: held) => {
         let found = count_ranked(env: client, value: held, walk: &walk);
@@ -943,7 +943,7 @@ fn run_zremrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client
   set client^.now = time^.check;
   set client^.state = state_absent;
   set client^.number = 0_u64;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let edited = remove_walked(env: client, value: held, walk: &walk);
@@ -959,12 +959,12 @@ fn run_zremrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client
     }
     if lapsed {
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if client^.number > 0_u64 {
       if store^.logging {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
