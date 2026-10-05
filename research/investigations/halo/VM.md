@@ -101,8 +101,8 @@ Rejected: NaN-boxing (every access would decode tags by hand with
 the oracle, moves the same 16 bytes). Rejected: generational handles as in
 E1 (a precise collector never leaves a dangling handle; the generation would
 cost a load and compare on every table and string access). A `live` flag is
-kept and checked, and a test-build verifier checks handles after every
-collection.
+kept and checked; a test-build verifier is planned to check handles after
+every collection (F4).
 
 ## 2. Heap
 
@@ -138,12 +138,13 @@ every script's constant pool, and values the host pins. Collection happens at th
 call, where every live value is in a stack slot or another root (revised
 during implementation from "only inside allocation", which would have made
 every allocating helper keep its live values as arguments): a due
-collection marks the stack below the highest frame top, frame closures,
+collection marks the stack below the highest frame top or dynamic argument/result
+top, frame closures,
 open upvalues, globals, per-type metatables, the script's constants, the
 error value and a host-stopped stack, clears the stack above as Lua 5.1's
-`traversestack` does, and sweeps. Straight-line code between safepoints is
-finite, so allocation between collections is bounded by the code and by
-library calls, which the byte limit covers. Trigger:
+`traversestack` does, and sweeps. The byte limit applies to logical live
+heap bytes after a safepoint collection; it does not bound temporary
+allocation inside library calls, slab/intern reserve or process RSS. Trigger:
 `bytes_since_gc > max(1 MiB, live_bytes_after_last_gc)`. Byte accounting
 answers G5: past `memory_limit`, collect once, then raise "not enough
 memory". Not incremental, no weak tables, no `__gc` in slice 1.
@@ -309,6 +310,7 @@ coding agent.
 - F4: a script allocating without bound under a 64 MiB limit fails with
   "not enough memory" and the host survives; the collector verifier finds
   nothing with collection forced at every allocation.
+  Status: safepoint stress, root mutations and memory recovery pass; every-allocation verification remains open ([F4 results](../../experiments/halo-gc/RESULTS.md)).
 - P1 (with the current `match` lowering): Halo's median is at most PUC
   5.1.5's on `fib(30)`, a 1e8 numeric loop, 1e7 table integer fill and read,
   1e6 string-key reads, 1e6 short concatenations, `table.sort` of 1e6

@@ -1,5 +1,24 @@
 # Halo F4 safepoint stress validation
 
+Safepoint stress preserves all 80 stored Redis replies at budgets 1, 7 and
+1000 (240/240 with stress on and 240/240 off). Each stressed script collects;
+each budget completes 20,450 collections. The 64 MiB logical heap limit
+returns a Lua memory error and a following script succeeds on the same
+engine/store, in both modes at all budgets.
+
+F4 found and fixed dynamic call arguments excluded from the live-stack
+bound, consumed callback snapshots retained after restoration/reset, and
+missing logical heap-limit enforcement. All four missing-root mutations
+are detected; three need explicit local witnesses beyond the ordinary corpus.
+Every-allocation stress and a complete reachability verifier remain untested,
+as do process RSS, peak temporary allocation and platform parity beyond
+Darwin arm64. This establishes F4's safepoint and recovery observations,
+not its original every-allocation verifier goal.
+
+This record serves VM.md F4 and is retained with the reproducible collector
+experiment; remove or supersede it when maintained collector tests own these
+observations or Halo is retired.
+
 Environment: Darwin arm64. The existing gate compiler was used without
 Cargo, network, push or pull requests. The worktree branch is
 `claude/halo-slice1`; the task base is
@@ -201,3 +220,160 @@ selected-witness runner/source digest:
 `48583609fb048d599bcf506d0209e1dd8e516d06f2bcc00024c51586c820fb1e`;
 executable SHA-256:
 `d45e7b68c21b50141a8283bb32f42e34372f542948b4c53bad56788e94b6b681`.
+
+## Final committed-collector validation
+
+The native inputs are those at `d02e723a80e8e2188ec32cd6464f9281767da77c`;
+subsequent edits only complete the research records and TODO. The final
+native build exited 0 in 413.40 s (user 323.75 s, system 44.32 s), with
+module caching enabled. The smaller heap-graph build exited 0 in 0.52 s
+(user 0.47 s, system 0.07 s). Build time is excluded from all execution rows.
+
+Final executable SHA-256:
+`3b0ed569e0577ee03400d4d54839f4a8e63f4a46cf2f6b1925a08d44906196fa`.
+Corpus runner/source/fixture digest:
+`0097333aa4ca8d225a8517196b806884246ca9e17ee42ca6a178107bce057907`.
+Local three-case digest:
+`4189654c025fd2557ede227f57773526f0dec9e889e134a0f4cfa9aaf1e26eb9`.
+Collector SHA-256 (identical to `74f4f521b`):
+`d343996ccc9a712fbe1080cc8e68e3762c299cebcd1466c2593e66ead63c8709`.
+
+Before scaling execution, three budget-7 counter-closure samples took
+0.404867, 0.003751 and 0.003956 s with stress, and 0.003638, 0.003713
+and 0.003956 s without. The first launch was slower; both subsequent
+stress samples and all three off samples justify this seconds-scale batch.
+Stress samples collected 8 times; off samples collected 0. Budget-7
+memory/recovery samples passed in 0.372260 s on and 0.372850 s off.
+Three fixed stress SHA-1 samples matched hashlib in 0.004604, 0.004568
+and 0.004291 s before the larger vector check.
+
+| Suite | Stress | Budget | Passed | Collections | Execution seconds |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 80-script oracle | On | 1 | 80/80 | 20450 | 1.393637 |
+| 80-script oracle | On | 7 | 80/80 | 20450 | 0.473711 |
+| 80-script oracle | On | 1000 | 80/80 | 20450 | 0.323578 |
+| 80-script oracle | Off | 1 | 80/80 | 0 | 1.337636 |
+| 80-script oracle | Off | 7 | 80/80 | 0 | 0.434205 |
+| 80-script oracle | Off | 1000 | 80/80 | 0 | 0.282046 |
+| Three local root cases | On | 1 | 3/3 | 25 | 0.012305 |
+| Three local root cases | On | 7 | 3/3 | 25 | 0.010738 |
+| Three local root cases | On | 1000 | 3/3 | 25 | 0.010633 |
+| Three local root cases | Off | 1 | 3/3 | 0 | 0.012342 |
+| Three local root cases | Off | 7 | 3/3 | 0 | 0.010797 |
+| Three local root cases | Off | 1000 | 3/3 | 0 | 0.010833 |
+| Isolated frame closure | On | 1 | 1/1 | 9 | 0.004529 |
+| Parked suspended stack | On | 1 | 1/1 | 14 | 0.005065 |
+
+Collections and times above exclude preparation chunks. The isolated frame
+row enables `--isolate-frames`; the parked-stack row enables
+`--collect-suspended`. Both independently specified replies are restored.
+Ordinary local-case rows leave these extra conditions off.
+
+| Memory limit + same-engine/store recovery | Budget | Passed | Collections | Recovered heap bytes | Execution seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stress on | 1 | 2/2 replies | 131 | 9846 | 0.376495 |
+| Stress on | 7 | 2/2 replies | 131 | 9846 | 0.370845 |
+| Stress on | 1000 | 2/2 replies | 131 | 9846 | 0.369553 |
+| Stress off | 1 | 2/2 replies | 8 | 9846 | 0.373569 |
+| Stress off | 7 | 2/2 replies | 8 | 9846 | 0.375094 |
+| Stress off | 1000 | 2/2 replies | 8 | 9846 | 0.370405 |
+
+Each memory run reports `not enough memory` for the unbounded allocator,
+then bulk `alive` from the pre-exhaustion store key. Both replies share one
+engine/store. Collection counts include both scripts and exclude preparation.
+The standalone heap graph passed (exit 0, native wall 0.30 s), checking
+rooted/unrooted counts and all three table-reference edge kinds. The
+embedding smoke passed (exit 0; native wall rounded to 0.00 s), including
+nested host Stop, reset, following execution, pins/cached constants and
+collection-count preservation. These are correctness timings.
+
+In each stress mode the additional 1,003 SHA-1 vectors matched Python
+hashlib, and all 32 Redis-source-grounded error probes passed. Vector
+execution totals were 3.577 s on and 3.558 s off. Entire runner wall times,
+including memory, vectors, error probes and corpus transport/comparison,
+were 7.61 s on and 7.42 s off; they are not build times or speed comparisons.
+
+## Commands and exit codes
+
+All commands ran from this worktree with the existing gate compiler; no
+Cargo, network, push or PR was used. Heavy commands used
+`perl .github/run-check.pl LABEL COMMAND ...`; reported native times come
+from its separate `time -p` output. Shared-lock refusals (exit 75) were
+retried only after the other command released its lock.
+
+For these invocations, the common runner arguments are:
+
+```sh
+python3 -B research/experiments/halo-e2e/run.py \
+  --compiler compiler/target/gate/whitefootc \
+  --binary /private/tmp/halo-f4-finish/final
+```
+
+Each runner invocation also used `--report` and `--actual` scratch outputs.
+`--cases research/experiments/halo-gc/cases` is abbreviated below as local
+cases. The stopped mutation used the separately built `stopped-mutant`
+executable, never the final executable.
+
+| Command or runner arguments | Exit | Observation |
+| --- | ---: | --- |
+| `compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --check-interface halo::heap --cache /private/tmp/halo-gc-cache` | 0 | Small interface sample, 0.02 s |
+| `compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --entry test --cache /private/tmp/halo-gc-cache -o /private/tmp/halo-f4-finish/stopped-mutant` | 0 | Stopped-root mutant build |
+| Mutant: stress + local `gc/suspended-stack`, budget 1, `--collect-suspended` | 1 | Expected discrimination; native exit 0, wrong error reply |
+| Mutant: `--gc-stress --budgets 1,7,1000`, ordinary oracle | 0 | 240/240, missing root concealed |
+| `compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --entry test --cache /private/tmp/halo-gc-cache -o /private/tmp/halo-f4-finish/final` | 0 | Restored collector build |
+| `--gc-stress --budgets 1,7,1000 --verify-memory --verify-errors --verify-sha1` | 0 | Final stressed oracle and auxiliary checks |
+| `--budgets 1,7,1000 --verify-memory --verify-errors --verify-sha1` | 0 | Final ordinary oracle and auxiliary checks |
+| Local cases, `--gc-stress --budgets 1,7,1000` | 0 | 9/9 |
+| Local cases, `--budgets 1,7,1000` | 0 | 9/9 |
+| Local cases, `--filter gc/frame-closure --gc-stress --budgets 1 --isolate-frames` | 0 | Sole frame root restored |
+| Local cases, `--filter gc/suspended-stack --gc-stress --budgets 1 --collect-suspended` | 0 | Sole snapshot root restored |
+| `/private/tmp/halo-f4-finish/final one two three` | 0 | Embedding smoke |
+| `compiler/target/gate/whitefootc --graph research/experiments/halo-gc/modules.wfg --function pkg::test::main --cache /private/tmp/halo-gc-cache -o /private/tmp/halo-f4-finish/heap` | 0 | Heap-graph build |
+| `/private/tmp/halo-f4-finish/heap` | 0 | Heap-graph execution |
+| `git diff --exit-code -- lib/halo/vm/collect.wf` | 0 | Collector restored exactly |
+| `make design-lint` | 0 | Small structural sample, 7.40 s before `make static` |
+| `make static` | 0 | All static stages, 32.39 s |
+| `git diff --check` | 0 | Patch whitespace |
+
+The earlier open/frame/constants evidence above was recovered from the
+previous session's saved reports and replies, with their counts and digests
+checked here; those mutations were not rerun in this session.
+
+## Instrumentation boundary assessment
+
+The completion review identified a material interface choice in the earlier
+stress commit: `set_gc_stress` and `collection_count` are public embedding
+operations, while the public Heap carries their storage. The current
+recommendation (Q1, awaiting owner ruling) keeps those embedding operations.
+They state the engine's default-off behavior and the meaning of completed,
+saturating, reset-preserved collection telemetry at the client's boundary.
+The viable alternative is to let research clients write/read Heap fields
+directly; that ties each client to collector storage and makes it interpret
+lifecycle details itself. Keeping the API adds an embedding contract that
+must be maintained; direct access avoids that additional contract.
+
+This is a technical boundary judgment, not a measured advantage of one API
+placement. F4 validates the current contract's observations but does not
+select API placement empirically. Reopen at the production firn binding or
+a collector-storage change. The provisional tree node lives in the existing
+compiler tree beside the Halo closure decision; it serves F4's repeatable
+embedding checks and is retired or superseded with the controls when Halo
+is retired or its production boundary replaces them. No approval log entry
+is written before the owner's ruling.
+
+## Findings and remaining scope
+
+The live-stack bound, snapshot retention and memory-limit TODO items are
+resolved by the corrected code and these observations. The stale coercion
+TODO wording was corrected, as were VM.md's fixed-frame-only stack bound,
+verifier status and overly broad byte-limit description. The experiment
+README now links the final validation rather than promising it below. The outdated embedding boundary narration is
+recorded in `docs/todo.md` for its next update; its technical witnesses were
+not broadened into compatibility claims. The every-allocation verifier gap
+is also recorded there with an explicit reopening condition. CJSON instance
+configuration reclamation remains a separate existing TODO.
+
+No specification, conformance expectation, oracle reply, or collector source
+was changed by this finishing session. A complete repository `make check`
+was not run: this task uses the supplied compiler and forbids Cargo. The
+experiment establishes these observations on Darwin arm64 only.

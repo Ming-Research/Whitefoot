@@ -2200,25 +2200,17 @@ rarely insert at the same place.
 
 ## Modules and libraries
 
-- **Halo does not enforce its logical heap limit at VM safepoints.**
-  The F4 bounded growing-table probe in
-  `research/experiments/halo-gc/README.md` returns successfully with
-  74,462,693 bytes under a 67,108,864-byte engine limit. Impact: an
-  unbounded allocator can exhaust the host instead of returning the intended
-  Lua memory error. Change: force a root-preserving full collection when
-  over the limit, then unwind with `not enough memory` if survivors still
-  exceed it. Reopen immediately for F4; verify an unbounded case and a
-  following script on the same engine/store, and remove when fixed.
-
-- **Halo stress reveals incomplete live-stack bounds and saved-stack retention.**
-  F4's `lua-core/unpack-select-varargs` loses its last array value at every
-  budget: the collector clears dynamic arguments beyond `frame_top` even
-  though `Vm.top` keeps them live. Also, `restore_stopped_stack` leaves the
-  consumed snapshot rooted indefinitely, retaining dead callback values
-  across scripts. Change: include the dynamic top in the collector's stack
-  limit, and release a snapshot once restored. Reopen immediately for F4;
-  verify the unchanged varargs oracle, suspended callbacks and heap recovery,
-  then remove this item when both fixes pass.
+- **Halo F4 has no every-allocation reachability verifier.**
+  The safepoint stress and four missing-root mutations in
+  `research/experiments/halo-gc/RESULTS.md` distinguish selected root
+  omissions, but do not check every heap reference or collect at every
+  allocation as VM.md's original F4 requires. Impact: passing these cases
+  cannot establish complete collector reachability or bound temporary
+  allocation between safepoints. Change: add an independent test-build
+  handle/reachability check and establish temporary-root handling before
+  extending stress to allocation boundaries. Reopen at the next F4 extension
+  or before claiming every-allocation validation; verify omitted-reference
+  controls and allocating helpers with live temporary values.
 
 - **Halo codec error names need Lua debug metadata.** The library comparison
   in `research/experiments/halo-luacodecs/RESULTS.md` includes
@@ -2245,7 +2237,8 @@ rarely insert at the same place.
   self-tail call; this halved the vm module's check time (about 60 s for the
   package on an M1 Pro) but gives the match-dispatch lowering one shared
   dispatch point instead of a tail jump per arm. Globals always take the slow
-  executor; coercion and numeric power already use `lib/halo/number`. Change: once a lowering and a benchmark exist (VM.md P1, P2),
+  executor; coercion and numeric power already use `lib/halo/number`. Change:
+  once a lowering and a benchmark exist (VM.md P1, P2),
   measure, then move the epilogue into each arm or inline the handlers, and
   add fast paths where the census shows them hot. Reopen with the first Halo
   performance measurement.

@@ -96,5 +96,5 @@ comparison. The cached corrected build took 418.89 s and the root-probe
 build 210.21 s, both exit 0. The original embedding smoke exited 0.
 Consumed suspended snapshots are released after restoration; a host-stopped
 snapshot stays available through nested stop unwinding and is released on
-reset. Final validation below includes that retention guard, added after
-this preliminary comparison.
+reset. The [final validation](RESULTS.md#final-committed-collector-validation)
+includes that retention guard, added after this preliminary comparison.
