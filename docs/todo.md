@@ -2200,6 +2200,10 @@ rarely insert at the same place.
   program-ready event, keeping the delayed-byte assertion, and confirm that a
   cancellation implementation that ignores the deadline still fails. Reopen
   when it fails in CI or before changing deadline reads.
+  The same two status-10 failures recurred in amendment S's full gate at
+  `f1fba77c3fa422348b72a00301105d4908e68e5a`; each then passed unchanged in
+  isolation. The recurrence preserves the need for a ready-event test rather
+  than establishing a deadline-runtime defect.
 
 - **Symbolic const expressions in atomic root comparison are conservative.**
   An unresolved capacity expression can equal a concrete capacity, so the
@@ -3383,6 +3387,14 @@ condition under which it is taken up.
   longer; reopen when the corpus job becomes the longest or its budget trips.
   This changes conformance evidence wiring, so the PR states it under
   AGENTS.md rule 4.
+  The local macOS amendment S gate at
+  `f1fba77c3fa422348b72a00301105d4908e68e5a` took 214.72 s in
+  `compiler/test-corpus`, above its 125 s budget; the native conformance walk
+  was the last test still running. The amendment changes the manifest from
+  1,733 to 1,735 cases and from 552 to 557 native-run cases, but those counts
+  do not attribute the overrun. Profile the serial walk and host startup
+  before deciding whether the amendment adds work on that path or the host
+  needs another budget. No budget was raised and no case was removed.
 - **The Windows io-hosts steps have no time budget.** They run without
   `run-check.pl`, so only their step timeouts (5 and 8 min) and the job's
   (10 min) bound them, and the Windows job is now the longest CI job, 230–285
