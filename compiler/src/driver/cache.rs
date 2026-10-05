@@ -32,15 +32,6 @@ const MAGIC: &[u8; 8] = b"WFCACHE1";
 /// process.
 static PUBLICATIONS: AtomicU64 = AtomicU64::new(0);
 
-/// The file whose modification time records the last pruning.
-const PRUNE_STAMP: &str = ".pruned";
-/// How often a cache directory is pruned.
-const PRUNE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
-/// How long another compiler's record is kept after its last write.
-const FOREIGN_RECORD_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
-/// How long an interrupted publication's temporary file is kept.
-const PARTIAL_FILE_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
-
 /// The cache family of proof receipts [MOD-8].
 const PROOF_RECEIPTS: &str = "proof-receipts";
 
@@ -68,99 +59,13 @@ impl BuildCache {
     /// Returns the I/O error that prevented creating the directory.
     pub fn open(root: &Path, compiler: [u8; 32]) -> std::io::Result<Self> {
         std::fs::create_dir_all(root)?;
-        let cache = Self {
+        Ok(Self {
             root: root.to_path_buf(),
             compiler,
             receipts_reused: Cell::new(0),
             receipts_recorded: Cell::new(0),
             settled: RefCell::new(HashMap::new()),
-        };
-        cache.prune_daily();
-        Ok(cache)
-    }
-
-    /// Prunes at most once a day, as the stamp file's modification time
-    /// records; a failure to prune or stamp changes only the space the
-    /// directory uses.
-    fn prune_daily(&self) {
-        let stamp = self.root.join(PRUNE_STAMP);
-        let now = std::time::SystemTime::now();
-        let due = std::fs::metadata(&stamp)
-            .and_then(|metadata| metadata.modified())
-            .map_or(true, |stamped| {
-                now.duration_since(stamped)
-                    .is_ok_and(|age| age >= PRUNE_INTERVAL)
-            });
-        if due {
-            self.prune(now, FOREIGN_RECORD_AGE, PARTIAL_FILE_AGE);
-            let _ = std::fs::write(&stamp, b"");
-        }
-    }
-
-    /// Removes the records another compiler wrote that no write has touched
-    /// for `foreign` and the temporary files of this cache's publications
-    /// interrupted longer than `partial` ago. A record of this compiler is
-    /// never removed, and neither is a file this cache did not write, such
-    /// as an area another tool keeps; a record of another compiler can never
-    /// be read by this one, and a younger one may belong to a build still in
-    /// use beside it. A read does not refresh a record's time, so a record
-    /// another compiler only reads is removed once it is `foreign` old and
-    /// that compiler recomputes it. Another compiler may also publish a new
-    /// record under a name between this pruning's check and its removal;
-    /// that record is then recomputed too. Neither case can remove a record
-    /// this compiler reads, or change a verdict.
-    fn prune(
-        &self,
-        now: std::time::SystemTime,
-        foreign: std::time::Duration,
-        partial: std::time::Duration,
-    ) {
-        let Ok(families) = std::fs::read_dir(&self.root) else {
-            return;
-        };
-        for family in families.flatten() {
-            if !family.file_type().is_ok_and(|kind| kind.is_dir()) {
-                continue;
-            }
-            let Ok(entries) = std::fs::read_dir(family.path()) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let Some(age) = entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .ok()
-                    .and_then(|modified| now.duration_since(modified).ok())
-                else {
-                    continue;
-                };
-                let interrupted = own_partial_file(&entry.file_name().to_string_lossy());
-                let remove = if interrupted {
-                    age >= partial
-                } else {
-                    age >= foreign && self.foreign_record(&path)
-                };
-                if remove {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
-        }
-    }
-
-    /// Whether `path` holds a record of this cache's format whose key names
-    /// another compiler.
-    fn foreign_record(&self, path: &Path) -> bool {
-        use std::io::Read;
-        const COMPILER: &[u8] = b"compiler ";
-        let header = MAGIC.len() + 8 + COMPILER.len() + 32;
-        let mut bytes = vec![0; header];
-        let read = std::fs::File::open(path).and_then(|mut file| file.read_exact(&mut bytes));
-        if read.is_err() || !bytes.starts_with(MAGIC) {
-            return false;
-        }
-        let key = &bytes[MAGIC.len() + 8..];
-        key.starts_with(COMPILER) && key[COMPILER.len()..] != self.compiler
+        })
     }
 
     /// Whether the verdict this handle settled for exactly `material` was
@@ -285,20 +190,6 @@ pub fn content_digest(bytes: &[u8]) -> [u8; 32] {
 }
 
 /// Lowercase hexadecimal of a digest, a record's file name.
-/// Whether `name` is a temporary file of an interrupted [`BuildCache::store`],
-/// `.<process>-<publication>.partial`.
-fn own_partial_file(name: &str) -> bool {
-    name.strip_prefix('.')
-        .and_then(|rest| rest.strip_suffix(".partial"))
-        .and_then(|rest| rest.split_once('-'))
-        .is_some_and(|(process, publication)| {
-            !process.is_empty()
-                && !publication.is_empty()
-                && process.bytes().all(|byte| byte.is_ascii_digit())
-                && publication.bytes().all(|byte| byte.is_ascii_digit())
-        })
-}
-
 fn hex(bytes: &[u8]) -> String {
     use core::fmt::Write;
     let mut text = String::with_capacity(bytes.len() * 2);
@@ -425,89 +316,6 @@ mod tests {
         assert_eq!(cache.load("other", b"key"), None);
         let other_compiler = BuildCache::open(&root, [2; 32]).expect("open");
         assert_eq!(other_compiler.load("family", b"key"), None);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn pruning_removes_only_stale_foreign_records_and_interrupted_writes() {
-        let root = directory("prune");
-        let ours = BuildCache::open(&root, [4; 32]).expect("open");
-        let theirs = BuildCache::open(&root, [5; 32]).expect("open");
-        ours.store("family", b"ours-old", b"a").expect("store");
-        theirs.store("family", b"theirs-old", b"b").expect("store");
-        theirs.store("family", b"theirs-new", b"c").expect("store");
-        let record = |cache: &BuildCache, material: &[u8]| {
-            cache.record_path("family", &cache.scoped(material))
-        };
-        let partial = root.join("family").join(".1-1.partial");
-        let other_tool = root.join("thinlto").join("llvmcache-1");
-        std::fs::write(&partial, b"x").expect("partial");
-        let young_partial = root.join("family").join(".1-2.partial");
-        std::fs::write(&young_partial, b"x").expect("young partial");
-        let other_partial = root.join("thinlto").join("llvm.partial");
-        std::fs::create_dir_all(other_tool.parent().expect("area")).expect("area");
-        std::fs::write(&other_tool, b"not ours").expect("other tool's file");
-        std::fs::write(&other_partial, b"not ours").expect("other tool's partial file");
-        let now = std::time::SystemTime::now();
-        let days = |count: u64| std::time::Duration::from_secs(count * 24 * 60 * 60);
-        let age = |path: &std::path::Path, by: std::time::Duration| {
-            std::fs::File::options()
-                .write(true)
-                .open(path)
-                .and_then(|file| file.set_modified(now - by))
-                .expect("set modification time");
-        };
-        age(&record(&ours, b"ours-old"), days(30));
-        age(&record(&theirs, b"theirs-old"), days(30));
-        age(&partial, days(2));
-        age(&young_partial, std::time::Duration::from_secs(60 * 60));
-        age(&other_partial, days(30));
-        age(&other_tool, days(30));
-        ours.prune(now, super::FOREIGN_RECORD_AGE, super::PARTIAL_FILE_AGE);
-        assert!(
-            record(&ours, b"ours-old").exists(),
-            "this compiler's record stays"
-        );
-        assert!(
-            !record(&theirs, b"theirs-old").exists(),
-            "a stale foreign record goes"
-        );
-        assert!(
-            record(&theirs, b"theirs-new").exists(),
-            "a recent foreign record stays"
-        );
-        assert!(!partial.exists(), "an interrupted write goes");
-        assert!(young_partial.exists(), "a recent interrupted write stays");
-        assert!(other_tool.exists(), "another tool's file stays");
-        assert!(other_partial.exists(), "another tool's partial file stays");
-        assert_eq!(ours.load("family", b"ours-old").as_deref(), Some(&b"a"[..]));
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn opening_prunes_at_most_once_a_day() {
-        let root = directory("daily");
-        let theirs = BuildCache::open(&root, [6; 32]).expect("open");
-        theirs.store("family", b"old", b"x").expect("store");
-        let path = theirs.record_path("family", &theirs.scoped(b"old"));
-        let stale =
-            std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 60 * 60);
-        let set = |path: &std::path::Path| {
-            std::fs::File::options()
-                .write(true)
-                .open(path)
-                .and_then(|file| file.set_modified(stale))
-                .expect("set modification time");
-        };
-        set(&path);
-        BuildCache::open(&root, [7; 32]).expect("open");
-        assert!(
-            path.exists(),
-            "the stamp the first open wrote defers pruning"
-        );
-        set(&root.join(super::PRUNE_STAMP));
-        BuildCache::open(&root, [7; 32]).expect("open");
-        assert!(!path.exists(), "a day-old stamp lets the next open prune");
         let _ = std::fs::remove_dir_all(&root);
     }
 
