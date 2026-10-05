@@ -316,6 +316,7 @@ coding agent.
   1e6 string-key reads, 1e6 short concatenations, `table.sort` of 1e6
   numbers and binary-trees depth 16; above 1.5 times on `fib` or the loop,
   the value width and handle checks are attributed first.
+  Status: P1 baseline fails on six unscaled kernels and depth-14 binary-trees; sampled attribution and budget-1000 costs are recorded in [P1 results](../../experiments/halo-bench/RESULTS.md).
 - P2 (after the per-arm lowering): at most 0.6 times PUC on the numeric
   kernels and 0.8 times on the table and string kernels.
 - P3: the budget costs under 1% on the loop kernel.

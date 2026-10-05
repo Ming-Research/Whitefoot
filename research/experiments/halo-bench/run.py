@@ -34,6 +34,15 @@ def validate(puc, halo, stats, realistic):
 
 
 def self_check():
+    assert profile_samples('    42 wf__main_body  (in halo) + 148\n') == 42
+    for bad in ('', '    0 wf__main_body  (in halo) + 148\n',
+                '    1 wf__main_body  (in halo)\n    2 wf__main_body  (in halo)\n'):
+        try:
+            profile_samples(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('empty/ambiguous profile admitted')
     assert validate(b'42\n', b'42\n', b'0\n2\n', False) == (0, 2)
     assert validate(b'42\n', b'42\n', b'3\n2\n', True) == (3, 2)
     for puc, halo, stats in ((b'42\n', b'43\n', b'0\n2\n'),
@@ -48,6 +57,13 @@ def self_check():
             pass
         else:
             raise AssertionError('bad checksum/stats were admitted')
+
+
+def profile_samples(report):
+    counts = re.findall(r"^\s+(\d+) wf__main_body\s", report, re.M)
+    if len(counts) != 1 or int(counts[0]) == 0:
+        raise ValueError('profile has no single sampled execution worker')
+    return int(counts[0])
 
 
 def summary(values):
@@ -124,6 +140,8 @@ def main():
                         item.update(profiler_exit=profiler.returncode, profiler_report=report.name,
                                     profiler_output=(po+pe).decode('utf8', 'replace'))
                     data['launches'].append(item)
+                    if profiler is not None and report.exists():
+                        item['worker_samples'] = profile_samples(report.read_text())
                     pair[engine] = item
                     print(f'{name} {run+1}/{args.runs} {engine}: {elapsed:.6f}s exit={process.returncode} checksum={stdout.strip()!r}', flush=True)
                     if profiler is not None and (profiler.returncode or not report.exists()):

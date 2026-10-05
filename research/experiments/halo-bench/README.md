@@ -62,6 +62,8 @@ baseline; lengthen only if spread affects a threshold conclusion.
 For attribution on macOS, `run.py --profile` samples each individual Halo
 launch at 1 ms with `/usr/bin/sample`; its result JSON records the profiler's
 exit and report. Use the same workload and budget as the baseline, and
-exclude profiled timings from baseline medians. Short processes may finish
-before attachment; report this limitation or choose a longer recorded
-profiling workload. Raw data and supported attribution are in [RESULTS.md](RESULTS.md).
+exclude profiled timings from baseline medians. The runner requires one
+nonzero sampled execution worker, including when
+`sample` itself exits 0. Short processes may finish before attachment;
+report this limitation or choose a longer recorded profiling workload. Raw
+data and supported attribution are in [RESULTS.md](RESULTS.md).

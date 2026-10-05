@@ -1,0 +1,2167 @@
+===== binary-trees-profile-three-binary-trees-0.sample.txt =====
+Analysis of sampling halo (pid 1693) every 1 millisecond
+Process:         halo [1693]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x100bf4000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1682]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:36.369 -0700
+Launch Time:     2026-10-05 05:03:36.338 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1845 Thread_170988432   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1845 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1845 wf__floor_run  (in halo) + 604  [0x100bf4a18]
+    +     1845 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1845 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1845 Thread_170988435
+      1845 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1845 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1845 wf__floor_entry  (in halo) + 32  [0x100bf4a48]
+            1845 wf__main_body  (in halo) + 148  [0x100c3e7f4]
+              232 wf_package.halo.vm.enter_lua  (in halo) + 492,1020,...  [0x100c0c270,0x100c0c480,...]
+              131 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 748,756,...  [0x100c23ff4,0x100c23ffc,...]
+              114 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 236  [0x100c249c0]
+              ! 114 wf_package.halo.heap.node_find  (in halo) + 292,272,...  [0x100c0049c,0x100c00488,...]
+              101 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x100c304cc]
+              ! 38 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 0,28  [0x100c25c38,0x100c25c54]
+              ! 23 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo) + 0,28  [0x100c26958,0x100c26974]
+              ! 14 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.61  (in halo) + 168,56,...  [0x100c2df74,0x100c2df04,...]
+              ! 8 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 32  [0x100c2e698]
+              ! 6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 28  [0x100c227ac]
+              ! 6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 28  [0x100c2e1b8]
+              ! 3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo) + 28  [0x100c2509c]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.0  (in halo) + 0  [0x100c21fac]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 28  [0x100c23d24]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.50  (in halo) + 32  [0x100c2b97c]
+              95 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 792,216,...  [0x100c3a18c,0x100c39f4c,...]
+              83 wf_package.halo.heap.new_table  (in halo) + 176  [0x100c00790]
+              ! 27 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 18 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,672,...  [0x1864c8f64,0x1864c91dc,...]
+              ! 13 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112,136,...  [0x1864c31cc,0x1864c31e4,...]
+              ! 11 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,44,...  [0x1864d30c8,0x1864d30e8,...]
+              ! 10 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 24,180,...  [0x1864c3968,0x1864c3a04,...]
+              ! 3 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 324  [0x1864ca7e4]
+              ! : 3 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 1308  [0x1864cb498]
+              ! :   2 xzm_segment_group_alloc_chunk  (in libsystem_malloc.dylib) + 628  [0x1864ac670]
+              ! :   | 2 _xzm_segment_group_alloc_segment  (in libsystem_malloc.dylib) + 904  [0x1864aee68]
+              ! :   |   2 _xzm_segment_group_init_segment  (in libsystem_malloc.dylib) + 80  [0x1864ae85c]
+              ! :   1 xzm_segment_group_alloc_chunk  (in libsystem_malloc.dylib) + 664  [0x1864ac694]
+              ! :     1 _xzm_segment_group_find_and_allocate_chunk  (in libsystem_malloc.dylib) + 1196  [0x1864acecc]
+              ! 1 DYLD-STUB$$malloc  (in halo) + 4  [0x100c42d0c]
+              73 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 236  [0x100c23df4]
+              ! 73 wf_package.halo.heap.node_find  (in halo) + 256,8,...  [0x100c00478,0x100c00380,...]
+              69 wf_package.halo.heap.new_table  (in halo) + 68  [0x100c00724]
+              ! 69 wf_package.halo.heap.power_capacity  (in halo) + 8,16  [0x100c00534,0x100c0053c]
+              65 wf_package.halo.vm.collect_if_due  (in halo) + 2212  [0x100c0cdc8]
+              ! 36 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,12,...  [0x1864c8f64,0x1864c8f48,...]
+              ! 12 _malloc_zone_calloc  (in libsystem_malloc.dylib) + 84,44,...  [0x1864d3340,0x1864d3318,...]
+              ! 10 _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib) + 160,284,...  [0x1864d213c,0x1864d21b8,...]
+              ! 4 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 24,184,...  [0x1864c3968,0x1864c3a08,...]
+              ! 2 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 324  [0x1864ca7e4]
+              ! : 2 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 1308  [0x1864cb498]
+              ! :   2 xzm_segment_group_alloc_chunk  (in libsystem_malloc.dylib) + 504  [0x1864ac5f4]
+              ! :     1 _xzm_segment_group_find_and_allocate_chunk  (in libsystem_malloc.dylib) + 28  [0x1864aca3c]
+              ! :     1 _xzm_segment_group_span_mark_smaller  (in libsystem_malloc.dylib) + 456  [0x1864ae220]
+              ! 1 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              63 wf_package.halo.vm.collect_if_due  (in halo) + 2192  [0x100c0cdb4]
+              ! 26 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,148,...  [0x1864c8f64,0x1864c8fd0,...]
+              ! 14 _malloc_zone_calloc  (in libsystem_malloc.dylib) + 56,12,...  [0x1864d3324,0x1864d32f8,...]
+              ! 12 _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib) + 160,164,...  [0x1864d213c,0x1864d2140,...]
+              ! 8 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 324,336,...  [0x1864c3a94,0x1864c3aa0,...]
+              ! 3 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              58 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 108,700,...  [0x100c24940,0x100c24b90,...]
+              58 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 68,108,...  [0x100c2e6bc,0x100c2e6e4,...]
+              56 wf_package.halo.vm.collect_if_due  (in halo) + 1880,36,...  [0x100c0cc7c,0x100c0c548,...]
+              54 wf_package.halo.heap.new_table  (in halo) + 96  [0x100c00740]
+              ! 30 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,284,...  [0x1864c8f64,0x1864c9058,...]
+              ! 10 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,56,...  [0x1864d30c8,0x1864d30f4,...]
+              ! 7 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112,212,...  [0x1864c31cc,0x1864c3230,...]
+              ! 3 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 24,192  [0x1864c3968,0x1864c3a10]
+              ! 3 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 1 DYLD-STUB$$malloc  (in halo) + 4  [0x100c42d0c]
+              50 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 640,488,...  [0x100c22a10,0x100c22978,...]
+              49 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 184,52,...  [0x100c2068c,0x100c20608,...]
+              47 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 236,484,...  [0x100c2e288,0x100c2e380,...]
+              41 wf_package.halo.heap.insert_parts  (in halo) + 60,128,...  [0x100c00ad0,0x100c00b14,...]
+              37 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,144,...  [0x100c26cf4,0x100c26d24,...]
+              33 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 360  [0x100c2e7e0]
+              ! 33 wf_package.halo.vm.finish  (in halo) + 40,112,...  [0x100c0bcdc,0x100c0bd24,...]
+              29 wf_package.halo.vm.push_frame  (in halo) + 236,292,...  [0x100c1b0dc,0x100c1b114,...]
+              27 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 928  [0x100c3a214]
+              ! 27 wf_package.halo.heap.node_find  (in halo) + 196,8,...  [0x100c0043c,0x100c00380,...]
+              24 wf_package.halo.heap.insert_parts  (in halo) + 128  [0x100c00b14]
+              ! 24 wf_package.halo.heap.node_find  (in halo) + 412,196,...  [0x100c00514,0x100c0043c,...]
+              24 wf_package.halo.heap.new_table  (in halo) + 224,352,...  [0x100c007c0,0x100c00840,...]
+              24 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo) + 376,228,...  [0x100c251f8,0x100c25164,...]
+              22 wf_package.halo.vm.collect_if_due  (in halo) + 1896  [0x100c0cc8c]
+              ! 22 wf_package.halo.heap.gc_mark  (in halo) + 28,16  [0x100bffa30,0x100bffa24]
+              20 wf_package.halo.heap.table_set  (in halo) + 188  [0x100c01478]
+              ! 20 wf_package.halo.heap.node_find  (in halo) + 96,260,...  [0x100c003d8,0x100c0047c,...]
+              20 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.30  (in halo) + 96,440,...  [0x100c27d64,0x100c27ebc,...]
+              19 wf_package.halo.heap.table_set  (in halo) + 108,68,...  [0x100c01428,0x100c01400,...]
+              18 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.50  (in halo) + 144,92,...  [0x100c2b9ec,0x100c2b9b8,...]
+              17 wf_package.halo.heap.gc_mark  (in halo) + 40,68,...  [0x100bffa3c,0x100bffa58,...]
+              16 wf_package.halo.vm.raw_assign  (in halo) + 404,56,...  [0x100c1ad58,0x100c1abfc,...]
+              13 wf_package.halo.vm.enter_lua  (in halo) + 1140  [0x100c0c4f8]
+              ! 13 wf_package.halo.vm.push_frame  (in halo) + 32,24  [0x100c1b010,0x100c1b008]
+              10 wf_package.halo.vm.metamethod  (in halo) + 332,368,...  [0x100c1ab68,0x100c1ab8c,...]
+              7 wf_package.halo.vm.collect_if_due  (in halo) + 1908  [0x100c0cc98]
+              ! 7 wf_package.halo.heap.gc_mark  (in halo) + 16,28  [0x100bffa24,0x100bffa30]
+              7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 444,504,...  [0x100c25df4,0x100c25e30,...]
+              7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo) + 84,76,...  [0x100c269ac,0x100c269a4,...]
+              6 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 404  [0x100c3a008]
+              ! 6 wf_package.halo.heap.node_find  (in halo) + 8,16,...  [0x100c00380,0x100c00388,...]
+              5 wf_package.halo.heap.gray_push  (in halo) + 204  [0x100bffa04]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 436  [0x100c24a88]
+              ! 4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x100c39e94]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 252  [0x100c2e298]
+              ! 4 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 24,32  [0x100c205ec,0x100c205f4]
+              3 wf_package.halo.heap.gc_mark  (in halo) + 204  [0x100bffae0]
+              ! 2 wf_package.halo.heap.gc_mark  (in halo) + 28  [0x100bffa30]
+              ! 1 wf_package.halo.heap.gray_push  (in halo) + 32  [0x100bff958]
+              3 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 4732  [0x100c3b0f0]
+              ! 3 wf_package.halo.vm.raw_assign  (in halo) + 32,24  [0x100c1abe4,0x100c1abdc]
+              2 wf_host.main.resume  (in halo) + 1540  [0x100c3f170]
+              ! 2 _free  (in libsystem_malloc.dylib) + 0,104  [0x1864d3cd0,0x1864d3d38]
+              2 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x100c1ac4c]
+              ! 2 wf_package.halo.heap.table_set  (in halo) + 28  [0x100c013d8]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 992  [0x100c3a254]
+              ! 2 wf_package.halo.vm.metamethod  (in halo) + 12  [0x100c1aa28]
+              1 wf_package.halo.heap.insert_parts  (in halo) + 536  [0x100c00cac]
+                1 wf_package.halo.heap.main_position  (in halo) + 0  [0x100c002c0]
+
+Total number in stack (recursive counted multiple, when >=5):
+        6       wf_package.halo.heap.node_find  (in halo) + 0  [0x100c00378]
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1845
+        wf_package.halo.heap.node_find  (in halo)        264
+        wf_package.halo.vm.enter_lua  (in halo)        232
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo)        132
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        110
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        99
+        wf_package.halo.heap.power_capacity  (in halo)        69
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo)        66
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo)        58
+        wf_package.halo.vm.collect_if_due  (in halo)        56
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo)        56
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        53
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo)        53
+        wf_package.halo.heap.gc_mark  (in halo)        48
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        45
+        wf_package.halo.vm.push_frame  (in halo)        42
+        wf_package.halo.heap.insert_parts  (in halo)        41
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        37
+        _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib)        34
+        wf_package.halo.vm.finish  (in halo)        33
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo)        30
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo)        27
+        _malloc_zone_calloc  (in libsystem_malloc.dylib)        26
+        _xzm_xzone_malloc  (in libsystem_malloc.dylib)        25
+        wf_package.halo.heap.new_table  (in halo)        24
+        _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib)        22
+        _malloc_zone_malloc  (in libsystem_malloc.dylib)        21
+        wf_package.halo.heap.table_set  (in halo)        21
+        <deduplicated_symbol>  (in libsystem_malloc.dylib)        20
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.30  (in halo)        20
+        wf_package.halo.vm.raw_assign  (in halo)        19
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.50  (in halo)        19
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.61  (in halo)        14
+        wf_package.halo.vm.metamethod  (in halo)        12
+        wf_package.halo.heap.gray_push  (in halo)        6
+
+===== binary-trees-profile-three-binary-trees-1.sample.txt =====
+Analysis of sampling halo (pid 1702) every 1 millisecond
+Process:         halo [1702]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x102748000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1682]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:38.895 -0700
+Launch Time:     2026-10-05 05:03:38.864 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1855 Thread_170988495   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1855 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1855 wf__floor_run  (in halo) + 604  [0x102748a18]
+    +     1855 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1855 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1854 Thread_170988498
+      1854 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1854 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1854 wf__floor_entry  (in halo) + 32  [0x102748a48]
+            1854 wf__main_body  (in halo) + 148  [0x1027927f4]
+              235 wf_package.halo.vm.enter_lua  (in halo) + 492,496,...  [0x102760270,0x102760274,...]
+              124 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 756,104,...  [0x102777ffc,0x102777d70,...]
+              98 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1027844cc]
+              ! 27 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 0  [0x102779c38]
+              ! 21 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo) + 0  [0x10277a958]
+              ! 13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 28  [0x1027821b8]
+              ! 13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 32,24  [0x102782698,0x102782690]
+              ! 12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.61  (in halo) + 56,108,...  [0x102781f04,0x102781f38,...]
+              ! 7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 28  [0x1027767ac]
+              ! 3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo) + 28  [0x10277909c]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 0,32  [0x102777d08,0x102777d28]
+              97 wf_package.halo.heap.new_table  (in halo) + 176  [0x102754790]
+              ! 39 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 25 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,28,...  [0x1864c8f64,0x1864c8f58,...]
+              ! 15 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,100,...  [0x1864d30c8,0x1864d3120,...]
+              ! 7 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 212,112,...  [0x1864c3230,0x1864c31cc,...]
+              ! 5 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 180,8,...  [0x1864c3a04,0x1864c3958,...]
+              ! 5 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 324  [0x1864ca7e4]
+              ! : 5 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 1308  [0x1864cb498]
+              ! :   4 xzm_segment_group_alloc_chunk  (in libsystem_malloc.dylib) + 504  [0x1864ac5f4]
+              ! :   | 2 _xzm_segment_group_find_and_allocate_chunk  (in libsystem_malloc.dylib) + 528  [0x1864acc30]
+              ! :   | + 2 _xzm_segment_group_span_mark_smaller  (in libsystem_malloc.dylib) + 164  [0x1864ae0fc]
+              ! :   | 2 _xzm_segment_group_find_and_allocate_chunk  (in libsystem_malloc.dylib) + 544,1168  [0x1864acc40,0x1864aceb0]
+              ! :   1 xzm_segment_group_alloc_chunk  (in libsystem_malloc.dylib) + 628  [0x1864ac670]
+              ! :     1 _xzm_segment_group_alloc_segment  (in libsystem_malloc.dylib) + 752  [0x1864aedd0]
+              ! :       1 mach_vm_map  (in libsystem_kernel.dylib) + 128  [0x1866639d0]
+              ! :         1 _kernelrpc_mach_vm_map_trap  (in libsystem_kernel.dylib) + 8  [0x186663acc]
+              ! 1 DYLD-STUB$$malloc  (in halo) + 4  [0x102796d0c]
+              91 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 236  [0x1027789c0]
+              ! 91 wf_package.halo.heap.node_find  (in halo) + 272,292,...  [0x102754488,0x10275449c,...]
+              88 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 792,6020,...  [0x10278e18c,0x10278f5f8,...]
+              75 wf_package.halo.vm.collect_if_due  (in halo) + 1880,3072,...  [0x102760c7c,0x102761124,...]
+              74 wf_package.halo.heap.new_table  (in halo) + 68  [0x102754724]
+              ! 74 wf_package.halo.heap.power_capacity  (in halo) + 8,16  [0x102754534,0x10275453c]
+              64 wf_package.halo.heap.new_table  (in halo) + 96  [0x102754740]
+              ! 28 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,12,...  [0x1864c8f64,0x1864c8f48,...]
+              ! 15 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,56,...  [0x1864d30c8,0x1864d30f4,...]
+              ! 8 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112,176  [0x1864c31cc,0x1864c320c]
+              ! 6 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 24,184,...  [0x1864c3968,0x1864c3a08,...]
+              ! 4 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 2 DYLD-STUB$$malloc  (in halo) + 4  [0x102796d0c]
+              ! 1 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 324  [0x1864ca7e4]
+              !   1 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 1308  [0x1864cb498]
+              !     1 xzm_segment_group_alloc_chunk  (in libsystem_malloc.dylib) + 504  [0x1864ac5f4]
+              !       1 _xzm_segment_group_find_and_allocate_chunk  (in libsystem_malloc.dylib) + 92  [0x1864aca7c]
+              62 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 236  [0x102777df4]
+              ! 62 wf_package.halo.heap.node_find  (in halo) + 256,412,...  [0x102754478,0x102754514,...]
+              61 wf_package.halo.vm.collect_if_due  (in halo) + 2192  [0x102760db4]
+              ! 27 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,76,...  [0x1864c8f64,0x1864c8f88,...]
+              ! 12 _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib) + 160,284,...  [0x1864d213c,0x1864d21b8,...]
+              ! 8 _malloc_zone_calloc  (in libsystem_malloc.dylib) + 12,84,...  [0x1864d32f8,0x1864d3340,...]
+              ! 8 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 6 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 24,8,...  [0x1864c3968,0x1864c3958,...]
+              61 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 596,68,...  [0x1027828cc,0x1027826bc,...]
+              56 wf_package.halo.vm.collect_if_due  (in halo) + 2212  [0x102760dc8]
+              ! 15 _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib) + 160,284,...  [0x1864d213c,0x1864d21b8,...]
+              ! 14 _malloc_zone_calloc  (in libsystem_malloc.dylib) + 12,84,...  [0x1864d32f8,0x1864d3340,...]
+              ! 13 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,420,...  [0x1864c8f64,0x1864c90e0,...]
+              ! 7 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 4 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 184,24,...  [0x1864c3a08,0x1864c3968,...]
+              ! 3 DYLD-STUB$$calloc  (in halo) + 4  [0x102796c64]
+              54 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 528,92,...  [0x1027823ac,0x1027821f8,...]
+              52 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 640,488,...  [0x102776a10,0x102776978,...]
+              51 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 184,52,...  [0x10277468c,0x102774608,...]
+              49 wf_package.halo.vm.push_frame  (in halo) + 292,252,...  [0x10276f114,0x10276f0ec,...]
+              48 wf_package.halo.heap.insert_parts  (in halo) + 148,740,...  [0x102754b28,0x102754d78,...]
+              42 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,516,...  [0x10277acf4,0x10277ae98,...]
+              41 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 108,700,...  [0x102778940,0x102778b90,...]
+              34 wf_package.halo.vm.collect_if_due  (in halo) + 1896  [0x102760c8c]
+              ! 34 wf_package.halo.heap.gc_mark  (in halo) + 28,16  [0x102753a30,0x102753a24]
+              27 wf_package.halo.heap.new_table  (in halo) + 216,396,...  [0x1027547b8,0x10275486c,...]
+              24 wf_package.halo.heap.insert_parts  (in halo) + 128  [0x102754b14]
+              ! 24 wf_package.halo.heap.node_find  (in halo) + 284,4,...  [0x102754494,0x10275437c,...]
+              24 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 360  [0x1027827e0]
+              ! 24 wf_package.halo.vm.finish  (in halo) + 40,92,...  [0x10275fcdc,0x10275fd10,...]
+              23 wf_package.halo.heap.gc_mark  (in halo) + 40,68,...  [0x102753a3c,0x102753a58,...]
+              23 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo) + 228,216,...  [0x102779164,0x102779158,...]
+              22 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 928  [0x10278e214]
+              ! 22 wf_package.halo.heap.node_find  (in halo) + 8,412,...  [0x102754380,0x102754514,...]
+              17 wf_package.halo.heap.table_set  (in halo) + 276,168,...  [0x1027554d0,0x102755464,...]
+              16 wf_package.halo.heap.table_set  (in halo) + 188  [0x102755478]
+              ! 16 wf_package.halo.heap.node_find  (in halo) + 196,116,...  [0x10275443c,0x1027543ec,...]
+              16 wf_package.halo.vm.metamethod  (in halo) + 76,368,...  [0x10276ea68,0x10276eb8c,...]
+              16 wf_package.halo.vm.raw_assign  (in halo) + 40,404,...  [0x10276ebec,0x10276ed58,...]
+              13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.30  (in halo) + 96,104,...  [0x10277bd64,0x10277bd6c,...]
+              13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.50  (in halo) + 392,144,...  [0x10277fae4,0x10277f9ec,...]
+              10 wf_package.halo.vm.enter_lua  (in halo) + 1140  [0x1027604f8]
+              ! 10 wf_package.halo.vm.push_frame  (in halo) + 32,24  [0x10276f010,0x10276f008]
+              8 wf_package.halo.vm.collect_if_due  (in halo) + 1908  [0x102760c98]
+              ! 8 wf_package.halo.heap.gc_mark  (in halo) + 16,28  [0x102753a24,0x102753a30]
+              7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo) + 388,60,...  [0x10277aadc,0x10277a994,...]
+              7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 252  [0x102782298]
+              ! 5 wf_package.halo.vm.enter_lua  (in halo) + 0,4,...  [0x102760084,0x102760088,...]
+              ! 2 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 24,32  [0x1027745ec,0x1027745f4]
+              5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 436  [0x102778a88]
+              ! 5 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x10278de94]
+              5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 60,76,...  [0x102779c74,0x102779c84,...]
+              4 wf_package.halo.heap.insert_parts  (in halo) + 536  [0x102754cac]
+              ! 4 wf_package.halo.heap.main_position  (in halo) + 112,84  [0x102754330,0x102754314]
+              4 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x10276ec4c]
+              ! 4 wf_package.halo.heap.table_set  (in halo) + 28  [0x1027553d8]
+              4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 404  [0x10278e008]
+              ! 4 wf_package.halo.heap.node_find  (in halo) + 296,104,...  [0x1027544a0,0x1027543e0,...]
+              3 wf_package.halo.heap.gray_push  (in halo) + 204,160  [0x102753a04,0x1027539d8]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 992  [0x10278e254]
+              ! 2 wf_package.halo.vm.metamethod  (in halo) + 12  [0x10276ea28]
+              1 wf__context_root_run  (in halo) + 676  [0x10274ba5c]
+              ! 1 wf_file_adapter_progress  (in halo) + 292  [0x102749c3c]
+              !   1 wf_file_execute_timed  (in halo) + 108  [0x1027499e0]
+              !     1 wf_file_execute_direct  (in halo) + 224  [0x10274a0c4]
+              !       1 write  (in libsystem_kernel.dylib) + 8  [0x186667834]
+              1 wf_host.main.resume  (in halo) + 1540  [0x102793170]
+              ! 1 _xzm_free  (in libsystem_malloc.dylib) + 952  [0x1864c44d0]
+              1 wf_package.halo.heap.gc_mark  (in halo) + 204  [0x102753ae0]
+              ! 1 wf_package.halo.heap.gray_push  (in halo) + 32  [0x102753958]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 4732  [0x10278f0f0]
+                1 wf_package.halo.vm.raw_assign  (in halo) + 28  [0x10276ebe0]
+
+Total number in stack (recursive counted multiple, when >=5):
+        6       wf_package.halo.heap.node_find  (in halo) + 0  [0x102754378]
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1855
+        wf_package.halo.vm.enter_lua  (in halo)        240
+        wf_package.halo.heap.node_find  (in halo)        219
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo)        126
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        93
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        93
+        wf_package.halo.vm.collect_if_due  (in halo)        75
+        wf_package.halo.heap.power_capacity  (in halo)        74
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo)        74
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo)        67
+        wf_package.halo.heap.gc_mark  (in halo)        65
+        wf_package.halo.vm.push_frame  (in halo)        59
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo)        59
+        _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib)        58
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        53
+        wf_package.halo.heap.insert_parts  (in halo)        48
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        42
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo)        41
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        32
+        _malloc_zone_malloc  (in libsystem_malloc.dylib)        30
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo)        28
+        _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib)        27
+        wf_package.halo.heap.new_table  (in halo)        27
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo)        26
+        wf_package.halo.vm.finish  (in halo)        24
+        _malloc_zone_calloc  (in libsystem_malloc.dylib)        22
+        _xzm_xzone_malloc  (in libsystem_malloc.dylib)        21
+        wf_package.halo.heap.table_set  (in halo)        21
+        wf_package.halo.vm.metamethod  (in halo)        18
+        wf_package.halo.vm.raw_assign  (in halo)        17
+        <deduplicated_symbol>  (in libsystem_malloc.dylib)        15
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.30  (in halo)        13
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.50  (in halo)        13
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.61  (in halo)        12
+
+===== binary-trees-profile-three-binary-trees-2.sample.txt =====
+Analysis of sampling halo (pid 1751) every 1 millisecond
+Process:         halo [1751]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x104800000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1682]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:44.014 -0700
+Launch Time:     2026-10-05 05:03:43.982 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1848 Thread_170988683   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1848 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1848 wf__floor_run  (in halo) + 604  [0x104800a18]
+    +     1848 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1848 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1848 Thread_170988686
+      1848 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1848 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1848 wf__floor_entry  (in halo) + 32  [0x104800a48]
+            1848 wf__main_body  (in halo) + 148  [0x10484a7f4]
+              233 wf_package.halo.vm.enter_lua  (in halo) + 492,1020,...  [0x104818270,0x104818480,...]
+              114 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 104,756,...  [0x10482fd70,0x10482fffc,...]
+              109 wf_package.halo.heap.new_table  (in halo) + 176  [0x10480c790]
+              ! 39 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756,240  [0x1864ca994,0x1864ca790]
+              ! 34 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 12,40,...  [0x1864c8f48,0x1864c8f64,...]
+              ! 14 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,44,...  [0x1864d30c8,0x1864d30e8,...]
+              ! 11 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 212,112,...  [0x1864c3230,0x1864c31cc,...]
+              ! 6 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 324,336,...  [0x1864c3a94,0x1864c3aa0,...]
+              ! 3 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 324  [0x1864ca7e4]
+              ! : 2 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 1008,1740  [0x1864cb36c,0x1864cb648]
+              ! : 1 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 1308  [0x1864cb498]
+              ! :   1 xzm_segment_group_alloc_chunk  (in libsystem_malloc.dylib) + 628  [0x1864ac670]
+              ! :     1 _xzm_segment_group_alloc_segment  (in libsystem_malloc.dylib) + 752  [0x1864aedd0]
+              ! :       1 mach_vm_map  (in libsystem_kernel.dylib) + 128  [0x1866639d0]
+              ! :         1 _kernelrpc_mach_vm_map_trap  (in libsystem_kernel.dylib) + 8  [0x186663acc]
+              ! 2 DYLD-STUB$$malloc  (in halo) + 4  [0x10484ed0c]
+              104 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x10483c4cc]
+              ! 37 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo) + 0,28  [0x104832958,0x104832974]
+              ! 24 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 0,32  [0x104831c38,0x104831c58]
+              ! 18 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.61  (in halo) + 140,56,...  [0x104839f58,0x104839f04,...]
+              ! 8 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 28  [0x10482e7ac]
+              ! 6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 32  [0x10483a698]
+              ! 5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 28  [0x10483a1b8]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 0,28  [0x10482fd08,0x10482fd24]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 0,32  [0x104832c94,0x104832cb4]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.0  (in halo) + 136  [0x10482e034]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo) + 28  [0x10483109c]
+              95 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 236  [0x1048309c0]
+              ! 95 wf_package.halo.heap.node_find  (in halo) + 272,292,...  [0x10480c488,0x10480c49c,...]
+              94 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 144,216,...  [0x104845f04,0x104845f4c,...]
+              77 wf_package.halo.heap.new_table  (in halo) + 68  [0x10480c724]
+              ! 77 wf_package.halo.heap.power_capacity  (in halo) + 8,16,...  [0x10480c534,0x10480c53c,...]
+              70 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 236  [0x10482fdf4]
+              ! 70 wf_package.halo.heap.node_find  (in halo) + 256,412,...  [0x10480c478,0x10480c514,...]
+              66 wf_package.halo.vm.collect_if_due  (in halo) + 2192  [0x104818db4]
+              ! 35 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,772,...  [0x1864c8f64,0x1864c9240,...]
+              ! 11 _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib) + 284,48,...  [0x1864d21b8,0x1864d20cc,...]
+              ! 7 _malloc_zone_calloc  (in libsystem_malloc.dylib) + 12,44,...  [0x1864d32f8,0x1864d3318,...]
+              ! 5 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 324,24,...  [0x1864c3a94,0x1864c3968,...]
+              ! 5 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 2 DYLD-STUB$$calloc  (in halo) + 4  [0x10484ec64]
+              ! 1 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 324  [0x1864ca7e4]
+              !   1 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 1904  [0x1864cb6ec]
+              !     1 _xzm_chunk_list_push  (in libsystem_malloc.dylib) + 52  [0x1864cb878]
+              66 wf_package.halo.vm.collect_if_due  (in halo) + 3072,36,...  [0x104819124,0x104818548,...]
+              61 wf_package.halo.heap.new_table  (in halo) + 96  [0x10480c740]
+              ! 26 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,148,...  [0x1864c8f64,0x1864c8fd0,...]
+              ! 15 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 100,56,...  [0x1864d3120,0x1864d30f4,...]
+              ! 9 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112,164,...  [0x1864c31cc,0x1864c3200,...]
+              ! 5 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 336,184  [0x1864c3aa0,0x1864c3a08]
+              ! 5 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 1 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 324  [0x1864ca7e4]
+              !   1 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 1196  [0x1864cb428]
+              58 wf_package.halo.vm.collect_if_due  (in halo) + 2212  [0x104818dc8]
+              ! 26 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 40,148,...  [0x1864c8f64,0x1864c8fd0,...]
+              ! 11 _malloc_zone_calloc  (in libsystem_malloc.dylib) + 84,12,...  [0x1864d3340,0x1864d32f8,...]
+              ! 10 _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib) + 236,160,...  [0x1864d2188,0x1864d213c,...]
+              ! 5 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 756  [0x1864ca994]
+              ! 4 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 336,24,...  [0x1864c3aa0,0x1864c3968,...]
+              ! 1 DYLD-STUB$$calloc  (in halo) + 4  [0x10484ec64]
+              ! 1 _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib) + 324  [0x1864ca7e4]
+              !   1 _xzm_xzone_find_and_malloc_from_freelist_chunk  (in libsystem_malloc.dylib) + 564  [0x1864cb1b0]
+              57 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 616,108,...  [0x104830b3c,0x104830940,...]
+              52 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 68,108,...  [0x10483a6bc,0x10483a6e4,...]
+              46 wf_package.halo.vm.collect_if_due  (in halo) + 1896  [0x104818c8c]
+              ! 46 wf_package.halo.heap.gc_mark  (in halo) + 28,16  [0x10480ba30,0x10480ba24]
+              45 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 528,236,...  [0x10483a3ac,0x10483a288,...]
+              42 wf_package.halo.vm.push_frame  (in halo) + 292,236,...  [0x104827114,0x1048270dc,...]
+              40 wf_package.halo.heap.insert_parts  (in halo) + 56,108,...  [0x10480cacc,0x10480cb00,...]
+              40 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 144,96,...  [0x104832d24,0x104832cf4,...]
+              37 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 488,436,...  [0x10482e978,0x10482e944,...]
+              34 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 184,52,...  [0x10482c68c,0x10482c608,...]
+              26 wf_package.halo.heap.table_set  (in halo) + 188  [0x10480d478]
+              ! 26 wf_package.halo.heap.node_find  (in halo) + 96,8,...  [0x10480c3d8,0x10480c380,...]
+              23 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo) + 172,296,...  [0x10483112c,0x1048311a8,...]
+              22 wf_package.halo.heap.insert_parts  (in halo) + 128  [0x10480cb14]
+              ! 22 wf_package.halo.heap.node_find  (in halo) + 412,196,...  [0x10480c514,0x10480c43c,...]
+              22 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 360  [0x10483a7e0]
+              ! 22 wf_package.halo.vm.finish  (in halo) + 40,92,...  [0x104817cdc,0x104817d10,...]
+              22 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 928  [0x104846214]
+              ! 22 wf_package.halo.heap.node_find  (in halo) + 8,104,...  [0x10480c380,0x10480c3e0,...]
+              21 wf_package.halo.heap.new_table  (in halo) + 364,104,...  [0x10480c84c,0x10480c748,...]
+              20 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.50  (in halo) + 92,144,...  [0x1048379b8,0x1048379ec,...]
+              17 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.30  (in halo) + 144,96,...  [0x104833d94,0x104833d64,...]
+              15 wf_package.halo.vm.metamethod  (in halo) + 68,76,...  [0x104826a60,0x104826a68,...]
+              15 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 252  [0x10483a298]
+              ! 13 wf_package.halo.vm.enter_lua  (in halo) + 28,20,...  [0x1048180a0,0x104818098,...]
+              ! 2 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 24,32  [0x10482c5ec,0x10482c5f4]
+              14 wf_package.halo.vm.raw_assign  (in halo) + 404,76,...  [0x104826d58,0x104826c10,...]
+              13 wf_package.halo.heap.table_set  (in halo) + 108,172,...  [0x10480d428,0x10480d468,...]
+              12 wf_package.halo.heap.gc_mark  (in halo) + 40,148,...  [0x10480ba3c,0x10480baa8,...]
+              12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 60,84,...  [0x104831c74,0x104831c8c,...]
+              12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo) + 84,136,...  [0x1048329ac,0x1048329e0,...]
+              6 wf_package.halo.vm.collect_if_due  (in halo) + 1908  [0x104818c98]
+              ! 6 wf_package.halo.heap.gc_mark  (in halo) + 16,28  [0x10480ba24,0x10480ba30]
+              6 wf_package.halo.vm.enter_lua  (in halo) + 1140  [0x1048184f8]
+              ! 6 wf_package.halo.vm.push_frame  (in halo) + 32,24  [0x104827010,0x104827008]
+              4 wf_package.halo.heap.gc_mark  (in halo) + 204  [0x10480bae0]
+              ! 2 wf_package.halo.heap.gc_mark  (in halo) + 28  [0x10480ba30]
+              ! 2 wf_package.halo.heap.gray_push  (in halo) + 32  [0x10480b958]
+              4 wf_package.halo.heap.insert_parts  (in halo) + 536  [0x10480ccac]
+              ! 4 wf_package.halo.heap.main_position  (in halo) + 84,112,...  [0x10480c314,0x10480c330,...]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo) + 188  [0x10483113c]
+              ! 4 wf_package.halo.heap.new_table  (in halo) + 24  [0x10480c6f8]
+              4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 404  [0x104846008]
+              ! 4 wf_package.halo.heap.node_find  (in halo) + 96,104,...  [0x10480c3d8,0x10480c3e0,...]
+              3 wf_package.halo.heap.gray_push  (in halo) + 204  [0x10480ba04]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo) + 436  [0x104830a88]
+              ! 2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x104845e94]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 4732  [0x1048470f0]
+              ! 2 wf_package.halo.vm.raw_assign  (in halo) + 32  [0x104826be4]
+              1 wf_host.main.resume  (in halo) + 1532  [0x10484b168]
+              ! 1 _xzm_free  (in libsystem_malloc.dylib) + 1240  [0x1864c45f0]
+              1 wf_host.main.resume  (in halo) + 1540  [0x10484b170]
+              ! 1 _xzm_free  (in libsystem_malloc.dylib) + 1240  [0x1864c45f0]
+              1 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x104826c4c]
+              ! 1 wf_package.halo.heap.table_set  (in halo) + 28  [0x10480d3d8]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo) + 488  [0x10482fef0]
+              ! 1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x104845e94]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 120  [0x10483a214]
+              ! 1 wf_package.halo.vm.collect_if_due  (in halo) + 20  [0x104818538]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 468  [0x104846048]
+              ! 1 wf_package.halo.vm.metamethod  (in halo) + 0  [0x104826a1c]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 992  [0x104846254]
+                1 wf_package.halo.vm.metamethod  (in halo) + 12  [0x104826a28]
+
+Total number in stack (recursive counted multiple, when >=5):
+        6       wf_package.halo.heap.node_find  (in halo) + 0  [0x10480c378]
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1848
+        wf_package.halo.vm.enter_lua  (in halo)        246
+        wf_package.halo.heap.node_find  (in halo)        239
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        121
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.12  (in halo)        116
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        97
+        wf_package.halo.heap.power_capacity  (in halo)        77
+        wf_package.halo.vm.collect_if_due  (in halo)        67
+        wf_package.halo.heap.gc_mark  (in halo)        66
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo)        58
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.15  (in halo)        57
+        _xzm_xzone_malloc_freelist_outlined  (in libsystem_malloc.dylib)        54
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo)        50
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.24  (in halo)        49
+        wf_package.halo.vm.push_frame  (in halo)        48
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo)        45
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        42
+        wf_package.halo.heap.insert_parts  (in halo)        40
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        36
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        36
+        _malloc_zone_malloc  (in libsystem_malloc.dylib)        29
+        wf_package.halo.heap.new_table  (in halo)        25
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.17  (in halo)        24
+        wf_package.halo.vm.finish  (in halo)        22
+        _xzm_malloc_zone_malloc_type_calloc_entry  (in libsystem_malloc.dylib)        21
+        <deduplicated_symbol>  (in libsystem_malloc.dylib)        20
+        _xzm_xzone_malloc  (in libsystem_malloc.dylib)        20
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.50  (in halo)        20
+        _malloc_zone_calloc  (in libsystem_malloc.dylib)        18
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.61  (in halo)        18
+        wf_package.halo.vm.metamethod  (in halo)        17
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.30  (in halo)        17
+        wf_package.halo.vm.raw_assign  (in halo)        16
+        wf_package.halo.heap.table_set  (in halo)        14
+        wf_package.halo.heap.gray_push  (in halo)        5
+
+===== concat-profile-three-concat-0.sample.txt =====
+Analysis of sampling halo (pid 1457) every 1 millisecond
+Process:         halo [1457]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x100ed8000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1448]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:20.810 -0700
+Launch Time:     2026-10-05 05:03:20.779 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1508 Thread_170987602   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1508 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1508 wf__floor_run  (in halo) + 604  [0x100ed8a18]
+    +     1508 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1508 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1508 Thread_170987605
+      1508 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1508 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1508 wf__floor_entry  (in halo) + 32  [0x100ed8a48]
+            1508 wf__main_body  (in halo) + 148  [0x100f227f4]
+              267 wf_package.halo.heap.intern  (in halo) + 144,232,...  [0x100ee3eec,0x100ee3f44,...]
+              164 wf_package.halo.vm.concat_strings  (in halo) + 120  [0x100efeddc]
+              ! 76 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 420,672,...  [0x1864c90e0,0x1864c91dc,...]
+              ! 39 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,100,...  [0x1864d30c8,0x1864d3120,...]
+              ! 26 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112,212,...  [0x1864c31cc,0x1864c3230,...]
+              ! 17 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 180,324,...  [0x1864c3a04,0x1864c3a94,...]
+              ! 6 DYLD-STUB$$malloc  (in halo) + 4  [0x100f26d0c]
+              155 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 1568  [0x100f1e494]
+              ! 83 _xzm_free  (in libsystem_malloc.dylib) + 996,304,...  [0x1864c44fc,0x1864c4248,...]
+              ! 39 _xzm_free  (in libsystem_malloc.dylib) + 352  [0x1864c4278]
+              ! : 28 _platform_memset  (in libsystem_platform.dylib) + 180,208,...  [0x1866b1144,0x1866b1160,...]
+              ! : 8 DYLD-STUB$$_platform_bzero  (in libsystem_malloc.dylib) + 8  [0x1864db878]
+              ! : 3 __bzero  (in libsystem_platform.dylib) + 0  [0x1866b1030]
+              ! 22 _free  (in libsystem_malloc.dylib) + 36,64,...  [0x1864d3cf4,0x1864d3d10,...]
+              ! 8 DYLD-STUB$$free  (in halo) + 4  [0x100f26cc4]
+              ! 3 wf_package.halo.vm.concat_strings  (in halo) + 20  [0x100efed78]
+              152 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 144,216,...  [0x100f1df04,0x100f1df4c,...]
+              111 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 744,92,...  [0x100f07bf4,0x100f07968,...]
+              105 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 156,96,...  [0x100f0d49c,0x100f0d460,...]
+              101 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 96,516,...  [0x100f09fd4,0x100f0a178,...]
+              86 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 248,40,...  [0x100f145fc,0x100f1452c,...]
+              58 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 416,108,...  [0x100f0f114,0x100f0efe0,...]
+              57 wf_package.halo.vm.concat_strings  (in halo) + 80,44,...  [0x100efedb4,0x100efed90,...]
+              53 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x100f144cc]
+              ! 31 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.1  (in halo) + 192,48,...  [0x100f061ac,0x100f0611c,...]
+              ! 9 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x100f12958]
+              ! 7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 32,28  [0x100f09f94,0x100f09f90]
+              ! 5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 32  [0x100f0d420]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 28  [0x100f0acb0]
+              44 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 772,80,...  [0x100f12c3c,0x100f12988,...]
+              37 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,144,...  [0x100f0acf4,0x100f0ad24,...]
+              28 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 136,84,...  [0x100f09cc0,0x100f09c8c,...]
+              22 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.47  (in halo) + 44,240,...  [0x100f0f270,0x100f0f334,...]
+              21 wf_package.halo.vm.resize_stack  (in halo) + 188,156,...  [0x100efefe4,0x100efefc4,...]
+              12 _xzm_free  (in libsystem_malloc.dylib) + 1560  [0x1864c4730]
+              11 wf_package.halo.vm.collect_if_due  (in halo) + 3072,36,...  [0x100ef1124,0x100ef0548,...]
+              8 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 196  [0x100f145c8]
+              ! 8 wf_package.halo.vm.resize_stack  (in halo) + 24  [0x100efef40]
+              5 wf_package.halo.vm.concat_strings  (in halo) + 332  [0x100efeeb0]
+              ! 5 wf_package.halo.heap.intern  (in halo) + 24,32  [0x100ee3e74,0x100ee3e7c]
+              4 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 380  [0x100f14680]
+              ! 4 wf_package.halo.vm.resize_stack  (in halo) + 24,20  [0x100efef40,0x100efef3c]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 148  [0x100f0f008]
+              ! 4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x100f1de94]
+              3 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 364  [0x100f14670]
+                3 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32,24  [0x100f1de94,0x100f1de8c]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1508
+        wf_package.halo.heap.intern  (in halo)        272
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        159
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        111
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo)        110
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo)        108
+        _xzm_free  (in libsystem_malloc.dylib)        95
+        wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo)        86
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        76
+        wf_package.halo.vm.concat_strings  (in halo)        60
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo)        58
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        53
+        _malloc_zone_malloc  (in libsystem_malloc.dylib)        39
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        38
+        wf_package.halo.vm.resize_stack  (in halo)        33
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.1  (in halo)        31
+        _platform_memset  (in libsystem_platform.dylib)        28
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        28
+        <deduplicated_symbol>  (in libsystem_malloc.dylib)        26
+        _free  (in libsystem_malloc.dylib)        22
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.47  (in halo)        22
+        _xzm_xzone_malloc  (in libsystem_malloc.dylib)        17
+        wf_package.halo.vm.collect_if_due  (in halo)        11
+        DYLD-STUB$$_platform_bzero  (in libsystem_malloc.dylib)        8
+        DYLD-STUB$$free  (in halo)        8
+        DYLD-STUB$$malloc  (in halo)        6
+
+===== concat-profile-three-concat-1.sample.txt =====
+Analysis of sampling halo (pid 1480) every 1 millisecond
+Process:         halo [1480]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x100e28000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1448]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:22.879 -0700
+Launch Time:     2026-10-05 05:03:22.850 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1562 Thread_170987678   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1562 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1562 wf__floor_run  (in halo) + 604  [0x100e28a18]
+    +     1562 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1562 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1562 Thread_170987681
+      1562 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1562 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1562 wf__floor_entry  (in halo) + 32  [0x100e28a48]
+            1562 wf__main_body  (in halo) + 148  [0x100e727f4]
+              455 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 1568  [0x100e6e494]
+              ! 295 _xzm_free  (in libsystem_malloc.dylib) + 1048  [0x1864c4530]
+              ! : 284 mach_absolute_time  (in libsystem_kernel.dylib) + 108,112,...  [0x18666410c,0x186664110,...]
+              ! : 11 DYLD-STUB$$mach_absolute_time  (in libsystem_malloc.dylib) + 8,12  [0x1864dbb98,0x1864dbb9c]
+              ! 79 _xzm_free  (in libsystem_malloc.dylib) + 692,668,...  [0x1864c43cc,0x1864c43b4,...]
+              ! 32 _xzm_free  (in libsystem_malloc.dylib) + 352  [0x1864c4278]
+              ! : 21 _platform_memset  (in libsystem_platform.dylib) + 180,208  [0x1866b1144,0x1866b1160]
+              ! : 9 DYLD-STUB$$_platform_bzero  (in libsystem_malloc.dylib) + 8  [0x1864db878]
+              ! : 2 __bzero  (in libsystem_platform.dylib) + 0  [0x1866b1030]
+              ! 29 _free  (in libsystem_malloc.dylib) + 36,12,...  [0x1864d3cf4,0x1864d3cdc,...]
+              ! 12 DYLD-STUB$$free  (in halo) + 4  [0x100e76cc4]
+              ! 7 wf_package.halo.vm.concat_strings  (in halo) + 4,20,...  [0x100e4ed68,0x100e4ed78,...]
+              ! 1 free  (in libsystem_malloc.dylib) + 0  [0x18649a6b8]
+              261 wf_package.halo.heap.intern  (in halo) + 144,232,...  [0x100e33eec,0x100e33f44,...]
+              124 wf_package.halo.vm.concat_strings  (in halo) + 120  [0x100e4eddc]
+              ! 72 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 420,284,...  [0x1864c90e0,0x1864c9058,...]
+              ! 20 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112,136,...  [0x1864c31cc,0x1864c31e4,...]
+              ! 18 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,52,...  [0x1864d30c8,0x1864d30f0,...]
+              ! 8 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 192,324,...  [0x1864c3a10,0x1864c3a94,...]
+              ! 4 DYLD-STUB$$malloc  (in halo) + 4  [0x100e76d0c]
+              ! 1 malloc  (in libsystem_malloc.dylib) + 0  [0x186499ce8]
+              ! 1 xzm_malloc_zone_malloc_type_malloc  (in libsystem_malloc.dylib) + 0  [0x1864cf184]
+              118 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 92,376,...  [0x100e57968,0x100e57a84,...]
+              94 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 96,516,...  [0x100e59fd4,0x100e5a178,...]
+              78 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 136,216,...  [0x100e6defc,0x100e6df4c,...]
+              75 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 96,156,...  [0x100e5d460,0x100e5d49c,...]
+              58 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 248,292,...  [0x100e645fc,0x100e64628,...]
+              49 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,84,...  [0x100e5acf4,0x100e5ace8,...]
+              48 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x100e644cc]
+              ! 30 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.1  (in halo) + 128,48,...  [0x100e5616c,0x100e5611c,...]
+              ! 5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 32,28  [0x100e59f94,0x100e59f90]
+              ! 4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x100e62958]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 28,32  [0x100e57928,0x100e5792c]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 32  [0x100e5d420]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 4  [0x100e5ef78]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.47  (in halo) + 28  [0x100e5f260]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32  [0x100e59c58]
+              44 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 364,652,...  [0x100e62aa4,0x100e62bc4,...]
+              40 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 504,92,...  [0x100e59e30,0x100e59c94,...]
+              36 wf_package.halo.vm.concat_strings  (in halo) + 284,44,...  [0x100e4ee80,0x100e4ed90,...]
+              21 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 300,368,...  [0x100e5f0a0,0x100e5f0e4,...]
+              19 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.47  (in halo) + 44,152,...  [0x100e5f270,0x100e5f2dc,...]
+              12 wf_package.halo.vm.collect_if_due  (in halo) + 3072,68,...  [0x100e41124,0x100e40568,...]
+              8 wf_package.halo.vm.resize_stack  (in halo) + 176,184,...  [0x100e4efd8,0x100e4efe0,...]
+              7 wf_package.halo.vm.concat_strings  (in halo) + 332  [0x100e4eeb0]
+              ! 7 wf_package.halo.heap.intern  (in halo) + 32,16,...  [0x100e33e7c,0x100e33e6c,...]
+              5 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 380  [0x100e64680]
+              ! 5 wf_package.halo.vm.resize_stack  (in halo) + 0  [0x100e4ef28]
+              4 _xzm_free  (in libsystem_malloc.dylib) + 1552  [0x1864c4728]
+              3 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 364  [0x100e64670]
+              ! 3 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 4,24,...  [0x100e6de78,0x100e6de8c,...]
+              2 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 196  [0x100e645c8]
+              ! 2 wf_package.halo.vm.resize_stack  (in halo) + 8  [0x100e4ef30]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 148  [0x100e5f008]
+                1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 24  [0x100e6de8c]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1562
+        mach_absolute_time  (in libsystem_kernel.dylib)        284
+        wf_package.halo.heap.intern  (in halo)        268
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        120
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo)        99
+        _xzm_free  (in libsystem_malloc.dylib)        83
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        82
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo)        77
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        72
+        wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo)        58
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        49
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        48
+        wf_package.halo.vm.concat_strings  (in halo)        43
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        41
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.1  (in halo)        30
+        _free  (in libsystem_malloc.dylib)        29
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo)        23
+        _platform_memset  (in libsystem_platform.dylib)        21
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.47  (in halo)        21
+        <deduplicated_symbol>  (in libsystem_malloc.dylib)        20
+        _malloc_zone_malloc  (in libsystem_malloc.dylib)        18
+        wf_package.halo.vm.resize_stack  (in halo)        15
+        DYLD-STUB$$free  (in halo)        12
+        wf_package.halo.vm.collect_if_due  (in halo)        12
+        DYLD-STUB$$mach_absolute_time  (in libsystem_malloc.dylib)        11
+        DYLD-STUB$$_platform_bzero  (in libsystem_malloc.dylib)        9
+        _xzm_xzone_malloc  (in libsystem_malloc.dylib)        8
+
+===== concat-profile-three-concat-2.sample.txt =====
+Analysis of sampling halo (pid 1522) every 1 millisecond
+Process:         halo [1522]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x1029cc000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1448]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:26.080 -0700
+Launch Time:     2026-10-05 05:03:26.051 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1563 Thread_170987802   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1563 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1563 wf__floor_run  (in halo) + 604  [0x1029cca18]
+    +     1563 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1563 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1563 Thread_170987805
+      1563 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1563 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1563 wf__floor_entry  (in halo) + 32  [0x1029cca48]
+            1563 wf__main_body  (in halo) + 148  [0x102a167f4]
+              461 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 1568  [0x102a12494]
+              ! 303 _xzm_free  (in libsystem_malloc.dylib) + 1048  [0x1864c4530]
+              ! : 296 mach_absolute_time  (in libsystem_kernel.dylib) + 108,112,...  [0x18666410c,0x186664110,...]
+              ! : 7 DYLD-STUB$$mach_absolute_time  (in libsystem_malloc.dylib) + 12,8  [0x1864dbb9c,0x1864dbb98]
+              ! 86 _xzm_free  (in libsystem_malloc.dylib) + 196,692,...  [0x1864c41dc,0x1864c43cc,...]
+              ! 36 _free  (in libsystem_malloc.dylib) + 96,44,...  [0x1864d3d30,0x1864d3cfc,...]
+              ! 29 _xzm_free  (in libsystem_malloc.dylib) + 352  [0x1864c4278]
+              ! : 24 _platform_memset  (in libsystem_platform.dylib) + 180,208,...  [0x1866b1144,0x1866b1160,...]
+              ! : 5 DYLD-STUB$$_platform_bzero  (in libsystem_malloc.dylib) + 8  [0x1864db878]
+              ! 4 DYLD-STUB$$free  (in halo) + 4  [0x102a1acc4]
+              ! 3 wf_package.halo.vm.concat_strings  (in halo) + 8,4  [0x1029f2d6c,0x1029f2d68]
+              276 wf_package.halo.heap.intern  (in halo) + 144,232,...  [0x1029d7eec,0x1029d7f44,...]
+              130 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 92,744,...  [0x1029fb968,0x1029fbbf4,...]
+              129 wf_package.halo.vm.concat_strings  (in halo) + 120  [0x1029f2ddc]
+              ! 60 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 420,536,...  [0x1864c90e0,0x1864c9154,...]
+              ! 27 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,100,...  [0x1864d30c8,0x1864d3120,...]
+              ! 25 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112,212,...  [0x1864c31cc,0x1864c3230,...]
+              ! 10 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 180,184,...  [0x1864c3a04,0x1864c3a08,...]
+              ! 4 malloc  (in libsystem_malloc.dylib) + 8,0  [0x186499cf0,0x186499ce8]
+              ! 2 DYLD-STUB$$malloc  (in halo) + 4  [0x102a1ad0c]
+              ! 1 xzm_malloc_zone_malloc_type_malloc  (in libsystem_malloc.dylib) + 0  [0x1864cf184]
+              85 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 156,96,...  [0x102a0149c,0x102a01460,...]
+              83 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 96,516,...  [0x1029fdfd4,0x1029fe178,...]
+              72 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 1408,216,...  [0x102a123f4,0x102a11f4c,...]
+              49 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 352,292,...  [0x102a08664,0x102a08628,...]
+              46 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x102a084cc]
+              ! 28 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.1  (in halo) + 192,48,...  [0x1029fa1ac,0x1029fa11c,...]
+              ! 7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x102a06958]
+              ! 6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 28,32  [0x1029fdf90,0x1029fdf94]
+              ! 3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 0,4  [0x102a02f74,0x102a02f78]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.47  (in halo) + 28  [0x102a03260]
+              44 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 772,364,...  [0x102a06c3c,0x102a06aa4,...]
+              42 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,392,...  [0x1029fecf4,0x1029fee1c,...]
+              37 wf_package.halo.vm.concat_strings  (in halo) + 284,44,...  [0x1029f2e80,0x1029f2d90,...]
+              37 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 52,92,...  [0x1029fdc6c,0x1029fdc94,...]
+              16 wf_package.halo.vm.collect_if_due  (in halo) + 3072,36,...  [0x1029e5124,0x1029e4548,...]
+              13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 100,152,...  [0x102a02fd8,0x102a0300c,...]
+              12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.47  (in halo) + 44,220  [0x102a03270,0x102a03320]
+              6 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 364  [0x102a08670]
+              ! 6 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32,4,...  [0x102a11e94,0x102a11e78,...]
+              6 wf_package.halo.vm.resize_stack  (in halo) + 176,180  [0x1029f2fd8,0x1029f2fdc]
+              5 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 380  [0x102a08680]
+              ! 5 wf_package.halo.vm.resize_stack  (in halo) + 0  [0x1029f2f28]
+              4 _xzm_free  (in libsystem_malloc.dylib) + 1548,1552  [0x1864c4724,0x1864c4728]
+              4 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 196  [0x102a085c8]
+              ! 4 wf_package.halo.vm.resize_stack  (in halo) + 8  [0x1029f2f30]
+              4 wf_package.halo.vm.concat_strings  (in halo) + 332  [0x1029f2eb0]
+              ! 4 wf_package.halo.heap.intern  (in halo) + 24,32  [0x1029d7e74,0x1029d7e7c]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 148  [0x102a03008]
+              ! 1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 20  [0x102a11e88]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 108  [0x102a069a4]
+                1 wf_package.halo.vm.collect_if_due  (in halo) + 4  [0x1029e4528]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1563
+        mach_absolute_time  (in libsystem_kernel.dylib)        296
+        wf_package.halo.heap.intern  (in halo)        280
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        130
+        _xzm_free  (in libsystem_malloc.dylib)        90
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo)        89
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo)        85
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        79
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        60
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        51
+        wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo)        49
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        42
+        wf_package.halo.vm.concat_strings  (in halo)        40
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        37
+        _free  (in libsystem_malloc.dylib)        36
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.1  (in halo)        28
+        _malloc_zone_malloc  (in libsystem_malloc.dylib)        27
+        <deduplicated_symbol>  (in libsystem_malloc.dylib)        25
+        _platform_memset  (in libsystem_platform.dylib)        24
+        wf_package.halo.vm.collect_if_due  (in halo)        17
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo)        16
+        wf_package.halo.vm.resize_stack  (in halo)        15
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.47  (in halo)        14
+        _xzm_xzone_malloc  (in libsystem_malloc.dylib)        10
+        DYLD-STUB$$mach_absolute_time  (in libsystem_malloc.dylib)        7
+        DYLD-STUB$$_platform_bzero  (in libsystem_malloc.dylib)        5
+
+===== fib-profile-three-fib-0.sample.txt =====
+Analysis of sampling halo (pid 1234) every 1 millisecond
+Process:         halo [1234]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x104528000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1227]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:09.525 -0700
+Launch Time:     2026-10-05 05:03:09.495 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1117 Thread_170986629   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1117 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1117 wf__floor_run  (in halo) + 604  [0x104528a18]
+    +     1117 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1117 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1117 Thread_170986632
+      1117 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1117 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1117 wf__floor_entry  (in halo) + 32  [0x104528a48]
+            1117 wf__main_body  (in halo) + 148  [0x1045727f4]
+              371 wf_package.halo.vm.enter_lua  (in halo) + 492,592,...  [0x104540270,0x1045402d4,...]
+              168 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1045644cc]
+              ! 64 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 0,32,...  [0x104562678,0x104562698,...]
+              ! 63 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 0,28,...  [0x104556790,0x1045567ac,...]
+              ! 30 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 0,28  [0x104559c38,0x104559c54]
+              ! 10 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 28  [0x1045621b8]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 32  [0x10455acb4]
+              86 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,524,...  [0x10455acf4,0x10455aea0,...]
+              86 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 596,356,...  [0x1045628cc,0x1045627dc,...]
+              73 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 184,52,...  [0x10455468c,0x104554608,...]
+              70 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 244,136,...  [0x104562290,0x104562224,...]
+              56 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 488,648,...  [0x104556978,0x104556a18,...]
+              45 wf_package.halo.vm.collect_if_due  (in halo) + 36,3072,...  [0x104540548,0x104541124,...]
+              43 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 360  [0x1045627e0]
+              ! 43 wf_package.halo.vm.finish  (in halo) + 92,40,...  [0x10453fd10,0x10453fcdc,...]
+              40 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo) + 92,144,...  [0x104560750,0x104560784,...]
+              32 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,100,...  [0x104559c8c,0x104559c9c,...]
+              21 wf_package.halo.vm.push_frame  (in halo) + 220,292,...  [0x10454f0cc,0x10454f114,...]
+              19 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 252  [0x104562298]
+              ! 14 wf_package.halo.vm.enter_lua  (in halo) + 24,12,...  [0x10454009c,0x104540090,...]
+              ! 5 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 32  [0x1045545f4]
+              7 wf_package.halo.vm.enter_lua  (in halo) + 1140  [0x1045404f8]
+                7 wf_package.halo.vm.push_frame  (in halo) + 32  [0x10454f010]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1117
+        wf_package.halo.vm.enter_lua  (in halo)        385
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo)        150
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo)        119
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        87
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo)        80
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        78
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        62
+        wf_package.halo.vm.collect_if_due  (in halo)        45
+        wf_package.halo.vm.finish  (in halo)        43
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo)        40
+        wf_package.halo.vm.push_frame  (in halo)        28
+
+===== fib-profile-three-fib-1.sample.txt =====
+Analysis of sampling halo (pid 1246) every 1 millisecond
+Process:         halo [1246]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x100db0000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1227]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:11.092 -0700
+Launch Time:     2026-10-05 05:03:11.061 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1108 Thread_170986691   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1108 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1108 wf__floor_run  (in halo) + 604  [0x100db0a18]
+    +     1108 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1108 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1108 Thread_170986697
+      1108 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1108 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1108 wf__floor_entry  (in halo) + 32  [0x100db0a48]
+            1108 wf__main_body  (in halo) + 148  [0x100dfa7f4]
+              336 wf_package.halo.vm.enter_lua  (in halo) + 492,592,...  [0x100dc8270,0x100dc82d4,...]
+              178 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x100dec4cc]
+              ! 75 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 0,32,...  [0x100dea678,0x100dea698,...]
+              ! 53 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 0,28,...  [0x100dde790,0x100dde7ac,...]
+              ! 37 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 0,28  [0x100de1c38,0x100de1c54]
+              ! 12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 28  [0x100dea1b8]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 32  [0x100de2cb4]
+              90 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 516,96,...  [0x100de2e98,0x100de2cf4,...]
+              82 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 356,524,...  [0x100dea7dc,0x100dea884,...]
+              80 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 244,92,...  [0x100dea290,0x100dea1f8,...]
+              71 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 640,108,...  [0x100ddea10,0x100dde7fc,...]
+              63 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 184,52,...  [0x100ddc68c,0x100ddc608,...]
+              49 wf_package.halo.vm.collect_if_due  (in halo) + 36,3072,...  [0x100dc8548,0x100dc9124,...]
+              44 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo) + 92,52,...  [0x100de8750,0x100de8728,...]
+              39 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 360  [0x100dea7e0]
+              ! 39 wf_package.halo.vm.finish  (in halo) + 112,92,...  [0x100dc7d24,0x100dc7d10,...]
+              29 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 504,84,...  [0x100de1e30,0x100de1c8c,...]
+              23 wf_package.halo.vm.push_frame  (in halo) + 292,252,...  [0x100dd7114,0x100dd70ec,...]
+              19 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 252  [0x100dea298]
+              ! 17 wf_package.halo.vm.enter_lua  (in halo) + 28,12,...  [0x100dc80a0,0x100dc8090,...]
+              ! 2 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 32  [0x100ddc5f4]
+              5 wf_package.halo.vm.enter_lua  (in halo) + 1140  [0x100dc84f8]
+                5 wf_package.halo.vm.push_frame  (in halo) + 32  [0x100dd7010]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1108
+        wf_package.halo.vm.enter_lua  (in halo)        353
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo)        157
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo)        124
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo)        92
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        91
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        66
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        65
+        wf_package.halo.vm.collect_if_due  (in halo)        49
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo)        44
+        wf_package.halo.vm.finish  (in halo)        39
+        wf_package.halo.vm.push_frame  (in halo)        28
+
+===== fib-profile-three-fib-2.sample.txt =====
+Analysis of sampling halo (pid 1258) every 1 millisecond
+Process:         halo [1258]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x104f0c000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1227]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:13.666 -0700
+Launch Time:     2026-10-05 05:03:13.636 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1123 Thread_170986744   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1123 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1123 wf__floor_run  (in halo) + 604  [0x104f0ca18]
+    +     1123 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1123 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1123 Thread_170986747
+      1123 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1123 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1123 wf__floor_entry  (in halo) + 32  [0x104f0ca48]
+            1123 wf__main_body  (in halo) + 148  [0x104f567f4]
+              367 wf_package.halo.vm.enter_lua  (in halo) + 492,592,...  [0x104f24270,0x104f242d4,...]
+              200 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x104f484cc]
+              ! 70 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 0,28,...  [0x104f3a790,0x104f3a7ac,...]
+              ! 57 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 0,32,...  [0x104f46678,0x104f46698,...]
+              ! 49 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 0,28  [0x104f3dc38,0x104f3dc54]
+              ! 23 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 28  [0x104f461b8]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 32  [0x104f3ecb4]
+              76 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 516,96,...  [0x104f3ee98,0x104f3ecf4,...]
+              76 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 356,524,...  [0x104f467dc,0x104f46884,...]
+              75 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 244,92,...  [0x104f46290,0x104f461f8,...]
+              63 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 184,496,...  [0x104f3868c,0x104f387c4,...]
+              61 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 488,480,...  [0x104f3a978,0x104f3a970,...]
+              44 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo) + 92,144,...  [0x104f44750,0x104f44784,...]
+              38 wf_package.halo.vm.collect_if_due  (in halo) + 36,3072,...  [0x104f24548,0x104f25124,...]
+              37 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 360  [0x104f467e0]
+              ! 37 wf_package.halo.vm.finish  (in halo) + 92,112,...  [0x104f23d10,0x104f23d24,...]
+              35 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,504,...  [0x104f3dc8c,0x104f3de30,...]
+              32 wf_package.halo.vm.push_frame  (in halo) + 292,52,...  [0x104f33114,0x104f33024,...]
+              17 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 252  [0x104f46298]
+              ! 11 wf_package.halo.vm.enter_lua  (in halo) + 24,0,...  [0x104f2409c,0x104f24084,...]
+              ! 6 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 32  [0x104f385f4]
+              2 wf_package.halo.vm.enter_lua  (in halo) + 1140  [0x104f244f8]
+                2 wf_package.halo.vm.push_frame  (in halo) + 32  [0x104f33010]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1123
+        wf_package.halo.vm.enter_lua  (in halo)        378
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo)        133
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo)        131
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo)        98
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        84
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        77
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        69
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo)        44
+        wf_package.halo.vm.collect_if_due  (in halo)        38
+        wf_package.halo.vm.finish  (in halo)        37
+        wf_package.halo.vm.push_frame  (in halo)        34
+
+===== integer-table-profile-three-integer-table-0.sample.txt =====
+Analysis of sampling halo (pid 1540) every 1 millisecond
+Process:         halo [1540]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x1009fc000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1534]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:28.516 -0700
+Launch Time:     2026-10-05 05:03:28.485 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    551 Thread_170987903   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 551 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   551 wf__floor_run  (in halo) + 604  [0x1009fca18]
+    +     551 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       551 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    551 Thread_170987907
+      551 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        551 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          551 wf__floor_entry  (in halo) + 32  [0x1009fca48]
+            551 wf__main_body  (in halo) + 148  [0x100a467f4]
+              157 wf_package.halo.heap.rehash  (in halo) + 452,920,...  [0x100a08f54,0x100a09128,...]
+              62 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 208,772,...  [0x100a36a08,0x100a36c3c,...]
+              52 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo) + 96,108,...  [0x100a2c168,0x100a2c174,...]
+              49 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,444,...  [0x100a2dc8c,0x100a2ddf4,...]
+              48 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 744,92,...  [0x100a2bbf4,0x100a2b968,...]
+              42 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 136,792,...  [0x100a41efc,0x100a4218c,...]
+              40 wf_package.halo.vm.collect_if_due  (in halo) + 36,3072,...  [0x100a14548,0x100a15124,...]
+              30 wf_package.halo.heap.insert_parts  (in halo) + 740,736,...  [0x100a08d78,0x100a08d74,...]
+              19 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x100a384cc]
+              ! 14 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x100a36958]
+              ! 3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32  [0x100a2dc58]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 28  [0x100a2b928]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo) + 28  [0x100a2c124]
+              14 wf_package.halo.heap.table_set  (in halo) + 276,132,...  [0x100a094d0,0x100a09440,...]
+              14 wf_package.halo.vm.raw_assign  (in halo) + 40,136,...  [0x100a22bec,0x100a22c4c,...]
+              7 wf_package.halo.vm.collect_if_due  (in halo) + 1780  [0x100a14c18]
+              ! 7 wf_package.halo.heap.gc_mark  (in halo) + 16,28,...  [0x100a07a24,0x100a07a30,...]
+              7 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x100a22c4c]
+              ! 7 wf_package.halo.heap.table_set  (in halo) + 28  [0x100a093d8]
+              6 wf_package.halo.vm.metamethod  (in halo) + 332,368,...  [0x100a22b68,0x100a22b8c,...]
+              1 wf_package.halo.heap.rehash  (in halo) + 1144  [0x100a09208]
+              ! 1 wf_package.halo.heap.insert_parts  (in halo) + 24  [0x100a08aac]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 108  [0x100a369a4]
+              ! 1 wf_package.halo.vm.collect_if_due  (in halo) + 20  [0x100a14538]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 992  [0x100a42254]
+              ! 1 wf_package.halo.vm.metamethod  (in halo) + 12  [0x100a22a28]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 4732  [0x100a430f0]
+                1 wf_package.halo.vm.raw_assign  (in halo) + 32  [0x100a22be4]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        551
+        wf_package.halo.heap.rehash  (in halo)        157
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        76
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo)        53
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        52
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        49
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        42
+        wf_package.halo.vm.collect_if_due  (in halo)        41
+        wf_package.halo.heap.insert_parts  (in halo)        31
+        wf_package.halo.heap.table_set  (in halo)        21
+        wf_package.halo.vm.raw_assign  (in halo)        15
+        wf_package.halo.heap.gc_mark  (in halo)        7
+        wf_package.halo.vm.metamethod  (in halo)        7
+
+===== integer-table-profile-three-integer-table-1.sample.txt =====
+Analysis of sampling halo (pid 1543) every 1 millisecond
+Process:         halo [1543]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x102c18000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1534]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:29.351 -0700
+Launch Time:     2026-10-05 05:03:29.320 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    556 Thread_170987934   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 556 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   556 wf__floor_run  (in halo) + 604  [0x102c18a18]
+    +     556 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       556 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    556 Thread_170987937
+      556 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        556 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          556 wf__floor_entry  (in halo) + 32  [0x102c18a48]
+            556 wf__main_body  (in halo) + 148  [0x102c627f4]
+              165 wf_package.halo.heap.rehash  (in halo) + 452,920,...  [0x102c24f54,0x102c25128,...]
+              60 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 92,188,...  [0x102c47968,0x102c479c8,...]
+              59 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 208,364,...  [0x102c52a08,0x102c52aa4,...]
+              49 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 1068,824,...  [0x102c5e2a0,0x102c5e1ac,...]
+              45 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo) + 108,448,...  [0x102c48174,0x102c482c8,...]
+              39 wf_package.halo.vm.collect_if_due  (in halo) + 3072,1808,...  [0x102c31124,0x102c30c34,...]
+              37 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,504,...  [0x102c49c8c,0x102c49e30,...]
+              26 wf_package.halo.heap.insert_parts  (in halo) + 740,736,...  [0x102c24d78,0x102c24d74,...]
+              16 wf_package.halo.vm.raw_assign  (in halo) + 40,404,...  [0x102c3ebec,0x102c3ed58,...]
+              16 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x102c544cc]
+              ! 9 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x102c52958]
+              ! 5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32,28  [0x102c49c58,0x102c49c54]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 28  [0x102c47928]
+              14 wf_package.halo.heap.table_set  (in halo) + 148,52,...  [0x102c25450,0x102c253f0,...]
+              11 wf_package.halo.vm.metamethod  (in halo) + 368,76,...  [0x102c3eb8c,0x102c3ea68,...]
+              10 wf_package.halo.vm.collect_if_due  (in halo) + 1780  [0x102c30c18]
+              ! 10 wf_package.halo.heap.gc_mark  (in halo) + 16,28,...  [0x102c23a24,0x102c23a30,...]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo) + 460  [0x102c482d4]
+              ! 4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x102c5de94]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 992  [0x102c5e254]
+              ! 2 wf_package.halo.vm.metamethod  (in halo) + 12  [0x102c3ea28]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 4732  [0x102c5f0f0]
+              ! 2 wf_package.halo.vm.raw_assign  (in halo) + 32  [0x102c3ebe4]
+              1 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x102c3ec4c]
+                1 wf_package.halo.heap.table_set  (in halo) + 28  [0x102c253d8]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        556
+        wf_package.halo.heap.rehash  (in halo)        165
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        68
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        62
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        53
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo)        45
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        42
+        wf_package.halo.vm.collect_if_due  (in halo)        39
+        wf_package.halo.heap.insert_parts  (in halo)        26
+        wf_package.halo.vm.raw_assign  (in halo)        18
+        wf_package.halo.heap.table_set  (in halo)        15
+        wf_package.halo.vm.metamethod  (in halo)        13
+        wf_package.halo.heap.gc_mark  (in halo)        10
+
+===== integer-table-profile-three-integer-table-2.sample.txt =====
+Analysis of sampling halo (pid 1555) every 1 millisecond
+Process:         halo [1555]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x104480000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1534]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:30.590 -0700
+Launch Time:     2026-10-05 05:03:30.558 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    555 Thread_170988002   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 555 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   555 wf__floor_run  (in halo) + 604  [0x104480a18]
+    +     555 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       555 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    555 Thread_170988005
+      555 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        555 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          555 wf__floor_entry  (in halo) + 32  [0x104480a48]
+            555 wf__main_body  (in halo) + 148  [0x1044ca7f4]
+              164 wf_package.halo.heap.rehash  (in halo) + 452,920,...  [0x10448cf54,0x10448d128,...]
+              66 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 772,208,...  [0x1044bac3c,0x1044baa08,...]
+              59 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo) + 108,740,...  [0x1044b0174,0x1044b03ec,...]
+              52 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 296,744,...  [0x1044afa34,0x1044afbf4,...]
+              48 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 224,84,...  [0x1044c5f54,0x1044c5ec8,...]
+              39 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,504,...  [0x1044b1c8c,0x1044b1e30,...]
+              27 wf_package.halo.vm.collect_if_due  (in halo) + 36,1764,...  [0x104498548,0x104498c08,...]
+              25 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1044bc4cc]
+              ! 13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x1044ba958]
+              ! 10 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32,28  [0x1044b1c58,0x1044b1c54]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 28  [0x1044af928]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo) + 28  [0x1044b0124]
+              23 wf_package.halo.heap.insert_parts  (in halo) + 80,320,...  [0x10448cae4,0x10448cbd4,...]
+              14 wf_package.halo.vm.raw_assign  (in halo) + 40,76,...  [0x1044a6bec,0x1044a6c10,...]
+              12 wf_package.halo.vm.collect_if_due  (in halo) + 1780  [0x104498c18]
+              ! 12 wf_package.halo.heap.gc_mark  (in halo) + 16,28  [0x10448ba24,0x10448ba30]
+              6 wf_package.halo.heap.table_set  (in halo) + 440,36,...  [0x10448d574,0x10448d3e0,...]
+              6 wf_package.halo.vm.metamethod  (in halo) + 368,332,...  [0x1044a6b8c,0x1044a6b68,...]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 108  [0x1044ba9a4]
+              ! 4 wf_package.halo.vm.collect_if_due  (in halo) + 20  [0x104498538]
+              3 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x1044a6c4c]
+              ! 3 wf_package.halo.heap.table_set  (in halo) + 28  [0x10448d3d8]
+              3 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 4732  [0x1044c70f0]
+              ! 3 wf_package.halo.vm.raw_assign  (in halo) + 32,24  [0x1044a6be4,0x1044a6bdc]
+              2 wf_package.halo.heap.rehash  (in halo) + 1144  [0x10448d208]
+              ! 2 wf_package.halo.heap.insert_parts  (in halo) + 24  [0x10448caac]
+              2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 992  [0x1044c6254]
+                2 wf_package.halo.vm.metamethod  (in halo) + 12  [0x1044a6a28]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        555
+        wf_package.halo.heap.rehash  (in halo)        164
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        79
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.13  (in halo)        60
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        53
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        49
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        48
+        wf_package.halo.vm.collect_if_due  (in halo)        31
+        wf_package.halo.heap.insert_parts  (in halo)        25
+        wf_package.halo.vm.raw_assign  (in halo)        17
+        wf_package.halo.heap.gc_mark  (in halo)        12
+        wf_package.halo.heap.table_set  (in halo)        9
+        wf_package.halo.vm.metamethod  (in halo)        8
+
+===== loop-profile-three-loop-0.sample.txt =====
+Analysis of sampling halo (pid 99350) every 1 millisecond
+Process:         halo [99350]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x104df8000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [99344]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:00:02.258 -0700
+Launch Time:     2026-10-05 05:00:02.227 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1026 Thread_170979186   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1026 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1026 wf__floor_run  (in halo) + 604  [0x104df8a18]
+    +     1026 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1026 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1026 Thread_170979189
+      1026 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1026 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1026 wf__floor_entry  (in halo) + 32  [0x104df8a48]
+            1026 wf__main_body  (in halo) + 148  [0x104e427f4]
+              420 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,76,...  [0x104e29c8c,0x104e29c84,...]
+              350 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 772,364,...  [0x104e32c3c,0x104e32aa4,...]
+              147 wf_package.halo.vm.collect_if_due  (in halo) + 3072,36,...  [0x104e11124,0x104e10548,...]
+              109 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x104e344cc]
+                97 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32,28  [0x104e32958,0x104e32954]
+                12 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32,28  [0x104e29c58,0x104e29c54]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1026
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        447
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        432
+        wf_package.halo.vm.collect_if_due  (in halo)        147
+
+===== loop-profile-three-loop-1.sample.txt =====
+Analysis of sampling halo (pid 99418) every 1 millisecond
+Process:         halo [99418]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x100214000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [99344]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:00:03.699 -0700
+Launch Time:     2026-10-05 05:00:03.670 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    999 Thread_170979369   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 999 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   999 wf__floor_run  (in halo) + 604  [0x100214a18]
+    +     999 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       999 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    999 Thread_170979374
+      999 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        999 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          999 wf__floor_entry  (in halo) + 32  [0x100214a48]
+            999 wf__main_body  (in halo) + 148  [0x10025e7f4]
+              459 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,504,...  [0x100245c8c,0x100245e30,...]
+              351 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 364,208,...  [0x10024eaa4,0x10024ea08,...]
+              126 wf_package.halo.vm.collect_if_due  (in halo) + 3072,36,...  [0x10022d124,0x10022c548,...]
+              63 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1002504cc]
+                57 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32,28  [0x10024e958,0x10024e954]
+                6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32,28  [0x100245c58,0x100245c54]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        999
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        465
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        408
+        wf_package.halo.vm.collect_if_due  (in halo)        126
+
+===== loop-profile-three-loop-2.sample.txt =====
+Analysis of sampling halo (pid 99432) every 1 millisecond
+Process:         halo [99432]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x104d1c000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [99344]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:00:06.033 -0700
+Launch Time:     2026-10-05 05:00:06.001 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    1019 Thread_170979450   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 1019 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   1019 wf__floor_run  (in halo) + 604  [0x104d1ca18]
+    +     1019 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       1019 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    1019 Thread_170979453
+      1019 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        1019 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          1019 wf__floor_entry  (in halo) + 32  [0x104d1ca48]
+            1019 wf__main_body  (in halo) + 148  [0x104d667f4]
+              404 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 772,364,...  [0x104d56c3c,0x104d56aa4,...]
+              393 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,76,...  [0x104d4dc8c,0x104d4dc84,...]
+              124 wf_package.halo.vm.collect_if_due  (in halo) + 3072,36,...  [0x104d35124,0x104d34548,...]
+              98 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x104d584cc]
+                82 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32,28  [0x104d56958,0x104d56954]
+                16 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32,28,...  [0x104d4dc58,0x104d4dc54,...]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        1019
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        486
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        409
+        wf_package.halo.vm.collect_if_due  (in halo)        124
+
+===== sort-profile-three-sort-0.sample.txt =====
+Analysis of sampling halo (pid 1566) every 1 millisecond
+Process:         halo [1566]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x102e5c000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1558]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:31.902 -0700
+Launch Time:     2026-10-05 05:03:31.872 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    508 Thread_170988085   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 508 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   508 wf__floor_run  (in halo) + 604  [0x102e5ca18]
+    +     508 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       508 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    508 Thread_170988088
+      508 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        508 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          508 wf__floor_entry  (in halo) + 32  [0x102e5ca48]
+            508 wf__main_body  (in halo) + 148  [0x102ea67f4]
+              240 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 352,212,...  [0x102e997bc,0x102e99730,...]
+              127 wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo) + 212,152,...  [0x102ea3d94,0x102ea3d58,...]
+              19 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 588,92,...  [0x102e8bb58,0x102e8b968,...]
+              14 wf_package.halo.vm.raw_assign  (in halo) + 404,40,...  [0x102e82d58,0x102e82bec,...]
+              14 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 116  [0x102e996d0]
+              ! 14 wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo) + 32,28  [0x102ea3ce0,0x102ea3cdc]
+              13 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 176,2316,...  [0x102e88684,0x102e88ee0,...]
+              10 wf_package.halo.heap.table_set  (in halo) + 276,52,...  [0x102e694d0,0x102e693f0,...]
+              9 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 2340  [0x102e88ef8]
+              ! 7 wf_package.halo.vm.library_dispatch$instance$2ead40aebe81bc32.body  (in halo) + 44,20,...  [0x102e9aa30,0x102e9aa18,...]
+              ! 2 wf_package.halo.vm.resize_stack  (in halo) + 20,24  [0x102e82f3c,0x102e82f40]
+              6 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 64,124,...  [0x102ea1eb4,0x102ea1ef0,...]
+              5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.55  (in halo) + 84,40,...  [0x102e94abc,0x102e94a90,...]
+              4 wf_package.halo.vm.collect_if_due  (in halo) + 3072,36,...  [0x102e75124,0x102e74548,...]
+              4 wf_package.halo.vm.library_base$instance$2ead40aebe81bc32.body  (in halo) + 44,52,...  [0x102ea5280,0x102ea5288,...]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 76,84,...  [0x102e8dc84,0x102e8dc8c,...]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 40,364,...  [0x102e96960,0x102e96aa4,...]
+              4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 404  [0x102ea2008]
+              ! 4 wf_package.halo.heap.node_find  (in halo) + 196,8,...  [0x102e6843c,0x102e68380,...]
+              3 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 3652  [0x102e89418]
+              ! 3 wf_package.halo.vm.finish  (in halo) + 356,196  [0x102e73e18,0x102e73d78]
+              3 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x102e82c4c]
+              ! 3 wf_package.halo.heap.table_set  (in halo) + 28  [0x102e693d8]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x102e984cc]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.3  (in halo) + 52  [0x102e8a4f8]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x102e96958]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.7  (in halo) + 0  [0x102e8ad4c]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,68  [0x102e8ecf4,0x102e8ecd8]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.57  (in halo) + 76,412  [0x102e95180,0x102e952d0]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.7  (in halo) + 48,116,...  [0x102e8ad7c,0x102e8adc0,...]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 236,412  [0x102e96288,0x102e96338]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.7  (in halo) + 168  [0x102e8adf4]
+              ! 2 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x102ea1e94]
+              2 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 2744  [0x102e9a114]
+              ! 2 wf_package.halo.vm.raw_assign  (in halo) + 32  [0x102e82be4]
+              2 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 2780  [0x102e9a138]
+              ! 2 wf_package.halo.vm.raw_assign  (in halo) + 32  [0x102e82be4]
+              1 wf_package.halo.vm.metamethod  (in halo) + 368  [0x102e82b8c]
+              1 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 2372  [0x102e88f18]
+              ! 1 wf_package.halo.vm.resize_stack  (in halo) + 0  [0x102e82f28]
+              1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 468  [0x102ea2048]
+              ! 1 wf_package.halo.vm.metamethod  (in halo) + 24  [0x102e82a34]
+              1 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 668  [0x102e998f8]
+              ! 1 wf_package.halo.vm.raw_assign  (in halo) + 24  [0x102e82bdc]
+              1 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 844  [0x102e999a8]
+                1 wf_package.halo.vm.raw_assign  (in halo) + 24  [0x102e82bdc]
+
+Total number in stack (recursive counted multiple, when >=5):
+        5       wf_package.halo.vm.raw_assign  (in halo) + 0  [0x102e82bc4]
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        508
+        wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo)        240
+        wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo)        141
+        wf_package.halo.vm.raw_assign  (in halo)        20
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        19
+        wf_package.halo.heap.table_set  (in halo)        13
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        13
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        8
+        wf_package.halo.vm.library_dispatch$instance$2ead40aebe81bc32.body  (in halo)        7
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.55  (in halo)        5
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        5
+
+===== sort-profile-three-sort-1.sample.txt =====
+Analysis of sampling halo (pid 1574) every 1 millisecond
+Process:         halo [1574]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x10064c000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1558]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:32.676 -0700
+Launch Time:     2026-10-05 05:03:32.646 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    513 Thread_170988116   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 513 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   513 wf__floor_run  (in halo) + 604  [0x10064ca18]
+    +     513 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       513 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    513 Thread_170988119
+      513 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        513 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          513 wf__floor_entry  (in halo) + 32  [0x10064ca48]
+            513 wf__main_body  (in halo) + 148  [0x1006967f4]
+              239 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 1720,104,...  [0x100689d14,0x1006896c4,...]
+              117 wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo) + 212,640,...  [0x100693d94,0x100693f40,...]
+              24 wf_package.halo.heap.table_set  (in halo) + 276,440,...  [0x1006594d0,0x100659574,...]
+              19 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 116  [0x1006896d0]
+              ! 19 wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo) + 32,28  [0x100693ce0,0x100693cdc]
+              18 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 136,376,...  [0x10067b994,0x10067ba84,...]
+              16 wf_package.halo.vm.raw_assign  (in halo) + 404,40,...  [0x100672d58,0x100672bec,...]
+              10 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 176,112,...  [0x100678684,0x100678644,...]
+              9 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 488,516,...  [0x10067ee7c,0x10067ee98,...]
+              7 wf_package.halo.vm.library_base$instance$2ead40aebe81bc32.body  (in halo) + 240,48,...  [0x100695344,0x100695284,...]
+              6 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 2340  [0x100678ef8]
+              ! 5 wf_package.halo.vm.library_dispatch$instance$2ead40aebe81bc32.body  (in halo) + 44,16,...  [0x10068aa30,0x10068aa14,...]
+              ! 1 wf_package.halo.vm.resize_stack  (in halo) + 20  [0x100672f3c]
+              6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 76,136,...  [0x10067dc84,0x10067dcc0,...]
+              6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.7  (in halo) + 400,128,...  [0x10067aedc,0x10067adcc,...]
+              5 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 64,124,...  [0x100691eb4,0x100691ef0,...]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 100,136,...  [0x100686200,0x100686224,...]
+              4 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 404  [0x100692008]
+              ! 4 wf_package.halo.heap.node_find  (in halo) + 8,132,...  [0x100658380,0x1006583fc,...]
+              3 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x100672c4c]
+              ! 3 wf_package.halo.heap.table_set  (in halo) + 28  [0x1006593d8]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1006884cc]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x100686958]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.3  (in halo) + 76  [0x10067a510]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.57  (in halo) + 76,524  [0x100685180,0x100685340]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 160,200,...  [0x1006869d8,0x100686a00,...]
+              3 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 2780  [0x10068a138]
+              ! 3 wf_package.halo.vm.raw_assign  (in halo) + 32,24  [0x100672be4,0x100672bdc]
+              2 wf_package.halo.vm.collect_if_due  (in halo) + 36,3072  [0x100664548,0x100665124]
+              2 wf_package.halo.vm.resize_stack  (in halo) + 188  [0x100672fe4]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.55  (in halo) + 84,508  [0x100684abc,0x100684c64]
+              1 wf_package.halo.vm.library_dispatch$instance$2ead40aebe81bc32.body  (in halo) + 15816  [0x10068e7cc]
+              ! 1 wf_package.halo.vm.library_dispatch$instance$2ead40aebe81bc32.body  (in halo) + 15816  [0x10068e7cc]
+              1 wf_package.halo.vm.metamethod  (in halo) + 368  [0x100672b8c]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        513
+        wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo)        239
+        wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo)        136
+        wf_package.halo.heap.table_set  (in halo)        27
+        wf_package.halo.vm.raw_assign  (in halo)        19
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        18
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        10
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        9
+        wf_package.halo.vm.library_base$instance$2ead40aebe81bc32.body  (in halo)        7
+        wf_package.halo.vm.library_dispatch$instance$2ead40aebe81bc32.body  (in halo)        6
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        6
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.7  (in halo)        6
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        5
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        5
+
+===== sort-profile-three-sort-2.sample.txt =====
+Analysis of sampling halo (pid 1675) every 1 millisecond
+Process:         halo [1675]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x102c10000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1558]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:34.223 -0700
+Launch Time:     2026-10-05 05:03:34.192 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    515 Thread_170988312   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 514 start  (in dyld) + 6992  [0x1862dc4e4]
+    + ! 514 wf__floor_run  (in halo) + 604  [0x102c10a18]
+    + !   514 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    + !     514 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    + 1 start  (in dyld) + 7040  [0x1862dc514]
+    +   1 dyld4::LibSystemHelpersWrapper::exit(int) const  (in dyld) + 164  [0x1862dc5f0]
+    +     1 dyld4::LibSystemHelpers::exit(int) const  (in libdyld.dylib) + 20  [0x1862a42e4]
+    +       1 exit  (in libsystem_c.dylib) + 0  [0x18655c5b0]
+    514 Thread_170988317
+      514 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        514 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          514 wf__floor_entry  (in halo) + 32  [0x102c10a48]
+            514 wf__main_body  (in halo) + 148  [0x102c5a7f4]
+              268 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 352,1720,...  [0x102c4d7bc,0x102c4dd14,...]
+              100 wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo) + 212,152,...  [0x102c57d94,0x102c57d58,...]
+              20 wf_package.halo.heap.table_set  (in halo) + 276,156,...  [0x102c1d4d0,0x102c1d458,...]
+              19 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 92,188,...  [0x102c3f968,0x102c3f9c8,...]
+              13 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 116  [0x102c4d6d0]
+              ! 13 wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo) + 32,28,...  [0x102c57ce0,0x102c57cdc,...]
+              11 wf_package.halo.vm.library_base$instance$2ead40aebe81bc32.body  (in halo) + 240,356,...  [0x102c59344,0x102c593b8,...]
+              11 wf_package.halo.vm.raw_assign  (in halo) + 76,40,...  [0x102c36c10,0x102c36bec,...]
+              10 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 52,3644,...  [0x102c3c608,0x102c3d410,...]
+              7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,40,...  [0x102c42cf4,0x102c42cbc,...]
+              7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.7  (in halo) + 292,48,...  [0x102c3ee70,0x102c3ed7c,...]
+              7 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 124,216,...  [0x102c55ef0,0x102c55f4c,...]
+              6 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 2340  [0x102c3cef8]
+              ! 5 wf_package.halo.vm.library_dispatch$instance$2ead40aebe81bc32.body  (in halo) + 16,44,...  [0x102c4ea14,0x102c4ea30,...]
+              ! 1 wf_package.halo.vm.resize_stack  (in halo) + 24  [0x102c36f40]
+              6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 76,52,...  [0x102c41c84,0x102c41c6c,...]
+              5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 80,108,...  [0x102c4a988,0x102c4a9a4,...]
+              4 wf_package.halo.vm.raw_assign  (in halo) + 136  [0x102c36c4c]
+              ! 4 wf_package.halo.heap.table_set  (in halo) + 28  [0x102c1d3d8]
+              4 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x102c4c4cc]
+              ! 3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.3  (in halo) + 76,136,...  [0x102c3e510,0x102c3e54c,...]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x102c4a958]
+              4 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 2780  [0x102c4e138]
+              ! 4 wf_package.halo.vm.raw_assign  (in halo) + 32  [0x102c36be4]
+              3 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 404  [0x102c56008]
+              ! 3 wf_package.halo.heap.node_find  (in halo) + 104,120,...  [0x102c1c3e0,0x102c1c3f0,...]
+              2 wf_package.halo.vm.collect_if_due  (in halo) + 36,68  [0x102c28548,0x102c28568]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.55  (in halo) + 84,144  [0x102c48abc,0x102c48af8]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.57  (in halo) + 76,412  [0x102c49180,0x102c492d0]
+              1 wf_package.halo.vm.resize_stack  (in halo) + 188  [0x102c36fe4]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 236  [0x102c4a288]
+              1 wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo) + 4044  [0x102c4e628]
+                1 wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo) + 32  [0x102c57ce0]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        514
+        wf_package.halo.vm.sort_run$instance$2ead40aebe81bc32  (in halo)        268
+        wf_package.halo.vm.sort_compare$instance$2ead40aebe81bc32  (in halo)        114
+        wf_package.halo.heap.table_set  (in halo)        24
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        19
+        wf_package.halo.vm.raw_assign  (in halo)        15
+        wf_package.halo.vm.library_base$instance$2ead40aebe81bc32.body  (in halo)        11
+        wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo)        10
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        7
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.7  (in halo)        7
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        7
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        6
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        6
+        wf_package.halo.vm.library_dispatch$instance$2ead40aebe81bc32.body  (in halo)        5
+
+===== string-key-profile-three-string-key-0.sample.txt =====
+Analysis of sampling halo (pid 1283) every 1 millisecond
+Process:         halo [1283]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x1028d4000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1268]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:15.781 -0700
+Launch Time:     2026-10-05 05:03:15.750 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    792 Thread_170986836   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 792 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   792 wf__floor_run  (in halo) + 604  [0x1028d4a18]
+    +     792 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       792 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    792 Thread_170986839
+      792 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        792 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          792 wf__floor_entry  (in halo) + 32  [0x1028d4a48]
+            792 wf__main_body  (in halo) + 148  [0x10291e7f4]
+              281 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 744,376,...  [0x102903bf4,0x102903a84,...]
+              101 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,504,...  [0x102905c8c,0x102905e30,...]
+              92 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 96,144,...  [0x102905fd4,0x102906004,...]
+              78 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 528,96,...  [0x102909610,0x102909460,...]
+              74 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 456,96,...  [0x102906e5c,0x102906cf4,...]
+              69 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 208,700,...  [0x10290ea08,0x10290ebf4,...]
+              47 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 228  [0x1029039f0]
+              ! 47 wf_package.halo.heap.node_find  (in halo) + 292,8,...  [0x1028e049c,0x1028e0380,...]
+              28 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1029104cc]
+              ! 13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32,28  [0x10290e958,0x10290e954]
+              ! 8 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32  [0x102905c58]
+              ! 5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 28  [0x102906cb0]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 32  [0x10290392c]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 32  [0x102905f94]
+              19 wf_package.halo.vm.collect_if_due  (in halo) + 36,3072,...  [0x1028ec548,0x1028ed124,...]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 108  [0x10290e9a4]
+                3 wf_package.halo.vm.collect_if_due  (in halo) + 20  [0x1028ec538]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        792
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        282
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        109
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo)        93
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        82
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        79
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo)        78
+        wf_package.halo.heap.node_find  (in halo)        47
+        wf_package.halo.vm.collect_if_due  (in halo)        22
+
+===== string-key-profile-three-string-key-1.sample.txt =====
+Analysis of sampling halo (pid 1293) every 1 millisecond
+Process:         halo [1293]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x1046fc000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1268]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:16.955 -0700
+Launch Time:     2026-10-05 05:03:16.897 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    690 Thread_170986945   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 690 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   690 wf__floor_run  (in halo) + 604  [0x1046fca18]
+    +     690 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       690 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    690 Thread_170986954
+      690 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        690 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          690 wf__floor_entry  (in halo) + 32  [0x1046fca48]
+            690 wf__main_body  (in halo) + 148  [0x1047467f4]
+              283 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 92,656,...  [0x10472b968,0x10472bb9c,...]
+              80 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,504,...  [0x10472dc8c,0x10472de30,...]
+              62 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,456,...  [0x10472ecf4,0x10472ee5c,...]
+              61 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 440,144,...  [0x10472e12c,0x10472e004,...]
+              59 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 208,772,...  [0x104736a08,0x104736c3c,...]
+              45 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 228  [0x10472b9f0]
+              ! 45 wf_package.halo.heap.node_find  (in halo) + 8,104,...  [0x104708380,0x1047083e0,...]
+              39 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 528,156,...  [0x104731610,0x10473149c,...]
+              30 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1047384cc]
+              ! 13 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32  [0x104736958]
+              ! 6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 28,32  [0x10472ecb0,0x10472ecb4]
+              ! 4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 32  [0x10472dc58]
+              ! 3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 32  [0x104731420]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 32  [0x10472b92c]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 32  [0x10472df94]
+              28 wf_package.halo.vm.collect_if_due  (in halo) + 36,52,...  [0x104714548,0x104714558,...]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 108  [0x1047369a4]
+                3 wf_package.halo.vm.collect_if_due  (in halo) + 20  [0x104714538]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        690
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        285
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        84
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        72
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        68
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo)        63
+        wf_package.halo.heap.node_find  (in halo)        45
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo)        42
+        wf_package.halo.vm.collect_if_due  (in halo)        31
+
+===== string-key-profile-three-string-key-2.sample.txt =====
+Analysis of sampling halo (pid 1425) every 1 millisecond
+Process:         halo [1425]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x1041b0000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1268]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:19.037 -0700
+Launch Time:     2026-10-05 05:03:19.005 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    798 Thread_170987402   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 798 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   798 wf__floor_run  (in halo) + 604  [0x1041b0a18]
+    +     798 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       798 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    798 Thread_170987405
+      798 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        798 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          798 wf__floor_entry  (in halo) + 32  [0x1041b0a48]
+            798 wf__main_body  (in halo) + 148  [0x1041fa7f4]
+              287 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 92,656,...  [0x1041df968,0x1041dfb9c,...]
+              104 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,136,...  [0x1041e1c8c,0x1041e1cc0,...]
+              85 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 156,96,...  [0x1041e549c,0x1041e5460,...]
+              76 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,84,...  [0x1041e2cf4,0x1041e2ce8,...]
+              74 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 208,412,...  [0x1041eaa08,0x1041eaad4,...]
+              69 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 96,144,...  [0x1041e1fd4,0x1041e2004,...]
+              45 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 228  [0x1041df9f0]
+              ! 45 wf_package.halo.heap.node_find  (in halo) + 292,196,...  [0x1041bc49c,0x1041bc43c,...]
+              31 wf_package.halo.vm.collect_if_due  (in halo) + 36,3072,...  [0x1041c8548,0x1041c9124,...]
+              25 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1041ec4cc]
+              ! 15 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32,28  [0x1041ea958,0x1041ea954]
+              ! 5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 28,32  [0x1041e2cb0,0x1041e2cb4]
+              ! 3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 32  [0x1041e5420]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 32  [0x1041df92c]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 32  [0x1041e1f94]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 108  [0x1041ea9a4]
+                2 wf_package.halo.vm.collect_if_due  (in halo) + 20  [0x1041c8538]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        798
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        288
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        104
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        89
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo)        88
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        81
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo)        70
+        wf_package.halo.heap.node_find  (in halo)        45
+        wf_package.halo.vm.collect_if_due  (in halo)        33
+
+===== loop-budget-profile-one-loop-0.sample.txt =====
+Analysis of sampling halo (pid 1770) every 1 millisecond
+Process:         halo [1770]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x102888000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [1759]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:03:47.089 -0700
+Launch Time:     2026-10-05 05:03:47.059 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    2356 Thread_170988801   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 2355 start  (in dyld) + 6992  [0x1862dc4e4]
+    + ! 2355 wf__floor_run  (in halo) + 604  [0x102888a18]
+    + !   2355 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    + !     2355 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    + 1 start  (in dyld) + 7040  [0x1862dc514]
+    +   1 dyld4::LibSystemHelpersWrapper::exit(int) const  (in dyld) + 164  [0x1862dc5f0]
+    +     1 dyld4::LibSystemHelpers::exit(int) const  (in libdyld.dylib) + 20  [0x1862a42e4]
+    +       1 exit  (in libsystem_c.dylib) + 0  [0x18655c5b0]
+    2355 Thread_170988804
+      2355 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        2355 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          2355 wf__floor_entry  (in halo) + 32  [0x102888a48]
+            2355 wf__main_body  (in halo) + 148  [0x1028d27f4]
+              689 wf_package.halo.embed.refresh_roots  (in halo) + 324  [0x1028afaf4]
+              ! 685 _platform_memmove  (in libsystem_platform.dylib) + 180,204,...  [0x1866b1414,0x1866b142c,...]
+              ! 4 DYLD-STUB$$memmove  (in halo) + 4  [0x1028d6d24]
+              474 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 84,76,...  [0x1028b9c8c,0x1028b9c84,...]
+              316 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 772,364,...  [0x1028c2c3c,0x1028c2aa4,...]
+              248 wf_package.halo.embed.refresh_roots  (in halo) + 332  [0x1028afafc]
+              ! 137 _xzm_free  (in libsystem_malloc.dylib) + 996,684,...  [0x1864c44fc,0x1864c43c4,...]
+              ! 46 _free  (in libsystem_malloc.dylib) + 12,36,...  [0x1864d3cdc,0x1864d3cf4,...]
+              ! 36 _xzm_free  (in libsystem_malloc.dylib) + 1048  [0x1864c4530]
+              ! : 36 mach_absolute_time  (in libsystem_kernel.dylib) + 108,112,...  [0x18666410c,0x186664110,...]
+              ! 16 _xzm_free  (in libsystem_malloc.dylib) + 352  [0x1864c4278]
+              ! : 15 _platform_memset  (in libsystem_platform.dylib) + 140,160,...  [0x1866b111c,0x1866b1130,...]
+              ! : 1 __bzero  (in libsystem_platform.dylib) + 24  [0x1866b1048]
+              ! 11 DYLD-STUB$$free  (in halo) + 4  [0x1028d6cc4]
+              ! 1 _xzm_free_outlined  (in libsystem_malloc.dylib) + 64  [0x1864cc4bc]
+              ! 1 free  (in libsystem_malloc.dylib) + 0  [0x18649a6b8]
+              196 wf_package.halo.embed.refresh_roots  (in halo) + 300  [0x1028afadc]
+              ! 94 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 268,88,...  [0x1864c9048,0x1864c8f94,...]
+              ! 47 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,44,...  [0x1864d30c8,0x1864d30e8,...]
+              ! 35 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112,212,...  [0x1864c31cc,0x1864c3230,...]
+              ! 16 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 28,184,...  [0x1864c396c,0x1864c3a08,...]
+              ! 4 DYLD-STUB$$malloc  (in halo) + 4  [0x1028d6d0c]
+              155 wf_package.halo.vm.collect_if_due  (in halo) + 3072,36,...  [0x1028a1124,0x1028a0548,...]
+              133 wf_package.halo.embed.refresh_roots  (in halo) + 624,708,...  [0x1028afc20,0x1028afc74,...]
+              122 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1028c44cc]
+              ! 89 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 32,28  [0x1028c2958,0x1028c2954]
+              ! 33 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 28,32  [0x1028b9c54,0x1028b9c58]
+              11 _xzm_free  (in libsystem_malloc.dylib) + 1560,1548,...  [0x1864c4730,0x1864c4724,...]
+              8 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 108  [0x1028c29a4]
+              ! 8 wf_package.halo.vm.collect_if_due  (in halo) + 28,20  [0x1028a0540,0x1028a0538]
+              1 wf_host.main.resume  (in halo) + 13928  [0x1028d61d4]
+              ! 1 wf_host.main.resume  (in halo) + 13952  [0x1028d61ec]
+              1 wf_host.main.resume  (in halo) + 14184  [0x1028d62d4]
+              ! 1 wf_host.main.resume  (in halo) + 13860  [0x1028d6190]
+              1 wf_package.halo.embed.refresh_roots  (in halo) + 48  [0x1028af9e0]
+                1 _malloc_zone_calloc  (in libsystem_malloc.dylib) + 84  [0x1864d3340]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        2355
+        _platform_memmove  (in libsystem_platform.dylib)        685
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        507
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        405
+        wf_package.halo.vm.collect_if_due  (in halo)        163
+        _xzm_free  (in libsystem_malloc.dylib)        148
+        wf_package.halo.embed.refresh_roots  (in halo)        133
+        _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib)        94
+        _malloc_zone_malloc  (in libsystem_malloc.dylib)        47
+        _free  (in libsystem_malloc.dylib)        46
+        mach_absolute_time  (in libsystem_kernel.dylib)        36
+        <deduplicated_symbol>  (in libsystem_malloc.dylib)        35
+        _xzm_xzone_malloc  (in libsystem_malloc.dylib)        16
+        _platform_memset  (in libsystem_platform.dylib)        15
+        DYLD-STUB$$free  (in halo)        11
+
+===== string-key-profile-one-string-key-0.sample.txt (short calibration; excluded from attribution table) =====
+Analysis of sampling halo (pid 99462) every 1 millisecond
+Process:         halo [99462]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x102b08000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [99457]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:00:09.139 -0700
+Launch Time:     2026-10-05 05:00:09.109 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+
+===== fib-profile-one-fib-0.sample.txt (short calibration; excluded from attribution table) =====
+Analysis of sampling halo (pid 99444) every 1 millisecond
+Process:         halo [99444]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x104224000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [99439]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:00:07.653 -0700
+Launch Time:     2026-10-05 05:00:07.624 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    98 Thread_170979571   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 98 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   98 wf__floor_run  (in halo) + 604  [0x104224a18]
+    +     98 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       98 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    98 Thread_170979574
+      98 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        98 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          98 wf__floor_entry  (in halo) + 32  [0x104224a48]
+            98 wf__main_body  (in halo) + 148  [0x10426e7f4]
+              33 wf_package.halo.vm.enter_lua  (in halo) + 492,48,...  [0x10423c270,0x10423c0b4,...]
+              18 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1042604cc]
+              ! 6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 0,28,...  [0x104252790,0x1042527ac,...]
+              ! 6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 0,32  [0x10425e678,0x10425e698]
+              ! 4 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 0  [0x104255c38]
+              ! 2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 28  [0x10425e1b8]
+              10 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 96,148,...  [0x104256cf4,0x104256d28,...]
+              9 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 108,356,...  [0x10425e6e4,0x10425e7dc,...]
+              7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 244,212,...  [0x10425e290,0x10425e270,...]
+              5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo) + 52,488,...  [0x1042527c4,0x104252978,...]
+              3 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 52,184,...  [0x104250608,0x10425068c,...]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 60,84,...  [0x104255c74,0x104255c8c,...]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.54  (in halo) + 92,144,...  [0x10425c750,0x10425c784,...]
+              2 wf_package.halo.vm.collect_if_due  (in halo) + 36,3072  [0x10423c548,0x10423d124]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo) + 252  [0x10425e298]
+              ! 1 wf_package.halo.vm.enter_lua  (in halo) + 28  [0x10423c0a0]
+              ! 1 wf_package.halo.vm.prepare$instance$2ead40aebe81bc32  (in halo) + 32  [0x1042505f4]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo) + 360  [0x10425e7e0]
+              ! 2 wf_package.halo.vm.finish  (in halo) + 92,212  [0x10423bd10,0x10423bd88]
+              1 wf_package.halo.vm.push_frame  (in halo) + 292  [0x10424b114]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        98
+        wf_package.halo.vm.enter_lua  (in halo)        34
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.65  (in halo)        15
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.5  (in halo)        11
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo)        10
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.63  (in halo)        9
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo)        7
+
+===== concat-profile-one-concat-0.sample.txt (short calibration; excluded from attribution table) =====
+Analysis of sampling halo (pid 99473) every 1 millisecond
+Process:         halo [99473]
+Path:            <repository-root>/research/experiments/halo-bench/target/halo
+Load Address:    0x10239c000
+Identifier:      halo
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  Python [99464]
+Target Type:     live task
+
+Date/Time:       2026-10-05 05:00:09.394 -0700
+Launch Time:     2026-10-05 05:00:09.364 -0700
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+----
+
+Call graph:
+    82 Thread_170979786   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 82 start  (in dyld) + 6992  [0x1862dc4e4]
+    +   82 wf__floor_run  (in halo) + 604  [0x10239ca18]
+    +     82 _pthread_join  (in libsystem_pthread.dylib) + 616  [0x1866aa114]
+    +       82 __ulock_wait  (in libsystem_kernel.dylib) + 8  [0x186665af8]
+    82 Thread_170979789
+      82 thread_start  (in libsystem_pthread.dylib) + 8  [0x1866a2c1c]
+        82 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x1866a7c58]
+          82 wf__floor_entry  (in halo) + 32  [0x10239ca48]
+            82 wf__main_body  (in halo) + 148  [0x1023e67f4]
+              16 wf_package.halo.heap.intern  (in halo) + 232,60,...  [0x1023a7f44,0x1023a7e98,...]
+              8 wf_package.halo.vm.concat_strings  (in halo) + 120  [0x1023c2ddc]
+              ! 3 DYLD-STUB$$malloc  (in halo) + 4  [0x1023ead0c]
+              ! 2 _malloc_zone_malloc  (in libsystem_malloc.dylib) + 12,44  [0x1864d30c8,0x1864d30e8]
+              ! 2 _xzm_xzone_malloc_tiny  (in libsystem_malloc.dylib) + 420,824  [0x1864c90e0,0x1864c9274]
+              ! 1 _xzm_xzone_malloc  (in libsystem_malloc.dylib) + 8  [0x1864c3958]
+              8 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo) + 392,84,...  [0x1023ce0fc,0x1023cdfc8,...]
+              7 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo) + 528,60,...  [0x1023d1610,0x1023d143c,...]
+              6 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo) + 92,376,...  [0x1023cb968,0x1023cba84,...]
+              6 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 1568  [0x1023e2494]
+              ! 3 _xzm_free  (in libsystem_malloc.dylib) + 952,1240  [0x1864c44d0,0x1864c45f0]
+              ! 2 _free  (in libsystem_malloc.dylib) + 64,96  [0x1864d3d10,0x1864d3d30]
+              ! 1 _xzm_free  (in libsystem_malloc.dylib) + 352  [0x1864c4278]
+              !   1 _platform_memset  (in libsystem_platform.dylib) + 180  [0x1866b1144]
+              5 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo) + 772,136,...  [0x1023d6c3c,0x1023d69c0,...]
+              5 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 1408,1532,...  [0x1023e23f4,0x1023e2470,...]
+              4 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 284,40,...  [0x1023d8620,0x1023d852c,...]
+              4 wf_package.halo.vm.concat_strings  (in halo) + 80,152,...  [0x1023c2db4,0x1023c2dfc,...]
+              3 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.20  (in halo) + 108,428,...  [0x1023cdca4,0x1023cdde4,...]
+              2 _xzm_free  (in libsystem_malloc.dylib) + 1560  [0x1864c4730]
+              2 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.25  (in halo) + 144,440  [0x1023ced24,0x1023cee4c]
+              1 wf_package.halo.vm.collect_if_due  (in halo) + 68  [0x1023b4568]
+              1 wf_package.halo.vm.concat_step$instance$2ead40aebe81bc32  (in halo) + 364  [0x1023d8670]
+              ! 1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x1023e1e94]
+              1 wf_package.halo.vm.resize_stack  (in halo) + 188  [0x1023c2fe4]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32  (in halo) + 128  [0x1023d84cc]
+              ! 1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.1  (in halo) + 128  [0x1023ca16c]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 148  [0x1023d3008]
+              ! 1 wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo) + 32  [0x1023e1e94]
+              1 wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.46  (in halo) + 416  [0x1023d3114]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        __ulock_wait  (in libsystem_kernel.dylib)        82
+        wf_package.halo.heap.intern  (in halo)        16
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.21  (in halo)        8
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.37  (in halo)        7
+        wf_package.halo.vm.slow$instance$2ead40aebe81bc32  (in halo)        7
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.11  (in halo)        6
+        _xzm_free  (in libsystem_malloc.dylib)        5
+        wf_package.halo.vm.run$instance$2ead40aebe81bc32.body.arm.66  (in halo)        5

@@ -2263,18 +2263,19 @@ rarely insert at the same place.
   and repeated new/encode/collect cycles. Reopen before long-lived Halo VMs
   use independent cjson instances.
 
-- **Halo's dispatch arms join before the tail call, and its hot paths are
-  not yet fast.** `lib/halo/vm/dispatch.wf` matches the cell, each arm calls
-  a handler function returning a `Step`, and one shared epilogue makes the
-  self-tail call; this halved the vm module's check time (about 60 s for the
-  package on an M1 Pro) but gives the match-dispatch lowering one shared
-  dispatch point instead of a tail jump per arm. Globals always take the slow
-  executor; coercion and numeric power already use `lib/halo/number`. Impact:
-  shared dispatch and slow global access may limit interpreter throughput.
-  Change: once a lowering and a benchmark exist (VM.md P1, P2),
-  measure, then move the epilogue into each arm or inline the handlers, and
-  add fast paths where the census shows them hot. Reopen with the first Halo
-  performance measurement.
+- **Halo's measured hot paths exceed the P1 median target.** The source
+  `lib/halo/vm/dispatch.wf` joins handler `Step` results before a self-tail
+  call, but the full-LTO native baseline already has per-arm functions and
+  indirect tail jumps; a single native dispatch point is not the measured
+  cause ([P1 results](../research/experiments/halo-bench/RESULTS.md#value-width-handles-and-native-dispatch-inspected-first)).
+  Impact: the six unscaled workloads are 1.964–4.081 times PUC; depth-14
+  binary-trees is 1.910 times. Numeric profiles expose dispatch/continuation
+  traffic, tag tests, repeated window tests and safepoint predicate work;
+  table rehash, concat and sorting have separate substantial costs. Change:
+  compare the VM.md C1–C6 candidates and library/heap paths with same-source,
+  full-LTO pairs, preserving checksums, normal GC, roots and handle validity.
+  Reopen at the next performance experiment; require a discriminating native
+  comparison before selecting a candidate or claiming a causal speedup.
 - **Checking Halo's vm module takes minutes.** The whole lib/halo package
   checked in roughly 60 s with the dispatch core alone and 156 s once the
   slice-1 library joined it (M1 Pro, 2026-10-04), almost all of it the vm
@@ -2455,6 +2456,33 @@ rarely insert at the same place.
   source and graph invalidation. Defer from the runner-only cache update;
   reopen when incremental compiler work next targets invocation identity.
   Remove this entry when that assessment and its selected repair land.
+
+- **Halo's budget resumes rebuild and copy the root bridge.** The
+  [P1 budget comparison](../research/experiments/halo-bench/RESULTS.md#budget-1000)
+  raises the 1e8 loop's median from 1.363583 s at the unlimited sentinel to
+  3.043277 s at budget 1000, with 100000 suspensions and no collections.
+  In one budgeted profile, `embed.refresh_roots` and descendants account for
+  1267 of 2355 worker samples, including copying and allocation/free work.
+  `lib/halo/embed/engine.wf` rebuilds the constant/pin bridge on each resume;
+  its append helper reserves one slot at a time. Impact: this embedding's
+  measured decrement-plus-resume cost is far above VM.md's eventual 1%
+  budget target; isolated decrement cost remains unknown. Change: measure
+  bulk reservation or retaining the bridge until roots change, preserving
+  every cached constant, pin and active-script root. Reopen with the next
+  budget/embedding performance work; require interleaved same-source budget
+  pairs, unchanged checksums and collector-root controls before selection.
+
+- **Halo's instruction Cell stride differs from the proposed eight bytes.**
+  The [P1 native inspection](../research/experiments/halo-bench/RESULTS.md#value-width-handles-and-native-dispatch-inspected-first)
+  observes a 12-byte Cell stride and operand offsets 4/5/6/8, while VM.md
+  section 4 proposes eight bytes. Both Halo and PUC value slots are 16 bytes;
+  PUC's instruction fetch is four bytes. Impact: the proposed instruction
+  density is not implemented, and its throughput effect remains unmeasured.
+  Change: reconcile the intended Cell layout with native enum emission and
+  compare representation alternatives under C6, preserving operands, tags,
+  targets and all verified access conditions. Reopen with the next layout or
+  dispatch experiment; require native size/offset evidence and a matched
+  throughput comparison before claiming an improvement.
 
 ## Interpreter dispatch lowering
 
