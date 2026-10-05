@@ -230,6 +230,66 @@ fn enter_lua(vm: &Vm, stack: &Box<Slots<Value>>, h: u32, func: u64, argc: u64, w
   return Step::Error();
 }
 
+fn enter_fixed_lua(vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, wanted: i64, return_pc: u64) -> r: Option<Step> writes(vm), writes(stack) contract {
+  requires func < stack^.inner.len;
+} {
+  doc "Qualifies fixed Lua calls once; other kinds retain the general prepare path.";
+  match func_of(v: stack^.inner[func]) {
+    Lua(h: fixed_h) => {
+      let hi = cvt::<u32, u64>(fixed_h);
+      if hi < vm^.heap.closures.inner.len {
+        if vm^.heap.closures.inner[hi].live {
+          let pi = cvt::<u32, u64>(vm^.heap.closures.inner[hi].payload.proto);
+          if pi < vm^.protos.inner.len {
+            let p = vm^.protos.inner[pi];
+            if bnot(p.is_vararg) {
+              let fixed = cvt::<u8, u64>(p.numparams);
+              let maxstack = cvt::<u8, u64>(p.maxstack);
+              let kb = cvt::<u32, u64>(p.kbase);
+              let start = cvt::<u32, u64>(p.start);
+              let b = func +sat 1_u64;
+              let room = b +sat 256_u64;
+              if room == unlimited {
+                let ignored = raise_text(vm: vm, text: &calls_text_0[0_u64..14_u64]);
+                let failure = Step::Error();
+                return Some<Step>(value: failure);
+              }
+              ensure_stack(stack: stack, size: room);
+              for (i in argc..fixed) {
+                let j = b +sat i;
+                if j < stack^.inner.len {
+                  set stack^.inner[j] = Value::Nil();
+                }
+              }
+              for (i in fixed..maxstack) {
+                let j = b +sat i;
+                if j < stack^.inner.len {
+                  set stack^.inner[j] = Value::Nil();
+                }
+              }
+              let top = b +sat maxstack;
+              let vb = b +sat fixed;
+              let f = Frame(func: func, base: b, return_pc: return_pc, kbase: kb, closure: fixed_h, nresults: wanted, activation: vm^.activation, flags: 0_u8, varbase: vb, varcount: 0_u64, frame_top: top);
+              if push_frame(vm: vm, frame: f) {
+                set vm^.top = top;
+                let jump = Step::Jump(pc: start, base: b, kbase: kb);
+                return Some<Step>(value: jump);
+              }
+              let failure = Step::Error();
+              return Some<Step>(value: failure);
+            }
+          }
+        }
+      }
+    }
+    Native(..) => {
+    }
+    Other() => {
+    }
+  }
+  return None<Step>();
+}
+
 fn prepare<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slots<Value>>, vm: &Vm, stack: &Box<Slots<Value>>, env: &E, func: u64, argc: u64, wanted: i64, return_pc: u64, base: u64, kbase: u64, tail: Bool) -> r: Step reads(code), reads(consts), writes(vm), writes(stack), writes(env) {
   let fslot = func;
   let nargs = argc;

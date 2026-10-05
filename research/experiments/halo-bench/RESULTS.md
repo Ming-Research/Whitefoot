@@ -1547,3 +1547,15 @@ Found during attribution: iterator classification and CJSON binding use the
 same no-prototype sentinel, and prepare tests iterator classification first.
 This pre-existing routing overlap is deferred in docs/todo.md; the trial
 qualifies only real prototypes and leaves both sentinel paths unchanged.
+
+
+### Check sizing and candidate boundary
+
+Before vm checks pass in 250.22 and 238.16 s: median 244.19 s, range
+4.94%. Select two candidate checks initially: this spread is substantially
+smaller than the 25% gate; lengthen only if the observed ratio is close enough
+for it to matter. The threshold is 305.2375 s on that median. The call helper
+adds no public type or new module; its stack-slot requirement is discharged
+at instruction_call's existing dispatch window. The source trial changes
+only calls.wf and instruction_call in handlers.wf. Native sentinel closures,
+invalid handles/prototypes and varargs return to the unchanged general path.
