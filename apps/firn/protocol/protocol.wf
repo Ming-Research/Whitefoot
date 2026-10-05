@@ -175,7 +175,7 @@ fn push_arg(args: &Box<Slots<Span>>, start: u64, length: u64) -> result: unit wr
 }
 
 fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed reads(input), writes(args) {
-  doc "Reads a RESP array of bulk strings whose leading asterisk is at start, as Redis 7.0 reads one. Every count and length line is read as read_line reads it. The count is at most 2,147,483,647, and an array of no element or a negative count is skipped; each bulk string's line starts with a dollar sign, its length is 0 to 536,870,912, and the two bytes after its data are skipped unread. A client that must authenticate first, when locked is true, may send at most 10 elements and bulk strings of at most 16,384 bytes.";
+  doc "Reads a RESP array of bulk strings whose leading asterisk is at start, as Redis 7.0 reads one. The count line is read as read_line reads it, and each length line of the common shape, a dollar sign and one to nine digits without a leading zero whose carriage return and following byte are held, is read in place, every other one as read_line_full reads it. The count is at most 2,147,483,647, and an array of no element or a negative count is skipped; each bulk string's line starts with a dollar sign, its length is 0 to 536,870,912, and the two bytes after its data are skipped unread. A client that must authenticate first, when locked is true, may send at most 10 elements and bulk strings of at most 16,384 bytes.";
   let header = read_line(input: input, marker: start, held: held);
   if header.state == 0_u64 {
     return Parsed(state: 0_u64, next: start);
@@ -202,21 +202,72 @@ fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>,
   let count = cvt.wrap::<i64, u64>(elements);
   clear_args(args: args);
   for @arguments (ordinal in 0_u64..count) {
-    let line = read_line(input: input, marker: position, held: held);
-    if line.state == 0_u64 {
-      return Parsed(state: 0_u64, next: start);
-    }
-    if line.state == 3_u64 {
-      return Parsed(state: 9_u64, next: start);
-    }
     let dollar = byte_at(input: input, index: position);
-    if dollar != 36_u8 {
-      return Parsed(state: 3_u64, next: position);
+    let size = 0_i64;
+    let line_end = 0_u64;
+    let quick = False();
+    if dollar == 36_u8 {
+      let first = position +wrap 1_u64;
+      let scan = first;
+      let value = 0_u64;
+      loop @digits {
+        if scan >= held {
+          break @digits;
+        }
+        let byte = byte_at(input: input, index: scan);
+        if byte == 13_u8 {
+          let digits = scan -wrap first;
+          let after = scan +wrap 1_u64;
+          let some = digits >= 1_u64;
+          let held_after = after < held;
+          let lone = digits == 1_u64;
+          let lead = byte_at(input: input, index: first);
+          let unpadded = lead != 48_u8;
+          let canonical = bor(lone, unpadded);
+          let counted = band(some, held_after);
+          let common = band(counted, canonical);
+          if common {
+            set size = cvt.wrap::<u64, i64>(value);
+            set line_end = scan;
+            set quick = True();
+          }
+          break @digits;
+        }
+        let low = byte >= 48_u8;
+        let high = byte <= 57_u8;
+        let digit = band(low, high);
+        let taken = scan -wrap first;
+        let room = taken < 9_u64;
+        let take = band(digit, room);
+        if take {
+        } else {
+          break @digits;
+        }
+        let offset = byte -wrap 48_u8;
+        let wide = cvt::<u8, u64>(offset);
+        let scaled = value *wrap 10_u64;
+        set value = scaled +wrap wide;
+        set scan = scan +wrap 1_u64;
+      }
     }
-    if line.state == 2_u64 {
-      return Parsed(state: 4_u64, next: position);
+    if quick {
+    } else {
+      let line = read_line_full(input: input, marker: position, held: held);
+      if line.state == 0_u64 {
+        return Parsed(state: 0_u64, next: start);
+      }
+      if line.state == 3_u64 {
+        return Parsed(state: 9_u64, next: start);
+      }
+      if dollar != 36_u8 {
+        return Parsed(state: 3_u64, next: position);
+      }
+      if line.state == 2_u64 {
+        return Parsed(state: 4_u64, next: position);
+      }
+      set size = line.value;
+      set line_end = line.end;
     }
-    let size = line.value;
     if size < 0_i64 {
       return Parsed(state: 4_u64, next: position);
     }
@@ -229,7 +280,7 @@ fn parse_multibulk(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>,
       }
     }
     let length = cvt.wrap::<i64, u64>(size);
-    let data_start = line.end +wrap 2_u64;
+    let data_start = line_end +wrap 2_u64;
     let data_end = data_start +wrap length;
     let closed = data_end +wrap 2_u64;
     if closed > held {
