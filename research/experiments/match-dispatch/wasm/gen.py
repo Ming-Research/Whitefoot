@@ -274,7 +274,7 @@ def numeric_arm(name, ins, out, lines):
     body = [l.replace("return trap(code: 2_u32, pc: pc);", "return False();") for l in lines]
     res = "ok: Bool" if trapping else "r: unit"
     params = "d: u16, a: u16" + (", b: u16" if len(ins) == 2 else "")
-    h = [f"fn {fn}(stack: &Box<Array<u64>>, fp: u64, {params}) -> {res} writes(stack) contract {{", FRAME, KEEPS, "} {"]
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, fp: u64, {params}) -> {res} writes(stack.inner) contract {{", FRAME, KEEPS, "} {"]
     b = slot("a", "a") + ["let xw = stack^.inner[at];"] + decode("x", "xw", ins[0])
     if len(ins) == 2:
         b += slot("b", "b") + ["let yw = stack^.inner[bt];"] + decode("y", "yw", ins[1])
@@ -306,7 +306,7 @@ def memory_address(nbytes):
 
 def load_arm(name, nbytes, signed, out):
     fn = snake(name)
-    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, d: u16, a: u16, offset: u32) -> ok: Bool reads(mem), writes(stack) contract {{",
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, d: u16, a: u16, offset: u32) -> ok: Bool reads(mem), writes(stack.inner) contract {{",
          FRAME, KEEPS, "} {"]
     b = slot("a", "a") + ["let aw = stack^.inner[at];"] + memory_address(nbytes) + ["if lim <= mem^.inner.len {"]
     inner = []
@@ -352,7 +352,7 @@ def load_arm(name, nbytes, signed, out):
 
 def store_arm(name, nbytes):
     fn = snake(name)
-    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, a: u16, v: u16, offset: u32) -> ok: Bool reads(stack), writes(mem) contract {{",
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, a: u16, v: u16, offset: u32) -> ok: Bool reads(stack), writes(mem.inner) contract {{",
          FRAME, "  ensures mem^.inner.len == entry(mem)^.inner.len;", "} {"]
     b = slot("a", "a") + slot("v", "v") + ["let aw = stack^.inner[at];", "let vw = stack^.inner[vt];"] + memory_address(nbytes) + ["if lim <= mem^.inner.len {"]
     inner = []

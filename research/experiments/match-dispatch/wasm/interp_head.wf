@@ -51,7 +51,7 @@ fn trap(code: u32, pc: u64) -> r: Outcome pure {
   return t;
 }
 
-fn zero_range(stack: &Box<Array<u64>>, from: u64, to: u64) -> r: unit writes(stack) contract {
+fn zero_range(stack: &Box<Array<u64>>, from: u64, to: u64) -> r: unit writes(stack.inner) contract {
   requires to <= stack^.inner.len;
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
@@ -62,7 +62,7 @@ fn zero_range(stack: &Box<Array<u64>>, from: u64, to: u64) -> r: unit writes(sta
   return unit;
 }
 
-fn move_slot(stack: &Box<Array<u64>>, fp: u64, s: u64, d: u64) -> r: unit writes(stack) contract {
+fn move_slot(stack: &Box<Array<u64>>, fp: u64, s: u64, d: u64) -> r: unit writes(stack.inner) contract {
   requires fp + 65536_u64 <= stack^.inner.len;
   requires s < 65536_u64;
   requires d < 65536_u64;
@@ -76,7 +76,7 @@ fn move_slot(stack: &Box<Array<u64>>, fp: u64, s: u64, d: u64) -> r: unit writes
   return unit;
 }
 
-fn copy_memory(mem: &Box<Array<u8>>, dst: u64, src: u64, count: u64) -> ok: Bool writes(mem) contract {
+fn copy_memory(mem: &Box<Array<u8>>, dst: u64, src: u64, count: u64) -> ok: Bool writes(mem.inner) contract {
   ensures mem^.inner.len == entry(mem)^.inner.len;
 } {
   doc "memory.copy: an overlapping copy, back to front when the destination lies above the source.";
@@ -111,7 +111,7 @@ fn copy_memory(mem: &Box<Array<u8>>, dst: u64, src: u64, count: u64) -> ok: Bool
   return True();
 }
 
-fn fill_memory(mem: &Box<Array<u8>>, dst: u64, value: u8, count: u64) -> ok: Bool writes(mem) contract {
+fn fill_memory(mem: &Box<Array<u8>>, dst: u64, value: u8, count: u64) -> ok: Bool writes(mem.inner) contract {
   ensures mem^.inner.len == entry(mem)^.inner.len;
 } {
   doc "memory.fill.";
@@ -130,7 +130,7 @@ fn fill_memory(mem: &Box<Array<u8>>, dst: u64, value: u8, count: u64) -> ok: Boo
   return True();
 }
 
-fn enter(stack: &Box<Array<u64>>, consts: &Box<Slots<u64>>, fp: u64, at: u16, callee: Func, ret: u64) -> nf: u64 reads(consts), writes(stack) contract {
+fn enter(stack: &Box<Array<u64>>, consts: &Box<Slots<u64>>, fp: u64, at: u16, callee: Func, ret: u64) -> nf: u64 reads(consts), writes(stack.inner) contract {
   ensures stack^.inner.len == entry(stack)^.inner.len;
 } {
   doc "Builds the frame of a call whose arguments are the callee's parameter slots from at: zeroes its locals, copies its constants after them, saves ret and the caller's frame base after those, and returns the callee's frame base, or the largest u64 when its 65536 slots do not fit in the stack.";

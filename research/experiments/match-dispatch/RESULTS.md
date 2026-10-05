@@ -394,6 +394,26 @@ from 107 to 77 million: conditions held in locals no longer needed one. The
 largest remaining kinds are `I32Add` (102 million), `Copy` (77 million),
 `I32Load` (53 million) and `I32And` (43 million).
 
+### v2d, the stack box kept across helper calls
+
+The handlers' helper functions declare `writes(stack.inner)` and
+`writes(mem.inner)`, writes below the boxes' content, in place of
+`writes(stack)` and `writes(mem)`, and the interpreter is compiled by the
+compiler of branch `claude/pin-through-callees`, which keeps such a
+reference pinned across those calls and hands each callee a part-local slot
+holding the hoisted box pointer. The `I32Add` handler's machine code loses
+its reload of the stack box's pointer (`ldr x11, [x22]`): seventeen
+instructions to its indirect branch instead of eighteen, and no dependent
+load. Seven alternating launches ([run-wasm-v2d.tsv](run-wasm-v2d.tsv)), every
+launch with correct CRCs; Silverfir-nano's spread includes one slow launch:
+
+| Build | Median score | Ratio to Silverfir-nano | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2c | 2522.1 | 0.441 | 11,918,394,281 | 2,498,674,814 |
+| v2d | 2617.8 | 0.458 | 11,230,519,951 | 2,431,061,674 |
+
+The score rises 3.8%, above the 2% criterion.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which
