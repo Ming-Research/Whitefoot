@@ -1,0 +1,5 @@
+package halo = "../../../lib/halo";
+
+pkg::host: [halo::embed, halo::value, halo::vm, halo::number, std::io, std::process, std::fs, std::time, std::text];
+
+entry bench = pkg::host::main;
