@@ -1,0 +1,6292 @@
+{
+  "criterion": {
+    "numeric_improvement_minimum": 0.1,
+    "check_ratio_maximum": 1.5,
+    "kernel_pairs": 6,
+    "check_runs_per_side": 3,
+    "improvement": "1 - median(after) / median(before)"
+  },
+  "source_identities": {
+    "before": {
+      "revision": "d469d1ec7d9b6a34ab485028eb986ad578fbb17c",
+      "sources": {
+        "compiler/target/gate/whitefootc": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+        "lib/halo/compile/assemble.wf": "7e272e23660b3ad4bebc3c7df3e8da3f6258be28bae893d9a777fcb6c3c78ff1",
+        "lib/halo/compile/bridge.wf": "5045ced98cb87533d3515dd7f946597be2c1e7f74fb6b44fae28d9b299320bfb",
+        "lib/halo/compile/code.wf": "4a0c75d59599654c91df1e79ac1724b6a3e63e8abf328f66bcfb2f8c07114861",
+        "lib/halo/compile/entry.wf": "734f82984a07eb424e579781af6e5dfda1122b6d16c293b807c2ee3099c14732",
+        "lib/halo/compile/expr.wf": "3ab2fc27cdfcd7085422ed7294838bd4595288aaba5970cc98c929d68ff9fc46",
+        "lib/halo/compile/module.wfm": "8d2fad42cabd09cfa9c2a7b4edb8c641a1f6c0b96800d282b3579dc1985d69f8",
+        "lib/halo/compile/parse_support.wf": "3ac5bebb5bfc12d35de68be96c439245b313323a08f8d4ac304a8cb277e0b429",
+        "lib/halo/compile/statements.wf": "272f81b0e03617c13d6449da1436cefcbe8ce108ee774fd78e6fdb9a87fa88d1",
+        "lib/halo/compile/support.wf": "4994946c342bbfc0a3712038e1a4702afae40bb6e1809ef2427753cea6976888",
+        "lib/halo/compile/verify.wf": "5b6656635ca8a04eb2debcde76fedb268b50e3ed146b95e2cccd2a056cda7adb",
+        "lib/halo/embed/engine.wf": "f328bea47550924792ab572f423eeac34a4d1a0929582c4bf1b4d673203ac4d2",
+        "lib/halo/embed/install.wf": "919ac491ea05e7995e6ac0eb886c4db19e1853d0f19805fde38edf8d82435f22",
+        "lib/halo/embed/module.wfm": "14c49e2a42c8968d244559f27ab2dd1a0771b9bbcafc2dd51b62216fed40dc3c",
+        "lib/halo/embed/redis-error.wf": "79a4ac2f71c36e011982f5169d4ffa91a9a8e1d689e3f33c3c4230af2cdd90cf",
+        "lib/halo/embed/sha1.wf": "6b41fa53fb8c78165d3352be10ee548c2e27c36a6bb59b540d3eefa3121e033c",
+        "lib/halo/embed/values.wf": "fd46f55b373a2c044224b9756f72520a7ee7e171d146f409217ac59e62ebe96d",
+        "lib/halo/heap/gc.wf": "020caee48b3badcfc3de5a80b532749b9b486021138f38ccb9665fe0550796f6",
+        "lib/halo/heap/module.wfm": "2b5e254d3e77c330c06b77c8bbd19fe0182a27e75380072eb332fa863371e372",
+        "lib/halo/heap/slabs.wf": "1a7833e5930f55050e4fa1e36297684a5374be7ace9133ca90fb5f7d56b0648d",
+        "lib/halo/heap/strings.wf": "625fc1cf41e830d5f95dba259f9f6c012a55d4e1b156bdd3047686eb7ee0e490",
+        "lib/halo/heap/tables.wf": "af0420e70b46ce75e1dedb1af97e21687388b2b1b6a1f9570c1668a70bcff186",
+        "lib/halo/lex/error.wf": "a232a9f535bf7bf6738cfd3e692dd49f7a6575634edd02e7b81439d2f9d37cda",
+        "lib/halo/lex/lex.wf": "16040b47766f2b14697e73b443d498b0e944aee43f2556c2b8cd98d845d2ad21",
+        "lib/halo/lex/module.wfm": "3d0bfdd23dadc80ff6b0b9e33163bb6add59ba25b028340287b8c171c67671d8",
+        "lib/halo/lex/scan.wf": "5eee71bbb14a8b5ea941a85019961bd20d74716bf22dba709e6829a03e15078d",
+        "lib/halo/lex/support.wf": "0dc9493c850c6f441e98f2db62786bd32d87a7018001027b9ed73f6ed739008c",
+        "lib/halo/modules.wfg": "b7a0b5e45424788921418b5133ea5dad51357b528e5eed1cbd83d55650691936",
+        "lib/halo/number/decimal.wf": "8f1589d6d0f5bfee3f870099b1b7103847028a19b5156f03c981bd97ebb86797",
+        "lib/halo/number/format.wf": "65340adf8f5fa8b6d7bdb2086fc19b5e3fab8656dcf54b5813b4895a06da1dbd",
+        "lib/halo/number/math.wf": "652541ec554ddfb5ee144e0b5d64ccd7b23dba0f5a85d407a7af8535f99f9907",
+        "lib/halo/number/module.wfm": "098558648ddeef2f0805414866e687b8e61711b84669fb0a588d8d495ab10a8c",
+        "lib/halo/number/pow-data.wf": "efb5c13631311e235c57199c49dba39e1e220597b37c3e2ae09f58a8234b6635",
+        "lib/halo/number/pow.wf": "b7d5ebd29d5abdfaab428995e5efc6d6ddbcb8455f3c4f420175e4ee1a7e2bf0",
+        "lib/halo/number/read.wf": "957326a7e7d532f467a54cd66d80f93f272913319118efbfbe0fe9d49716177d",
+        "lib/halo/number/tests/check/check.wf": "8a08486b0104779fa8f6d775188edc4163241975071695efa9965a0ca7c6b7d4",
+        "lib/halo/number/tests/check/module.wfm": "f86fe277b71d2b8166bc69f68364a215821ab11e63ff1bc5862016c2fcea4769",
+        "lib/halo/value/module.wfm": "ee3fcd96704819565545ef6ea419c47feb8fcc36ac5854e5fc5a3f31d0e1f149",
+        "lib/halo/value/value.wf": "56c836f7597f8f8ba392da6848712f45a068519d7b7f994825d047eb9635e206",
+        "lib/halo/vm/builtins.wf": "1837a0332383e1673893009df8c3984f524404919c8f235607ae56641e83847a",
+        "lib/halo/vm/calls.wf": "15c454adb82eb82c6be526a7138630d29854f0a3a35c54f950a20740feef003d",
+        "lib/halo/vm/collect.wf": "025519ef055751caa9417c3967fb2d1cc21613f262709a20c73e323ce432af93",
+        "lib/halo/vm/continuations.wf": "9d2feb734c7caed6d6d65817181aa04c879c1dd06302b697f916bf952f04c599",
+        "lib/halo/vm/dispatch.wf": "fe463f69749d93914ba4f87bcd5e0ec475ccaeb26a3adfd79fbbd75452de52c3",
+        "lib/halo/vm/handlers.wf": "52075921f099ff0f47e97f21f97529c261f693928267abf0ed4bbfa65215f36c",
+        "lib/halo/vm/instructions.wf": "e215c7d624b10adac7a955253f8dab2556c04f2da9489f9635fd733296ad412f",
+        "lib/halo/vm/library-base.wf": "ab069dfa3fb7a4cdd08ded923c01f3fad3d4b389f7a1b9eaee8c23f6aeaacc9b",
+        "lib/halo/vm/library-bit.wf": "3e02ac3a8bccbe05310116f06962edb7aa7a1c3268cae8627c40133abea08a7d",
+        "lib/halo/vm/library-callbacks.wf": "e0cea17b590965be92cda158da014ac69b1535a9b6fc60287467a7a22eba103a",
+        "lib/halo/vm/library-cjson-decode.wf": "a4fa99abdd656f4d0d14218a7e935522a543008354cd0e395099b4e04d8730f7",
+        "lib/halo/vm/library-cjson.wf": "4425355d2a042ff1d4eac57121441a4e7054e73207d8f947643a9012555c6cf2",
+        "lib/halo/vm/library-cmsgpack.wf": "701ddeb9e0676433efeb6fc32bf677d11fdecb3e0e62360d0285486dc636c416",
+        "lib/halo/vm/library-codecs.wf": "02ea53d45fd8624f171807acb41065ec94756e5d5a0e62b282419d3314d8d99e",
+        "lib/halo/vm/library-decimal.wf": "0c01d351582ec88f6101dcad997c4a3bbd7fcde0ce410761489962b9214cf2a0",
+        "lib/halo/vm/library-dispatch.wf": "7e503f0b0227d638eb892c2b4bfe9d075e0fe176305e69e6c7a553e6aade3a1a",
+        "lib/halo/vm/library-format.wf": "0aad72db13d19244d37c5a17bfd69e5b3ef9a5f951b56ebaef0501dbe54419aa",
+        "lib/halo/vm/library-hyperbolic.wf": "df2c7425d93ca4907a6f3f5101ced4505a448e2a684dfcfd123bab0a95550bde",
+        "lib/halo/vm/library-libm.wf": "49ebf733338dd82c43d53e82f4fe5ff8ef2bcafb23fc3e1c8724cd079cfe9196",
+        "lib/halo/vm/library-math.wf": "5f942f6fa8b1241f0b22a6681e8bcbb22506e1702594e2f02a7669d997c02dc5",
+        "lib/halo/vm/library-pattern-api.wf": "356bc1e0d57ab37a5f3a9e1ed24c023b8344137aff2371716c49db7e215a3641",
+        "lib/halo/vm/library-pattern-sub.wf": "06b88a60947461918503a86852a0576cf582103479a1f4d03598720c9ea60398",
+        "lib/halo/vm/library-pattern.wf": "eea41fe800af855b7755c6fd0b6e43328ea6b8db330b4c78c926fd5ea6e029fc",
+        "lib/halo/vm/library-sort.wf": "c68c2f874d4bb5ec55c11624a80c40b16d3ad7d8e09590277eb0a9d91dde611c",
+        "lib/halo/vm/library-string.wf": "eccfb26c443a65e9bf2094efd381706491543261591a5c2f9fbc59d9c69059e7",
+        "lib/halo/vm/library-struct.wf": "17e2f91082b77e9aa71d1ebd4aa0c800480d2bcd362847d17823308b021bb41b",
+        "lib/halo/vm/library-table.wf": "e660685a348ad7b50b11289fa2c0df3eb378ac0d694b3b99d181d45318f62869",
+        "lib/halo/vm/library-trig.wf": "ec5fdbf5b2ae83cca40bd9028dbf17d686d4ff743a698c25a4cd08ec50b31605",
+        "lib/halo/vm/library.wf": "e1c709af0c9f04e9b830fa3d82d27d044b9d4c3f4533b91020f28c09379bdd61",
+        "lib/halo/vm/module.wfm": "31ceb9bfc6eb46c55d49e5a772f0dba831bb95cda493673bafb61260367f3620",
+        "lib/halo/vm/slow.wf": "23e71263f199e75a4e5d76df57ced44c15f728de6be5da940661b634b4eb0349",
+        "lib/halo/vm/state.wf": "1dd7e9cecbaec94e68cf287127ace3dcb37bb96f7927ae273c7443c852c614c9"
+      },
+      "baseline_binary": "target/halo-after",
+      "baseline_binary_sha256": "789792760374e1438316f9c1329297c49c106361c3c8faa78da35aa67afdb287",
+      "baseline_build_revision": "ec69af2c494b5d26ede8cf319e5c73c1d9efc29f",
+      "current_library_equals_baseline_build": true
+    },
+    "after": {
+      "revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae",
+      "sources": {
+        "compiler/target/gate/whitefootc": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+        "lib/halo/compile/assemble.wf": "7e272e23660b3ad4bebc3c7df3e8da3f6258be28bae893d9a777fcb6c3c78ff1",
+        "lib/halo/compile/bridge.wf": "5045ced98cb87533d3515dd7f946597be2c1e7f74fb6b44fae28d9b299320bfb",
+        "lib/halo/compile/code.wf": "4a0c75d59599654c91df1e79ac1724b6a3e63e8abf328f66bcfb2f8c07114861",
+        "lib/halo/compile/entry.wf": "734f82984a07eb424e579781af6e5dfda1122b6d16c293b807c2ee3099c14732",
+        "lib/halo/compile/expr.wf": "3ab2fc27cdfcd7085422ed7294838bd4595288aaba5970cc98c929d68ff9fc46",
+        "lib/halo/compile/module.wfm": "8d2fad42cabd09cfa9c2a7b4edb8c641a1f6c0b96800d282b3579dc1985d69f8",
+        "lib/halo/compile/parse_support.wf": "3ac5bebb5bfc12d35de68be96c439245b313323a08f8d4ac304a8cb277e0b429",
+        "lib/halo/compile/statements.wf": "272f81b0e03617c13d6449da1436cefcbe8ce108ee774fd78e6fdb9a87fa88d1",
+        "lib/halo/compile/support.wf": "4994946c342bbfc0a3712038e1a4702afae40bb6e1809ef2427753cea6976888",
+        "lib/halo/compile/verify.wf": "5b6656635ca8a04eb2debcde76fedb268b50e3ed146b95e2cccd2a056cda7adb",
+        "lib/halo/embed/engine.wf": "f328bea47550924792ab572f423eeac34a4d1a0929582c4bf1b4d673203ac4d2",
+        "lib/halo/embed/install.wf": "919ac491ea05e7995e6ac0eb886c4db19e1853d0f19805fde38edf8d82435f22",
+        "lib/halo/embed/module.wfm": "14c49e2a42c8968d244559f27ab2dd1a0771b9bbcafc2dd51b62216fed40dc3c",
+        "lib/halo/embed/redis-error.wf": "79a4ac2f71c36e011982f5169d4ffa91a9a8e1d689e3f33c3c4230af2cdd90cf",
+        "lib/halo/embed/sha1.wf": "6b41fa53fb8c78165d3352be10ee548c2e27c36a6bb59b540d3eefa3121e033c",
+        "lib/halo/embed/values.wf": "fd46f55b373a2c044224b9756f72520a7ee7e171d146f409217ac59e62ebe96d",
+        "lib/halo/heap/gc.wf": "020caee48b3badcfc3de5a80b532749b9b486021138f38ccb9665fe0550796f6",
+        "lib/halo/heap/module.wfm": "2b5e254d3e77c330c06b77c8bbd19fe0182a27e75380072eb332fa863371e372",
+        "lib/halo/heap/slabs.wf": "1a7833e5930f55050e4fa1e36297684a5374be7ace9133ca90fb5f7d56b0648d",
+        "lib/halo/heap/strings.wf": "625fc1cf41e830d5f95dba259f9f6c012a55d4e1b156bdd3047686eb7ee0e490",
+        "lib/halo/heap/tables.wf": "af0420e70b46ce75e1dedb1af97e21687388b2b1b6a1f9570c1668a70bcff186",
+        "lib/halo/lex/error.wf": "a232a9f535bf7bf6738cfd3e692dd49f7a6575634edd02e7b81439d2f9d37cda",
+        "lib/halo/lex/lex.wf": "16040b47766f2b14697e73b443d498b0e944aee43f2556c2b8cd98d845d2ad21",
+        "lib/halo/lex/module.wfm": "3d0bfdd23dadc80ff6b0b9e33163bb6add59ba25b028340287b8c171c67671d8",
+        "lib/halo/lex/scan.wf": "5eee71bbb14a8b5ea941a85019961bd20d74716bf22dba709e6829a03e15078d",
+        "lib/halo/lex/support.wf": "0dc9493c850c6f441e98f2db62786bd32d87a7018001027b9ed73f6ed739008c",
+        "lib/halo/modules.wfg": "b7a0b5e45424788921418b5133ea5dad51357b528e5eed1cbd83d55650691936",
+        "lib/halo/number/decimal.wf": "8f1589d6d0f5bfee3f870099b1b7103847028a19b5156f03c981bd97ebb86797",
+        "lib/halo/number/format.wf": "65340adf8f5fa8b6d7bdb2086fc19b5e3fab8656dcf54b5813b4895a06da1dbd",
+        "lib/halo/number/math.wf": "652541ec554ddfb5ee144e0b5d64ccd7b23dba0f5a85d407a7af8535f99f9907",
+        "lib/halo/number/module.wfm": "098558648ddeef2f0805414866e687b8e61711b84669fb0a588d8d495ab10a8c",
+        "lib/halo/number/pow-data.wf": "efb5c13631311e235c57199c49dba39e1e220597b37c3e2ae09f58a8234b6635",
+        "lib/halo/number/pow.wf": "b7d5ebd29d5abdfaab428995e5efc6d6ddbcb8455f3c4f420175e4ee1a7e2bf0",
+        "lib/halo/number/read.wf": "957326a7e7d532f467a54cd66d80f93f272913319118efbfbe0fe9d49716177d",
+        "lib/halo/number/tests/check/check.wf": "8a08486b0104779fa8f6d775188edc4163241975071695efa9965a0ca7c6b7d4",
+        "lib/halo/number/tests/check/module.wfm": "f86fe277b71d2b8166bc69f68364a215821ab11e63ff1bc5862016c2fcea4769",
+        "lib/halo/value/module.wfm": "ee3fcd96704819565545ef6ea419c47feb8fcc36ac5854e5fc5a3f31d0e1f149",
+        "lib/halo/value/value.wf": "56c836f7597f8f8ba392da6848712f45a068519d7b7f994825d047eb9635e206",
+        "lib/halo/vm/builtins.wf": "1837a0332383e1673893009df8c3984f524404919c8f235607ae56641e83847a",
+        "lib/halo/vm/calls.wf": "15c454adb82eb82c6be526a7138630d29854f0a3a35c54f950a20740feef003d",
+        "lib/halo/vm/collect.wf": "025519ef055751caa9417c3967fb2d1cc21613f262709a20c73e323ce432af93",
+        "lib/halo/vm/continuations.wf": "9d2feb734c7caed6d6d65817181aa04c879c1dd06302b697f916bf952f04c599",
+        "lib/halo/vm/dispatch.wf": "5795a027da9e9ef165f0a74903e9d3703be005852f03378ece436adf2a636150",
+        "lib/halo/vm/handlers.wf": "91da01298fa926b7805cd376f5a11d6b2621b29b3511c8499f36cb535849f6fb",
+        "lib/halo/vm/instructions.wf": "e215c7d624b10adac7a955253f8dab2556c04f2da9489f9635fd733296ad412f",
+        "lib/halo/vm/library-base.wf": "ab069dfa3fb7a4cdd08ded923c01f3fad3d4b389f7a1b9eaee8c23f6aeaacc9b",
+        "lib/halo/vm/library-bit.wf": "3e02ac3a8bccbe05310116f06962edb7aa7a1c3268cae8627c40133abea08a7d",
+        "lib/halo/vm/library-callbacks.wf": "e0cea17b590965be92cda158da014ac69b1535a9b6fc60287467a7a22eba103a",
+        "lib/halo/vm/library-cjson-decode.wf": "a4fa99abdd656f4d0d14218a7e935522a543008354cd0e395099b4e04d8730f7",
+        "lib/halo/vm/library-cjson.wf": "4425355d2a042ff1d4eac57121441a4e7054e73207d8f947643a9012555c6cf2",
+        "lib/halo/vm/library-cmsgpack.wf": "701ddeb9e0676433efeb6fc32bf677d11fdecb3e0e62360d0285486dc636c416",
+        "lib/halo/vm/library-codecs.wf": "02ea53d45fd8624f171807acb41065ec94756e5d5a0e62b282419d3314d8d99e",
+        "lib/halo/vm/library-decimal.wf": "0c01d351582ec88f6101dcad997c4a3bbd7fcde0ce410761489962b9214cf2a0",
+        "lib/halo/vm/library-dispatch.wf": "7e503f0b0227d638eb892c2b4bfe9d075e0fe176305e69e6c7a553e6aade3a1a",
+        "lib/halo/vm/library-format.wf": "0aad72db13d19244d37c5a17bfd69e5b3ef9a5f951b56ebaef0501dbe54419aa",
+        "lib/halo/vm/library-hyperbolic.wf": "df2c7425d93ca4907a6f3f5101ced4505a448e2a684dfcfd123bab0a95550bde",
+        "lib/halo/vm/library-libm.wf": "49ebf733338dd82c43d53e82f4fe5ff8ef2bcafb23fc3e1c8724cd079cfe9196",
+        "lib/halo/vm/library-math.wf": "5f942f6fa8b1241f0b22a6681e8bcbb22506e1702594e2f02a7669d997c02dc5",
+        "lib/halo/vm/library-pattern-api.wf": "356bc1e0d57ab37a5f3a9e1ed24c023b8344137aff2371716c49db7e215a3641",
+        "lib/halo/vm/library-pattern-sub.wf": "06b88a60947461918503a86852a0576cf582103479a1f4d03598720c9ea60398",
+        "lib/halo/vm/library-pattern.wf": "eea41fe800af855b7755c6fd0b6e43328ea6b8db330b4c78c926fd5ea6e029fc",
+        "lib/halo/vm/library-sort.wf": "c68c2f874d4bb5ec55c11624a80c40b16d3ad7d8e09590277eb0a9d91dde611c",
+        "lib/halo/vm/library-string.wf": "eccfb26c443a65e9bf2094efd381706491543261591a5c2f9fbc59d9c69059e7",
+        "lib/halo/vm/library-struct.wf": "17e2f91082b77e9aa71d1ebd4aa0c800480d2bcd362847d17823308b021bb41b",
+        "lib/halo/vm/library-table.wf": "e660685a348ad7b50b11289fa2c0df3eb378ac0d694b3b99d181d45318f62869",
+        "lib/halo/vm/library-trig.wf": "ec5fdbf5b2ae83cca40bd9028dbf17d686d4ff743a698c25a4cd08ec50b31605",
+        "lib/halo/vm/library.wf": "e1c709af0c9f04e9b830fa3d82d27d044b9d4c3f4533b91020f28c09379bdd61",
+        "lib/halo/vm/module.wfm": "31ceb9bfc6eb46c55d49e5a772f0dba831bb95cda493673bafb61260367f3620",
+        "lib/halo/vm/slow.wf": "23e71263f199e75a4e5d76df57ced44c15f728de6be5da940661b634b4eb0349",
+        "lib/halo/vm/state.wf": "1dd7e9cecbaec94e68cf287127ace3dcb37bb96f7927ae273c7443c852c614c9"
+      }
+    }
+  },
+  "check_times": {
+    "before": {
+      "runs": [
+        {
+          "real": 216.28,
+          "user": 162.62,
+          "sys": 24.01,
+          "exit": 0,
+          "run": 1
+        },
+        {
+          "real": 210.07,
+          "user": 163.05,
+          "sys": 22.37,
+          "exit": 0,
+          "run": 2
+        },
+        {
+          "real": 206.35,
+          "user": 162.69,
+          "sys": 21.84,
+          "exit": 0,
+          "run": 3
+        }
+      ],
+      "median": 210.07,
+      "minimum": 206.35,
+      "maximum": 216.28
+    },
+    "after": {
+      "runs": [
+        {
+          "real": 241.0,
+          "user": 181.44,
+          "sys": 25.88,
+          "exit": 0,
+          "run": 1
+        },
+        {
+          "real": 241.95,
+          "user": 181.09,
+          "sys": 25.84,
+          "exit": 0,
+          "run": 2
+        },
+        {
+          "real": 239.36,
+          "user": 182.28,
+          "sys": 25.39,
+          "exit": 0,
+          "run": 3
+        }
+      ],
+      "median": 241.0,
+      "minimum": 239.36,
+      "maximum": 241.95
+    },
+    "ratio": 1.1472366354072452
+  },
+  "failed_check_attempts": [
+    {
+      "name": "formation",
+      "seconds": 6.33,
+      "exit": 1,
+      "diagnostic": [
+        "FN-9",
+        "InvalidPostconditionRelation"
+      ]
+    },
+    {
+      "name": "cycle",
+      "seconds": 381.27,
+      "exit": 1,
+      "diagnostic": [
+        "FN-8",
+        "UndischargedCallRequirement"
+      ]
+    },
+    {
+      "name": "comment",
+      "seconds": 2.59,
+      "exit": 1,
+      "diagnostic": [
+        "FORM-4",
+        "CommentPrefix"
+      ]
+    },
+    {
+      "name": "atoms",
+      "seconds": 3.48,
+      "exit": 1,
+      "diagnostic": [
+        "GRAM-9",
+        "UnexpectedToken"
+      ]
+    },
+    {
+      "name": "effects",
+      "seconds": 6.31,
+      "exit": 1,
+      "diagnostic": [
+        "EFF-2",
+        "EffectMismatch"
+      ]
+    }
+  ],
+  "runs": {
+    "c1-fib-one": {
+      "revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae",
+      "host": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "started_utc": "2026-10-05T15:36:35Z",
+      "binary_sha256": "c2d6ff35f27f4c5817512d7639e495044a1f60fca401be64202f99c0419749f0",
+      "lua_sha256": "dd2f2bb469b8c423292e23a5ab0dea2c4f3ea23658b76d55cd5f296d5d94e91e",
+      "compiler_sha256": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+      "host_sources_sha256": {
+        "modules.wfg": "dae3b0320fcfb9d8223b537ee27b7d1342e277a639dddf4582b5736d4b865230",
+        "host/module.wfm": "6b555158bf47efd20cbd81a123f4906b55d5213364ee829b7c0253a89820a939",
+        "host/driver.wf": "bda376ab2c19d8fbd27b3e18cc28dc9cbc15b077f01c8120bf334e01704a5fbc"
+      },
+      "budget": "large",
+      "profile": false,
+      "reference_only": false,
+      "scales": {},
+      "kernels": {
+        "fib": {
+          "source_sha256": "dbbbf86920c5e832958c523d378e5d28fd593739008327d2db30ba61548b44ab",
+          "pairs": [
+            {
+              "halo": 0.5735712912864983,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.2283368338830769,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "832040\n"
+          },
+          "before": {
+            "median": 0.2283368338830769,
+            "minimum": 0.2283368338830769,
+            "maximum": 0.2283368338830769,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "halo": {
+            "median": 0.5735712912864983,
+            "minimum": 0.5735712912864983,
+            "maximum": 0.5735712912864983,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "ratio": 2.5119525462992254
+        }
+      },
+      "launches": [
+        {
+          "kernel": "fib",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.2283368338830769,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.5735712912864983,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        }
+      ],
+      "before_binary_sha256": "789792760374e1438316f9c1329297c49c106361c3c8faa78da35aa67afdb287",
+      "before_budget": "large"
+    },
+    "c1-others-one": {
+      "revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae",
+      "host": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "started_utc": "2026-10-05T15:36:53Z",
+      "binary_sha256": "c2d6ff35f27f4c5817512d7639e495044a1f60fca401be64202f99c0419749f0",
+      "lua_sha256": "dd2f2bb469b8c423292e23a5ab0dea2c4f3ea23658b76d55cd5f296d5d94e91e",
+      "compiler_sha256": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+      "host_sources_sha256": {
+        "modules.wfg": "dae3b0320fcfb9d8223b537ee27b7d1342e277a639dddf4582b5736d4b865230",
+        "host/module.wfm": "6b555158bf47efd20cbd81a123f4906b55d5213364ee829b7c0253a89820a939",
+        "host/driver.wf": "bda376ab2c19d8fbd27b3e18cc28dc9cbc15b077f01c8120bf334e01704a5fbc"
+      },
+      "budget": "large",
+      "profile": false,
+      "reference_only": false,
+      "scales": {
+        "binary-trees": 14
+      },
+      "kernels": {
+        "loop": {
+          "source_sha256": "109c6f96fd9809ccf6525f982b11baa2f6dbe352990a28a60c474807be9265da",
+          "pairs": [
+            {
+              "halo": 0.5581577499397099,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.2431507920846343,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "5.00000005e+15\n"
+          },
+          "before": {
+            "median": 1.2431507920846343,
+            "minimum": 1.2431507920846343,
+            "maximum": 1.2431507920846343,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "halo": {
+            "median": 0.5581577499397099,
+            "minimum": 0.5581577499397099,
+            "maximum": 0.5581577499397099,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "ratio": 0.44898636070024744
+        },
+        "integer-table": {
+          "source_sha256": "0281334766512a9e620a543d5b429f7c0d61b8ea2ff82927224d52b1e72ee3ce",
+          "pairs": [
+            {
+              "halo": 0.7404274996370077,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.788883666973561,
+              "before_suspends": 0,
+              "before_collections": 5
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "50000005000000\n"
+          },
+          "before": {
+            "median": 0.788883666973561,
+            "minimum": 0.788883666973561,
+            "maximum": 0.788883666973561,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "halo": {
+            "median": 0.7404274996370077,
+            "minimum": 0.7404274996370077,
+            "maximum": 0.7404274996370077,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "ratio": 0.9385762827078821
+        },
+        "string-key": {
+          "source_sha256": "585821f9c9800736ce0e3af1f83bbb2b1f6a7d274e04c83b0494a4ae38b74cea",
+          "pairs": [
+            {
+              "halo": 0.038259999826550484,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.05772641720250249,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "28500000\n"
+          },
+          "before": {
+            "median": 0.05772641720250249,
+            "minimum": 0.05772641720250249,
+            "maximum": 0.05772641720250249,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "halo": {
+            "median": 0.038259999826550484,
+            "minimum": 0.038259999826550484,
+            "maximum": 0.038259999826550484,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "ratio": 0.6627814730357435
+        },
+        "concat": {
+          "source_sha256": "2fa66325e51e5d25ee67972f779b3c88d47326557f4cbf9393195799c3a7525c",
+          "pairs": [
+            {
+              "halo": 0.180868917144835,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.21363449981436133,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "5000000\n"
+          },
+          "before": {
+            "median": 0.21363449981436133,
+            "minimum": 0.21363449981436133,
+            "maximum": 0.21363449981436133,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "halo": {
+            "median": 0.180868917144835,
+            "minimum": 0.180868917144835,
+            "maximum": 0.180868917144835,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "ratio": 0.8466278494438018
+        },
+        "sort": {
+          "source_sha256": "96bb6c47b3062381dca7a9b5ae09186792d28ca5dd7cbfe7d6b3432fb8e4807d",
+          "pairs": [
+            {
+              "halo": 0.7248786250129342,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.7402906250208616,
+              "before_suspends": 0,
+              "before_collections": 3
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "1.0733795172001e+15\n"
+          },
+          "before": {
+            "median": 0.7402906250208616,
+            "minimum": 0.7402906250208616,
+            "maximum": 0.7402906250208616,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "halo": {
+            "median": 0.7248786250129342,
+            "minimum": 0.7248786250129342,
+            "maximum": 0.7248786250129342,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "ratio": 0.9791811492851296
+        },
+        "binary-trees": {
+          "source_sha256": "01f28ad8804be0bc1b8539aabfc7942da18b928b1a270cf7cb9300367f1eebd6",
+          "pairs": [
+            {
+              "halo": 2.4054182921536267,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.4166799588128924,
+              "before_suspends": 0,
+              "before_collections": 176
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "-43682\n"
+          },
+          "before": {
+            "median": 2.4166799588128924,
+            "minimum": 2.4166799588128924,
+            "maximum": 2.4166799588128924,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "halo": {
+            "median": 2.4054182921536267,
+            "minimum": 2.4054182921536267,
+            "maximum": 2.4054182921536267,
+            "relative_range": 0.0,
+            "runs": 1
+          },
+          "ratio": 0.9953400256338462
+        }
+      },
+      "launches": [
+        {
+          "kernel": "loop",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 1.2431507920846343,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.5581577499397099,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.788883666973561,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.7404274996370077,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.05772641720250249,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.038259999826550484,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.21363449981436133,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.180868917144835,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.7402906250208616,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.7248786250129342,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 2.4166799588128924,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 2.4054182921536267,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        }
+      ],
+      "before_binary_sha256": "789792760374e1438316f9c1329297c49c106361c3c8faa78da35aa67afdb287",
+      "before_budget": "large"
+    },
+    "c1-three": {
+      "revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae",
+      "host": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "started_utc": "2026-10-05T15:38:18Z",
+      "binary_sha256": "c2d6ff35f27f4c5817512d7639e495044a1f60fca401be64202f99c0419749f0",
+      "lua_sha256": "dd2f2bb469b8c423292e23a5ab0dea2c4f3ea23658b76d55cd5f296d5d94e91e",
+      "compiler_sha256": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+      "host_sources_sha256": {
+        "modules.wfg": "dae3b0320fcfb9d8223b537ee27b7d1342e277a639dddf4582b5736d4b865230",
+        "host/module.wfm": "6b555158bf47efd20cbd81a123f4906b55d5213364ee829b7c0253a89820a939",
+        "host/driver.wf": "bda376ab2c19d8fbd27b3e18cc28dc9cbc15b077f01c8120bf334e01704a5fbc"
+      },
+      "budget": "large",
+      "profile": false,
+      "reference_only": false,
+      "scales": {
+        "binary-trees": 14
+      },
+      "kernels": {
+        "fib": {
+          "source_sha256": "dbbbf86920c5e832958c523d378e5d28fd593739008327d2db30ba61548b44ab",
+          "pairs": [
+            {
+              "halo": 0.19425533339381218,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.22630391689017415,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.19380933325737715,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.22072141710668802,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.19455216731876135,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.2216450423002243,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "832040\n"
+          },
+          "before": {
+            "median": 0.2216450423002243,
+            "minimum": 0.22072141710668802,
+            "maximum": 0.22630391689017415,
+            "relative_range": 0.02518666659786813,
+            "runs": 3
+          },
+          "halo": {
+            "median": 0.19425533339381218,
+            "minimum": 0.19380933325737715,
+            "maximum": 0.19455216731876135,
+            "relative_range": 0.0038240085788443187,
+            "runs": 3
+          },
+          "ratio": 0.8764253482858777
+        },
+        "loop": {
+          "source_sha256": "109c6f96fd9809ccf6525f982b11baa2f6dbe352990a28a60c474807be9265da",
+          "pairs": [
+            {
+              "halo": 0.552350000012666,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.210625416599214,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.5526822917163372,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.2168838330544531,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.5536472918465734,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.2204467081464827,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "5.00000005e+15\n"
+          },
+          "before": {
+            "median": 1.2168838330544531,
+            "minimum": 1.210625416599214,
+            "maximum": 1.2204467081464827,
+            "relative_range": 0.00807085383213333,
+            "runs": 3
+          },
+          "halo": {
+            "median": 0.5526822917163372,
+            "minimum": 0.552350000012666,
+            "maximum": 0.5536472918465734,
+            "relative_range": 0.0023472650623175702,
+            "runs": 3
+          },
+          "ratio": 0.4541783502284443
+        },
+        "integer-table": {
+          "source_sha256": "0281334766512a9e620a543d5b429f7c0d61b8ea2ff82927224d52b1e72ee3ce",
+          "pairs": [
+            {
+              "halo": 0.7388734580017626,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.7813373343087733,
+              "before_suspends": 0,
+              "before_collections": 5
+            },
+            {
+              "halo": 0.7366797910071909,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.7820280003361404,
+              "before_suspends": 0,
+              "before_collections": 5
+            },
+            {
+              "halo": 0.7429049168713391,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.7829822497442365,
+              "before_suspends": 0,
+              "before_collections": 5
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "50000005000000\n"
+          },
+          "before": {
+            "median": 0.7820280003361404,
+            "minimum": 0.7813373343087733,
+            "maximum": 0.7829822497442365,
+            "relative_range": 0.0021033971095103417,
+            "runs": 3
+          },
+          "halo": {
+            "median": 0.7388734580017626,
+            "minimum": 0.7366797910071909,
+            "maximum": 0.7429049168713391,
+            "relative_range": 0.008425158322757467,
+            "runs": 3
+          },
+          "ratio": 0.9448171391359024
+        },
+        "string-key": {
+          "source_sha256": "585821f9c9800736ce0e3af1f83bbb2b1f6a7d274e04c83b0494a4ae38b74cea",
+          "pairs": [
+            {
+              "halo": 0.03803854202851653,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.05680308258160949,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.03794554201886058,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.05693712504580617,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.039349582977592945,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.058446249924600124,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "28500000\n"
+          },
+          "before": {
+            "median": 0.05693712504580617,
+            "minimum": 0.05680308258160949,
+            "maximum": 0.058446249924600124,
+            "relative_range": 0.028859331089666037,
+            "runs": 3
+          },
+          "halo": {
+            "median": 0.03803854202851653,
+            "minimum": 0.03794554201886058,
+            "maximum": 0.039349582977592945,
+            "relative_range": 0.036911008778406716,
+            "runs": 3
+          },
+          "ratio": 0.6680797809498522
+        },
+        "concat": {
+          "source_sha256": "2fa66325e51e5d25ee67972f779b3c88d47326557f4cbf9393195799c3a7525c",
+          "pairs": [
+            {
+              "halo": 0.17826708313077688,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.1980550829321146,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.1816796250641346,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.19860054133459926,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.17762616695836186,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.2069965829141438,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "5000000\n"
+          },
+          "before": {
+            "median": 0.19860054133459926,
+            "minimum": 0.1980550829321146,
+            "maximum": 0.2069965829141438,
+            "relative_range": 0.04502253579946035,
+            "runs": 3
+          },
+          "halo": {
+            "median": 0.17826708313077688,
+            "minimum": 0.17762616695836186,
+            "maximum": 0.1816796250641346,
+            "relative_range": 0.022738118751845584,
+            "runs": 3
+          },
+          "ratio": 0.8976163002014941
+        },
+        "sort": {
+          "source_sha256": "96bb6c47b3062381dca7a9b5ae09186792d28ca5dd7cbfe7d6b3432fb8e4807d",
+          "pairs": [
+            {
+              "halo": 0.7121705827303231,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.7349615837447345,
+              "before_suspends": 0,
+              "before_collections": 3
+            },
+            {
+              "halo": 0.7177218752913177,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.7359157912433147,
+              "before_suspends": 0,
+              "before_collections": 3
+            },
+            {
+              "halo": 0.7159621673636138,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.742588167078793,
+              "before_suspends": 0,
+              "before_collections": 3
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "1.0733795172001e+15\n"
+          },
+          "before": {
+            "median": 0.7359157912433147,
+            "minimum": 0.7349615837447345,
+            "maximum": 0.742588167078793,
+            "relative_range": 0.010363391334725358,
+            "runs": 3
+          },
+          "halo": {
+            "median": 0.7159621673636138,
+            "minimum": 0.7121705827303231,
+            "maximum": 0.7177218752913177,
+            "relative_range": 0.007753611592964667,
+            "runs": 3
+          },
+          "ratio": 0.9728859957659155
+        },
+        "binary-trees": {
+          "source_sha256": "01f28ad8804be0bc1b8539aabfc7942da18b928b1a270cf7cb9300367f1eebd6",
+          "pairs": [
+            {
+              "halo": 2.37421604199335,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.405793833080679,
+              "before_suspends": 0,
+              "before_collections": 176
+            },
+            {
+              "halo": 2.3746471661143005,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.4016507077030838,
+              "before_suspends": 0,
+              "before_collections": 176
+            },
+            {
+              "halo": 2.3812162498943508,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.41029612487182,
+              "before_suspends": 0,
+              "before_collections": 176
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "-43682\n"
+          },
+          "before": {
+            "median": 2.405793833080679,
+            "minimum": 2.4016507077030838,
+            "maximum": 2.41029612487182,
+            "relative_range": 0.0035935818979408495,
+            "runs": 3
+          },
+          "halo": {
+            "median": 2.3746471661143005,
+            "minimum": 2.37421604199335,
+            "maximum": 2.3812162498943508,
+            "relative_range": 0.0029478939022573223,
+            "runs": 3
+          },
+          "ratio": 0.9870534762629702
+        }
+      },
+      "launches": [
+        {
+          "kernel": "fib",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.22630391689017415,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.19425533339381218,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.19380933325737715,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.22072141710668802,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.2216450423002243,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.19455216731876135,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 1.210625416599214,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.552350000012666,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.5526822917163372,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 1.2168838330544531,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 1.2204467081464827,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.5536472918465734,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.7813373343087733,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.7388734580017626,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.7366797910071909,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.7820280003361404,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.7829822497442365,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.7429049168713391,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.05680308258160949,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.03803854202851653,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.03794554201886058,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.05693712504580617,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.058446249924600124,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.039349582977592945,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.1980550829321146,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.17826708313077688,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.1816796250641346,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.19860054133459926,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.2069965829141438,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.17762616695836186,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.7349615837447345,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.7121705827303231,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.7177218752913177,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.7359157912433147,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.742588167078793,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.7159621673636138,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 2.405793833080679,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 2.37421604199335,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 2.3746471661143005,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 2.4016507077030838,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 2.41029612487182,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 2.3812162498943508,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        }
+      ],
+      "before_binary_sha256": "789792760374e1438316f9c1329297c49c106361c3c8faa78da35aa67afdb287",
+      "before_budget": "large"
+    },
+    "c1-six": {
+      "revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae",
+      "host": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "started_utc": "2026-10-05T15:39:19Z",
+      "binary_sha256": "c2d6ff35f27f4c5817512d7639e495044a1f60fca401be64202f99c0419749f0",
+      "lua_sha256": "dd2f2bb469b8c423292e23a5ab0dea2c4f3ea23658b76d55cd5f296d5d94e91e",
+      "compiler_sha256": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5",
+      "host_sources_sha256": {
+        "modules.wfg": "dae3b0320fcfb9d8223b537ee27b7d1342e277a639dddf4582b5736d4b865230",
+        "host/module.wfm": "6b555158bf47efd20cbd81a123f4906b55d5213364ee829b7c0253a89820a939",
+        "host/driver.wf": "bda376ab2c19d8fbd27b3e18cc28dc9cbc15b077f01c8120bf334e01704a5fbc"
+      },
+      "budget": "large",
+      "profile": false,
+      "reference_only": false,
+      "scales": {
+        "binary-trees": 14
+      },
+      "kernels": {
+        "fib": {
+          "source_sha256": "dbbbf86920c5e832958c523d378e5d28fd593739008327d2db30ba61548b44ab",
+          "pairs": [
+            {
+              "halo": 0.20128679228946567,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.22064087493345141,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.19318504119291902,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.22041650023311377,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.1933822501450777,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.2186239999718964,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.1995742921717465,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.2208635420538485,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.1935009160079062,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.22113208286464214,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.19326716708019376,
+              "checksum": "832040",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.2212861250154674,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "832040\n"
+          },
+          "before": {
+            "median": 0.22075220849364996,
+            "minimum": 0.2186239999718964,
+            "maximum": 0.2212861250154674,
+            "relative_range": 0.012059335948376583,
+            "runs": 6
+          },
+          "halo": {
+            "median": 0.19344158307649195,
+            "minimum": 0.19318504119291902,
+            "maximum": 0.20128679228946567,
+            "relative_range": 0.041882158777324534,
+            "runs": 6
+          },
+          "ratio": 0.8762837952855923
+        },
+        "loop": {
+          "source_sha256": "109c6f96fd9809ccf6525f982b11baa2f6dbe352990a28a60c474807be9265da",
+          "pairs": [
+            {
+              "halo": 0.568619541823864,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.2381970840506256,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.566334709059447,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.242891333065927,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.568439332768321,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.245999291073531,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.5680627496913075,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.2433577910996974,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.5698031671345234,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.2459031250327826,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.5705644167028368,
+              "checksum": "5.00000005e+15",
+              "suspends": 0,
+              "collections": 0,
+              "before": 1.253409625031054,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "5.00000005e+15\n"
+          },
+          "before": {
+            "median": 1.24463045806624,
+            "minimum": 1.2381970840506256,
+            "maximum": 1.253409625031054,
+            "relative_range": 0.012222536321394473,
+            "runs": 6
+          },
+          "halo": {
+            "median": 0.5685294372960925,
+            "minimum": 0.566334709059447,
+            "maximum": 0.5705644167028368,
+            "relative_range": 0.007439733751529303,
+            "runs": 6
+          },
+          "ratio": 0.456785733959465
+        },
+        "integer-table": {
+          "source_sha256": "0281334766512a9e620a543d5b429f7c0d61b8ea2ff82927224d52b1e72ee3ce",
+          "pairs": [
+            {
+              "halo": 0.7527507082559168,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.7926464579068124,
+              "before_suspends": 0,
+              "before_collections": 5
+            },
+            {
+              "halo": 0.7537914589047432,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.7961416253820062,
+              "before_suspends": 0,
+              "before_collections": 5
+            },
+            {
+              "halo": 0.7589179999195039,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.806978499982506,
+              "before_suspends": 0,
+              "before_collections": 5
+            },
+            {
+              "halo": 0.7559891669079661,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.8083241251297295,
+              "before_suspends": 0,
+              "before_collections": 5
+            },
+            {
+              "halo": 0.7524554161354899,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.798627917189151,
+              "before_suspends": 0,
+              "before_collections": 5
+            },
+            {
+              "halo": 0.7550770416855812,
+              "checksum": "50000005000000",
+              "suspends": 0,
+              "collections": 5,
+              "before": 0.8018599576316774,
+              "before_suspends": 0,
+              "before_collections": 5
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "50000005000000\n"
+          },
+          "before": {
+            "median": 0.8002439374104142,
+            "minimum": 0.7926464579068124,
+            "maximum": 0.8083241251297295,
+            "relative_range": 0.019591110272762502,
+            "runs": 6
+          },
+          "halo": {
+            "median": 0.7544342502951622,
+            "minimum": 0.7524554161354899,
+            "maximum": 0.7589179999195039,
+            "relative_range": 0.008566132544334496,
+            "runs": 6
+          },
+          "ratio": 0.9427553462466808
+        },
+        "string-key": {
+          "source_sha256": "585821f9c9800736ce0e3af1f83bbb2b1f6a7d274e04c83b0494a4ae38b74cea",
+          "pairs": [
+            {
+              "halo": 0.039038415998220444,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.059137292206287384,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.03983154101297259,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.06106520863249898,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.03940400015562773,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.0591841246932745,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.03926520887762308,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.05978612508624792,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.03988537471741438,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.059304624795913696,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.039553167298436165,
+              "checksum": "28500000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.0593105829320848,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "28500000\n"
+          },
+          "before": {
+            "median": 0.05930760386399925,
+            "minimum": 0.059137292206287384,
+            "maximum": 0.06106520863249898,
+            "relative_range": 0.032507069930401866,
+            "runs": 6
+          },
+          "halo": {
+            "median": 0.039478583727031946,
+            "minimum": 0.039038415998220444,
+            "maximum": 0.03988537471741438,
+            "relative_range": 0.021453624705741463,
+            "runs": 6
+          },
+          "ratio": 0.6656580464380578
+        },
+        "concat": {
+          "source_sha256": "2fa66325e51e5d25ee67972f779b3c88d47326557f4cbf9393195799c3a7525c",
+          "pairs": [
+            {
+              "halo": 0.18443883303552866,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.21688320860266685,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.18220433313399553,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.21220179181545973,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.17468137480318546,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.2164957500062883,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.18672241596505046,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.2129693329334259,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.18316045869141817,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.21716249966993928,
+              "before_suspends": 0,
+              "before_collections": 0
+            },
+            {
+              "halo": 0.17409875011071563,
+              "checksum": "5000000",
+              "suspends": 0,
+              "collections": 0,
+              "before": 0.21186387492343783,
+              "before_suspends": 0,
+              "before_collections": 0
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "5000000\n"
+          },
+          "before": {
+            "median": 0.2147325414698571,
+            "minimum": 0.21186387492343783,
+            "maximum": 0.21716249966993928,
+            "relative_range": 0.02467546236928992,
+            "runs": 6
+          },
+          "halo": {
+            "median": 0.18268239591270685,
+            "minimum": 0.17409875011071563,
+            "maximum": 0.18672241596505046,
+            "relative_range": 0.06910170950662886,
+            "runs": 6
+          },
+          "ratio": 0.8507438819576899
+        },
+        "sort": {
+          "source_sha256": "96bb6c47b3062381dca7a9b5ae09186792d28ca5dd7cbfe7d6b3432fb8e4807d",
+          "pairs": [
+            {
+              "halo": 0.7369783753529191,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.7822000831365585,
+              "before_suspends": 0,
+              "before_collections": 3
+            },
+            {
+              "halo": 0.731836250051856,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.7510990831069648,
+              "before_suspends": 0,
+              "before_collections": 3
+            },
+            {
+              "halo": 0.7402412500232458,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.7676345421932638,
+              "before_suspends": 0,
+              "before_collections": 3
+            },
+            {
+              "halo": 0.729774042032659,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.7529259170405567,
+              "before_suspends": 0,
+              "before_collections": 3
+            },
+            {
+              "halo": 0.7368545001372695,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.750256875064224,
+              "before_suspends": 0,
+              "before_collections": 3
+            },
+            {
+              "halo": 0.7316417503170669,
+              "checksum": "1.0733795172001e+15",
+              "suspends": 0,
+              "collections": 3,
+              "before": 0.7519252500496805,
+              "before_suspends": 0,
+              "before_collections": 3
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "1.0733795172001e+15\n"
+          },
+          "before": {
+            "median": 0.7524255835451186,
+            "minimum": 0.750256875064224,
+            "maximum": 0.7822000831365585,
+            "relative_range": 0.042453644281779106,
+            "runs": 6
+          },
+          "halo": {
+            "median": 0.7343453750945628,
+            "minimum": 0.729774042032659,
+            "maximum": 0.7402412500232458,
+            "relative_range": 0.014253794393733166,
+            "runs": 6
+          },
+          "ratio": 0.9759707686102733
+        },
+        "binary-trees": {
+          "source_sha256": "01f28ad8804be0bc1b8539aabfc7942da18b928b1a270cf7cb9300367f1eebd6",
+          "pairs": [
+            {
+              "halo": 2.4528130418621004,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.490588540676981,
+              "before_suspends": 0,
+              "before_collections": 176
+            },
+            {
+              "halo": 2.4504788327030838,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.4846774581819773,
+              "before_suspends": 0,
+              "before_collections": 176
+            },
+            {
+              "halo": 2.437913917005062,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.4779652087017894,
+              "before_suspends": 0,
+              "before_collections": 176
+            },
+            {
+              "halo": 2.4371431251056492,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.4858237081207335,
+              "before_suspends": 0,
+              "before_collections": 176
+            },
+            {
+              "halo": 2.44879920873791,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.477931291796267,
+              "before_suspends": 0,
+              "before_collections": 176
+            },
+            {
+              "halo": 2.449103457853198,
+              "checksum": "-43682",
+              "suspends": 0,
+              "collections": 176,
+              "before": 2.4776798337697983,
+              "before_suspends": 0,
+              "before_collections": 176
+            }
+          ],
+          "independent_reference": {
+            "exit": 0,
+            "stdout": "-43682\n"
+          },
+          "before": {
+            "median": 2.4813213334418833,
+            "minimum": 2.4776798337697983,
+            "maximum": 2.490588540676981,
+            "relative_range": 0.005202351961919032,
+            "runs": 6
+          },
+          "halo": {
+            "median": 2.448951333295554,
+            "minimum": 2.4371431251056492,
+            "maximum": 2.4528130418621004,
+            "relative_range": 0.006398623175318116,
+            "runs": 6
+          },
+          "ratio": 0.9869545311564188
+        }
+      },
+      "launches": [
+        {
+          "kernel": "fib",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.22064087493345141,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.20128679228946567,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.19318504119291902,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.22041650023311377,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.2186239999718964,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.1933822501450777,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 4,
+          "engine": "Halo",
+          "seconds": 0.1995742921717465,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 4,
+          "engine": "Before",
+          "seconds": 0.2208635420538485,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 5,
+          "engine": "Before",
+          "seconds": 0.22113208286464214,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 5,
+          "engine": "Halo",
+          "seconds": 0.1935009160079062,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 6,
+          "engine": "Halo",
+          "seconds": 0.19326716708019376,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "fib",
+          "run": 6,
+          "engine": "Before",
+          "seconds": 0.2212861250154674,
+          "exit": 0,
+          "stdout": "832040\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 1.2381970840506256,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.568619541823864,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.566334709059447,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 1.242891333065927,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 1.245999291073531,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.568439332768321,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 4,
+          "engine": "Halo",
+          "seconds": 0.5680627496913075,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 4,
+          "engine": "Before",
+          "seconds": 1.2433577910996974,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 5,
+          "engine": "Before",
+          "seconds": 1.2459031250327826,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 5,
+          "engine": "Halo",
+          "seconds": 0.5698031671345234,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 6,
+          "engine": "Halo",
+          "seconds": 0.5705644167028368,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "loop",
+          "run": 6,
+          "engine": "Before",
+          "seconds": 1.253409625031054,
+          "exit": 0,
+          "stdout": "5.00000005e+15\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.7926464579068124,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.7527507082559168,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.7537914589047432,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.7961416253820062,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.806978499982506,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.7589179999195039,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 4,
+          "engine": "Halo",
+          "seconds": 0.7559891669079661,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 4,
+          "engine": "Before",
+          "seconds": 0.8083241251297295,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 5,
+          "engine": "Before",
+          "seconds": 0.798627917189151,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 5,
+          "engine": "Halo",
+          "seconds": 0.7524554161354899,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 6,
+          "engine": "Halo",
+          "seconds": 0.7550770416855812,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "integer-table",
+          "run": 6,
+          "engine": "Before",
+          "seconds": 0.8018599576316774,
+          "exit": 0,
+          "stdout": "50000005000000\n",
+          "stderr": "0\n5\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.059137292206287384,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.039038415998220444,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.03983154101297259,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.06106520863249898,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.0591841246932745,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.03940400015562773,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 4,
+          "engine": "Halo",
+          "seconds": 0.03926520887762308,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 4,
+          "engine": "Before",
+          "seconds": 0.05978612508624792,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 5,
+          "engine": "Before",
+          "seconds": 0.059304624795913696,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 5,
+          "engine": "Halo",
+          "seconds": 0.03988537471741438,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 6,
+          "engine": "Halo",
+          "seconds": 0.039553167298436165,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "string-key",
+          "run": 6,
+          "engine": "Before",
+          "seconds": 0.0593105829320848,
+          "exit": 0,
+          "stdout": "28500000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.21688320860266685,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.18443883303552866,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.18220433313399553,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.21220179181545973,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.2164957500062883,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.17468137480318546,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 4,
+          "engine": "Halo",
+          "seconds": 0.18672241596505046,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 4,
+          "engine": "Before",
+          "seconds": 0.2129693329334259,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 5,
+          "engine": "Before",
+          "seconds": 0.21716249966993928,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 5,
+          "engine": "Halo",
+          "seconds": 0.18316045869141817,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 6,
+          "engine": "Halo",
+          "seconds": 0.17409875011071563,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "concat",
+          "run": 6,
+          "engine": "Before",
+          "seconds": 0.21186387492343783,
+          "exit": 0,
+          "stdout": "5000000\n",
+          "stderr": "0\n0\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 0.7822000831365585,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 0.7369783753529191,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 0.731836250051856,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 0.7510990831069648,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 0.7676345421932638,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 0.7402412500232458,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 4,
+          "engine": "Halo",
+          "seconds": 0.729774042032659,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 4,
+          "engine": "Before",
+          "seconds": 0.7529259170405567,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 5,
+          "engine": "Before",
+          "seconds": 0.750256875064224,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 5,
+          "engine": "Halo",
+          "seconds": 0.7368545001372695,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 6,
+          "engine": "Halo",
+          "seconds": 0.7316417503170669,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "sort",
+          "run": 6,
+          "engine": "Before",
+          "seconds": 0.7519252500496805,
+          "exit": 0,
+          "stdout": "1.0733795172001e+15\n",
+          "stderr": "0\n3\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 1,
+          "engine": "Before",
+          "seconds": 2.490588540676981,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 1,
+          "engine": "Halo",
+          "seconds": 2.4528130418621004,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 2,
+          "engine": "Halo",
+          "seconds": 2.4504788327030838,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 2,
+          "engine": "Before",
+          "seconds": 2.4846774581819773,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 3,
+          "engine": "Before",
+          "seconds": 2.4779652087017894,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 3,
+          "engine": "Halo",
+          "seconds": 2.437913917005062,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 4,
+          "engine": "Halo",
+          "seconds": 2.4371431251056492,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 4,
+          "engine": "Before",
+          "seconds": 2.4858237081207335,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 5,
+          "engine": "Before",
+          "seconds": 2.477931291796267,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 5,
+          "engine": "Halo",
+          "seconds": 2.44879920873791,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 6,
+          "engine": "Halo",
+          "seconds": 2.449103457853198,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        },
+        {
+          "kernel": "binary-trees",
+          "run": 6,
+          "engine": "Before",
+          "seconds": 2.4776798337697983,
+          "exit": 0,
+          "stdout": "-43682\n",
+          "stderr": "0\n176\n"
+        }
+      ],
+      "before_binary_sha256": "789792760374e1438316f9c1329297c49c106361c3c8faa78da35aa67afdb287",
+      "before_budget": "large"
+    }
+  },
+  "commands": [
+    {
+      "stage": "check-before-1",
+      "command": "compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-modules",
+      "seconds": 216.28,
+      "exit": 0
+    },
+    {
+      "stage": "check-before-2",
+      "command": "compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-modules",
+      "seconds": 210.07,
+      "exit": 0
+    },
+    {
+      "stage": "check-before-3",
+      "command": "compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-modules",
+      "seconds": 206.35,
+      "exit": 0
+    },
+    {
+      "stage": "check-after-1",
+      "command": "compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-modules",
+      "seconds": 241.0,
+      "exit": 0
+    },
+    {
+      "stage": "check-after-2",
+      "command": "compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-modules",
+      "seconds": 241.95,
+      "exit": 0
+    },
+    {
+      "stage": "check-after-3",
+      "command": "compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-modules",
+      "seconds": 239.36,
+      "exit": 0
+    },
+    {
+      "stage": "bench-build",
+      "command": "compiler/target/gate/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o research/experiments/halo-bench/target/halo-c1",
+      "seconds": 543.17,
+      "exit": 0
+    },
+    {
+      "stage": "fib-one",
+      "command": "python3 -B research/experiments/halo-bench/run.py --lua <PUC_LUA> --before-binary research/experiments/halo-bench/target/halo-after --binary research/experiments/halo-bench/target/halo-c1 --kernels fib --runs 1 --out research/experiments/halo-bench/target/c1-fib-one.json",
+      "seconds": 1.03,
+      "exit": 0
+    },
+    {
+      "stage": "others-one",
+      "command": "python3 -B research/experiments/halo-bench/run.py --lua <PUC_LUA> --before-binary research/experiments/halo-bench/target/halo-after --binary research/experiments/halo-bench/target/halo-c1 --kernels loop,integer-table,string-key,concat,sort,binary-trees --scale binary-trees=14 --runs 1 --out research/experiments/halo-bench/target/c1-others-one.json",
+      "seconds": 12.61,
+      "exit": 0
+    },
+    {
+      "stage": "three",
+      "command": "python3 -B research/experiments/halo-bench/run.py --lua <PUC_LUA> --before-binary research/experiments/halo-bench/target/halo-after --binary research/experiments/halo-bench/target/halo-c1 --kernels fib,loop,integer-table,string-key,concat,sort,binary-trees --scale binary-trees=14 --runs 3 --out research/experiments/halo-bench/target/c1-three.json",
+      "seconds": 33.83,
+      "exit": 0
+    },
+    {
+      "stage": "six",
+      "command": "python3 -B research/experiments/halo-bench/run.py --lua <PUC_LUA> --before-binary research/experiments/halo-bench/target/halo-after --binary research/experiments/halo-bench/target/halo-c1 --kernels fib,loop,integer-table,string-key,concat,sort,binary-trees --scale binary-trees=14 --runs 6 --out research/experiments/halo-bench/target/c1-six.json",
+      "seconds": 66.84,
+      "exit": 0
+    },
+    {
+      "stage": "e2e-build",
+      "command": "compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --entry test --full-lto -o research/experiments/halo-bench/target/c1-e2e",
+      "seconds": 535.89,
+      "exit": 0
+    },
+    {
+      "stage": "oracle-sample",
+      "command": "python3 -B research/experiments/halo-e2e/run.py --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/c1-e2e --full-lto --scratch-root research/experiments/halo-bench/target --filter lua-core/assert --budgets 1,7,1000 --report research/experiments/halo-bench/target/c1-oracle-sample.md",
+      "seconds": 0.39,
+      "exit": 0
+    },
+    {
+      "stage": "stress-sample",
+      "command": "python3 -B research/experiments/halo-e2e/run.py --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/c1-e2e --full-lto --scratch-root research/experiments/halo-bench/target --filter lua-core/assert --budgets 1,7,1000 --gc-stress --report research/experiments/halo-bench/target/c1-stress-sample.md",
+      "seconds": 0.09,
+      "exit": 0
+    },
+    {
+      "stage": "oracle",
+      "command": "python3 -B research/experiments/halo-e2e/run.py --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/c1-e2e --full-lto --scratch-root research/experiments/halo-bench/target --budgets 1,7,1000 --report research/experiments/halo-bench/target/c1-oracle.md",
+      "seconds": 0.98,
+      "exit": 0
+    },
+    {
+      "stage": "stress",
+      "command": "python3 -B research/experiments/halo-e2e/run.py --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/c1-e2e --full-lto --scratch-root research/experiments/halo-bench/target --budgets 1,7,1000 --gc-stress --report research/experiments/halo-bench/target/c1-stress.md",
+      "seconds": 1.05,
+      "exit": 0
+    }
+  ],
+  "oracles": {
+    "oracle": {
+      "rows": [
+        {
+          "case": "apps/hash-cas",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.004,
+          "collections": 0
+        },
+        {
+          "case": "apps/hash-cas",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "apps/hash-cas",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0037,
+          "collections": 0
+        },
+        {
+          "case": "apps/lock-extend",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "apps/lock-extend",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "apps/lock-extend",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "apps/queue-move",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "apps/queue-move",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "apps/queue-move",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "apps/rate-limiter",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "apps/rate-limiter",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "apps/rate-limiter",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 0
+        },
+        {
+          "case": "apps/redlock-release",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "apps/redlock-release",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "apps/redlock-release",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "apps/sliding-window",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "apps/sliding-window",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "apps/sliding-window",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "libs/bit-logical",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "libs/bit-logical",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "libs/bit-logical",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "libs/bit-shifts-hex",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "libs/bit-shifts-hex",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 0
+        },
+        {
+          "case": "libs/bit-shifts-hex",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-arrays-nested",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-arrays-nested",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-arrays-nested",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-invalid",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-invalid",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-invalid",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-numbers",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-numbers",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-numbers",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-objects",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-objects",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "libs/cjson-objects",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "libs/cmsgpack-binary",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "libs/cmsgpack-binary",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "libs/cmsgpack-binary",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "libs/cmsgpack-roundtrip",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "libs/cmsgpack-roundtrip",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "libs/cmsgpack-roundtrip",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "libs/struct-integers",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "libs/struct-integers",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "libs/struct-integers",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "libs/struct-strings-floats",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0037,
+          "collections": 0
+        },
+        {
+          "case": "libs/struct-strings-floats",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "libs/struct-strings-floats",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/array-holes",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/array-holes",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/array-holes",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/assert",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/assert",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/assert",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/concat-numbers",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/concat-numbers",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/concat-numbers",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/counter-closure",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/counter-closure",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/counter-closure",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/embedded-zero",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/embedded-zero",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/embedded-zero",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/error-levels",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/error-levels",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/error-levels",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/error-values",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/error-values",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/error-values",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/float-print",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/float-print",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/float-print",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/format-14g",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/format-14g",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/format-14g",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/integer-doubles",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/integer-doubles",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/integer-doubles",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/ipairs",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/ipairs",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/ipairs",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/loop-closures",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/loop-closures",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/loop-closures",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-powers",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-powers",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-powers",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-random",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-random",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-random",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-round-extrema",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-round-extrema",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/math-round-extrema",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-call",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-call",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-call",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-comparisons",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-comparisons",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-comparisons",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-concat-tostring",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-concat-tostring",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-concat-tostring",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-index",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-index",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-index",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-le-fallback",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-le-fallback",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-le-fallback",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.003,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-newindex",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-newindex",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-newindex",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-protection-raw",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-protection-raw",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-protection-raw",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-table-length",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-table-length",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/meta-table-length",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/metamethod-error",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/metamethod-error",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/metamethod-error",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/multiple-returns",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0038,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/multiple-returns",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0044,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/multiple-returns",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0042,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/negative-division",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/negative-division",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/negative-division",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/next-pairs",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/next-pairs",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/next-pairs",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/nil-returns",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/nil-returns",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/nil-returns",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/nonfinite",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/nonfinite",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/nonfinite",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/numeric-coercion",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/numeric-coercion",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/numeric-coercion",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/pcall-xpcall",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/pcall-xpcall",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/pcall-xpcall",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/shared-upvalues",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/shared-upvalues",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/shared-upvalues",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-byte-char",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0037,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-byte-char",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-byte-char",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0041,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-escapes",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-escapes",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-escapes",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-find",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-find",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-find",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-format",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-format",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-format",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gmatch",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gmatch",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gmatch",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gsub-dynamic",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gsub-dynamic",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gsub-dynamic",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gsub-string",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gsub-string",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-gsub-string",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-length-order",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-length-order",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-length-order",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-match",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-match",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-match",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-transforms",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-transforms",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/string-transforms",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-concat",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-concat",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-concat",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-insert-remove",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-insert-remove",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-insert-remove",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-parts",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-parts",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-parts",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-sort",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-sort",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/table-sort",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/tail-recursion",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0049,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/tail-recursion",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0044,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/tail-recursion",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0044,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/unpack-select-varargs",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/unpack-select-varargs",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "lua-core/unpack-select-varargs",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/call-error",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/call-error",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/call-error",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/call-success",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/call-success",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/call-success",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/error-reply",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/error-reply",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/error-reply",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/global-read",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/global-read",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/global-read",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0037,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/global-write",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/global-write",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/global-write",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/log-keys-argv",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/log-keys-argv",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/log-keys-argv",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-arrays",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-arrays",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-arrays",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-nil",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-nil",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-nil",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-scalars",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-scalars",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/lua-scalars",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/pcall-success-error",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/pcall-success-error",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/pcall-success-error",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/resp-error-raised",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/resp-error-raised",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/resp-error-raised",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/resp-values",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/resp-values",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/resp-values",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/return-error-table",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/return-error-table",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/return-error-table",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/return-status-table",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.004,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/return-status-table",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0039,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/return-status-table",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0038,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/sha1hex",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/sha1hex",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/sha1hex",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0037,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/status-reply",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/status-reply",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 0
+        },
+        {
+          "case": "redis-api/status-reply",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 0
+        }
+      ],
+      "unique_scripts": 80,
+      "comparisons": 240,
+      "report_sha256": "6fa4101e84220a461cf6a18ad7319ab7daa4b88e5aa2c33a9e03b7bca47e45cb",
+      "source_digest": "e00590fbf62fab6b64e188a7b29cfceada9a0e0d7df8a5b51702adbb4f2d9861",
+      "binary_sha256": "c005f56eb4ce1290381f5e35c5dc0732aebc5a500907e4394e07358de43a57fc",
+      "compiler_sha256": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5"
+    },
+    "stress": {
+      "rows": [
+        {
+          "case": "apps/hash-cas",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0038,
+          "collections": 8
+        },
+        {
+          "case": "apps/hash-cas",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 8
+        },
+        {
+          "case": "apps/hash-cas",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 8
+        },
+        {
+          "case": "apps/lock-extend",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 7
+        },
+        {
+          "case": "apps/lock-extend",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 7
+        },
+        {
+          "case": "apps/lock-extend",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 7
+        },
+        {
+          "case": "apps/queue-move",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 11
+        },
+        {
+          "case": "apps/queue-move",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 11
+        },
+        {
+          "case": "apps/queue-move",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 11
+        },
+        {
+          "case": "apps/rate-limiter",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 12
+        },
+        {
+          "case": "apps/rate-limiter",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 12
+        },
+        {
+          "case": "apps/rate-limiter",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 12
+        },
+        {
+          "case": "apps/redlock-release",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 9
+        },
+        {
+          "case": "apps/redlock-release",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 9
+        },
+        {
+          "case": "apps/redlock-release",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 9
+        },
+        {
+          "case": "apps/sliding-window",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.003,
+          "collections": 8
+        },
+        {
+          "case": "apps/sliding-window",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 8
+        },
+        {
+          "case": "apps/sliding-window",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 8
+        },
+        {
+          "case": "libs/bit-logical",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 7
+        },
+        {
+          "case": "libs/bit-logical",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 7
+        },
+        {
+          "case": "libs/bit-logical",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0037,
+          "collections": 7
+        },
+        {
+          "case": "libs/bit-shifts-hex",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 8
+        },
+        {
+          "case": "libs/bit-shifts-hex",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 8
+        },
+        {
+          "case": "libs/bit-shifts-hex",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 8
+        },
+        {
+          "case": "libs/cjson-arrays-nested",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 4
+        },
+        {
+          "case": "libs/cjson-arrays-nested",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "libs/cjson-arrays-nested",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "libs/cjson-invalid",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 2
+        },
+        {
+          "case": "libs/cjson-invalid",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 2
+        },
+        {
+          "case": "libs/cjson-invalid",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 2
+        },
+        {
+          "case": "libs/cjson-numbers",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 3
+        },
+        {
+          "case": "libs/cjson-numbers",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "libs/cjson-numbers",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 3
+        },
+        {
+          "case": "libs/cjson-objects",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "libs/cjson-objects",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "libs/cjson-objects",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 4
+        },
+        {
+          "case": "libs/cmsgpack-binary",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 22
+        },
+        {
+          "case": "libs/cmsgpack-binary",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 22
+        },
+        {
+          "case": "libs/cmsgpack-binary",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 22
+        },
+        {
+          "case": "libs/cmsgpack-roundtrip",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 4
+        },
+        {
+          "case": "libs/cmsgpack-roundtrip",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 4
+        },
+        {
+          "case": "libs/cmsgpack-roundtrip",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 4
+        },
+        {
+          "case": "libs/struct-integers",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 12
+        },
+        {
+          "case": "libs/struct-integers",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 12
+        },
+        {
+          "case": "libs/struct-integers",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 12
+        },
+        {
+          "case": "libs/struct-strings-floats",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 27
+        },
+        {
+          "case": "libs/struct-strings-floats",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 27
+        },
+        {
+          "case": "libs/struct-strings-floats",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 27
+        },
+        {
+          "case": "lua-core/array-holes",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/array-holes",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/array-holes",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/assert",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/assert",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/assert",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/concat-numbers",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/concat-numbers",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/concat-numbers",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/counter-closure",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/counter-closure",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/counter-closure",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/embedded-zero",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/embedded-zero",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/embedded-zero",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/error-levels",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/error-levels",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/error-levels",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/error-values",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/error-values",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/error-values",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/float-print",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/float-print",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/float-print",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/format-14g",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/format-14g",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/format-14g",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/integer-doubles",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/integer-doubles",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/integer-doubles",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/ipairs",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/ipairs",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/ipairs",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/loop-closures",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 16
+        },
+        {
+          "case": "lua-core/loop-closures",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 16
+        },
+        {
+          "case": "lua-core/loop-closures",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0037,
+          "collections": 16
+        },
+        {
+          "case": "lua-core/math-powers",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/math-powers",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/math-powers",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/math-random",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 15
+        },
+        {
+          "case": "lua-core/math-random",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 15
+        },
+        {
+          "case": "lua-core/math-random",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 15
+        },
+        {
+          "case": "lua-core/math-round-extrema",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/math-round-extrema",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/math-round-extrema",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/meta-call",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-call",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-call",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-comparisons",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0041,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/meta-comparisons",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/meta-comparisons",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/meta-concat-tostring",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/meta-concat-tostring",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/meta-concat-tostring",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 7
+        },
+        {
+          "case": "lua-core/meta-index",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/meta-index",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/meta-index",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/meta-le-fallback",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-le-fallback",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-le-fallback",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-newindex",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-newindex",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-newindex",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/meta-protection-raw",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 11
+        },
+        {
+          "case": "lua-core/meta-protection-raw",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 11
+        },
+        {
+          "case": "lua-core/meta-protection-raw",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 11
+        },
+        {
+          "case": "lua-core/meta-table-length",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.003,
+          "collections": 2
+        },
+        {
+          "case": "lua-core/meta-table-length",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 2
+        },
+        {
+          "case": "lua-core/meta-table-length",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.003,
+          "collections": 2
+        },
+        {
+          "case": "lua-core/metamethod-error",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/metamethod-error",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/metamethod-error",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/multiple-returns",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/multiple-returns",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/multiple-returns",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/negative-division",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/negative-division",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/negative-division",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/next-pairs",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 16
+        },
+        {
+          "case": "lua-core/next-pairs",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 16
+        },
+        {
+          "case": "lua-core/next-pairs",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 16
+        },
+        {
+          "case": "lua-core/nil-returns",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/nil-returns",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/nil-returns",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/nonfinite",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/nonfinite",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/nonfinite",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/numeric-coercion",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/numeric-coercion",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/numeric-coercion",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/pcall-xpcall",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/pcall-xpcall",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/pcall-xpcall",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/shared-upvalues",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0038,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/shared-upvalues",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0038,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/shared-upvalues",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/string-byte-char",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-byte-char",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-byte-char",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-escapes",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/string-escapes",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/string-escapes",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/string-find",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/string-find",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/string-find",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/string-format",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/string-format",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/string-format",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/string-gmatch",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-gmatch",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-gmatch",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-gsub-dynamic",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/string-gsub-dynamic",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/string-gsub-dynamic",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/string-gsub-string",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/string-gsub-string",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/string-gsub-string",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/string-length-order",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/string-length-order",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/string-length-order",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/string-match",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-match",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-match",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 6
+        },
+        {
+          "case": "lua-core/string-transforms",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/string-transforms",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/string-transforms",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/table-concat",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/table-concat",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/table-concat",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 4
+        },
+        {
+          "case": "lua-core/table-insert-remove",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/table-insert-remove",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/table-insert-remove",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.004,
+          "collections": 5
+        },
+        {
+          "case": "lua-core/table-parts",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/table-parts",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/table-parts",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 1
+        },
+        {
+          "case": "lua-core/table-sort",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/table-sort",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/table-sort",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 3
+        },
+        {
+          "case": "lua-core/tail-recursion",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0419,
+          "collections": 20002
+        },
+        {
+          "case": "lua-core/tail-recursion",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0414,
+          "collections": 20002
+        },
+        {
+          "case": "lua-core/tail-recursion",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0422,
+          "collections": 20002
+        },
+        {
+          "case": "lua-core/unpack-select-varargs",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0038,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/unpack-select-varargs",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 8
+        },
+        {
+          "case": "lua-core/unpack-select-varargs",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0032,
+          "collections": 8
+        },
+        {
+          "case": "redis-api/call-error",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 2
+        },
+        {
+          "case": "redis-api/call-error",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 2
+        },
+        {
+          "case": "redis-api/call-error",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 2
+        },
+        {
+          "case": "redis-api/call-success",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/call-success",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0029,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/call-success",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0029,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/error-reply",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 2
+        },
+        {
+          "case": "redis-api/error-reply",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0037,
+          "collections": 2
+        },
+        {
+          "case": "redis-api/error-reply",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 2
+        },
+        {
+          "case": "redis-api/global-read",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/global-read",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/global-read",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/global-write",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/global-write",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/global-write",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/log-keys-argv",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 3
+        },
+        {
+          "case": "redis-api/log-keys-argv",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 3
+        },
+        {
+          "case": "redis-api/log-keys-argv",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 3
+        },
+        {
+          "case": "redis-api/lua-arrays",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/lua-arrays",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/lua-arrays",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/lua-nil",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/lua-nil",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/lua-nil",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/lua-scalars",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/lua-scalars",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/lua-scalars",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/pcall-success-error",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/pcall-success-error",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/pcall-success-error",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/resp-error-raised",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/resp-error-raised",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/resp-error-raised",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/resp-values",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0036,
+          "collections": 11
+        },
+        {
+          "case": "redis-api/resp-values",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 11
+        },
+        {
+          "case": "redis-api/resp-values",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 11
+        },
+        {
+          "case": "redis-api/return-error-table",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/return-error-table",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/return-error-table",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/return-status-table",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.004,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/return-status-table",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.003,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/return-status-table",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0028,
+          "collections": 1
+        },
+        {
+          "case": "redis-api/sha1hex",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0031,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/sha1hex",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0035,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/sha1hex",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 4
+        },
+        {
+          "case": "redis-api/status-reply",
+          "budget": 1,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 2
+        },
+        {
+          "case": "redis-api/status-reply",
+          "budget": 7,
+          "status": "PASS",
+          "seconds": 0.0033,
+          "collections": 2
+        },
+        {
+          "case": "redis-api/status-reply",
+          "budget": 1000,
+          "status": "PASS",
+          "seconds": 0.0034,
+          "collections": 2
+        }
+      ],
+      "unique_scripts": 80,
+      "comparisons": 240,
+      "report_sha256": "357c3dd9ce454765e1bf29f2601ba1388dc96223d3d3e9a14614668560f4b7fd",
+      "source_digest": "e00590fbf62fab6b64e188a7b29cfceada9a0e0d7df8a5b51702adbb4f2d9861",
+      "binary_sha256": "c005f56eb4ce1290381f5e35c5dc0732aebc5a500907e4394e07358de43a57fc",
+      "compiler_sha256": "c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5"
+    }
+  },
+  "outcome": "kept",
+  "binaries": {
+    "before": {
+      "sha256": "789792760374e1438316f9c1329297c49c106361c3c8faa78da35aa67afdb287",
+      "source_revision": "ec69af2c494b5d26ede8cf319e5c73c1d9efc29f"
+    },
+    "after": {
+      "sha256": "c2d6ff35f27f4c5817512d7639e495044a1f60fca401be64202f99c0419749f0",
+      "source_revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae"
+    },
+    "oracle": {
+      "sha256": "c005f56eb4ce1290381f5e35c5dc0732aebc5a500907e4394e07358de43a57fc",
+      "source_revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae"
+    }
+  },
+  "validation": {
+    "implementation_revision": "bcb2ab4f35bf112471521875dea9c02aaafbdaae",
+    "design_lint": {
+      "command": [
+        "perl",
+        ".github/run-check.pl",
+        "halo-c1-design-lint",
+        "make",
+        "design-lint"
+      ],
+      "real": 7.67,
+      "exit": 0
+    },
+    "static": {
+      "command": [
+        "perl",
+        ".github/run-check.pl",
+        "halo-c1-static",
+        "make",
+        "static"
+      ],
+      "real": 33.62,
+      "exit": 0,
+      "individual_stages_within_macos_budgets": true
+    },
+    "unrun": [
+      "make check (Cargo prohibited by task)",
+      "CI (network prohibited by task)"
+    ]
+  }
+}

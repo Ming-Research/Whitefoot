@@ -2285,8 +2285,23 @@ rarely insert at the same place.
   module (one match of 73 arms over one function family, plus the
   library). Impact: full-package checks slow the Halo edit/check loop.
   Change: attribute the cost by stage (formation, derivation, certificates,
-  propagation) before restructuring source for the checker's sake. Reopen when a Halo edit-check
-  loop becomes the bottleneck or with the next checker cost work.
+  propagation) before restructuring source for the checker's sake. The
+  [C1 trial](../research/experiments/halo-bench/RESULTS.md#c1-bounded-per-arm-continuation-experiment)
+  measured whole-graph medians of 210.07 s before and 241.00 s after adding
+  checked continuations for 18 hot instructions; this is not a per-function
+  cost attribution. Reopen when a Halo edit-check loop becomes the bottleneck
+  or with the next checker cost work.
+- **Halo's C1 fast variants repeat operation logic in full handlers.**
+  Callback-free variants make next-pc summaries available outside the VM's
+  recursive callback component, but the corresponding full handlers retain
+  their original numeric/table fast paths. Impact: later instruction edits
+  could make hot and cold behavior diverge; fast misses also repeat operand
+  views or table lookup. Change: give both paths one operation owner, with
+  explicit cold execution after a fast miss, preserving errors, suspension
+  and window proofs. Validate the oracle and fresh same-source full-LTO pairs:
+  changing cold code can also change native placement. Reopen when an affected
+  instruction changes or the next VM performance experiment compares that
+  factoring; C1's measured source stays fixed for this bounded experiment.
 - **Halo's number library and oracle corpus were checked on macOS only.**
   `lib/halo/number` matches Redis 7.0.15's bundled Lua built on macOS
   (research/experiments/halo-number), except that NaN text now follows glibc

@@ -204,6 +204,10 @@ involved) and otherwise calls the one shared slow executor, which performs
 coercion, metamethods, hash misses, `__index` chains and readonly refusal
 and writes the destination slot itself; it returns `Err` after raising
 into `vm.error`. Outcomes: `Done(count)`, `Error`, `Budget`, `HostStopped`.
+The retained C1 form lets selected hot arms
+self-tail-call with the current window facts; callback-free variants expose
+the next pc, while fast misses, frame changes and other instructions keep
+the checked shared Step epilogue (section 11).
 
 ## 6. Embedding
 
@@ -337,13 +341,13 @@ dispatch
 
 two 16-byte loads and one 16-byte store per arithmetic cell, as in PUC Lua.
 The candidates below are ordered by expected gain, measured in Silverfir-nano
-(silverfir-lessons) and in the match-dispatch experiments (PR #217); none is
-selected, and each is chosen only after P1 and P2 of section 10 measure the
-baseline with the per-arm lowering.
+(silverfir-lessons) and in the match-dispatch experiments (PR #217).
+C1 was tested against the current P1 source under the bounded criterion below; C2–C6 remain unselected. The current compiler already emits native
+per-arm dispatch from the joined source, as the P1 disassembly shows.
 
 | Candidate | Mechanism | Evidence | Whitefoot constraint | Falsifier |
 |---|---|---|---|---|
-| C1. Epilogue in each arm | Each `match` arm ends in its own `return musttail run(...)` instead of joining one epilogue after the handler call (`dispatch.wf` today) | the per-arm lowering only threads dispatch when each arm jumps itself; a shared epilogue is one dispatch point | the split was made to halve check time (docs/todo.md); inlining handlers into arms must not multiply it | per-arm epilogues not faster than the joined form on P1's kernels by 5% |
+| C1. Hot instructions dispatch directly | 18 arms tail-call `run` with unchanged base/kbase facts; callback-free variants carry the next pc, while cold paths keep the shared Step epilogue | [Six full-LTO pairs](../../experiments/halo-bench/RESULTS.md#c1-bounded-per-arm-continuation-experiment): loop improves 54.32%, fib 12.37%; current native dispatch was already per-arm | The requested graph-check median grows 1.147× (210.07 to 241.00 s); full-handler summaries cannot cross the recursive callback component | Retain only with at least 10% improvement on both loop and fib and at most 1.5× check cost; kept: both numeric/check criteria pass and both oracle modes pass 240/240 |
 | C2. Accumulator | The compiler marks a producer whose result the next cell consumes; the value travels in a loop-carried parameter instead of the stack slot | Silverfir: +29% with no change in dispatch count | a Lua value is two words; a ninth parameter costs 8% on x86-64 until the lowering spills the coldest one; the slow path and every safepoint write the accumulator back first, so collector roots stay the stack | under 10% on the numeric kernels |
 | C3. Pinned locals | One or two locals chosen by static use count live in loop-carried parameters, written through to their slot | Silverfir: +16% for the first, 4 to 12% for the second; a third about 0 | same parameter budget as C2; write-through keeps the slot authoritative | under 5% per pinned local |
 | C4. Type-specialized cells | A cell that has met numbers is rewritten to a variant that skips the tag test and falls back when the test fails | Lua 5.4 and LuaJIT's interpreter specialize this way | code is read-only during a run (`reads(code)`); rewriting needs the code box writable or a side table, which changes run's row | under 5% after C1 to C3 |

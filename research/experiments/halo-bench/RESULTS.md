@@ -675,36 +675,180 @@ loop and fib improve by at least 10% in six interleaved same-source
 before/after pairs (full LTO), and the median of three uncached
 `whitefootc --graph lib/halo/modules.wfg --check-modules` runs grows by at
 most 1.5 times. Otherwise revert the candidate and retain the observations.
-The seven P1 sources remain identical within each pair; binary-trees uses
-the previously sized depth 14. The 240-script oracle must pass under budgets
-1, 7 and 1000, both normally and with GC stress. The experiment changes
-only Halo dispatch/handler source, not the compiler, language, or oracle.
+Improvement is `1 - median(after) / median(before)`; individual paired ratios
+are also retained to expose drift or spread near 10%. The seven P1 sources
+remain identical within each pair; binary-trees uses the previously sized
+depth 14. The oracle must pass under budgets 1, 7 and 1000, both normally
+and with GC stress. The experiment changes only Halo dispatch/handler source,
+not the compiler, language, or oracle.
 
-A single module-check run sizes each side before the remaining two runs.
-One pair and then three pairs size each kernel before the selected six.
-Commands use the existing gate compiler and each heavy command holds the
-host-wide lock separately. Generated C1 artifacts live in this experiment's
-existing ignored `target/`; retained observations serve reproduction and
-are retired when this comparison no longer needs reproduction.
+A single accepted module-check run sizes each side before the remaining two
+runs. One pair and then three pairs size each kernel before the selected
+six. Failed formation or proof attempts are reported separately and do not
+enter the check-cost statistic. Each heavy command holds the host-wide lock
+separately; exit 75 waits and retries that same command. C1 generated outputs
+and compiler temporary files live in this experiment's existing ignored
+`target/`; retained observations serve reproduction and are retired when
+this comparison no longer needs reproduction.
 
-The implementation trial uses the existing handlers with a
-`Result<u64, Step>` return: `Ok` carries only the next pc and conditional
-postconditions for the pc and unchanged frame/constant windows; `Err`
-forwards the existing failure or unwind Step. Each selected arm matches that
-result and immediately self-tail-calls on `Ok`. This retains small handler
-bodies rather than expanding arithmetic, comparisons and table operations
-inside the already large dispatch function. It tests the window checks and
-continuation traffic: P1 already showed native per-arm dispatch in the joined
-source, so a gain cannot be attributed to creating per-arm native dispatch.
-Call/Return remain joined because their normal paths change frame bases;
-this bounded trial does not redesign `prepare`, `enter_lua` or `finish`.
+### Checked source boundary
 
-Before any candidate check or timing began, the retained P1 leaf counts
-narrowed the trial to 18 arms: Move, LoadK, GetUpval, GetTableR/K,
-SetTableRR/KR, AddRR/RK, SubRR/RK, MulKR, ModRK, EqJmpRK, LtJmpRK/KR,
-LeJmpRR and ForLoop. GetUpval is prominent in fib; MulKR and SubRR occur
-in binary-trees; ModRK occurs in string-key, concat and sort. Unused
-arithmetic and comparison siblings were left joined. Call and Return are
-prominent in fib and binary-trees but remain outside this unchanged-base
-trial. The source milestone for the initial broader draft precedes this
-profile-based narrowing; neither draft was measured before narrowing.
+The retained P1 leaf counts selected 18 arms: Move, LoadK, GetUpval,
+GetTableR/K, SetTableRR/KR, AddRR/RK, SubRR/RK, MulKR, ModRK, EqJmpRK,
+LtJmpRK/KR, LeJmpRR and ForLoop. GetUpval is prominent in fib; MulKR and
+SubRR occur in binary-trees; ModRK occurs in string-key, concat and sort.
+Unselected siblings, Call and Return retain the joined Step epilogue.
+The latter two change frame bases, so this unchanged-base trial leaves
+`prepare`, `enter_lua` and `finish` unchanged.
+
+Move, LoadK, GetUpval and ForLoop return `Result<u64, Step>`; success carries
+the next pc and checked stack-window postconditions. The 14 handlers with
+callback slow paths get separate callback-free variants returning
+`Result<FastCursor, Step>`. A cursor contains a pc and a Bool saying whether
+the instruction was handled. A fast miss returns the current pc with that
+flag false before mutation, and the arm invokes the unchanged full handler.
+Success tail-calls directly from the arm; errors and suspension forward the
+original Step to the shared epilogue. Table-write failures unwind once, as
+before. Numeric comparisons only read the stack and preserve its window
+fact directly; slot-writing variants publish it. The read-only constant
+window keeps its caller fact and needs no new postcondition.
+
+This boundary follows [FN-9](../../../spec/kernel-spec.md): a full handler's
+callback can re-enter `run`, so its postconditions are unavailable within
+that recursive component. The callback-free variants are outside that
+component and their checked summaries reach the arms. Putting entire
+arithmetic/table handlers inside `run` would instead expand its proof body;
+small leaf variants keep operation proofs separate from dispatch control.
+The experiment does not change the recursive-summary rule. P1 already
+showed native per-arm dispatch in the joined source, so this trial tests
+window checks and continuation traffic, rather than creating that native
+split. Native layout and other traffic can also change.
+
+### Check and kernel observations
+
+The requested graph-check command checks the whole selected package graph;
+these are its process wall times, not isolated vm-stage timings. Its only
+changed inputs are the two VM implementation files. Waiting for the lock
+is excluded. All six admitted checks exited 0.
+
+| Check | Before s | After s |
+|---|---:|---:|
+| Run 1 | 216.28 | 241.00 |
+| Run 2 | 210.07 | 241.95 |
+| Run 3 | 206.35 | 239.36 |
+| Median | 210.07 | 241.00 |
+
+After/before is **1.147**: the 1.5-times check-cost criterion passes.
+
+The first fib candidate launch took 0.573571 s versus 0.228337 s before;
+this cold launch is calibration. The three warm-pair fib ratio was 0.8764,
+with before/after relative ranges 2.52%/0.38%; loop's ratio was 0.4542,
+with ranges 0.81%/0.23%. Every other kernel also received one pair and three
+pairs before selection. The calibration and final raw launches, source
+hashes, native/compiler/reference hashes, exits, checksums and spreads are
+in [c1-measurements.json](c1-measurements.json).
+
+Six alternating Before/After then After/Before pairs use identical stdin
+bytes and full-LTO binaries. Each kernel also gets an independent PUC
+checksum launch. Both native collection counts agree in every pair, every
+native/reference exit is 0, and all unlimited-budget suspension counts are
+zero. Both VMs use the normal collector and the benchmark's 2 GiB limit.
+
+| Kernel | Before median s | After median s | Improvement | Before min–max s | After min–max s |
+|---|---:|---:|---:|---|---|
+| fib | 0.220752 | 0.193442 | 12.37% | 0.218624–0.221286 | 0.193185–0.201287 |
+| loop | 1.244630 | 0.568529 | 54.32% | 1.238197–1.253410 | 0.566335–0.570564 |
+| integer-table | 0.800244 | 0.754434 | 5.72% | 0.792646–0.808324 | 0.752455–0.758918 |
+| string-key | 0.059308 | 0.039479 | 33.43% | 0.059137–0.061065 | 0.039038–0.039885 |
+| concat | 0.214733 | 0.182682 | 14.93% | 0.211864–0.217162 | 0.174099–0.186722 |
+| sort | 0.752426 | 0.734345 | 2.40% | 0.750257–0.782200 | 0.729774–0.740241 |
+| binary-trees | 2.481321 | 2.448951 | 1.30% | 2.477680–2.490589 | 2.437143–2.452813 |
+
+Both numeric median criteria pass. Fib's individual paired ratios range
+from 0.8734 to 0.9123: five of six pairs clear 10%, while one improves only
+8.77%. The agreed statistic is the ratio of medians, and both the three-
+and six-pair results put that gain near 12.4%. The loop's six paired ratios
+range from 0.4552 to 0.4592. Other kernel gains are observations, not
+additional selection thresholds. This does not measure a new PUC-relative
+P1 baseline, isolate window-check cost from layout/other continuation
+traffic, or qualify other hosts, compilers, budgets or binary-trees depth 16.
+
+### Outcome and validation
+
+**Kept.** The fixed numeric and check-cost criteria pass, and both oracle
+modes pass 240/240 comparisons: 80 unchanged scripts at each of budgets
+1, 7 and 1000. GC stress performed at least one collection in every row.
+No source or expected reply in the oracle changed. The normal and stress
+samples each passed 3/3 before the full runs. The native source revision is
+`bcb2ab4f35bf112471521875dea9c02aaafbdaae`; only `dispatch.wf` and
+`handlers.wf` differ from the before library. The existing before benchmark
+binary was built at `ec69af2c4` (full identity in the JSON), and a tool
+comparison verified its Halo, benchmark host/graph, compiler, standard
+library, JSON and MessagePack sources equal the before worktree. Its build
+log records full LTO. Compiler hash stayed
+`c71614ecb1da4ab8b5c4cfea7bec7afa3a39aeb967657e1aaa2019c76dbf3fc5`.
+
+Every heavy command below was a separate
+`perl .github/run-check.pl <label> <command>` invocation. Full-LTO builds
+set TMPDIR to the existing benchmark target directory. Busy-lock attempts
+returned 75 and retried the same command; none entered an admitted timing.
+The host was the same M1 Pro/macOS environment as P1; the lock excluded
+other cooperating heavy commands, not background OS activity.
+
+| Command stage | Wall s | Exit | Observation |
+|---|---:|---:|---|
+| check-before-1 | 216.28 | 0 | whole graph accepted |
+| check-before-2 | 210.07 | 0 | whole graph accepted |
+| check-before-3 | 206.35 | 0 | whole graph accepted |
+| check-after-1 | 241.00 | 0 | whole graph accepted |
+| check-after-2 | 241.95 | 0 | whole graph accepted |
+| check-after-3 | 239.36 | 0 | whole graph accepted |
+| bench-build | 543.17 | 0 | full LTO, entry bench |
+| fib-one | 1.03 | 0 | 1 cold sizing pair |
+| others-one | 12.61 | 0 | 1 sizing pair per remaining kernel |
+| three | 33.83 | 0 | 3 warm interleaved pairs per kernel |
+| six | 66.84 | 0 | 6 selected interleaved pairs per kernel |
+| e2e-build | 535.89 | 0 | full LTO, entry test |
+| oracle-sample | 0.39 | 0 | 3/3 normal |
+| stress-sample | 0.09 | 0 | 3/3 stress |
+| oracle | 0.98 | 0 | 240/240 normal |
+| stress | 1.05 | 0 | 240/240 stress |
+| design-lint | 7.67 | 0 | smallest static sizing sample |
+| static | 33.62 | 0 | every component within its macOS budget |
+
+The JSON retains exact command arguments with `<PUC_LUA>` as the supplied
+local Redis 7.0.15 Lua path. Reproduction commands use:
+
+```sh
+perl .github/run-check.pl halo-c1-check compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-modules
+perl .github/run-check.pl halo-c1-bench-build compiler/target/gate/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o research/experiments/halo-bench/target/halo-c1
+perl .github/run-check.pl halo-c1-six python3 -B research/experiments/halo-bench/run.py --lua /path/to/redis/deps/lua/src/lua --before-binary research/experiments/halo-bench/target/halo-after --binary research/experiments/halo-bench/target/halo-c1 --kernels fib,loop,integer-table,string-key,concat,sort,binary-trees --scale binary-trees=14 --runs 6 --out research/experiments/halo-bench/target/c1-six.json
+perl .github/run-check.pl halo-c1-e2e-build compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --entry test --full-lto -o research/experiments/halo-bench/target/c1-e2e
+perl .github/run-check.pl halo-c1-oracle python3 -B research/experiments/halo-e2e/run.py --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/c1-e2e --full-lto --scratch-root research/experiments/halo-bench/target --budgets 1,7,1000 --report research/experiments/halo-bench/target/c1-oracle.md
+```
+
+Add `--gc-stress` and use a separate report for the stress run. Substitute
+the supplied Lua path for `<PUC_LUA>`; set TMPDIR to the worktree's existing
+target directory for builds. The before binary must be rebuilt from its
+recorded source if absent, not substituted with an older pre-repair binary.
+
+Five excluded check attempts exited 1: FN-9 postcondition formation
+(6.33 s), FN-8 unavailable recursive summary (381.27 s), FORM-4 comment
+(2.59 s), GRAM-9 nested Bool construction (3.48 s), and EFF-2 unused
+constant reads (6.31 s). The accepted boundary above resolves all five;
+formation fixes add no language rule. `make design-lint` and `make static`
+passed on the measured implementation and the accompanying evidence/tree
+edits. The latter checked repository invariants, archives, translation,
+prose, guidance, source size and tree form. `make check` and CI were not run:
+the task prohibits Cargo and network. Independent review is recorded below
+after completion. No Cargo, network, PR or push command was issued for C1. A concurrent process committed and pushed the
+pre-existing DESIGN.md edit after the criterion milestone; the C1
+implementation commits remained local.
+
+Found along the way: the C1 row's single-native-dispatch premise was stale
+against P1 disassembly and is corrected; callback-free summaries are
+required by FN-9, not a checker defect. Duplicate fast/full operation logic
+and repeated work on fast misses are recorded in docs/todo.md for a later
+measured factoring. No specification or conformance rule changed. The
+new design node is provisional; no approval log or readiness action is
+part of this local experiment.
