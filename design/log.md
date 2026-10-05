@@ -5,6 +5,22 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
+
+Nodes: compiler/verification
+
+Owner-approved: In the session of 2026-10-05, written in Chinese: Q16, "keep it locally, turn it off on CI; that way both routes are tested and local runs are faster" (translated); after the handoff of PR #226 at `a5fc19e9a`, which showed the decision's text, "Confirmed" (translated).
+
+Summary: Outside CI a program case builds an app under `apps/` with the compiler executable and a persistent incremental cache, reusing the checked module and objects when neither the app nor the compiler changed; under CI it compiles the app in-process as before. A cache record is keyed by the compiler's identity and its exact inputs and every assertion reruns, so this is not the cached test verdict the existing reuse decision refuses, and alternating the routes keeps both builds under test.
+
+## 2026-10-05 Hoisted dispatch invariants, the frame past the registers and the ledger
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: In the session of 2026-10-04, written in Chinese: Q9 A, the developer ledger ("A is fine to do together if the work is small", translated), and the follow-ups to hoist invariant loads, carry reference facts, spill to the frame and pass the table base ("the rest are all approved, start", translated); after the handoff of PR #222 at `74cfeaade`, which presented decision cards Q10 and Q11 and the ledger edit, "Agree to 10 and 11" (translated).
+
+Summary: A split dispatch loop entered by one edge computes in the enclosing function what the loop cannot change: the box projections and measures of a read-only reference passed through unchanged, the box projection of a passed-through reference used only for it, no parameter for a reference left unread, and a function parameter's reference facts on the part parameter holding its pointer (Q10), which brought the WF interpreter to 1.00-1.13x of the C tail-call form. Past the convention's argument registers, values the loop cannot change wait in enclosing-frame slots, the fewest-read first, and the handler table's address is a parameter where a register is left (Q11). `whitefootc --dispatch-ledger` reports each loop's split verdict or first failed condition, instead of a source marker that would make acceptance depend on the host (Q9). Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md).
+
 ## 2026-10-04 Interpreter dispatch through match
 
 Nodes: compiler/match-dispatch-lowering, compiler/backend-facts
