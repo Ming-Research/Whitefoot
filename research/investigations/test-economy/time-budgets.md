@@ -398,7 +398,8 @@ image: the cohorts have different revisions, and those two maxima come
 from 29 and 30 `macos-15` samples against 13 `macos-14` ones each, and a
 larger sample alone raises a maximum.
 Slowest `macos-15` runs, in seconds, and 1.25 times each rounded up to
-5 s, which this change sets as the macOS budgets:
+5 s, which this change sets as the macOS budgets and the owner approved on
+2026-10-05 ("agree to all the others", translated from Chinese):
 
 | Stage | Slowest run | Budget, before | after |
 |---|---:|---:|---:|
