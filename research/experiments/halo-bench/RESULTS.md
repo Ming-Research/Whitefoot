@@ -1213,3 +1213,93 @@ classification, initialization and reinsertion without changing table
 ownership or mutation on failed rehash. Reopen prefix allocation copying
 if the selected change still leaves measured growth cost. No new public
 interface or representation is needed.
+
+### Iteration-order evidence correction
+
+The unchanged corpus has 80 scripts at three budgets (240 comparisons),
+not 240 distinct scripts. Inspection finds `lua-core/next-pairs.lua` sorts
+both observations before returning them; its README explicitly says it
+avoids hash-order dependence. Passing it cannot establish byte-identical
+iteration order. Preserve all corpus source and expected bytes and add
+scratch, unsorted PUC comparisons of that script and mixed-table growth,
+holes, shrink and regrowth. These supplement the required ordinary/stress
+oracle, rather than silently strengthening its reported coverage. The
+original corpus's order-observation gap is a maintained TODO.
+
+### Fib frame input for the next experiment
+
+The retained three fib(34) profiles contain 1,090, 1,090 and 1,122 worker
+samples. Exclusive enter_lua counts are 465, 430 and 415; prepare counts
+68, 74 and 84; push_frame 56, 63 and 60; finish 50, 44 and 47. Together
+these account for the reported 54.01–58.62%. Their source and native code
+show per-call closure/live-handle and prototype checks, a prototype copy,
+saturating argument/base/top arithmetic, stack-room checks, register
+clearing, construction and copying of an 80-byte Frame, frame-capacity
+checks and result Value copying with source/destination bounds checks.
+The native enter_lua reserves 464 stack bytes and push_frame reserves 160;
+these are native call storage, not Lua's register count. Prominent
+enter_lua offsets +492 and +592 map to saved-register restoration and
+the room-sentinel test respectively, not the clearing loop; push_frame
++292 is saved-register restoration, +60 its depth check. finish +92/+156
+map to result Value stores/addressing. Function occupancy therefore does
+not justify assigning the 37–43% enter_lua share to register clearing.
+
+The independent PUC `luac -l -p` listing identifies fib as one fixed
+parameter, four registers, no varargs and ordinary recursive calls (two
+calls and one addition), so its dominant path needs neither tail argument
+movement nor vararg relocation. On Halo's corresponding fixed-arity path,
+enter_lua clears registers after the parameters, constructs a frame and
+returns a Jump; ensure_stack reserves room for 256 slots but extends
+only when needed. No resize_stack child appears in these steady-state
+profiles. Frame transport, call/return overhead and repeated checked
+metadata work are concrete next attribution targets; exact cycle shares
+inside them remain unmeasured. No frame code changes in this experiment.
+
+### Runtime sizing
+
+The full-LTO benchmark build passes in 547.65 s (exit 0). One pair
+per kernel takes 12.89 s; the candidate's first fib launch is cold
+(0.66915 s versus 0.20765 s), and no sizing launch enters the selected
+medians. Three subsequent warm pairs take 31.64 s (exit 0): integer-table
+improves 25.68% with before/candidate relative ranges 0.68%/1.08%.
+This separates the expected result from the 10% threshold, so select the
+requested six alternating pairs. One loop candidate calibration launch
+gives an 11.47% range; retain it as calibration, do not pool it or
+attribute it to the source change. All sizing checksums and completed
+collection counts agree. Report the independent six-pair spread for every
+kernel under the already recorded noise rule.
+
+### Six-pair table-growth result
+
+Same-source full-LTO pairs on the recorded M1 Pro/macOS host, normal GC,
+unlimited execution budget; process time includes startup, source loading,
+compilation and execution. The selected six-pair batch takes 59.92 s
+(exit 0); no selected launch is discarded.
+
+| Kernel | Before median s | Candidate median s | Improvement | Before min–max s | Candidate min–max s | Before/candidate range |
+|---|---:|---:|---:|---|---|---|
+| fib | 0.197299 | 0.197550 | -0.13% | 0.196233–0.202212 | 0.196077–0.200146 | 3.03% / 2.06% |
+| loop | 0.561178 | 0.560938 | 0.04% | 0.560504–0.563639 | 0.558494–0.563817 | 0.56% / 0.95% |
+| integer-table | 0.747147 | 0.555112 | 25.70% | 0.742155–0.750803 | 0.552090–0.557001 | 1.16% / 0.88% |
+| string-key | 0.038109 | 0.038426 | -0.83% | 0.037955–0.038297 | 0.037725–0.041416 | 0.90% / 9.61% |
+| concat | 0.178958 | 0.178930 | 0.02% | 0.176419–0.184531 | 0.174141–0.183689 | 4.53% / 5.34% |
+| sort | 0.726877 | 0.718753 | 1.12% | 0.725983–0.731520 | 0.716615–0.721970 | 0.76% / 0.74% |
+| binary-trees | 2.419485 | 2.418981 | 0.02% | 2.411753–2.433051 | 2.413501–2.429184 | 0.88% / 0.65% |
+
+Integer-table improves **25.70%**, passing the 10% runtime threshold.
+Fib loses 0.13%, below its 3.03% before range; string-key loses 0.83%,
+below even its 0.90% before range (candidate range 9.61%). The other
+five improve. Thus no other kernel regresses beyond the fixed noise rule;
+the short string-key result remains noisy. Every native/reference exit
+is 0, printed checksum bytes agree, suspensions are zero, and paired
+completed collections remain fib 0, loop 0, integer-table 5, string-key 0,
+concat 0, sort 3 and binary-trees 176. Individual pairs, launch order,
+source/binary hashes and all calibration runs remain in the raw JSON.
+
+The combined trial removes the source-level redundant work identified
+above; these timings do not isolate gains from counting, prefix copying
+and suffix-only initialization, or native layout changes separately.
+Candidate retains fresh allocation and copies the retained prefix:
+physical in-place resize and isolated copy costs remain possible follow-up
+experiments, not prerequisites for this bounded trial. The computesizes
+loop still examines all 27 bins; its small total was not selected.
