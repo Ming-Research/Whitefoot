@@ -375,3 +375,209 @@ paths. Set `BASELINE`, `CANDIDATE` and `WORK_ROOT` explicitly and run under
 `.github/run-check.pl`. The runner requires `shasum` for retained SHA-256
 evidence. Later test-only route counters and conformance evidence do not alter
 the measured production mechanisms.
+
+## Active-term matrices
+
+### Question
+
+A synthetic interpreter, one function whose `match` has N arms, each arm
+doing a few checked stack operations and a guaranteed tail call, checked in
+0.10, 0.36, 3.0 and 27.3 s for N = 10, 20, 40, 80 on an idle M1 Pro, roughly
+N³, and a real 178-arm interpreter (the stage-3 wasm interpreter of the
+match-dispatch investigation, not on this branch) did not finish checking in
+minutes. What scales with the whole function rather than with the facts on
+the path being checked? The generator is not kept as a file; it is this
+script, run as `python3 synth.py N`:
+
+```python
+import sys
+n = int(sys.argv[1])
+o = ["alias ExitStatus = std::process::ExitStatus;",
+     "alias exit_status = std::process::exit_status;", "", "enum Op {"]
+o += [f"  A{i}(x: u16);" for i in range(n)]
+o += ["}", "",
+      "fn run(code: &Box<Slots<Op>>, stack: &Box<Array<u64>>, pc: u64, sp: u64)"
+      " -> r: u64 reads(code), writes(stack) contract {",
+      "  requires pc < code^.inner.len;", "  requires sp <= stack^.inner.len;",
+      "} {", "  let n = code^.inner.len;", "  match code^.inner[pc] {"]
+for i in range(n):
+    o += [f"    A{i}(x: xv) => {{", "      if sp >= 2_u64 {",
+          "        let s1 = sp - 1_u64;", "        let s2 = sp - 2_u64;",
+          "        let a = stack^.inner[s2];", "        let b = stack^.inner[s1];",
+          "        let c = a +wrap b;", "        set stack^.inner[s2] = c;",
+          "        let next = pc + 1_u64;", "        if next < n {",
+          "          return musttail run(code: code, stack: stack, pc: next, sp: s1);",
+          "        }", "      }", "      return 0_u64;", "    }"]
+o += ["  }", "}", "", "fn main() -> status: ExitStatus pure {",
+      "  return exit_status(code: 0_u8);", "}", ""]
+open(f"synth{n}.wf", "w").write("\n".join(o))
+```
+
+### Measurement
+
+A copy of the compiler with one trace line per closure, join,
+materialization and contradiction probe (route, matrix dimension, stored
+cells, terms with any stored cell, cells in the closed matrix, ledger nodes
+interned) checked the synthetic program at N = 5, 10, 20, 40, 80 on an Apple
+Silicon Mac. D is the number of registered terms when the function ends;
+"computed" closures are those not answered from the remembered view;
+Σ dim² is the total of matrix cells allocated and filled by them.
+
+| N | D | computed closures (unseeded/insert/closed) | Σ dim² | two-input joins | join-route interned nodes | materializations | materialized cells | max terms with a stored cell in an arm-entry state | check wall s |
+|---|---|---|---|---|---|---|---|---|---|
+| 5 | 54 | 131 (100/20/11) | 93,922 | 5 | 10,951 | 15 | 23,205 | 13 | 0.52 (cold) |
+| 10 | 94 | 196 (135/40/21) | 476,662 | 10 | 48,301 | 30 | 115,610 | 13 | 0.10 |
+| 20 | 174 | 326 (205/80/41) | 2,945,342 | 20 | 266,201 | 60 | 700,020 | 13 | 0.41 |
+| 40 | 334 | 586 (345/160/81) | 20,519,502 | 40 | 1,722,801 | 120 | 4,811,240 | 13 | 3.09 |
+| 80 | 654 | 1,106 (625/320/161) | 152,807,022 | 80 | 12,303,201 | 240 | 35,555,280 | 13 | 28.98 |
+
+Every closed matrix was completely full (`closed_live / dim²` = 1.000 in
+every trace): for any two registered terms a and b the implicit type-range
+bounds `a - Z <= max(a)` and `Z - b <= -min(b)` compose to `a - b <= max(a)
+- min(b)`, which the fixed point derives through Z as its first middle and
+edge insertion derives from each fresh term's two implicit edges. D grows by
+eight per arm, since the arm's binders, locals and commit value are never
+removed from the term table, while at most thirteen terms carried a stored
+relation in any arm-entry state at every N. Each arm ran about fourteen
+computed closures, two joins and three materializations, each Θ(D²), which
+is the cubic: Σ dim² grew ×6.2, ×7.0 and ×7.4 per doubling, the wall time
+×7.5 and ×9.4. The two-input `if` join interned about D² fresh `JoinBound`
+nodes each (`dim=502 joined_live=252004 interned=259038`), the first
+materialization of each arm one `MaterializedBound` per cell (`dim=325
+stored=105625 interned_total=105679`), and each kill scanned the store's
+`(1.5·D)²` cells; the unseeded fixed point's Z-path candidates were
+deduplicated by the content-addressed ledger and cost one probe and one cell
+write each. A profile of the 80-arm check put 3,954 of 7,954 samples in the
+fixed point, 1,469 in `DerivationLedger::intern` and 904 in
+`DenseClosureBounds::set`.
+
+### Alternatives
+
+- Scoping or retiring terms at arm and block exits: subsumed, because commit
+  values, call and measure datums and constants have no lexical scope and
+  still grow D by one `set` per arm, `TermId` is the dense index of every
+  ledger node and retained goal, and an in-scope binder without a fact still
+  fills a row.
+- Storing only cells stronger than the Z path, the alternative this record's
+  first selection rejected: not needed to remove the cubic, and it changes
+  the stored-cell identity of pairs of two active terms, which the
+  semi-naive freshness, the row summaries and the weakened-cell repair read
+  by position.
+- Fewer closures, by keeping the remembered view across the registration of a
+  term without facts or by recording a complete closure on a state whose
+  record is unknown: each halves the computed closures per arm and leaves
+  every one Θ(D²).
+
+### Selection
+
+The matrices are indexed by each state's active terms: Z, the terms with a
+stored bound or disequality candidate, and the terms whose implicit facts
+relate them to another non-Z term (a measure equated to a symbolic constant
+with that constant, a capacity measure with a registered length or head
+sibling). A term outside that set holds exactly its reflexive bound and its
+two bounds against Z, so it is never an interior vertex of a strictly
+shortest path (its Z→t→Z cycle weighs `max(t) - min(t) >= 0`, and a constant's
+zero-weight cycle gives an equal bound at depth two more, which the
+candidate order rejects) and no strengthening applies to its cells in a
+non-contradictory state; the closure over the active terms therefore derives
+every bound the closure over all terms derives, and the closed view answers a
+pair with such a term from its implicit bound and the active term's Z cell,
+with the `TransitiveBound` through Z the complete closure selects for that
+cell. A join ranges over the union of its inputs' active terms, reads a term
+an input holds no row for through that input's view, and stores a
+disequality on a term outside that union only where the inputs bound the
+other term strictly above and strictly below the term's range on different
+paths, the one case the joined Z bounds do not imply. When the ordinary
+layer's join activates terms the full join did not, which happens when a full
+input is contradictory while its ordinary layer is not, the full join is
+retaken over those terms so its stored selection stays at least as strong as
+its view. The test oracle closes the same state over every registered term
+and compares every registered pair's bound and disequality with the active
+closure's view on all four routes; it failed on a deliberately weakened edge
+insertion before the change and on a deliberately weakened view through Z
+after it.
+
+### Result
+
+Same host, under the host lock, the pre-change gate build of the branch
+against the change (commit `222dec040`), `whitefootc synthN.wf --check`
+wall seconds, every output identical and empty:
+
+| N | before | after (three runs) |
+|---|---|---|
+| 10 | 0.16 | 0.15, 0.16, 0.16 |
+| 20 | 0.47, 0.37 | 0.16, 0.16, 0.15 |
+| 40 | 2.59, 2.61 | 0.26, 0.26, 0.16 |
+| 80 | 24.50, 24.49 | 0.27, 0.26, 0.36 |
+| 160 | 212.9 | 0.58, 0.58, 0.59 |
+
+The 9,700-line wasm interpreter with its handlers in helper functions
+checked in 30.8 and 30.7 s before and 2.58 and 2.61 s after; the 8,588-line
+variant with 154 handler bodies inline in the arms in 84.8 s before and 2.72
+s after. A paired alternating comparison of five rounds per source with the
+emitted LLVM hashed at every compile gave medians of 1,348 against 1,002 ms
+on `tests/programs/wfgrep.wf` (0.74) and 1,568 against 1,612 ms on
+`tests/programs/fixed_run_library.wf` (1.03), with the LLVM output
+byte-identical in every compile of every source. The review commit that
+follows (`816657ddc`) measured, against `222dec040` on the 14900K host,
+748 against 742 ms on wfgrep (0.99) and 1,195 against 1,199 ms on
+fixed_run_library (1.00), LLVM identical. A first build of the change
+that found a term's row by binary search had measured 1.10 and 1.21 on the
+same two programs; the term-indexed slot tables removed that cost.
+
+Review follow-up: the generated flows now also establish call-dependent
+disequalities, include a capacity sibling and a length equated to a symbolic
+constant among their terms, promote a predecessor's contradiction before
+every kill and join as the walk does, check at every step that the
+proof-free contradiction probe agrees with the closure over every registered
+term, and run 1000 cases. Two gaps of the active-term matrices surfaced. A
+term active only through a call-dependent disequality has no row in the
+ordinary closure, so the materialization's fallback loop, which visited the
+ordinary closure's cells, gave such a term's call-dependent cells no
+fallback; it now visits every call-dependent cell of the canonical closure
+and reads the ordinary closure through its view, and the ordinary join
+stores a row for every term of the full join. And a predecessor
+contradictory only through call-dependent facts is neutral in the full join
+while its ordinary layer contributes to the ordinary join, so the ordinary
+join can hold rows the full join lacks; the full join is then retaken over
+those rows, as the selection above records. A third finding predates the
+change: materialization before a kill is skipped when the full closure
+record is closed, and an ordinary relation that does not improve the full
+selection leaves that record closed while the ordinary fallbacks it improves
+are not yet stored, so the kill removes its support before they exist
+(generated case 1379 of 3000). Materializing on the ordinary record as well
+changes which ordinary fallbacks a program holds, a change of the ordinary
+layer's completeness rather than a restoration of it; it is recorded in
+`docs/todo.md`. Taking the ordinary record before marking the cells a
+candidate removal weakens, which was tried as a fix for the second gap,
+repairs those cells at every removal and was not kept: the paired comparison
+on the 14900K host (five alternating rounds, `--emit-llvm`, the two variants
+present together) measured wfgrep 749 against 1,565 ms (2.09) and
+fixed_run_library 1,213 against 1,400 ms (1.15) relative to commit
+`222dec040`, and the two variants were not measured apart; with both removed
+the same comparison gave 748 against 742 ms (0.99) and 1,195 against 1,199 ms
+(1.00), LLVM identical in every compile.
+
+Changed observation: the generated-flow comparison `assert_flow_states_agree`
+compared the two states' stored cell lists and stored disequality sets; it
+now compares every registered pair's bound and disequality query, since the
+optimized and the reference state store different rows for the same closure.
+The oracle's stored-disequality comparison is kept on the active universe.
+
+Limit: the universe of every closure contains every relational term of the
+function whether or not it carries a stored fact, and the measure walk interns
+the length, capacity and head measures of each measured place together, so a
+function with many measured places has a universe, and so closure, join and
+materialization costs, that grow with that count again. The synthetic and the
+real interpreters here have a handful of measured places; a program with
+hundreds would show the growth. The remedy is to admit a relational group to
+the universe only while one of its members holds a stored fact and to answer
+a pair inside a dormant group from its implicit edges, which needs the view to
+know those edges; it is recorded in `docs/todo.md`.
+
+Witness policy: a pair the view answers through Z no longer receives a
+`MaterializedBound`, `JoinBound`, `MaterializedDistinct` or `JoinDistinct`
+wrapper at a materialization or join, and a disequality derived from such a
+strict bound is re-derived rather than stored; these are the different valid
+derivations of equal bounds that the retained-derivation decision admits,
+and no rendered diagnostic names a derivation node kind.

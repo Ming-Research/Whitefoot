@@ -12,13 +12,16 @@ use std::mem::{size_of, size_of_val};
 use std::rc::Rc;
 
 use super::super::goal::{GoalExpression, GoalOperation, GoalProjection};
+#[cfg(test)]
+use super::super::model::IntegerType;
 use super::super::model::{
-    BindingId, CheckedBooleanOperation, CheckedLoopId, CheckedMeasure, CheckedValue, IntegerType,
+    BindingId, CheckedBooleanOperation, CheckedLoopId, CheckedMeasure, CheckedValue,
 };
 use super::super::places::{CapturedRange, CapturedValue};
 use super::VerifiedPostconditionSummaryRef;
 use super::affine::{AffineForm, AffineInequality};
-use super::term::{MeasureBound, TermId, TermKind, TermTable, ZERO, type_range};
+pub(crate) use super::term::ImplicitBoundKind;
+use super::term::{ImplicitRange, MeasureBound, TermId, TermKind, TermTable, ZERO};
 use crate::NodePath;
 
 /// One normalized source relation over interned terms.
@@ -261,21 +264,6 @@ pub(crate) struct DerivationInventory {
     pub(crate) terms: Vec<TermKind>,
     pub(crate) measure_bounds: Vec<Option<MeasureBound>>,
     pub(crate) goals: Vec<RetainedGoal>,
-}
-
-/// Why an implicit bound exists independently of writer facts.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum ImplicitBoundKind {
-    Reflexive,
-    Constant,
-    TypeMinimum,
-    TypeMaximum,
-    /// One [MSR-2] standing fact: a measure whose table cell fixes its
-    /// value, or a measure the table equates to another measure of the
-    /// same place. It has empty support and no event kills it.
-    StandingMeasure,
-    /// [MSR-2]'s standing ordering between two measures of one place.
-    MeasureOrdering,
 }
 
 /// One reaching predecessor named by a join derivation.
@@ -2262,8 +2250,11 @@ impl ClosureRecord {
         }
     }
 
-    fn is_closed_over(&self, term_count: usize) -> bool {
-        matches!(self, Self::Closed { terms } if *terms as usize == term_count)
+    /// Whether the stored relations are their own complete closure over the
+    /// state's active terms. A term activated or registered later is fresh
+    /// in the next closure's universe, which `closure_universe` records.
+    fn is_closed(&self) -> bool {
+        matches!(self, Self::Closed { .. })
     }
 
     /// Turns a closed record into an empty core; returns whether the record
@@ -2369,14 +2360,27 @@ impl<'a, T: Copy + PartialEq> IntoIterator for &'a Candidates<T> {
     }
 }
 
-/// The selected difference bounds of a fact state, dense over term identities.
+/// Slot marker of a term a matrix holds no row for.
+const NO_SLOT: u32 = u32::MAX;
+
+/// The selected difference bounds of a fact state, dense over the state's
+/// active terms.
 ///
-/// Row-major cells are in sorted `(left, right)` order. The stride leaves room
-/// for terms registered later, so a new term rarely re-lays the store out.
-/// A relation's selected candidate is its cell; any further independently live
-/// candidates of the same pair are kept, in order, in `extra`.
+/// A term is active in a store while the store holds a relation on it; the
+/// active terms, in ascending `TermId` order, own the rows and columns of a
+/// square matrix, so row-major cells are in sorted `(left, right)` order.
+/// Every other registered term has no row: its only facts are its implicit
+/// bounds through Z, which a closure's view answers without a cell [ENT-4].
+/// The stride leaves room for terms activated later, so a new slot at the end
+/// rarely re-lays the store out. A relation's selected candidate is its cell;
+/// any further independently live candidates of the same pair are kept, in
+/// order, in `extra`.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BoundStore {
+    slots: Vec<TermId>,
+    /// The slot of each registered term, `NO_SLOT` where the store holds no
+    /// relation on it; indexed by `TermId`, grown as terms are activated.
+    slot_of: Vec<u32>,
     stride: usize,
     bounds: Vec<i128>,
     proofs: Vec<DerivationId>,
@@ -2386,15 +2390,39 @@ pub(crate) struct BoundStore {
 }
 
 impl BoundStore {
-    fn with_terms(terms: usize) -> Self {
+    /// The active terms, ascending.
+    pub(crate) fn slots(&self) -> &[TermId] {
+        &self.slots
+    }
+
+    /// A store with rows for `slots`, ascending, and no cell yet: the shape a
+    /// materialization or join fills in.
+    fn with_slots(slots: Vec<TermId>) -> Self {
         let mut store = Self::default();
-        store.reserve(terms);
+        store.relayout(slots);
         store
     }
 
+    /// Whether the store holds a row for `term`.
+    pub(crate) fn is_active(&self, term: TermId) -> bool {
+        self.slot(term).is_some()
+    }
+
+    fn slot(&self, term: TermId) -> Option<usize> {
+        let slot = *self.slot_of.get(term.0 as usize)?;
+        (slot != NO_SLOT).then_some(slot as usize)
+    }
+
+    fn record_slot(&mut self, term: TermId, slot: usize) {
+        let index = term.0 as usize;
+        if self.slot_of.len() <= index {
+            self.slot_of.resize(index + 1, NO_SLOT);
+        }
+        self.slot_of[index] = u32::try_from(slot).expect("store slot fits the u32 identity");
+    }
+
     fn index(&self, left: TermId, right: TermId) -> Option<usize> {
-        let (left, right) = (left.0 as usize, right.0 as usize);
-        (left < self.stride && right < self.stride).then_some(left * self.stride + right)
+        Some(self.slot(left)? * self.stride + self.slot(right)?)
     }
 
     /// The selected bound and proof of `left - right`, if any.
@@ -2409,46 +2437,86 @@ impl BoundStore {
 
     /// Every selected bound in sorted `(left, right)` order.
     pub(crate) fn cells(&self) -> impl Iterator<Item = (TermId, TermId, i128, DerivationId)> + '_ {
-        let stride = self.stride.max(1);
-        self.present
-            .iter()
-            .enumerate()
-            .filter(|(_, present)| **present)
-            .map(move |(index, _)| {
-                (
-                    TermId(
-                        u32::try_from(index / stride).expect("term index fits the u32 identity"),
-                    ),
-                    TermId(
-                        u32::try_from(index % stride).expect("term index fits the u32 identity"),
-                    ),
-                    self.bounds[index],
-                    self.proofs[index],
-                )
+        let count = self.slots.len();
+        (0..count).flat_map(move |row| {
+            (0..count).filter_map(move |column| {
+                let index = row * self.stride + column;
+                self.present[index].then(|| {
+                    (
+                        self.slots[row],
+                        self.slots[column],
+                        self.bounds[index],
+                        self.proofs[index],
+                    )
+                })
             })
+        })
     }
 
-    fn reserve(&mut self, terms: usize) {
-        if terms <= self.stride {
+    /// Gives `term` a row and column, keeping the slots sorted. A term above
+    /// every active term takes the next free index without moving a cell;
+    /// any other insertion, and a stride with no room, re-lays the matrix
+    /// out.
+    fn ensure_slot(&mut self, term: TermId) {
+        if let Err(position) = self.slots.binary_search(&term) {
+            if position == self.slots.len() && position < self.stride {
+                self.slots.push(term);
+                self.record_slot(term, position);
+            } else {
+                let mut slots = self.slots.clone();
+                slots.insert(position, term);
+                self.relayout(slots);
+            }
+        }
+    }
+
+    /// Drops the row and column of every active term the predicate selects,
+    /// after the caller cleared their cells.
+    fn drop_slots(&mut self, mut dropped: impl FnMut(TermId) -> bool) {
+        if !self.slots.iter().any(|term| dropped(*term)) {
             return;
         }
-        let stride = (terms + terms / 2).max(16);
+        let kept = self
+            .slots
+            .iter()
+            .copied()
+            .filter(|term| !dropped(*term))
+            .collect::<Vec<_>>();
+        self.relayout(kept);
+    }
+
+    /// Re-lays the matrix out over `slots`, sorted, keeping every present
+    /// cell whose two terms are among them, with headroom for later terms.
+    fn relayout(&mut self, slots: Vec<TermId>) {
+        let stride = (slots.len() + slots.len() / 2).max(16);
         let count = stride
             .checked_mul(stride)
             .expect("ENT bound store exceeds the address space");
         let mut bounds = vec![0; count];
         let mut proofs = vec![DerivationId(0); count];
         let mut present = vec![false; count];
+        let mut live = 0;
         for (left, right, bound, proof) in self.cells() {
-            let index = left.0 as usize * stride + right.0 as usize;
+            let (Ok(row), Ok(column)) = (slots.binary_search(&left), slots.binary_search(&right))
+            else {
+                continue;
+            };
+            let index = row * stride + column;
             bounds[index] = bound;
             proofs[index] = proof;
             present[index] = true;
+            live += 1;
         }
+        self.slot_of.clear();
+        for (slot, term) in slots.iter().enumerate() {
+            self.record_slot(*term, slot);
+        }
+        self.slots = slots;
         self.stride = stride;
         self.bounds = bounds;
         self.proofs = proofs;
         self.present = present;
+        self.live = live;
     }
 
     /// Every independently live candidate of one pair, the selected one first.
@@ -2568,10 +2636,11 @@ impl BoundStore {
 
     /// Selects a pair's only candidate.
     fn store_single(&mut self, left: TermId, right: TermId, bound: i128, proof: DerivationId) {
-        self.reserve(left.0.max(right.0) as usize + 1);
+        self.ensure_slot(left);
+        self.ensure_slot(right);
         let index = self
             .index(left, right)
-            .expect("store reserved for the pair");
+            .expect("store has slots for the pair");
         if !self.present[index] {
             self.live += 1;
         }
@@ -3021,6 +3090,14 @@ impl FactState {
         {
             self.closure.mark_fresh_cell(pair);
         }
+        // A term receiving its first stored relation has no closed row yet:
+        // its implicit bounds enter the next closure as fresh edges.
+        for term in [left, right] {
+            if !self.bounds.is_active(term) {
+                self.closure.mark_fresh_term(term);
+                self.ordinary_closure.mark_fresh_term(term);
+            }
+        }
         if ledger.depends_on_postcondition_call(proof) {
             self.postcondition_candidates = true;
         } else if self
@@ -3160,6 +3237,12 @@ impl FactState {
             for pair in dead {
                 bounds.clear(pair);
             }
+        }
+        // A killed term's row is empty now; dropping it returns the term to
+        // its implicit bounds alone, which every later closure answers
+        // through Z, and keeps the matrix to the terms that carry a fact.
+        if self.bounds.slots().iter().any(|term| killed(*term)) {
+            Rc::make_mut(&mut self.bounds).drop_slots(&mut killed);
         }
         // Shared relation maps are copied only when this kill changes them.
         if self
@@ -3313,7 +3396,10 @@ impl FactState {
                 ledger.depends_on_postcondition_call(proof)
             });
         self.postcondition_candidates = false;
-        // Every remaining selection is now its ordinary selection.
+        // Every remaining selection is now its ordinary selection: each pair
+        // whose selection depended on a call carries the ordinary fallback
+        // its materialization or join stored, which was a closed value of the
+        // ordinary layer, so the ordinary layer's record describes the state.
         self.closure = self.ordinary_closure.clone();
         changed
     }
@@ -3424,7 +3510,7 @@ impl ClosedState {
         }
         self.matrix
             .lookup(left, right)
-            .is_some_and(|(held, _)| held <= bound)
+            .is_some_and(|held| held <= bound)
     }
 
     /// Strongest closed difference bound for interval projection.  Callers
@@ -3432,8 +3518,45 @@ impl ClosedState {
     /// meaningful numeric interval.
     pub(crate) fn tight_bound(&self, left: TermId, right: TermId) -> Option<i128> {
         (!self.all_derivable)
-            .then(|| self.matrix.lookup(left, right).map(|(bound, _)| bound))
+            .then(|| self.matrix.lookup(left, right))
             .flatten()
+    }
+
+    /// Whether the ordered pair is distinct in this closure: a stored or
+    /// derived disequality, or a strict bound in either direction, the
+    /// bound answered through Z for a term without a row included [ENT-4].
+    fn derives_distinct_pair(&self, pair: (TermId, TermId)) -> bool {
+        self.all_derivable
+            || self.distinct.contains(&pair)
+            || self.derives_bound(pair.0, pair.1, -1)
+            || self.derives_bound(pair.1, pair.0, -1)
+    }
+
+    /// The proof of one distinct ordered pair: its stored proof, or the
+    /// disequality the strict bound in either direction derives.
+    fn distinct_proof(
+        &self,
+        pair: (TermId, TermId),
+        ledger: &mut DerivationLedger,
+    ) -> Option<DerivationId> {
+        if self.all_derivable {
+            return self.contradiction;
+        }
+        if let Some(proof) = self.distinct_proofs.get(&pair) {
+            return Some(*proof);
+        }
+        for (from, to) in [(pair.0, pair.1), (pair.1, pair.0)] {
+            if let Some((bound, parent)) = self.matrix.lookup_proof(from, to, ledger)
+                && bound <= -1
+            {
+                return Some(ledger.intern(DerivationNode::DisequalityFromStrictBound {
+                    left: pair.0,
+                    right: pair.1,
+                    parent,
+                }));
+            }
+        }
+        None
     }
 
     /// A state is contradictory when `t - t <= -1` is derivable for any term;
@@ -3446,31 +3569,60 @@ impl ClosedState {
         self.contradiction
     }
 
-    /// The finite normalized L0 inventory used by bounded `value_if`
-    /// delivery. Opaque signed goals are deliberately absent.
-    pub(crate) fn delivery_relations(&self) -> Vec<(Relation, DerivationId)> {
-        if self.all_derivable {
+    /// The closed L0 relations naming `term`, bounds in sorted `(left,
+    /// right)` order and then disequalities in sorted pair order, for bounded
+    /// `value_if` delivery. Opaque signed goals are deliberately absent. A
+    /// pair answered through Z is listed with its Z-path derivation; a pair
+    /// of two terms without a row is left out, since both its parents are
+    /// implicit bounds and delivery carries no relation whose derivation
+    /// depends on no established relation.
+    pub(crate) fn relations_mentioning(
+        &self,
+        term: TermId,
+        ledger: &mut DerivationLedger,
+    ) -> Vec<(Relation, DerivationId)> {
+        if self.all_derivable || !self.matrix.answers(term) {
             return Vec::new();
         }
-        // Row-major cells are already in `(left, right)` order.
-        let mut relations = self
-            .matrix
-            .cells()
-            .map(|(left, right, bound, proof)| (Relation::Bound { left, right, bound }, proof))
-            .collect::<Vec<_>>();
-        let mut distinct = self.distinct.iter().copied().collect::<Vec<_>>();
-        distinct.sort_unstable();
-        relations.extend(distinct.into_iter().map(|(left, right)| {
-            (
-                Relation::Distinct {
-                    left,
-                    right,
-                    difference: 0,
-                },
-                self.distinct_proofs[&(left, right)],
-            )
-        }));
-        relations
+        let others = (0..self.matrix.term_count)
+            .map(|index| TermId(u32::try_from(index).expect("term index fits the u32 identity")));
+        let active = self.matrix.slot(term).is_some();
+        let mut bounds = Vec::new();
+        let mut distinct = Vec::new();
+        for other in others {
+            if !active && self.matrix.slot(other).is_none() {
+                continue;
+            }
+            let pairs: &[(TermId, TermId)] = if other == term {
+                &[(term, term)]
+            } else {
+                &[(term, other), (other, term)]
+            };
+            for &(left, right) in pairs {
+                if let Some((bound, proof)) = self.matrix.lookup_proof(left, right, ledger) {
+                    bounds.push((Relation::Bound { left, right, bound }, proof));
+                }
+            }
+            if other != term {
+                let pair = ordered(term, other);
+                if self.derives_distinct_pair(pair)
+                    && let Some(proof) = self.distinct_proof(pair, ledger)
+                {
+                    distinct.push((
+                        Relation::Distinct {
+                            left: pair.0,
+                            right: pair.1,
+                            difference: 0,
+                        },
+                        proof,
+                    ));
+                }
+            }
+        }
+        bounds.sort_by_key(|(relation, _)| relation.terms());
+        distinct.sort_by_key(|(relation, _)| relation.terms());
+        bounds.extend(distinct);
+        bounds
     }
 
     /// [ENT-4] exact derivability of one normalized relation: a bound by the
@@ -3628,7 +3780,7 @@ impl ClosedState {
         if self.all_derivable {
             return self.contradiction;
         }
-        let (held, parent) = self.matrix.lookup(left, right)?;
+        let (held, parent) = self.matrix.lookup_proof(left, right, ledger)?;
         if held > requested {
             return None;
         }
@@ -3939,95 +4091,12 @@ pub(crate) fn implicit_bound_between(
 ) -> Option<(i128, ImplicitBoundKind)> {
     let term = if pair.0 == ZERO { pair.1 } else { pair.0 };
     let mut tightest: Option<(i128, ImplicitBoundKind)> = None;
-    for_each_implicit_bound(terms, term, |left, right, bound, kind| {
+    terms.for_each_implicit_bound(term, |left, right, bound, kind| {
         if (left, right) == pair && tightest.is_none_or(|(held, _)| bound < held) {
             tightest = Some((bound, kind));
         }
     });
     tightest
-}
-
-/// Emits every [ENT-2] implicit bound carried by one term: the reflexive
-/// bound, the fragment-type range, the constant fold through Z, and the
-/// `len_of(P) = N` equality of an `array<T, N>` place.
-///
-/// Implicit facts are a function of the term table and the place's type
-/// alone. They hold at every program point, so this is the single rule table
-/// every closure entry point re-emits; no [ENT-5] kill and no join can remove
-/// one, and a state that lost the materialized copy of one regains it here.
-fn for_each_implicit_bound(
-    terms: &TermTable,
-    id: TermId,
-    mut emit: impl FnMut(TermId, TermId, i128, ImplicitBoundKind),
-) {
-    emit(id, id, 0, ImplicitBoundKind::Reflexive);
-    match terms.kind(id) {
-        TermKind::Zero => {}
-        TermKind::Constant(value) => {
-            emit(id, ZERO, *value, ImplicitBoundKind::Constant);
-            emit(ZERO, id, -value, ImplicitBoundKind::Constant);
-        }
-        TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => {
-            let (minimum, maximum) = type_range(*ty);
-            emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-            emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-        }
-        // [MSR-2] every measure term carries the standing facts of its
-        // place. The `u64` range already gives `Z <= m`; what the measure
-        // table adds is the value a fixed cell has and the ordering between
-        // two measures of one place. Each has empty support and no event
-        // kills it, which is exactly what an implicit bound is.
-        // [MSR-3] an entry or placement datum is one measure's value, of
-        // fragment type u64, or one fragment-integer place's value, of that
-        // place's type, with empty support. Its standing orderings reach it
-        // through the equality this datum is established with; what it
-        // carries of its own is the type range.
-        TermKind::EntryDatum { ty, .. } | TermKind::MeasureDatum { ty, .. } => {
-            let (minimum, maximum) = type_range(*ty);
-            emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-            emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-        }
-        TermKind::Measure(measure, _) => {
-            let (minimum, maximum) = type_range(IntegerType::U64);
-            emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-            emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-            match terms.measure_bound(id) {
-                Some(MeasureBound::Constant(value)) => {
-                    emit(id, ZERO, value, ImplicitBoundKind::StandingMeasure);
-                    emit(ZERO, id, -value, ImplicitBoundKind::StandingMeasure);
-                }
-                Some(MeasureBound::Equal(other)) => {
-                    emit(id, other, 0, ImplicitBoundKind::StandingMeasure);
-                    emit(other, id, 0, ImplicitBoundKind::StandingMeasure);
-                }
-                None => {}
-            }
-            // `P.len <= P.cap` and `P.head <= P.cap`, emitted from the
-            // capacity term so each ordering is emitted exactly once. x1's
-            // [MSR-1] table gives the two `Array` rows no `cap` cell, so an
-            // `Array` place registers no capacity term and neither ordering
-            // is emitted for it.
-            if *measure == CheckedMeasure::Capacity {
-                for bounded in [CheckedMeasure::Length, CheckedMeasure::Head] {
-                    if let Some(other) = terms.sibling_measure(id, bounded) {
-                        emit(other, id, 0, ImplicitBoundKind::MeasureOrdering);
-                    }
-                }
-            }
-        }
-        TermKind::CountedCapture { .. } | TermKind::IndexCapture { .. } => {
-            let (minimum, maximum) = type_range(IntegerType::U64);
-            emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-            emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-        }
-        TermKind::ResultPayload { ty, .. }
-        | TermKind::CommitValue { ty, .. }
-        | TermKind::CallDatum { ty, .. } => {
-            let (minimum, maximum) = type_range(*ty);
-            emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-            emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-        }
-    }
 }
 
 /// Puts one [ENT-2] implicit bound back into an already closed view.
@@ -4043,10 +4112,12 @@ fn restore_implicit_bound(
     kind: ImplicitBoundKind,
     ledger: &mut DerivationLedger,
 ) {
-    if closed
-        .matrix
-        .lookup(left, right)
-        .is_some_and(|(current, _)| current <= bound)
+    if closed.matrix.slot(left).is_none()
+        || closed.matrix.slot(right).is_none()
+        || closed
+            .matrix
+            .get(left, right)
+            .is_some_and(|(current, _)| current <= bound)
     {
         return;
     }
@@ -4074,15 +4145,18 @@ pub(crate) fn contradiction_without_proofs(
     if state.all_derivable {
         return true;
     }
+    let universe = closure_universe(state, terms, None, UniverseChoice::Active);
+    let ranges = terms.implicit_ranges();
     if let Some(EdgeClosure {
         dense, distinct, ..
-    }) = insert_fresh_edges(state, terms, &mut NoProofs)
+    }) = insert_fresh_edges(state, terms, &universe, Rc::clone(&ranges), &mut NoProofs)
     {
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::InsertionWithoutProofs);
-        let contradictory = terms
-            .ids()
-            .any(|id| dense.get(id, id).is_some_and(|(bound, _)| bound < 0))
+        let contradictory = universe
+            .slots
+            .iter()
+            .any(|id| dense.get(*id, *id).is_some_and(|(bound, _)| bound < 0))
             || goal_contradiction_without_proofs(state, dense, distinct, goals);
         #[cfg(test)]
         if tests::verifying_seeded_closures() {
@@ -4096,21 +4170,18 @@ pub(crate) fn contradiction_without_proofs(
         }
         return contradictory;
     }
-    let dimension = terms.ids().count();
-    let ids = terms.ids().collect::<Vec<_>>();
-    let active_middles = closure_middle_terms(state, terms, goals, &ids);
+    let ids = &universe.slots;
+    let dimension = ids.len();
+    let active_middles = closure_middle_terms(state, terms, goals, &universe);
     let cells = dimension
         .checked_mul(dimension)
         .expect("ENT contradiction matrix exceeds the address space");
     let mut bounds = vec![None; cells];
-    let index = |left: TermId, right: TermId| {
-        let left = left.0 as usize;
-        let right = right.0 as usize;
-        assert!(left < dimension && right < dimension);
-        left * dimension + right
-    };
     let insert = |bounds: &mut [Option<i128>], left: TermId, right: TermId, bound: i128| {
-        let cell = &mut bounds[index(left, right)];
+        let (Some(row), Some(column)) = (universe.slot(left), universe.slot(right)) else {
+            return;
+        };
+        let cell = &mut bounds[row * dimension + column];
         if cell.is_none_or(|current| bound < current) {
             *cell = Some(bound);
         }
@@ -4118,8 +4189,8 @@ pub(crate) fn contradiction_without_proofs(
     for (left, right, bound, _) in state.bounds.cells() {
         insert(&mut bounds, left, right, bound);
     }
-    for id in terms.ids() {
-        for_each_implicit_bound(terms, id, |left, right, bound, _| {
+    for id in ids {
+        terms.for_each_implicit_bound(*id, |left, right, bound, _| {
             insert(&mut bounds, left, right, bound);
         });
     }
@@ -4129,8 +4200,7 @@ pub(crate) fn contradiction_without_proofs(
         // Floyd-Warshall over the exact same saturating difference bounds.
         // One pass closes the current edge set; a second is needed only when
         // a newly derived disequality strengthens a weak bound below.
-        for middle in ids.iter().filter(|id| active_middles.contains(**id)) {
-            let middle = middle.0 as usize;
+        for middle in (0..dimension).filter(|slot| active_middles.contains(*slot)) {
             let middle_row = middle * dimension;
             for left in 0..dimension {
                 let left_row = left * dimension;
@@ -4149,7 +4219,8 @@ pub(crate) fn contradiction_without_proofs(
                 }
             }
         }
-        if (0..dimension).any(|id| bounds[id * dimension + id].is_some_and(|bound| bound < 0)) {
+        if (0..dimension).any(|slot| bounds[slot * dimension + slot].is_some_and(|bound| bound < 0))
+        {
             return true;
         }
 
@@ -4160,17 +4231,17 @@ pub(crate) fn contradiction_without_proofs(
                 if forward.is_some_and(|bound| bound <= -1)
                     || reverse.is_some_and(|bound| bound <= -1)
                 {
-                    distinct.insert((
-                        TermId(u32::try_from(left).expect("term index fits u32")),
-                        TermId(u32::try_from(right).expect("term index fits u32")),
-                    ));
+                    distinct.insert((ids[left], ids[right]));
                 }
             }
         }
         let mut strengthened = false;
         for &(left, right) in &distinct {
             for (from, to) in [(left, right), (right, left)] {
-                let cell = &mut bounds[index(from, to)];
+                let (Some(row), Some(column)) = (universe.slot(from), universe.slot(to)) else {
+                    continue;
+                };
+                let cell = &mut bounds[row * dimension + column];
                 if *cell == Some(0) {
                     *cell = Some(-1);
                     strengthened = true;
@@ -4184,17 +4255,11 @@ pub(crate) fn contradiction_without_proofs(
 
     // Reuse the ordinary goal truth table over proof-free relation cells.
     // `derives_goal` consults no proof identity.
-    let mut matrix = DenseClosureBounds::new(dimension);
+    let mut matrix = DenseClosureBounds::new(&universe, ranges);
     for left in 0..dimension {
         for right in 0..dimension {
             if let Some(bound) = bounds[left * dimension + right] {
-                matrix.set(
-                    TermId(u32::try_from(left).expect("term index fits u32")),
-                    TermId(u32::try_from(right).expect("term index fits u32")),
-                    bound,
-                    DerivationId(0),
-                    0,
-                );
+                matrix.set(ids[left], ids[right], bound, DerivationId(0), 0);
             }
         }
     }
@@ -4245,7 +4310,14 @@ fn close_with_excluded_term(
     ledger: &mut DerivationLedger,
     excluded: Option<TermId>,
 ) -> ClosedState {
-    close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded)
+    close_with_row_pruning::<true, false>(
+        state,
+        terms,
+        goals,
+        ledger,
+        excluded,
+        UniverseChoice::Active,
+    )
 }
 
 /// One closure implementation; tests instantiate the unpruned traversal and
@@ -4257,22 +4329,25 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
     goals: &GoalTable,
     ledger: &mut DerivationLedger,
     excluded: Option<TermId>,
+    choice: UniverseChoice,
 ) -> ClosedState {
     if state.all_derivable {
         return ClosedState {
             all_derivable: true,
             contradiction: state.contradiction,
-            matrix: DenseClosureBounds::new(0),
+            matrix: DenseClosureBounds::empty(),
             distinct: HashSet::default(),
             distinct_proofs: HashMap::default(),
             opaque: HashSet::default(),
             opaque_proofs: HashMap::default(),
         };
     }
-    let term_count = terms.ids().count();
+    let universe = closure_universe(state, terms, excluded, choice);
+    let ranges = terms.implicit_ranges();
     if excluded.is_none()
         && !REFERENCE_PRODUCT
-        && let Some(closed) = close_by_edge_insertion(state, terms, goals, ledger)
+        && let Some(closed) =
+            close_by_edge_insertion(state, terms, goals, ledger, &universe, Rc::clone(&ranges))
     {
         #[cfg(test)]
         if tests::verifying_seeded_closures() {
@@ -4280,13 +4355,13 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         }
         return closed;
     }
-    if excluded.is_none() && state.closure.is_closed_over(term_count) {
+    if excluded.is_none() && state.closure.is_closed() && !universe.has_fresh() {
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::Closed);
         let mut closed = ClosedState {
             all_derivable: false,
             contradiction: None,
-            matrix: DenseClosureBounds::values_from_store(term_count, &state.bounds),
+            matrix: DenseClosureBounds::values_from_store(&universe, ranges, &state.bounds),
             distinct: (*state.distinct).clone(),
             distinct_proofs: (*state.distinct_proofs).clone(),
             opaque: state.opaque.clone(),
@@ -4296,8 +4371,8 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         // over this term universe, so the fixed point would add nothing. The
         // [ENT-2] implicit bounds are re-emitted regardless: they hold at
         // every program point by term kind, never by surviving in a map.
-        for id in terms.ids() {
-            for_each_implicit_bound(terms, id, |left, right, bound, kind| {
+        for id in &universe.slots {
+            terms.for_each_implicit_bound(*id, |left, right, bound, kind| {
                 restore_implicit_bound(&mut closed, left, right, bound, kind, ledger);
             });
         }
@@ -4315,29 +4390,29 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
     // maps once from the settled matrix keeps their exact content while
     // dropping one hashed pair insert per accepted candidate, of which
     // `tests/programs/wfgrep.wf` accepts eighteen million.
-    let mut dense_bounds = DenseClosureBounds::from_store(term_count, &state.bounds, ledger);
+    let mut dense_bounds = DenseClosureBounds::from_store(&universe, ranges, &state.bounds, ledger);
     // A closed core seeds the fixed point: its cells start stale, so the first
     // round visits only triples through a fresh cell, and a candidate must
     // strictly lower a bound. Equal-bound candidates would replace the core's
     // retained proofs throughout the matrix for no change in any bound.
-    let seeded = excluded.is_none() && dense_bounds.seed_from(&state.closure);
+    let seeded = excluded.is_none() && dense_bounds.seed_from(&universe, &state.closure);
     #[cfg(test)]
     tests::record_route(if seeded {
         tests::ClosureRoute::Seeded
     } else {
         tests::ClosureRoute::Unseeded
     });
-    let ids = terms
-        .ids()
-        .filter(|id| Some(*id) != excluded)
-        .collect::<Vec<_>>();
-    let active_middles = closure_middle_terms(state, terms, goals, &ids);
+    let ids = &universe.slots;
+    let active_middles = closure_middle_terms(state, terms, goals, &universe);
     {
         let mut add = |left: TermId,
                        right: TermId,
                        bound: i128,
                        kind: ImplicitBoundKind,
                        ledger: &mut DerivationLedger| {
+            if universe.slot(left).is_none() || universe.slot(right).is_none() {
+                return;
+            }
             let node = DerivationNode::ImplicitBound {
                 left,
                 right,
@@ -4359,7 +4434,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         // Implicit facts [ENT-2]. They are a function of the term table and
         // the place's type alone, so every closure re-emits all of them.
         for id in ids.iter().copied() {
-            for_each_implicit_bound(terms, id, |left, right, bound, kind| {
+            terms.for_each_implicit_bound(id, |left, right, bound, kind| {
                 add(left, right, bound, kind, ledger);
             });
         }
@@ -4371,7 +4446,12 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
     loop {
         dense_bounds.begin_round();
         let mut changed = false;
-        for middle in ids.iter().filter(|id| active_middles.contains(**id)) {
+        for middle in ids
+            .iter()
+            .enumerate()
+            .filter(|(slot, _)| active_middles.contains(*slot))
+            .map(|(_, middle)| middle)
+        {
             // Preserve the former dense TermId order while skipping absent
             // matrix cells.  Transitivity cannot add a new incoming or
             // outgoing key for `middle` while processing this middle: the
@@ -4438,8 +4518,8 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         // orientation. Retain that derived fact in this same fixed point so
         // it can strengthen an available weak bound and so ENT-5 joins can
         // intersect the complete closed disequality set.
-        for left in &ids {
-            for right in &ids {
+        for left in ids {
+            for right in ids {
                 if left == right
                     || dense_bounds
                         .get(*left, *right)
@@ -4498,7 +4578,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         }
     }
     let mut contradiction = None;
-    for id in &ids {
+    for id in ids {
         if let Some((bound, parent)) = dense_bounds.get(*id, *id) {
             if bound >= 0 {
                 continue;
@@ -4520,7 +4600,8 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
     };
     let closed = close_goal_contradictions(closed, goals, ledger);
     #[cfg(test)]
-    if seeded && tests::verifying_seeded_closures() {
+    if excluded.is_none() && choice == UniverseChoice::Active && tests::verifying_seeded_closures()
+    {
         tests::assert_seeded_closure_matches_complete(state, terms, goals, ledger, &closed);
     }
     closed
@@ -4551,56 +4632,48 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
 fn insert_fresh_edges<P: ClosureProofs>(
     state: &FactState,
     terms: &TermTable,
+    universe: &Universe,
+    ranges: Rc<Vec<ImplicitRange>>,
     ledger: &mut P,
 ) -> Option<EdgeClosure> {
-    let term_count = terms.ids().count();
     type Cells<'a> = &'a [(TermId, TermId)];
-    let (core_terms, fresh_terms, fresh_cells, weakened_cells): (usize, &[TermId], Cells, Cells) =
-        match &state.closure {
-            ClosureRecord::Closed { terms } if (*terms as usize) < term_count => {
-                (*terms as usize, &[], &[], &[])
-            }
-            ClosureRecord::Core {
-                terms,
-                fresh_terms,
-                fresh_cells,
-                weakened_cells,
-            } => (*terms as usize, fresh_terms, fresh_cells, weakened_cells),
-            _ => return None,
-        };
+    let (fresh_cells, weakened_cells): (Cells, Cells) = match &state.closure {
+        ClosureRecord::Closed { .. } if universe.has_fresh() => (&[], &[]),
+        ClosureRecord::Core {
+            fresh_cells,
+            weakened_cells,
+            ..
+        } => (fresh_cells, weakened_cells),
+        _ => return None,
+    };
+    let width = universe.slots.len();
     // Repairing a weakened cell scans one row and column per pass. When a
     // removal weakens more cells than there are terms, the seeded fixed
     // point, which revisits only the weakened endpoints' rows and columns, is
     // the cheaper route to the same bounds.
-    if weakened_cells.len() > term_count {
+    if weakened_cells.len() > width {
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::LargeFallback);
         return None;
     }
-    let width = term_count;
-    let mut dense = DenseClosureBounds::values_from_store(width, &state.bounds);
+    let mut dense = DenseClosureBounds::values_from_store(universe, ranges, &state.bounds);
     let mut distinct = (*state.distinct).clone();
     let mut distinct_proofs = (*state.distinct_proofs).clone();
 
-    let mut fresh = vec![false; width];
-    for term in fresh_terms {
-        if let Some(slot) = fresh.get_mut(term.0 as usize) {
-            *slot = true;
-        }
-    }
-    for slot in fresh.iter_mut().skip(core_terms) {
-        *slot = true;
-    }
+    let fresh = &universe.fresh;
     // Pending edges, first the implicit bounds touching a fresh term (whose
     // other facts are gone) or stronger than their cell — a measure's
     // standing bound can be registered after the core closed — then every
     // fresh cell at its current value.
     let mut pending: std::collections::VecDeque<(TermId, TermId, i128, DerivationId)> =
         std::collections::VecDeque::new();
-    for id in terms.ids() {
-        for_each_implicit_bound(terms, id, |left, right, bound, kind| {
-            if fresh[left.0 as usize]
-                || fresh[right.0 as usize]
+    for id in &universe.slots {
+        terms.for_each_implicit_bound(*id, |left, right, bound, kind| {
+            let (Some(row), Some(column)) = (dense.slot(left), dense.slot(right)) else {
+                return;
+            };
+            if fresh[row]
+                || fresh[column]
                 || dense.get(left, right).is_none_or(|(held, _)| bound < held)
             {
                 let proof = ledger.intern(DerivationNode::ImplicitBound {
@@ -4635,8 +4708,10 @@ fn insert_fresh_edges<P: ClosureProofs>(
         passes += 1;
         let mut repaired = false;
         for &(left, right) in &weakened {
-            let (row, column) = (left.0 as usize, right.0 as usize);
-            if row == column || row >= width || column >= width {
+            let (Some(row), Some(column)) = (dense.slot(left), dense.slot(right)) else {
+                continue;
+            };
+            if row == column {
                 continue;
             }
             for middle in 0..width {
@@ -4654,9 +4729,7 @@ fn insert_fresh_edges<P: ClosureProofs>(
                 }
                 let node = ledger.intern(DerivationNode::TransitiveBound {
                     left,
-                    middle: TermId(
-                        u32::try_from(middle).expect("term index fits the u32 identity"),
-                    ),
+                    middle: dense.slots[middle],
                     right,
                     bound: via,
                     first: dense.proofs[first],
@@ -4747,7 +4820,10 @@ fn insert_fresh_edges<P: ClosureProofs>(
     let mut tight_rows = Vec::new();
     let mut improving_columns = Vec::new();
     while let Some((a, b, weight, proof)) = pending.pop_front() {
-        let edge_cell = a.0 as usize * width + b.0 as usize;
+        let (Some(a_row), Some(b_row)) = (dense.slot(a), dense.slot(b)) else {
+            continue;
+        };
+        let edge_cell = a_row * width + b_row;
         if dense.stamps[edge_cell] != 0 && dense.bounds[edge_cell] < weight {
             continue;
         }
@@ -4767,24 +4843,22 @@ fn insert_fresh_edges<P: ClosureProofs>(
         );
         let (weight, proof) = (dense.bounds[edge_cell], dense.proofs[edge_cell]);
         tight_rows.clear();
-        tight_rows.push(a);
+        tight_rows.push(a_row);
         // Column pass: i - a <= x and a - b <= w give i - b <= x + w.
         for i in 0..width {
-            let into_a = i * width + a.0 as usize;
-            if i == a.0 as usize || dense.stamps[into_a] == 0 {
+            let into_a = i * width + a_row;
+            if i == a_row || dense.stamps[into_a] == 0 {
                 continue;
             }
             let via = compose_transitive_bounds(dense.bounds[into_a], weight);
-            let target = i * width + b.0 as usize;
+            let target = i * width + b_row;
             if dense.stamps[target] != 0 && via >= dense.bounds[target] {
                 if via == dense.bounds[target] {
-                    tight_rows.push(TermId(
-                        u32::try_from(i).expect("term index fits the u32 identity"),
-                    ));
+                    tight_rows.push(i);
                 }
                 continue;
             }
-            let left = TermId(u32::try_from(i).expect("term index fits the u32 identity"));
+            let left = dense.slots[i];
             let node = ledger.intern(DerivationNode::TransitiveBound {
                 left,
                 middle: a,
@@ -4803,41 +4877,42 @@ fn insert_fresh_edges<P: ClosureProofs>(
                 left,
                 b,
             );
-            tight_rows.push(left);
+            tight_rows.push(i);
         }
         // Row pass: i - b <= y and b - j <= z give i - j <= y + z. A tight row
         // has i - b equal to i - a + w, so a column where w + (b - j) exceeds
         // a - j is already dominated by i - a and a - j, a triangle composed
         // when its later-set premise was set; only the other columns are
         // scanned. A fresh term's implicit edge thus fills one column.
-        let b_row = b.0 as usize * width;
-        let a_row = a.0 as usize * width;
+        let b_cells = b_row * width;
+        let a_cells = a_row * width;
         improving_columns.clear();
         for j in 0..width {
-            let out_of_b = b_row + j;
-            if j == b.0 as usize || dense.stamps[out_of_b] == 0 {
+            let out_of_b = b_cells + j;
+            if j == b_row || dense.stamps[out_of_b] == 0 {
                 continue;
             }
             let through_b = compose_transitive_bounds(weight, dense.bounds[out_of_b]);
-            if dense.stamps[a_row + j] == 0 || through_b <= dense.bounds[a_row + j] {
+            if dense.stamps[a_cells + j] == 0 || through_b <= dense.bounds[a_cells + j] {
                 improving_columns.push(j);
             }
         }
-        for &left in &tight_rows {
-            let left_row = left.0 as usize * width;
-            let into_b = left_row + b.0 as usize;
+        for &left_row in &tight_rows {
+            let left_cells = left_row * width;
+            let into_b = left_cells + b_row;
             if dense.stamps[into_b] == 0 {
                 continue;
             }
+            let left = dense.slots[left_row];
             let (first, first_proof) = (dense.bounds[into_b], dense.proofs[into_b]);
             for &j in &improving_columns {
-                let out_of_b = b_row + j;
+                let out_of_b = b_cells + j;
                 let via = compose_transitive_bounds(first, dense.bounds[out_of_b]);
-                let target = left_row + j;
+                let target = left_cells + j;
                 if dense.stamps[target] != 0 && via >= dense.bounds[target] {
                     continue;
                 }
-                let right = TermId(u32::try_from(j).expect("term index fits the u32 identity"));
+                let right = dense.slots[j];
                 let node = ledger.intern(DerivationNode::TransitiveBound {
                     left,
                     middle: b,
@@ -4910,21 +4985,23 @@ fn close_by_edge_insertion(
     terms: &TermTable,
     goals: &GoalTable,
     ledger: &mut DerivationLedger,
+    universe: &Universe,
+    ranges: Rc<Vec<ImplicitRange>>,
 ) -> Option<ClosedState> {
     let EdgeClosure {
         dense,
         distinct,
         distinct_proofs,
-    } = insert_fresh_edges(state, terms, ledger)?;
+    } = insert_fresh_edges(state, terms, universe, ranges, ledger)?;
     #[cfg(test)]
     tests::record_route(tests::ClosureRoute::InsertionWithProofs);
     let mut contradiction = None;
-    for id in terms.ids() {
-        if let Some((bound, parent)) = dense.get(id, id) {
+    for id in &universe.slots {
+        if let Some((bound, parent)) = dense.get(*id, *id) {
             if bound >= 0 {
                 continue;
             }
-            let candidate = ledger.intern(DerivationNode::L0Contradiction { term: id, parent });
+            let candidate = ledger.intern(DerivationNode::L0Contradiction { term: *id, parent });
             if contradiction.is_none_or(|current| ledger.better(candidate, current)) {
                 contradiction = Some(candidate);
             }
@@ -4990,20 +5067,15 @@ fn closure_middle_terms(
     state: &FactState,
     terms: &TermTable,
     goals: &GoalTable,
-    ids: &[TermId],
+    universe: &Universe,
 ) -> ActiveMiddles {
-    // `TermId` is the dense function-local term identity, so membership is a
-    // direct index rather than a hashed probe. The old sets answered one probe
-    // per live relation endpoint of every closure.
-    let width = terms.ids().count();
-    let mut available = vec![false; width];
-    for id in ids {
-        available[id.0 as usize] = true;
-    }
-    let mut active = ActiveMiddles(vec![false; width]);
+    // Membership is a direct index by universe slot rather than a hashed
+    // probe. The old sets answered one probe per live relation endpoint of
+    // every closure.
+    let mut active = ActiveMiddles(vec![false; universe.slots.len()]);
     let admit = |term: TermId, active: &mut ActiveMiddles| {
-        if available[term.0 as usize] {
-            active.0[term.0 as usize] = true;
+        if let Some(slot) = universe.slot(term) {
+            active.0[slot] = true;
         }
     };
     admit(ZERO, &mut active);
@@ -5048,8 +5120,8 @@ fn closure_middle_terms(
     // as a middle loses that proof until an unrelated source read happens to
     // mention it. Derive this inventory from the complete implicit edge set,
     // so future measure rows cannot silently evade the same fixed point.
-    for id in ids {
-        for_each_implicit_bound(terms, *id, |left, right, _, _| {
+    for id in &universe.slots {
+        terms.for_each_implicit_bound(*id, |left, right, _, _| {
             if left != right && left != ZERO && right != ZERO {
                 admit(left, &mut active);
                 admit(right, &mut active);
@@ -5059,12 +5131,13 @@ fn closure_middle_terms(
     active
 }
 
-/// Dense membership of the terms the [ENT-4] fixed point uses as middles.
+/// Dense membership, by universe slot, of the terms the [ENT-4] fixed point
+/// uses as middles.
 struct ActiveMiddles(Vec<bool>);
 
 impl ActiveMiddles {
-    fn contains(&self, term: TermId) -> bool {
-        self.0[term.0 as usize]
+    fn contains(&self, slot: usize) -> bool {
+        self.0[slot]
     }
 }
 
@@ -5075,17 +5148,119 @@ struct ClosedBoundCandidate {
     node: DerivationNode,
 }
 
-/// Dense scratch index for ENT-4's fixed point.
+/// Which registered terms one closure ranges over.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UniverseChoice {
+    /// The state's active terms: Z, every term with a stored bound or
+    /// disequality candidate, and every term with an implicit fact against
+    /// another non-Z term. A term outside this set holds exactly its two
+    /// implicit bounds against Z, which can neither shorten a path between
+    /// two other terms nor be strengthened, so the closure over this set
+    /// derives every bound the closure over all terms derives, and the view
+    /// answers the omitted pairs through Z [ENT-4].
+    Active,
+    /// Every registered term, the specification's own universe; the test
+    /// oracle closes over it to check the active closure's view.
+    #[cfg(test)]
+    Every,
+}
+
+/// The terms one closure ranges over, ascending, and which of them are
+/// fresh: not part of the state's recorded closed core, so their implicit
+/// bounds and cells still have to enter the closure.
+struct Universe {
+    slots: Vec<TermId>,
+    fresh: Vec<bool>,
+    term_count: usize,
+    excluded: Option<TermId>,
+}
+
+impl Universe {
+    fn slot(&self, term: TermId) -> Option<usize> {
+        self.slots.binary_search(&term).ok()
+    }
+
+    fn has_fresh(&self) -> bool {
+        self.fresh.iter().any(|fresh| *fresh)
+    }
+}
+
+/// The universe of one closure of `state`. A term is fresh when the store
+/// holds no relation on it, since its row then has no closed cell yet, or
+/// when the closure record lists it, since a kill emptied its row.
+fn closure_universe(
+    state: &FactState,
+    terms: &TermTable,
+    excluded: Option<TermId>,
+    choice: UniverseChoice,
+) -> Universe {
+    let term_count = terms.ids().count();
+    let mut slots: Vec<TermId> = match choice {
+        #[cfg(test)]
+        UniverseChoice::Every => terms.ids().collect(),
+        UniverseChoice::Active => {
+            let mut active = vec![ZERO];
+            active.extend(state.bounds.slots().iter().copied());
+            active.extend(
+                state
+                    .distinct_candidates
+                    .keys()
+                    .flat_map(|(left, right)| [*left, *right]),
+            );
+            active.extend(terms.relational_terms().iter().copied());
+            active.sort_unstable();
+            active.dedup();
+            active
+        }
+    };
+    if let Some(excluded) = excluded {
+        slots.retain(|term| *term != excluded);
+    }
+    let listed_fresh: &[TermId] = match &state.closure {
+        ClosureRecord::Core { fresh_terms, .. } => fresh_terms,
+        ClosureRecord::Unknown | ClosureRecord::Closed { .. } => &[],
+    };
+    let fresh = slots
+        .iter()
+        .map(|term| !state.bounds.is_active(*term) || listed_fresh.contains(term))
+        .collect();
+    Universe {
+        slots,
+        fresh,
+        term_count,
+        excluded,
+    }
+}
+
+/// Dense scratch index for ENT-4's fixed point, and the closed view's
+/// bounds.
 ///
-/// `TermId` is a dense function-local identity.  The closed result remains in
-/// the long-lived maps above, but using tuple-key hash tables for every probe
-/// in the transitivity cube repeatedly hashes the same two integers. This
-/// index owns the evolving bounds while preserving TermId traversal and
-/// proof-selection order; the settled maps are rebuilt once before the index
-/// is discarded. Row summaries only reject dominated products, never supply
-/// facts or proofs.
+/// Rows and columns belong to the closure's universe, the state's active
+/// terms in ascending order, so traversal keeps `TermId` order. Using
+/// tuple-key hash tables for every probe in the transitivity cube would
+/// repeatedly hash the same two integers; this index owns the evolving
+/// bounds while preserving traversal and proof-selection order, and the
+/// settled maps are rebuilt once before it is discarded. A registered term
+/// without a row holds no stored relation, so its only facts are its two
+/// implicit bounds against Z, and `lookup` answers every pair involving it
+/// from those and the Z row and column: the one path such a term has
+/// [ENT-4]. Row summaries only reject dominated products, never supply facts
+/// or proofs.
 #[derive(Clone)]
 struct DenseClosureBounds {
+    /// The universe, ascending; row and column `i` belong to `slots[i]`.
+    slots: Vec<TermId>,
+    /// The slot of each registered term, `NO_SLOT` for a term outside the
+    /// universe; indexed by `TermId`, so the transitivity cube finds a row
+    /// with one load.
+    slot_of: Vec<u32>,
+    /// Registered terms when the closure was taken; a later term is not
+    /// answered.
+    term_count: usize,
+    /// A term withheld from the closure entirely, not answered either.
+    excluded: Option<TermId>,
+    /// The implicit bounds of every registered term, for pairs without a row.
+    ranges: Rc<Vec<ImplicitRange>>,
     dimension: usize,
     /// Row-major cells. A bound or proof is meaningful only where `stamps`
     /// marks the cell live; the transitivity cube reads the three columns of
@@ -5150,27 +5325,70 @@ impl ClosureRowSummary {
 }
 
 impl DenseClosureBounds {
-    fn from_store(dimension: usize, store: &BoundStore, ledger: &impl ClosureProofs) -> Self {
-        let mut dense = Self::new(dimension);
-        for (left, right, bound, proof) in store.cells() {
-            dense.set(left, right, bound, proof, ledger.depth(proof));
+    fn from_store(
+        universe: &Universe,
+        ranges: Rc<Vec<ImplicitRange>>,
+        store: &BoundStore,
+        ledger: &impl ClosureProofs,
+    ) -> Self {
+        let mut dense = Self::new(universe, ranges);
+        let columns = store
+            .slots
+            .iter()
+            .map(|term| dense.slot(*term))
+            .collect::<Vec<_>>();
+        for (row, &left) in store.slots.iter().enumerate() {
+            if columns[row].is_none() {
+                continue;
+            }
+            let source = row * store.stride;
+            for (column, target) in columns.iter().enumerate() {
+                let Some(_) = target else {
+                    continue;
+                };
+                if store.present[source + column] {
+                    let proof = store.proofs[source + column];
+                    dense.set(
+                        left,
+                        store.slots[column],
+                        store.bounds[source + column],
+                        proof,
+                        ledger.depth(proof),
+                    );
+                }
+            }
         }
         dense
     }
 
     /// The store's cells without the row summaries only the unseeded fixed
     /// point's pruning reads; edge insertion and closed views never do.
-    fn values_from_store(dimension: usize, store: &BoundStore) -> Self {
-        let mut dense = Self::new(dimension);
-        let stride = store.stride;
-        for row in 0..dimension.min(stride) {
-            let source = row * stride;
-            let target = row * dimension;
-            for column in 0..dimension.min(stride) {
+    fn values_from_store(
+        universe: &Universe,
+        ranges: Rc<Vec<ImplicitRange>>,
+        store: &BoundStore,
+    ) -> Self {
+        let mut dense = Self::new(universe, ranges);
+        let columns = store
+            .slots
+            .iter()
+            .map(|term| dense.slot(*term))
+            .collect::<Vec<_>>();
+        for row in 0..store.slots.len() {
+            let Some(target_row) = columns[row] else {
+                continue;
+            };
+            let source = row * store.stride;
+            let target = target_row * dense.dimension;
+            for (column, target_column) in columns.iter().enumerate() {
+                let Some(target_column) = target_column else {
+                    continue;
+                };
                 if store.present[source + column] {
-                    dense.bounds[target + column] = store.bounds[source + column];
-                    dense.proofs[target + column] = store.proofs[source + column];
-                    dense.stamps[target + column] = 1;
+                    let index = target + target_column;
+                    dense.bounds[index] = store.bounds[source + column];
+                    dense.proofs[index] = store.proofs[source + column];
+                    dense.stamps[index] = 1;
                     dense.live += 1;
                 }
             }
@@ -5178,11 +5396,42 @@ impl DenseClosureBounds {
         dense
     }
 
-    fn new(dimension: usize) -> Self {
+    fn new(universe: &Universe, ranges: Rc<Vec<ImplicitRange>>) -> Self {
+        Self::over(
+            universe.slots.clone(),
+            universe.term_count,
+            universe.excluded,
+            ranges,
+        )
+    }
+
+    /// The matrix of a contradictory state, which answers no pair.
+    fn empty() -> Self {
+        Self::over(Vec::new(), 0, None, Rc::new(Vec::new()))
+    }
+
+    fn over(
+        slots: Vec<TermId>,
+        term_count: usize,
+        excluded: Option<TermId>,
+        ranges: Rc<Vec<ImplicitRange>>,
+    ) -> Self {
+        let dimension = slots.len();
         let count = dimension
             .checked_mul(dimension)
             .expect("ENT closure matrix exceeds the address space");
+        let mut slot_of = vec![NO_SLOT; term_count];
+        for (slot, term) in slots.iter().enumerate() {
+            if let Some(entry) = slot_of.get_mut(term.0 as usize) {
+                *entry = u32::try_from(slot).expect("closure slot fits the u32 identity");
+            }
+        }
         Self {
+            slots,
+            slot_of,
+            term_count,
+            excluded,
+            ranges,
             dimension,
             bounds: vec![i128::MAX; count],
             proofs: vec![DerivationId(0); count],
@@ -5193,43 +5442,35 @@ impl DenseClosureBounds {
         }
     }
 
+    fn slot(&self, term: TermId) -> Option<usize> {
+        let slot = *self.slot_of.get(term.0 as usize)?;
+        (slot != NO_SLOT).then_some(slot as usize)
+    }
+
+    fn row_of(&self, term: TermId) -> usize {
+        self.slot(term)
+            .expect("the closure universe holds the term")
+    }
+
     fn begin_round(&mut self) {
         self.round += 1;
     }
 
-    /// Marks a closed core's cells stale and every other cell fresh for the
-    /// first round, or returns `false` when the record claims no closed part.
-    /// A core recorded over fewer terms treats every later term as fresh: its
-    /// implicit bounds are the only facts it can carry.
-    fn seed_from(&mut self, record: &ClosureRecord) -> bool {
-        let mut fresh_rows_seed: Option<Vec<TermId>> = None;
-        let (core_terms, fresh_terms, fresh_cells): (u32, &[TermId], &[(TermId, TermId)]) =
-            match record {
-                ClosureRecord::Unknown => return false,
-                ClosureRecord::Closed { terms } => (*terms, &[], &[]),
-                ClosureRecord::Core {
-                    terms,
-                    fresh_terms,
-                    fresh_cells,
-                    weakened_cells,
-                } => {
-                    // A weakened cell can leave any triangle through it open,
-                    // and each such triangle has a premise in one of its
-                    // endpoints' rows or columns.
-                    let mut rows = fresh_rows_seed.take().unwrap_or_default();
-                    for (left, right) in weakened_cells {
-                        rows.push(*left);
-                        rows.push(*right);
-                    }
-                    rows.extend(fresh_terms.iter().copied());
-                    fresh_rows_seed = Some(rows);
-                    (
-                        *terms,
-                        fresh_rows_seed.as_deref().unwrap_or_default(),
-                        fresh_cells,
-                    )
-                }
-            };
+    /// Marks a closed core's cells stale and every fresh row, column and cell
+    /// fresh for the first round, or returns `false` when the record claims
+    /// no closed part. A fresh term's implicit bounds are the only facts it
+    /// can carry.
+    fn seed_from(&mut self, universe: &Universe, record: &ClosureRecord) -> bool {
+        type Cells<'a> = &'a [(TermId, TermId)];
+        let (fresh_cells, weakened_cells): (Cells, Cells) = match record {
+            ClosureRecord::Unknown => return false,
+            ClosureRecord::Closed { .. } => (&[], &[]),
+            ClosureRecord::Core {
+                fresh_cells,
+                weakened_cells,
+                ..
+            } => (fresh_cells, weakened_cells),
+        };
         // Loaded cells carry stamp 1. Starting the rounds one later makes
         // them stale, while anything set before the first round — a fresh
         // mark or an implicit bound — carries stamp 2 and stays fresh.
@@ -5240,28 +5481,29 @@ impl DenseClosureBounds {
                 dense.stamps[index] = 2;
             }
         };
-        let mut fresh_rows = vec![false; width];
-        for term in fresh_terms {
-            if let Some(row) = fresh_rows.get_mut(term.0 as usize) {
-                *row = true;
+        let mut fresh_rows = universe.fresh.clone();
+        // A weakened cell can leave any triangle through it open, and each
+        // such triangle has a premise in one of its endpoints' rows or
+        // columns.
+        for (left, right) in weakened_cells {
+            for term in [left, right] {
+                if let Some(slot) = self.slot(*term) {
+                    fresh_rows[slot] = true;
+                }
             }
         }
-        for row in fresh_rows.iter_mut().skip(core_terms as usize) {
-            *row = true;
-        }
-        for (term, fresh) in fresh_rows.iter().enumerate() {
+        for (slot, fresh) in fresh_rows.iter().enumerate() {
             if !*fresh {
                 continue;
             }
             for other in 0..width {
-                refresh(self, term * width + other);
-                refresh(self, other * width + term);
+                refresh(self, slot * width + other);
+                refresh(self, other * width + slot);
             }
         }
         for (left, right) in fresh_cells {
-            let (left, right) = (left.0 as usize, right.0 as usize);
-            if left < width && right < width {
-                refresh(self, left * width + right);
+            if let (Some(row), Some(column)) = (self.slot(*left), self.slot(*right)) {
+                refresh(self, row * width + column);
             }
         }
         true
@@ -5276,14 +5518,13 @@ impl DenseClosureBounds {
     }
 
     fn index(&self, left: TermId, right: TermId) -> usize {
-        let left = left.0 as usize;
-        let right = right.0 as usize;
-        assert!(left < self.dimension && right < self.dimension);
-        left * self.dimension + right
+        self.row_of(left) * self.dimension + self.row_of(right)
     }
 
+    /// A cell of two universe terms; `None` for an absent cell or a term
+    /// outside the universe.
     fn get(&self, left: TermId, right: TermId) -> Option<(i128, DerivationId)> {
-        let index = self.index(left, right);
+        let index = self.slot(left)? * self.dimension + self.slot(right)?;
         (self.stamps[index] != 0).then(|| (self.bounds[index], self.proofs[index]))
     }
 
@@ -5294,21 +5535,22 @@ impl DenseClosureBounds {
         first: i128,
         first_depth: u32,
     ) -> bool {
-        self.rows[left.0 as usize].rejects_product(
+        self.rows[self.row_of(left)].rejects_product(
             self.dimension,
             first,
             first_depth,
-            self.rows[middle.0 as usize].minimum,
+            self.rows[self.row_of(middle)].minimum,
         )
     }
 
     fn set(&mut self, left: TermId, right: TermId, bound: i128, proof: DerivationId, depth: u32) {
-        let index = self.index(left, right);
+        let row = self.row_of(left);
+        let index = row * self.dimension + self.row_of(right);
         let new_cell = self.stamps[index] == 0;
         if new_cell {
             self.live += 1;
         }
-        self.rows[left.0 as usize].observe(bound, depth, new_cell);
+        self.rows[row].observe(bound, depth, new_cell);
         self.bounds[index] = bound;
         self.proofs[index] = proof;
         self.stamps[index] = self
@@ -5317,15 +5559,140 @@ impl DenseClosureBounds {
             .expect("ENT closure rounds fit the u32 stamp space");
     }
 
-    /// A cell of a closed matrix, or `None` for an absent cell or a term
-    /// registered after the closure was taken.
-    fn lookup(&self, left: TermId, right: TermId) -> Option<(i128, DerivationId)> {
-        let (left, right) = (left.0 as usize, right.0 as usize);
-        if left >= self.dimension || right >= self.dimension {
+    /// Whether the view answers for a term: one registered when the closure
+    /// was taken and not withheld from it.
+    fn answers(&self, term: TermId) -> bool {
+        (term.0 as usize) < self.term_count && self.excluded != Some(term)
+    }
+
+    fn implicit(&self, term: TermId) -> ImplicitRange {
+        self.ranges[term.0 as usize]
+    }
+
+    /// The closed bound on one ordered pair of registered terms: the cell of
+    /// two universe terms, or, for a term without a row, the composition of
+    /// its implicit bound against Z with the Z row or column, which is the
+    /// only path such a term has [ENT-4]. `None` for an absent cell, a term
+    /// registered after the closure was taken, or a withheld term.
+    fn lookup(&self, left: TermId, right: TermId) -> Option<i128> {
+        if !self.answers(left) || !self.answers(right) {
             return None;
         }
-        let index = left * self.dimension + right;
-        (self.stamps[index] != 0).then(|| (self.bounds[index], self.proofs[index]))
+        match (self.slot(left), self.slot(right)) {
+            (Some(row), Some(column)) => {
+                let index = row * self.dimension + column;
+                (self.stamps[index] != 0).then(|| self.bounds[index])
+            }
+            (None, Some(_)) => {
+                let (to_zero, _) = self.implicit(left).to_zero?;
+                Some(compose_transitive_bounds(to_zero, self.get(ZERO, right)?.0))
+            }
+            (Some(_), None) => {
+                let (from_zero, _) = self.implicit(right).from_zero?;
+                Some(compose_transitive_bounds(
+                    self.get(left, ZERO)?.0,
+                    from_zero,
+                ))
+            }
+            (None, None) if left == right => Some(0),
+            (None, None) => {
+                let (to_zero, _) = self.implicit(left).to_zero?;
+                let (from_zero, _) = self.implicit(right).from_zero?;
+                let (through_zero, _) = self.get(ZERO, ZERO)?;
+                Some(compose_transitive_bounds(
+                    compose_transitive_bounds(to_zero, through_zero),
+                    from_zero,
+                ))
+            }
+        }
+    }
+
+    /// A stored cell of two universe terms with its proof; `None` for a pair
+    /// the view answers through Z.
+    fn lookup_stored(&self, left: TermId, right: TermId) -> Option<(i128, DerivationId)> {
+        if !self.answers(left) || !self.answers(right) {
+            return None;
+        }
+        self.get(left, right)
+    }
+
+    /// `lookup` with the derivation of the bound. A pair answered through Z
+    /// receives the `TransitiveBound` through Z over the term's implicit bound
+    /// and the Z cell, the derivation the complete closure selects for that
+    /// cell, interned on demand; a pair of Z with such a term receives the
+    /// implicit bound itself.
+    fn lookup_proof(
+        &self,
+        left: TermId,
+        right: TermId,
+        ledger: &mut DerivationLedger,
+    ) -> Option<(i128, DerivationId)> {
+        if !self.answers(left) || !self.answers(right) {
+            return None;
+        }
+        let implicit = |ledger: &mut DerivationLedger,
+                        left: TermId,
+                        right: TermId,
+                        (bound, kind): (i128, ImplicitBoundKind)| {
+            ledger.intern(DerivationNode::ImplicitBound {
+                left,
+                right,
+                bound,
+                kind,
+            })
+        };
+        let transitive = |ledger: &mut DerivationLedger,
+                          bound: i128,
+                          first: DerivationId,
+                          second: DerivationId| {
+            ledger.intern(DerivationNode::TransitiveBound {
+                left,
+                middle: ZERO,
+                right,
+                bound,
+                first,
+                second,
+            })
+        };
+        match (self.slot(left), self.slot(right)) {
+            (Some(_), Some(_)) => self.get(left, right),
+            (None, Some(_)) => {
+                let to_zero = self.implicit(left).to_zero?;
+                if right == ZERO {
+                    return Some((to_zero.0, implicit(ledger, left, ZERO, to_zero)));
+                }
+                let (second_bound, second) = self.get(ZERO, right)?;
+                let bound = compose_transitive_bounds(to_zero.0, second_bound);
+                let first = implicit(ledger, left, ZERO, to_zero);
+                Some((bound, transitive(ledger, bound, first, second)))
+            }
+            (Some(_), None) => {
+                let from_zero = self.implicit(right).from_zero?;
+                if left == ZERO {
+                    return Some((from_zero.0, implicit(ledger, ZERO, right, from_zero)));
+                }
+                let (first_bound, first) = self.get(left, ZERO)?;
+                let bound = compose_transitive_bounds(first_bound, from_zero.0);
+                let second = implicit(ledger, ZERO, right, from_zero);
+                Some((bound, transitive(ledger, bound, first, second)))
+            }
+            (None, None) if left == right => Some((
+                0,
+                implicit(ledger, left, left, (0, ImplicitBoundKind::Reflexive)),
+            )),
+            (None, None) => {
+                let to_zero = self.implicit(left).to_zero?;
+                let from_zero = self.implicit(right).from_zero?;
+                let (through_zero, _) = self.get(ZERO, ZERO)?;
+                let bound = compose_transitive_bounds(
+                    compose_transitive_bounds(to_zero.0, through_zero),
+                    from_zero.0,
+                );
+                let first = implicit(ledger, left, ZERO, to_zero);
+                let second = implicit(ledger, ZERO, right, from_zero);
+                Some((bound, transitive(ledger, bound, first, second)))
+            }
+        }
     }
 
     /// Every present cell in row-major, that is sorted `(left, right)`, order.
@@ -5337,8 +5704,8 @@ impl DenseClosureBounds {
             .filter(|(_, stamp)| **stamp != 0)
             .map(move |(index, _)| {
                 (
-                    TermId(u32::try_from(index / width).expect("term index fits the u32 identity")),
-                    TermId(u32::try_from(index % width).expect("term index fits the u32 identity")),
+                    self.slots[index / width],
+                    self.slots[index % width],
                     self.bounds[index],
                     self.proofs[index],
                 )
@@ -5374,7 +5741,8 @@ fn middle_products<const PRUNE_ROWS: bool, const STRICT: bool>(
 ) -> bool {
     let width = dense.dimension;
     let round = dense.round;
-    let middle_row = middle.0 as usize * width;
+    let middle_slot = dense.row_of(middle);
+    let middle_row = middle_slot * width;
     let mut changed = false;
     // Columns whose second premise is fresh, for rows whose first premise is
     // not: the other columns of such a row are skipped. Only the middle's own
@@ -5383,13 +5751,13 @@ fn middle_products<const PRUNE_ROWS: bool, const STRICT: bool>(
         outgoing
             .iter()
             .copied()
-            .filter(|right| dense.stamps[middle_row + right.0 as usize] >= round)
+            .filter(|right| dense.stamps[middle_row + dense.row_of(*right)] >= round)
             .collect::<Vec<_>>()
     };
     let mut fresh_outgoing = None;
     for &left in incoming {
-        let left_row = left.0 as usize * width;
-        let first_cell = left_row + middle.0 as usize;
+        let left_row = dense.row_of(left) * width;
+        let first_cell = left_row + middle_slot;
         let first = dense.bounds[first_cell];
         let first_proof = dense.proofs[first_cell];
         let first_depth = ledger.depth(first_proof);
@@ -5404,7 +5772,7 @@ fn middle_products<const PRUNE_ROWS: bool, const STRICT: bool>(
                 .as_slice()
         };
         for &right in columns {
-            let column = right.0 as usize;
+            let column = dense.row_of(right);
             let second_cell = middle_row + column;
             let via = first.saturating_add(dense.bounds[second_cell]);
             let current_cell = left_row + column;
@@ -5572,7 +5940,7 @@ pub(crate) fn materialize_closure_before_kill(
     goals: &GoalTable,
     ledger: &mut DerivationLedger,
 ) {
-    if state.all_derivable || state.closure.is_closed_over(terms.ids().count()) {
+    if state.all_derivable {
         return;
     }
     // With no explicit relation or signed goal, closing can add only the
@@ -5582,6 +5950,17 @@ pub(crate) fn materialize_closure_before_kill(
     // transfer metadata rather than independently derivable facts.
     if state.bounds.is_empty() && state.distinct.is_empty() && state.opaque.is_empty() {
         return;
+    }
+    if state.closure.is_closed()
+        && !closure_universe(state, terms, None, UniverseChoice::Active).has_fresh()
+    {
+        // The relations are already their own closure. Only a goal
+        // contradiction established since can still be undiscovered, and a
+        // materialized contradiction has empty support and survives the kill
+        // [ENT-5], so it is the one thing left to materialize.
+        if state.opaque.is_empty() || !close(state, terms, goals, ledger).all_derivable {
+            return;
+        }
     }
     let event = ledger.event(FlowEventKind::Snapshot, None);
     *state = materialize_closure_at(state, terms, goals, ledger, event);
@@ -5647,7 +6026,7 @@ pub(crate) fn materialize_closure_at(
         };
     }
     let needs_ordinary_fallback = closed.selected_relations_depend_on_postcondition_call(ledger);
-    let mut bounds = BoundStore::with_terms(terms.ids().count());
+    let mut bounds = BoundStore::with_slots(closed.matrix.slots.clone());
     for (left, right, bound, parent) in closed.matrix.cells() {
         let proof = materialized_bound_proof(ledger, left, right, bound, event, parent);
         bounds.store_single(left, right, bound, proof);
@@ -5714,31 +6093,44 @@ pub(crate) fn materialize_closure_at(
         // Only a relation whose selected proof depends on a postcondition call
         // needs an ordinary candidate. Any other selection is derivable
         // without such calls, so it already equals the ordinary closure, which
-        // has fewer facts and cannot be stronger.
-        for (left, right, bound, parent) in ordinary_closed.matrix.cells() {
-            let (_, selected) = materialized
-                .bounds
-                .get(left, right)
-                .expect("the ordinary closure is no stronger than the canonical one");
+        // has fewer facts and cannot be stronger. Every cell of the canonical
+        // closure is visited, read through the ordinary view: a term active
+        // only through a call-dependent relation has no row in the ordinary
+        // closure, which answers its pairs through Z, and the fallback for
+        // such a pair is that answer.
+        let canonical: Vec<(TermId, TermId, DerivationId)> = materialized
+            .bounds
+            .cells()
+            .map(|(left, right, _, selected)| (left, right, selected))
+            .collect();
+        for (left, right, selected) in canonical {
             if !ledger.depends_on_postcondition_call(selected) {
                 continue;
             }
+            let Some((bound, parent)) = ordinary_closed.matrix.lookup_proof(left, right, ledger)
+            else {
+                continue;
+            };
             let proof = materialized_bound_proof(ledger, left, right, bound, event, parent);
             materialized.add_bound(left, right, bound, proof, ledger);
         }
-        let mut keys = ordinary_closed
-            .distinct
+        let mut keys = materialized
+            .distinct_proofs
             .iter()
-            .copied()
-            .filter(|pair| ledger.depends_on_postcondition_call(materialized.distinct_proofs[pair]))
+            .filter(|(_, proof)| ledger.depends_on_postcondition_call(**proof))
+            .map(|(pair, _)| *pair)
+            .filter(|pair| ordinary_closed.derives_distinct_pair(*pair))
             .collect::<Vec<_>>();
         keys.sort_unstable();
         for (left, right) in keys {
+            let parent = ordinary_closed
+                .distinct_proof((left, right), ledger)
+                .expect("the ordinary closure holds the disequality it derives");
             let proof = ledger.intern(DerivationNode::MaterializedDistinct {
                 left,
                 right,
                 event,
-                parent: ordinary_closed.distinct_proofs[&(left, right)],
+                parent,
             });
             materialized.add_distinct_candidate((left, right), proof, ledger);
         }
@@ -5775,7 +6167,7 @@ pub(crate) fn join_at(
     ledger: &mut DerivationLedger,
     event: FlowEventId,
 ) -> FactState {
-    let mut joined = join_at_once(states, terms, goals, ledger, event);
+    let mut joined = join_at_once(states, terms, goals, ledger, event, &[]);
     if joined.all_derivable {
         return joined;
     }
@@ -5793,10 +6185,28 @@ pub(crate) fn join_at(
         joined.ordinary_closure = ClosureRecord::Unknown;
         return joined;
     }
-    let ordinary = join_at_once(&ordinary_states, terms, goals, ledger, event);
+    // The ordinary join stores a row for every term of the full join as well,
+    // so a pair the full join selected through a call-dependent proof has an
+    // ordinary fallback even where the ordinary inputs answer it through Z.
+    let full_slots = joined.bounds.slots().to_vec();
+    let ordinary = join_at_once(&ordinary_states, terms, goals, ledger, event, &full_slots);
     joined.ordinary_closure = if ordinary.all_derivable {
         ClosureRecord::Unknown
     } else {
+        // A contradictory full input contributes nothing to the full join
+        // while its ordinary layer may contribute, so the ordinary join can
+        // hold rows for terms the full join answers through Z. The full
+        // join's stored selection must stay at least as strong as its view
+        // on every pair that receives an ordinary fallback, so it is retaken
+        // over those terms as well.
+        if ordinary
+            .bounds
+            .slots()
+            .iter()
+            .any(|term| !joined.bounds.is_active(*term))
+        {
+            joined = join_at_once(states, terms, goals, ledger, event, ordinary.bounds.slots());
+        }
         joined.merge_relation_candidates_from(&ordinary, ledger);
         ClosureRecord::closed(terms.ids().count())
     };
@@ -5804,12 +6214,15 @@ pub(crate) fn join_at(
     joined
 }
 
+/// `also` names terms the join stores rows for beyond the inputs' active
+/// terms, read through each input's view.
 fn join_at_once(
     states: &[FactState],
     terms: &TermTable,
     goals: &GoalTable,
     ledger: &mut DerivationLedger,
     event: FlowEventId,
+    also: &[TermId],
 ) -> FactState {
     // Close before filtering: a contradiction established immediately before
     // an edge is already the absorbing all-derivable state even when no kill
@@ -5843,38 +6256,68 @@ fn join_at_once(
         };
     };
     let first = &closed[first_index];
-    let mut bounds = BoundStore::with_terms(terms.ids().count());
-    for (left, right, bound, shared) in first.matrix.cells() {
-        let pair = (left, right);
-        let mut weakest = bound;
-        let mut same_proof = true;
-        let held = rest_indices.iter().all(|index| {
-            closed[*index]
+    // The join's universe is every term active in some contributing input,
+    // ascending. A term active in one input and not in another is read in
+    // the latter through Z, the bound its dense cell held before; a term
+    // active in no input is answered through Z by the join's own view, from
+    // the joined Z row and column, which is the join of the inputs' answers.
+    let mut universe: Vec<TermId> = contributing
+        .iter()
+        .flat_map(|index| closed[*index].matrix.slots.iter().copied())
+        .chain(also.iter().copied())
+        .collect();
+    universe.sort_unstable();
+    universe.dedup();
+    let mut bounds = BoundStore::with_slots(universe.clone());
+    for &left in &universe {
+        for &right in &universe {
+            let pair = (left, right);
+            let Some(bound) = first.matrix.lookup(left, right) else {
+                continue;
+            };
+            let shared = first
                 .matrix
-                .lookup(left, right)
-                .is_some_and(|(other, proof)| {
-                    same_proof &= other == bound && proof == shared;
-                    if other > weakest {
-                        weakest = other;
-                    }
-                    true
-                })
-        });
-        if held {
+                .lookup_stored(left, right)
+                .map(|(_, proof)| proof);
+            let mut weakest = bound;
+            let mut same_proof = shared.is_some();
+            let held = rest_indices.iter().all(|index| {
+                closed[*index]
+                    .matrix
+                    .lookup(left, right)
+                    .is_some_and(|other| {
+                        same_proof &= other == bound
+                            && closed[*index]
+                                .matrix
+                                .lookup_stored(left, right)
+                                .map(|(_, proof)| proof)
+                                == shared;
+                        if other > weakest {
+                            weakest = other;
+                        }
+                        true
+                    })
+            });
+            if !held {
+                continue;
+            }
             // A temporary transitive/strengthened proof may still mention a
             // middle that the next kill removes. Even when all incoming
             // closures select it, the join must record when its conclusion
             // became independently live. Reuse only existing live facts or
             // implicit bounds, which hold at every program point.
-            let independently_live = matches!(
-                ledger.nodes[shared.0 as usize],
-                DerivationNode::SourceBound { left: l, right: r, bound: b, .. }
-                    | DerivationNode::ImplicitBound { left: l, right: r, bound: b, .. }
-                    | DerivationNode::JoinBound { left: l, right: r, bound: b, .. }
-                    | DerivationNode::MaterializedBound { left: l, right: r, bound: b, .. }
-                    if (l, r, b) == (left, right, bound)
-            );
-            if contributing.len() == closed.len() && same_proof && independently_live {
+            if let Some(shared) = shared
+                && contributing.len() == closed.len()
+                && same_proof
+                && matches!(
+                    ledger.nodes[shared.0 as usize],
+                    DerivationNode::SourceBound { left: l, right: r, bound: b, .. }
+                        | DerivationNode::ImplicitBound { left: l, right: r, bound: b, .. }
+                        | DerivationNode::JoinBound { left: l, right: r, bound: b, .. }
+                        | DerivationNode::MaterializedBound { left: l, right: r, bound: b, .. }
+                        if (l, r, b) == (left, right, bound)
+                )
+            {
                 bounds.store_single(left, right, bound, shared);
                 continue;
             }
@@ -5905,16 +6348,89 @@ fn join_at_once(
             bounds.store_single(pair.0, pair.1, weakest, proof);
         }
     }
-    let mut distinct = first.distinct.clone();
-    for index in rest_indices {
-        distinct.retain(|pair| closed[*index].distinct.contains(pair));
+    // A disequality is held by an input when it is stored or derived there,
+    // a strict bound answered through Z included [ENT-4]. Within the
+    // universe every held pair is kept, as before. A pair with a term active
+    // in no input is held through Z in each input; the join's own view
+    // derives it again from the joined Z bounds unless the inputs bound the
+    // other term on opposite sides of that term's range, the one case where
+    // the pair must be stored to stay derivable.
+    let mut distinct: WordHashSet<(TermId, TermId)> = HashSet::default();
+    for (index, &left) in universe.iter().enumerate() {
+        for &right in &universe[index + 1..] {
+            let pair = (left, right);
+            if contributing
+                .iter()
+                .all(|input| closed[*input].derives_distinct_pair(pair))
+            {
+                distinct.insert(pair);
+            }
+        }
+    }
+    let ranges = terms.implicit_ranges();
+    let mut outside: Option<Vec<TermId>> = None;
+    for &term in &universe {
+        if term == ZERO {
+            continue;
+        }
+        let Some(zero_bounds) = contributing
+            .iter()
+            .map(|input| {
+                let matrix = &closed[*input].matrix;
+                Some((matrix.lookup(ZERO, term)?, matrix.lookup(term, ZERO)?))
+            })
+            .collect::<Option<Vec<(i128, i128)>>>()
+        else {
+            continue;
+        };
+        // Held on opposite sides needs some input to bound the term strictly
+        // above a value another input bounds it strictly below.
+        let lowest_from_zero = zero_bounds.iter().map(|(from_zero, _)| *from_zero).min();
+        let lowest_to_zero = zero_bounds.iter().map(|(_, to_zero)| *to_zero).min();
+        let (Some(lowest_from_zero), Some(lowest_to_zero)) = (lowest_from_zero, lowest_to_zero)
+        else {
+            continue;
+        };
+        if compose_transitive_bounds(lowest_from_zero, lowest_to_zero) > -2 {
+            continue;
+        }
+        let joined_from_zero = zero_bounds.iter().map(|(from_zero, _)| *from_zero).max();
+        let joined_to_zero = zero_bounds.iter().map(|(_, to_zero)| *to_zero).max();
+        let outside = outside.get_or_insert_with(|| {
+            terms
+                .ids()
+                .filter(|id| universe.binary_search(id).is_err())
+                .collect()
+        });
+        for &other in outside.iter() {
+            let range = ranges[other.0 as usize];
+            let (Some((to_zero, _)), Some((from_zero, _))) = (range.to_zero, range.from_zero)
+            else {
+                continue;
+            };
+            let held = zero_bounds.iter().all(|(input_from_zero, input_to_zero)| {
+                compose_transitive_bounds(to_zero, *input_from_zero) <= -1
+                    || compose_transitive_bounds(*input_to_zero, from_zero) <= -1
+            });
+            if !held {
+                continue;
+            }
+            let derived = joined_from_zero
+                .is_some_and(|joined| compose_transitive_bounds(to_zero, joined) <= -1)
+                || joined_to_zero
+                    .is_some_and(|joined| compose_transitive_bounds(joined, from_zero) <= -1);
+            if !derived {
+                distinct.insert(ordered(other, term));
+            }
+        }
     }
     let mut distinct_proofs = HashMap::default();
     let mut distinct_keys: Vec<_> = distinct.iter().copied().collect();
     distinct_keys.sort_unstable();
     for pair in distinct_keys {
-        if contributing.len() == closed.len() {
-            let shared = first.distinct_proofs[&pair];
+        if contributing.len() == closed.len()
+            && let Some(shared) = first.distinct_proofs.get(&pair).copied()
+        {
             let independently_live = matches!(
                 ledger.nodes[shared.0 as usize],
                 DerivationNode::SourceDistinct { left, right, .. }
@@ -5925,7 +6441,7 @@ fn join_at_once(
             if independently_live
                 && rest_indices
                     .iter()
-                    .all(|index| closed[*index].distinct_proofs[&pair] == shared)
+                    .all(|index| closed[*index].distinct_proofs.get(&pair) == Some(&shared))
             {
                 distinct_proofs.insert(pair, shared);
                 continue;
@@ -5938,7 +6454,9 @@ fn join_at_once(
                     .contradiction
                     .expect("contradictory predecessor proof")
             } else {
-                state.distinct_proofs[&pair]
+                state
+                    .distinct_proof(pair, ledger)
+                    .expect("contributing predecessor holds the joined disequality")
             };
             parents.push(JoinParent {
                 ordinal: u32::try_from(ordinal)
@@ -6114,14 +6632,6 @@ pub(crate) mod tests {
         verifying
     }
 
-    fn bound_values(closed: &ClosedState) -> Vec<(TermId, TermId, i128)> {
-        closed
-            .matrix
-            .cells()
-            .map(|(left, right, bound, _)| (left, right, bound))
-            .collect()
-    }
-
     pub(super) fn assert_seeded_closure_matches_complete(
         state: &FactState,
         terms: &TermTable,
@@ -6132,8 +6642,17 @@ pub(crate) mod tests {
         let mut unseeded = state.clone();
         unseeded.closure = ClosureRecord::Unknown;
         let mut complete_ledger = ledger.clone();
-        let complete =
-            close_with_excluded_term(&unseeded, terms, goals, &mut complete_ledger, None);
+        // The complete closure ranges over every registered term, the
+        // specification's universe, so the active closure's answers through Z
+        // are compared with cells it derives.
+        let complete = close_with_row_pruning::<true, false>(
+            &unseeded,
+            terms,
+            goals,
+            &mut complete_ledger,
+            None,
+            UniverseChoice::Every,
+        );
         assert_eq!(
             seeded.all_derivable, complete.all_derivable,
             "seeded closure contradiction differs from the complete closure"
@@ -6141,15 +6660,45 @@ pub(crate) mod tests {
         if complete.all_derivable {
             return;
         }
-        assert_eq!(
-            bound_values(seeded),
-            bound_values(&complete),
-            "seeded closure bounds differ from the complete closure"
-        );
-        assert_eq!(
-            seeded.distinct, complete.distinct,
-            "seeded closure disequalities differ from the complete closure"
-        );
+        // Every ordered pair of registered terms is compared through the
+        // same queries the flow asks, so a bound the view answers without a
+        // stored cell is held to the cell the complete closure derives.
+        for left in terms.ids() {
+            for right in terms.ids() {
+                assert_eq!(
+                    seeded.tight_bound(left, right),
+                    complete.tight_bound(left, right),
+                    "seeded closure bound {left:?} - {right:?} differs from the complete closure"
+                );
+                let distinct = Relation::Distinct {
+                    left,
+                    right,
+                    difference: 0,
+                };
+                assert_eq!(
+                    seeded.derives(&distinct),
+                    complete.derives(&distinct),
+                    "seeded closure disequality {left:?} != {right:?} differs from the complete closure"
+                );
+            }
+        }
+        // The stored disequality sets agree on the active closure's own
+        // universe; the complete closure also stores the pairs the active one
+        // answers through Z, which the loop above compared.
+        for pair in &complete.distinct {
+            if seeded.matrix.slot(pair.0).is_some() && seeded.matrix.slot(pair.1).is_some() {
+                assert!(
+                    seeded.distinct.contains(pair),
+                    "seeded closure lacks the stored disequality {pair:?}"
+                );
+            }
+        }
+        for pair in &seeded.distinct {
+            assert!(
+                complete.distinct.contains(pair),
+                "seeded closure stores a disequality {pair:?} the complete closure lacks"
+            );
+        }
         assert_eq!(seeded.opaque, complete.opaque);
         for goal in goals.ids() {
             for sign in [GoalSign::Positive, GoalSign::Negative] {
@@ -6328,6 +6877,7 @@ pub(crate) mod tests {
                     &GoalTable::default(),
                     &mut original_ledger,
                     excluded,
+                    UniverseChoice::Active,
                 );
                 if satisfiable {
                     assert!(
@@ -6348,6 +6898,7 @@ pub(crate) mod tests {
                         &GoalTable::default(),
                         &mut candidate_ledger,
                         excluded,
+                        UniverseChoice::Active,
                     );
                     let label = format!(
                         "graph {mask}/{satisfiable}, excluded {excluded:?}, pruned {prune}, reference {reference}"
@@ -6405,6 +6956,241 @@ pub(crate) mod tests {
         assert!(closed.derives_bound(second, first, 0));
         assert!(closed.derives_bound(parameter, ZERO, u64::MAX.into()));
         assert!(closed.derives_bound(ZERO, parameter, 0));
+    }
+
+    /// A term with no stored relation is answered through Z by every view, so
+    /// a join stores a disequality on it only where the joined Z bounds no
+    /// longer imply it: here one path puts `b` above the whole `u8` range of
+    /// `a` and the other below it, each path derives `a != b`, and the join
+    /// of the two Z bounds on `b` says nothing about `a`.
+    /// A predecessor contradictory only through call-dependent facts is
+    /// neutral in the full join and a live input of the ordinary join, so the
+    /// ordinary join can hold rows for terms the full join answers through
+    /// Z. The full join must then be retaken over those terms: otherwise the
+    /// ordinary fallback for such a pair, merged into a store that has no
+    /// cell for it, would become the full selection, weaker than the view.
+    /// The input is not promoted, as the result-image joins of the flow
+    /// leave their inputs.
+    #[test]
+    fn a_join_retakes_rows_the_ordinary_layer_adds() {
+        let mut terms = TermTable::new();
+        let place = |binding, ty| {
+            TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                ty,
+            )
+        };
+        let t = terms.intern(place(0, IntegerType::U8));
+        let x = terms.intern(place(1, IntegerType::I32));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        // The dead input: an ordinary fact on `t` and a call-dependent
+        // contradiction `Z - Z <= -1`, nothing on `x`.
+        let mut dead = FactState::new();
+        dead.establish(
+            &Relation::Bound {
+                left: t,
+                right: ZERO,
+                bound: 100,
+            },
+            &mut ledger,
+            event,
+        );
+        let impossible = Relation::Bound {
+            left: ZERO,
+            right: ZERO,
+            bound: -1,
+        };
+        let call = postcondition_call_proof(&mut ledger, impossible.clone());
+        dead.establish_from_proof(&impossible, call, &ledger);
+        // The live input: `x` bounded below ordinarily and more tightly by a
+        // call; `t` holds no fact.
+        let mut live = FactState::new();
+        live.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: x,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let tighter = Relation::Bound {
+            left: ZERO,
+            right: x,
+            bound: -400,
+        };
+        let call = postcondition_call_proof(&mut ledger, tighter.clone());
+        live.establish_from_proof(&tighter, call, &ledger);
+        assert!(close(&dead, &terms, &goals, &mut ledger).contradictory());
+        let join_event = ledger.event(FlowEventKind::Join, None);
+        let joined = join_at(&[dead, live], &terms, &goals, &mut ledger, join_event);
+        // The full join is the live input: `t - x` through Z is 255 - 400.
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(t, x), Some(-145));
+        assert_eq!(closed.tight_bound(ZERO, x), Some(-400));
+        // The ordinary join has both inputs: the dead one knows nothing of
+        // `x`, so the ordinary layer bounds `x` only by its type, and its
+        // `t - x` is the weaker of the two inputs' pairs, the dead input's
+        // `t <= 100` composed with the type range of `x`.
+        let mut ordinary = joined.clone();
+        ordinary.retain_non_postcondition_candidates(&ledger);
+        let closed = close(&ordinary, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(ZERO, x), Some(i128::from(i32::MAX) + 1));
+        assert_eq!(
+            closed.tight_bound(t, x),
+            Some(100 + i128::from(i32::MAX) + 1)
+        );
+        assert_eq!(closed.tight_bound(t, ZERO), Some(255));
+    }
+
+    #[test]
+    fn a_join_keeps_a_disequality_held_through_zero_on_opposite_sides() {
+        let mut terms = TermTable::new();
+        let a = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+            IntegerType::U8,
+        ));
+        let b = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(1)),
+            IntegerType::I32,
+        ));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut above = FactState::new();
+        above.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: b,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let mut below = FactState::new();
+        below.establish(
+            &Relation::Bound {
+                left: b,
+                right: ZERO,
+                bound: -5,
+            },
+            &mut ledger,
+            event,
+        );
+        let distinct = Relation::Distinct {
+            left: a,
+            right: b,
+            difference: 0,
+        };
+        for state in [&above, &below] {
+            assert!(close(state, &terms, &goals, &mut ledger).derives(&distinct));
+            assert!(!state.bounds.is_active(a));
+        }
+        let joined = join(&[above, below], &terms, &goals, &mut ledger);
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert!(closed.derives(&distinct));
+        assert!(closed.tight_bound(a, b).is_some_and(|bound| bound > -1));
+        assert!(closed.tight_bound(b, a).is_some_and(|bound| bound > -1));
+        assert!(joined.distinct.contains(&(a, b)));
+        // A disequality the joined bounds imply is not stored: `c` holds
+        // only its range and `b` stays above it on both paths.
+        let c = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(2)),
+            IntegerType::U8,
+        ));
+        let mut high = FactState::new();
+        high.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: b,
+                bound: -400,
+            },
+            &mut ledger,
+            event,
+        );
+        let mut above = FactState::new();
+        above.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: b,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let joined = join(&[above, high], &terms, &goals, &mut ledger);
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert!(closed.derives(&Relation::Distinct {
+            left: c,
+            right: b,
+            difference: 0,
+        }));
+        assert!(!joined.distinct.contains(&(b, c)));
+        assert!(!joined.bounds.is_active(c));
+    }
+
+    /// A term active only through a call-dependent disequality has no row in
+    /// the ordinary closure, which answers its pairs through Z. The
+    /// materialization must still give every call-dependent cell of such a
+    /// term its ordinary fallback, so that removing the call-dependent
+    /// candidates leaves the bound the ordinary layer derives.
+    #[test]
+    fn a_materialized_ordinary_layer_keeps_a_bound_on_a_distinct_only_term() {
+        let mut terms = TermTable::new();
+        let place = |binding, ty| {
+            TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                ty,
+            )
+        };
+        let t = terms.intern(place(0, IntegerType::U8));
+        let y = terms.intern(place(1, IntegerType::U8));
+        let x = terms.intern(place(2, IntegerType::I32));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: x,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let stronger = Relation::Bound {
+            left: ZERO,
+            right: x,
+            bound: -400,
+        };
+        let call = postcondition_call_proof(&mut ledger, stronger.clone());
+        state.establish_from_proof(&stronger, call, &ledger);
+        let distinct = Relation::Distinct {
+            left: t,
+            right: y,
+            difference: 0,
+        };
+        let call = postcondition_call_proof(&mut ledger, distinct.clone());
+        state.establish_from_proof(&distinct, call, &ledger);
+        let mut direct = state.clone();
+        direct.retain_non_postcondition_candidates(&ledger);
+        let direct = close(&direct, &terms, &goals, &mut ledger);
+        assert_eq!(direct.tight_bound(t, x), Some(-45));
+        let snapshot = ledger.event(FlowEventKind::Snapshot, None);
+        let materialized = materialize_closure_at(&state, &terms, &goals, &mut ledger, snapshot);
+        assert_eq!(
+            close(&materialized, &terms, &goals, &mut ledger).tight_bound(t, x),
+            Some(-145)
+        );
+        let mut ordinary = materialized.clone();
+        ordinary.retain_non_postcondition_candidates(&ledger);
+        let closed = close(&ordinary, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(t, x), Some(-45));
+        assert_eq!(closed.tight_bound(x, t), direct.tight_bound(x, t));
+        assert!(!closed.derives(&distinct));
     }
 
     #[test]
@@ -7212,7 +7998,7 @@ pub(crate) mod tests {
         assert_ne!(old_distinct, new_distinct);
         assert!(!ledger.depends_on_postcondition_call(new_bound.1));
         assert!(!ledger.depends_on_postcondition_call(new_distinct));
-        assert!(swapped.closure.is_closed_over(terms.ids().count()));
+        assert!(swapped.closure.is_closed());
         assert!(!Rc::ptr_eq(
             &cached,
             &close(&swapped, &terms, &goals, &mut ledger)
@@ -7234,8 +8020,8 @@ pub(crate) mod tests {
             bound: 20,
         };
         state.establish(&weaker, &mut ledger, event);
-        assert!(state.closure.is_closed_over(terms.ids().count()));
-        assert!(state.ordinary_closure.is_closed_over(terms.ids().count()));
+        assert!(state.closure.is_closed());
+        assert!(state.ordinary_closure.is_closed());
         assert!(
             state
                 .bounds
@@ -7264,7 +8050,7 @@ pub(crate) mod tests {
             &mut ledger,
             event,
         );
-        assert!(state.closure.is_closed_over(terms.ids().count()));
+        assert!(state.closure.is_closed());
         state.retain_non_postcondition_candidates(&ledger);
         let closed = close(&state, &terms, &goals, &mut ledger);
         assert!(closed.derives_bound(left, right, 9));
@@ -7455,46 +8241,64 @@ pub(crate) mod tests {
             });
             return FactState::contradictory(proof);
         };
+        // Every registered pair is joined through the closed views, so the
+        // reference stores what the specification's join holds whether or
+        // not an input's matrix has a row for the pair's terms.
         let mut result = FactState::new();
-        for (left, right, bound, _) in first.matrix.cells() {
-            let weakest = closed.iter().filter(|state| !state.all_derivable).try_fold(
-                bound,
-                |bound, state| {
-                    state
-                        .matrix
-                        .lookup(left, right)
-                        .map(|(held, _)| bound.max(held))
-                },
-            );
-            let Some(bound) = weakest else {
-                continue;
-            };
-            let proofs = closed
-                .iter()
-                .map(|state| {
-                    state
-                        .contradiction
-                        .unwrap_or_else(|| state.bound_proof(left, right, bound, ledger).unwrap())
-                })
-                .collect();
-            let proof = ledger.intern(DerivationNode::JoinBound {
-                left,
-                right,
-                bound,
-                event,
-                parents: parents(proofs),
-            });
-            result.add_bound(left, right, bound, proof, ledger);
+        let contributing = closed
+            .iter()
+            .filter(|state| !state.all_derivable)
+            .collect::<Vec<_>>();
+        for left in terms.ids() {
+            for right in terms.ids() {
+                let weakest = contributing
+                    .iter()
+                    .try_fold(None, |weakest: Option<i128>, state| {
+                        let held = state.matrix.lookup(left, right)?;
+                        Some(Some(weakest.map_or(held, |weakest| weakest.max(held))))
+                    })
+                    .flatten();
+                let Some(bound) = weakest else {
+                    continue;
+                };
+                let proofs = closed
+                    .iter()
+                    .map(|state| {
+                        state.contradiction.unwrap_or_else(|| {
+                            state.bound_proof(left, right, bound, ledger).unwrap()
+                        })
+                    })
+                    .collect();
+                let proof = ledger.intern(DerivationNode::JoinBound {
+                    left,
+                    right,
+                    bound,
+                    event,
+                    parents: parents(proofs),
+                });
+                result.add_bound(left, right, bound, proof, ledger);
+            }
         }
-        let mut distinct = first.distinct.iter().copied().collect::<Vec<_>>();
-        distinct.sort_unstable();
+        let mut distinct = Vec::new();
+        for left in terms.ids() {
+            for right in terms.ids() {
+                let pair = (left, right);
+                if left < right
+                    && contributing
+                        .iter()
+                        .all(|state| state.derives_distinct_pair(pair))
+                {
+                    distinct.push(pair);
+                }
+            }
+        }
         for (left, right) in distinct {
             let proofs = closed
                 .iter()
                 .map(|state| {
                     state
                         .contradiction
-                        .or_else(|| state.distinct_proofs.get(&(left, right)).copied())
+                        .or_else(|| state.distinct_proof((left, right), ledger))
                 })
                 .collect::<Option<Vec<_>>>();
             if let Some(proofs) = proofs {
@@ -7592,13 +8396,28 @@ pub(crate) mod tests {
             if fast.all_derivable {
                 continue;
             }
-            let actual = bound_values(&fast);
-            let expected = bound_values(&reference);
-            assert_eq!(actual.len(), expected.len(), "ordinary={ordinary}");
-            for (actual, expected) in actual.iter().zip(&expected) {
-                assert_eq!(actual, expected, "ordinary={ordinary}");
+            // The two states store different rows, since the reference keeps
+            // every registered pair; what must agree is the answer to every
+            // pair's bound and disequality query.
+            for left in terms.ids() {
+                for right in terms.ids() {
+                    assert_eq!(
+                        fast.tight_bound(left, right),
+                        reference.tight_bound(left, right),
+                        "bound {left:?} - {right:?}, ordinary={ordinary}"
+                    );
+                    let distinct = Relation::Distinct {
+                        left,
+                        right,
+                        difference: 0,
+                    };
+                    assert_eq!(
+                        fast.derives(&distinct),
+                        reference.derives(&distinct),
+                        "disequality {left:?} != {right:?}, ordinary={ordinary}"
+                    );
+                }
             }
-            assert_eq!(fast.distinct, reference.distinct, "ordinary={ordinary}");
             assert_eq!(fast.opaque, reference.opaque, "ordinary={ordinary}");
             for goal in goals.ids() {
                 for sign in [GoalSign::Positive, GoalSign::Negative] {
@@ -7623,7 +8442,7 @@ pub(crate) mod tests {
         VERIFIED_CLOSURES.with(|count| count.set(0));
         ROUTE_COUNTS.with(|counts| counts.set([0; CLOSURE_ROUTES.len()]));
         let mut actions = [0_usize; 13];
-        for case in 0..400_u64 {
+        for case in 0..1000_u64 {
             let mut seed = case.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
             let mut terms = TermTable::new();
             let mut binding = 0;
@@ -7650,6 +8469,24 @@ pub(crate) mod tests {
             ));
             terms.set_measure_bound(measure, MeasureBound::Constant(7));
             places.push(measure);
+            // A capacity sibling, whose standing ordering relates two non-Z
+            // terms, and a length equated to a symbolic constant: the
+            // relational terms every closure universe must carry.
+            let capacity = terms.intern(TermKind::Measure(
+                CheckedMeasure::Capacity,
+                super::super::term::ResolvedPlace::binding(BindingId(100)),
+            ));
+            places.push(capacity);
+            let parameter = terms.intern(TermKind::ConstParameter(
+                DeclarationId::from_index(0).expect("zero declaration identity exists"),
+                IntegerType::U8,
+            ));
+            let alias = terms.intern(TermKind::Measure(
+                CheckedMeasure::Length,
+                super::super::term::ResolvedPlace::binding(BindingId(102)),
+            ));
+            terms.set_measure_bound(alias, MeasureBound::Equal(parameter));
+            places.push(alias);
             let mut goals = GoalTable::default();
             let goal = goals.intern(
                 GoalExpression::Datum(super::super::super::goal::GoalDatum::Place {
@@ -7686,20 +8523,44 @@ pub(crate) mod tests {
                     let state = &mut states[index];
                     let ledger = &mut ledgers[index];
                     let event = events[index];
+                    // The flow-level kills and joins (`apply_kills`,
+                    // `join_flows`) promote a predecessor's contradiction
+                    // first, so there a predecessor contradictory only
+                    // through call-dependent facts is neutral in both layers
+                    // of the join. The result-image joins and kills do not
+                    // promote; `a_join_retakes_rows_the_ordinary_layer_adds`
+                    // covers an unpromoted contradictory input.
+                    if matches!(action, 6 | 9) {
+                        let promote = |state: &mut FactState, ledger: &mut DerivationLedger| {
+                            let closed = close(state, &terms, &goals, ledger);
+                            if closed.contradictory() {
+                                state.promote_to_contradiction(closed.contradiction_proof());
+                            }
+                        };
+                        promote(state, ledger);
+                        if let Some(copy) = &mut earlier {
+                            promote(&mut copy[index], ledger);
+                        }
+                    }
                     match action {
                         0..=2 if left != right => {
                             state.establish(&Relation::Bound { left, right, bound }, ledger, event);
                         }
                         3 if left != right => {
-                            state.establish(
-                                &Relation::Distinct {
-                                    left,
-                                    right,
-                                    difference: 0,
-                                },
-                                ledger,
-                                event,
-                            );
+                            let relation = Relation::Distinct {
+                                left,
+                                right,
+                                difference: 0,
+                            };
+                            if bound < 0 {
+                                state.establish(&relation, ledger, event);
+                            } else {
+                                // A call-dependent disequality: its terms
+                                // are active only until a candidate removal,
+                                // which the ordinary layer must survive.
+                                let call = postcondition_call_proof(ledger, relation.clone());
+                                state.establish_from_proof(&relation, call, ledger);
+                            }
                         }
                         4 | 5 if left != right => {
                             let relation = Relation::Bound { left, right, bound };
@@ -7759,7 +8620,21 @@ pub(crate) mod tests {
                         // comparison of its clone also checks memo reuse.
                         let _ = close(state, &terms, &goals, ledger);
                     }
-                    let _ = contradiction_without_proofs(state, &terms, &goals);
+                    // The proof-free probe answers the contradiction question
+                    // the closure over every registered term answers.
+                    let probe = contradiction_without_proofs(state, &terms, &goals);
+                    let mut every = state.clone();
+                    every.closure = ClosureRecord::Unknown;
+                    let mut every_ledger = ledger.clone();
+                    let complete = close_with_row_pruning::<true, false>(
+                        &every,
+                        &terms,
+                        &goals,
+                        &mut every_ledger,
+                        None,
+                        UniverseChoice::Every,
+                    );
+                    assert_eq!(probe, complete.all_derivable, "case {case}: {trace:?}");
                 }
                 if action == 9 {
                     earlier = if earlier.is_none() {
