@@ -1132,3 +1132,30 @@ Final `make static`, after the review record, passes all seven stages in
 Final `git diff --check` passes (exit 0); the library and all design,
 specification, formal test, compiler and gate bytes remain unchanged from
 the task base. All task commits stay local.
+
+## Bounded table-growth experiment
+
+Criterion recorded before attribution builds, source changes and timing,
+against task head `66fa1c8b9f422fb9e1bc3885f8c75f1fdbfbabf2`: keep a
+change only if integer-table (10,000,000 fill then read) improves at least
+10%, the other six kernels do not regress beyond noise, and the unchanged
+oracle passes 240/240 comparisons in both ordinary and `--gc-stress` modes,
+including byte-identical `next`/`pairs` order against the supplied Redis Lua.
+Use six alternating before/candidate full-LTO pairs per kernel, with
+binary-trees depth 14 and all other original counts. Improvement is
+`1 - median(candidate) / median(before)`. Size with one pair then three
+warm pairs before the selected six; retain every selected launch.
+For the other kernels, a regression is beyond noise when its median loss
+exceeds the larger before/after relative min–max range in the six pairs;
+report the ranges and paired results even when that guard passes.
+No performance result can substitute for failed behavior checks.
+
+Attribution precedes the candidate: derive the integer table's array/hash
+size sequence from both implementations and confirm with a temporary
+counter build. Count array and hash scans, histogram-bin work and resize
+movement separately. Temporary sources, binaries and logs belong in the
+existing ignored benchmark target and are removed when no longer needed;
+retained raw observations serve this comparison in this experiment until
+superseded. No compiler, specification, conformance, network, Cargo, push
+or PR change is in scope. The owner's task supplies the bounded direction
+and keep/revert rule; any retained Halo decision is provisional at handoff.
