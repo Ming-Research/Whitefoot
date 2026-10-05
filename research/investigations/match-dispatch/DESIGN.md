@@ -338,3 +338,16 @@ Writing v1 also found that checking one function grows faster than its size
 (`docs/todo.md`, "Checking one function grows faster than its size"): the
 interpreter function checks only with each handler's body in a function of
 its own.
+
+## Stage 3 v2 so far
+
+Register-form operations on frame slots (v2a) and constants in frame slots
+(v2b) bring the score to 0.390x
+([results](../../experiments/match-dispatch/RESULTS.md#v2-results)), both
+short of their predictions. The remaining per-dispatch cost is now visible
+in the machine code: a stack-box reload the hoisting rule leaves because the
+arms hand the reference to helpers, and addresses recomputed from indices
+(both in `docs/todo.md`). The handlers live in helper functions only because
+the checker cannot check the interpreter function with their bodies inline,
+so the checker's growth with function size limits the interpreter's form as
+well as its build time.

@@ -21,15 +21,21 @@ struct Ctl {
   target: u64;
   fixes: u64;
   else_at: u64;
+  c: u64;
 }
 
 struct Trans {
-  h: u64;
   dead: Bool;
   skip: u64;
   base: u64;
   l: u64;
   results: u64;
+  last: u64;
+  last_pos: u64;
+  failed: Bool;
+  cslot: u64;
+  cbase: u64;
+  cn: u64;
 }
 
 fn fail(r: &Reader) -> v: u64 writes(r) {
@@ -369,7 +375,7 @@ fn parse_imports(r: &Reader, bytes: &Box<Array<u8>>, types: &Box<Slots<FuncType>
     if module_name != 5630335187277993924_u64 {
       set id = 9_u64;
     }
-    let f = Func(canon: ft.canon, start: 0_u64, params: ft.params, locals: 0_u64, results: ft.results, host: id);
+    let f = Func(canon: ft.canon, start: 0_u64, params: ft.params, locals: 0_u64, results: ft.results, host: id, cbase: 0_u64, cn: 0_u64);
     push_func(cell: funcs, value: f);
   }
   let failed = r^.failed;
@@ -385,7 +391,7 @@ fn parse_functions(r: &Reader, bytes: &Box<Array<u8>>, types: &Box<Slots<FuncTyp
       return False();
     }
     let ft = types^.inner[ti];
-    let f = Func(canon: ft.canon, start: 0_u64, params: ft.params, locals: 0_u64, results: ft.results, host: 0_u64);
+    let f = Func(canon: ft.canon, start: 0_u64, params: ft.params, locals: 0_u64, results: ft.results, host: 0_u64, cbase: 0_u64, cn: 0_u64);
     push_func(cell: funcs, value: f);
   }
   let failed = r^.failed;
@@ -527,12 +533,35 @@ struct Pending {
   at: u64;
   table: Bool;
   form: u64;
-  h: u64;
-  k: u64;
+  s: u64;
+  d: u64;
+  c: u64;
+}
+
+struct Prov {
+  kind: u64;
+  value: u64;
 }
 
 fn push_pending(cell: &Box<Slots<Pending>>, value: Pending) -> r: unit writes(cell) {
   doc "Records a forward branch to patch when its label's block ends.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    let doubled = capacity +wrap capacity;
+    let bigger = imax(doubled, 64_u64);
+    if bigger >= capacity {
+      grow(cell: cell, capacity: bigger);
+    }
+  }
+  if cell^.inner.len < cell^.inner.cap {
+    place_back(window: &cell^.inner, value: value);
+  }
+  return unit;
+}
+
+fn push_prov(cell: &Box<Slots<Prov>>, value: Prov) -> r: unit writes(cell) {
+  doc "Pushes the provider of an operand.";
   let length = cell^.inner.len;
   let capacity = cell^.inner.cap;
   if length >= capacity {
@@ -553,25 +582,28 @@ fn narrow(value: u64) -> n: u32 pure {
   return cvt.wrap::<u64, u32>(value);
 }
 
-fn branch_op(form: u64, target: u64, h: u64, k: u64) -> op: Op pure {
-  doc "The branch operation of a form: 0 Jump, 1 Br, 2 BrIf, 3 BrIfJ, 4 BrUnless.";
+fn slot16(value: u64) -> n: u16 pure {
+  doc "A frame slot as an operand; the translator refuses a frame past 65535 slots.";
+  return cvt.wrap::<u64, u16>(value);
+}
+
+fn branch_op(form: u64, target: u64, s: u64, d: u64, c: u64) -> op: Op pure {
+  doc "The branch operation of a form: 0 Jump, 1 Br moving slot s to d, 2 BrIf on slot c, 4 BrUnless on slot c.";
   let t = narrow(value: target);
-  let hh = narrow(value: h);
-  let kk = narrow(value: k);
   if form == 1_u64 {
-    let o = Op::Br(t: t, h: hh, k: kk);
+    let s16 = slot16(value: s);
+    let d16 = slot16(value: d);
+    let o = Op::Br(t: t, s: s16, d: d16);
     return o;
   }
   if form == 2_u64 {
-    let o = Op::BrIf(t: t, h: hh, k: kk);
-    return o;
-  }
-  if form == 3_u64 {
-    let o = Op::BrIfJ(t: t);
+    let c16 = slot16(value: c);
+    let o = Op::BrIf(t: t, c: c16);
     return o;
   }
   if form == 4_u64 {
-    let o = Op::BrUnless(t: t);
+    let c16 = slot16(value: c);
+    let o = Op::BrUnless(t: t, c: c16);
     return o;
   }
   let o = Op::Jump(t: t);
@@ -579,20 +611,17 @@ fn branch_op(form: u64, target: u64, h: u64, k: u64) -> op: Op pure {
 }
 
 fn patch(code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, p: Pending, target: u64) -> r: unit writes(code), writes(brtab) {
-  doc "Points a recorded forward branch at target.";
+  doc "Points a recorded forward branch, an operation or a branch-table entry, at target.";
   let at = p.at;
   if p.table {
     if at < brtab^.inner.len {
       let t = narrow(value: target);
-      let hh = narrow(value: p.h);
-      let kk = narrow(value: p.k);
-      let entry_value = Target(t: t, h: hh, k: kk);
-      set brtab^.inner[at] = entry_value;
+      set brtab^.inner[at].t = t;
     }
     return unit;
   }
   if at < code^.inner.len {
-    let o = branch_op(form: p.form, target: target, h: p.h, k: p.k);
+    let o = branch_op(form: p.form, target: target, s: p.s, d: p.d, c: p.c);
     set code^.inner[at] = o;
   }
   return unit;
@@ -763,8 +792,146 @@ fn skip_immediates(r: &Reader, bytes: &Box<Array<u8>>, op: u8) -> done: unit rea
   return unit;
 }
 
-fn emit_branch(st: &Trans, depth: u64, conditional: Bool, code: &Box<Slots<Op>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(st), reads(ctls), writes(code), writes(fixes) {
-  doc "A branch to the label depth frames out: a plain jump when the operands already sit at the label's height, a moving branch otherwise; a block's target is patched at its end, a loop's is known.";
+fn temp_slot(st: &Trans, pos: u64) -> slot: u64 reads(st) {
+  doc "The frame slot of the operand at stack position pos.";
+  return st^.base +wrap pos;
+}
+
+fn emit_dest(st: &Trans, code: &Box<Slots<Op>>, op: Op, pos: u64) -> r: unit writes(st), writes(code) {
+  doc "Emits an operation writing the temporary of stack position pos and remembers it, so that a local.set right after it can take over its destination.";
+  let at = code^.inner.len;
+  push_op(code: code, op: op);
+  set st^.last = at;
+  set st^.last_pos = pos;
+  return unit;
+}
+
+fn emit_plain(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> r: unit writes(st), writes(code) {
+  doc "Emits an operation writing no temporary.";
+  push_op(code: code, op: op);
+  set st^.last = 18446744073709551615_u64;
+  return unit;
+}
+
+fn materialize(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos: u64) -> r: unit writes(st), writes(provs), writes(code) {
+  doc "Copies a local or constant operand into its own temporary.";
+  if pos >= provs^.inner.len {
+    return unit;
+  }
+  let p = provs^.inner[pos];
+  if p.kind == 0_u64 {
+    return unit;
+  }
+  let ts = temp_slot(st: st, pos: pos);
+  let d = slot16(value: ts);
+  if p.kind == 1_u64 {
+    let s = slot16(value: p.value);
+    let o = Op::Copy(d: d, s: s);
+    emit_dest(st: st, code: code, op: o, pos: pos);
+  } else {
+    let o = Op::Const(d: d, v: p.value);
+    emit_dest(st: st, code: code, op: o, pos: pos);
+  }
+  if pos < provs^.inner.len {
+    let in_temp = Prov(kind: 0_u64, value: 0_u64);
+    set provs^.inner[pos] = in_temp;
+  }
+  return unit;
+}
+
+fn flush(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> r: unit writes(st), writes(provs), writes(code) {
+  doc "Puts every operand in its temporary, as control flow expects.";
+  let h = provs^.inner.len;
+  for (pos in 0_u64..h) {
+    materialize(st: st, provs: provs, code: code, pos: pos);
+  }
+  return unit;
+}
+
+fn source(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos: u64) -> slot: u64 writes(st), writes(provs), writes(code) {
+  doc "The slot holding the operand at pos: a local's own slot, or its temporary, a constant first copied there.";
+  if pos < provs^.inner.len {
+    let p = provs^.inner[pos];
+    if p.kind == 1_u64 {
+      return p.value;
+    }
+    if p.kind == 2_u64 {
+      materialize(st: st, provs: provs, code: code, pos: pos);
+    }
+  }
+  return temp_slot(st: st, pos: pos);
+}
+
+fn preserve(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local: u64) -> r: unit writes(st), writes(provs), writes(code) {
+  doc "Before a local changes, copies every operand still naming it into its temporary.";
+  let h = provs^.inner.len;
+  for (pos in 0_u64..h) {
+    if pos < provs^.inner.len {
+      let p = provs^.inner[pos];
+      if p.kind == 1_u64 {
+        if p.value == local {
+          materialize(st: st, provs: provs, code: code, pos: pos);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn pop_prov(st: &Trans, provs: &Box<Slots<Prov>>, count: u64) -> r: unit writes(st), writes(provs) {
+  doc "Pops count operands, marking the translation failed when there are fewer.";
+  for (i in 0_u64..count) {
+    if provs^.inner.len > 0_u64 {
+      let gone = take_back(window: &provs^.inner);
+    } else {
+      set st^.failed = True();
+    }
+  }
+  return unit;
+}
+
+fn push_temp(st: &Trans, provs: &Box<Slots<Prov>>) -> r: unit writes(st), writes(provs) {
+  doc "Pushes an operand held in its temporary, refusing a frame past 65535 slots.";
+  let pos = provs^.inner.len;
+  let ts = temp_slot(st: st, pos: pos);
+  if ts >= 65535_u64 {
+    set st^.failed = True();
+  }
+  let p = Prov(kind: 0_u64, value: 0_u64);
+  push_prov(cell: provs, value: p);
+  return unit;
+}
+
+fn set_height(st: &Trans, provs: &Box<Slots<Prov>>, height: u64) -> r: unit writes(st), writes(provs) {
+  doc "Makes the operand stack height operands deep, every new one in its temporary.";
+  loop @lower {
+    if provs^.inner.len <= height {
+      break @lower;
+    }
+    let gone = take_back(window: &provs^.inner);
+  }
+  loop @raise {
+    if provs^.inner.len >= height {
+      break @raise;
+    }
+    let failed = st^.failed;
+    if failed {
+      break @raise;
+    }
+    push_temp(st: st, provs: provs);
+  }
+  return unit;
+}
+
+fn top_pos(provs: &Box<Slots<Prov>>, depth: u64) -> pos: u64 reads(provs) {
+  doc "The stack position depth below the top, the top being depth 0.";
+  let h = provs^.inner.len;
+  let above = depth +wrap 1_u64;
+  return h -wrap above;
+}
+
+fn emit_branch(st: &Trans, depth: u64, cond: u64, conditional: Bool, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(provs), reads(ctls), writes(st), writes(code), writes(brtab), writes(fixes) {
+  doc "A branch to the label depth frames out, every operand already in its temporary: a plain jump when the label's result already sits in the label's slot, a moving branch otherwise; a block's target is patched at its end, a loop's is known.";
   let nctl = ctls^.inner.len;
   if depth >= nctl {
     return False();
@@ -776,33 +943,61 @@ fn emit_branch(st: &Trans, depth: u64, conditional: Bool, code: &Box<Slots<Op>>,
   if k > 1_u64 {
     return False();
   }
-  let dest = c.height;
-  let reached = dest +wrap k;
-  let fits = st^.h == reached;
-  let hh = st^.base +wrap dest;
-  let form = 1_u64;
-  if fits {
-    set form = 0_u64;
+  let label_slot = temp_slot(st: st, pos: c.height);
+  let top = top_pos(provs: provs, depth: 0_u64);
+  let value_slot = temp_slot(st: st, pos: top);
+  let moves = False();
+  if k == 1_u64 {
+    if value_slot != label_slot {
+      set moves = True();
+    }
   }
+  let is_loop = c.kind == 2_u64;
   if conditional {
-    set form = 3_u64 -wrap form;
+    if moves {
+      let e = brtab^.inner.len;
+      let target = 0_u64;
+      if is_loop {
+        set target = c.target;
+      } else {
+        let yes = True();
+        let pend = Pending(depth: ci, at: e, table: yes, form: 3_u64, s: 0_u64, d: 0_u64, c: 0_u64);
+        push_pending(cell: fixes, value: pend);
+      }
+      let t32 = narrow(value: target);
+      let s32 = narrow(value: value_slot);
+      let d32 = narrow(value: label_slot);
+      let entry_value = Target(t: t32, s: s32, d: d32, k: 1_u32);
+      push_target(brtab: brtab, t: entry_value);
+      let c16 = slot16(value: cond);
+      let e32 = narrow(value: e);
+      let o = Op::BrIfMove(c: c16, e: e32);
+      emit_plain(st: st, code: code, op: o);
+      return True();
+    }
+  }
+  let form = 0_u64;
+  if conditional {
+    set form = 2_u64;
+  } else if moves {
+    set form = 1_u64;
   }
   let target = 0_u64;
-  if c.kind == 2_u64 {
+  if is_loop {
     set target = c.target;
   } else {
     let at = code^.inner.len;
-    let false_1 = False();
-    let p = Pending(depth: ci, at: at, table: false_1, form: form, h: hh, k: k);
-    push_pending(cell: fixes, value: p);
+    let no = False();
+    let pend = Pending(depth: ci, at: at, table: no, form: form, s: value_slot, d: label_slot, c: cond);
+    push_pending(cell: fixes, value: pend);
   }
-  let o = branch_op(form: form, target: target, h: hh, k: k);
-  push_op(code: code, op: o);
+  let o = branch_op(form: form, target: target, s: value_slot, d: label_slot, c: cond);
+  emit_plain(st: st, code: code, op: o);
   return True();
 }
 
-fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(bytes), reads(st), reads(ctls), writes(r), writes(code), writes(brtab), writes(fixes) {
-  doc "br_table: the table's entries go to the branch table, each moving its label's results to the label's height.";
+fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, cond: u64, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(bytes), reads(provs), reads(ctls), writes(st), writes(r), writes(code), writes(brtab), writes(fixes) {
+  doc "br_table on the index in slot cond: the entries go to the branch table, each moving its label's result to the label's slot.";
   let n = read_uleb(r: r, bytes: bytes);
   let p = r^.pos;
   let e = r^.end;
@@ -813,8 +1008,11 @@ fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, code: &Box<Slots<O
   let start = brtab^.inner.len;
   let s32 = narrow(value: start);
   let n32 = narrow(value: n);
-  let o = Op::BrTable(start: s32, count: n32);
-  push_op(code: code, op: o);
+  let c16 = slot16(value: cond);
+  let o = Op::BrTable(c: c16, start: s32, count: n32);
+  emit_plain(st: st, code: code, op: o);
+  let top = top_pos(provs: provs, depth: 0_u64);
+  let value_slot = temp_slot(st: st, pos: top);
   let total = n + 1_u64;
   for (j in 0_u64..total) {
     let depth = read_uleb(r: r, bytes: bytes);
@@ -829,38 +1027,53 @@ fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, code: &Box<Slots<O
     if k > 1_u64 {
       return False();
     }
-    let hh = st^.base +wrap c.height;
+    let label_slot = temp_slot(st: st, pos: c.height);
     let target = 0_u64;
     if c.kind == 2_u64 {
       set target = c.target;
     } else {
       let at = brtab^.inner.len;
-      let true_2 = True();
-      let pend = Pending(depth: ci, at: at, table: true_2, form: 0_u64, h: hh, k: k);
+      let yes = True();
+      let pend = Pending(depth: ci, at: at, table: yes, form: 0_u64, s: 0_u64, d: 0_u64, c: 0_u64);
       push_pending(cell: fixes, value: pend);
     }
     let t32 = narrow(value: target);
-    let h32 = narrow(value: hh);
+    let vs32 = narrow(value: value_slot);
+    let ls32 = narrow(value: label_slot);
     let k32 = narrow(value: k);
-    let tv = Target(t: t32, h: h32, k: k32);
+    let tv = Target(t: t32, s: vs32, d: ls32, k: k32);
     push_target(brtab: brtab, t: tv);
   }
   let failed = r^.failed;
   return bnot(failed);
 }
 
-fn end_block(st: &Trans, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> status: u64 writes(st), writes(code), writes(brtab), writes(ctls), writes(fixes) {
-  doc "end: patches the branches to the closing block and returns 0, or emits the function's return and returns 1; 2 reports a malformed body.";
+fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> status: u64 writes(st), writes(provs), writes(code), writes(brtab), writes(ctls), writes(fixes) {
+  doc "end: puts the block's results in their slots, patches the branches to the closing block and returns 0, or emits the function's return and returns 1; 2 reports a malformed body.";
   if ctls^.inner.len == 0_u64 {
     return 2_u64;
   }
+  flush(st: st, provs: provs, code: code);
   let c = take_back(window: &ctls^.inner);
   let depth = ctls^.inner.len;
   let here = code^.inner.len;
+  if c.kind == 0_u64 {
+    let k = st^.results;
+    if k > 1_u64 {
+      return 2_u64;
+    }
+    let first = c.height;
+    let s = temp_slot(st: st, pos: first);
+    let s16 = slot16(value: s);
+    let k16 = slot16(value: k);
+    let l16 = slot16(value: st^.l);
+    let o = Op::Return(s: s16, k: k16, l: l16);
+    emit_plain(st: st, code: code, op: o);
+  }
   if c.kind == 3_u64 {
     if c.else_at != 18446744073709551615_u64 {
-      let false_3 = False();
-      let p = Pending(depth: depth, at: c.else_at, table: false_3, form: 4_u64, h: 0_u64, k: 0_u64);
+      let no = False();
+      let p = Pending(depth: depth, at: c.else_at, table: no, form: 4_u64, s: 0_u64, d: 0_u64, c: c.c);
       patch(code: code, brtab: brtab, p: p, target: here);
     }
   }
@@ -884,27 +1097,29 @@ fn end_block(st: &Trans, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls
     }
     let gone = take_back(window: &fixes^.inner);
   }
-  set st^.h = c.height +wrap c.results;
+  let height = c.height +wrap c.results;
+  set_height(st: st, provs: provs, height: height);
   set st^.dead = False();
+  set st^.last = 18446744073709551615_u64;
   if c.kind == 0_u64 {
-    let k32 = narrow(value: st^.results);
-    let l32 = narrow(value: st^.l);
-    let o = Op::Return(k: k32, l: l32);
-    push_op(code: code, op: o);
     return 1_u64;
   }
   return 0_u64;
 }
 
-fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &Box<Slots<Func>>, types: &Box<Slots<FuncType>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> status: u64 reads(bytes), reads(funcs), reads(types), writes(st), writes(r), writes(code), writes(brtab), writes(ctls), writes(fixes) {
-  doc "Control operations 0x00 through 0x11: 0 to continue, 1 at the function's end, 2 when malformed or unsupported.";
-  if op == 0_u8 {
-    let o = Op::Unreachable();
-    push_op(code: code, op: o);
-    set st^.dead = True();
+fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &Box<Slots<Func>>, types: &Box<Slots<FuncType>>, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> status: u64 reads(bytes), reads(funcs), reads(types), writes(st), writes(r), writes(provs), writes(code), writes(brtab), writes(ctls), writes(fixes) {
+  doc "Control operations 0x00 through 0x11: 0 to continue, 1 at the function's end, 2 when malformed or unsupported. Every one first puts the operands in their temporaries.";
+  if op == 1_u8 {
     return 0_u64;
   }
-  if op == 1_u8 {
+  if op == 11_u8 {
+    return end_block(st: st, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
+  }
+  flush(st: st, provs: provs, code: code);
+  if op == 0_u8 {
+    let o = Op::Unreachable();
+    emit_plain(st: st, code: code, op: o);
+    set st^.dead = True();
     return 0_u64;
   }
   let opening = False();
@@ -920,23 +1135,27 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
   if opening {
     let (p, q) = block_type(r: r, bytes: bytes, types: types);
     let else_at = 18446744073709551615_u64;
+    let cond = 0_u64;
     let kind = 1_u64;
     if op == 4_u8 {
       set kind = 3_u64;
-      set st^.h = st^.h -wrap 1_u64;
+      let top = top_pos(provs: provs, depth: 0_u64);
+      set cond = temp_slot(st: st, pos: top);
+      pop_prov(st: st, provs: provs, count: 1_u64);
       set else_at = code^.inner.len;
-      let o = Op::BrUnless(t: 0_u32);
-      push_op(code: code, op: o);
+      let c16 = slot16(value: cond);
+      let o = Op::BrUnless(t: 0_u32, c: c16);
+      emit_plain(st: st, code: code, op: o);
     }
     let brk = q;
     if op == 3_u8 {
       set kind = 2_u64;
       set brk = p;
     }
-    let height = st^.h -wrap p;
+    let height = provs^.inner.len -wrap p;
     let target = code^.inner.len;
     let marks = fixes^.inner.len;
-    let c = Ctl(kind: kind, height: height, params: p, brk: brk, results: q, target: target, fixes: marks, else_at: else_at);
+    let c = Ctl(kind: kind, height: height, params: p, brk: brk, results: q, target: target, fixes: marks, else_at: else_at, c: cond);
     push_ctl(cell: ctls, value: c);
     return 0_u64;
   }
@@ -951,29 +1170,27 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       return 2_u64;
     }
     let at = code^.inner.len;
-    let false_4 = False();
-    let jump = Pending(depth: top, at: at, table: false_4, form: 0_u64, h: 0_u64, k: 0_u64);
+    let no = False();
+    let jump = Pending(depth: top, at: at, table: no, form: 0_u64, s: 0_u64, d: 0_u64, c: 0_u64);
     push_pending(cell: fixes, value: jump);
     let o = Op::Jump(t: 0_u32);
-    push_op(code: code, op: o);
+    emit_plain(st: st, code: code, op: o);
     let here = code^.inner.len;
-    let false_5 = False();
-    let unless = Pending(depth: top, at: c.else_at, table: false_5, form: 4_u64, h: 0_u64, k: 0_u64);
+    let no2 = False();
+    let unless = Pending(depth: top, at: c.else_at, table: no2, form: 4_u64, s: 0_u64, d: 0_u64, c: c.c);
     patch(code: code, brtab: brtab, p: unless, target: here);
     if top < ctls^.inner.len {
       set ctls^.inner[top].else_at = 18446744073709551615_u64;
     }
-    set st^.h = c.height +wrap c.params;
+    let height = c.height +wrap c.params;
+    set_height(st: st, provs: provs, height: height);
     set st^.dead = False();
     return 0_u64;
-  }
-  if op == 11_u8 {
-    return end_block(st: st, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
   }
   if op == 12_u8 {
     let depth = read_uleb(r: r, bytes: bytes);
     let no = False();
-    let ok = emit_branch(st: st, depth: depth, conditional: no, code: code, ctls: ctls, fixes: fixes);
+    let ok = emit_branch(st: st, depth: depth, cond: 0_u64, conditional: no, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     set st^.dead = True();
     if ok {
       return 0_u64;
@@ -982,17 +1199,21 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
   }
   if op == 13_u8 {
     let depth = read_uleb(r: r, bytes: bytes);
-    set st^.h = st^.h -wrap 1_u64;
+    let top = top_pos(provs: provs, depth: 0_u64);
+    let cond = temp_slot(st: st, pos: top);
+    pop_prov(st: st, provs: provs, count: 1_u64);
     let yes = True();
-    let ok = emit_branch(st: st, depth: depth, conditional: yes, code: code, ctls: ctls, fixes: fixes);
+    let ok = emit_branch(st: st, depth: depth, cond: cond, conditional: yes, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     if ok {
       return 0_u64;
     }
     return 2_u64;
   }
   if op == 14_u8 {
-    set st^.h = st^.h -wrap 1_u64;
-    let ok = emit_table(r: r, bytes: bytes, st: st, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
+    let top = top_pos(provs: provs, depth: 0_u64);
+    let cond = temp_slot(st: st, pos: top);
+    pop_prov(st: st, provs: provs, count: 1_u64);
+    let ok = emit_table(r: r, bytes: bytes, st: st, cond: cond, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     set st^.dead = True();
     if ok {
       return 0_u64;
@@ -1000,10 +1221,20 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     return 2_u64;
   }
   if op == 15_u8 {
-    let k32 = narrow(value: st^.results);
-    let l32 = narrow(value: st^.l);
-    let o = Op::Return(k: k32, l: l32);
-    push_op(code: code, op: o);
+    let k = st^.results;
+    if k > 1_u64 {
+      return 2_u64;
+    }
+    let first = top_pos(provs: provs, depth: 0_u64);
+    if k == 0_u64 {
+      set first = 0_u64;
+    }
+    let s = temp_slot(st: st, pos: first);
+    let s16 = slot16(value: s);
+    let k16 = slot16(value: k);
+    let l16 = slot16(value: st^.l);
+    let o = Op::Return(s: s16, k: k16, l: l16);
+    emit_plain(st: st, code: code, op: o);
     set st^.dead = True();
     return 0_u64;
   }
@@ -1013,17 +1244,27 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       return 2_u64;
     }
     let callee = funcs^.inner[fi];
+    let h = provs^.inner.len;
+    let np = callee.params;
+    if np > h {
+      return 2_u64;
+    }
+    let first = h - np;
+    let at = temp_slot(st: st, pos: first);
+    let at16 = slot16(value: at);
     if callee.host != 0_u64 {
-      let id = narrow(value: callee.host);
-      let o = Op::Host(id: id);
-      push_op(code: code, op: o);
+      let id = slot16(value: callee.host);
+      let o = Op::Host(id: id, at: at16);
+      emit_plain(st: st, code: code, op: o);
     } else {
       let f32v = narrow(value: fi);
-      let o = Op::Call(f: f32v);
-      push_op(code: code, op: o);
+      let o = Op::Call(f: f32v, at: at16);
+      emit_plain(st: st, code: code, op: o);
     }
-    let lowered = st^.h -wrap callee.params;
-    set st^.h = lowered +wrap callee.results;
+    pop_prov(st: st, provs: provs, count: callee.params);
+    for (i in 0_u64..callee.results) {
+      push_temp(st: st, provs: provs);
+    }
     return 0_u64;
   }
   if op == 17_u8 {
@@ -1033,23 +1274,87 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       return 2_u64;
     }
     let ft = types^.inner[ti];
+    let top = top_pos(provs: provs, depth: 0_u64);
+    let index_slot = temp_slot(st: st, pos: top);
+    pop_prov(st: st, provs: provs, count: 1_u64);
+    let h = provs^.inner.len;
+    let np = ft.params;
+    if np > h {
+      return 2_u64;
+    }
+    let first = h - np;
+    let at = temp_slot(st: st, pos: first);
     let canon = narrow(value: ft.canon);
-    let o = Op::CallIndirect(canon: canon);
-    push_op(code: code, op: o);
-    let popped = st^.h -wrap 1_u64;
-    let lowered = popped -wrap ft.params;
-    set st^.h = lowered +wrap ft.results;
+    let at16 = slot16(value: at);
+    let idx16 = slot16(value: index_slot);
+    let o = Op::CallIndirect(canon: canon, at: at16, i: idx16);
+    emit_plain(st: st, code: code, op: o);
+    pop_prov(st: st, provs: provs, count: ft.params);
+    for (i in 0_u64..ft.results) {
+      push_temp(st: st, provs: provs);
+    }
     return 0_u64;
   }
   return 2_u64;
 }
 
-fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, code: &Box<Slots<Op>>) -> status: u64 reads(bytes), writes(st), writes(r), writes(code) {
-  doc "Parametric, variable, memory and constant operations, 0x1a through 0x44.";
+fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local: u64) -> ok: Bool writes(st), writes(provs), writes(code) {
+  doc "local.set: the operation that computed the top operand into its temporary writes the local instead when it is the last one emitted; otherwise a copy or a constant writes it.";
+  if local >= st^.l {
+    return False();
+  }
+  if provs^.inner.len == 0_u64 {
+    return False();
+  }
+  preserve(st: st, provs: provs, code: code, local: local);
+  let top = top_pos(provs: provs, depth: 0_u64);
+  if top >= provs^.inner.len {
+    return False();
+  }
+  let p = provs^.inner[top];
+  pop_prov(st: st, provs: provs, count: 1_u64);
+  let li = slot16(value: local);
+  if p.kind == 1_u64 {
+    let s = slot16(value: p.value);
+    let o = Op::Copy(d: li, s: s);
+    emit_plain(st: st, code: code, op: o);
+    return True();
+  }
+  if p.kind == 2_u64 {
+    let o = Op::Const(d: li, v: p.value);
+    emit_plain(st: st, code: code, op: o);
+    return True();
+  }
+  let length = code^.inner.len;
+  let latest = length -wrap 1_u64;
+  let fresh = st^.last == latest;
+  let same = st^.last_pos == top;
+  let fused = band(fresh, same);
+  if fused {
+    if latest < code^.inner.len {
+      let old = code^.inner[latest];
+      match with_dest(op: old, slot: li) {
+        Some(value: o) => {
+          set code^.inner[latest] = o;
+          set st^.last = 18446744073709551615_u64;
+          return True();
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  let ts = temp_slot(st: st, pos: top);
+  let s = slot16(value: ts);
+  let o = Op::Copy(d: li, s: s);
+  emit_plain(st: st, code: code, op: o);
+  return True();
+}
+
+fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Box<Slots<u64>>, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> status: u64 reads(bytes), reads(consts), writes(st), writes(r), writes(provs), writes(code) {
+  doc "Parametric, variable, memory and constant operations, 0x1a through 0x44: a local.get or a constant becomes the operand's provider and emits nothing.";
   if op == 26_u8 {
-    let o = Op::Drop();
-    push_op(code: code, op: o);
-    set st^.h = st^.h -wrap 1_u64;
+    pop_prov(st: st, provs: provs, count: 1_u64);
     return 0_u64;
   }
   let picks = False();
@@ -1067,39 +1372,67 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, code: &Box<
     set picks = True();
   }
   if picks {
-    let o = Op::Select();
-    push_op(code: code, op: o);
-    set st^.h = st^.h -wrap 2_u64;
+    let c_pos = top_pos(provs: provs, depth: 0_u64);
+    let b_pos = top_pos(provs: provs, depth: 1_u64);
+    let a_pos = top_pos(provs: provs, depth: 2_u64);
+    let c = source(st: st, provs: provs, code: code, pos: c_pos);
+    let b = source(st: st, provs: provs, code: code, pos: b_pos);
+    let a = source(st: st, provs: provs, code: code, pos: a_pos);
+    pop_prov(st: st, provs: provs, count: 3_u64);
+    let dest_pos = provs^.inner.len;
+    let d = temp_slot(st: st, pos: dest_pos);
+    let d16 = slot16(value: d);
+    let a16 = slot16(value: a);
+    let b16 = slot16(value: b);
+    let c16 = slot16(value: c);
+    let o = Op::Select(d: d16, a: a16, b: b16, c: c16);
+    emit_dest(st: st, code: code, op: o, pos: dest_pos);
+    push_temp(st: st, provs: provs);
     return 0_u64;
   }
   if op >= 32_u8 {
     if op <= 36_u8 {
       let index = read_uleb(r: r, bytes: bytes);
-      let i32v = narrow(value: index);
       if op == 32_u8 {
-        let o = Op::LocalGet(i: i32v);
-        push_op(code: code, op: o);
-        set st^.h = st^.h +wrap 1_u64;
+        if index >= st^.l {
+          return 2_u64;
+        }
+        let p = Prov(kind: 1_u64, value: index);
+        push_prov(cell: provs, value: p);
+        return 0_u64;
       }
       if op == 33_u8 {
-        let o = Op::LocalSet(i: i32v);
-        push_op(code: code, op: o);
-        set st^.h = st^.h -wrap 1_u64;
+        let ok = set_local(st: st, provs: provs, code: code, local: index);
+        if ok {
+          return 0_u64;
+        }
+        return 2_u64;
       }
       if op == 34_u8 {
-        let o = Op::LocalTee(i: i32v);
-        push_op(code: code, op: o);
+        let ok = set_local(st: st, provs: provs, code: code, local: index);
+        let p = Prov(kind: 1_u64, value: index);
+        push_prov(cell: provs, value: p);
+        if ok {
+          return 0_u64;
+        }
+        return 2_u64;
       }
+      let i32v = narrow(value: index);
       if op == 35_u8 {
-        let o = Op::GlobalGet(i: i32v);
-        push_op(code: code, op: o);
-        set st^.h = st^.h +wrap 1_u64;
+        let dest_pos = provs^.inner.len;
+        let d = temp_slot(st: st, pos: dest_pos);
+        let d16 = slot16(value: d);
+        let o = Op::GlobalGet(d: d16, i: i32v);
+        emit_dest(st: st, code: code, op: o, pos: dest_pos);
+        push_temp(st: st, provs: provs);
+        return 0_u64;
       }
-      if op == 36_u8 {
-        let o = Op::GlobalSet(i: i32v);
-        push_op(code: code, op: o);
-        set st^.h = st^.h -wrap 1_u64;
-      }
+      let top = top_pos(provs: provs, depth: 0_u64);
+      let s = source(st: st, provs: provs, code: code, pos: top);
+      pop_prov(st: st, provs: provs, count: 1_u64);
+      let s16 = slot16(value: s);
+      let o = Op::GlobalSet(s: s16, i: i32v);
+      emit_plain(st: st, code: code, op: o);
       return 0_u64;
     }
   }
@@ -1111,74 +1444,35 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, code: &Box<
         return 2_u64;
       }
       let o32 = narrow(value: offset);
-      match load_op(code: op, offset: o32) {
-        Some(value: o) => {
-          push_op(code: code, op: o);
-        }
-        None() => {
-          return 2_u64;
-        }
-      }
       if op >= 54_u8 {
-        set st^.h = st^.h -wrap 2_u64;
+        let v_pos = top_pos(provs: provs, depth: 0_u64);
+        let a_pos = top_pos(provs: provs, depth: 1_u64);
+        let v = source(st: st, provs: provs, code: code, pos: v_pos);
+        let a = source(st: st, provs: provs, code: code, pos: a_pos);
+        pop_prov(st: st, provs: provs, count: 2_u64);
+        let a16 = slot16(value: a);
+        let v16 = slot16(value: v);
+        match load_op(code: op, first: a16, second: v16, offset: o32) {
+          Some(value: o) => {
+            emit_plain(st: st, code: code, op: o);
+            return 0_u64;
+          }
+          None() => {
+            return 2_u64;
+          }
+        }
       }
-      return 0_u64;
-    }
-  }
-  if op == 63_u8 {
-    let b = read_byte(r: r, bytes: bytes);
-    let o = Op::MemorySize();
-    push_op(code: code, op: o);
-    set st^.h = st^.h +wrap 1_u64;
-    return 0_u64;
-  }
-  if op == 64_u8 {
-    let b = read_byte(r: r, bytes: bytes);
-    let o = Op::MemoryGrow();
-    push_op(code: code, op: o);
-    return 0_u64;
-  }
-  if op == 65_u8 {
-    let v = read_sleb(r: r, bytes: bytes);
-    let v32 = narrow(value: v);
-    let o = Op::I32Const(v: v32);
-    push_op(code: code, op: o);
-    set st^.h = st^.h +wrap 1_u64;
-    return 0_u64;
-  }
-  if op == 66_u8 {
-    let v = read_sleb(r: r, bytes: bytes);
-    let o = Op::I64Const(v: v);
-    push_op(code: code, op: o);
-    set st^.h = st^.h +wrap 1_u64;
-    return 0_u64;
-  }
-  if op == 67_u8 {
-    let v = read_fixed(r: r, bytes: bytes, count: 4_u64);
-    let v32 = narrow(value: v);
-    let o = Op::I32Const(v: v32);
-    push_op(code: code, op: o);
-    set st^.h = st^.h +wrap 1_u64;
-    return 0_u64;
-  }
-  if op == 68_u8 {
-    let v = read_fixed(r: r, bytes: bytes, count: 8_u64);
-    let o = Op::I64Const(v: v);
-    push_op(code: code, op: o);
-    set st^.h = st^.h +wrap 1_u64;
-    return 0_u64;
-  }
-  return 2_u64;
-}
-
-fn step_numeric(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, code: &Box<Slots<Op>>) -> status: u64 reads(bytes), writes(st), writes(r), writes(code) {
-  doc "Numeric operations 0x45 through 0xc4 and the 0xfc prefix; the zero-extension and reinterpretations need no operation, the representation already holding their result.";
-  if op == 252_u8 {
-    let sub = read_uleb(r: r, bytes: bytes);
-    if sub < 8_u64 {
-      match saturating_op(sub: sub) {
+      let a_pos = top_pos(provs: provs, depth: 0_u64);
+      let a = source(st: st, provs: provs, code: code, pos: a_pos);
+      pop_prov(st: st, provs: provs, count: 1_u64);
+      let dest_pos = provs^.inner.len;
+      let d = temp_slot(st: st, pos: dest_pos);
+      let d16 = slot16(value: d);
+      let a16 = slot16(value: a);
+      match load_op(code: op, first: d16, second: a16, offset: o32) {
         Some(value: o) => {
-          push_op(code: code, op: o);
+          emit_dest(st: st, code: code, op: o, pos: dest_pos);
+          push_temp(st: st, provs: provs);
           return 0_u64;
         }
         None() => {
@@ -1186,19 +1480,101 @@ fn step_numeric(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, code: &B
         }
       }
     }
-    if sub == 10_u64 {
-      let a = read_byte(r: r, bytes: bytes);
-      let b = read_byte(r: r, bytes: bytes);
-      let o = Op::MemoryCopy();
-      push_op(code: code, op: o);
-      set st^.h = st^.h -wrap 3_u64;
-      return 0_u64;
+  }
+  if op == 63_u8 {
+    let b = read_byte(r: r, bytes: bytes);
+    let dest_pos = provs^.inner.len;
+    let d = temp_slot(st: st, pos: dest_pos);
+    let d16 = slot16(value: d);
+    let o = Op::MemorySize(d: d16);
+    emit_dest(st: st, code: code, op: o, pos: dest_pos);
+    push_temp(st: st, provs: provs);
+    return 0_u64;
+  }
+  if op == 64_u8 {
+    let b = read_byte(r: r, bytes: bytes);
+    let top = top_pos(provs: provs, depth: 0_u64);
+    let s = source(st: st, provs: provs, code: code, pos: top);
+    pop_prov(st: st, provs: provs, count: 1_u64);
+    let dest_pos = provs^.inner.len;
+    let d = temp_slot(st: st, pos: dest_pos);
+    let d16 = slot16(value: d);
+    let s16 = slot16(value: s);
+    let o = Op::MemoryGrow(d: d16, s: s16);
+    emit_dest(st: st, code: code, op: o, pos: dest_pos);
+    push_temp(st: st, provs: provs);
+    return 0_u64;
+  }
+  let value = 0_u64;
+  if op == 65_u8 {
+    let v = read_sleb(r: r, bytes: bytes);
+    set value = iand(v, 4294967295_u64);
+  } else if op == 66_u8 {
+    set value = read_sleb(r: r, bytes: bytes);
+  } else if op == 67_u8 {
+    set value = read_fixed(r: r, bytes: bytes, count: 4_u64);
+  } else if op == 68_u8 {
+    set value = read_fixed(r: r, bytes: bytes, count: 8_u64);
+  } else {
+    return 2_u64;
+  }
+  let cs = const_slot(st: st, consts: consts, value: value);
+  if cs == 18446744073709551615_u64 {
+    return 2_u64;
+  }
+  let p = Prov(kind: 1_u64, value: cs);
+  push_prov(cell: provs, value: p);
+  return 0_u64;
+}
+
+fn step_numeric(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> status: u64 reads(bytes), writes(st), writes(r), writes(provs), writes(code) {
+  doc "Numeric operations 0x45 through 0xc4 and the 0xfc prefix; the zero-extension and reinterpretations need no operation, the representation already holding their result.";
+  if op == 252_u8 {
+    let sub = read_uleb(r: r, bytes: bytes);
+    if sub < 8_u64 {
+      let a_pos = top_pos(provs: provs, depth: 0_u64);
+      let a = source(st: st, provs: provs, code: code, pos: a_pos);
+      pop_prov(st: st, provs: provs, count: 1_u64);
+      let dest_pos = provs^.inner.len;
+      let d = temp_slot(st: st, pos: dest_pos);
+      let d16 = slot16(value: d);
+      let a16 = slot16(value: a);
+      match saturating_op(sub: sub, d: d16, a: a16) {
+        Some(value: o) => {
+          emit_dest(st: st, code: code, op: o, pos: dest_pos);
+          push_temp(st: st, provs: provs);
+          return 0_u64;
+        }
+        None() => {
+          return 2_u64;
+        }
+      }
     }
-    if sub == 11_u64 {
+    let copying = sub == 10_u64;
+    let filling = sub == 11_u64;
+    let bulk = bor(copying, filling);
+    if bulk {
       let a = read_byte(r: r, bytes: bytes);
-      let o = Op::MemoryFill();
-      push_op(code: code, op: o);
-      set st^.h = st^.h -wrap 3_u64;
+      if copying {
+        let b = read_byte(r: r, bytes: bytes);
+      }
+      let n_pos = top_pos(provs: provs, depth: 0_u64);
+      let s_pos = top_pos(provs: provs, depth: 1_u64);
+      let d_pos = top_pos(provs: provs, depth: 2_u64);
+      let nslot = source(st: st, provs: provs, code: code, pos: n_pos);
+      let sslot = source(st: st, provs: provs, code: code, pos: s_pos);
+      let dslot = source(st: st, provs: provs, code: code, pos: d_pos);
+      pop_prov(st: st, provs: provs, count: 3_u64);
+      let d16 = slot16(value: dslot);
+      let s16 = slot16(value: sslot);
+      let n16 = slot16(value: nslot);
+      if copying {
+        let o = Op::MemoryCopy(d: d16, s: s16, n: n16);
+        emit_plain(st: st, code: code, op: o);
+      } else {
+        let o = Op::MemoryFill(d: d16, v: s16, n: n16);
+        emit_plain(st: st, code: code, op: o);
+      }
       return 0_u64;
     }
     return 2_u64;
@@ -1211,12 +1587,25 @@ fn step_numeric(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, code: &B
       return 0_u64;
     }
   }
-  match numeric_op(code: op) {
+  let ins = numeric_inputs(code: op);
+  let b = 0_u64;
+  if ins == 2_u64 {
+    let b_pos = top_pos(provs: provs, depth: 0_u64);
+    set b = source(st: st, provs: provs, code: code, pos: b_pos);
+  }
+  let a_depth = ins -wrap 1_u64;
+  let a_pos = top_pos(provs: provs, depth: a_depth);
+  let a = source(st: st, provs: provs, code: code, pos: a_pos);
+  pop_prov(st: st, provs: provs, count: ins);
+  let dest_pos = provs^.inner.len;
+  let d = temp_slot(st: st, pos: dest_pos);
+  let d16 = slot16(value: d);
+  let a16 = slot16(value: a);
+  let b16 = slot16(value: b);
+  match numeric_op(code: op, d: d16, a: a16, b: b16) {
     Some(value: o) => {
-      push_op(code: code, op: o);
-      let ins = numeric_inputs(code: op);
-      let lowered = st^.h -wrap ins;
-      set st^.h = lowered +wrap 1_u64;
+      emit_dest(st: st, code: code, op: o, pos: dest_pos);
+      push_temp(st: st, provs: provs);
       return 0_u64;
     }
     None() => {
@@ -1225,8 +1614,83 @@ fn step_numeric(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, code: &B
   }
 }
 
-fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func>>, types: &Box<Slots<FuncType>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(bytes), reads(types), writes(r), writes(funcs), writes(code), writes(brtab), writes(ctls), writes(fixes) {
-  doc "Translates one function body, the reader bounded to it, into the operation store.";
+fn add_const(consts: &Box<Slots<u64>>, cbase: u64, value: u64) -> r: unit writes(consts) {
+  doc "Adds value to the function's constant pool, the slots from cbase, unless it is there.";
+  let length = consts^.inner.len;
+  for (i in cbase..length) {
+    if i < consts^.inner.len {
+      if consts^.inner[i] == value {
+        return unit;
+      }
+    }
+  }
+  push_word(cell: consts, value: value);
+  return unit;
+}
+
+fn collect_consts(r: &Reader, bytes: &Box<Array<u8>>, types: &Box<Slots<FuncType>>, consts: &Box<Slots<u64>>) -> ok: Bool reads(r), reads(bytes), reads(types), writes(consts) {
+  doc "Scans a function body, from the reader's position to its end, for its distinct constants; the reader is not moved.";
+  let scan = Reader(pos: r^.pos, end: r^.end, failed: r^.failed);
+  let cbase = consts^.inner.len;
+  loop @ops {
+    if scan.pos >= scan.end {
+      break @ops;
+    }
+    let failed = scan.failed;
+    if failed {
+      return False();
+    }
+    let op = read_byte(r: &scan, bytes: bytes);
+    let opening = False();
+    if op == 2_u8 {
+      set opening = True();
+    }
+    if op == 3_u8 {
+      set opening = True();
+    }
+    if op == 4_u8 {
+      set opening = True();
+    }
+    if opening {
+      let (p, q) = block_type(r: &scan, bytes: bytes, types: types);
+    } else if op == 65_u8 {
+      let v = read_sleb(r: &scan, bytes: bytes);
+      let w = iand(v, 4294967295_u64);
+      add_const(consts: consts, cbase: cbase, value: w);
+    } else if op == 66_u8 {
+      let v = read_sleb(r: &scan, bytes: bytes);
+      add_const(consts: consts, cbase: cbase, value: v);
+    } else if op == 67_u8 {
+      let v = read_fixed(r: &scan, bytes: bytes, count: 4_u64);
+      add_const(consts: consts, cbase: cbase, value: v);
+    } else if op == 68_u8 {
+      let v = read_fixed(r: &scan, bytes: bytes, count: 8_u64);
+      add_const(consts: consts, cbase: cbase, value: v);
+    } else {
+      skip_immediates(r: &scan, bytes: bytes, op: op);
+    }
+  }
+  let failed = scan.failed;
+  return bnot(failed);
+}
+
+fn const_slot(st: &Trans, consts: &Box<Slots<u64>>, value: u64) -> slot: u64 reads(st), reads(consts) {
+  doc "The frame slot holding a constant of the function, or the largest u64.";
+  let cbase = st^.cbase;
+  let cn = st^.cn;
+  for (k in 0_u64..cn) {
+    let i = cbase +wrap k;
+    if i < consts^.inner.len {
+      if consts^.inner[i] == value {
+        return st^.cslot +wrap k;
+      }
+    }
+  }
+  return 18446744073709551615_u64;
+}
+
+fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func>>, types: &Box<Slots<FuncType>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>, provs: &Box<Slots<Prov>>, consts: &Box<Slots<u64>>) -> ok: Bool reads(bytes), reads(types), writes(r), writes(funcs), writes(code), writes(brtab), writes(ctls), writes(fixes), writes(provs), writes(consts) {
+  doc "Translates one function body, the reader bounded to it, into register-form operations on frame slots.";
   if fi >= funcs^.inner.len {
     return False();
   }
@@ -1243,15 +1707,27 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
     let c = read_uleb(r: r, bytes: bytes);
     let t = read_byte(r: r, bytes: bytes);
     set nl = nl +wrap c;
-    if nl > 1048576_u64 {
+    if nl > 65536_u64 {
       return False();
     }
   }
-  let l = f.params +wrap nl;
+  let cbase = consts^.inner.len;
+  let collected = collect_consts(r: r, bytes: bytes, types: types, consts: consts);
+  if bnot(collected) {
+    return False();
+  }
+  let cn = consts^.inner.len -wrap cbase;
+  let pl = f.params +wrap nl;
+  let l = pl +wrap cn;
+  if l >= 65000_u64 {
+    return False();
+  }
   let begin = code^.inner.len;
   if fi < funcs^.inner.len {
     set funcs^.inner[fi].locals = nl;
     set funcs^.inner[fi].start = begin;
+    set funcs^.inner[fi].cbase = cbase;
+    set funcs^.inner[fi].cn = cn;
   }
   loop @clear_ctls {
     if ctls^.inner.len == 0_u64 {
@@ -1265,14 +1741,23 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
     }
     let gone = take_back(window: &fixes^.inner);
   }
+  loop @clear_provs {
+    if provs^.inner.len == 0_u64 {
+      break @clear_provs;
+    }
+    let gone = take_back(window: &provs^.inner);
+  }
   let base = l +wrap 2_u64;
-  let false_6 = False();
-  let st = Trans(h: 0_u64, dead: false_6, skip: 0_u64, base: base, l: l, results: f.results);
-  let top = Ctl(kind: 0_u64, height: 0_u64, params: 0_u64, brk: f.results, results: f.results, target: 0_u64, fixes: 0_u64, else_at: 18446744073709551615_u64);
+  let no = False();
+  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, failed: no, cslot: pl, cbase: cbase, cn: cn);
+  let top = Ctl(kind: 0_u64, height: 0_u64, params: 0_u64, brk: f.results, results: f.results, target: 0_u64, fixes: 0_u64, else_at: 18446744073709551615_u64, c: 0_u64);
   push_ctl(cell: ctls, value: top);
   loop @ops {
     let failed = r^.failed;
     if failed {
+      return False();
+    }
+    if st.failed {
       return False();
     }
     let op = read_byte(r: r, bytes: bytes);
@@ -1309,11 +1794,11 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
     if process {
       let status = 2_u64;
       if op <= 17_u8 {
-        set status = step_control(op: op, st: &st, r: r, bytes: bytes, funcs: funcs, types: types, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
+        set status = step_control(op: op, st: &st, r: r, bytes: bytes, funcs: funcs, types: types, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
       } else if op <= 68_u8 {
-        set status = step_data(op: op, st: &st, r: r, bytes: bytes, code: code);
+        set status = step_data(op: op, st: &st, r: r, bytes: bytes, consts: consts, provs: provs, code: code);
       } else {
-        set status = step_numeric(op: op, st: &st, r: r, bytes: bytes, code: code);
+        set status = step_numeric(op: op, st: &st, r: r, bytes: bytes, provs: provs, code: code);
       }
       if status == 1_u64 {
         break @ops;
@@ -1324,7 +1809,10 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
     }
   }
   let failed = r^.failed;
-  return bnot(failed);
+  if failed {
+    return False();
+  }
+  return bnot(st.failed);
 }
 
 struct Loaded {
@@ -1413,7 +1901,7 @@ fn refuse(why: u64) -> info: Loaded pure {
   return info;
 }
 
-fn load(bytes: &Box<Array<u8>>, size: u64, types: &Box<Slots<FuncType>>, funcs: &Box<Slots<Func>>, table: &Box<Slots<u64>>, globals: &Box<Slots<u64>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>) -> info: Loaded reads(bytes), writes(types), writes(funcs), writes(table), writes(globals), writes(code), writes(brtab) {
+fn load(bytes: &Box<Array<u8>>, size: u64, types: &Box<Slots<FuncType>>, funcs: &Box<Slots<Func>>, table: &Box<Slots<u64>>, globals: &Box<Slots<u64>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, consts: &Box<Slots<u64>>) -> info: Loaded reads(bytes), writes(types), writes(funcs), writes(table), writes(globals), writes(code), writes(brtab), writes(consts) {
   doc "Decodes the module and translates every function body; data segments wait until memory exists.";
   let false_2 = False();
   let spans = box_array_filled::<u64>(count: 26_u64, value: 0_u64);
@@ -1510,6 +1998,7 @@ fn load(bytes: &Box<Array<u8>>, size: u64, types: &Box<Slots<FuncType>>, funcs: 
   }
   let ctls = box_slots_new::<Ctl>(capacity: 64_u64);
   let fixes = box_slots_new::<Pending>(capacity: 64_u64);
+  let provs = box_slots_new::<Prov>(capacity: 256_u64);
   for (b in 0_u64..bodies) {
     let length = read_uleb(r: &cr, bytes: bytes);
     let at = cr.pos;
@@ -1521,7 +2010,7 @@ fn load(bytes: &Box<Array<u8>>, size: u64, types: &Box<Slots<FuncType>>, funcs: 
     let false_12 = False();
     let br = Reader(pos: at, end: body_end, failed: false_12);
     let fi = imported +wrap b;
-    let translated = translate(r: &br, bytes: bytes, fi: fi, funcs: funcs, types: types, code: code, brtab: brtab, ctls: &ctls, fixes: &fixes);
+    let translated = translate(r: &br, bytes: bytes, fi: fi, funcs: funcs, types: types, code: code, brtab: brtab, ctls: &ctls, fixes: &fixes, provs: &provs, consts: consts);
     if bnot(translated) {
       return refuse(why: 7_u64);
     }
@@ -1850,7 +2339,8 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
   let globals = box_slots_new::<u64>(capacity: 64_u64);
   let code = box_slots_new::<Op>(capacity: 65536_u64);
   let brtab = box_slots_new::<Target>(capacity: 1024_u64);
-  let info = load(bytes: bytes, size: size, types: &types, funcs: &funcs, table: &table, globals: &globals, code: &code, brtab: &brtab);
+  let consts = box_slots_new::<u64>(capacity: 1024_u64);
+  let info = load(bytes: bytes, size: size, types: &types, funcs: &funcs, table: &table, globals: &globals, code: &code, brtab: &brtab, consts: &consts);
   if bnot(info.ok) {
     let r8 = cvt.wrap::<u64, u8>(info.reason);
     let shown = r8 +wrap 30_u8;
@@ -1878,29 +2368,27 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
     return 68_u8;
   }
   let stack = box_array_filled::<u64>(count: 4194304_u64, value: 0_u64);
-  let l = entry_func.locals;
-  let saved_fp = l +wrap 1_u64;
-  if saved_fp >= stack.inner.len {
+  let first_frame = enter(stack: &stack, consts: &consts, fp: 0_u64, at: 0_u16, callee: entry_func, ret: 18446744073709551615_u64);
+  if first_frame != 0_u64 {
     return 69_u8;
   }
-  if l < stack.inner.len {
-    set stack.inner[l] = 18446744073709551615_u64;
-  }
-  set stack.inner[saved_fp] = 0_u64;
   let pc = entry_func.start;
-  let sp = saved_fp + 1_u64;
   let fp = 0_u64;
   let max_pages = info.max_pages;
   loop @drive {
     if pc >= code.inner.len {
       return 70_u8;
     }
-    if sp > stack.inner.len {
+    if stack.inner.len < 65536_u64 {
       return 70_u8;
     }
-    let outcome = run(code: &code, funcs: &funcs, brtab: &brtab, table: &table, stack: &stack, mem: &mem, globals: &globals, pc: pc, sp: sp, fp: fp);
+    let room = stack.inner.len - 65536_u64;
+    if fp > room {
+      return 70_u8;
+    }
+    let outcome = run(code: &code, funcs: &funcs, brtab: &brtab, table: &table, consts: &consts, stack: &stack, mem: &mem, globals: &globals, pc: pc, fp: fp);
     match outcome {
-      Done(sp: final_sp) => {
+      Done() => {
         return 0_u8;
       }
       Trap(code: reason, pc: where) => {
@@ -1908,24 +2396,31 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
         let shown = r8 +wrap 100_u8;
         return shown;
       }
-      Grow(pc: grow_pc, sp: grow_sp, fp: grow_fp) => {
-        if grow_sp == 0_u64 {
+      Grow(pc: grow_pc, fp: grow_fp, d: grow_d, s: grow_s) => {
+        let di = cvt::<u16, u64>(grow_d);
+        let si = cvt::<u16, u64>(grow_s);
+        let dt = grow_fp +wrap di;
+        let st = grow_fp +wrap si;
+        if dt >= stack.inner.len {
           return 70_u8;
         }
-        if grow_sp > stack.inner.len {
+        if st >= stack.inner.len {
           return 70_u8;
         }
-        let top = grow_sp - 1_u64;
-        let delta = stack.inner[top];
+        let delta = stack.inner[st];
         let (grown, old) = grow_memory(mem: move mem, delta: delta, max_pages: max_pages);
         set mem = move grown;
-        set stack.inner[top] = old;
+        set stack.inner[dt] = old;
         set pc = grow_pc +wrap 1_u64;
-        set sp = grow_sp;
         set fp = grow_fp;
       }
-      Host(id: host, pc: host_pc, sp: host_sp, fp: host_fp) => {
-        let step = host_call(id: host, sp: host_sp, stack: &stack, mem: &mem, args: args, files: files, out: out, err: err, clock: clock, origin: origin);
+      Host(id: host, pc: host_pc, fp: host_fp, at: host_at) => {
+        let id32 = cvt::<u16, u32>(host);
+        let ai = cvt::<u16, u64>(host_at);
+        let base = host_fp +wrap ai;
+        let arity = host_arity(id: id32);
+        let host_sp = base +wrap arity;
+        let step = host_call(id: id32, sp: host_sp, stack: &stack, mem: &mem, args: args, files: files, out: out, err: err, clock: clock, origin: origin);
         if step.exit {
           let c = cvt.wrap::<u64, u8>(step.code);
           return c;
@@ -1934,7 +2429,6 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
           return 71_u8;
         }
         set pc = host_pc +wrap 1_u64;
-        set sp = step.sp;
         set fp = host_fp;
       }
     }

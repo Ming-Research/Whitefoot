@@ -323,6 +323,56 @@ Silverfir-nano's own dispatch count is not reported: `/usr/bin/time -l`
 counts only its startup (about 1.1 million cycles), so its execution is
 not measured on these counters.
 
+### v2a, register form
+
+Operations read and write frame slots named by u16 operands (`I32Add(d, a,
+b)`); the translator tracks each operand's provider (its temporary, a local
+or a constant), so `local.get` and constants emit nothing, a `local.set`
+after an operation retargets that operation's destination, and operands
+reach their temporaries only at control flow. The stack pointer is gone:
+the interpreter function requires `fp + 65536 <= stack.len`, checked once
+per call and return, which covers every slot access. Predicted before
+measuring: dispatches 40-50% of v1's, score 0.45-0.55x.
+
+### v2b, constants in frame slots
+
+Each function's distinct constants, collected before its body is
+translated, are copied into frame slots after its locals when it is
+entered, and a constant operand names its slot. Predicted: about 23% fewer
+dispatches than v2a, score 0.42-0.45x.
+
+### v2 results
+
+Seven alternating launches each ([run-wasm-v2a.tsv](run-wasm-v2a.tsv) with
+v1 in the same run, [run-wasm-v2b.tsv](run-wasm-v2b.tsv) with v2a), every
+launch with correct CRCs:
+
+| Build | Median score | Ratio to Silverfir-nano | Dispatches | Instructions per dispatch | Cycles per dispatch |
+|---|---:|---:|---:|---:|---:|
+| v1 | 1260.2 | 0.221 | 1,271,009,318 | 18.2 | 3.94 |
+| v2a | 1970.4 | 0.346 | 822,373,679 | 18.8 | 3.91 |
+| v2b | 2214.8 | 0.390 | 652,267,155 | 20.9 | 4.35 |
+
+Both scores fall short of their predictions. v2a removed 35% of v1's
+dispatches, not 50-60%; v2b removed the 21% its prediction named, but each
+remaining dispatch cost more, the constant copy on every call adding to the
+calls' cost and the removed `Const` dispatches having been cheap ones.
+v2b's remaining dispatches by kind (`gen.py --profile`): `Copy` 107 million,
+`BrIf` 103 million, `I32Add` 102 million, `I32Load` 53 million, `I32And` 43
+million; the compares that feed a `BrIf` (`I32Ne`, `I32Eqz`, `I32Eq` and the
+ordered compares) total about 70 million.
+
+The machine code of v2b's `I32Add` handler is 18 instructions to its
+indirect branch. Beyond the operation itself, it reloads the stack box's
+pointer from its reference (two instructions and a dependent load), because
+the arm hands the reference to its helper function and the hoisting rule
+pins only a reference used for box projections; it recomputes the next
+cell's address from the cell index; and it adds the frame base to each slot
+index. The first is a compiler limitation recorded in `docs/todo.md`; the
+other two are the derived-address item already there. Writing the handlers'
+bodies back into the arms, which would avoid the reload, does not check: the
+interpreter function then grows past what the checker handles in minutes.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which

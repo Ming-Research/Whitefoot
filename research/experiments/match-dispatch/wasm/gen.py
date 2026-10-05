@@ -8,7 +8,8 @@ from the tables below; interp_head.wf (the interpreter function's header and
 its control, variable and call handlers) and interp_tail.wf (the loader, the
 translator and the WASI driver) are written by hand. With --count the
 interpreter also counts its dispatches and prints the count on standard
-error when _start returns, for attributing a change to the dispatch count.
+error when _start returns, for attributing a change to the dispatch count;
+with --profile it counts each operation kind, in the order --names prints.
 
     python3 gen.py interp.wf [--count]
     whitefootc interp.wf -o wasm-interp
@@ -188,15 +189,23 @@ STORES = [(0x36, "I32Store", 4), (0x37, "I64Store", 8), (0x38, "F32Store", 4),
           (0x39, "F64Store", 8), (0x3a, "I32Store8", 1), (0x3b, "I32Store16", 2),
           (0x3c, "I64Store8", 1), (0x3d, "I64Store16", 2), (0x3e, "I64Store32", 4)]
 
-ARGS = "code: code, funcs: funcs, brtab: brtab, table: table, stack: stack, mem: mem, globals: globals"
+ARGS = "code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals"
 
-def tail(pc, sp, fp, ind):
-    p = " " * ind
-    return [f"{p}return musttail run({ARGS}, pc: {pc}, sp: {sp}, fp: {fp});"]
+# The frame contract every handler and helper relies on: the 65536 slots
+# from fp lie inside the stack, so an operand slot (a u16) needs no check.
+FRAME = "  requires fp + 65536_u64 <= stack^.inner.len;"
+KEEPS = "  ensures stack^.inner.len == entry(stack)^.inner.len;"
 
-def advance(sp, fp, ind):
+
+def tail(pc, ind):
     p = " " * ind
-    return [f"{p}let next = pc + 1_u64;", f"{p}if next < n {{"] + tail("next", sp, fp, ind + 2) + [f"{p}}}"]
+    return [f"{p}return musttail run({ARGS}, pc: {pc}, fp: fp);"]
+
+
+def advance(ind):
+    p = " " * ind
+    return [f"{p}let next = pc + 1_u64;", f"{p}if next < n {{"] + tail("next", ind + 2) + [f"{p}}}"]
+
 
 def decode(var, word, ty):
     if ty == "u32":
@@ -233,70 +242,63 @@ def encode(ty):
 
 HELPERS = []
 
+
 def snake(name):
     out = ""
     for i, ch in enumerate(name):
-        if ch.isupper() and i > 0 and not name[i-1].isupper():
+        if ch.isupper() and i > 0 and not name[i - 1].isupper():
             out += "_"
-        elif ch.isupper() and i > 0 and i + 1 < len(name) and name[i+1].islower() and name[i-1].isupper():
+        elif ch.isupper() and i > 0 and i + 1 < len(name) and name[i + 1].islower() and name[i - 1].isupper():
             out += "_"
         out += ch.lower()
     return "op_" + out
 
-def traps(lines):
-    return any("trap(" in l for l in lines)
+
+def slot(var, field):
+    return [f"let {var}i = cvt::<u16, u64>({field});", f"let {var}t = fp + {var}i;"]
+
 
 def numeric_arm(name, ins, out, lines):
     fn = snake(name)
-    trapping = traps(lines)
+    trapping = any("trap(" in l for l in lines)
     body = [l.replace("return trap(code: 2_u32, pc: pc);", "return False();") for l in lines]
-    h = []
     res = "ok: Bool" if trapping else "r: unit"
-    if len(ins) == 1:
-        h.append(f"fn {fn}(stack: &Box<Array<u64>>, at: u64) -> {res} writes(stack) contract {{")
-        h.append("  requires at < stack^.inner.len;")
-        h.append("  ensures stack^.inner.len == entry(stack)^.inner.len;")
-        h.append("} {")
-        b = ["let xw = stack^.inner[at];"] + decode("x", "xw", ins[0]) + body + encode(out) + ["set stack^.inner[at] = zw;"]
-    else:
-        h.append(f"fn {fn}(stack: &Box<Array<u64>>, at: u64) -> {res} writes(stack) contract {{")
-        h.append("  requires at >= 1_u64;")
-        h.append("  requires at < stack^.inner.len;")
-        h.append("  ensures stack^.inner.len == entry(stack)^.inner.len;")
-        h.append("} {")
-        b = ["let below = at - 1_u64;", "let xw = stack^.inner[below];", "let yw = stack^.inner[at];"] + decode("x", "xw", ins[0]) + decode("y", "yw", ins[1]) + body + encode(out) + ["set stack^.inner[below] = zw;"]
+    params = "d: u16, a: u16" + (", b: u16" if len(ins) == 2 else "")
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, fp: u64, {params}) -> {res} writes(stack) contract {{", FRAME, KEEPS, "} {"]
+    b = slot("a", "a") + ["let xw = stack^.inner[at];"] + decode("x", "xw", ins[0])
+    if len(ins) == 2:
+        b += slot("b", "b") + ["let yw = stack^.inner[bt];"] + decode("y", "yw", ins[1])
+    b += body + encode(out) + slot("d", "d") + ["set stack^.inner[dt] = zw;"]
     b.append("return True();" if trapping else "return unit;")
-    h += ["  " + l for l in b]
-    h.append("}")
-    h.append("")
-    HELPERS.extend(h)
-    o = [f"    {name}() => {{"]
-    need = len(ins)
-    o.append(f"      if sp >= {need}_u64 {{")
-    o.append("        let s1 = sp - 1_u64;")
-    ns = "sp" if need == 1 else "s1"
+    HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
+    fields = "d: dv, a: av" + (", b: bv" if len(ins) == 2 else "")
+    args = "stack: stack, fp: fp, d: dv^, a: av^" + (", b: bv^" if len(ins) == 2 else "")
+    o = [f"    {name}({fields}) => {{"]
     if trapping:
-        o.append(f"        let ok = {fn}(stack: stack, at: s1);")
-        o.append("        if ok {")
-        o += advance(ns, "fp", 10)
-        o.append("        }")
-        o.append("        return trap(code: 2_u32, pc: pc);")
+        o.append(f"      let ok = {fn}({args});")
+        o.append("      if ok {")
+        o += advance(8)
+        o.append("      }")
+        o.append("      return trap(code: 2_u32, pc: pc);")
     else:
-        o.append(f"        {fn}(stack: stack, at: s1);")
-        o += advance(ns, "fp", 8)
-    o.append("      }")
-    o.append("      return trap(code: 1_u32, pc: pc);")
+        o.append(f"      {fn}({args});")
+        o += advance(6)
+        o.append("      return trap(code: 1_u32, pc: pc);")
     o.append("    }")
     return o
 
+
+def memory_address(nbytes):
+    return ["let a32 = cvt.wrap::<u64, u32>(aw);", "let a64 = cvt::<u32, u64>(a32);",
+            "let o64 = cvt::<u32, u64>(offset);", "let ea = a64 + o64;",
+            f"let lim = ea + {nbytes}_u64;"]
+
+
 def load_arm(name, nbytes, signed, out):
     fn = snake(name)
-    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, at: u64, offset: u32) -> ok: Bool reads(mem), writes(stack) contract {{",
-         "  requires at < stack^.inner.len;", "  ensures stack^.inner.len == entry(stack)^.inner.len;", "} {"]
-    b = ["let aw = stack^.inner[at];",
-         "let a32 = cvt.wrap::<u64, u32>(aw);", "let a64 = cvt::<u32, u64>(a32);",
-         "let o64 = cvt::<u32, u64>(offset);", "let ea = a64 + o64;",
-         f"let lim = ea + {nbytes}_u64;", "if lim <= mem^.inner.len {"]
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, d: u16, a: u16, offset: u32) -> ok: Bool reads(mem), writes(stack) contract {{",
+         FRAME, KEEPS, "} {"]
+    b = slot("a", "a") + ["let aw = stack^.inner[at];"] + memory_address(nbytes) + ["if lim <= mem^.inner.len {"]
     inner = []
     for i in range(nbytes):
         if i == 0:
@@ -328,26 +330,21 @@ def load_arm(name, nbytes, signed, out):
             inner.append("let zw = reinterpret::<i64, u64>(wv);")
     else:
         inner.append("let zw = v;" if acc == "u64" else f"let zw = cvt::<{acc}, u64>(v);")
-    inner.append("set stack^.inner[at] = zw;")
-    inner.append("return True();")
+    inner += slot("d", "d") + ["set stack^.inner[dt] = zw;", "return True();"]
     b += ["  " + l for l in inner] + ["}", "return False();"]
-    h += ["  " + l for l in b] + ["}", ""]
-    HELPERS.extend(h)
-    o = [f"    {name}(o: ov) => {{", "      if sp >= 1_u64 {", "        let s1 = sp - 1_u64;",
-         f"        let ok = {fn}(stack: stack, mem: mem, at: s1, offset: ov^);", "        if ok {"]
-    o += advance("sp", "fp", 10)
-    o += ["        }", "        return trap(code: 3_u32, pc: pc);", "      }",
-          "      return trap(code: 1_u32, pc: pc);", "    }"]
+    HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
+    o = [f"    {name}(d: dv, a: av, o: ov) => {{",
+         f"      let ok = {fn}(stack: stack, mem: mem, fp: fp, d: dv^, a: av^, offset: ov^);", "      if ok {"]
+    o += advance(8)
+    o += ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
     return o
+
 
 def store_arm(name, nbytes):
     fn = snake(name)
-    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, at: u64, offset: u32) -> ok: Bool reads(stack), writes(mem) contract {{",
-         "  requires at >= 1_u64;", "  requires at < stack^.inner.len;", "  ensures mem^.inner.len == entry(mem)^.inner.len;", "} {"]
-    b = ["let below = at - 1_u64;", "let vw = stack^.inner[at];", "let aw = stack^.inner[below];",
-         "let a32 = cvt.wrap::<u64, u32>(aw);", "let a64 = cvt::<u32, u64>(a32);",
-         "let o64 = cvt::<u32, u64>(offset);", "let ea = a64 + o64;",
-         f"let lim = ea + {nbytes}_u64;", "if lim <= mem^.inner.len {"]
+    h = [f"fn {fn}(stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, fp: u64, a: u16, v: u16, offset: u32) -> ok: Bool reads(stack), writes(mem) contract {{",
+         FRAME, "  ensures mem^.inner.len == entry(mem)^.inner.len;", "} {"]
+    b = slot("a", "a") + slot("v", "v") + ["let aw = stack^.inner[at];", "let vw = stack^.inner[vt];"] + memory_address(nbytes) + ["if lim <= mem^.inner.len {"]
     inner = []
     for i in range(nbytes):
         if i == 0:
@@ -360,22 +357,19 @@ def store_arm(name, nbytes):
             inner.append(f"set mem^.inner[e{i}] = b{i};")
     inner.append("return True();")
     b += ["  " + l for l in inner] + ["}", "return False();"]
-    h += ["  " + l for l in b] + ["}", ""]
-    HELPERS.extend(h)
-    o = [f"    {name}(o: ov) => {{", "      if sp >= 2_u64 {", "        let s1 = sp - 1_u64;",
-         "        let s2 = sp - 2_u64;",
-         f"        let ok = {fn}(stack: stack, mem: mem, at: s1, offset: ov^);", "        if ok {"]
-    o += advance("s2", "fp", 10)
-    o += ["        }", "        return trap(code: 3_u32, pc: pc);", "      }",
-          "      return trap(code: 1_u32, pc: pc);", "    }"]
+    HELPERS.extend(h + ["  " + l for l in b] + ["}", ""])
+    o = [f"    {name}(a: av, v: vv, o: ov) => {{",
+         f"      let ok = {fn}(stack: stack, mem: mem, fp: fp, a: av^, v: vv^, offset: ov^);", "      if ok {"]
+    o += advance(8)
+    o += ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
     return o
 
 
 def count_dispatches(program):
     """The --count variant: a counter cell passed to the interpreter function
     and incremented at every dispatch, printed when _start returns."""
-    sig = ("globals: &Box<Slots<u64>>, pc: u64, sp: u64, fp: u64) -> r: Outcome reads(code), reads(funcs), "
-           "reads(brtab), reads(table), writes(stack), writes(mem), writes(globals) contract {")
+    sig = ("globals: &Box<Slots<u64>>, pc: u64, fp: u64) -> r: Outcome reads(code), reads(funcs), "
+           "reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {")
     assert sig in program
     program = program.replace(sig, sig.replace("pc: u64,", "counter: &Box<Array<u64>>, pc: u64,")
                               .replace("writes(globals) contract", "writes(globals), writes(counter) contract"))
@@ -384,14 +378,14 @@ def count_dispatches(program):
                               "  let n = code^.inner.len;\n  if 0_u64 < counter^.inner.len {\n"
                               "    let seen = counter^.inner[0_u64];\n"
                               "    set counter^.inner[0_u64] = seen +wrap 1_u64;\n  }\n  match code^.inner[pc] {")
-    program = program.replace("globals: &globals, pc: pc, sp: sp, fp: fp);",
-                              "globals: &globals, counter: &counter, pc: pc, sp: sp, fp: fp);")
+    program = program.replace("globals: &globals, pc: pc, fp: fp);",
+                              "globals: &globals, counter: &counter, pc: pc, fp: fp);")
     program = program.replace("  let max_pages = info.max_pages;\n  loop @drive {",
                               "  let max_pages = info.max_pages;\n"
                               "  let counter = box_array_filled::<u64>(count: 1_u64, value: 0_u64);\n  loop @drive {")
-    done = "      Done(sp: final_sp) => {\n        return 0_u8;\n      }"
+    done = "      Done() => {\n        return 0_u8;\n      }"
     assert done in program
-    program = program.replace(done, """      Done(sp: final_sp) => {
+    program = program.replace(done, """      Done() => {
         if 0_u64 < counter.inner.len {
           let total = counter.inner[0_u64];
           let digits = box_array_filled::<u8>(count: 21_u64, value: 48_u8);
@@ -422,34 +416,77 @@ def count_dispatches(program):
       }""")
     return program
 
+
+def profile_dispatches(program, variants):
+    """The --profile variant: one counter per operation kind, incremented at
+    every dispatch and printed, one 20-digit count per line in enum order,
+    when _start returns; gen.py --names prints the names in the same order."""
+    program = count_dispatches(program)
+    total = len(variants)
+    program = program.replace("let counter = box_array_filled::<u64>(count: 1_u64, value: 0_u64);",
+                              f"let counter = box_array_filled::<u64>(count: {total}_u64, value: 0_u64);")
+    old = ("  if 0_u64 < counter^.inner.len {\n    let seen = counter^.inner[0_u64];\n"
+           "    set counter^.inner[0_u64] = seen +wrap 1_u64;\n  }\n")
+    assert old in program
+    program = program.replace(old, "  let kind = op_index(op: code^.inner[pc]);\n  if kind < counter^.inner.len {\n"
+                              "    let seen = counter^.inner[kind];\n    set counter^.inner[kind] = seen +wrap 1_u64;\n  }\n")
+    old = "        if 0_u64 < counter.inner.len {\n          let total = counter.inner[0_u64];"
+    assert old in program
+    program = program.replace(old, "        let kinds = counter.inner.len;\n        for (kind in 0_u64..kinds) {\n          let total = counter.inner[kind];")
+    index = ["fn op_index(op: Op) -> kind: u64 pure {", '  doc "The position of an operation\'s kind in the enum.";', "  match op {"]
+    for i, (name, fields, dest) in enumerate(variants):
+        index += [f"    {name}(..) => {{", f"      return {i}_u64;", "    }"]
+    index += ["  }", "}", ""]
+    return program.replace("fn run(", "\n".join(index) + "\nfn run(", 1)
+
 # ---- emit -----------------------------------------------------------------
+# Control, variable and call operations; their handlers are in interp_head.wf.
+CONTROL = ["Unreachable()", "Jump(t: u32)", "Br(t: u32, s: u16, d: u16)", "BrIf(t: u32, c: u16)",
+           "BrIfMove(c: u16, e: u32)", "BrUnless(t: u32, c: u16)", "BrTable(c: u16, start: u32, count: u32)",
+           "Return(s: u16, k: u16, l: u16)", "Call(f: u32, at: u16)", "CallIndirect(canon: u32, at: u16, i: u16)",
+           "Host(id: u16, at: u16)", "Select(d: u16, a: u16, b: u16, c: u16)", "Copy(d: u16, s: u16)",
+           "GlobalGet(d: u16, i: u32)", "GlobalSet(s: u16, i: u32)", "MemorySize(d: u16)",
+           "MemoryGrow(d: u16, s: u16)", "MemoryCopy(d: u16, s: u16, n: u16)",
+           "MemoryFill(d: u16, v: u16, n: u16)", "Const(d: u16, v: u64)"]
+DEST = {"Select", "Copy", "GlobalGet", "MemorySize", "MemoryGrow", "Const"}
+
 out = []
 w = out.append
 
+variants = []
+for v in CONTROL:
+    name, fields = v[:-1].split("(")
+    variants.append((name, [f.split(": ")[0] for f in fields.split(", ")] if fields else [], name in DEST))
 w("enum Op {")
-for v in ["Unreachable()", "Jump(t: u32)", "Br(t: u32, h: u32, k: u32)", "BrIf(t: u32, h: u32, k: u32)",
-          "BrIfJ(t: u32)", "BrUnless(t: u32)", "BrTable(start: u32, count: u32)",
-          "Return(k: u32, l: u32)", "Call(f: u32)", "CallIndirect(canon: u32)", "Host(id: u32)",
-          "Drop()", "Select()", "LocalGet(i: u32)", "LocalSet(i: u32)", "LocalTee(i: u32)",
-          "GlobalGet(i: u32)", "GlobalSet(i: u32)", "MemorySize()", "MemoryGrow()",
-          "MemoryCopy()", "MemoryFill()", "I32Const(v: u32)", "I64Const(v: u64)"]:
+for v in CONTROL:
     w(f"  {v};")
 for code, name, *_ in LOADS:
-    w(f"  {name}(o: u32);")
+    w(f"  {name}(d: u16, a: u16, o: u32);")
+    variants.append((name, ["d", "a", "o"], True))
 for code, name, _ in STORES:
-    w(f"  {name}(o: u32);")
-for code, name, *_ in N:
-    w(f"  {name}();")
+    w(f"  {name}(a: u16, v: u16, o: u32);")
+    variants.append((name, ["a", "v", "o"], False))
+for code, name, ins, *_ in N:
+    if len(ins) == 2:
+        w(f"  {name}(d: u16, a: u16, b: u16);")
+        variants.append((name, ["d", "a", "b"], True))
+    else:
+        w(f"  {name}(d: u16, a: u16);")
+        variants.append((name, ["d", "a"], True))
 for sub, name, *_ in FC:
-    w(f"  {name}();")
+    w(f"  {name}(d: u16, a: u16);")
+    variants.append((name, ["d", "a"], True))
 w("}")
 w("")
 
-w("fn numeric_op(code: u8) -> found: Option<Op> pure {")
-w('  doc "The operation of a one-byte numeric opcode, or None for an opcode that is not one.";')
-for code, name, *_ in N:
+w("fn numeric_op(code: u8, d: u16, a: u16, b: u16) -> found: Option<Op> pure {")
+w('  doc "The operation of a one-byte numeric opcode writing slot d from a (and b), or None for an opcode that is not one.";')
+for code, name, ins, *_ in N:
     w(f"  if code == {code}_u8 {{")
-    w(f"    let o = Op::{name}();")
+    if len(ins) == 2:
+        w(f"    let o = Op::{name}(d: d, a: a, b: b);")
+    else:
+        w(f"    let o = Op::{name}(d: d, a: a);")
     w(f"    return Some<Op>(value: o);")
     w("  }")
 w("  return None<Op>();")
@@ -465,35 +502,52 @@ for code, name, ins, *_ in N:
 w("  return 1_u64;")
 w("}")
 w("")
-w("fn saturating_op(sub: u64) -> found: Option<Op> pure {")
+w("fn saturating_op(sub: u64, d: u16, a: u16) -> found: Option<Op> pure {")
 w('  doc "The operation of a saturating truncation, 0xfc 0 through 7.";')
 for sub, name, *_ in FC:
     w(f"  if sub == {sub}_u64 {{")
-    w(f"    let o = Op::{name}();")
+    w(f"    let o = Op::{name}(d: d, a: a);")
     w(f"    return Some<Op>(value: o);")
     w("  }")
 w("  return None<Op>();")
 w("}")
 w("")
-w("fn load_op(code: u8, offset: u32) -> found: Option<Op> pure {")
-w('  doc "The operation of a load or store opcode with its offset.";')
+w("fn load_op(code: u8, first: u16, second: u16, offset: u32) -> found: Option<Op> pure {")
+w('  doc "The operation of a load (first the destination, second the address) or a store (first the address, second the value).";')
 for code, name, *_ in LOADS:
     w(f"  if code == {code}_u8 {{")
-    w(f"    let o = Op::{name}(o: offset);")
+    w(f"    let o = Op::{name}(d: first, a: second, o: offset);")
     w(f"    return Some<Op>(value: o);")
     w("  }")
 for code, name, _ in STORES:
     w(f"  if code == {code}_u8 {{")
-    w(f"    let o = Op::{name}(o: offset);")
+    w(f"    let o = Op::{name}(a: first, v: second, o: offset);")
     w(f"    return Some<Op>(value: o);")
     w("  }")
 w("  return None<Op>();")
+w("}")
+w("")
+w("fn with_dest(op: Op, slot: u16) -> found: Option<Op> pure {")
+w('  doc "The operation writing slot instead of its own destination, or None for one that writes no slot.";')
+w("  match op {")
+for name, fields, dest in variants:
+    if not dest:
+        w(f"    {name}(..) => {{")
+        w("      return None<Op>();")
+        w("    }")
+        continue
+    binds = ", ".join(f"{f}: x_{f}" for f in fields)
+    inits = ", ".join(("d: slot" if f == "d" else f"{f}: x_{f}") for f in fields)
+    w(f"    {name}({binds}) => {{")
+    w(f"      let o = Op::{name}({inits});")
+    w("      return Some<Op>(value: o);")
+    w("    }")
+w("  }")
 w("}")
 w("")
 
 OPS = "\n".join(out).strip("\n")
 
-# The interpreter's arms go to a second file.
 arms = []
 for code, name, nbytes, signed, outty in LOADS:
     arms += load_arm(name, nbytes, signed, outty)
@@ -505,10 +559,15 @@ for sub, name, ins, outty, lines in FC:
     arms += numeric_arm(name, ins, outty, lines)
 here = os.path.dirname(os.path.abspath(__file__))
 head = open(os.path.join(here, "interp_head.wf")).read()
-tail = open(os.path.join(here, "interp_tail.wf")).read().strip("\n")
+tail_text = open(os.path.join(here, "interp_tail.wf")).read().strip("\n")
 aliases_end = head.index("\n\n") + 2
 program = (head[:aliases_end] + OPS + "\n\n" + "\n".join(HELPERS).strip("\n") + "\n\n"
-           + head[aliases_end:].rstrip("\n") + "\n" + "\n".join(arms).strip("\n") + "\n  }\n}\n\n" + tail + "\n")
-if "--count" in sys.argv:
+           + head[aliases_end:].rstrip("\n") + "\n" + "\n".join(arms).strip("\n") + "\n  }\n}\n\n" + tail_text + "\n")
+if "--names" in sys.argv:
+    print("\n".join(name for name, _, _ in variants))
+    sys.exit(0)
+if "--profile" in sys.argv:
+    program = profile_dispatches(program, variants)
+elif "--count" in sys.argv:
     program = count_dispatches(program)
 open(sys.argv[1], "w").write(program)
