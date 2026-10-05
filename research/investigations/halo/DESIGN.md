@@ -192,24 +192,27 @@ approved its direction:
   locked lies between the block's footprint and the whole state, which is
   where lazy taking, escalation after patience and SHARE-3's liberty to hold
   less already live.
-- **A, an explicit whole-table binding** answers G1:
+- **A, superseded by the shared-objects redesign** (PR 231, owner rulings
+  of 2026-10-05) for G1. The first answer, an explicit whole-table binding
+  `t = &s^.map` inside one state, was implemented on PR 224 and replaced
+  before release, because a table that could exist unshared gave one type
+  two runtime regimes. Now a concurrent hash map exists only as the state of
+  its own shared object, made by `shared_map_new`, and one atomic statement
+  holds several objects, each header item a target:
 
   ```wf
-  atomic s = &store^.state, t = &s^.map {     // the table, whole
-    let e = t^[key];                           // a key computed in the block
-    let es = &t^[keys];                        // entries of a KeySet formed in the block
+  atomic t = &store^.keys, m = &store^.meta {   // the map whole, and meta
+    let e = &t^[key];                            // a key computed in the block
+    let es = &t^[keys];                          // entries of a KeySet formed in the block
   }
+  atomic es = &store^.keys[keys], m = &store^.meta { ... }   // declared keys only
   ```
 
-  A bare `s` grants the state's non-table fields, which are its one
-  non-table lock unit; a table is reachable only through its header binding,
-  by entry, by key set or whole; one binding per table, so entries and the
-  whole of one table in one header are refused. Passing `s` to a callee is
-  admitted when the callee's row lies within the grant, so a script host's
-  `writes(env)` requires the table granted whole and the hold that
-  serializes the server is visible in the header. Today's implicit whole
-  hold (any path to a table outside an entry binding) is retired; firn's
-  DBSIZE gains `t = &s^.map`.
+  A map is held whole or by its entry targets, never both through one
+  handle; a callee receiving `&ConcurrentHashMap<V>` indexes it the same
+  way, so a script host's executor needs no special form. Locks follow a
+  static order of types, then object identity, so firn's `meta` is still
+  taken lazily after the keys.
 - **B, a deadline on the statement** answers G3:
   `atomic ... until d { ... } else { ... }` takes effect before the clock
   reaches `d`, or runs the else block having executed nothing of its guard
@@ -229,9 +232,8 @@ approved its direction:
   numeric library (fdlibm or musl lineage) with specified results, not a
   host binding to the platform's libm.
 
-A and B are one amendment of GRAM-4, SHARE-1, SHARE-2, SHARE-3, WAIT-2 and
-OP-4, designed with firn's KeySet redesign (insertion-order keys, lock order
-private to the runtime), which lands first.
+A landed as the shared-objects amendment (spec v0.92, PR 231). B is a
+separate amendment, still to be drafted against that text.
 
 ## VM core
 
