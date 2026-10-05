@@ -393,8 +393,10 @@ medians moved from 220.5 to 237.2 s (`check/unit`), 145.3 to 144.5 s
 (`compiler/test-build-unit`), 75.4 to 84.4 s (`compiler/test-unit`), 186.8
 to 187.8 s (`check/corpus`) and 89.0 to 99.3 s (`compiler/test-corpus`),
 while the maxima rose more, 256.2 to 342.7 s for `check/unit` and 161.9 to
-234.3 s for `compiler/test-build-unit`. The two cohorts
-have different revisions, so the comparison does not isolate the image.
+234.3 s for `compiler/test-build-unit`. The comparison does not isolate the
+image: the cohorts have different revisions, and the maxima come from 29
+`macos-15` samples of each of those stages against 13 `macos-14` ones, a
+larger sample alone raising a maximum.
 Slowest `macos-15` runs, in seconds, and 1.25 times each rounded up to
 5 s, which this change sets as the macOS budgets:
 
