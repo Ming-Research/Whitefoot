@@ -649,5 +649,21 @@ Findings fixed: pin and compile mutually masked invalidation in the new
 probe (C1/C2, DC4), now separated and each falsified by its own stale-bridge
 control; a prospective review-record statement (D3/V2), now replaced by this
 actual record; and a machine-local reference path in the interrupted log (A4),
-now a role placeholder. The logic repair receives a narrow follow-up review;
-its result is recorded after that review completes. Q1 remains provisional.
+now a role placeholder. The logic repair received the narrow follow-up review below. Q1 remains provisional.
+
+The same read-only reviewer, configured as GPT-6.1-sol, reviewed the repair
+`ec69af2c494b5d26ede8cf319e5c73c1d9efc29f..f069b49eba236d68e1f79b5370fd2742e3b98975`
+under applicable A, D, C, R, M and V items. It independently verified control
+routing, correct and stale-bridge resumes, updated host/source hashes, case
+rows/counts, construction and control logs, unchanged timing evidence and
+binaries, memory recovery and redaction. Each mutation starts with a valid
+bridge and no intervening invalidator; each omitted refresh fails after an
+observed collection at its own pin/cached-string/release observation. All
+three original findings are resolved; none within narrow scope. No green
+suite was rerun and no reviewer edited a file. Full-gate and publication
+verification remain outside this explicitly constrained task.
+
+Final `make static` on the reviewed probe repair passes all seven stages,
+exit 0 in 33.59 s; `git diff --check` passes after the review record. The
+handoff leaves the work branch local and the readonly boundary Q1 open;
+no specification change, approval record, PR, push or merge is made.
