@@ -596,11 +596,11 @@ pub(crate) enum CheckedType {
     /// lexicographic order, each with a `u64` payload. Its `len` is its key
     /// count, the one measure of the type and a bounded one [MSR-1].
     KeySet,
-    /// The `KeyedEntries<V>` an entry binding names over a key set [SHARE-2]:
+    /// The `Entries<V>` an entry binding names over a key set [SHARE-2]:
     /// one `Option<V>` place per key of the set, `element` being that
     /// `Option<V>`. It exists only as the binding's referent; its `len` is the
     /// set's [MSR-1].
-    KeyedEntries {
+    Entries {
         element: CheckedElement,
     },
 }
@@ -647,11 +647,11 @@ impl CheckedType {
                     .is_some_and(|ty| ty.is_concrete(elements))
                     && capacity.is_none_or(|capacity| capacity.is_concrete())
             }
-            Self::Buffer { element }
-            | Self::Segments { element }
-            | Self::KeyedEntries { element } => elements
-                .get(element.index())
-                .is_some_and(|ty| ty.is_concrete(elements)),
+            Self::Buffer { element } | Self::Segments { element } | Self::Entries { element } => {
+                elements
+                    .get(element.index())
+                    .is_some_and(|ty| ty.is_concrete(elements))
+            }
             Self::Unit
             | Self::Bool
             | Self::Integer(_)
@@ -669,7 +669,7 @@ impl CheckedType {
             Self::Buffer { .. } => Some(MeasuredKind::RuntimeArray),
             Self::Segments { .. } => Some(MeasuredKind::Segments),
             Self::KeySet => Some(MeasuredKind::KeySet),
-            Self::KeyedEntries { .. } => Some(MeasuredKind::KeyedEntries),
+            Self::Entries { .. } => Some(MeasuredKind::Entries),
             Self::Window {
                 shape: WindowShape::Slots,
                 capacity: Some(_),
@@ -795,10 +795,10 @@ impl CheckedMeasure {
             }
             // `&[T]`: the range's element count, and nothing else [MSR-1].
             // `Segments<T>`: the segment count its block stores.
-            // `KeyedEntries<V>`: the named entries, as many as its set's keys,
+            // `Entries<V>`: the named entries, as many as its set's keys,
             // which no operation changes while the binding lives.
             (
-                MeasuredKind::Range | MeasuredKind::Segments | MeasuredKind::KeyedEntries,
+                MeasuredKind::Range | MeasuredKind::Segments | MeasuredKind::Entries,
                 Self::Length,
             ) => MeasureCell::ExactRuntime,
             // The two *bounded* cell classes of the table: the two
@@ -825,11 +825,11 @@ impl CheckedMeasure {
                 MeasuredKind::Range
                 | MeasuredKind::Segments
                 | MeasuredKind::KeySet
-                | MeasuredKind::KeyedEntries,
+                | MeasuredKind::Entries,
                 Self::Head,
             )
             | (
-                MeasuredKind::Segments | MeasuredKind::KeySet | MeasuredKind::KeyedEntries,
+                MeasuredKind::Segments | MeasuredKind::KeySet | MeasuredKind::Entries,
                 Self::Capacity,
             ) => MeasureCell::Absent,
         }
@@ -862,8 +862,8 @@ pub(crate) enum MeasuredKind {
     Segments,
     /// `KeySet`, whose one measure is its bounded key count `len`.
     KeySet,
-    /// `KeyedEntries<V>`, whose one measure is its entry count `len`.
-    KeyedEntries,
+    /// `Entries<V>`, whose one measure is its entry count `len`.
+    Entries,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -995,93 +995,47 @@ pub(crate) enum CheckedNominalKind {
     },
 }
 
-/// [SHARE-2] one entry binding of an atomic statement's header.
+/// One target of an atomic statement, in written order [SHARE-2].
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CheckedEntryBinding {
-    /// The `IDENT = &place` the binding is written as, its site.
+pub(crate) struct CheckedTarget {
+    pub(crate) lock_order: Vec<String>,
     pub(crate) node_path: NodePath,
-    /// The entry binder, a reference variable.
     pub(crate) binding: BindingId,
-    /// The `&KeyedTable<V>` reference the place's table part forms through
-    /// the statement's binder.
-    pub(crate) table: Box<CheckedExpression>,
-    /// The table's entry type, the prelude's `Option<V>`.
-    pub(crate) entry: CheckedType,
-    /// What the index atom names.
-    pub(crate) index: CheckedEntryIndex,
-    /// The binder's referent type: the entry's `Option<V>` for one key, the
-    /// `KeyedEntries<V>` for a key set.
+    pub(crate) handle: Box<CheckedExpression>,
+    pub(crate) borrowed: bool,
+    pub(crate) state: CheckedType,
+    pub(crate) kind: CheckedTargetKind,
     pub(crate) referent: CheckedType,
-    /// Whether the guard and block write no path rooted at this binder, so
-    /// that the statement may read its entries beside others that only read
-    /// them [SHARE-3].
     pub(crate) reads: bool,
+    pub(crate) invariants: Vec<super::goal::CheckedCallRequirement>,
 }
 
-/// [SHARE-2] what an entry binding's index atom names.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum CheckedEntryIndex {
-    /// The complete table granted by the header.
-    Whole,
-    /// One key: the `&[u8]` the statement reads when it begins.
-    Key(Box<CheckedExpression>),
-    /// Every key of a key set: the `&KeySet` reference the statement forms
-    /// to the set place when it begins.
-    Set(Box<CheckedExpression>),
+pub(crate) enum CheckedTargetKind {
+    Object,
+    MapWhole,
+    MapEntry(Box<CheckedExpression>),
+    MapSet(Box<CheckedExpression>),
 }
 
-impl CheckedEntryBinding {
+impl CheckedTarget {
     pub(crate) fn expressions(&self) -> Vec<&CheckedExpression> {
-        let mut result = vec![self.table.as_ref()];
-        if let CheckedEntryIndex::Key(index) | CheckedEntryIndex::Set(index) = &self.index {
+        let mut result = vec![self.handle.as_ref()];
+        if let CheckedTargetKind::MapEntry(index) | CheckedTargetKind::MapSet(index) = &self.kind {
             result.push(index);
         }
         result
     }
 
     pub(crate) fn expressions_mut(&mut self) -> Vec<&mut CheckedExpression> {
-        let mut result = vec![self.table.as_mut()];
-        if let CheckedEntryIndex::Key(index) | CheckedEntryIndex::Set(index) = &mut self.index {
+        let mut result = vec![self.handle.as_mut()];
+        if let CheckedTargetKind::MapEntry(index) | CheckedTargetKind::MapSet(index) =
+            &mut self.kind
+        {
             result.push(index.as_mut());
         }
         result
     }
-}
-
-/// A declaration-only view of the parts traversed by a shared-state layout.
-pub(crate) enum StateShape<T, N> {
-    Table(N),
-    Fields(Vec<T>),
-    Plain,
-}
-
-/// The tables and plain leaves of a state, by non-Box field paths in
-/// declaration order. Check and lowering share this traversal.
-pub(crate) fn state_parts<T: Copy, N>(
-    state: T,
-    shape: impl Fn(T) -> StateShape<T, N>,
-) -> Vec<(Vec<u32>, Option<N>)> {
-    fn walk<T: Copy, N>(
-        ty: T,
-        shape: &impl Fn(T) -> StateShape<T, N>,
-        path: &mut Vec<u32>,
-        out: &mut Vec<(Vec<u32>, Option<N>)>,
-    ) {
-        match shape(ty) {
-            StateShape::Table(table) => out.push((path.clone(), Some(table))),
-            StateShape::Fields(fields) => {
-                for (index, field) in fields.into_iter().enumerate() {
-                    path.push(u32::try_from(index).expect("field count fits u32"));
-                    walk(field, shape, path, out);
-                    path.pop();
-                }
-            }
-            StateShape::Plain => out.push((path.clone(), None)),
-        }
-    }
-    let mut out = Vec::new();
-    walk(state, &shape, &mut Vec::new(), &mut out);
-    out
 }
 
 /// [SHARE-1] which shared nominal a `Shared` kind is.
@@ -1089,9 +1043,9 @@ pub(crate) fn state_parts<T: Copy, N>(
 pub(crate) enum CheckedShared {
     /// `Shared<T>`, a handle to an object.
     Object,
-    /// `KeyedTable<V>`, a table whose every entry is an `entry`, the
+    /// `ConcurrentHashMap<V>`, a table whose every entry is an `entry`, the
     /// prelude's `Option<V>`.
-    Table { entry: CheckedType },
+    Map { entry: CheckedType },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1165,7 +1119,7 @@ pub(crate) fn type_has_copy_capability(
             | CheckedType::Window { .. }
             | CheckedType::Segments { .. }
             | CheckedType::KeySet
-            | CheckedType::KeyedEntries { .. } => return Some(false),
+            | CheckedType::Entries { .. } => return Some(false),
             CheckedType::Nominal(id) => {
                 // A nominal met again is already being judged on this walk,
                 // so it adds no part the walk has not queued.
@@ -1852,7 +1806,7 @@ impl CheckedRangeElementPlace {
             | CheckedType::Window { element, .. }
             | CheckedType::Buffer { element }
             | CheckedType::Segments { element }
-            | CheckedType::KeyedEntries { element } => Some(element),
+            | CheckedType::Entries { element } => Some(element),
             _ => None,
         }
     }
@@ -2410,9 +2364,7 @@ pub(crate) enum CheckedExpression {
         root: CheckedContainerRoot,
         /// Whether ordinary ownership and the function's row permit writes
         /// through every resolved target at this formation [SET-1, EFF-2].
-        /// Atomic sources are refined by their statement's completed write set.
         writable: bool,
-        atomic_sources: Vec<BindingId>,
         /// Resolved places at formation, including every alternative
         /// of a reference. Split lowering refines captured places from the
         /// body's completed write footprint without resolving aliases again.
@@ -2794,20 +2746,7 @@ pub(crate) enum CheckedStatement {
         /// The complete `atomic_stmt`, which the waiting-call record names
         /// [WAIT-1] and which is the statement's own site.
         node_path: NodePath,
-        /// The reference the target place forms: a `&Shared<T>` whose handle
-        /// the statement reads when it begins.
-        target: Box<CheckedExpression>,
-        /// Whether the handle is reached through a reference parameter whose
-        /// declared row writes nothing below it, so that the caller's handle
-        /// stays live until the statement completes and the statement needs
-        /// no handle of its own [SHARE-2].
-        borrowed: bool,
-        /// The binder, a reference variable naming the object's state.
-        binding: BindingId,
-        /// The binder's referent type: the object's state `T`.
-        state: CheckedType,
-        /// The entry bindings, in written order [SHARE-2].
-        entries: Vec<CheckedEntryBinding>,
+        targets: Vec<CheckedTarget>,
         /// The guard, an owned `Bool` whose footprint writes no path.
         guard: Option<Box<CheckedExpression>>,
         body: Vec<CheckedStatement>,
@@ -2815,10 +2754,6 @@ pub(crate) enum CheckedStatement {
         fallthrough_drops: Vec<CheckedDrop>,
         /// Whether the block can reach its end [FN-1].
         continues: bool,
-        /// [TYPE-11] each type invariant of the state's struct over the
-        /// binder's referent: a fact at the block's entry and an obligation
-        /// at each edge that leaves the block.
-        invariants: Vec<super::goal::CheckedCallRequirement>,
     },
 }
 
@@ -3404,19 +3339,16 @@ impl FunctionMentions {
                     self.types.extend(drops.iter().map(|drop| drop.ty));
                 }
                 CheckedStatement::Atomic {
-                    target,
-                    entries,
-                    state,
+                    targets,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => {
-                    self.types.push(*state);
-                    self.expression(target);
-                    for key in entries
+                    self.types.extend(targets.iter().map(|t| t.state));
+                    for key in targets
                         .iter()
-                        .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                        .flat_map(crate::semantic::CheckedTarget::expressions)
                     {
                         self.expression(key);
                     }

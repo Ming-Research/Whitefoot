@@ -626,7 +626,6 @@ struct BodyChecker {
     /// checked: inside one, a waiting call or another atomic statement is
     /// refused.
     atomic_depth: u32,
-    atomic_grant: Option<AtomicGrant>,
     table_set_borrow: Option<NodeId>,
     /// [RANGE-1] the range clauses of the function being checked, published
     /// with its finished body. Every retry starts empty.
@@ -634,15 +633,6 @@ struct BodyChecker {
     /// [RANGE-1, RANGE-4] the range facts that state nothing at this
     /// concrete instance, which a certificate's `use` of them skips.
     unformed_range_facts: HashSet<DeclarationId>,
-}
-
-struct AtomicGrant {
-    state: BindingId,
-    tables: Vec<Vec<u32>>,
-    names: Vec<String>,
-    whole: Vec<(Vec<super::places::PlaceStep>, BindingId)>,
-    touched: Vec<BindingId>,
-    refusals: Vec<(NodeId, SemanticIssueKind)>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -2438,16 +2428,14 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     self.install_statement_call_requirements(check_context, body, requirements)?;
                 }
                 CheckedStatement::Atomic {
-                    target,
-                    entries,
+                    targets,
                     guard,
                     body,
                     ..
                 } => {
-                    self.install_expression_call_requirements(check_context, target, requirements)?;
-                    for key in entries
+                    for key in targets
                         .iter_mut()
-                        .flat_map(crate::semantic::CheckedEntryBinding::expressions_mut)
+                        .flat_map(crate::semantic::CheckedTarget::expressions_mut)
                     {
                         self.install_expression_call_requirements(
                             check_context,
@@ -2989,7 +2977,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     .map(|capacity| self.types.instantiate_goal_const(capacity, signature))
                     .transpose()?,
             },
-            CheckedType::KeyedEntries { element } => CheckedType::KeyedEntries {
+            CheckedType::Entries { element } => CheckedType::Entries {
                 element: self.instantiate_goal_element(
                     check_context,
                     element,

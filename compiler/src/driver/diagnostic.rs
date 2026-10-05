@@ -867,7 +867,7 @@ impl Report for SemanticIssueKind {
             ReferenceToReferenceVariable { mechanical_fix };
             EscapingReference { mechanical_fix };
             RangeOverRing { mechanical_fix };
-            RangeOverKeyedEntries { mechanical_fix };
+            RangeOverEntries { mechanical_fix };
             MoveOutOfSlot { mechanical_fix };
             MissingDereference { mechanical_fix };
             MoveOuterBindingInLoop { binding, mechanical_fix };
@@ -900,10 +900,6 @@ impl Report for SemanticIssueKind {
             WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
             AtomicTargetNotShared { found, mechanical_fix };
             WaitInsideAtomic { construct, mechanical_fix };
-            AtomicTableBoundTwice { table, mechanical_fix };
-            AtomicTableNotGranted { table, mechanical_fix };
-            AtomicRowReachesTable { callee, path, table, mechanical_fix };
-            TableNeedsReference { mechanical_fix };
             TableOffsetNotKey { mechanical_fix };
             TableEntriesNotBorrowed { mechanical_fix };
             AtomicKeyNotBytes { found, mechanical_fix };

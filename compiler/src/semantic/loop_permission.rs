@@ -877,6 +877,7 @@ impl<'check> Survey<'check, '_> {
             return;
         };
         let origin = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: place.root,
             path: place.path[..place.path.len() - 1].to_vec(),
         };
@@ -953,6 +954,7 @@ impl<'check> Survey<'check, '_> {
         }
         self.certified_writes.push(CertifiedElementWrite {
             root: ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: place.root,
                 path: place.path[..first].to_vec(),
             },
@@ -1691,10 +1693,12 @@ fn element_prefix(place: &ResolvedPlace, after: usize) -> Option<(ResolvedPlace,
         })?;
     Some((
         ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: place.root,
             path: place.path[..position].to_vec(),
         },
         ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: place.root,
             path: place.path[..=position].to_vec(),
         },
@@ -1838,7 +1842,9 @@ fn collect_introduced(statements: &[CheckedStatement], out: &mut Vec<BindingId>)
                 out.extend(bindings.iter().map(|(binding, _, _)| *binding));
             }
             CheckedStatement::CountedRange { binder, .. } => out.push(*binder),
-            CheckedStatement::Atomic { binding, .. } => out.push(*binding),
+            CheckedStatement::Atomic { targets, .. } => {
+                out.extend(targets.iter().map(|t| t.binding))
+            }
             _ => {}
         }
         if let CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } =

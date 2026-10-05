@@ -178,7 +178,6 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<MutationTarget, CheckStop> {
-        self.note_atomic_place(context, node, bindings)?;
         let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types
@@ -802,7 +801,6 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         options: PlaceUseOptions,
     ) -> Result<TypedExpression, CheckStop> {
-        self.note_atomic_place(context, node, bindings)?;
         let FunctionContext {
             check_context,
             function,
@@ -2150,9 +2148,9 @@ impl<'unit> TypeContext<'unit> {
                 )
             }
             CheckedType::KeySet => "KeySet".to_owned(),
-            // [PRE-1] `KeyedEntries<V>` is written with the value type, and
+            // [PRE-1] `Entries<V>` is written with the value type, and
             // its element is the `Option<V>` each entry is [SHARE-2].
-            CheckedType::KeyedEntries { element } => {
+            CheckedType::Entries { element } => {
                 let entry = self.element_type(element)?;
                 let value = match entry {
                     CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
@@ -2169,7 +2167,7 @@ impl<'unit> TypeContext<'unit> {
                     _ => None,
                 }
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                format!("KeyedEntries<{}>", self.checked_type_name(value)?)
+                format!("Entries<{}>", self.checked_type_name(value)?)
             }
             CheckedType::Buffer { element } => {
                 format!(

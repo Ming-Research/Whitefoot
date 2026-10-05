@@ -589,7 +589,7 @@ impl Analyzer<'_, '_> {
                         );
                     }
                     if let CheckedExpression::BorrowAddressed { root, .. } = value
-                        && matches!(root.ty, CheckedType::KeyedEntries { .. })
+                        && matches!(root.ty, CheckedType::Entries { .. })
                         && let Some(crate::semantic::CheckedPlaceStep::Subscript(index)) =
                             root.path.last()
                         && let CheckedExpression::BorrowAddressed { root: keys, .. } = &index.offset
@@ -597,7 +597,7 @@ impl Analyzer<'_, '_> {
                         let left = self.reasoning().place_measure_term(
                             CheckedMeasure::Length,
                             bound_place(*binding),
-                            MeasuredKind::KeyedEntries,
+                            MeasuredKind::Entries,
                             None,
                         );
                         let right = self.reasoning().place_measure_term(
@@ -1176,31 +1176,33 @@ impl Analyzer<'_, '_> {
             // leaves with it.
             CheckedStatement::Atomic {
                 node_path,
-                target,
-                entries,
-                binding,
+                targets,
                 guard,
                 body,
-                invariants,
                 ..
             } => {
-                let _ = self.expression_effects(target, state);
-                for key in entries
+                let invariants = targets
                     .iter()
-                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                    .flat_map(|t| t.invariants.iter().cloned())
+                    .collect::<Vec<_>>();
+                for key in targets
+                    .iter()
+                    .flat_map(crate::semantic::CheckedTarget::expressions)
                 {
                     let _ = self.expression_effects(key, state);
                 }
                 let outer_scope_depth = self.frames.scopes.len();
-                self.frames.scopes.push(vec![*binding]);
+                self.frames
+                    .scopes
+                    .push(targets.iter().map(|t| t.binding).collect());
                 // [SHARE-2] an entry binding over a key set names one entry
                 // for each of the set's keys, so `e^.len == k.len` holds
                 // where the block begins.
-                for entry in entries {
+                for entry in targets {
                     let (
-                        crate::semantic::CheckedEntryIndex::Set(set),
-                        CheckedType::KeyedEntries { .. },
-                    ) = (&entry.index, entry.referent)
+                        crate::semantic::CheckedTargetKind::MapSet(set),
+                        CheckedType::Entries { .. },
+                    ) = (&entry.kind, entry.referent)
                     else {
                         continue;
                     };
@@ -1208,15 +1210,15 @@ impl Analyzer<'_, '_> {
                     else {
                         continue;
                     };
-                    let entries_root = CheckedContainerRoot {
+                    let targets_root = CheckedContainerRoot {
                         root: PlaceRoot::Binding(entry.binding),
                         path: Vec::new(),
                         ty: entry.referent,
                     };
                     let left = self.reasoning().place_measure_term(
                         CheckedMeasure::Length,
-                        container_root_path(&entries_root),
-                        MeasuredKind::KeyedEntries,
+                        container_root_path(&targets_root),
+                        MeasuredKind::Entries,
                         None,
                     );
                     let right = self.reasoning().place_measure_term(
@@ -1264,7 +1266,7 @@ impl Analyzer<'_, '_> {
                 }
                 // [TYPE-11] the state's type invariants hold where the block
                 // begins, as the guard does.
-                for invariant in invariants {
+                for invariant in &invariants {
                     let event = self
                         .vocabulary
                         .proof_event(FlowEventKind::S1, Some(&invariant.requires_clause));
@@ -1613,6 +1615,7 @@ impl Analyzer<'_, '_> {
                     // normal body fallthrough can reach it.
                     kills.push_event_group(vec![KillEvent::Write {
                         place: ResolvedPlace {
+                            atomic_aliases: Vec::new(),
                             root: PlaceRoot::Binding(*binder),
                             path: Vec::new(),
                         },

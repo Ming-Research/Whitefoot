@@ -135,7 +135,6 @@ pub(super) enum InvalidationEvent {
     /// [EFF-5 clause 3].
     CallWrite,
     /// A call writes a whole binding's table or a prefix [SHARE-2].
-    WholeTableWritten,
     /// The scope of the local variable the path starts at ended.
     RootScopeEnded,
     /// A window operation moved the boundary or the logical origin the
@@ -157,7 +156,6 @@ impl InvalidationEvent {
             Self::PrefixWritten => "a proper prefix of the reference's path was written",
             Self::PrefixMoved => "the reference's path or a prefix of it was moved out of",
             Self::CallWrite => "a call wrote a proper prefix of the reference's path",
-            Self::WholeTableWritten => "a call wrote the whole binding's table or a prefix of it",
             Self::RootScopeEnded => "the scope of the local variable the path starts at ended",
             Self::WindowBoundaryMoved => {
                 "a window operation moved the boundary or origin the reference was formed under"
@@ -189,7 +187,6 @@ pub(super) struct ReferenceInfo {
     pub(super) anchors: Vec<ResolvedPlace>,
     /// Header bindings through which this reference was formed. Joins keep
     /// every origin: sharing a physical target does not transfer a grant.
-    pub(super) atomic_sources: Vec<BindingId>,
     pub(super) validity: ReferenceValidity,
     /// Header validity variables this reference still depends on. A freshly
     /// formed reference has none. Copying a reference name retains the
@@ -205,7 +202,6 @@ pub(super) struct ReferenceInfo {
 #[derive(Clone, Debug)]
 pub(super) struct LoopReferenceSummary {
     pub(super) paths: Vec<ResolvedPlace>,
-    pub(super) atomic_sources: Vec<BindingId>,
 }
 
 impl ReferenceInfo {
@@ -222,7 +218,6 @@ impl ReferenceInfo {
             kind,
             paths,
             anchors: Vec::new(),
-            atomic_sources: Vec::new(),
             validity: ReferenceValidity::Valid,
             loop_dependencies: Vec::new(),
             preservations: Vec::new(),
@@ -232,13 +227,9 @@ impl ReferenceInfo {
     fn formed_through(
         kind: ReferenceKind,
         paths: Vec<ResolvedPlace>,
-        parent: Option<&Self>,
+        _parent: Option<&Self>,
     ) -> Self {
-        let mut reference = Self::formed_paths(kind, paths);
-        if let Some(parent) = parent {
-            reference.atomic_sources.clone_from(&parent.atomic_sources);
-        }
-        reference
+        Self::formed_paths(kind, paths)
     }
 
     pub(super) const fn is_valid(&self) -> bool {
@@ -273,11 +264,6 @@ impl ReferenceInfo {
     /// An index one edge superseded is superseded after the join too, so the
     /// same capture on both edges stays one member rather than two.
     pub(super) fn join(&mut self, other: &Self) {
-        for source in &other.atomic_sources {
-            if !self.atomic_sources.contains(source) {
-                self.atomic_sources.push(*source);
-            }
-        }
         for path in &other.paths {
             if !self.paths.contains(path) {
                 self.paths.push(path.clone());
@@ -570,7 +556,6 @@ impl<'unit> Checker<'_, 'unit> {
         ty: CheckedType,
         kind: ReferenceKind,
         paths: &[ResolvedPlace],
-        atomic_sources: &[BindingId],
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<bool, CheckStop> {
         let mut contributions = Vec::new();
@@ -594,19 +579,13 @@ impl<'unit> Checker<'_, 'unit> {
                 // a previously established sibling-field separation.
                 entry.insert(LoopReferenceSummary {
                     paths: contributions.into_iter().map(|(path, _)| path).collect(),
-                    atomic_sources: atomic_sources.to_vec(),
                 });
                 return Ok(true);
             }
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
         };
         let mut changed = false;
-        for source in atomic_sources {
-            if !summary.atomic_sources.contains(source) {
-                summary.atomic_sources.push(*source);
-                changed = true;
-            }
-        }
+
         let paths = &mut summary.paths;
         for (incoming, incoming_readonly) in contributions {
             if !incoming.has_descendant()
@@ -640,6 +619,7 @@ impl<'unit> Checker<'_, 'unit> {
                 prefix.truncate(shared);
             }
             let mut joined = ResolvedPlace {
+                atomic_aliases: incoming.atomic_aliases.clone(),
                 root: incoming.root,
                 path: prefix,
             };
@@ -866,7 +846,6 @@ impl<'unit> Checker<'_, 'unit> {
         loop_depth: usize,
         without_last: bool,
     ) -> Result<TypedExpression, CheckStop> {
-        self.note_atomic_place(context, place_node, bindings)?;
         let FunctionContext { check_context, .. } = context;
         let pbase = self
             .types
@@ -1131,36 +1110,6 @@ impl<'unit> Checker<'_, 'unit> {
         };
         let (mut path, ty, mut carried) =
             self.resolve_storage_path(context, prefix, root_type, bindings, loop_depth, true)?;
-        // [OP-4] table entries are selected only through a reference's ^,
-        // including a table subscript followed by more borrowed-place steps.
-        if !written_deref {
-            for (suffix, step) in prefix.iter().zip(&path) {
-                if let CheckedPlaceStep::Subscript(index) = step
-                    && self.table_entry_type(index.base_type).is_some()
-                {
-                    return self.types.declarations.issue_node(
-                        SemanticRule::Op4, *suffix, SemanticIssueKind::TableNeedsReference {
-                            mechanical_fix: "form a reference first, `let t = &local.map;`, and index `t^[key]`",
-                        },
-                    );
-                }
-            }
-            if let Some(last) = last
-                && self
-                    .types
-                    .declarations
-                    .tree
-                    .subscript_offset(last)?
-                    .is_some()
-                && self.table_entry_type(ty).is_some()
-            {
-                return self.types.declarations.issue_node(
-                    SemanticRule::Op4, last, SemanticIssueKind::TableNeedsReference {
-                        mechanical_fix: "form a reference first, `let t = &local.map;`, and index `t^[key]`",
-                    },
-                );
-            }
-        }
         let ty = match (last, ty) {
             (Some(last), CheckedType::Segments { element })
                 if self.segment_selection(last)?.is_some() =>
@@ -1191,6 +1140,7 @@ impl<'unit> Checker<'_, 'unit> {
             (None, ty) => ty,
         };
         let place = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root,
             path: path.iter().map(CheckedPlaceStep::place_step).collect(),
         };
@@ -1221,10 +1171,11 @@ impl<'unit> Checker<'_, 'unit> {
                 .and_then(|local| local.reference.as_ref()),
         );
         if let Some(CheckedPlaceStep::Subscript(index)) = path.last()
-            && matches!(ty, CheckedType::KeyedEntries { .. })
+            && matches!(ty, CheckedType::Entries { .. })
             && let CheckedExpression::BorrowAddressed { root: keys, .. } = &index.offset
         {
             let key_place = ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: keys.root,
                 path: keys.path.iter().map(CheckedPlaceStep::place_step).collect(),
             };
@@ -1238,8 +1189,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         let kind = ReferenceKind::Single;
         // Retain the point-current ownership judgment, not the function-wide
-        // union of a rebound holder's origins. Lowering refines atomic sources
-        // and captured places from their completed statements' write footprints.
+        // union of a rebound holder's origins. Lowering refines captured places from their completed statements' write footprints.
         let writable = places.iter().try_fold(true, |writable, place| {
             self.reference_row_writes(context.function, place, bindings)
                 .map(|allowed| writable && allowed)
@@ -1248,7 +1198,6 @@ impl<'unit> Checker<'_, 'unit> {
             carrier: self.types.declarations.tree.path(carrier)?.clone(),
             root: CheckedContainerRoot { root, path, ty },
             writable,
-            atomic_sources: reference.atomic_sources.clone(),
             write_places: places.clone(),
         };
         let mut accesses = carried
@@ -1369,6 +1318,7 @@ impl<'unit> Checker<'_, 'unit> {
             };
         let step = segment.place_step();
         let formed = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: base.root,
             path: base
                 .path
@@ -1602,11 +1552,11 @@ impl<'unit> Checker<'_, 'unit> {
                 CheckedType::Buffer { element } => self.types.element_type(element)?,
                 // [REF-4] keyed entries are each where its key's node keeps
                 // it, no run of storage [SHARE-2].
-                CheckedType::KeyedEntries { .. } => {
+                CheckedType::Entries { .. } => {
                     return self.types.declarations.issue_node(
                         SemanticRule::Ref4,
                         suffix,
-                        SemanticIssueKind::RangeOverKeyedEntries {
+                        SemanticIssueKind::RangeOverEntries {
                             mechanical_fix: REF4_KEYED_ENTRIES,
                         },
                     );
@@ -1623,6 +1573,7 @@ impl<'unit> Checker<'_, 'unit> {
                 }
             };
             let base = ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root,
                 path: path.iter().map(CheckedPlaceStep::place_step).collect(),
             };
@@ -2009,6 +1960,7 @@ impl<'unit> TypeContext<'unit> {
                 .get(&root)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             return Ok(vec![ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Constant(constant),
                 path: Vec::new(),
             }]);
@@ -2116,10 +2068,7 @@ impl<'unit> TypeContext<'unit> {
                 local.call_value = false;
             }
         }
-        let include_equal = matches!(
-            event,
-            InvalidationEvent::PrefixMoved | InvalidationEvent::WholeTableWritten
-        );
+        let include_equal = matches!(event, InvalidationEvent::PrefixMoved);
         let primitive_write = !include_equal
             && !matches!(
                 written.path.last(),

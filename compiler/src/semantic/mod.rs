@@ -48,13 +48,13 @@ pub(crate) use loop_permission::{LoopActualization, LoopCombine, LoopPermission}
 pub(crate) use model::{
     BindingId, CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation,
     CheckedBufferRoot, CheckedConst, CheckedContainerRoot, CheckedConversionMode, CheckedDrop,
-    CheckedElement, CheckedEntryBinding, CheckedEntryIndex, CheckedEnumType, CheckedExpression,
-    CheckedFloatOperation, CheckedFunction, CheckedIntegerOperation, CheckedLoopId,
-    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedNumericType,
-    CheckedOwnedTakeCleanup, CheckedParameter, CheckedPlaceStep, CheckedProgramData,
-    CheckedProjectedDrop, CheckedRangeElementPlace, CheckedRangeRoot, CheckedRangeSource,
-    CheckedReleaseClass, CheckedSegmentIndex, CheckedSegmentSelect, CheckedSetTarget,
-    CheckedShared, CheckedStatement, CheckedTargetDomainObligation, CheckedType, CheckedValue,
+    CheckedElement, CheckedEnumType, CheckedExpression, CheckedFloatOperation, CheckedFunction,
+    CheckedIntegerOperation, CheckedLoopId, CheckedMatchArm, CheckedMeasure, CheckedMode,
+    CheckedNominalKind, CheckedNumericType, CheckedOwnedTakeCleanup, CheckedParameter,
+    CheckedPlaceStep, CheckedProgramData, CheckedProjectedDrop, CheckedRangeElementPlace,
+    CheckedRangeRoot, CheckedRangeSource, CheckedReleaseClass, CheckedSegmentIndex,
+    CheckedSegmentSelect, CheckedSetTarget, CheckedShared, CheckedStatement, CheckedTarget,
+    CheckedTargetDomainObligation, CheckedTargetKind, CheckedType, CheckedValue,
     CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell, MeasuredKind, NominalId,
     PropagationContext, WindowShape,
 };
@@ -897,7 +897,7 @@ pub enum SemanticIssueKind {
     },
     /// [REF-4] a range reference was formed over the keyed entries an entry
     /// binding names, which are entries of a table and no run of storage.
-    RangeOverKeyedEntries {
+    RangeOverEntries {
         /// Exact restructuring required by REF-4.
         mechanical_fix: &'static str,
     },
@@ -1137,23 +1137,6 @@ pub enum SemanticIssueKind {
     },
     /// An entry binding whose index atom is neither a `&[u8]` range nor a
     /// place of type `KeySet` [SHARE-2].
-    AtomicTableBoundTwice {
-        table: String,
-        mechanical_fix: &'static str,
-    },
-    AtomicTableNotGranted {
-        table: String,
-        mechanical_fix: &'static str,
-    },
-    AtomicRowReachesTable {
-        callee: String,
-        path: String,
-        table: String,
-        mechanical_fix: &'static str,
-    },
-    TableNeedsReference {
-        mechanical_fix: &'static str,
-    },
     TableOffsetNotKey {
         mechanical_fix: &'static str,
     },

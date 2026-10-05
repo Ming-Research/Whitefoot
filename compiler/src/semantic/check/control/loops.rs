@@ -114,16 +114,7 @@ impl<'unit> Checker<'_, 'unit> {
             {
                 let ty = local.ty;
                 let kind = reference.kind;
-                let atomic_sources = reference.atomic_sources.clone();
-                self.join_loop_reference_summary(
-                    check_context,
-                    token,
-                    ty,
-                    kind,
-                    &paths,
-                    &atomic_sources,
-                    bindings,
-                )?;
+                self.join_loop_reference_summary(check_context, token, ty, kind, &paths, bindings)?;
                 let summary = self
                     .body
                     .loop_reference_summaries
@@ -135,7 +126,6 @@ impl<'unit> Checker<'_, 'unit> {
                     .and_then(|local| local.reference.as_mut())
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 reference.paths.clone_from(&summary.paths);
-                reference.atomic_sources.clone_from(&summary.atomic_sources);
                 self.body
                     .record_reference_origins(token.owner, &summary.paths);
             }

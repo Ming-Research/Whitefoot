@@ -6,9 +6,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::syntax::NodeId;
 use crate::{
-    DeclarationId, DeclarationRole, DeferredUseRole, FixedTerminal, LexicalUseRole, Production,
-    ResolvedTarget, SemanticCompilerFailure, SemanticIssueKind, SemanticRule,
-    UnsupportedSemanticFeature,
+    DeclarationId, DeclarationRole, DeferredUseRole, FixedTerminal, Production,
+    SemanticCompilerFailure, SemanticIssueKind, SemanticRule, UnsupportedSemanticFeature,
 };
 
 use super::super::super::model::{
@@ -132,36 +131,6 @@ impl<'unit> Checker<'_, 'unit> {
                     super::super::references::ReferenceKind::Single,
                     place,
                 ));
-            }
-            let atom = self
-                .types
-                .declarations
-                .tree
-                .first_child_with(expression_node, Production::Atom)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let place = self
-                .types
-                .declarations
-                .tree
-                .first_child_with(atom, Production::Place)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let pbase = self
-                .types
-                .declarations
-                .tree
-                .first_child_with(place, Production::Pbase)?
-                .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-            let use_ = self.types.declarations.use_at(
-                context.check_context,
-                pbase,
-                LexicalUseRole::PlaceBase,
-            )?;
-            if let ResolvedTarget::Source { declaration, .. } = use_.target()
-                && let Some(parent) = bindings
-                    .get(&declaration)
-                    .and_then(|local| local.reference.as_ref())
-            {
-                reference.atomic_sources.clone_from(&parent.atomic_sources);
             }
             scrutinee.mode = CheckedMode::Reference;
             scrutinee.reference = Some(reference);

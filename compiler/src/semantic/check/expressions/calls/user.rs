@@ -297,7 +297,6 @@ impl<'unit> Checker<'_, 'unit> {
         // control-flow join gave more than one path [REF-1]; every check must
         // then hold for every member.
         let mut actual_paths: Vec<Vec<ResolvedPlace>> = Vec::with_capacity(fields.len());
-        let mut actual_through_state = Vec::with_capacity(fields.len());
         let mut actual_captures = Vec::with_capacity(fields.len());
         let mut actual_modes = Vec::with_capacity(fields.len());
         let call = self.types.declarations.tree.path(node)?.clone();
@@ -451,12 +450,7 @@ impl<'unit> Checker<'_, 'unit> {
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
             argument_atoms.push(atom);
-            actual_through_state.push(self.body.atomic_grant.as_ref().is_some_and(|grant| {
-                argument
-                    .reference
-                    .as_ref()
-                    .is_some_and(|reference| reference.atomic_sources.contains(&grant.state))
-            }));
+
             actual_paths.push(paths);
             actual_captures.push(
                 self.body.note_capture(
@@ -522,52 +516,25 @@ impl<'unit> Checker<'_, 'unit> {
             .declarations
             .invalidate_window_operation_references(signature, &substituted, bindings)?;
         self.project_call_effects(node, function, &substituted, bindings, &mut effects)?;
-        let mut written_whole = Vec::new();
-        if let Some(grant) = self.body.atomic_grant.as_mut() {
-            for effect in &substituted {
-                if !actual_through_state[effect.argument]
-                    || effect.place.root != PlaceRoot::Binding(grant.state)
-                {
-                    continue;
-                }
-                let actual = &actual_paths[effect.argument];
-                for (index, table) in grant.tables.iter().enumerate() {
-                    let table_path = table
-                        .iter()
-                        .copied()
-                        .map(PlaceStep::Field)
-                        .collect::<Vec<_>>();
-                    let supplied_prefix = actual.iter().any(|p| {
-                        p.root == PlaceRoot::Binding(grant.state) && table_path.starts_with(&p.path)
-                    });
-                    if supplied_prefix
-                        && (effect.place.path.starts_with(&table_path)
-                            || table_path.starts_with(&effect.place.path))
-                    {
-                        if let Some((_, binding)) =
-                            grant.whole.iter().find(|(path, _)| *path == table_path)
-                        {
-                            grant.touched.push(*binding);
-                            if effect.write && table_path.starts_with(&effect.place.path) {
-                                written_whole.push(*binding);
-                            }
-                        } else {
-                            grant.refusals.push((node, SemanticIssueKind::AtomicRowReachesTable {
-                                callee: signature.name.clone(), path: signature.parameters[effect.argument].name.clone(), table: grant.names[index].clone(),
-                                mechanical_fix: "add a whole binding for each table the callee's row reaches through this argument, or pass the parts the callee needs: `&s^.field` for a field, an entry binding for an entry",
-                            }));
-                        }
-                    }
-                }
+        if self
+            .types
+            .declarations
+            .tree
+            .is_prelude_node(signature.node)?
+        {
+            for parameter in &signature.parameters {
+                self.types.reject_placement(
+                    node,
+                    parameter.ty,
+                    if parameter.mode == CheckedMode::Own {
+                        super::super::super::types::Placement::Value
+                    } else {
+                        super::super::super::types::Placement::Reference
+                    },
+                )?;
             }
-        }
-
-        for binding in written_whole {
-            self.types.invalidate_references(
-                bindings,
-                &ResolvedPlace::binding(binding),
-                &InvalidationEvent::WholeTableWritten,
-            )?;
+            self.types
+                .reject_inline_runtime_capacity(node, signature.result)?;
         }
         let result = signature.result;
         let result_mode = signature.result_mode;
@@ -636,6 +603,7 @@ impl<'unit> Checker<'_, 'unit> {
             let ordinal =
                 u32::try_from(ordinal).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
             places.push(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(BindingId(ordinal)),
                 path: Checker::substitute_effect_steps(signature, formal, &captures)?,
             });
@@ -936,6 +904,7 @@ impl<'unit> Checker<'_, 'unit> {
                     };
                     candidates.push(position);
                     window = Some(ResolvedPlace {
+                        atomic_aliases: Vec::new(),
                         root: left.root,
                         path: left.path[..depth].to_vec(),
                     });
@@ -1301,6 +1270,7 @@ impl<'unit> TypeContext<'unit> {
                 },
                 self.goal_referent_image(
                     &ResolvedPlace {
+                        atomic_aliases: Vec::new(),
                         root: root.root,
                         path: root.place_path(),
                     },
@@ -1603,6 +1573,7 @@ impl<'unit> DeclarationInventory<'unit> {
                 continue;
             }
             let window = ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: entry.place.root,
                 path: entry.place.path[..cut].to_vec(),
             };

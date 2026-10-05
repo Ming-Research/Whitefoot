@@ -69,10 +69,10 @@ pub enum ContainerShape {
     /// each with a payload, whose one measure is its bounded `len`
     /// [SHARE-1, MSR-1].
     KeySet,
-    /// `KeyedEntries<V>`: the entries of a keyed table an entry binding names
+    /// `Entries<V>`: the entries of a keyed table an entry binding names
     /// over a key set, one `Option<V>` place per key, reached only as that
     /// binding's referent [SHARE-2, OP-4].
-    KeyedEntries,
+    Entries,
     /// `Box<T>`: one heap object of any nameable T, carrying no brand and no
     /// measure at all, a cell being never empty [TYPE-9]. Its declaration is
     /// the prelude's opaque struct [TYPE-2, PRE-1], not a row below.
@@ -105,8 +105,8 @@ pub const CONTAINER_NOMINALS: [ContainerNominal; 6] = [
         shape: ContainerShape::KeySet,
     },
     ContainerNominal {
-        spelling: "KeyedEntries",
-        shape: ContainerShape::KeyedEntries,
+        spelling: "Entries",
+        shape: ContainerShape::Entries,
     },
 ];
 

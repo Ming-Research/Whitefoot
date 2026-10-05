@@ -281,6 +281,7 @@ impl<'unit> Checker<'_, 'unit> {
             require_named_offsets,
         )?;
         let mut resolved = ResolvedPlace {
+            atomic_aliases: Vec::new(),
             root: PlaceRoot::Constant(constant),
             path: Vec::new(),
         };
@@ -1079,7 +1080,6 @@ impl<'unit> Checker<'_, 'unit> {
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         loop_depth: usize,
     ) -> Result<MutationTarget, CheckStop> {
-        self.note_atomic_place(context, node, bindings)?;
         let FunctionContext { check_context, .. } = context;
         let suffix = suffixes[subscript];
         let indexed = self
@@ -1324,7 +1324,7 @@ impl<'unit> Checker<'_, 'unit> {
         };
         match self.types.nominals.get(nominal.0 as usize).map(|n| &n.kind) {
             Some(crate::semantic::CheckedNominalKind::Shared {
-                shape: crate::semantic::CheckedShared::Table { entry },
+                shape: crate::semantic::CheckedShared::Map { entry },
                 ..
             }) => Some(*entry),
             _ => None,
@@ -1374,7 +1374,7 @@ impl<'unit> Checker<'_, 'unit> {
             let mut element_type = match ty {
                 CheckedType::Array { element, .. }
                 | CheckedType::Window { element, .. }
-                | CheckedType::KeyedEntries { element } => self.types.element_type(element)?,
+                | CheckedType::Entries { element } => self.types.element_type(element)?,
                 CheckedType::Buffer { element } => self.types.element_type(element)?,
                 _ if table_entry.is_some() => table_entry.unwrap(),
                 _ => {
@@ -1447,9 +1447,9 @@ impl<'unit> Checker<'_, 'unit> {
                         return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableOffsetNotKey { mechanical_fix: "index a table by a key, a `&[u8]` range such as `&bytes[start..end]`, or borrow the entries under a `KeySet` as `&t^[keys]`" });
                     }
                     if self.body.table_set_borrow != Some(suffix) {
-                        return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableEntriesNotBorrowed { mechanical_fix: "write `&t^[keys]`: the entries under a key set are reached only as a reference of kind `&KeyedEntries<V>`" });
+                        return self.types.declarations.issue_node(SemanticRule::Op4, offset_node, SemanticIssueKind::TableEntriesNotBorrowed { mechanical_fix: "write `&t^[keys]`: the entries under a key set are reached only as a reference of kind `&Entries<V>`" });
                     }
-                    element_type = CheckedType::KeyedEntries {
+                    element_type = CheckedType::Entries {
                         element: self.types.intern_element(element_type)?,
                     };
                 } else if offset.mode != CheckedMode::Range
@@ -1708,13 +1708,13 @@ impl<'unit> Checker<'_, 'unit> {
             }
             // [OP-4] the indexable bases, reached through `^` exactly as
             // an inline one is: a run is one measured place wherever it is
-            // reached from [MSR-1]. The `KeyedEntries` an entry binding names
+            // reached from [MSR-1]. The `Entries` an entry binding names
             // is reached only so [SHARE-2].
             _ if matches!(
                 ty,
                 CheckedType::Array { .. }
                     | CheckedType::Window { .. }
-                    | CheckedType::KeyedEntries { .. }
+                    | CheckedType::Entries { .. }
             ) || self.table_entry_type(ty).is_some() =>
             {
                 Ok(CheckedIndexedPlace::Container(CheckedContainerPlace {
@@ -1947,10 +1947,6 @@ impl<'unit> Checker<'_, 'unit> {
                     offsets,
                 }))
             }
-            _ if self.table_entry_type(ty).is_some() => self.types.declarations.issue_node(
-                SemanticRule::Op4, anchor, SemanticIssueKind::TableNeedsReference {
-                    mechanical_fix: "form a reference first, `let t = &local.map;`, and index `t^[key]`",
-                }),
             // [TYPE-7] a `Box` is not a reference, so no implicit read and no
             // `p^` fix is at issue here: the cell is simply not one of
             // [OP-4]'s indexable bases, and its content is the ordinary field
@@ -1972,11 +1968,11 @@ impl<'unit> Checker<'_, 'unit> {
                 )
             }
             // [MSR-1] gives each storage shape a measure-table row and [OP-4]
-            // makes it an indexable base, as it does the `KeyedEntries` an
+            // makes it an indexable base, as it does the `Entries` an
             // entry binding names [SHARE-2].
             CheckedType::Array { .. }
             | CheckedType::Window { .. }
-            | CheckedType::KeyedEntries { .. } => {
+            | CheckedType::Entries { .. } => {
                 let (Some(binding), Some(declaration)) = (binding, declaration) else {
                     return Err(SemanticCompilerFailure::InvalidResolution.into());
                 };

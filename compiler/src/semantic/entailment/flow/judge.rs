@@ -1195,6 +1195,7 @@ impl Analyzer<'_, '_> {
                         return false;
                     };
                     let base = ResolvedPlace {
+                        atomic_aliases: Vec::new(),
                         root: root.root,
                         path: projections.clone(),
                     };
@@ -1738,6 +1739,7 @@ pub(super) fn array_root_place(root: &CheckedArrayRoot) -> ResolvedPlace {
 /// field list.
 pub(super) fn container_root_path(root: &CheckedContainerRoot) -> ResolvedPlace {
     let mut place = ResolvedPlace {
+        atomic_aliases: Vec::new(),
         root: root.root,
         path: Vec::new(),
     };
@@ -1802,6 +1804,7 @@ fn judged_place(root: &CheckedContainerRoot) -> ResolvedPlace {
         });
     }
     ResolvedPlace {
+        atomic_aliases: Vec::new(),
         root: root.root,
         path,
     }

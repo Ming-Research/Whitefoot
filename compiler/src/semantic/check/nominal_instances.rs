@@ -756,7 +756,7 @@ impl<'unit> Checker<'_, 'unit> {
         let kind = (|| {
             Ok(match template.role {
                 DeclarationRole::Struct
-                    if matches!(template.name.as_str(), "Shared" | "KeyedTable")
+                    if matches!(template.name.as_str(), "Shared" | "ConcurrentHashMap")
                         && self
                             .types
                             .declarations
@@ -773,7 +773,7 @@ impl<'unit> Checker<'_, 'unit> {
                             self.types
                                 .intern_prelude_nominal(PreludeType::Option(state))?,
                         );
-                        CheckedShared::Table { entry }
+                        CheckedShared::Map { entry }
                     };
                     CheckedNominalKind::Shared { state, shape }
                 }
@@ -1014,7 +1014,7 @@ impl<'unit> Checker<'_, 'unit> {
             CheckedType::Segments { element } => CheckedType::Segments {
                 element: self.substitute_element_regions(check_context, element, regions)?,
             },
-            CheckedType::KeyedEntries { element } => CheckedType::KeyedEntries {
+            CheckedType::Entries { element } => CheckedType::Entries {
                 element: self.substitute_element_regions(check_context, element, regions)?,
             },
             CheckedType::KeySet => ty,
