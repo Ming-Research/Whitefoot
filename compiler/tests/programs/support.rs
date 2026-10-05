@@ -731,6 +731,49 @@ impl CompiledProgram {
         output
     }
 
+    /// Runs the program with `bytes` written to its standard input `delay`
+    /// after the program first writes to its standard output, the signal
+    /// that it has reached the point the case times from.
+    pub fn run_with_input_after_first_output(
+        &self,
+        bytes: &[u8],
+        delay: std::time::Duration,
+        native_ring: bool,
+        settings: &[(&str, &str)],
+    ) -> Output {
+        let (reader, mut writer) = std::io::pipe().expect("create the input pipe");
+        let mut command = Command::new(&self.executable);
+        command
+            .current_dir(&self.directory)
+            .stdin(Stdio::from(reader))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        select_route(&mut command, native_ring);
+        for (name, value) in settings {
+            command.env(name, value);
+        }
+        let (child, started) = ProgramChild::spawn_signalling_first_output(&mut command)
+            .expect("spawn compiled program");
+        let bytes = bytes.to_vec();
+        let writer = std::thread::spawn(move || {
+            if started
+                .recv_timeout(crate::support::PROGRAM_DEADLINE)
+                .is_ok()
+            {
+                std::thread::sleep(delay);
+                writer.write_all(&bytes)
+            } else {
+                Ok(())
+            }
+        });
+        let output = child.wait_with_output().expect("wait for compiled program");
+        writer
+            .join()
+            .expect("input writer thread")
+            .expect("fill input pipe");
+        output
+    }
+
     /// Runs the program with its standard input and its standard output both
     /// one pipe, so what it writes it can read back, under the given runtime
     /// settings. The program is the pipe's only reader and only writer.
