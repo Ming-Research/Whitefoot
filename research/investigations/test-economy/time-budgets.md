@@ -396,7 +396,7 @@ all of the growth was in two cases:
 
 Every other case changed by under 0.3 s. On 2026-10-05 the owner approved
 both a raise to 115 s and splitting that witness case into one case per
-witness, so that the five can run on separate threads ("两者都做", "both").
+witness, so that the five can run on separate threads ("do both", translated from Chinese).
 
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
