@@ -294,8 +294,9 @@ impl TermTable {
     }
 
     /// The tightest implicit bound of one term in each direction against Z;
-    /// of two equal bounds the first emitted, which is the one the complete
-    /// closure's candidate order keeps.
+    /// of two equal bounds the first emitted. The complete closure may keep
+    /// the other kind's node for the same value, a different valid
+    /// derivation of an equal bound.
     fn implicit_range(&self, id: TermId) -> ImplicitRange {
         let mut range = ImplicitRange {
             to_zero: None,
