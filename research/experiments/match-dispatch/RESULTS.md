@@ -272,6 +272,35 @@ work (`wfhoist` on `fib`: 607 million cycles in the interleaved run, 1151
 million in three later launches), the placement effect Silverfir-nano's
 record describes; the tables report medians of interleaved launches.
 
+### Values kept in the frame past the registers
+
+A measurement of compiler/match-dispatch-lowering's spill (the interpreter's
+loop-invariant values moved to frame slots when the parts need more argument
+registers than the convention has), run by GPT-6.1 sol per the owner's
+chore policy and checked here. Criterion, recorded before measuring: the
+split loop that spills is justified when it takes at least 5% fewer cycles
+than the same loop emitted whole, on the median of at least 7 alternating
+launches per kernel. Variants, both from `wf/vm.wf` at main d6d6456cf on
+the M1 Pro: S gives `run` 16 extra `u64` parameters passed through
+unchanged and read by `Movi` (`--dispatch-ledger`: split into 23 arms
+taking all 24 integer registers, one value kept in the frame); W adds
+`if pc == 18446744073709551615_u64 { return ...; }` before the `match`,
+which never fires, so the loop is emitted whole. Both pass every kernel's
+checksum. Cycles, seven alternating launches per variant and kernel
+([run-spill.tsv](run-spill.tsv); fib was repeated once more because of one
+outlier per variant):
+
+| Kernel | S median | W median | Fewer cycles, S |
+|---|---:|---:|---:|
+| loop | 3,979,329,968 | 6,024,855,078 | 34.0% |
+| fib (14 launches) | 636,933,902 | 992,618,892 | 35.8% |
+| sieve | 2,359,838,391 | 3,111,945,191 | 24.2% |
+| mandel | 364,613,536 | 506,358,032 | 28.0% |
+
+The spill meets the criterion on every kernel. This covers one spilled value
+under `preserve_none` on arm64; more spilled values, the C convention and
+x86-64 are not measured.
+
 ## Stage 3: a wasm interpreter running CoreMark
 
 The design and criteria are in
