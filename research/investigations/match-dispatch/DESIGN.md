@@ -433,8 +433,11 @@ The budget is corrected to those counts.
 - The C convention on the 14900K under clang 18: 6 registers and 9 values in
   the frame, 0.560 of Silverfir-nano.
 
-Both ratios are above the M1's 0.519. So the split form costs x86-64
-nothing beyond having a clang with the convention.
+The measured interpreter splits on both hosts, and each ratio clears the
+threshold the rule set. These runs compare Whitefoot with Silverfir-nano on
+different processors and toolchains. They do not isolate what the split, or
+either convention, costs on x86-64, and the M1's 0.519 was measured on
+another processor.
 
 By the rule fixed before measuring, the loop splits under `preserve_none`
 with a ratio of at least 0.45. So the next lowering change is the
