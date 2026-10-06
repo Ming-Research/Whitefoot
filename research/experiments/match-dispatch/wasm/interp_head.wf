@@ -1,0 +1,494 @@
+alias Args = std::text::Args;
+alias Clock = std::time::Clock;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias OutputStream = std::io::OutputStream;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+alias host_bytes_len = std::text::host_bytes_len;
+alias host_copy_bytes = std::text::host_copy_bytes;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+alias open_read = std::fs::open_read;
+alias read_at = std::fs::read_at;
+alias relative_path = std::fs::relative_path;
+alias write_once = std::io::write_once;
+
+struct Func {
+  canon: u64;
+  start: u64;
+  params: u64;
+  locals: u64;
+  results: u64;
+  host: u64;
+  cbase: u64;
+  cn: u64;
+}
+
+struct Target {
+  t: u32;
+  s: u32;
+  d: u32;
+  k: u32;
+}
+
+enum Outcome {
+  Done();
+  Host(id: u16, pc: u64, fp: u64, at: u16);
+  Grow(pc: u64, fp: u64, d: u16, s: u16);
+  Trap(code: u32, pc: u64);
+}
+
+fn trap(code: u32, pc: u64) -> r: Outcome pure {
+  doc "A trap with its reason: 1 a frame that does not fit, 2 an arithmetic trap, 3 an access outside linear memory, 4 a call that does not fit, 5 an indirect call to a missing or mismatched function, 6 unreachable.";
+  let t = Outcome::Trap(code: code, pc: pc);
+  return t;
+}
+
+fn zero_range(stack: &Box<Array<u64>>, from: u64, to: u64) -> r: unit writes(stack.inner) contract {
+  requires to <= stack^.inner.len;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "Zeroes the declared locals of a frame being entered.";
+  for (at in from..to) {
+    set stack^.inner[at] = 0_u64;
+  }
+  return unit;
+}
+
+fn move_slot(stack: &Box<Array<u64>>, fp: u64, s: u64, d: u64) -> r: unit writes(stack.inner) contract {
+  requires fp + 65536_u64 <= stack^.inner.len;
+  requires s < 65536_u64;
+  requires d < 65536_u64;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "Copies one frame slot to another, a branch carrying its label's result.";
+  let st = fp + s;
+  let dt = fp + d;
+  let v = stack^.inner[st];
+  set stack^.inner[dt] = v;
+  return unit;
+}
+
+fn copy_memory(mem: &Box<Array<u8>>, dst: u64, src: u64, count: u64) -> ok: Bool writes(mem.inner) contract {
+  ensures mem^.inner.len == entry(mem)^.inner.len;
+} {
+  doc "memory.copy: an overlapping copy, back to front when the destination lies above the source.";
+  let len = mem^.inner.len;
+  if count > len {
+    return False();
+  }
+  let room = len - count;
+  if src > room {
+    return False();
+  }
+  if dst > room {
+    return False();
+  }
+  if dst <= src {
+    for (i in 0_u64..count) {
+      let s = src + i;
+      let d = dst + i;
+      let v = mem^.inner[s];
+      set mem^.inner[d] = v;
+    }
+    return True();
+  }
+  for (j in 0_u64..count) {
+    let back = count - j;
+    let i = back - 1_u64;
+    let s = src + i;
+    let d = dst + i;
+    let v = mem^.inner[s];
+    set mem^.inner[d] = v;
+  }
+  return True();
+}
+
+fn fill_memory(mem: &Box<Array<u8>>, dst: u64, value: u8, count: u64) -> ok: Bool writes(mem.inner) contract {
+  ensures mem^.inner.len == entry(mem)^.inner.len;
+} {
+  doc "memory.fill.";
+  let len = mem^.inner.len;
+  if count > len {
+    return False();
+  }
+  let room = len - count;
+  if dst > room {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let d = dst + i;
+    set mem^.inner[d] = value;
+  }
+  return True();
+}
+
+fn enter(stack: &Box<Array<u64>>, consts: &Box<Slots<u64>>, fp: u64, at: u16, callee: Func, ret: u64) -> nf: u64 reads(consts), writes(stack.inner) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "Builds the frame of a call whose arguments are the callee's parameter slots from at: zeroes its locals, copies its constants after them, saves ret and the caller's frame base after those, and returns the callee's frame base, or the largest u64 when its 65536 slots do not fit in the stack.";
+  let ai = cvt::<u16, u64>(at);
+  let base = fp +wrap ai;
+  let len = stack^.inner.len;
+  if len < 65536_u64 {
+    return 18446744073709551615_u64;
+  }
+  let room = len - 65536_u64;
+  if base > room {
+    return 18446744073709551615_u64;
+  }
+  let params = callee.params;
+  let locals = callee.locals;
+  let cn = callee.cn;
+  if params >= 65536_u64 {
+    return 18446744073709551615_u64;
+  }
+  if locals >= 65536_u64 {
+    return 18446744073709551615_u64;
+  }
+  if cn >= 65536_u64 {
+    return 18446744073709551615_u64;
+  }
+  let pl = params + locals;
+  let l = pl + cn;
+  if l >= 65535_u64 {
+    return 18446744073709551615_u64;
+  }
+  let first = base + params;
+  let const_at = base + pl;
+  let saved = base + l;
+  let saved_fp = saved + 1_u64;
+  zero_range(stack: stack, from: first, to: const_at);
+  let cbase = callee.cbase;
+  for (k in 0_u64..cn) {
+    let ck = cbase +wrap k;
+    let sk = const_at + k;
+    if ck < consts^.inner.len {
+      let v = consts^.inner[ck];
+      set stack^.inner[sk] = v;
+    }
+  }
+  set stack^.inner[saved] = ret;
+  set stack^.inner[saved_fp] = fp;
+  return base;
+}
+
+fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target>>, table: &Box<Slots<u64>>, consts: &Box<Slots<u64>>, stack: &Box<Array<u64>>, mem: &Box<Array<u8>>, globals: &Box<Slots<u64>>, pc: u64, fp: u64, acc: u64) -> r: Outcome reads(code), reads(funcs), reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {
+  requires pc < code^.inner.len;
+  requires fp + 65536_u64 <= stack^.inner.len;
+} {
+  doc "One operation per dispatch on frame slots: an operand names a slot by its distance from fp, below 65536, so the frame contract covers every slot access. Values are u64 words, an i32 kept zero-extended and a float as its bits; a frame is the parameters, locals and constants from fp, the caller's return pc and frame base after them, then the operand slots. acc carries a value from the operation that computed it to the next one, its single consumer, in place of a slot.";
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Unreachable() => {
+      return trap(code: 6_u32, pc: pc);
+    }
+    Jump(t: tv) => {
+      let target = cvt::<u32, u64>(tv^);
+      if target < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    Br(t: tv, s: sv, d: dv) => {
+      let si = cvt::<u16, u64>(sv^);
+      let di = cvt::<u16, u64>(dv^);
+      move_slot(stack: stack, fp: fp, s: si, d: di);
+      let target = cvt::<u32, u64>(tv^);
+      if target < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    BrIf(t: tv, c: cv) => {
+      let ci = cvt::<u16, u64>(cv^);
+      let ct = fp + ci;
+      let c = stack^.inner[ct];
+      let next = pc + 1_u64;
+      if c != 0_u64 {
+        set next = cvt::<u32, u64>(tv^);
+      }
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    BrIfMove(c: cv, e: ev) => {
+      let ci = cvt::<u16, u64>(cv^);
+      let ct = fp + ci;
+      let c = stack^.inner[ct];
+      let next = pc + 1_u64;
+      if c != 0_u64 {
+        let ei = cvt::<u32, u64>(ev^);
+        if ei < brtab^.inner.len {
+          let slot = brtab^.inner[ei];
+          let si = cvt::<u32, u64>(slot.s);
+          let di = cvt::<u32, u64>(slot.d);
+          if si < 65536_u64 {
+            if di < 65536_u64 {
+              move_slot(stack: stack, fp: fp, s: si, d: di);
+              set next = cvt::<u32, u64>(slot.t);
+            }
+          }
+        }
+      }
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    BrUnless(t: tv, c: cv) => {
+      let ci = cvt::<u16, u64>(cv^);
+      let ct = fp + ci;
+      let c = stack^.inner[ct];
+      let next = pc + 1_u64;
+      if c == 0_u64 {
+        set next = cvt::<u32, u64>(tv^);
+      }
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    BrTable(c: cv, start: startv, count: countv) => {
+      let ci = cvt::<u16, u64>(cv^);
+      let ct = fp + ci;
+      let iw = stack^.inner[ct];
+      let count = cvt::<u32, u64>(countv^);
+      let i32v = cvt.wrap::<u64, u32>(iw);
+      let i = cvt::<u32, u64>(i32v);
+      let pick = imin(i, count);
+      let base = cvt::<u32, u64>(startv^);
+      let at = base + pick;
+      if at < brtab^.inner.len {
+        let slot = brtab^.inner[at];
+        let target = cvt::<u32, u64>(slot.t);
+        let si = cvt::<u32, u64>(slot.s);
+        let di = cvt::<u32, u64>(slot.d);
+        if slot.k != 0_u32 {
+          if si < 65536_u64 {
+            if di < 65536_u64 {
+              move_slot(stack: stack, fp: fp, s: si, d: di);
+            }
+          }
+        }
+        if target < n {
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: target, fp: fp, acc: acc);
+        }
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    Return(s: sv, k: kv, l: lv) => {
+      let li = cvt::<u16, u64>(lv^);
+      if li < 65535_u64 {
+        let saved = fp + li;
+        let saved_fp = saved + 1_u64;
+        let ret = stack^.inner[saved];
+        let caller = stack^.inner[saved_fp];
+        if kv^ != 0_u16 {
+          let si = cvt::<u16, u64>(sv^);
+          move_slot(stack: stack, fp: fp, s: si, d: 0_u64);
+        }
+        if ret == 18446744073709551615_u64 {
+          let done = Outcome::Done();
+          return done;
+        }
+        let room = stack^.inner.len - 65536_u64;
+        if caller <= room {
+          if ret < n {
+            return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: ret, fp: caller, acc: acc);
+          }
+        }
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    Call(f: fv, at: av) => {
+      let fi = cvt::<u32, u64>(fv^);
+      if fi < funcs^.inner.len {
+        let callee = funcs^.inner[fi];
+        let rp = pc + 1_u64;
+        let nf = enter(stack: stack, consts: consts, fp: fp, at: av^, callee: callee, ret: rp);
+        let room = stack^.inner.len - 65536_u64;
+        if nf <= room {
+          let begin = callee.start;
+          if begin < n {
+            return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: begin, fp: nf, acc: acc);
+          }
+        }
+      }
+      return trap(code: 4_u32, pc: pc);
+    }
+    CallIndirect(canon: cv, at: av, i: iv) => {
+      let ii = cvt::<u16, u64>(iv^);
+      let it = fp + ii;
+      let iw = stack^.inner[it];
+      let i32v = cvt.wrap::<u64, u32>(iw);
+      let i = cvt::<u32, u64>(i32v);
+      if i < table^.inner.len {
+        let fi = table^.inner[i];
+        if fi < funcs^.inner.len {
+          let callee = funcs^.inner[fi];
+          let want = cvt::<u32, u64>(cv^);
+          let local = callee.host == 0_u64;
+          let same = callee.canon == want;
+          let good = band(local, same);
+          if good {
+            let rp = pc + 1_u64;
+            let nf = enter(stack: stack, consts: consts, fp: fp, at: av^, callee: callee, ret: rp);
+            let room = stack^.inner.len - 65536_u64;
+            if nf <= room {
+              let begin = callee.start;
+              if begin < n {
+                return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: begin, fp: nf, acc: acc);
+              }
+            }
+          }
+        }
+      }
+      return trap(code: 5_u32, pc: pc);
+    }
+    Host(id: idv, at: av) => {
+      let h = Outcome::Host(id: idv^, pc: pc, fp: fp, at: av^);
+      return h;
+    }
+    Select(d: dv, a: av, b: bv, c: cv) => {
+      let ci = cvt::<u16, u64>(cv^);
+      let ct = fp + ci;
+      let c = stack^.inner[ct];
+      let pick = if c != 0_u64 {
+        give av^;
+      } else {
+        give bv^;
+      }
+      let si = cvt::<u16, u64>(pick);
+      let di = cvt::<u16, u64>(dv^);
+      move_slot(stack: stack, fp: fp, s: si, d: di);
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    Copy(d: dv, s: sv) => {
+      let si = cvt::<u16, u64>(sv^);
+      let di = cvt::<u16, u64>(dv^);
+      move_slot(stack: stack, fp: fp, s: si, d: di);
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    Copy2(d: dv, s: sv, e: ev, t: tv) => {
+      let si = cvt::<u16, u64>(sv^);
+      let di = cvt::<u16, u64>(dv^);
+      move_slot(stack: stack, fp: fp, s: si, d: di);
+      let ti = cvt::<u16, u64>(tv^);
+      let ei = cvt::<u16, u64>(ev^);
+      move_slot(stack: stack, fp: fp, s: ti, d: ei);
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    GlobalGet(d: dv, i: iv) => {
+      let iw = cvt::<u32, u64>(iv^);
+      if iw < globals^.inner.len {
+        let v = globals^.inner[iw];
+        let di = cvt::<u16, u64>(dv^);
+        let dt = fp + di;
+        set stack^.inner[dt] = v;
+        let next = pc + 1_u64;
+        if next < n {
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+        }
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    GlobalSet(s: sv, i: iv) => {
+      let iw = cvt::<u32, u64>(iv^);
+      if iw < globals^.inner.len {
+        let si = cvt::<u16, u64>(sv^);
+        let st = fp + si;
+        let v = stack^.inner[st];
+        set globals^.inner[iw] = v;
+        let next = pc + 1_u64;
+        if next < n {
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+        }
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    MemorySize(d: dv) => {
+      let bytes = mem^.inner.len;
+      let pages = bytes / 65536_u64;
+      let di = cvt::<u16, u64>(dv^);
+      let dt = fp + di;
+      set stack^.inner[dt] = pages;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
+    MemoryGrow(d: dv, s: sv) => {
+      let g = Outcome::Grow(pc: pc, fp: fp, d: dv^, s: sv^);
+      return g;
+    }
+    MemoryCopy(d: dv, s: sv, n: nv) => {
+      let di = cvt::<u16, u64>(dv^);
+      let si = cvt::<u16, u64>(sv^);
+      let ni = cvt::<u16, u64>(nv^);
+      let dt = fp + di;
+      let st = fp + si;
+      let nt = fp + ni;
+      let dst = stack^.inner[dt];
+      let src = stack^.inner[st];
+      let count = stack^.inner[nt];
+      let copied = copy_memory(mem: mem, dst: dst, src: src, count: count);
+      if copied {
+        let next = pc + 1_u64;
+        if next < n {
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+        }
+      }
+      return trap(code: 3_u32, pc: pc);
+    }
+    MemoryFill(d: dv, v: vv, n: nv) => {
+      let di = cvt::<u16, u64>(dv^);
+      let vi = cvt::<u16, u64>(vv^);
+      let ni = cvt::<u16, u64>(nv^);
+      let dt = fp + di;
+      let vt = fp + vi;
+      let nt = fp + ni;
+      let dst = stack^.inner[dt];
+      let vw = stack^.inner[vt];
+      let count = stack^.inner[nt];
+      let value = cvt.wrap::<u64, u8>(vw);
+      let filled = fill_memory(mem: mem, dst: dst, value: value, count: count);
+      if filled {
+        let next = pc + 1_u64;
+        if next < n {
+          return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+        }
+      }
+      return trap(code: 3_u32, pc: pc);
+    }
+    Const(d: dv, v: vv) => {
+      let di = cvt::<u16, u64>(dv^);
+      let dt = fp + di;
+      set stack^.inner[dt] = vv^;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals, pc: next, fp: fp, acc: acc);
+      }
+      return trap(code: 1_u32, pc: pc);
+    }
