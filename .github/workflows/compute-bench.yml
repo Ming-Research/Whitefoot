@@ -3,6 +3,12 @@
 # Whitefoot program built with plain `--par` the fastest thing in the row? --
 # answered on a real Linux host and on an ordinary Apple M1.
 #
+# With `experiment: placement` it serves research/investigations/code-placement
+# instead: the five kernels' images under shifted placements, built by an
+# unaligned and an aligned compiler, timed on a hosted runner or the owner's
+# i9-14900K. Remove that job with the investigation's harness when the
+# alignment decision no longer needs re-measuring.
+#
 # research-boundary: manual-only
 # Explicitly requested framework comparison; no push or pull-request trigger.
 # Formal correctness and paired regression use the maintained test system.
@@ -27,6 +33,32 @@ on:
     # never a recorded plain table. `gap_us` is not a control and builds
     # nothing, but marks its table the same way.
     inputs:
+      experiment:
+        description: The compute scoreboard, or the code-placement experiment
+        type: choice
+        options: [scoreboard, placement]
+        default: scoreboard
+      placement_runner:
+        description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
+        type: choice
+        options: [github, 14900k]
+        default: github
+      placement_rounds:
+        description: Placement experiment rounds over every image, kernel and width
+        type: string
+        default: "10"
+      placement_unaligned:
+        description: Commit of the placement experiment's unaligned compiler; empty means the merge base with main
+        type: string
+        default: ""
+      placement_cpus:
+        description: The vCPUs every timed placement process is pinned to with taskset
+        type: string
+        default: "0-3"
+      placement_event:
+        description: Runtime revision whose images the aligned compiler's are compared with by compare.sh; the default is main before PR 251; empty skips the replay
+        type: string
+        default: c2e5a1808a7ab194c1523a809e88de64316bd15a
       par_control_flags:
         description: WF_PAR_CONTROL_FLAGS for the B image (emission)
         default: ""
@@ -59,9 +91,13 @@ defaults:
   run:
     shell: bash
 
+# Hosted placement runs land on whichever processor model the pool assigns, so
+# several may run at once to reach a given model. A placement run on the
+# 14900K waits for the one running before it; GitHub keeps one waiting run
+# per group, so a third dispatch replaces the waiting one.
 concurrency:
-  group: compute-bench-${{ github.ref }}
-  cancel-in-progress: true
+  group: compute-bench-${{ github.ref }}-${{ inputs.experiment }}-${{ inputs.placement_runner }}${{ inputs.experiment == 'placement' && inputs.placement_runner == 'github' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ inputs.experiment != 'placement' }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -71,6 +107,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
+    if: inputs.experiment != 'placement'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -206,3 +243,116 @@ jobs:
             ${{ runner.temp }}/results/raw.tsv
             ${{ runner.temp }}/results/table.txt
             ${{ runner.temp }}/results/logs/
+
+  placement:
+    name: placement (${{ inputs.placement_runner }})
+    if: inputs.experiment == 'placement'
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A runner service starts without the login shell's PATH, where rustup
+      # puts cargo; the step stops on the first missing tool and names it.
+      - name: Check the host's tools
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          missing=
+          for tool in /usr/bin/clang cargo make taskset perl python3 git nm; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          /usr/bin/clang --version
+          nproc
+          lscpu
+
+      - name: Build the unaligned and aligned compilers
+        env:
+          UNALIGNED: ${{ inputs.placement_unaligned }}
+        run: |
+          if [ -z "$UNALIGNED" ]; then
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            UNALIGNED=$(git merge-base origin/main HEAD)
+          fi
+          git worktree prune
+          rm -rf "$RUNNER_TEMP/unaligned"
+          git worktree add --detach "$RUNNER_TEMP/unaligned" "$UNALIGNED"
+          for tree in "$RUNNER_TEMP/unaligned" "$GITHUB_WORKSPACE"; do
+            cargo fetch --locked --manifest-path "$tree/compiler/Cargo.toml"
+            make -C "$tree/compiler" build
+          done
+
+      - name: Build, verify and time every placement
+        env:
+          ROUNDS: ${{ inputs.placement_rounds }}
+          CPUS: ${{ inputs.placement_cpus }}
+          WHITEFOOT_CHECK_TIMEOUT: "6000"
+        run: |
+          rm -rf "$RUNNER_TEMP/placement"
+          perl .github/run-check.pl code-placement/measure \
+            bash research/investigations/code-placement/placement.sh \
+            "$RUNNER_TEMP/unaligned" "$RUNNER_TEMP/unaligned/compiler/target/gate/whitefootc" \
+            "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" \
+            "$RUNNER_TEMP/placement" "$ROUNDS" "$CPUS"
+
+      - name: Reduce and publish
+        run: |
+          python3 -I research/investigations/code-placement/summarize.py \
+            "$RUNNER_TEMP/placement/raw.tsv" > "$RUNNER_TEMP/placement/summary.txt"
+          cat "$RUNNER_TEMP/placement/summary.txt"
+          {
+            echo "## code-placement (${{ inputs.placement_runner }})"
+            echo
+            echo '```text'
+            head -3 "$RUNNER_TEMP/placement/manifest.txt"
+            echo
+            cat "$RUNNER_TEMP/placement/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The event that reopened the investigation: the same aligned compiler
+      # and flags over the runtime before and after a change that adds one
+      # import, judged by the regression instrument itself. The event
+      # revision's hand-written LLVM gets the alignment its successors carry.
+      - name: Replay the runtime change under the aligned compiler
+        if: inputs.placement_event != ''
+        env:
+          EVENT: ${{ inputs.placement_event }}
+        run: |
+          rm -rf "$RUNNER_TEMP/event" "$RUNNER_TEMP/event-images" "$RUNNER_TEMP/placement/event"
+          git worktree add --detach "$RUNNER_TEMP/event" "$EVENT"
+          sed -i -E 's/^(define .*\)) \{$/\1 align 64 {/' \
+            "$RUNNER_TEMP/event/compiler/src/backend/ordinary_values.ll"
+          make -s -C tests/performance build BUILD="$RUNNER_TEMP/event-images" \
+            ROOT="$RUNNER_TEMP/event" WFC="$GITHUB_WORKSPACE/compiler/target/gate/whitefootc"
+          status=0
+          bash tests/performance/compare.sh "$RUNNER_TEMP/event-images" \
+            "$RUNNER_TEMP/placement/fr" "$RUNNER_TEMP/placement/event" || status=$?
+          {
+            echo "### replay of $EVENT against this revision's runtime, aligned compiler"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/placement/event/verdict.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "compare.sh exit status: $status"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-placement-${{ inputs.placement_runner }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/placement/manifest.txt
+            ${{ runner.temp }}/placement/raw.tsv
+            ${{ runner.temp }}/placement/summary.txt
+            ${{ runner.temp }}/placement/logs/
+            ${{ runner.temp }}/placement/event/

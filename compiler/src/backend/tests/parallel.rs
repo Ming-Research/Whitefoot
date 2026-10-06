@@ -85,6 +85,75 @@ fn fold_module(parallel: bool) -> String {
     module
 }
 
+/// Every function the emitter defines — source functions, their outlined
+/// chunks and thunks, and the module's weak runtime fallbacks — and every
+/// definition of the linked ordinary-values IR starts on a 64-byte boundary,
+/// so a change elsewhere in an image cannot move their code within those lines
+/// (design/compiler/code-alignment.md). Clang applies no such alignment to
+/// LLVM input on its own, so a definition without it here is unaligned in
+/// every executable.
+#[test]
+fn every_emitted_and_linked_llvm_definition_starts_on_a_64_byte_boundary() {
+    for (name, module) in [
+        ("the parallel fold module", fold_module(true)),
+        ("ordinary_values.ll", crate::ORDINARY_VALUES_LLVM.to_owned()),
+    ] {
+        let definitions: Vec<&str> = module
+            .lines()
+            .filter(|line| line.starts_with("define "))
+            .collect();
+        assert!(
+            definitions.len() > 10,
+            "{name} must define enough functions to be a witness:\n{module}"
+        );
+        for definition in definitions {
+            assert!(
+                definition.ends_with(" align 64 {"),
+                "{name} defines a function without 64-byte alignment: {definition}"
+            );
+        }
+    }
+}
+
+/// The compiler-owned C runtime compiles with the host arguments every link
+/// takes, which start each of its functions on a 64-byte boundary as the
+/// emitted module's are, and the regression instrument's `runtime.mk`, which
+/// compiles the same runtime outside the driver, names the same arguments.
+#[test]
+fn the_c_runtime_compiles_with_64_byte_function_alignment() {
+    let makefile = include_str!("../../../runtime.mk");
+    let instrument: Vec<&str> = makefile
+        .lines()
+        .find_map(|line| line.strip_prefix("NATIVE_OPTIMIZATION_FLAGS := "))
+        .expect("runtime.mk must name NATIVE_OPTIMIZATION_FLAGS")
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        instrument,
+        crate::HOST_OPTIMIZATION_ARGUMENTS,
+        "runtime.mk must compile the runtime with the driver's host arguments"
+    );
+    let mut child = Command::new("/usr/bin/clang")
+        .args(["-x", "c", "-", "-S", "-o", "-"])
+        .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("invoke host clang");
+    std::io::Write::write_all(
+        child.stdin.as_mut().expect("clang stdin"),
+        b"int wf_alignment_probe(int x) { return x + 1; }\n",
+    )
+    .expect("send the probe to clang");
+    let output = child.wait_with_output().expect("wait for host clang");
+    assert!(output.status.success(), "clang rejected the probe");
+    let assembly = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        assembly.contains(".p2align\t6"),
+        "a runtime function compiled with the host arguments must start on a 64-byte boundary:\n{assembly}"
+    );
+}
+
 const LANE_FRAME_LAYOUT_FUNCTIONS: &[u8] =
     br#"fn exact_frame(values: Array<u8, 255>) -> result: u8 pure {
   return values[0_u64];
@@ -252,7 +321,7 @@ fn a_program_named_like_the_runtime_still_compiles_and_links() {
         "the source function keeps its own symbol:\n{module}"
     );
     assert!(
-        module.contains("define weak ptr @wf__par_acquire_lane(i64 %bytes) #0 {"),
+        module.contains("define weak ptr @wf__par_acquire_lane(i64 %bytes) #0 align 64 {"),
         "the runtime keeps its reserved symbol:\n{module}"
     );
     let output = compile_and_run(&module);
@@ -410,7 +479,7 @@ fn a_permitted_pair_is_outlined_offered_and_joined() {
     // published callback reads the budget out of the frame the offer wrote it
     // into; the inline edge carries the same value in a register.
     assert!(
-        module.contains("(ptr %frame) #0 {\nentry:\n  %p0 = getelementptr inbounds "),
+        module.contains("(ptr %frame) #0 align 64 {\nentry:\n  %p0 = getelementptr inbounds "),
         "no outlined thunk over a frame:\n{module}"
     );
     assert!(
@@ -430,10 +499,10 @@ fn a_permitted_pair_is_outlined_offered_and_joined() {
     // Every runtime entry point is the module's own weak definition, so a
     // module that hands work out is still a complete program.
     for weak in [
-        "define weak ptr @wf__par_acquire_lane(i64 %bytes) #0 {",
-        "define weak void @wf__par_publish(ptr %frame, ptr %fn) #0 {",
-        "define weak void @wf__par_join(ptr %frame) #0 {",
-        "define weak void @wf__par_release(ptr %frame) #0 {",
+        "define weak ptr @wf__par_acquire_lane(i64 %bytes) #0 align 64 {",
+        "define weak void @wf__par_publish(ptr %frame, ptr %fn) #0 align 64 {",
+        "define weak void @wf__par_join(ptr %frame) #0 align 64 {",
+        "define weak void @wf__par_release(ptr %frame) #0 align 64 {",
     ] {
         assert!(module.contains(weak), "no weak `{weak}`:\n{module}");
     }
@@ -1037,14 +1106,16 @@ fn the_bootstrap_selects_one_world_once() {
     // These POSIX fallback definitions are an emitted-module property. The
     // shipped driver still links the complete ordinary runtime for every build.
     assert!(
-        overlapped.contains("define weak i32 @wf__par_pool_active() #0 {\nentry:\n  ret i32 0\n}"),
+        overlapped.contains(
+            "define weak i32 @wf__par_pool_active() #0 align 64 {\nentry:\n  ret i32 0\n}"
+        ),
         "the module must carry its own answer:\n{overlapped}"
     );
     for weak in [
-        "define weak ptr @wf__par_acquire_lane(i64 %bytes) #0 {",
-        "define weak void @wf__par_publish(ptr %frame, ptr %fn) #0 {",
-        "define weak void @wf__par_join(ptr %frame) #0 {",
-        "define weak void @wf__par_release(ptr %frame) #0 {",
+        "define weak ptr @wf__par_acquire_lane(i64 %bytes) #0 align 64 {",
+        "define weak void @wf__par_publish(ptr %frame, ptr %fn) #0 align 64 {",
+        "define weak void @wf__par_join(ptr %frame) #0 align 64 {",
+        "define weak void @wf__par_release(ptr %frame) #0 align 64 {",
     ] {
         assert!(
             overlapped.contains(weak),
