@@ -781,9 +781,12 @@ impl FlowGraph {
 }
 
 /// Selects the one checked owned binding whose dead backing may receive this
-/// ordinary call's whole result. Stored parameters are snapshotted in the
-/// callee prologue before any body or result write, so making its result
-/// destination equal this one input address preserves argument evaluation.
+/// ordinary call's whole result. A callee whose result crosses through a
+/// destination snapshots its stored parameters in its prologue before any
+/// body or result write, so making that destination equal this one input
+/// address preserves argument evaluation; a callee whose result returns as
+/// a value or in registers may read an input in place, and its caller
+/// stores the result only after the call returns (compiler/storage-placement).
 /// Calls which can leave the current synchronous extent keep distinct storage.
 fn call_reuse_operand(
     program: &IrProgram,
