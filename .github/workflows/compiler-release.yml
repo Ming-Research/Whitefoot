@@ -137,10 +137,16 @@ jobs:
           fi
           tag="$prefix${commit:0:12}"
           spec=$(git show "$commit:spec/kernel-spec.md" | sed -n '1s/^# Kernel Specification //p')
-          # The LLVM major the commit pins for its gate's Linux jobs, which its
-          # Linux compiler is built with; a commit from before the pin is built
-          # with Ubuntu's own clang, as it was gated (compiler/downstream-releases).
+          # The LLVM major the commit's gate built its Linux jobs with, which its
+          # Linux compiler is built with (compiler/downstream-releases): the
+          # commit's .github/llvm-major, else the major its gate.yml named
+          # inline before that file existed, else none, Ubuntu's own clang, as
+          # such a commit was gated.
           llvm=$(git show "$commit:.github/llvm-major" 2>/dev/null | tr -d '[:space:]' || true)
+          if [ -z "$llvm" ]; then
+            llvm=$(git show "$commit:.github/workflows/gate.yml" 2>/dev/null \
+              | sed -n 's/^ *LLVM_MAJOR: "\([0-9][0-9]*\)"$/\1/p' | head -n 1 || true)
+          fi
           if [ -z "$spec" ]; then
             echo "::error::spec/kernel-spec.md at $commit names no version"
             exit 1
