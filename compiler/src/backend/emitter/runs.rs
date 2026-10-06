@@ -115,6 +115,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .is_some_and(|shape| shape.shape == IrWindowShape::Slots))
     }
 
+    /// The address of slot `physical` of a run whose slots follow its
+    /// address (see [`Self::run_slots_follow_address`]), one past the last
+    /// slot included.
+    pub(super) fn run_slot_pointer(
+        &mut self,
+        run: IrValueId,
+        physical: &str,
+    ) -> Result<String, BackendFailure> {
+        let run_type = self.run_value_type(run)?;
+        let shape = RunShape::of(run_type).ok_or(BackendFailure::InvalidIr)?;
+        self.element_pointer(run, shape, run_type, run, physical)
+            .map(|pointer| format!("%{pointer}"))
+    }
+
+    /// The run type and the aggregate field of the slots of a run whose
+    /// slots follow its address.
+    pub(super) fn run_slots_layout(&self, run: IrValueId) -> Result<(IrType, u32), BackendFailure> {
+        let run_type = self.run_value_type(run)?;
+        let shape = RunShape::of(run_type).ok_or(BackendFailure::InvalidIr)?;
+        Ok((run_type, shape.slots_field()))
+    }
+
     fn run_storage(&mut self, run: IrValueId) -> Result<Option<String>, BackendFailure> {
         if matches!(self.value_type(run), Some(IrType::Address(_))) {
             Ok(Some(self.value_name(run)))

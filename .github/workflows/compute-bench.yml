@@ -402,7 +402,11 @@ jobs:
           set -eo pipefail
           out="$RUNNER_TEMP/stage3"
           mkdir -p "$out"
-          base=$(git merge-base origin/main HEAD)
+          # placement_unaligned names another base, such as an earlier step.
+          base="${{ inputs.placement_unaligned }}"
+          if [ -z "$base" ]; then
+            base=$(git merge-base origin/main HEAD)
+          fi
           echo "base $base, head $(git rev-parse HEAD)"
           git worktree prune
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
