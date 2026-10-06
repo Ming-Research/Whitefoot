@@ -805,8 +805,8 @@ struct Entry {
 }
 
 fn put_text(slot: &Option<Entry>, value: Bytes, expires: u64) -> result: unit writes(slot) {
-  let entry = Entry(text: move value, expires: expires);
-  set slot^ = Some<Entry>(value: move entry);
+  let stored = Entry(text: move value, expires: expires);
+  set slot^ = Some<Entry>(value: move stored);
   return unit;
 }
 
@@ -864,7 +864,7 @@ fn main() -> status: std::process::ExitStatus pure {
 /// text into a slot of its own at entry (compiler/storage-placement). The
 /// program also stores, replaces and releases inline and boxed texts
 /// through `put_text`, whose text is read in place the same way, with
-/// every owner released once.
+/// every owner released once, inlined and with its call boundaries kept.
 #[test]
 fn a_by_value_parameter_nothing_writes_is_read_in_place() {
     for overlap in [OverlapLowering::Off, OverlapLowering::On] {
@@ -886,10 +886,25 @@ fn a_by_value_parameter_nothing_writes_is_read_in_place() {
             body.lines().skip(1).any(|line| line.contains(&incoming)),
             "{overlap:?}: the body reads {incoming} in place: {body}"
         );
-        let output = compile_link_and_run(&observed(&module), Some(ALLOCATION_OBSERVER), &[]);
-        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
-        let report = String::from_utf8(output.stdout).expect("report");
-        assert!(report.ends_with(" live=0\n"), "{overlap:?}: {report}");
-        assert!(!report.starts_with("allocated=0 "), "{overlap:?}: {report}");
+        let ordinary = module
+            .replace("@malloc(", "@wf_test_allocate(")
+            .replace("@free(", "@wf_test_release(");
+        for (form, llvm) in [("ordinary", ordinary), ("retained", observed(&module))] {
+            let output = compile_link_and_run(&llvm, Some(ALLOCATION_OBSERVER), &[]);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{overlap:?} {form}: {output:?}"
+            );
+            let report = String::from_utf8(output.stdout).expect("report");
+            assert!(
+                report.ends_with(" live=0\n"),
+                "{overlap:?} {form}: {report}"
+            );
+            assert!(
+                !report.starts_with("allocated=0 "),
+                "{overlap:?} {form}: {report}"
+            );
+        }
     }
 }
