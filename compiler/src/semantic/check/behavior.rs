@@ -349,9 +349,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .types
                     .declarations
                     .resolved
-                    .declarations()
-                    .iter()
-                    .find(|candidate| candidate.id() == declaration)
+                    .declaration(declaration)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 let source = self
                     .types
@@ -844,10 +842,11 @@ impl<'unit> Checker<'_, 'unit> {
 }
 
 impl<'unit> TypeContext<'unit> {
-    /// Diagnostic provenance is not part of function or nominal instance
+    /// Generic argument diagnostic provenance is not part of function or nominal instance
     /// identity. The retained substitution names the binding directly; an
     /// independently attached region vector is not an argument of a
-    /// function-kind formal and does not select its binding site.
+    /// formal and does not select its binding site. Type arguments share these
+    /// records so placement refusals point to the argument that supplied them.
     pub(super) fn record_behavior_binding_sites(
         &self,
         substitution: &GenericSubstitution,
@@ -1262,7 +1261,7 @@ impl<'unit> TypeContext<'unit> {
         let mut edges = vec![Vec::new(); groups.len()];
         for (source, (_, group)) in groups.iter().enumerate() {
             let prefix = self.declarations.tree.path(group.node)?.components();
-            for usage in self.declarations.resolved.lexical_uses() {
+            for usage in self.declarations.resolved.lexical_uses_under(prefix) {
                 let ResolvedTarget::Source {
                     declaration,
                     class: DeclarationClass::Binding,
@@ -1270,10 +1269,9 @@ impl<'unit> TypeContext<'unit> {
                 else {
                     continue;
                 };
-                if usage.origin().node().components().starts_with(prefix)
-                    && let Some(target) = groups
-                        .iter()
-                        .position(|(candidate, _)| **candidate == declaration)
+                if let Some(target) = groups
+                    .iter()
+                    .position(|(candidate, _)| **candidate == declaration)
                     && !edges[source].contains(&target)
                 {
                     edges[source].push(target);

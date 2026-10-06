@@ -382,38 +382,72 @@ replay suites, and `compiler/test-corpus` inside the group stayed within its
 145 s (125.1 s). 1.25 times the slower run, rounded up to 5 s, is 265 s,
 which the owner approved on 2026-10-04 (Q37, "37 agreed", translated from Chinese); macOS stays at 255 s.
 
-**macOS budgets after the move to `macos-15`.** From the merge that moved
-the macOS jobs to `macos-15` (`c3d26643c`, 2026-10-04 22:12 UTC) to
-2026-10-05 08:27 UTC, 29 gate runs on 10 branches ran on `macos-15-arm64`
-images; eleven stage runs went over their budgets, in `check/unit` (up to
-342.7 s of 280 s), `compiler/test-build-unit` (234.3 s of 185 s),
-`compiler/test-unit` (119.5 s of 100 s) and `compiler/test-corpus` (129.9 s
-of 125 s). Against the last 15 `macos-14` runs before the merge, the
-medians moved from 220.5 to 237.2 s (`check/unit`), 145.3 to 144.5 s
-(`compiler/test-build-unit`), 75.4 to 84.4 s (`compiler/test-unit`), 186.8
-to 187.8 s (`check/corpus`) and 89.0 to 99.3 s (`compiler/test-corpus`),
-while the maxima rose more, 256.2 to 342.7 s for `check/unit` and 161.9 to
-234.3 s for `compiler/test-build-unit`. The comparison does not isolate the
-image: the cohorts have different revisions, and those two maxima come
-from 29 and 30 `macos-15` samples against 13 `macos-14` ones each, and a
-larger sample alone raises a maximum.
-Slowest `macos-15` runs, in seconds, and 1.25 times each rounded up to
-5 s, which this change sets as the macOS budgets and the owner approved on
-2026-10-05 ("agree to all the others", translated from Chinese):
+**Every gate stage recomputed over main's runs on mixed processors.** On
+2026-10-05, 42 gate runs failed with 64 failed jobs, and 59 of those jobs
+failed only their verdict step: each stage's own checks passed, and the
+stage took longer than its budget. The other five were a clippy refusal of
+dead code, the English-artifact check, each on both hosts, and a two-map
+audit of the concurrent map that main has since fixed. The host record's
+processor model shows why the overruns came and went. The hosted ubuntu
+runners drew six processor models, and on one model a stage took about
+1.6 times as long as on another (medians over the 70 ubuntu unit jobs and 71
+corpus jobs of the last 100 gate runs, all branches; seconds):
 
-| Stage | Slowest run | Budget, before | after |
-|---|---:|---:|---:|
-| `check/unit` | 342.7 | 280 | 430 |
-| `compiler/test-build-unit` | 234.3 | 185 | 295 |
-| `compiler/test-unit` | 119.5 | 100 | 150 |
-| `check/corpus` | 253.6 | 255 | 320 |
-| `compiler/test-build-corpus` | 129.5 | 135 | 165 |
-| `compiler/test-corpus` | 129.9 | 125 | 165 |
-| `check/runtime` | 14.6 | 15 | 20 |
+| Processor | unit jobs | `compiler/test-build-unit` | `compiler/test-unit` | `compiler/test-corpus` |
+|---|---:|---:|---:|---:|
+| AMD EPYC 7763 | 45 | 121 | 105 | 128 |
+| AMD EPYC 9V45 | 11 | 85 | 65 | 80 |
+| AMD EPYC 9V74 | 6 | 124 | 98 | 103 |
+| Intel Xeon Platinum 8370C | 5 | 121 | 100 | 129 |
+| Intel Xeon Platinum 8573C | 2 | 107 | 82 | 106 |
+| Intel Xeon 6973P-C | 1 | 97 | 66 | 104 |
 
-Every other macOS stage's slowest run stayed within its budget. The
-slowest `check/unit` and `compiler/test-unit` came from run 37262433875,
-the slowest `compiler/test-build-unit` from run 37279701596.
+The EPYC 7763 ran most jobs, and on it `compiler/test-unit` had reached its
+105 s budget: main took 107.3 s at `a23a3f1f4`, 111.3 s at `bfe5d652b` and
+106.9 s at `97b477e14`, so every branch failed that stage whenever it drew
+that processor, whatever it changed. The September budgets came from seven
+runs whose processor was not recorded; at that time `compiler/test-unit` took
+58–81 s over 1,880 cases, and on 2026-10-05 it took 65 s on the 9V45 and
+105 s on the 7763 over 1,964. Part of the difference is growth: one
+witness test added in PR #231 took 11.8 s alone, which PR #239 splits. The
+macOS runners, all `Apple M1 (Virtual)` with three processors, varied as
+widely within one model: `compiler/test-unit` took 56–137 s on main's
+revisions. PR #227's faster checker did not shorten `compiler/test-unit`
+(107.4 s and 103.8 s on the 7763 after it), whose slowest cases compile,
+link and run native programs; it shortened firn's cold front end from 24.2 s
+to 3.7 s on the 14900K.
+
+Each gate stage's budget is again 1.25 times its slowest run, rounded up to
+5 s, now over the 22 gate runs from 2026-10-05 08:27 to 2026-10-06 00:07
+UTC whose head is a commit of main, so that no branch's own cost enters the
+sample: runs 37283770911, 37284883461, 37291288915, 37298227841,
+37300734558, 37302833541, 37303357044, 37376326396, 37379405859,
+37379598126, 37379967022, 37380266404, 37381952614, 37381969387,
+37381975146, 37383619959, 37383653548, 37389666607, 37390062583,
+37390583584, 37391117333 and 37392246769. Every slowest ubuntu run was on an
+EPYC 7763. Seconds:
+
+| Stage | ubuntu slowest | ubuntu budget | macOS slowest | macOS budget |
+|---|---:|---|---:|---|
+| `check/static` | 66.8 | 65 → 85 | 99.8 | 120 → 125 |
+| `compiler/lint` | 43.4 | 40 → 55 | 58.5 | 80 → 75 |
+| `design-lint` | 1.7 | 10 | 9.9 | 10 → 15 |
+| `check/unit` | 249.9 | 235 → 315 | 315.2 | 280 → 395 |
+| `compiler/test-build-unit` | 138.3 | 135 → 175 | 212.2 | 185 → 270 |
+| `compiler/test-unit` | 111.3 | 105 → 140 | 137.4 | 100 → 175 |
+| `check/corpus` | 240.8 | 265 → 305 | 261.7 | 255 → 330 |
+| `compiler/test-build-corpus` | 107.8 | 95 → 135 | 128.4 | 135 → 165 |
+| `compiler/test-corpus` | 139.7 | 145 → 175 | 137.3 | 125 → 175 |
+| `check/runtime` | 12.9 | 15 → 20 | 14.4 | 15 → 20 |
+
+The owner approved this table on 2026-10-05. The other gate stages keep
+their budgets, which their slowest runs stay under. These values replace the separate raises proposed in PRs #230
+(`compiler/test-unit` 115 s and `check/unit` 250 s on ubuntu) and #237 (the
+macOS column over 29 to 30 runs of 2026-10-04 and 2026-10-05), which drop
+their budget edits. A budget that covers the slowest processor lets a change
+grow a stage on the fastest by about twice before it trips, so a branch
+still reads its stage times against main's on the same processor; a budget
+column per processor model remains in `docs/todo.md`.
 
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,

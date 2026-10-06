@@ -1,0 +1,31 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn run(ops: &Box<Slots<u64>>, room: u64) -> r: u64 reads(ops) contract {
+  requires 1_u64 <= ops^.inner.len;
+} {
+  let n = ops^.inner.len;
+  let base = 0_u64;
+  let pc = 0_u64;
+  loop (
+    invariant inside: pc < n,
+    invariant frame: base <= room
+  ) {
+    let t = ops^.inner[pc];
+    if t <= room {
+      set base = t;
+    } else {
+      return base;
+    }
+    if t < n {
+      set pc = t;
+    } else {
+      return base;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

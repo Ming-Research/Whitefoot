@@ -197,8 +197,8 @@ fn run_info(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   let clients = 0_u64;
   if chosen[1_u64] == 1_u64 {
-    atomic s = &store^.state {
-      set clients = s^.meta.clients;
+    atomic m = &store^.meta {
+      set clients = m^.clients;
     }
   }
   let started = 0_u64;
@@ -215,8 +215,8 @@ fn run_info(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   }
   let keys = 0_u64;
   if chosen[12_u64] == 1_u64 {
-    atomic s = &store^.state {
-      set keys = keyed_table_count::<Entry>(table: &s^.map);
+    atomic t = &store^.keys {
+      set keys = map_count::<Entry>(map: t);
     }
   }
   let text = box_slots_new::<u8>(capacity: 2048_u64);

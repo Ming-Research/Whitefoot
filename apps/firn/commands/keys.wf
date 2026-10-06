@@ -357,7 +357,7 @@ fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let keys = named_keys(input: input, args: args, positions: &client^.key_metadata);
   let removed = 0_u64;
   let logged = store^.logging;
-  atomic s = &store^.state, slots = &s^.map[keys] {
+  atomic slots = &store^.keys[keys], m = &store^.meta {
     for @named (at in 0_u64..keys.len) {
       let found = remove_live(slot: &slots^[at], now: time^.check);
       if found == 1_u64 {
@@ -368,13 +368,13 @@ fn run_del(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
           let payload = key_position(positions: &client^.key_metadata, index: at);
           let place = named_bounds(input: input, args: args, payload: payload);
           let key = &input^[place.start..place.end];
-          log_removal(log: &s^.meta.log, key: key);
+          log_removal(log: &m^.log, key: key);
         }
       }
     }
     if removed > 0_u64 {
       if logged {
-        log_command(log: &s^.meta.log, input: input, args: args);
+        log_command(log: &m^.log, input: input, args: args);
       }
     }
   }
@@ -390,7 +390,7 @@ fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   let live = 0_u64;
   let logged = store^.logging;
-  atomic s = &store^.state, slots = &s^.map[keys] {
+  atomic slots = &store^.keys[keys], m = &store^.meta {
     for @named (at in 0_u64..keys.len) {
       let kind = entry_kind(slot: &slots^[at], client: client);
       let payload = key_position(positions: &client^.key_metadata, index: at);
@@ -402,7 +402,7 @@ fn run_exists(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
         if logged {
           let place = named_bounds(input: input, args: args, payload: payload);
           let key = &input^[place.start..place.end];
-          log_removal(log: &s^.meta.log, key: key);
+          log_removal(log: &m^.log, key: key);
         }
       }
     }
@@ -419,11 +419,11 @@ fn run_type(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   let kind = 0_u64;
   let logged = store^.logging;
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     set kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
   }
@@ -681,11 +681,11 @@ fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let logged = store^.logging;
   set client^.now = time^.check;
   let done = False();
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     let kind = entry_kind(slot: slot, client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if kind != 0_u64 {
@@ -695,16 +695,16 @@ fn run_expire(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
         if remove_now {
           set slot^ = None<Entry>();
           if logged {
-            log_key_word(log: &s^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+            log_key_word(log: &m^.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
           }
         } else {
           hold_expiry(slot: slot, expires: expires);
-          queue_expiry(meta: &s^.meta, key: key, at: expires, env: env);
+          queue_expiry(meta: m, key: key, at: expires, env: env);
           if logged {
             if as_sent {
-              log_command(log: &s^.meta.log, input: input, args: args);
+              log_command(log: &m^.log, input: input, args: args);
             } else {
-              log_expire_options(log: &s^.meta.log, input: input, args: args, at_ms: expires);
+              log_expire_options(log: &m^.log, input: input, args: args, at_ms: expires);
             }
           }
         }
@@ -725,7 +725,7 @@ fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let remaining = Remaining(at: 0_u64, now: time^.check, state: 3_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let found = read_expiry(env: &remaining, value: held);
@@ -736,7 +736,7 @@ fn run_ttl(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     if remaining.state == 0_u64 {
       set slot^ = None<Entry>();
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
   }
@@ -767,7 +767,7 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   let key_span = arg(args: args, index: 1_u64);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
-  atomic s = &store^.state, slot = &s^.map[key] {
+  atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
       Some(value: held) => {
         let outcome = clear_expiry(env: &expiry, value: held);
@@ -778,12 +778,12 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
     if expiry.state == state_expired {
       set slot^ = None<Entry>();
       if store^.logging {
-        log_removal(log: &s^.meta.log, key: key);
+        log_removal(log: &m^.log, key: key);
       }
     }
     if expiry.state == state_done {
       if store^.logging {
-        log_key_word(log: &s^.meta.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
+        log_key_word(log: &m^.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
       }
     }
   }
@@ -796,10 +796,10 @@ fn run_persist(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
 }
 
 fn run_dbsize(store: &Keyspace, client: &Client) -> result: unit reads(store), writes(client) waits {
-  doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does, in one statement that holds the keyspace's table whole.";
+  doc "DBSIZE: answers how many keys the keyspace holds, counting an expired key not yet removed, as Redis does, in one statement that holds the keyspace's map whole.";
   let size = 0_u64;
-  atomic s = &store^.state {
-    set size = keyed_table_count::<Entry>(table: &s^.map);
+  atomic t = &store^.keys {
+    set size = map_count::<Entry>(map: t);
   }
   let answer = cvt.wrap::<u64, i64>(size);
   reply_integer(client: client, value: answer);
@@ -971,12 +971,12 @@ fn run_rename(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   let logged = store^.logging;
   let outcome = rename_missing;
-  atomic s = &store^.state, slots = &s^.map[keys] {
+  atomic slots = &store^.keys[keys], m = &store^.meta {
     if source < slots^.len {
       let kind = entry_kind(slot: &slots^[source], client: client);
       if client^.state == state_expired {
         if logged {
-          log_removal(log: &s^.meta.log, key: source_key);
+          log_removal(log: &m^.log, key: source_key);
         }
       }
       if kind == 0_u64 {
@@ -986,7 +986,7 @@ fn run_rename(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
         let held = entry_kind(slot: &slots^[target], client: client);
         if client^.state == state_expired {
           if logged {
-            log_removal(log: &s^.meta.log, key: target_key);
+            log_removal(log: &m^.log, key: target_key);
           }
         }
         let occupied = held != 0_u64;
@@ -999,10 +999,10 @@ fn run_rename(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
           let at = held_expiry(slot: &moved);
           set slots^[target] = move moved;
           if at != 0_u64 {
-            queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+            queue_expiry(meta: m, key: target_key, at: at, env: env);
           }
           if logged {
-            log_command(log: &s^.meta.log, input: input, args: args);
+            log_command(log: &m^.log, input: input, args: args);
           }
           set outcome = rename_done;
         }
@@ -1082,12 +1082,12 @@ fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.now = time^.check;
   let logged = store^.logging;
   let done = False();
-  atomic s = &store^.state, slots = &s^.map[keys] {
+  atomic slots = &store^.keys[keys], m = &store^.meta {
     if source < slots^.len {
       let kind = entry_kind(slot: &slots^[source], client: client);
       if client^.state == state_expired {
         if logged {
-          log_removal(log: &s^.meta.log, key: source_key);
+          log_removal(log: &m^.log, key: source_key);
         }
       }
       if kind != 0_u64 {
@@ -1095,7 +1095,7 @@ fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
           let held = entry_kind(slot: &slots^[target], client: client);
           if client^.state == state_expired {
             if logged {
-              log_removal(log: &s^.meta.log, key: target_key);
+              log_removal(log: &m^.log, key: target_key);
             }
           }
           let vacant = held == 0_u64;
@@ -1105,10 +1105,10 @@ fn run_copy(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
             let at = held_expiry(slot: &copied);
             set slots^[target] = move copied;
             if at != 0_u64 {
-              queue_expiry(meta: &s^.meta, key: target_key, at: at, env: env);
+              queue_expiry(meta: m, key: target_key, at: at, env: env);
             }
             if logged {
-              log_command(log: &s^.meta.log, input: input, args: args);
+              log_command(log: &m^.log, input: input, args: args);
             }
             set done = True();
           }

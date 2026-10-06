@@ -677,3 +677,288 @@ old sort's share, and `memmove` from 50.0 to 8.1; `try_entry` is back at
 Measurement 6 went with the byte-ordered set. E carries the parser's
 `read_line` (56.0 ns), which PR #218 removes separately, so E without that
 regression would spend about 3% less than `cea9188d4` per `MSET`.
+
+## Independent shared-object targets
+
+Amendment S replaces the table-field layout and header grants described above.
+TYPE-9 places ConcurrentHashMap values only in Shared state; an entry may
+contain a Shared map handle. SHARE-2 names each held object directly and treats
+unifying state types as pairwise possible aliases. Several entries and key sets
+may use one handle place; a whole target is alone on its handle place.
+
+The checker keeps possible state-root overlap on ordinary resolved reference
+paths. It removes table grants, row checks and provenance sets. Lowering owns
+targets and ordered type groups in its existing atomic module. The existing map
+hold record supplies per-target positions; a group sorts objects by identity and
+merges duplicate objects into a primary hold. Direct single-entry targets retain
+the direct lock/unlock calls. Lazy groups use aligned words rather than Boolean
+address slots. These responsibilities follow the existing checker, lowering and
+runtime boundaries and introduce no additional analysis pass.
+
+Read groups share present cells. An absent key has no cell to exclude an insert,
+so a multi-key read falls back to a whole read hold and probes shared None without
+allocating. Guard-read entries keep exclusive holds until their watches are
+registered. Split chunks retain the current write-footprint rule.
+
+Firn separates its keys and Meta objects, names both where a command needs them,
+and swaps a fresh shared map for FLUSHALL. Whole-map iteration remains a library
+gap recorded in docs/todo.md; no SCAN or BGSAVE claim follows from this amendment.
+
+### Conformance transitions
+
+TYPE-9's position judgment changes the runtime-capacity reference case from a
+rejection to acceptance; a separate generic reference instance and by-value
+negative distinguish the new boundary. Rewritten map cases retain their original
+observations unless the table below explicitly names a replaced observation.
+
+| Retired case | Technical reason |
+|---|---|
+| share-neg-table-subscript-in-block | no table reached through a binding exists |
+| share-neg-table-entry-after-replace | it assigned a table value (`set s^.map = move fresh`); no expression yields a map value now [TYPE-9], and the whole-write invalidation it showed is `share-neg-map-entry-after-swap`'s |
+| share-neg-table-entry-not-through-the-binding | no header has a binding to go through; a target that is no handle is `share-neg-target-not-shared`, and a map inside a local struct is `type9-neg-map-field` |
+| share-neg-table-through-a-box | `type9-neg-map-box-content` |
+| share-pos-table-whole-binding-swapped | `share-pos-map-swapped` |
+| share-pos-table-row-names-no-table | vacuous: a state holds no map |
+| share-pos-table-local-indexed | a map that no shared object holds no longer exists (rulings 1, 3); its absent-`None` and counting observations are `share-pos-map-whole-target-entry`'s |
+| share-neg-table-reached-without-binding | no state contains a map |
+| share-neg-table-two-whole-bindings | the same refusal as `share-neg-target-handle-twice` |
+| share-neg-table-row-names-table-without-binding | no row can reach a map except through a whole target (SHARE-2's consequence sentence) |
+| share-neg-table-whole-binding-unused | the same observation as new `share-neg-target-unused` |
+| share-neg-table-whole-binding-through-a-box | `type9-neg-map-box-content` |
+| share-neg-table-reached-through-a-box | `type9-neg-map-box-content` |
+| share-neg-table-state-alias-write | the header provenance they tested retires: a map is reached only through its own target's state, and no second binding over one state exists |
+| share-neg-table-state-alias-beside-whole | the header provenance they tested retires: a map is reached only through its own target's state, and no second binding over one state exists |
+| share-neg-table-state-alias-join | the header provenance they tested retires: a map is reached only through its own target's state, and no second binding over one state exists |
+| share-neg-table-state-alias-backedge | the header provenance they tested retires: a map is reached only through its own target's state, and no second binding over one state exists |
+| share-pos-table-whole-binding-content-write | the same observation (a `swap` through a whole target keeps it valid) is in `share-pos-map-swapped` |
+| share-neg-table-owned-borrow-without-reference | there is no local map [TYPE-9]; `type9-neg-map-field` refuses its struct |
+| share-neg-table-state-payload-alias | Header grants and table provenance retire; map placement is now TYPE-9 and whole writes invalidate entries under ordinary REF-2. |
+| share-neg-table-state-subfield-alias | Header grants and table provenance retire; map placement is now TYPE-9 and whole writes invalidate entries under ordinary REF-2. |
+
+The backend row-grant mutation and local-table-publication tests retire because
+those mechanisms no longer exist. Their write-selection, set-index and swap
+mutation tests continue against map targets. Pinned grant and local-reference
+repairs retire with their diagnostics; target overlap, unused targets and ordinary
+key-set/subscript repairs continue in shared_maps.rs. The old nested-table writer
+fixture is replaced by a nested Shared handle; its reference permission tests
+continue for whole maps and separate metadata. Runtime local-selection tests
+now take explicit whole holds and retain their allocation, stability, growth and
+release observations.
+
+A single-entry read beside other targets likewise upgrades on an absent key and
+rechecks it under the whole hold. Without that protection a writer could insert
+that key and change the second object before its acquisition, yielding the old
+absence beside the new metadata. Single-target reads require no such upgrade.
+
+The rewritten nested-reader witness preserves both present/absent selections,
+key-set agreement and its exit status 18; a reader first copies the inner handle
+out and then holds its map whole in a separate statement. The replacement witness
+uses a fresh shared map and swap rather than assigning a map value, which TYPE-9
+no longer admits. Its exit changes from 12 to 22 because it additionally observes
+the two displaced entries through the fresh handle and their count after an
+equal-object swap. This is a replacement of the removed assignment mechanism,
+not a changed acceptance expectation.
+
+Found while porting: FLUSHALL's displaced map and expiry queue must leave scope
+before sending its reply, as its existing resource-release description promises.
+They now live in the successful branch, so both are released after the atomic
+statement and before the reply. The firn introduction now describes its separate
+objects rather than claiming that all commands on distinct keys never wait.
+
+The static lock key orders a source nominal's module path before its name,
+rather than comparing the two as one joined symbol. Constant and function-kind
+arguments use the existing stable source-identity spelling; compilation-local
+function instance numbers cannot order locks consistently across fragments.
+
+### Rewritten and new witnesses
+
+The mappings below retain the declared acceptance or rejection, except for the
+TYPE-9 reference judgment and the replacement witness described above. Run
+numbers are exact declared exits, not counts of assertions.
+
+| Old case | Amendment S case | Declared verdict |
+|---|---|---|
+| type9-neg-runtime-capacity-outside-box | type9-pos-runtime-capacity-reference | run 0 |
+| share-pos-table-keyed-counter | share-pos-map-keyed-counter | run 7 |
+| share-pos-table-entries-start-none | share-pos-map-entries-start-none | run 13 |
+| share-pos-table-key-set-entries | share-pos-map-key-set-entries | run 8 |
+| share-pos-key-set-insertion-order | share-pos-key-set-insertion-order | run 37 |
+| share-pos-key-set-insert-index | share-pos-key-set-insert-index | run 41 |
+| share-pos-table-two-keys-one-entry | share-pos-map-two-keys-one-entry | run 9 |
+| share-pos-table-beside-a-field | share-pos-map-entry-beside-an-object | run 80 |
+| share-pos-table-guard-on-entry | share-pos-map-guard-on-entry | run 9 |
+| share-pos-table-replaced | share-pos-map-swapped | run 22 |
+| share-pos-table-key-set-counts | share-pos-map-key-set-counts | run 6 |
+| share-pos-table-entry-through-a-copy | share-pos-map-entry-through-a-copy | run 6 |
+| share-pos-table-count-after-writes | share-pos-map-count-after-writes | run 5 |
+| share-neg-table-key-not-bytes | share-neg-map-key-not-bytes | reject SHARE-2 |
+| share-neg-table-binding-unused | share-neg-map-entry-target-unused | reject SHARE-2 |
+| share-neg-table-key-set-written | share-neg-map-key-set-written | reject REF-2 |
+| share-neg-table-entry-after-swap | share-neg-map-entry-after-swap | reject REF-2 |
+| share-neg-table-entries-past-the-set | share-neg-map-entries-past-the-set | reject OP-4 |
+| share-neg-table-key-read-outside-row | share-neg-map-key-read-outside-row | reject EFF-2 |
+| share-neg-table-entries-as-a-range | share-neg-map-entries-as-a-range | reject REF-4 |
+| share-neg-table-key-computed-in-block | share-neg-map-key-computed-in-block | reject TYPE-5 |
+| share-neg-table-key-reads-the-state | share-neg-map-key-reads-a-target | reject SHARE-2 |
+| share-neg-table-key-moved | share-neg-map-key-moved | reject SHARE-2 |
+| share-pos-table-as-the-state | share-pos-map-as-the-state | run 6 |
+| share-pos-table-entries-through-a-set-reference | share-pos-map-entries-through-a-set-reference | run 5 |
+| share-pos-table-key-written-in-the-block | share-pos-map-key-written-in-the-block | run 1 |
+| share-pos-table-entry-swapped | share-pos-map-entry-swapped | run 3 |
+| share-neg-table-key-range-reads-the-state | share-neg-map-key-range-reads-a-target | reject SHARE-2 |
+| share-pos-table-whole-binding-entry | share-pos-map-whole-target-entry | run 22 |
+| share-pos-table-whole-binding-entries-over-set | share-pos-map-whole-target-entries-over-set | run 3 |
+| share-pos-table-whole-binding-count-sees-own-writes | share-pos-map-whole-target-count-sees-own-writes | run 21 |
+| share-pos-table-whole-binding-passed-to-callee | share-pos-map-whole-target-passed-to-callee | run 1 |
+| share-pos-table-whole-binding-guard | share-pos-map-whole-target-guard | run 1 |
+| share-neg-table-mixed-entry-and-whole | share-neg-target-handle-twice | reject SHARE-2 |
+| share-neg-table-subscript-offset-not-a-key | share-neg-map-subscript-offset-not-a-key | reject OP-4 |
+| share-neg-table-entries-place-not-borrowed | share-neg-map-entries-place-not-borrowed | reject OP-4 |
+| share-neg-table-moved-key-set-offset | share-neg-map-moved-key-set-offset | reject OP-4 |
+| share-neg-table-whole-row-write-invalidates | share-neg-map-row-write-invalidates-entry | reject REF-2 |
+| share-neg-table-selected-key-set-write-invalidates | share-neg-map-selected-key-set-write-invalidates | reject REF-2 |
+| share-pos-table-whole-binding-alias | share-pos-map-whole-target-alias | run 22 |
+| share-neg-table-reference-key-set-offset | share-neg-map-reference-key-set-offset | reject OP-4 |
+| share-neg-table-key-write-invalidates-payload | share-neg-map-key-write-invalidates-payload | reject REF-2 |
+| share-neg-table-key-set-holder-offset | share-neg-map-key-set-holder-offset | reject OP-4 |
+| share-pos-table-nested-readers | share-pos-map-handle-in-an-entry | run 18 |
+
+| New case | Declared verdict |
+|---|---|
+| share-neg-target-index-not-a-map | reject SHARE-2 |
+| share-neg-target-reads-a-binding | reject SHARE-2 |
+| share-neg-target-unused | reject SHARE-2 |
+| share-neg-target-whole-handle-twice | reject SHARE-2 |
+| share-neg-targets-same-type-one-call | reject EFF-5 |
+| share-neg-targets-same-type-one-root | reject REF-2 |
+| share-neg-targets-type-parameter-overlaps | reject EFF-5 |
+| share-pos-map-two-handles-one-entry | run 9 |
+| share-pos-targets-different-types-disjoint | run 7 |
+| share-pos-targets-guard-over-two-objects | run 9 |
+| share-pos-targets-opposite-orders | run 6 |
+| share-pos-targets-same-map-whole-and-entry | run 71 |
+| share-pos-targets-same-object-two-handles | run 6 |
+| type9-neg-map-box-content | reject TYPE-9 |
+| type9-neg-map-entry-value | reject TYPE-9 |
+| type9-neg-map-field | reject TYPE-9 |
+| type9-neg-map-type-argument-in-a-result | reject TYPE-9 |
+| type9-neg-runtime-capacity-type-argument-value | reject TYPE-9 |
+| type9-pos-map-type-argument-behind-a-handle | run 3 |
+| type9-pos-runtime-capacity-type-argument-reference | run 0 |
+| share-pos-targets-repeated-type-parameter-disjoint | accept |
+| share-neg-targets-const-parameter-overlaps | reject EFF-5 |
+| share-neg-targets-const-expression-overlaps | reject EFF-5 |
+
+### Firn entry-path IR comparison
+
+The owner's criterion, stated before the comparison, is one entry lock and one
+unlock on each single-key path, with no additional hold bookkeeping between
+them and no added odd-alignment flag slot. This is an IR check, not a throughput
+measurement. The comparison uses the amendment A compiler and firn at
+`520759233bbdfd3556890c128693e30c3d0c7e48`, and amendment S at
+`9d873c27c12b4abf4c147572b18c74e30fd11c16`, on macOS arm64 with Apple clang 21.0.0 (clang-2100.3.34.2), target
+arm64-apple-darwin25.6.0.
+For each revision, build the gate compiler and emit firn with:
+
+```sh
+perl .github/run-check.pl ir/build make -C compiler build
+perl .github/run-check.pl ir/firn compiler/target/gate/whitefootc --emit-llvm --graph apps/firn/modules.wfg --entry firn -o /tmp/firn.ll
+perl .github/run-check.pl ir/opt /usr/bin/clang -x ir -O2 -Wno-override-module -S -emit-llvm /tmp/firn.ll -o /tmp/firn-O2.ll
+```
+
+The observed functions are `wf_commands.run_pop.resume` and
+`wf_commands.run_get.resume`. Count entry lock/unlock calls and 72-byte
+`llvm.memcpy`/`llvm.memmove` calls in those functions, and inspect their
+unoptimized frame allocations and the blocks containing each optimized copy.
+
+| Observation | Amendment A | Amendment S |
+|---|---|---|
+| Optimized run_pop entry lock / unlock | 1 / 1 | 1 / 1 |
+| Optimized run_get entry lock / unlock | 1 / 1 | 1 / 1 |
+| Optimized run_pop 72-byte copies | 3 | 1, only on removal/drop |
+| Optimized run_get 72-byte copies | 1 | 1 |
+| run_pop frame | aggregate with two i1 flags | independent eight-byte-aligned slots, one aligned i64 lazy-group word |
+| run_get frame | aggregate with i1 and existing i8 | aggregate with the existing i8, no hold flag |
+
+Both direct entry paths retain the same lock/body/unlock sequence. Ordinary
+entry work contains no added group descriptor, taken-state test or hold-state
+store. run_pop's normal live-list pop accesses the held cell directly; its
+remaining copy moves a removed value into its drop slot. The older raw IR had
+five run_pop lock call sites and two run_get sites from lazy acquisition; the
+new raw IR has one each. Those static counts do not mean the old execution took
+five or two locks: optimization already reduced each to one.
+
+The frame-alignment explanation is supported by `plan_target_frame` in
+`compiler/src/target.rs`: independent slots require common alignment without
+padding. Removing the atomic i1 slots lets run_pop take that path, whereas
+run_get's existing byte slot still prevents it. The remaining GET copy is
+recorded in `docs/todo.md`; this comparison does not claim it was removed.
+
+Final IR emission, optimization and executable construction at this revision
+each returned 0. Both functions' raw IR and optimized resume bodies were
+byte-identical to the earlier amendment S observation at
+`d7fcb9efb2c99457b8c19dfa7fb44699e7f6375b`, after the derived-root and type-order
+repairs; the counts and allocation inspection above were repeated on the final
+output.
+
+Found while checking the ports: the native guard harness retained a map handle
+in a local used by its later cleanup, and program fixtures retained constructor
+`move`s after their state became Copy, stale named-argument order and
+noncanonical indentation. These were corrected without changing assertions.
+All four ported map programs passed on one and four drivers. The firn build
+succeeded, but its maintained network tests are Linux-only (the macOS filter
+selected zero), and a supplemental macOS smoke attempt stopped at loopback
+bind with `Operation not permitted`. Its network and replay behavior remains
+unverified on this host.
+
+### Review of derived roots and type arguments
+
+The independent review found that resolved loop and window prefixes discarded
+possible atomic aliases. The pre-fix compiler's permission ledger permitted
+and split a loop writing `a^[i]` and `b^[i+1]` through two handles to one array.
+Those families overlap across iterations. Prefixes now retain the complete
+relation; the maintained compiler test also requires that two writes at the
+same iteration index remain permitted. Entailment-window and call-window
+prefixes were corrected for the same reason. All other empty alias inventories
+are initial unresolved spellings or constant roots and are resolved before
+storage judgments; they do not project an already resolved place.
+
+The pre-fix checker also rejected `Pair<T,T>` beside `Pair<u8,u16>` with EFF-5,
+although no single substitution makes those types equal, and accepted the
+corresponding simultaneous write through `Array<u8,n>` and `Array<u8,4>`.
+The root judgment now retains one substitution across the two types, including
+const and function arguments, with an occurrence check so dereferencing a
+substitution terminates. It remains pairwise rather than merging targets into
+classes. The concrete lock key pads numeric const values so their order is
+numeric: 2 before 10. Stable symbolic spellings never select a concrete lock
+order because FN-2 evaluates the concrete instance's const arguments.
+The order test also exposed that compiler-native Box types lacked a source
+nominal inventory entry and fell through to the source-nominal rank. Box now
+uses its PRE-1 position and recursively orders its referent; the same test
+requires Box to precede a source nominal.
+
+Unresolved symbolic const expressions need a ground separate from ordinary
+syntactic unification: `n + 1` and `4` can name one capacity. The provisional
+choice is to consider an unresolved comparison possibly equal, while comparing
+values when the retained substitutions evaluate both sides. This avoids
+assuming distinct storage without an arithmetic judgment, at the cost of
+refusing some generic-body calls, such as two capacities `n + 1` and `n + 2`.
+The open design question is whether to retain this conservative judgment or
+specify syntactic const-term unification. The precision cost and reopening
+condition are in `docs/todo.md`. No SMT or acceptance work limit is introduced.
+The additional witnesses above state the judgments directly.
+
+The review also found stale comments from header grants and table-value
+replacement; they were removed, and map construction's IR comment now names
+its owned Shared handle. A remaining checker-tree sentence claiming an
+atomic row restriction was removed because SHARE-2 now derives the callee
+whole-map condition from placement and ordinary reference formation.
+
+After these repairs, `make -C compiler format lint build`, the numeric-order
+test, the split-loop alias test and the focused native conformance adapter all
+returned 0. The adapter exercised 92 share-/type9- cases. The numeric-order
+test was also run once with the numeric padding deliberately replaced by
+lexical ordering: it failed with the required 2-before-10 assertion, and the
+correct implementation was restored. The old compiler's contradictory
+results above were observed before changing it; the new cases retain those
+distinguishing observations.

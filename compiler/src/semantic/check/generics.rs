@@ -141,6 +141,11 @@ impl GenericSubstitution {
         self.bindings.len()
     }
 
+    /// Every parameter's argument, in binding order.
+    pub(super) fn bindings(&self) -> &[(GenericParameterKey, GenericArgument)] {
+        &self.bindings
+    }
+
     pub(super) fn region_arguments(&self) -> &[(DeclarationId, DeclarationId)] {
         &self.regions
     }
@@ -570,30 +575,25 @@ impl<'unit> Checker<'_, 'unit> {
             .types
             .declarations
             .resolved
-            .lexical_uses()
-            .iter()
-            .any(|usage| {
-                let path = usage.origin().node().components();
-                path.len() >= owner.len()
-                    && path.starts_with(owner)
-                    && match usage.target() {
-                        ResolvedTarget::Source {
-                            declaration,
-                            class: DeclarationClass::NamedConst,
-                        } => !self.types.constants.contains_key(&declaration),
-                        ResolvedTarget::Source {
-                            declaration,
-                            class: DeclarationClass::NominalType,
-                        } => {
-                            self.analysis
-                                .postcondition_declaration_unavailable(declaration)
-                                || !self
-                                    .types
-                                    .nominal_templates_by_declaration
-                                    .contains_key(&declaration)
-                        }
-                        _ => false,
-                    }
+            .lexical_uses_under(owner)
+            .into_iter()
+            .any(|usage| match usage.target() {
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::NamedConst,
+                } => !self.types.constants.contains_key(&declaration),
+                ResolvedTarget::Source {
+                    declaration,
+                    class: DeclarationClass::NominalType,
+                } => {
+                    self.analysis
+                        .postcondition_declaration_unavailable(declaration)
+                        || !self
+                            .types
+                            .nominal_templates_by_declaration
+                            .contains_key(&declaration)
+                }
+                _ => false,
             })
         {
             return Ok(false);
@@ -938,30 +938,25 @@ impl<'unit> Checker<'_, 'unit> {
                 .types
                 .declarations
                 .resolved
-                .lexical_uses()
-                .iter()
-                .any(|usage| {
-                    let usage_path = usage.origin().node().components();
-                    usage_path.len() >= path.len()
-                        && usage_path.starts_with(path)
-                        && match usage.target() {
-                            ResolvedTarget::Source {
-                                declaration,
-                                class: DeclarationClass::NamedConst,
-                            } => !self.types.constants.contains_key(&declaration),
-                            ResolvedTarget::Source {
-                                declaration,
-                                class: DeclarationClass::NominalType,
-                            } => {
-                                self.analysis
-                                    .postcondition_declaration_unavailable(declaration)
-                                    || !self
-                                        .types
-                                        .nominal_templates_by_declaration
-                                        .contains_key(&declaration)
-                            }
-                            _ => false,
-                        }
+                .lexical_uses_under(path)
+                .into_iter()
+                .any(|usage| match usage.target() {
+                    ResolvedTarget::Source {
+                        declaration,
+                        class: DeclarationClass::NamedConst,
+                    } => !self.types.constants.contains_key(&declaration),
+                    ResolvedTarget::Source {
+                        declaration,
+                        class: DeclarationClass::NominalType,
+                    } => {
+                        self.analysis
+                            .postcondition_declaration_unavailable(declaration)
+                            || !self
+                                .types
+                                .nominal_templates_by_declaration
+                                .contains_key(&declaration)
+                    }
+                    _ => false,
                 })
             {
                 return Ok(false);
@@ -1706,7 +1701,10 @@ impl<'unit> Checker<'_, 'unit> {
                     );
                 }
             }
-            if matches!(value, GenericArgument::Function(_)) {
+            if matches!(
+                value,
+                GenericArgument::Type(_) | GenericArgument::Function(_)
+            ) {
                 binding_sites.push((parameter.key(), source));
             }
             bindings.push((parameter.key(), value));
@@ -1900,6 +1898,26 @@ impl<'unit> TypeContext<'unit> {
         let mut out = String::new();
         self.write_substitution_identity(substitution, &mut out, true, &mut HashSet::new())?;
         Ok(out)
+    }
+
+    /// Constant and function-kind arguments in a runtime type order must use
+    /// source identities, never this compilation's dense instance numbers.
+    pub(super) fn stable_argument_spelling(
+        &self,
+        key: GenericParameterKey,
+        argument: GenericArgument,
+    ) -> Result<String, CheckStop> {
+        if matches!(
+            argument,
+            GenericArgument::Function(super::behavior::FunctionArgument::Parameter(_))
+        ) {
+            // Symbolic bodies are checked but are not lowered to runtime groups.
+            return Ok(format!("{argument:?}"));
+        }
+        let substitution = GenericSubstitution::from_bindings(vec![(key, argument)])?;
+        let mut spelling = String::new();
+        self.write_substitution_identity(&substitution, &mut spelling, false, &mut HashSet::new())?;
+        Ok(spelling)
     }
 
     pub(super) fn stable_type_spelling(&self, ty: CheckedType) -> Option<String> {
@@ -2311,5 +2329,63 @@ impl<'unit> DeclarationInventory<'unit> {
             count += 1;
         }
         Ok(count)
+    }
+}
+
+/// A declaration and, per argument, its kind and, for a const parameter,
+/// that parameter's written integer type.
+pub(super) type RenamingClass = (DeclarationId, Vec<(u8, Option<IntegerType>)>);
+
+/// The renaming class of a symbolic function instance, when every argument
+/// is a distinct symbolic parameter. Two instances of one class differ only
+/// by a one-to-one renaming of those parameters, so their bodies prove the
+/// same summaries.
+pub(super) fn symbolic_renaming_class(
+    signature: &FunctionSignature,
+    const_types: &HashMap<DeclarationId, IntegerType>,
+) -> Option<RenamingClass> {
+    if signature.formal_parameter.is_some() || !signature.substitution.region_arguments().is_empty()
+    {
+        return None;
+    }
+    let mut kinds = Vec::with_capacity(signature.substitution.len());
+    let mut arguments = Vec::with_capacity(signature.substitution.len());
+    for (_, argument) in signature.substitution.bindings() {
+        // A const parameter's written type gives its symbolic value's range,
+        // which the analysis reads, so it is part of the class.
+        let kind = match argument {
+            GenericArgument::Type(CheckedType::Generic(_)) => (0, None),
+            GenericArgument::Type(CheckedType::GenericInt(_)) => (1, None),
+            GenericArgument::Type(CheckedType::GenericFloat(_)) => (2, None),
+            GenericArgument::Const(CheckedConst::Parameter(declaration)) => {
+                (3, Some(*const_types.get(declaration)?))
+            }
+            GenericArgument::Function(super::behavior::FunctionArgument::Parameter(_)) => (4, None),
+            _ => return None,
+        };
+        if arguments.contains(argument) {
+            return None;
+        }
+        arguments.push(*argument);
+        kinds.push(kind);
+    }
+    (!kinds.is_empty()).then_some((signature.declaration, kinds))
+}
+
+/// What a symbolic instance's callers read of another instance's analysis:
+/// its body disposition, invariant outcomes and postcondition proofs, with
+/// no published summary until this instance's own component publishes one.
+pub(super) fn summary_entailment(
+    entailment: &super::super::entailment::FunctionEntailment,
+) -> super::super::entailment::FunctionEntailment {
+    let mut postconditions = entailment.postconditions.clone();
+    for proof in &mut postconditions {
+        proof.summary = None;
+    }
+    super::super::entailment::FunctionEntailment {
+        body_disposition: entailment.body_disposition,
+        loop_invariants: entailment.loop_invariants.clone(),
+        postconditions,
+        ..super::super::entailment::FunctionEntailment::default()
     }
 }

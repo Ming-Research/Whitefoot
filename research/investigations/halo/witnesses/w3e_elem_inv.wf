@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Op {
+  a: u64;
+  invariant small(op): op.a < 200_u64;
+}
+
+fn use_op(op: Op, regs: &Array<u64, 200>) -> r: u64 reads(regs) {
+  let v = regs^[op.a];
+  return v;
+}
+
+fn run(ops: &Box<Slots<Op>>, regs: &Array<u64, 200>) -> r: u64 reads(ops), reads(regs) {
+  let total = 0_u64;
+  let n = ops^.inner.len;
+  for (pc in 0_u64..n) {
+    let op = ops^.inner[pc];
+    let v = regs^[op.a];
+    set total = total +wrap v;
+  }
+  return total;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

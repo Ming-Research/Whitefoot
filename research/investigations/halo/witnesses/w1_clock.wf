@@ -1,0 +1,44 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Inputs = std::process::Inputs;
+alias Clock = std::time::Clock;
+alias Instant = std::time::Instant;
+
+struct State {
+  count: u64;
+}
+
+struct Flag {
+  stop: Bool;
+}
+
+fn script(state: &State, clock: &Clock, deadline: Instant) -> killed: Bool writes(state), writes(clock) {
+  loop {
+    let t = std::time::now(clock: clock);
+    let late = std::time::instant_reached(deadline: deadline, instant: t);
+    if late {
+      return True();
+    }
+    set state^.count = state^.count +wrap 1_u64;
+  }
+  return False();
+}
+
+fn job(clock: Clock) -> status: Bool pure waits {
+  let st = State(count: 0_u64);
+  let h = shared_new::<State>(value: st);
+  let no = False();
+  let fl = Flag(stop: no);
+  let flag = shared_new::<Flag>(value: fl);
+  let start = std::time::now(clock: &clock);
+  let deadline = std::time::instant_after(instant: start, nanoseconds: 5000000_u64);
+  let killed = False();
+  atomic s = &h {
+    set killed = script(state: s, clock: &clock, deadline: deadline);
+  }
+  return killed;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

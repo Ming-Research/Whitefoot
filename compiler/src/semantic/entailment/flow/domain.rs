@@ -40,6 +40,7 @@ impl Input<'_, '_> {
     pub(super) fn read_place_path(&self, expression: &CheckedExpression) -> Option<ResolvedPlace> {
         match expression {
             CheckedExpression::Binding { binding, .. } => Some(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(*binding),
                 path: Vec::new(),
             }),
@@ -49,10 +50,12 @@ impl Input<'_, '_> {
                 consume_root: false,
                 ..
             } => Some(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(*binding),
                 path: fields.iter().copied().map(PlaceStep::Field).collect(),
             }),
             CheckedExpression::DerefAddressed { binding, .. } => Some(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(*binding),
                 // A reference binding is the body-local name of its referent
                 // path [REF-1]. The written `^` marks that reference boundary;

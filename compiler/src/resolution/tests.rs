@@ -2708,7 +2708,7 @@ fn ordinary_prelude_diagnostic_origins_follow_the_complete_record_preorder() {
     for (name, origins) in [
         ("Slots", vec![5, 6]),
         ("Shared", vec![26, 27]),
-        ("KeyedTable", vec![29, 30]),
+        ("ConcurrentHashMap", vec![29, 30]),
         ("KeySet", vec![32, 33]),
         ("Bool", vec![39]),
         ("Overflow", vec![54, 55]),
@@ -2806,22 +2806,22 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[27].1, "Shared");
     assert_eq!(first[27].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[28].1, "T");
-    assert_eq!(first[29].1, "KeyedTable");
+    assert_eq!(first[29].1, "ConcurrentHashMap");
     assert_eq!(first[29].2, Some(DeclarationClass::NominalType));
-    assert_eq!(first[30].1, "KeyedTable");
+    assert_eq!(first[30].1, "ConcurrentHashMap");
     assert_eq!(first[30].2, Some(DeclarationClass::StructConstructor));
     assert_eq!(first[31].1, "V");
     assert_eq!(first[32].1, "KeySet");
     assert_eq!(first[32].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[34].1, "len");
-    assert_eq!(first[35].1, "KeyedEntries");
+    assert_eq!(first[35].1, "Entries");
     assert_eq!(first[35].2, Some(DeclarationClass::NominalType));
     assert_eq!(first[37].1, "V");
     assert_eq!(first[38].1, "len");
     // Then each enum with its variants and their fields, then `Int` and
     // `Float`, then the construction functions [OP-13], then the window
     // operations [OP-10], then `swap` [OP-11], `shared_new`, `shared_share`,
-    // `keyed_table_new`, `keyed_table_count`, `key_set_new` and
+    // `shared_map_new`, `map_count`, `key_set_new` and
     // `key_set_insert` [SHARE-1] and `free_empty`
     // [OP-14], each with its type, const and value parameters in declared
     // order and then its range postconditions' names and bound variables
@@ -2834,17 +2834,17 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[105].1, "place_back");
     assert_eq!(first[149].1, "swap");
     assert_eq!(first[153].1, "shared_new");
-    assert_eq!(first[156].1, "shared_share");
-    assert_eq!(first[159].1, "keyed_table_new");
-    assert_eq!(first[162].1, "keyed_table_count");
+    assert_eq!(first[156].1, "shared_map_new");
+    assert_eq!(first[159].1, "shared_share");
+    assert_eq!(first[162].1, "map_count");
     assert_eq!(first[165].1, "key_set_new");
     assert_eq!(first[167].1, "key_set_insert");
     assert_eq!(first[170].1, "free_empty");
     // The opaque phase holds the four storage shapes, the cell, the
     // shared-object handle, the keyed table, the key set and the keyed
     // entries, 39 records: `Array` contributes five, `Slots` six, `Ring`
-    // seven, `Segments` four, `Box` four, `Shared`, `KeyedTable` and `KeySet`
-    // three each and `KeyedEntries` four. The host declarations left PRE-1
+    // seven, `Segments` four, `Box` four, `Shared`, `ConcurrentHashMap` and `KeySet`
+    // three each and `Entries` four. The host declarations left PRE-1
     // for the standard library [PRE-2], so the inventory holds 173 records
     // where it held 397: v0.84's range postconditions of `box_array_filled`
     // and `box_segments_filled` add their fact names and bound variables,
@@ -2997,4 +2997,38 @@ enum Right {
         "{}",
         variants[1]
     );
+}
+
+/// The path-sorted index returns exactly the uses a scan of every use finds
+/// inside each subtree, in record order.
+#[test]
+fn uses_under_a_subtree_match_a_scan_of_every_use() {
+    let source = include_bytes!("../../../tests/conformance/cases/ex1-pos-worked-example.wf");
+    with_resolution_sources(&[SourceInput::new("test.wf", source)], true, |outcome| {
+        let ResolutionOutcome::Complete(resolved) = outcome else {
+            panic!("the worked example must resolve: {outcome:?}");
+        };
+        let uses = resolved.lexical_uses();
+        assert!(uses.len() > 10);
+        let mut prefixes = vec![Vec::new()];
+        for usage in uses {
+            let path = usage.origin().node().components();
+            prefixes.extend((1..=path.len()).map(|length| path[..length].to_vec()));
+        }
+        prefixes.sort();
+        prefixes.dedup();
+        for prefix in prefixes {
+            let scanned = uses
+                .iter()
+                .filter(|usage| usage.origin().node().components().starts_with(&prefix))
+                .map(std::ptr::from_ref)
+                .collect::<Vec<_>>();
+            let indexed = resolved
+                .lexical_uses_under(&prefix)
+                .into_iter()
+                .map(std::ptr::from_ref)
+                .collect::<Vec<_>>();
+            assert_eq!(indexed, scanned, "uses under {prefix:?}");
+        }
+    });
 }

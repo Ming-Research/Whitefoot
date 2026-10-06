@@ -12,9 +12,6 @@
 //! [OWN-7] overlap relation over resolved places instead, which
 //! over-approximates it [ENT-5].
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use super::super::model::{CheckedMeasure, CheckedType, IntegerType};
 use super::super::places::CaptureId;
 pub(crate) use super::super::places::{PlaceRoot, PlaceStep, ResolvedPlace};
@@ -187,33 +184,6 @@ pub(crate) enum MeasureBound {
 /// The zero term is always interned first.
 pub(crate) const ZERO: TermId = TermId(0);
 
-/// Why an implicit bound exists independently of writer facts.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum ImplicitBoundKind {
-    Reflexive,
-    Constant,
-    TypeMinimum,
-    TypeMaximum,
-    /// One [MSR-2] standing fact: a measure whose table cell fixes its
-    /// value, or a measure the table equates to another measure of the
-    /// same place. It has empty support and no event kills it.
-    StandingMeasure,
-    /// [MSR-2]'s standing ordering between two measures of one place.
-    MeasureOrdering,
-}
-
-/// The two implicit bounds one term carries against Z, each with the kind of
-/// the tightest implicit fact giving it: `term - Z <= to_zero` and
-/// `Z - term <= from_zero`. Z itself carries neither. A term that holds no
-/// stored relation and no implicit fact against another non-Z term has no
-/// other fact, so a closure answers every pair involving it from these two
-/// bounds and its Z row and column [ENT-4].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ImplicitRange {
-    pub(crate) to_zero: Option<(i128, ImplicitBoundKind)>,
-    pub(crate) from_zero: Option<(i128, ImplicitBoundKind)>,
-}
-
 /// Function-scoped term registry. Only terms written in the function
 /// participate [ENT-4]; the registry grows monotonically during the forward
 /// walk. A term registered after a query cannot change that query's answer:
@@ -225,13 +195,18 @@ pub(crate) struct TermTable {
     terms: Vec<TermKind>,
     ids: WordHashMap<TermKind, TermId>,
     measure_bounds: WordHashMap<TermId, MeasureBound>,
-    /// Terms with an implicit fact against another non-Z term: a measure the
-    /// table equates to a symbolic constant and that constant, and a
-    /// capacity measure with a registered length or head sibling. Sorted.
-    relational: Vec<TermId>,
-    /// The implicit ranges of every registered term at one revision.
-    implicit_cache: RefCell<Option<(usize, Rc<Vec<ImplicitRange>>)>>,
     revision: usize,
+    /// How many registrations replaced a different standing measure fact of
+    /// an already registered measure term, which can weaken that term's
+    /// implicit bounds rather than only add to them.
+    measure_replacements: usize,
+    /// Every registered term and every term given a different standing
+    /// measure fact, in order: the terms whose implicit bounds may have
+    /// changed since the structure below last read the log.
+    implicit_log: Vec<TermId>,
+    /// What this table alone decides about implicit bounds, brought up to
+    /// date from `implicit_log` when a closure reads it.
+    implicit: std::cell::RefCell<super::state::ImplicitStructure>,
 }
 
 impl TermTable {
@@ -240,9 +215,10 @@ impl TermTable {
             terms: Vec::new(),
             ids: WordHashMap::default(),
             measure_bounds: WordHashMap::default(),
-            relational: Vec::new(),
-            implicit_cache: RefCell::new(None),
             revision: 0,
+            measure_replacements: 0,
+            implicit_log: Vec::new(),
+            implicit: std::cell::RefCell::default(),
         };
         let zero = table.intern(TermKind::Zero);
         debug_assert_eq!(zero, ZERO);
@@ -250,163 +226,38 @@ impl TermTable {
     }
 
     pub(crate) fn set_measure_bound(&mut self, term: TermId, bound: MeasureBound) {
-        if self.measure_bounds.insert(term, bound) != Some(bound) {
-            if let MeasureBound::Equal(other) = bound {
-                self.note_relational(term, other);
-            }
+        let previous = self.measure_bounds.insert(term, bound);
+        if previous.is_some_and(|previous| previous != bound) {
+            self.measure_replacements = self
+                .measure_replacements
+                .checked_add(1)
+                .expect("measure replacement count fits usize");
+        }
+        if previous != Some(bound) {
             self.revision = self
                 .revision
                 .checked_add(1)
                 .expect("term revision fits usize");
+            self.implicit_log.push(term);
         }
     }
 
-    /// Terms that carry an implicit fact against a non-Z term. Such a term
-    /// takes part in every closure even without a stored relation, because
-    /// the fact it carries is not implied by its bounds through Z.
-    pub(crate) fn relational_terms(&self) -> &[TermId] {
-        &self.relational
+    pub(super) fn implicit_log(&self) -> &[TermId] {
+        &self.implicit_log
     }
 
-    fn note_relational(&mut self, first: TermId, second: TermId) {
-        for term in [first, second] {
-            if let Err(position) = self.relational.binary_search(&term) {
-                self.relational.insert(position, term);
-            }
-        }
-    }
-
-    /// The implicit ranges of every registered term, shared until the table
-    /// changes.
-    pub(crate) fn implicit_ranges(&self) -> Rc<Vec<ImplicitRange>> {
-        if let Some((revision, ranges)) = self.implicit_cache.borrow().as_ref()
-            && *revision == self.revision
-        {
-            return Rc::clone(ranges);
-        }
-        let ranges = Rc::new(
-            self.ids()
-                .map(|id| self.implicit_range(id))
-                .collect::<Vec<_>>(),
-        );
-        *self.implicit_cache.borrow_mut() = Some((self.revision, Rc::clone(&ranges)));
-        ranges
-    }
-
-    /// The tightest implicit bound of one term in each direction against Z;
-    /// of two equal bounds the first emitted. The complete closure may keep
-    /// the other kind's node for the same value, a different valid
-    /// derivation of an equal bound.
-    fn implicit_range(&self, id: TermId) -> ImplicitRange {
-        let mut range = ImplicitRange {
-            to_zero: None,
-            from_zero: None,
-        };
-        if id == ZERO {
-            return range;
-        }
-        self.for_each_implicit_bound(id, |left, right, bound, kind| {
-            let held = if (left, right) == (id, ZERO) {
-                &mut range.to_zero
-            } else if (left, right) == (ZERO, id) {
-                &mut range.from_zero
-            } else {
-                return;
-            };
-            if held.is_none_or(|(current, _)| bound < current) {
-                *held = Some((bound, kind));
-            }
-        });
-        range
-    }
-
-    /// Emits every [ENT-2] implicit bound carried by one term: the reflexive
-    /// bound, the fragment-type range, the constant fold through Z, and the
-    /// `len_of(P) = N` equality of an `array<T, N>` place.
-    ///
-    /// Implicit facts are a function of the term table and the place's type
-    /// alone. They hold at every program point, so this is the single rule
-    /// table every closure entry point re-emits; no [ENT-5] kill and no join
-    /// can remove one, and a state that lost the materialized copy of one
-    /// regains it here.
-    pub(crate) fn for_each_implicit_bound(
-        &self,
-        id: TermId,
-        mut emit: impl FnMut(TermId, TermId, i128, ImplicitBoundKind),
-    ) {
-        emit(id, id, 0, ImplicitBoundKind::Reflexive);
-        match self.kind(id) {
-            TermKind::Zero => {}
-            TermKind::Constant(value) => {
-                emit(id, ZERO, *value, ImplicitBoundKind::Constant);
-                emit(ZERO, id, -value, ImplicitBoundKind::Constant);
-            }
-            TermKind::Place(_, ty) | TermKind::ConstParameter(_, ty) => {
-                let (minimum, maximum) = type_range(*ty);
-                emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-                emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-            }
-            // [MSR-2] every measure term carries the standing facts of its
-            // place. The `u64` range already gives `Z <= m`; what the measure
-            // table adds is the value a fixed cell has and the ordering between
-            // two measures of one place. Each has empty support and no event
-            // kills it, which is exactly what an implicit bound is.
-            // [MSR-3] an entry or placement datum is one measure's value, of
-            // fragment type u64, or one fragment-integer place's value, of that
-            // place's type, with empty support. Its standing orderings reach it
-            // through the equality this datum is established with; what it
-            // carries of its own is the type range.
-            TermKind::EntryDatum { ty, .. } | TermKind::MeasureDatum { ty, .. } => {
-                let (minimum, maximum) = type_range(*ty);
-                emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-                emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-            }
-            TermKind::Measure(measure, _) => {
-                let (minimum, maximum) = type_range(IntegerType::U64);
-                emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-                emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-                match self.measure_bound(id) {
-                    Some(MeasureBound::Constant(value)) => {
-                        emit(id, ZERO, value, ImplicitBoundKind::StandingMeasure);
-                        emit(ZERO, id, -value, ImplicitBoundKind::StandingMeasure);
-                    }
-                    Some(MeasureBound::Equal(other)) => {
-                        emit(id, other, 0, ImplicitBoundKind::StandingMeasure);
-                        emit(other, id, 0, ImplicitBoundKind::StandingMeasure);
-                    }
-                    None => {}
-                }
-                // `P.len <= P.cap` and `P.head <= P.cap`, emitted from the
-                // capacity term so each ordering is emitted exactly once. x1's
-                // [MSR-1] table gives the two `Array` rows no `cap` cell, so an
-                // `Array` place registers no capacity term and neither ordering
-                // is emitted for it.
-                if *measure == CheckedMeasure::Capacity {
-                    for bounded in [CheckedMeasure::Length, CheckedMeasure::Head] {
-                        if let Some(other) = self.sibling_measure(id, bounded) {
-                            emit(other, id, 0, ImplicitBoundKind::MeasureOrdering);
-                        }
-                    }
-                }
-            }
-            TermKind::CountedCapture { .. } | TermKind::IndexCapture { .. } => {
-                let (minimum, maximum) = type_range(IntegerType::U64);
-                emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-                emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-            }
-            TermKind::ResultPayload { ty, .. }
-            | TermKind::CommitValue { ty, .. }
-            | TermKind::CallDatum { ty, .. } => {
-                let (minimum, maximum) = type_range(*ty);
-                emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
-                emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
-            }
-        }
+    pub(super) fn implicit_cache(&self) -> &std::cell::RefCell<super::state::ImplicitStructure> {
+        &self.implicit
     }
 
     /// Changes whenever registered terms or their standing measure facts change.
     pub(crate) fn revision(&self) -> usize {
         self.revision
+    }
+
+    /// Changes whenever a standing measure fact replaces a different one.
+    pub(crate) fn measure_replacements(&self) -> usize {
+        self.measure_replacements
     }
 
     pub(crate) fn measure_bound(&self, term: TermId) -> Option<MeasureBound> {
@@ -445,23 +296,8 @@ impl TermTable {
                 .expect("ENT term inventory exceeds the u32 identity space"),
         );
         self.terms.push(kind.clone());
-        // [MSR-2]'s standing ordering relates a capacity measure to the
-        // length and head measures of its place as soon as both are
-        // registered; `for_each_implicit_bound` emits it from the capacity.
-        if let TermKind::Measure(measure, place) = &kind {
-            let siblings: &[CheckedMeasure] = match measure {
-                CheckedMeasure::Capacity => &[CheckedMeasure::Length, CheckedMeasure::Head],
-                CheckedMeasure::Length | CheckedMeasure::Head => &[CheckedMeasure::Capacity],
-            };
-            let siblings = siblings
-                .iter()
-                .filter_map(|sibling| self.interned(&TermKind::Measure(*sibling, place.clone())))
-                .collect::<Vec<_>>();
-            for sibling in siblings {
-                self.note_relational(id, sibling);
-            }
-        }
         self.ids.insert(kind, id);
+        self.implicit_log.push(id);
         self.revision = self
             .revision
             .checked_add(1)

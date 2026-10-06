@@ -64,7 +64,10 @@
 //! here, at compile time, and a loop that does not fit declines with a line
 //! naming the width. Every decline in [`Decline`] is reported the same way.
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use crate::semantic::{
     BindingId, CheckedDrop, CheckedLoopId, CheckedStatement, LoopActualization, LoopCombine,
@@ -132,6 +135,14 @@ struct Capture {
     binding: BindingId,
     ty: IrType,
     reconstruction: CaptureReconstruction,
+}
+
+/// A split's capture boundary and its already-judged body write footprint.
+/// Paths stay intact so a mapped field does not authorize sibling tables.
+#[derive(Clone)]
+pub(super) struct CaptureWriteContext<'program> {
+    pub(super) captured: HashSet<BindingId>,
+    pub(super) permission: &'program LoopPermission,
 }
 
 impl Decline {
@@ -240,7 +251,7 @@ struct BuiltChunk {
     call_results: HashMap<NodePath, (IrBlockId, IrValueId)>,
 }
 
-impl IrBuilder<'_> {
+impl<'program> IrBuilder<'program> {
     /// Lowers one split candidate, or leaves the ordinary path to its caller.
     ///
     /// A candidate whose reduced frame is too wide reuses its completed CFG
@@ -257,7 +268,10 @@ impl IrBuilder<'_> {
         lower: IrValueId,
         upper: IrValueId,
     ) -> Result<bool, LoweringFailure> {
-        let Some(actualization) = self.permitted_loop(node_path) else {
+        let Some(permission) = self.permitted_loop(node_path) else {
+            return Ok(false);
+        };
+        let Some(actualization) = permission.actualization else {
             return Ok(false);
         };
         let accumulator = match actualization {
@@ -378,6 +392,7 @@ impl IrBuilder<'_> {
             actualization,
             result_type,
             &captures,
+            permission,
             prune_captures,
         )?;
         captures = captures
@@ -500,7 +515,7 @@ impl IrBuilder<'_> {
 
     /// The actualization payload of the permitted loop at this statement, when
     /// this compilation asked for overlap lowering at all.
-    fn permitted_loop(&self, node_path: &NodePath) -> Option<LoopActualization> {
+    fn permitted_loop(&self, node_path: &NodePath) -> Option<&'program LoopPermission> {
         if self.overlap != crate::OverlapLowering::On {
             return None;
         }
@@ -508,7 +523,6 @@ impl IrBuilder<'_> {
             .loops
             .iter()
             .find(|judged: &&LoopPermission| judged.statement == *node_path)
-            .and_then(|judged| judged.actualization)
     }
 
     /// The emission conditions, all of them properties of the shape rather than
@@ -572,6 +586,7 @@ impl IrBuilder<'_> {
         actualization: LoopActualization,
         result_type: IrType,
         captures: &[Capture],
+        permission: &'program LoopPermission,
         prune_captures: bool,
     ) -> Result<BuiltChunk, LoweringFailure> {
         #[cfg(test)]
@@ -586,6 +601,19 @@ impl IrBuilder<'_> {
             self.overlap,
             self.function_name,
         )?;
+        builder
+            .readonly_atomic_roots
+            .clone_from(&self.readonly_atomic_roots);
+        builder
+            .capture_write_contexts
+            .clone_from(&self.capture_write_contexts);
+        // The parent owns these roots, but chunks only read captured places
+        // outside the body's resolved writes. Refine formation's judgment in
+        // borrow_may_write, preserving paths and enclosing chunk contexts.
+        builder.capture_write_contexts.push(CaptureWriteContext {
+            captured: captures.iter().map(|capture| capture.binding).collect(),
+            permission,
+        });
         let seed = builder.new_parameter(result_type)?;
         let lower = builder.new_parameter(U64)?;
         let upper = builder.new_parameter(U64)?;
@@ -1274,7 +1302,7 @@ fn frame_bytes(ty: IrType) -> u64 {
         IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } | IrType::KeySet => {
             2 * FRAME_FIELD_ALIGN
         }
-        IrType::KeyedEntries { .. } => 3 * FRAME_FIELD_ALIGN,
+        IrType::Entries { .. } => 3 * FRAME_FIELD_ALIGN,
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => FRAME_FIELD_ALIGN,
         // Aggregates trigger capture selection and the final exact-layout
         // query; a conservative fit retains its established capture interface.

@@ -569,7 +569,7 @@ impl<'unit> TypeContext<'unit> {
                         ty = SelectedPlaceType::Value(self.element_type(element)?);
                     }
                     // [SHARE-2] keyed entries select the table's `Option<V>`.
-                    SelectedPlaceType::Value(CheckedType::KeyedEntries { element }) => {
+                    SelectedPlaceType::Value(CheckedType::Entries { element }) => {
                         ty = SelectedPlaceType::Value(self.element_type(element)?);
                     }
                     // [TYPE-9] a segment is a run of T.

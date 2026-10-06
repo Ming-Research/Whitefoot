@@ -283,18 +283,19 @@ impl Records<'_> {
             }
             CheckedStatement::Atomic {
                 node_path,
-                target,
-                entries,
+                targets,
                 guard,
                 body,
                 continues,
-                invariants,
                 ..
             } => {
-                self.expression(target);
-                for key in entries
+                let invariants = targets
                     .iter()
-                    .flat_map(crate::semantic::CheckedEntryBinding::expressions)
+                    .flat_map(|t| t.invariants.iter().cloned())
+                    .collect::<Vec<_>>();
+                for key in targets
+                    .iter()
+                    .flat_map(crate::semantic::CheckedTarget::expressions)
                 {
                     self.expression(key);
                 }
@@ -542,6 +543,12 @@ impl Records<'_> {
             match step {
                 CheckedPlaceStep::Subscript(subscript) => {
                     self.expression(&subscript.offset);
+                    if matches!(
+                        subscript.base_type,
+                        crate::semantic::CheckedType::Nominal(_)
+                    ) {
+                        continue;
+                    }
                     self.source(
                         SemanticRule::Op4,
                         &subscript.obligation,

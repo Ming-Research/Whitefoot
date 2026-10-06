@@ -115,19 +115,19 @@ impl<'unit> Checker<'_, 'unit> {
                 let ty = local.ty;
                 let kind = reference.kind;
                 self.join_loop_reference_summary(check_context, token, ty, kind, &paths, bindings)?;
-                let paths = self
+                let summary = self
                     .body
                     .loop_reference_summaries
                     .get(&token)
                     .cloned()
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                bindings
+                let reference = bindings
                     .get_mut(&declaration)
                     .and_then(|local| local.reference.as_mut())
-                    .ok_or(SemanticCompilerFailure::InvalidResolution)?
-                    .paths
-                    .clone_from(&paths);
-                self.body.record_reference_origins(token.owner, &paths);
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                reference.paths.clone_from(&summary.paths);
+                self.body
+                    .record_reference_origins(token.owner, &summary.paths);
             }
         }
         // [REF-1] a write the backedge carries reaches this header again, so

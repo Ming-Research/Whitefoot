@@ -41,9 +41,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use whitefoot::{
     BuildCache, CheckOutcome, CompilationFailure, CompilationFailureKind, CompilerLimits,
-    HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, SourceInput, check,
-    check_module_entry, check_module_program, check_with_cache, compile, compile_module_program,
-    ModuleProgramFailure, discover_module_sources, entry_verdict, form_module_program_graph,
+    HOST_LINK_LIBRARIES, HOST_OPTIMIZATION_ARGUMENTS, ModuleEntry, ModuleProgramFailure,
+    SourceInput, check, check_module_entry, check_module_program, check_with_cache, compile,
+    compile_module_program, discover_module_sources, entry_verdict, form_module_program_graph,
     module_verdict,
 };
 
@@ -71,12 +71,12 @@ fn reach_module_program(
     case: &Case,
     root: &Path,
 ) -> Result<Option<whitefoot::LlvmModule>, CompilationFailure> {
-    let graph = match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
-    {
-        Ok(graph) => graph,
-        Err(ModuleProgramFailure::Compilation(failure)) => return Err(failure),
-        Err(ModuleProgramFailure::Discovery(failure)) => panic!("{}: {failure}", case.id),
-    };
+    let graph =
+        match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default()) {
+            Ok(graph) => graph,
+            Err(ModuleProgramFailure::Compilation(failure)) => return Err(failure),
+            Err(ModuleProgramFailure::Discovery(failure)) => panic!("{}: {failure}", case.id),
+        };
     let sources = discover_module_sources(root, &graph)
         .unwrap_or_else(|failure| panic!("{}: {failure}", case.id));
     let inputs: Vec<_> = sources

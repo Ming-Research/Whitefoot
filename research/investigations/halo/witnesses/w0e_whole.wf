@@ -1,0 +1,61 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Entry {
+  value: u64;
+}
+
+struct Meta {
+  log: u64;
+}
+
+struct State {
+  map: KeyedTable<Entry>;
+  meta: Meta;
+}
+
+const names: Array<u8, 2> =[97_u8, 98_u8];
+
+struct Vm {
+  acc: u64;
+}
+
+interface Host<E> {
+  fn call(env: &E, keys: &KeyedEntries<Entry>, vm: &Vm, op: u64) -> r: u64 writes(env), writes(keys), writes(vm);
+}
+
+fn run<interface Host<E>>(vm: &Vm, env: &E, keys: &KeyedEntries<Entry>) -> r: u64 writes(vm), writes(env), writes(keys) {
+  let got = Host::call(env: env, keys: keys, vm: vm, op: 1_u64);
+  return got;
+}
+
+fn entries_call(env: &State, keys: &KeyedEntries<Entry>, vm: &Vm, op: u64) -> r: u64 writes(env), writes(keys), writes(vm) {
+  set env^.meta.log = op;
+  let n = 0_u64;
+  if op < keys^.len {
+    let e = Entry(value: 7_u64);
+    set keys^[op] = Some<Entry>(value: e);
+  }
+  set vm^.acc = n;
+  return n;
+}
+
+binding EntriesHost : Host<State> {
+  call = entries_call;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  let table = keyed_table_new::<Entry>(capacity: 4_u64);
+  let m = Meta(log: 0_u64);
+  let state = State(map: move table, meta: m);
+  let h = shared_new::<State>(value: move state);
+  let vm = Vm(acc: 0_u64);
+  let keys = key_set_new(capacity: 2_u64);
+  key_set_put(keys: &keys, key: &names[0_u64..1_u64], payload: 0_u64);
+  key_set_put(keys: &keys, key: &names[1_u64..2_u64], payload: 1_u64);
+  let out = 0_u64;
+  atomic s = &h, slots = &s^.map[keys] {
+    set out = run::<EntriesHost>(vm: &vm, env: s, keys: slots);
+  }
+  return exit_status(code: 0_u8);
+}

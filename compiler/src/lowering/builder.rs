@@ -396,7 +396,7 @@ fn lower_nominals(
                     state: lower_type(erasure, *state)?,
                     shape: match shape {
                         CheckedShared::Object => IrShared::Object,
-                        CheckedShared::Table { entry } => IrShared::Table {
+                        CheckedShared::Map { entry } => IrShared::Map {
                             entry: lower_type(erasure, *entry)?,
                         },
                     },
@@ -717,6 +717,10 @@ struct IrBuilder<'program> {
     /// [SHARE-2] the atomic statements whose blocks enclose the statement
     /// being lowered, innermost last.
     atomics: Vec<atomic::AtomicRegion>,
+    /// Atomic entry roots whose completed statements permit concurrent readers.
+    readonly_atomic_roots: std::collections::HashSet<BindingId>,
+    /// Executing split contexts, including enclosing chunks' permissions.
+    capture_write_contexts: Vec<split::CaptureWriteContext<'program>>,
     /// How many frame records the function's atomic statements have
     /// numbered (compiler/waiting-contexts/state-locks).
     records: u32,
@@ -781,6 +785,8 @@ impl<'program> IrBuilder<'program> {
             context_awaits: Vec::new(),
             pending_contexts: Vec::new(),
             atomics: Vec::new(),
+            readonly_atomic_roots: std::collections::HashSet::new(),
+            capture_write_contexts: Vec::new(),
             records: 0,
         };
         let (entry, parameters) = builder.new_block(&[])?;
@@ -1309,21 +1315,13 @@ impl<'program> IrBuilder<'program> {
                     })?;
                 }
                 CheckedStatement::Atomic {
-                    target,
-                    borrowed,
-                    binding,
-                    state,
-                    entries,
+                    targets,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => self.lower_atomic(
-                    target,
-                    *borrowed,
-                    *binding,
-                    *state,
-                    entries,
+                    targets,
                     guard.as_deref(),
                     body,
                     fallthrough_drops,
@@ -2004,7 +2002,15 @@ impl<'program> IrBuilder<'program> {
                 }
                 Ok(selected)
             }
-            CheckedExpression::BorrowAddressed { root, .. } => self.lower_place_address(root),
+            CheckedExpression::BorrowAddressed {
+                root,
+                writable,
+                write_places,
+                ..
+            } => {
+                let write = self.borrow_may_write(*writable, write_places);
+                self.lower_place_address_access(root, write)
+            }
             CheckedExpression::DerefAddressed { binding, ty, .. } => {
                 let value = self.binding_value(*binding)?;
                 if self.value_type(value)? != lower_type(self.erasure, *ty)? {
@@ -2209,10 +2215,7 @@ impl<'program> IrBuilder<'program> {
     ) -> Result<(), LoweringFailure> {
         let target = self.prepare_target(target, displaces_live_value)?;
         let value = self.expression(value)?;
-        let (value, displaced) = match self.keep_table_identities(&target, value)? {
-            Some(kept) => kept,
-            None => (value, self.displaced_release(&target)?),
-        };
+        let displaced = self.displaced_release(&target)?;
         self.write_target(&target, value)?;
         if let Some(drop) = displaced {
             self.append_drops(vec![drop])?;

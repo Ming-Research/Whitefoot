@@ -22,7 +22,7 @@ use super::super::super::places::CapturedTerm;
 use super::super::fragment_type;
 use super::super::state::{
     DerivationId, DerivationNode, FactState, FlowEventId, FlowEventKind, ImplicitBoundKind,
-    Relation, close, implicit_bound_between, ordered,
+    Relation, close, implicit_bound_between,
 };
 use super::super::term::{
     CountedCaptureSide, MeasurePlacement, PlaceRoot, PlaceStep, ResolvedPlace, TermId, TermKind,
@@ -566,10 +566,12 @@ impl Input<'_, '_> {
             CheckedExpression::Project {
                 binding, fields, ..
             } => Some(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(*binding),
                 path: fields.iter().copied().map(PlaceStep::Field).collect(),
             }),
             CheckedExpression::BoxTake { binding, path, .. } => Some(ResolvedPlace {
+                atomic_aliases: Vec::new(),
                 root: PlaceRoot::Binding(*binding),
                 path: path.iter().map(CheckedPlaceStep::place_step).collect(),
             }),
@@ -1784,7 +1786,7 @@ impl Vocabulary {
         let mut image = FactState::new();
         let mut explicit = HashMap::new();
         let carried = closed
-            .relations_mentioning(context.carrier, &mut self.derivations)
+            .delivery_relations()
             .into_iter()
             .filter(|(relation, parent)| {
                 // No fact on the fresh receiver takes part in selecting c -> x
@@ -1946,23 +1948,6 @@ impl Vocabulary {
         })
     }
 
-    /// The strict bound of one image that derives the disequality of `pair`,
-    /// in whichever orientation holds, with the oriented pair it bounds; a
-    /// bound held through Z counts [ENT-4].
-    fn delivery_image_distinct_bound(
-        &self,
-        image: &FactState,
-        pair: (TermId, TermId),
-        receiver: TermId,
-    ) -> Option<(TermId, TermId, DeliveryImageBound)> {
-        [pair, (pair.1, pair.0)]
-            .into_iter()
-            .find_map(|(left, right)| {
-                let edge = self.delivery_image_bound(image, (left, right), receiver)?;
-                (edge.bound() <= -1).then_some((left, right, edge))
-            })
-    }
-
     /// [DIAG-2] a joined receiver bound on `pair` that the continuation's
     /// closure derives from the receiver's bound on Z and the other term's
     /// bound on Z creates no delivery root. Deriving it from live premises is
@@ -2008,95 +1993,8 @@ impl Vocabulary {
         pair: (TermId, TermId),
         receiver: TermId,
     ) -> DerivationId {
-        let (bound, transitive, give) = match self.delivery_image_transitive(edge, pair, receiver) {
-            Ok(proof) => return proof,
-            Err(parts) => parts,
-        };
-        self.derivations.intern(DerivationNode::PostconditionGive {
-            statement: give.statement,
-            carrier: give.carrier,
-            receiver: give.receiver,
-            relation: Box::new(Relation::Bound {
-                left: pair.0,
-                right: pair.1,
-                bound,
-            }),
-            event: give.event,
-            parent: transitive,
-        })
-    }
-
-    /// The Give node proving one image's disequality of `pair` from its
-    /// strict bound on the oriented pair `(left, right)`, a bound held
-    /// through Z included [ENT-4]. The disequality is derived over the
-    /// carrier, from the strict bound's own carrier-side derivation, and the
-    /// Give node substitutes the receiver, as every delivered relation's does.
-    fn delivery_image_distinct_proof(
-        &mut self,
-        edge: DeliveryImageBound,
-        (left, right): (TermId, TermId),
-        pair: (TermId, TermId),
-        receiver: TermId,
-    ) -> DerivationId {
-        let (strict, give) = match self.delivery_image_transitive(edge, (left, right), receiver) {
-            Ok(proof) => {
-                let DerivationNode::PostconditionGive {
-                    statement,
-                    carrier,
-                    receiver,
-                    event,
-                    parent,
-                    ..
-                } = self.derivations.nodes[proof.0 as usize].clone()
-                else {
-                    unreachable!("every delivery image cell is one Give node")
-                };
-                (
-                    parent,
-                    DeliveryGiveParts {
-                        statement,
-                        carrier,
-                        receiver,
-                        event,
-                    },
-                )
-            }
-            Err((_, transitive, give)) => (transitive, give),
-        };
-        let other = if pair.0 == receiver { pair.1 } else { pair.0 };
-        let carrier_pair = ordered(give.carrier, other);
-        let parent = self
-            .derivations
-            .intern(DerivationNode::DisequalityFromStrictBound {
-                left: carrier_pair.0,
-                right: carrier_pair.1,
-                parent: strict,
-            });
-        self.derivations.intern(DerivationNode::PostconditionGive {
-            statement: give.statement,
-            carrier: give.carrier,
-            receiver: give.receiver,
-            relation: Box::new(Relation::Distinct {
-                left: pair.0,
-                right: pair.1,
-                difference: 0,
-            }),
-            event: give.event,
-            parent,
-        })
-    }
-
-    /// A held cell's own Give node, or, for a bound held through Z, the
-    /// transitive derivation through Z over the image's Z Give node and the
-    /// implicit bound, with the Give node's fields for wrapping it.
-    fn delivery_image_transitive(
-        &mut self,
-        edge: DeliveryImageBound,
-        pair: (TermId, TermId),
-        receiver: TermId,
-    ) -> Result<DerivationId, (i128, DerivationId, DeliveryGiveParts)> {
         let (bound, zero, ((left, right), implicit_bound, kind)) = match edge {
-            DeliveryImageBound::Held { proof, .. } => return Ok(proof),
+            DeliveryImageBound::Held { proof, .. } => return proof,
             DeliveryImageBound::ThroughZero {
                 bound,
                 zero,
@@ -2140,16 +2038,18 @@ impl Vocabulary {
             }
         };
         let transitive = self.derivations.intern(transitive);
-        Err((
-            bound,
-            transitive,
-            DeliveryGiveParts {
-                statement,
-                carrier,
-                receiver: receiver_binding,
-                event,
-            },
-        ))
+        self.derivations.intern(DerivationNode::PostconditionGive {
+            statement,
+            carrier,
+            receiver: receiver_binding,
+            relation: Box::new(Relation::Bound {
+                left: pair.0,
+                right: pair.1,
+                bound,
+            }),
+            event,
+            parent: transitive,
+        })
     }
 
     pub(super) fn establish_delivery_join_once(
@@ -2173,9 +2073,10 @@ impl Vocabulary {
             .enumerate()
             .filter_map(|(index, image)| (!image.all_derivable).then_some(index))
             .collect::<Vec<_>>();
-        if contributing.is_empty() {
+        let Some((&first_index, rest)) = contributing.split_first() else {
             return;
-        }
+        };
+        let first = &images[first_index];
         // [ENT-5] every delivery image is closed, implicit facts included.
         // An image leaves out a receiver pair its own Z bound implies through
         // the other term's implicit bound, and it cannot hold a pair with a
@@ -2281,83 +2182,25 @@ impl Vocabulary {
             target.establish_from_proof(&relation, proof, &self.derivations);
         }
 
-        // [ENT-5] each disequality held by all. An image holds a disequality
-        // when it stores it or a strict bound of its own derives it [ENT-4],
-        // a bound held through the receiver's Z bound and the other term's
-        // implicit bound included; images store only the disequalities among
-        // their active terms, so the pairs an image derives through Z are
-        // evaluated here from its Z bound on the receiver. A pair every image
-        // derives on the same side is implied by the joined Z bounds and is
-        // left to the continuation's closure; only images bounding the
-        // receiver strictly above a term's range and strictly below it on
-        // different edges deliver a disequality the joined bounds do not
-        // imply. The prefilter recognizes that case from the least upper
-        // bound among the images holding one and the least lower bound among
-        // the images holding one: an image bounding the receiver on one side
-        // only is a valid above or below image, and an image without a Z
-        // bound on the receiver takes part in the exact check alone.
-        let receiver = context.receiver;
-        let mut candidates = contributing
-            .iter()
-            .flat_map(|index| images[*index].distinct.iter().copied())
-            .filter(|pair| pair.0 == receiver || pair.1 == receiver)
-            .collect::<BTreeSet<_>>();
-        let lowest_zero_bound = |left: TermId, right: TermId| {
-            contributing
-                .iter()
-                .filter_map(|index| images[*index].bounds.get(left, right).map(|held| held.0))
-                .min()
-        };
-        if let (Some(lowest_to_zero), Some(lowest_from_zero)) = (
-            lowest_zero_bound(receiver, ZERO),
-            lowest_zero_bound(ZERO, receiver),
-        ) && lowest_to_zero.saturating_add(lowest_from_zero) <= -2
-        {
-            for other in self.terms.ids() {
-                if other == receiver || other == ZERO {
-                    continue;
-                }
-                let pair = ordered(receiver, other);
-                if candidates.contains(&pair) {
-                    continue;
-                }
-                let held = contributing.iter().all(|index| {
-                    self.delivery_image_distinct_bound(&images[*index], pair, receiver)
-                        .is_some()
-                });
-                if held {
-                    candidates.insert(pair);
-                }
-            }
-        }
-        for pair in candidates {
-            let mut proofs = Vec::with_capacity(images.len());
-            for image in images {
-                if image.all_derivable {
-                    proofs.push(None);
-                    continue;
-                }
-                let proof = if let Some(proof) = image.distinct_proofs.get(&pair) {
-                    *proof
-                } else if let Some((left, right, edge)) =
-                    self.delivery_image_distinct_bound(image, pair, receiver)
-                {
-                    self.delivery_image_distinct_proof(edge, (left, right), pair, receiver)
-                } else {
-                    break;
-                };
-                proofs.push(Some(proof));
-            }
-            if proofs.len() != images.len() {
+        let mut distinct = first.distinct.iter().copied().collect::<Vec<_>>();
+        distinct.sort_unstable();
+        for pair in distinct {
+            if (pair.0 != context.receiver && pair.1 != context.receiver)
+                || !rest
+                    .iter()
+                    .all(|index| images[*index].distinct.contains(&pair))
+            {
                 continue;
             }
             // [ENT-4] a strict bound in either orientation derives the
             // disequality, so an implied strict bound implies it.
             let call_dependent = !ordinary_only
-                && proofs
-                    .iter()
-                    .flatten()
-                    .any(|proof| self.derivations.depends_on_postcondition_call(*proof));
+                && images.iter().any(|image| {
+                    !image.all_derivable
+                        && self
+                            .derivations
+                            .depends_on_postcondition_call(image.distinct_proofs[&pair])
+                });
             if [pair, (pair.1, pair.0)].into_iter().any(|(left, right)| {
                 self.delivery_join_implied(
                     target,
@@ -2384,16 +2227,17 @@ impl Vocabulary {
             }
             let parents = images
                 .iter()
-                .zip(proofs)
                 .enumerate()
-                .map(|(ordinal, (image, proof))| JoinParent {
+                .map(|(ordinal, image)| JoinParent {
                     ordinal: u32::try_from(ordinal)
                         .expect("delivery predecessor ordinal exceeds the u32 identity space"),
-                    parent: proof.unwrap_or_else(|| {
+                    parent: if image.all_derivable {
                         image
                             .contradiction
                             .expect("contradictory delivery image has one proof")
-                    }),
+                    } else {
+                        image.distinct_proofs[&pair]
+                    },
                 })
                 .collect::<Vec<_>>();
             let relation = Relation::Distinct {
@@ -3159,15 +3003,6 @@ pub(super) fn substitute_delivery_relation(
             }
         }
     }
-}
-
-/// The fields of one image's Z Give node that a derived relation's own Give
-/// node repeats.
-struct DeliveryGiveParts {
-    statement: crate::NodePath,
-    carrier: TermId,
-    receiver: BindingId,
-    event: FlowEventId,
 }
 
 /// How one closed delivery image holds a receiver pair [ENT-5].

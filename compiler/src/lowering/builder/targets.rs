@@ -157,50 +157,6 @@ impl IrBuilder<'_> {
         }))
     }
 
-    /// [SHARE-1] a commit over a live value in storage that holds tables at
-    /// paths of fields keeps each table where it is
-    /// (compiler/waiting-contexts/state-locks): a statement on another unit
-    /// of a shared state reads a table's address without a lock, so the
-    /// address stored must not change. Each new table's entries are
-    /// exchanged into the old table, the value written keeps the old tables,
-    /// and the release takes the new ones, which now hold the old entries.
-    /// `None` when the commit holds no such table.
-    pub(super) fn keep_table_identities(
-        &mut self,
-        target: &PreparedTarget<'_>,
-        value: IrValueId,
-    ) -> Result<Option<(IrValueId, Option<IrDrop>)>, LoweringFailure> {
-        if !target.displaces_live_value || !matches!(target.kind, TargetStorage::Address { .. }) {
-            return Ok(None);
-        }
-        let paths = self.table_paths(target.ty)?;
-        if paths.is_empty() {
-            return Ok(None);
-        }
-        let mut previous = self.read_target(target)?;
-        let mut value = value;
-        for path in &paths {
-            let old = self.table_at(previous, path)?;
-            let new = self.table_at(value, path)?;
-            self.define(
-                IrType::Unit,
-                IrOperation::KeyedTableSwap {
-                    first: old,
-                    second: new,
-                },
-            )?;
-            value = self.with_table_at(value, path, old)?;
-            previous = self.with_table_at(previous, path, new)?;
-        }
-        Ok(Some((
-            value,
-            Some(IrDrop {
-                subject: IrDropSubject::Value(previous),
-                ty: target.ty,
-            }),
-        )))
-    }
-
     fn check_target_offset(
         &self,
         offset: IrValueId,

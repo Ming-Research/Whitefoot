@@ -608,16 +608,54 @@ fn the_two_placements_are_admitted_where_the_rule_admits_them() {
     ));
 }
 
-/// [TYPE-9] a runtime-capacity form outside a `Box` is a hard error at the
-/// complete `type`.
+/// [TYPE-9] amendment S judges the referent position rather than the type argument spelling.
 #[test]
-fn a_runtime_capacity_shape_outside_a_box_is_refused() {
-    let source = include_bytes!(
-        "../../../../tests/conformance/cases/type9-neg-runtime-capacity-outside-box.wf"
+fn a_runtime_capacity_shape_behind_a_reference_is_admitted() {
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/type9-pos-runtime-capacity-reference.wf"
+    ));
+    assert_rule_kind(
+        br#"fn take(run: Slots<u64>) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        SemanticRule::Type9,
+        |kind| {
+            matches!(
+                kind,
+                SemanticIssueKind::InvalidRestrictedTypePlacement { .. }
+            )
+        },
     );
-    assert_rule_kind(source, SemanticRule::Type9, |kind| {
-        matches!(kind, SemanticIssueKind::TypeMismatch { .. })
+}
+
+/// [TYPE-9] the concrete argument's complete spelling owns a placement refusal.
+#[test]
+fn a_restricted_type_argument_is_refused_at_its_argument() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/type9-neg-map-type-argument-in-a-result.wf"
+    );
+    super::with_semantics(source, |outcome| {
+        let crate::SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("a map result must be refused: {outcome:?}");
+        };
+        assert_eq!(issue.rule_id(), "TYPE-9");
+        assert!(matches!(
+            issue.kind(),
+            SemanticIssueKind::InvalidRestrictedTypePlacement { .. }
+        ));
+        let coordinate = issue.location().coordinate();
+        let start = usize::try_from(coordinate.start().value()).expect("source offset");
+        let end = usize::try_from(coordinate.end().value()).expect("source offset");
+        assert_eq!(&source[start..end], b"ConcurrentHashMap<u8>");
     });
+    assert_accepts(include_bytes!(
+        "../../../../tests/conformance/cases/type9-pos-runtime-capacity-type-argument-reference.wf"
+    ));
 }
 
 /// [TYPE-2] each shape is one of the prelude's opaque structs now, and an
@@ -663,7 +701,10 @@ fn a_move_of_runtime_capacity_content_is_refused() {
         "../../../../tests/conformance/cases/type9-neg-move-runtime-capacity-content.wf"
     );
     assert_rule_kind(source, SemanticRule::Type9, |kind| {
-        matches!(kind, SemanticIssueKind::InlineRuntimeCapacityShape { .. })
+        matches!(
+            kind,
+            SemanticIssueKind::InvalidRestrictedTypePlacement { .. }
+        )
     });
 }
 

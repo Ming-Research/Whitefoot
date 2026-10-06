@@ -77,33 +77,6 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **Checking one function grows faster than its size.** The stage-3 wasm
-  interpreter's interpreter function, a `match` whose arms each hold their
-  handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s
-  with 20 and 144.6 s with 40 (M1 Pro, `whitefootc --check`), and the full
-  178-arm form had not finished after several minutes at 5 GB. A
-  15-second profile of the 20-arm check spends most of its samples in the
-  entailment closure (`close_with_row_pruning` and `DerivationLedger::intern`
-  in `compiler/src/semantic/entailment/state.rs`). Moving each handler's
-  body into its own function, the arm keeping only the stack-depth test and
-  the tail call, checks 20 arms in 3.7 s and 40 in 7.2 s, but the full
-  interpreter (8,500 lines, one 178-arm function) still takes about 100 s.
-  Impact: a writer of a large dispatch function, the shape an interpreter
-  has, must split it to check it at all, and each change costs minutes.
-  Change: find what the closure's cost scales with (the function's term
-  count against the facts live on the path being checked) and bound it by
-  the latter. Validate with the 10/20/40-arm series growing linearly and the
-  interpreter's verdicts unchanged. Reopen when the next stage-3 step needs
-  repeated checks of the interpreter, or another program meets the same
-  growth.
-
-- **A table subscripted in a block is refused without a repair.** `s^.map[k]`
-  in an atomic block is OP-4's type mismatch, "an indexable base", against
-  `KeyedTable<V>`, and names nothing a writer can do instead, where the
-  intended form is an entry binding in the header, `e = &s^.map[k]`
-  [SHARE-2]. The change: give that refusal a repair naming the header form.
-  Found by the adversarial tests of the keyed tables. Reopen with the next
-  change to how a subscript's base is refused.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
@@ -626,59 +599,25 @@ rarely insert at the same place.
   meanwhile report it as unsupported, with a conformance case either way.
   Reopen when a program needs a payload read without a binder.
 
-- **Half of an arm's closures recompute a state that did not change.** In
-  the synthetic N-arm interpreter of
-  [the active-term measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#active-term-matrices),
-  each arm ran about fourteen computed closures: `close` in
-  `compiler/src/semantic/entailment/state.rs` keys its remembered view on the
-  term table's revision, so each `let` that registers a term discards it
-  although a term without a fact changes no answer, and `close` never records
-  a complete closure on a state whose record is `Unknown`, so the arm-entry
-  state is closed from scratch at each of its first judgments. With the
-  matrices indexed by active terms each closure is small, so the saving is a
-  constant factor. The change: key the remembered view on the active terms
-  and the measure bounds rather than on every registration, and let a
-  complete closure of an `Unknown` record upgrade it to `Closed` through the
-  view's cell. Validate with the verification switch and the synthetic series.
-  Reopen when a profile of a real program attributes a substantial share to
-  repeated closures of unchanged states.
+- **Edge insertion recomposes every row for a term with an exact value.**
+  Inserting the two implicit edges of a constant, or of a measure with a
+  standing constant value, finds every row tight and recomposes all n columns
+  of each, n² products that improve no cell, in `insert_pending_edges` in
+  [`semantic/entailment/state.rs`](../compiler/src/semantic/entailment/state.rs).
+  It is 46% of the samples of Snowghost's `pkg::style` check, now its slowest
+  module ([compile-speed remaining costs](../research/investigations/compile-speed/DESIGN.md#remaining-costs)).
+  Change: fill such a term's closed row and column from zero's, shifted by
+  its value, with the transitive proof through zero, after showing that the
+  insertion order still closes the matrix. Validate with the seeded-closure
+  verification, byte-identical Snowghost LLVM and at least 1.2x on the
+  `pkg::style` module check. Reopen when that module limits a build.
 
-- **Every relational measure term is in every closure universe.** With the
-  closure matrices indexed by active terms
-  ([the active-term measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#active-term-matrices)),
-  `closure_universe` in `compiler/src/semantic/entailment/state.rs` still
-  admits every term of `TermTable::relational_terms`, the measures whose
-  implicit facts relate them to another non-Z term, and `measure_term` in
-  `flow/prover.rs` interns the length, capacity and head measures of each
-  measured place together, so a function with many measured places has a
-  universe that grows with that count, and with it every closure, join and
-  materialization. Impact: superlinear checking returns for such a function;
-  the interpreters measured have a handful of measured places. The change:
-  admit a relational group (a place's measures and a length's symbolic
-  constant) only while one member holds a stored relation, and let the closed
-  view answer a pair inside a dormant group from the group's implicit edges,
-  which the implicit-range snapshot would have to carry. Validate with the
-  verification switch, a generated-flow case with dormant measure groups and
-  a synthetic program with one measured place per arm. Reopen when a profile
-  of a real program attributes closure time to relational rows without facts.
-
-- **An ordinary relation that does not improve the full selection is not
-  materialized before a kill.** `materialize_closure_before_kill` in
-  `compiler/src/semantic/entailment/state.rs` returns early when the full
-  closure record is closed and no active term is fresh; an ordinary fact
-  weaker than the call-dependent selection of its pair (`p - x <= -1` beside
-  a call's `p - x <= -2`) leaves that record closed while the ordinary
-  fallbacks it improves (`Z - x` through `p`) are not stored, so a kill of
-  its support removes them from the ordinary layer, and a later removal of
-  the call's candidates leaves the pair at its type range. Found by the
-  generated-flow comparison at 3000 cases (case 1379) with the reference's
-  ordinary layer; the gate runs 1000 cases. Impact: a weaker ordinary
-  fallback after an S12 holder kill in that shape, never a wrong acceptance.
-  The change: skip the materialization only when the ordinary record is also
-  closed, or store the improved ordinary fallbacks alone. Validate with the
-  generated flows at 3000 cases and the paired comparison on wfgrep and
-  fixed_run_library. Reopen when a program's postcondition reasoning is
-  refused after a write that its ordinary facts should survive.
+- **A cacheless entry check analyzes every function body twice.** Without
+  `--cache`, a composition cannot reuse the analyses its own module verdicts
+  just made, so `style_oracle` takes 190 s instead of the fresh-cache 95 s
+  on the baseline ([compile-speed baseline](../research/investigations/compile-speed/DESIGN.md#baseline)).
+  Change: an in-memory receipt store for one invocation. Reopen when a
+  workflow builds without a cache.
 
 ## Containers and storage lowering
 
@@ -687,7 +626,7 @@ rarely insert at the same place.
   the rows that allocate them, while a shared object's state, a keyed
   table's entries and a key set's store come from the context runtime's
   pool, which a no-heap bundle may still use through `shared_new`,
-  `keyed_table_new` and `key_set_insert`. The checker refused `KeySet` there
+  `shared_map_new` and `key_set_insert`. The checker refused `KeySet` there
   for a while, which [STOR-8] does not name; it no longer does. The
   question for the owner: whether the declaration means no allocation at
   all, which would withdraw those three types and their rows too, or no use
@@ -1151,7 +1090,7 @@ rarely insert at the same place.
   by `ZADD`'s server CPU per request on four drivers against one. Reopen
   with the work on `ZADD`'s rate.
 
-- **`KeyedTable<unit>` and tables of other payload-free values do not
+- **`ConcurrentHashMap<unit>` and maps of other payload-free values do not
   lower.** The emitter passes the runtime an entry's `Option` tag as the
   `i32` at offset 0 (`checked_entry` in
   `compiler/src/backend/emitter/shared.rs`) and refuses a tag-only enum,
@@ -2257,7 +2196,42 @@ rarely insert at the same place.
   Reopen when a test needs a deadline order that real time cannot produce
   reliably.
 
+- **Deadline reads fail on the first corpus run after a build on macOS.**
+  `programs::stream::a_deadline_ends_a_read_of_a_silent_writer_on_both_routes`
+  and `..._under_a_pool_pinned_at_zero` (`stdin_deadline.wf`) returned status
+  10 on the first run after building the compiler, on this branch and on a
+  main-equivalent compiler alike, and passed on every repeat on both (macOS,
+  2026-10-05). Status 10 means the first read received the byte the harness
+  writes after 400 ms, so its 50 ms deadline did not end it; the harness
+  starts its delay at child spawn, not at the program's read, so a slow first
+  start can deliver the byte before the read is queued. Impact: a spurious
+  gate failure on a cold host. Change: synchronize the writer with a
+  program-ready event, keeping the delayed-byte assertion, and confirm that a
+  cancellation implementation that ignores the deadline still fails. Reopen
+  when it fails in CI or before changing deadline reads.
+  The same two status-10 failures recurred in amendment S's full gate at
+  `f1fba77c3fa422348b72a00301105d4908e68e5a`; each then passed unchanged in
+  isolation. The recurrence preserves the need for a ready-event test rather
+  than establishing a deadline-runtime defect.
+
+- **Symbolic const expressions in atomic root comparison are conservative.**
+  An unresolved capacity expression can equal a concrete capacity, so the
+  comparison treats it as possibly equal without solving arithmetic. It can
+  also refuse a call through `Array<u8, n + 1>` and `Array<u8, n + 2>` that
+  no concrete instance aliases. Define a specification-fixed comparison if
+  a writer needs that distinction; validate equal-value expressions still
+  overlap and the distinct-capacity witness is admitted. Reopen with the
+  first shared generic storage algorithm needing that call.
+
 ## Modules and libraries
+
+- **Whole-map iteration.** Shared maps provide selections, counting and swaps,
+  but no iteration API. Firn's BGSAVE and SCAN need a whole-map traversal whose
+  references remain valid under the whole hold and whose yielded order has a
+  stated meaning. Design that interface and add independent snapshot/cursor
+  cases when either command is selected; do not infer an order from the runtime
+  hash index. Validate by enumerating each present key once across growth and
+  deletion, with missing keys excluded.
 
 - **Library capacity ceilings that existed for OP-9.**
   `GrowVector<T, const ceiling: u64>` in `lib/std/collections/vector`, the
@@ -2438,6 +2412,16 @@ rarely insert at the same place.
   first consumer whose loop spills several values, or a host without
   `preserve_none`.
 
+- **Firn GET retains an Entry copy because its existing byte slot makes the
+  frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
+  eliminates two 72-byte copies from `run_pop`, but `run_get` still has its
+  prior 72-byte copy: its ordinary `i8` slot fails
+  `plan_target_frame`'s independent-slot alignment test in
+  `compiler/src/target.rs`. Investigate separating slots with different
+  alignments without changing their lifetimes or alias facts. Reopen with
+  firn GET performance work; validate the normal GET path's optimized IR
+  loses the copy while the frame and borrow tests retain their observations.
+
 - **Interpreter state is pinned only through the calling convention.** A
   split loop keeps its changing values in registers because every part
   shares one prototype, so the pinning has the convention's register count,
@@ -2470,9 +2454,10 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 8,668 lines, including a
-  2,086-line inline test module, and the tests in
-  `compiler/src/semantic/tests/entailment.rs` have 11,234 lines and 162
+  `compiler/src/semantic/entailment/state.rs` has 9,223 lines, including a
+  1,901-line inline test module (the compile-speed work added its slot
+  layouts, dormant components and implicit structure), and the tests in
+  `compiler/src/semantic/tests/entailment.rs` have 10,920 lines and 156
   tests. The flow itself is divided into its sub-contexts and component
   modules (`design/compiler/engine-components.md`), none over 3,200 lines.
   `state.rs` can move its test module to its own file and its dense-closure
@@ -2582,6 +2567,17 @@ rarely insert at the same place.
   differs from what the ownership judgment says the code touches.
 
 ## Open language questions
+
+- **A const argument of another integer type is accepted.** The checker
+  accepts `fn g<const m: u64>() -> r: u64 pure { return f::<m>(); }` for
+  `fn f<const n: u8>()`, and the reverse from `u8` to `u64`; [MSR-6] gives a
+  const generic its `gparam`'s exact type, but no rule found by reading says
+  whether an [FN-2] const argument must have the formal's exact type, fit it,
+  or be checked only at concrete instantiation. Symbolic summary reuse keys
+  renamed instances by each const parameter's written type, so this does not
+  affect it. Change: state the rule, then check it with a conformance case
+  either way. Found by the compile-speed review; reopen when a program passes
+  a const generic across integer types.
 
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
@@ -3435,6 +3431,14 @@ condition under which it is taken up.
   longer; reopen when the corpus job becomes the longest or its budget trips.
   This changes conformance evidence wiring, so the PR states it under
   AGENTS.md rule 4.
+  The local macOS amendment S gate at
+  `f1fba77c3fa422348b72a00301105d4908e68e5a` took 214.72 s in
+  `compiler/test-corpus`, above its 125 s budget; the native conformance walk
+  was the last test still running. The amendment changes the manifest from
+  1,733 to 1,735 cases and from 552 to 557 native-run cases, but those counts
+  do not attribute the overrun. Profile the serial walk and host startup
+  before deciding whether the amendment adds work on that path or the host
+  needs another budget. No budget was raised and no case was removed.
 - **The Windows io-hosts steps have no time budget.** They run without
   `run-check.pl`, so only their step timeouts (5 and 8 min) and the job's
   (10 min) bound them, and the Windows job is now the longest CI job, 230–285
@@ -3457,10 +3461,14 @@ condition under which it is taken up.
   about 90% before the stage trips, and the overrun may land on a later
   change's run
   ([budget size](../research/investigations/test-economy/time-budgets.md#the-gate)).
-  The gate's host record now prints the processor model. If the fast and
-  slow runs separate by model, give each model its own budget column, with
-  the current one kept for an unknown model, and lower the margin as far as
-  the within-model spread allows; validate that a leave-one-out over at
+  The processor model now shows that they separate: on 2026-10-05
+  `compiler/test-unit` had a median of 105 s on the AMD EPYC 7763 and 65 s
+  on the EPYC 9V45, and the budgets were raised to cover the 7763
+  ([mixed processors](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  Give each model its own budget column, with the slowest kept for an
+  unknown model, and lower the margin as far as the within-model spread
+  allows; macOS, one virtual model with `compiler/test-unit` at 56–137 s,
+  gains nothing from it; validate that a leave-one-out over at
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.

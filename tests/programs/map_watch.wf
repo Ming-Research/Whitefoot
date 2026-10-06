@@ -1,0 +1,135 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const names: Array<u8, 4> =[97_u8, 98_u8, 99_u8, 100_u8];
+
+fn empty(held: &Option<u64>) -> result: Bool reads(held) {
+  match held^ {
+    Some(value: unused) => {
+      return False();
+    }
+    None() => {
+      return True();
+    }
+  }
+}
+
+fn full(held: &Option<u64>) -> result: Bool reads(held) {
+  match held^ {
+    Some(value: unused) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn ready(closed: &u64, held: &Option<u64>) -> result: Bool reads(closed), reads(held) {
+  if closed^ == 1_u64 {
+    return True();
+  }
+  return full(held: held);
+}
+
+fn post(boxes: Shared<ConcurrentHashMap<u64>>, at: u64) -> result: unit pure waits contract {
+  requires at < 4_u64;
+} {
+  doc "Puts the values 1 to 500 into one box, each once the box is empty.";
+  let names_end = at + 1_u64;
+  let key = &names[at..names_end];
+  for @send (value in 1_u64..501_u64) {
+    atomic slot = &boxes[key] when empty(held: slot) {
+      set slot^ = Some<u64>(value: value);
+    }
+  }
+  return unit;
+}
+
+fn fetch(received: Shared<u64>, boxes: Shared<ConcurrentHashMap<u64>>, at: u64) -> result: unit pure waits contract {
+  requires at < 4_u64;
+} {
+  doc "Takes 500 values out of one box, each once the box holds one, and adds them to the state's total.";
+  let names_end = at + 1_u64;
+  let key = &names[at..names_end];
+  for @take (count in 0_u64..500_u64) {
+    atomic slot = &boxes[key], r = &received when full(held: slot) {
+      match slot^ {
+        Some(value: seen) => {
+          set r^ = r^ +wrap seen^;
+        }
+        None() => {
+        }
+      }
+      set slot^ = None<u64>();
+    }
+  }
+  return unit;
+}
+
+fn wait_ready(closed: Shared<u64>, boxes: Shared<ConcurrentHashMap<u64>>, waited: Shared<u64>) -> result: unit pure waits {
+  doc "Waits until the first box holds a value or the mail is closed, then counts its wake.";
+  let key = &names[0_u64..1_u64];
+  atomic slot = &boxes[key], c = &closed when ready(closed: c, held: slot) {
+    let unused = full(held: slot);
+  }
+  atomic count = &waited {
+    set count^ = count^ +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn close(closed: Shared<u64>) -> result: unit pure waits {
+  atomic c = &closed {
+    set c^ = 1_u64;
+  }
+  return unit;
+}
+
+fn exchange(boxes: &Shared<ConcurrentHashMap<u64>>, closed: &Shared<u64>, received: &Shared<u64>, waited: &Shared<u64>) -> result: unit reads(boxes), reads(closed), reads(received), reads(waited) waits {
+  for @pair (at in 0_u64..4_u64) {
+    let sender = shared_share::<ConcurrentHashMap<u64>>(shared: boxes);
+    let taker = shared_share::<ConcurrentHashMap<u64>>(shared: boxes);
+    let total = shared_share::<u64>(shared: received);
+    spawn post(boxes: move sender, at: at);
+    spawn fetch(received: move total, boxes: move taker, at: at);
+  }
+  for @watcher (index in 0_u64..2_u64) {
+    let watching = shared_share::<ConcurrentHashMap<u64>>(shared: boxes);
+    let stopping = shared_share::<u64>(shared: closed);
+    let counting = shared_share::<u64>(shared: waited);
+    spawn wait_ready(closed: move stopping, boxes: move watching, waited: move counting);
+  }
+  let closer = shared_share::<u64>(shared: closed);
+  spawn close(closed: move closer);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Four pairs of contexts pass 500 values each through one entry of a shared map, a sender waiting for its box to be empty and a taker for it to hold a value, so each guard reads an entry and every wake comes from a write to the map. Two more contexts wait on a guard that reads an entry and a separate closed object together, which a closing context sets. The total is the sum of 1 to 500 four times, every box ends empty and both waiters wake, on any number of drivers; the status names the first wrong count.";
+  let boxes = shared_map_new::<u64>(capacity: 0_u64);
+  let closed = shared_new::<u64>(value: 0_u64);
+  let received = shared_new::<u64>(value: 0_u64);
+  let waited = shared_new::<u64>(value: 0_u64);
+  exchange(boxes: &boxes, closed: &closed, received: &received, waited: &waited);
+  let total = 0_u64;
+  let left = 1_u64;
+  atomic t = &boxes, r = &received {
+    set total = r^;
+    set left = map_count::<u64>(map: t);
+  }
+  if total != 501000_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if left != 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let woken = 0_u64;
+  atomic count = &waited {
+    set woken = count^;
+  }
+  if woken != 2_u64 {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

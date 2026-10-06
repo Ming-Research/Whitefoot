@@ -1,0 +1,9 @@
+fn consume<T: drop>(x: T) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let cell = box_slots_new::<u8>(capacity: 4_u64);
+  consume::<Slots<u8>>(x: move cell.inner);
+  return std::process::exit_status(code: 0_u8);
+}

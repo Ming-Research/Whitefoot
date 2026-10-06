@@ -1,0 +1,417 @@
+alias Slab = std::collections::slab::Slab;
+alias SlabHandle = std::collections::slab::SlabHandle;
+alias slab_new = std::collections::slab::slab_new;
+alias slab_insert = std::collections::slab::slab_insert;
+alias slab_visit = std::collections::slab::slab_visit;
+alias slab_edit = std::collections::slab::slab_edit;
+alias slab_remove = std::collections::slab::slab_remove;
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias HandleFactory = std::io::HandleFactory;
+alias OutputStream = std::io::OutputStream;
+
+const stretch_text: Array<u8, 22> = "stretch tree of depth ";
+
+const long_text: Array<u8, 25> = "long lived tree of depth ";
+
+const trees_text: Array<u8, 17> = "\t trees of depth ";
+
+const check_text: Array<u8, 9> = "\t check: ";
+
+const newline_text: Array<u8, 1> = "\n";
+
+enum Value {
+  Nil();
+  Node(h: SlabHandle);
+}
+
+struct TreeNode {
+  left: Value;
+  right: Value;
+  mark: u64;
+}
+
+struct Heap {
+  objects: Slab<TreeNode, 1048576, 18446744073709551615>;
+  epoch: u64;
+  allocated: u64;
+  live: u64;
+  failed: Bool;
+}
+
+fn build(heap: &Heap, depth: u64) -> result: Value writes(heap) contract {
+  requires depth <= 17_u64;
+} {
+  let left = Value::Nil();
+  let right = Value::Nil();
+  if depth > 0_u64 {
+    let child_depth = depth - 1_u64;
+    set left = build(heap: heap, depth: child_depth);
+    set right = build(heap: heap, depth: child_depth);
+  }
+  let node = TreeNode(left: left, right: right, mark: 0_u64);
+  match slab_insert::<TreeNode, 1048576, 18446744073709551615>(slab: &heap^.objects, value: node) {
+    Ok(value: handle) => {
+      set heap^.allocated = heap^.allocated +wrap 1_u64;
+      return Value::Node(h: handle);
+    }
+    Err(error: refused) => {
+      set heap^.failed = True();
+      return Value::Nil();
+    }
+  }
+}
+
+fn read_node(env: &unit, value: &TreeNode) -> result: TreeNode reads(value) {
+  return value^;
+}
+
+fn check(objects: &Slab<TreeNode, 1048576, 18446744073709551615>, root: Value) -> result: Result<u64, unit> reads(objects) {
+  match root {
+    Nil() => {
+      return Ok<u64, unit>(value: 0_u64);
+    }
+    Node(h: handle) => {
+      let empty = unit;
+      match slab_visit::<TreeNode, unit, TreeNode, fn read_node, 1048576, 18446744073709551615>(slab: objects, handle: handle, env: &empty) {
+        Err(error: missing) => {
+          return Err<u64, unit>(error: unit);
+        }
+        Ok(value: node) => {
+          let left = match check(objects: objects, root: node.left) {
+            Ok(value: count) => {
+              give count;
+            }
+            Err(error: missing) => {
+              return Err<u64, unit>(error: unit);
+            }
+          }
+          let right = match check(objects: objects, root: node.right) {
+            Ok(value: count) => {
+              give count;
+            }
+            Err(error: missing) => {
+              return Err<u64, unit>(error: unit);
+            }
+          }
+          let partial = 1_u64 +wrap left;
+          let total = partial +wrap right;
+          return Ok<u64, unit>(value: total);
+        }
+      }
+    }
+  }
+}
+
+fn mark_node(env: &u64, value: &TreeNode) -> result: Option<TreeNode> reads(env), writes(value) {
+  if value^.mark == env^ {
+    return None<TreeNode>();
+  }
+  set value^.mark = env^;
+  return Some<TreeNode>(value: value^);
+}
+
+fn collect(heap: &Heap, roots: &Slots<Value, 2>) -> result: Bool reads(roots), writes(heap) {
+  doc "An epoch never wraps: a collector refuses exhaustion of u64 epochs.";
+  if heap^.epoch == 18446744073709551615_u64 {
+    return False();
+  }
+  set heap^.epoch = heap^.epoch + 1_u64;
+  let epoch = heap^.epoch;
+  let work = slots_new::<Value, 64>();
+  for @roots (i in 0_u64..roots^.len) {
+    if work.len < work.cap {
+      place_back(window: &work, value: roots^[i]);
+    } else {
+      return False();
+    }
+  }
+  let live = 0_u64;
+  loop @mark {
+    if work.len == 0_u64 {
+      break @mark;
+    }
+    let root = take_back(window: &work);
+    match root {
+      Nil() => {
+      }
+      Node(h: handle) => {
+        match slab_edit::<TreeNode, u64, Option<TreeNode>, fn mark_node, 1048576, 18446744073709551615>(slab: &heap^.objects, handle: handle, env: &epoch) {
+          Err(error: missing) => {
+            return False();
+          }
+          Ok(value: visited) => {
+            match visited {
+              None() => {
+              }
+              Some(value: node) => {
+                set live = live +wrap 1_u64;
+                if work.len < work.cap {
+                  place_back(window: &work, value: node.left);
+                } else {
+                  return False();
+                }
+                if work.len < work.cap {
+                  place_back(window: &work, value: node.right);
+                } else {
+                  return False();
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  let index = 0_u64;
+  loop @sweep {
+    if index < heap^.objects.cells.inner.len {
+      if heap^.objects.cells.inner[index].storage.len > 0_u64 {
+        if heap^.objects.cells.inner[index].storage[0_u64].mark != epoch {
+          let handle = SlabHandle(index: index, generation: heap^.objects.cells.inner[index].generation);
+          match slab_remove::<TreeNode, 1048576, 18446744073709551615>(slab: &heap^.objects, handle: handle) {
+            Some(value: removed) => {
+            }
+            None() => {
+              return False();
+            }
+          }
+        }
+      }
+      set index = index + 1_u64;
+    } else {
+      break @sweep;
+    }
+  }
+  set heap^.live = live;
+  set heap^.allocated = 0_u64;
+  return True();
+}
+
+fn safe_point(heap: &Heap, roots: &Slots<Value, 2>) -> result: Bool reads(roots), writes(heap) {
+  if heap^.failed {
+    return False();
+  }
+  let threshold = heap^.live;
+  if threshold < 65536_u64 {
+    set threshold = 65536_u64;
+  }
+  if heap^.allocated > threshold {
+    return collect(heap: heap, roots: roots);
+  }
+  return True();
+}
+
+fn number(buffer: &Slots<u8, 128>, value: u64) -> result: unit writes(buffer) {
+  let digits = slots_new::<u8, 20>();
+  let remaining = value;
+  loop @digits {
+    let digit = remaining % 10_u64;
+    if digits.len < digits.cap {
+      let narrow = cvt::<u64, u8>(digit);
+      let ascii = narrow + 48_u8;
+      place_back(window: &digits, value: ascii);
+    }
+    set remaining = remaining / 10_u64;
+    if remaining == 0_u64 {
+      break @digits;
+    }
+  }
+  loop @reverse {
+    if digits.len == 0_u64 {
+      break @reverse;
+    }
+    let digit = take_back(window: &digits);
+    if buffer^.len < buffer^.cap {
+      place_back(window: buffer, value: digit);
+    }
+  }
+  return unit;
+}
+
+fn text(buffer: &Slots<u8, 128>, value: &[u8]) -> result: unit reads(value), writes(buffer) {
+  for @bytes (i in 0_u64..value^.len) {
+    if buffer^.len < buffer^.cap {
+      place_back(window: buffer, value: value^[i]);
+    }
+  }
+  return unit;
+}
+
+fn line(factory: &HandleFactory, output: &OutputStream, kind: u64, depth: u64, iterations: u64, count: u64) -> result: Bool writes(factory), writes(output) waits {
+  let buffer = slots_new::<u8, 128>();
+  if kind == 0_u64 {
+    text(buffer: &buffer, value: &stretch_text[0_u64..22_u64]);
+  } else if kind == 2_u64 {
+    text(buffer: &buffer, value: &long_text[0_u64..25_u64]);
+  } else {
+    number(buffer: &buffer, value: iterations);
+    text(buffer: &buffer, value: &trees_text[0_u64..17_u64]);
+  }
+  number(buffer: &buffer, value: depth);
+  text(buffer: &buffer, value: &check_text[0_u64..9_u64]);
+  number(buffer: &buffer, value: count);
+  text(buffer: &buffer, value: &newline_text[0_u64..1_u64]);
+  let sent = 0_u64;
+  loop @write {
+    if sent < buffer.len {
+      let deadline = None<std::time::Instant>();
+      match std::io::write_once(factory: factory, output: output, source: &buffer[0_u64..buffer.len], start: sent, end: buffer.len, deadline: deadline) {
+        Err(error: problem) => {
+          return False();
+        }
+        Ok(value: next) => {
+          set sent = next;
+        }
+      }
+    } else {
+      break @write;
+    }
+  }
+  return True();
+}
+
+fn power(exponent: u64) -> result: u64 pure {
+  let value = 1_u64;
+  for @power (i in 0_u64..exponent) {
+    set value = value *wrap 2_u64;
+  }
+  return value;
+}
+
+fn run(n: u64, factory: &HandleFactory, output: &OutputStream) -> result: Bool writes(factory), writes(output) waits contract {
+  requires n >= 4_u64;
+  requires n <= 16_u64;
+} {
+  let objects = slab_new::<TreeNode, 1048576, 18446744073709551615>(capacity: 1048576_u64);
+  let failed = False();
+  let heap = Heap(objects: move objects, epoch: 0_u64, allocated: 0_u64, live: 0_u64, failed: failed);
+  let roots = slots_new::<Value, 2>();
+  let stretch_depth = n + 1_u64;
+  let stretch = build(heap: &heap, depth: stretch_depth);
+  let stretch_count = match check(objects: &heap.objects, root: stretch) {
+    Ok(value: count) => {
+      give count;
+    }
+    Err(error: missing) => {
+      return False();
+    }
+  }
+  if line(factory: factory, output: output, kind: 0_u64, depth: stretch_depth, iterations: 0_u64, count: stretch_count) {
+  } else {
+    return False();
+  }
+  if safe_point(heap: &heap, roots: &roots) {
+  } else {
+    return False();
+  }
+  let long_lived = build(heap: &heap, depth: n);
+  place_back(window: &roots, value: long_lived);
+  if safe_point(heap: &heap, roots: &roots) {
+  } else {
+    return False();
+  }
+  let depth = 4_u64;
+  loop @depths {
+    if depth <= n {
+      let difference = n - depth;
+      let exponent = difference + 4_u64;
+      let iterations = power(exponent: exponent);
+      let sum = 0_u64;
+      for @trees (i in 0_u64..iterations) {
+        let temporary = build(heap: &heap, depth: depth);
+        match check(objects: &heap.objects, root: temporary) {
+          Ok(value: count) => {
+            set sum = sum +wrap count;
+          }
+          Err(error: missing) => {
+            return False();
+          }
+        }
+        if safe_point(heap: &heap, roots: &roots) {
+        } else {
+          return False();
+        }
+      }
+      if line(factory: factory, output: output, kind: 1_u64, depth: depth, iterations: iterations, count: sum) {
+      } else {
+        return False();
+      }
+      set depth = depth + 2_u64;
+    } else {
+      break @depths;
+    }
+  }
+  let final_count = match check(objects: &heap.objects, root: long_lived) {
+    Ok(value: count) => {
+      give count;
+    }
+    Err(error: missing) => {
+      return False();
+    }
+  }
+  return line(factory: factory, output: output, kind: 2_u64, depth: n, iterations: 0_u64, count: final_count);
+}
+
+fn main(inputs: Inputs) -> result: ExitStatus pure waits {
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: directory, write: directory_write) = move cwd;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory);
+  let argc = std::text::args_count(args: &args);
+  if argc != 2_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let bytes = array_filled::<u8, 2>(value: 0_u8);
+  let length = match std::text::arg_get(args: &args, position: 1_u64) {
+    Err(error: missing) => {
+      return exit_status(code: 2_u8);
+    }
+    Ok(value: argument) => {
+      match std::text::host_copy_bytes(value: &argument, destination: &bytes[0_u64..2_u64], start: 0_u64, end: 2_u64) {
+        Err(error: problem) => {
+          return exit_status(code: 2_u8);
+        }
+        Ok(value: copied) => {
+          give copied;
+        }
+      }
+    }
+  }
+  let n = 0_u64;
+  if length == 1_u64 {
+    if bytes[0_u64] >= 52_u8 {
+      if bytes[0_u64] <= 57_u8 {
+        let digit = cvt::<u8, u64>(bytes[0_u64]);
+        if digit >= 48_u64 {
+          set n = digit - 48_u64;
+        }
+      }
+    }
+  }
+  if length == 2_u64 {
+    if bytes[0_u64] == 49_u8 {
+      if bytes[1_u64] >= 48_u8 {
+        if bytes[1_u64] <= 54_u8 {
+          let digit = cvt::<u8, u64>(bytes[1_u64]);
+          if digit >= 48_u64 {
+            if digit <= 54_u64 {
+              let ones = digit - 48_u64;
+              set n = 10_u64 + ones;
+            }
+          }
+        }
+      }
+    }
+  }
+  if n >= 4_u64 {
+    if n <= 16_u64 {
+      if run(n: n, factory: &factory, output: &out) {
+        return exit_status(code: 0_u8);
+      }
+      return exit_status(code: 1_u8);
+    }
+  }
+  return exit_status(code: 2_u8);
+}
