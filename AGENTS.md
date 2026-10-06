@@ -407,6 +407,11 @@ preserve the full gate before merge.
   `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
   timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
   experiments and never a gate.
+- Compiler releases: `compiler-release.yml`, dispatched when a downstream
+  project needs a main commit, publishes that commit's compiler as release
+  `wf-<12 hex digits>`, and `compiler-release-cleanup.yml` removes releases
+  older than 30 days each week, keeping the newest; each file's header gives
+  the command and contents ([downstream releases](design/compiler/downstream-releases.md)).
 - `make install-hooks` optionally reports an edit of a released archive at
   commit.
 

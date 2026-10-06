@@ -1,0 +1,56 @@
+# Removes the compiler releases compiler-release.yml makes, tags `wf-*`,
+# once they are more than 30 days old, always keeping the newest
+# (design/compiler/downstream-releases.md). A downstream whose pinned release
+# was removed has it made again by dispatching compiler-release.yml with the
+# release's commit.
+#
+# A push that changes this file lists what a run would remove and removes
+# nothing.
+name: compiler-release-cleanup
+
+on:
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/compiler-release-cleanup.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: compiler-release-cleanup
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  cleanup:
+    name: Remove releases older than 30 days
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Remove releases older than 30 days, keeping the newest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.tag_name | startswith("wf-")) | [.created_at, .tag_name] | @tsv' \
+            | LC_ALL=C sort -r > "$RUNNER_TEMP/releases.tsv"
+          echo "compiler releases, newest first, cutoff $cutoff:"
+          cat "$RUNNER_TEMP/releases.tsv"
+          tail -n +2 "$RUNNER_TEMP/releases.tsv" | while IFS=$'\t' read -r created tag; do
+            if [[ "$created" < "$cutoff" ]]; then
+              if [ "$GITHUB_EVENT_NAME" = push ]; then
+                echo "dry run: would remove $tag, made $created"
+              else
+                echo "removing $tag, made $created"
+                gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+              fi
+            fi
+          done
