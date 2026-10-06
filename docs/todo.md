@@ -3463,7 +3463,7 @@ condition under which it is taken up.
   both builds, then lower `performance-candidate-compiler` to 1.25 times its
   new slowest run; validate with swapped-order runs that the first and
   second builds agree within 5%. Reopen when the candidate stage overruns
-  155 s on a change that does not touch the compiler.
+  130 s on a change that does not touch the compiler.
 - **One budget per runner class hides slow growth on faster runners.** On
   identical compiler source the ubuntu `check/unit` stage took 123–187 s,
   so its budget, 1.25 times the slowest run, lets a change grow a fast run by
