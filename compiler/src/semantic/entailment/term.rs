@@ -196,6 +196,17 @@ pub(crate) struct TermTable {
     ids: WordHashMap<TermKind, TermId>,
     measure_bounds: WordHashMap<TermId, MeasureBound>,
     revision: usize,
+    /// How many registrations replaced a different standing measure fact of
+    /// an already registered measure term, which can weaken that term's
+    /// implicit bounds rather than only add to them.
+    measure_replacements: usize,
+    /// Every registered term and every term given a different standing
+    /// measure fact, in order: the terms whose implicit bounds may have
+    /// changed since the structure below last read the log.
+    implicit_log: Vec<TermId>,
+    /// What this table alone decides about implicit bounds, brought up to
+    /// date from `implicit_log` when a closure reads it.
+    implicit: std::cell::RefCell<super::state::ImplicitStructure>,
 }
 
 impl TermTable {
@@ -205,6 +216,9 @@ impl TermTable {
             ids: WordHashMap::default(),
             measure_bounds: WordHashMap::default(),
             revision: 0,
+            measure_replacements: 0,
+            implicit_log: Vec::new(),
+            implicit: std::cell::RefCell::default(),
         };
         let zero = table.intern(TermKind::Zero);
         debug_assert_eq!(zero, ZERO);
@@ -212,17 +226,38 @@ impl TermTable {
     }
 
     pub(crate) fn set_measure_bound(&mut self, term: TermId, bound: MeasureBound) {
-        if self.measure_bounds.insert(term, bound) != Some(bound) {
+        let previous = self.measure_bounds.insert(term, bound);
+        if previous.is_some_and(|previous| previous != bound) {
+            self.measure_replacements = self
+                .measure_replacements
+                .checked_add(1)
+                .expect("measure replacement count fits usize");
+        }
+        if previous != Some(bound) {
             self.revision = self
                 .revision
                 .checked_add(1)
                 .expect("term revision fits usize");
+            self.implicit_log.push(term);
         }
+    }
+
+    pub(super) fn implicit_log(&self) -> &[TermId] {
+        &self.implicit_log
+    }
+
+    pub(super) fn implicit_cache(&self) -> &std::cell::RefCell<super::state::ImplicitStructure> {
+        &self.implicit
     }
 
     /// Changes whenever registered terms or their standing measure facts change.
     pub(crate) fn revision(&self) -> usize {
         self.revision
+    }
+
+    /// Changes whenever a standing measure fact replaces a different one.
+    pub(crate) fn measure_replacements(&self) -> usize {
+        self.measure_replacements
     }
 
     pub(crate) fn measure_bound(&self, term: TermId) -> Option<MeasureBound> {
@@ -262,6 +297,7 @@ impl TermTable {
         );
         self.terms.push(kind.clone());
         self.ids.insert(kind, id);
+        self.implicit_log.push(id);
         self.revision = self
             .revision
             .checked_add(1)

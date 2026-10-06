@@ -349,9 +349,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .types
                     .declarations
                     .resolved
-                    .declarations()
-                    .iter()
-                    .find(|candidate| candidate.id() == declaration)
+                    .declaration(declaration)
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 let source = self
                     .types
@@ -1263,7 +1261,7 @@ impl<'unit> TypeContext<'unit> {
         let mut edges = vec![Vec::new(); groups.len()];
         for (source, (_, group)) in groups.iter().enumerate() {
             let prefix = self.declarations.tree.path(group.node)?.components();
-            for usage in self.declarations.resolved.lexical_uses() {
+            for usage in self.declarations.resolved.lexical_uses_under(prefix) {
                 let ResolvedTarget::Source {
                     declaration,
                     class: DeclarationClass::Binding,
@@ -1271,10 +1269,9 @@ impl<'unit> TypeContext<'unit> {
                 else {
                     continue;
                 };
-                if usage.origin().node().components().starts_with(prefix)
-                    && let Some(target) = groups
-                        .iter()
-                        .position(|(candidate, _)| **candidate == declaration)
+                if let Some(target) = groups
+                    .iter()
+                    .position(|(candidate, _)| **candidate == declaration)
                     && !edges[source].contains(&target)
                 {
                     edges[source].push(target);
