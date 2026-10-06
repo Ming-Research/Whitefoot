@@ -51,7 +51,7 @@ linux-runtime-tsan              10     -      -
 # compute-regression.yml: two cold compiler builds at two Cargo jobs, their
 # images, then the host control, the instrument's slowdown control and the
 # paired comparison
-performance-candidate-compiler  115    -      -
+performance-candidate-compiler  155    -      -
 performance-baseline-compiler   105    -      -
 performance-candidate-images    10     -      -
 performance-baseline-images     10     -      -

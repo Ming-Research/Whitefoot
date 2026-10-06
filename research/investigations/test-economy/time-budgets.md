@@ -449,6 +449,23 @@ grow a stage on the fastest by about twice before it trips, so a branch
 still reads its stage times against main's on the same processor; a budget
 column per processor model remains in `docs/todo.md`.
 
+**`performance-candidate-compiler` raised to 155 s.** `compute-regression`
+builds the candidate compiler first and the merge-base compiler second, each
+cold at two Cargo jobs in its own target directory, and the first build is
+the slower one whichever compiler it builds. Across the 30 runs before 2026-10-06
+01:00 UTC that built both, the candidate took longer than the baseline every time, by a median of 12%. In
+PR #239's run 37394287196, whose two compilers build the same `whitefootc`
+source because the PR changes only a test file, the candidate took 120.9 s
+and the baseline 90.7 s. Two dispatched runs on an EPYC 7763 of main's
+source separate the build order from the compiler built: in run 37395372973,
+in the workflow's order, the first build took 101.6 s and the second 93.2 s;
+in run 37395370468, with the two build steps swapped, the first took 107.2 s
+and the second 93.2 s. 1.25 times 120.9 s, rounded up to 5 s, is 155 s,
+which the owner approved on 2026-10-05; `performance-baseline-compiler`
+keeps 105 s, over its slowest run of 97.3 s. Why the first cold build is
+slower was not measured; an untimed warm-up before both builds would remove
+the difference instead of covering it.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases

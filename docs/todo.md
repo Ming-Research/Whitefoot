@@ -3454,6 +3454,16 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
+- **The first cold compiler build in `compute-regression` is 10–15% slower.**
+  Whichever compiler the job builds first takes longer, so the candidate's
+  build time carries a bias its budget now covers
+  ([first build](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  Find the cause (page cache of the restored Cargo cache, dependency
+  extraction or the toolchain's first load) and add an untimed warm-up before
+  both builds, then lower `performance-candidate-compiler` to 1.25 times its
+  new slowest run; validate with swapped-order runs that the first and
+  second builds agree within 5%. Reopen when the candidate stage overruns
+  155 s on a change that does not touch the compiler.
 - **One budget per runner class hides slow growth on faster runners.** On
   identical compiler source the ubuntu `check/unit` stage took 123–187 s,
   so its budget, 1.25 times the slowest run, lets a change grow a fast run by
