@@ -2102,7 +2102,8 @@ void wf_cmap_hold_take(wf_cmap_user *u, wf_cmap_holding *hold) {
         if (hold->held || hold->whole) read_whole(hold);
         u->own = NULL;
         if (hold->whole) u->map->whole_hold = hold;
-        hold->generation = u->map->generation;
+        if (hold->whole || hold->held || hold->count != 0)
+            hold->generation = u->map->generation;
         return;
     }
     if (hold->held) {
@@ -2129,7 +2130,8 @@ void wf_cmap_hold_take(wf_cmap_user *u, wf_cmap_holding *hold) {
         u->map->whole_hold = hold;
     /* Read once the hold keeps every other statement from swapping the map's
      * entries (wf_cmap_swap). */
-    hold->generation = u->map->generation;
+    if (hold->whole || hold->held || hold->count != 0)
+        hold->generation = u->map->generation;
 }
 
 /* A position past the keys added is one the compiler's own counting gave,
@@ -2308,7 +2310,7 @@ int wf_cmap_hold_release(wf_cmap_holding *hold, uint64_t tag_offset, uint32_t ta
         /* Swapped since the take, the hold's entries were settled by the
          * swap and went with the other map; they are not this map's to keep
          * or count. */
-        int swapped = hold->generation != map->generation;
+        int swapped = (hold->whole || hold->held || hold->count != 0) && hold->generation != map->generation;
         int fresh = 0;
         table *t = hold->table;
         wrote = swapped;

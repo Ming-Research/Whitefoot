@@ -89,9 +89,10 @@ Consequences:
   the key's position by bisection. The rule states that order, so nothing
   the program infers rests on an unstated property of the index.
 - Sorting a step's keys is a choice apart from the coverage guarantee: each
-  step's order could instead be an input of the execution. Sorting costs a
-  sort of a step's few keys and gives a complete scan of the same keys one
-  sequence in every map.
+  step's order could instead be an input of the execution. Sorting gives a
+  complete scan of the same keys one sequence in every map; its cost beside
+  reading the step's cells is assumed small and has not been measured, and
+  `count` does not bound a step's keys.
 - `RANDOMKEY` is a run of steps from a random cursor, wrapping once at `0`,
   all under one hold, until one inserts a key; a step may insert none. The
   key it finds is weighted by the gap of positions before it, as Redis's

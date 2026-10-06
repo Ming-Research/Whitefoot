@@ -44,6 +44,6 @@ Rejected:
 - `KeyedTable` and `KeyedEntries`: rejected because a map now has only its concurrent shared meaning and entries exist only as reference referents.
 - An opaque scan cursor with Redis's at-least-once promise: rejected because the promise is a property of a chain of calls rather than of one call, which makes the rule longer and weaker, and the cursor would encode the table's index structure.
 - A specified hash of a key's bytes as its position: rejected because it fixes the runtime's hash in the specification and lets an input choose colliding keys.
-- Each scan step's keys in an order that is an input of the execution: rejected because sorting a step's few keys costs little and gives a complete scan of the same keys one sequence in every map.
+- Each scan step's keys in an order that is an input of the execution: rejected because sorting gives a complete scan of the same keys one sequence in every map, a provisional ground, since the sort's cost beside reading the step's cells is assumed small and unmeasured; reopen if a measured scan step spends most of its time sorting.
 - `map_reserve`: rejected because construction fixes initial capacity and cooperative index moves grow the map.
 - A `shared struct` declaration: rejected because once one statement holds several objects, maps and other state live in separate objects held together, so one guard construct and one placement table cover every case, instead of a second declaration form whose constructor's type differs from its name.

@@ -3287,8 +3287,11 @@ static void scans_write_nothing(void) {
  * of their values. */
 static unsigned cleared_runs;
 static uint64_t cleared_entries, cleared_sum;
+static wf_cmap *clear_source;
 
 static void release_cleared(void *table) {
+    if (atomic_load(&clear_source->gate) != 0 || clear_source->whole_hold != NULL)
+        fail("a clear released entries before giving up the source hold", 0, 0);
     uint64_t drained;
     cleared_sum += drain_sum(table, &drained);
     cleared_entries += drained;
@@ -3310,6 +3313,7 @@ static void maps_clear(void) {
     cleared_runs = 0;
     cleared_entries = 0;
     cleared_sum = 0;
+    clear_source = map;
     wf_cmap_holding hold;
     wf__table_hold_begin(&hold, map);
     wf__table_hold_whole(&hold);

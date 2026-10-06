@@ -233,7 +233,8 @@ void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width,
     wf_cmap_holding *h = (wf_cmap_holding *)hold;
     wf_cmap *map = h->map;
     /* Taken while the hold still keeps every other clear out. */
-    wf_cmap *cleared = map->whole_hold == h ? wf_cmap_take_cleared(map) : NULL;
+    wf_cmap *cleared = h->user != NULL && h->whole && !h->read && map->whole_hold == h
+                           ? wf_cmap_take_cleared(map) : NULL;
     if (wf_cmap_hold_release(h, tag_offset, tag_width, none_tag))
         table_written(map);
     wf_cmap_release_cleared(cleared);
