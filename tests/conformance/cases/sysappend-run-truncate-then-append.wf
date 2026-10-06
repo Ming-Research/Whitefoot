@@ -1,0 +1,132 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias exit_status = std::process::exit_status;
+
+const name: Array<u8, 3> =[108_u8, 111_u8, 103_u8];
+
+const text: Array<u8, 5> =[97_u8, 98_u8, 99_u8, 100_u8, 101_u8];
+
+const suffix: Array<u8, 1> =[120_u8];
+
+fn change_file(factory: &std::io::HandleFactory, root: &std::fs::DirectoryWrite, extend: Bool) -> result: u8 reads(root), writes(factory) waits {
+  let label = &name[0_u64..3_u64];
+  match std::fs::open_append(factory: factory, root: root, name: label, start: 0_u64, end: 3_u64) {
+    Ok(value: file) => {
+      let outcome = 0_u8;
+      let length = 6_u64;
+      if bnot(extend) {
+        let source = &text[0_u64..5_u64];
+        match std::fs::append_once(factory: factory, file: &file, source: source, start: 0_u64, end: 5_u64) {
+          Ok(value: next) => {
+            if next != 5_u64 {
+              set outcome = 2_u8;
+            }
+          }
+          Err(error: problem) => {
+            set outcome = 3_u8;
+          }
+        }
+        set length = 2_u64;
+      }
+      match std::fs::truncate_file(factory: factory, file: &file, length: length) {
+        Ok(value: truncated) => {
+        }
+        Err(error: problem) => {
+          set outcome = 4_u8;
+        }
+      }
+      let source = &suffix[0_u64..1_u64];
+      match std::fs::append_once(factory: factory, file: &file, source: source, start: 0_u64, end: 1_u64) {
+        Ok(value: next) => {
+          if next != 1_u64 {
+            set outcome = 5_u8;
+          }
+        }
+        Err(error: problem) => {
+          set outcome = 6_u8;
+        }
+      }
+      std::fs::close_write(factory: factory, file: move file);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 1_u8;
+    }
+  }
+}
+
+fn check_file(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, extended: Bool) -> result: u8 reads(root), writes(factory) waits {
+  let bytes = array_filled::<u8, 8>(value: 255_u8);
+  let outcome = 0_u8;
+  let expected = 3_u64;
+  if extended {
+    set expected = 7_u64;
+  }
+  let label = &name[0_u64..3_u64];
+  match std::fs::open_file(factory: factory, root: root, name: label, start: 0_u64, end: 3_u64) {
+    Ok(value: file) => {
+      let window = &bytes[0_u64..8_u64];
+      match std::fs::read_at(factory: factory, file: &file, destination: window, file_offset: 0_u64, start: 0_u64, end: 8_u64) {
+        Ok(value: next) => {
+          if next != expected {
+            set outcome = 7_u8;
+          }
+        }
+        Err(error: problem) => {
+          set outcome = 8_u8;
+        }
+      }
+      std::fs::close_read(factory: factory, file: move file);
+    }
+    Err(error: problem) => {
+      set outcome = 9_u8;
+    }
+  }
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  if bytes[0_u64] != 97_u8 {
+    return 10_u8;
+  }
+  if bytes[1_u64] != 98_u8 {
+    return 10_u8;
+  }
+  if bytes[2_u64] != 120_u8 {
+    return 10_u8;
+  }
+  if extended {
+    if bytes[3_u64] != 0_u8 {
+      return 11_u8;
+    }
+    if bytes[4_u64] != 0_u8 {
+      return 11_u8;
+    }
+    if bytes[5_u64] != 0_u8 {
+      return 11_u8;
+    }
+    if bytes[6_u64] != 120_u8 {
+      return 11_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  let shrink = False();
+  let extend = True();
+  let outcome = change_file(factory: &handles, root: &cwd_write, extend: shrink);
+  if outcome == 0_u8 {
+    set outcome = check_file(factory: &handles, root: &cwd, extended: shrink);
+  }
+  if outcome == 0_u8 {
+    set outcome = change_file(factory: &handles, root: &cwd_write, extend: extend);
+  }
+  if outcome == 0_u8 {
+    set outcome = check_file(factory: &handles, root: &cwd, extended: extend);
+  }
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  return exit_status(code: outcome);
+}
