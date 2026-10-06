@@ -12,9 +12,9 @@
 //! Deleting the directory, or a failed write, changes only the work a later
 //! invocation performs, never a verdict.
 
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
@@ -36,18 +36,31 @@ static PUBLICATIONS: AtomicU64 = AtomicU64::new(0);
 const PROOF_RECEIPTS: &str = "proof-receipts";
 
 /// One cache directory, scoped to the compiler that reads and writes it.
-#[derive(Clone, Debug)]
+/// Checks running on several threads share one handle.
+#[derive(Debug)]
 pub struct BuildCache {
     root: PathBuf,
     compiler: [u8; 32],
     /// Proof receipts this handle found and recorded, for the build report.
-    receipts_reused: Cell<u64>,
-    receipts_recorded: Cell<u64>,
+    receipts_reused: AtomicU64,
+    receipts_recorded: AtomicU64,
     /// Whether each verdict this handle already settled for exact inputs
     /// was an acceptance, by the digest of its key material: one
     /// invocation's checks consult each module's interface verdict once for
     /// every module whose closure holds it [MOD-8].
-    settled: RefCell<HashMap<[u8; 32], bool>>,
+    settled: Mutex<HashMap<[u8; 32], bool>>,
+}
+
+impl Clone for BuildCache {
+    fn clone(&self) -> Self {
+        Self {
+            root: self.root.clone(),
+            compiler: self.compiler,
+            receipts_reused: AtomicU64::new(self.receipts_reused.load(Ordering::Relaxed)),
+            receipts_recorded: AtomicU64::new(self.receipts_recorded.load(Ordering::Relaxed)),
+            settled: Mutex::new(self.settled_verdicts().clone()),
+        }
+    }
 }
 
 impl BuildCache {
@@ -62,28 +75,39 @@ impl BuildCache {
         Ok(Self {
             root: root.to_path_buf(),
             compiler,
-            receipts_reused: Cell::new(0),
-            receipts_recorded: Cell::new(0),
-            settled: RefCell::new(HashMap::new()),
+            receipts_reused: AtomicU64::new(0),
+            receipts_recorded: AtomicU64::new(0),
+            settled: Mutex::new(HashMap::new()),
         })
     }
 
     /// Whether the verdict this handle settled for exactly `material` was
     /// an acceptance, when it settled one.
     pub(crate) fn settled(&self, material: &[u8]) -> Option<bool> {
-        self.settled.borrow().get(&digest(material)).copied()
+        self.settled_verdicts().get(&digest(material)).copied()
     }
 
     /// Notes the verdict settled for exactly `material`.
     pub(crate) fn settle(&self, material: &[u8], accepted: bool) {
-        self.settled.borrow_mut().insert(digest(material), accepted);
+        self.settled_verdicts().insert(digest(material), accepted);
+    }
+
+    /// The settled verdicts. A thread that panicked while holding them left
+    /// only complete insertions behind, so a poisoned lock is still read.
+    fn settled_verdicts(&self) -> std::sync::MutexGuard<'_, HashMap<[u8; 32], bool>> {
+        self.settled
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// How many function analyses this handle's checks took from proof
     /// receipts, and how many accepted analyses they recorded [MOD-8].
     #[must_use]
     pub fn receipt_counts(&self) -> (u64, u64) {
-        (self.receipts_reused.get(), self.receipts_recorded.get())
+        (
+            self.receipts_reused.load(Ordering::Relaxed),
+            self.receipts_recorded.load(Ordering::Relaxed),
+        )
     }
 
     /// The payload of the complete record of `family` whose key material is
@@ -155,7 +179,7 @@ impl crate::semantic::ProofReceipts for BuildCache {
     fn load(&self, key: &[u8]) -> Option<Vec<u8>> {
         let receipt = BuildCache::load(self, PROOF_RECEIPTS, key);
         if receipt.is_some() {
-            self.receipts_reused.set(self.receipts_reused.get() + 1);
+            self.receipts_reused.fetch_add(1, Ordering::Relaxed);
         }
         receipt
     }
@@ -163,7 +187,7 @@ impl crate::semantic::ProofReceipts for BuildCache {
     fn store(&self, key: &[u8], receipt: &[u8]) {
         // A failed publication costs only a later analysis.
         if BuildCache::store(self, PROOF_RECEIPTS, key, receipt).is_ok() {
-            self.receipts_recorded.set(self.receipts_recorded.get() + 1);
+            self.receipts_recorded.fetch_add(1, Ordering::Relaxed);
         }
     }
 }

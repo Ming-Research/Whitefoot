@@ -179,9 +179,7 @@ impl Checker<'_, '_> {
                         .types
                         .declarations
                         .resolved
-                        .declarations()
-                        .iter()
-                        .find(|declaration| declaration.id() == owner.declaration)
+                        .declaration(owner.declaration)
                         .map(|declaration| declaration.spelling().to_owned());
                     self.record_musttail_rejection(
                         node,

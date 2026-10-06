@@ -5,6 +5,29 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 Cold compile speed: concurrent verdicts and analyses, reused renamed instances, narrower closures
+
+Nodes: compiler/incremental-closure, compiler/incremental-compilation, compiler/generic-validation-scope
+
+Owner-approved: In the session of 2026-10-05, written in Chinese: Q1, reusing a renamed symbolic instance's analysis ("Q1 agreed", translated); keeping the concurrency without a user-visible thread count ("keep the parallelism, do not expose WHITEFOOT_JOBS to users", translated); and, after the progress reports on PR #227 that listed these changes with their single-thread and four-thread measurements, "merge these optimizations into main once they are done" and "update the PR, then once CI is all green you can merge it yourself" (translated).
+
+Summary: An entry composition computes its module verdicts concurrently and an inventory analyzes one postcondition level's functions concurrently, under one worker budget and with no environment variable. A renamed symbolic instance takes the analysis of an instance of the same declaration, argument kinds and const parameter types. A fact state without a closure record closes from its remembered view; snapshots keep implicit-only proofs unwrapped; a closure computes rows only for terms a fact reaches through more than zero, reading every other term, and each dormant implicit component, through zero; matrices and stores are laid out over their own terms and the term table caches its implicit structure. Fresh-cache checks of Snowghost's `layout_oracle` went from 262 s to 77 s on one processor and to 34 s on four; measurements and refused alternatives are in [the compile-speed investigation](../research/investigations/compile-speed/DESIGN.md).
+
+## 2026-10-05 Shared maps and several objects per atomic statement
+
+Nodes: language/generics, language/waiting/shared-objects, language/waiting/shared-objects/keyed-tables, compiler/checker-facts, compiler/waiting-contexts/concurrent-map, compiler/waiting-contexts/state-locks
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, translated: the direction that a concurrent hash table is shared by nature and is created together with its guard ("KeyedTable is by nature a concurrent hash table, so it should by nature be shared"; "a type's behavior should not change with where it is put"); several objects per atomic statement ("why can atomic take only one? taking several at once is convenient"); Q11 ("agree"); Q14, Q15 (`ConcurrentHashMap`), Q18, Q20, Q23, Q24, Q25 and Q26 ("all agreed"); Q17, FLUSHALL by swapping in a fresh map ("obviously, map_clear is not needed at all"); Q21, a swap of two maps the statement holds ("swap inside atomic is fine, provided the atomic takes both"); after the handoff of PR #231 at `a5d7b3840`, Q28 ("agree", with TYPE-9 written simply), Q29 ("agree"), Q30 ("A"), Q31 ("agree") and Q32 ("Q32 agree").
+
+Summary: `ConcurrentHashMap<V>` replaces `KeyedTable<V>` and exists only as the state of a shared object, made with its guard by `shared_map_new`, so one type has one runtime regime; TYPE-9's placement table gives each restricted type one home, a reference takes no place, and a type argument is placed where its parameter lands in the instance. An atomic statement holds several objects, each header item a target (`&h`, `&h[k]`, `&h[ks]`); same-type targets may name one object, which the runtime holds once and the checker treats as possibly overlapping by the ordinary rules; locks follow a static order of types by identity, then object identity, with later groups taken at first use; FLUSHALL swaps in a fresh map. Amendment A's table bindings, header grants, provenance sets and local-table pending holds retire, and `map_clear`, `map_reserve` and a `shared struct` form are refused with their reasons in the nodes.
+## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
+
+Nodes: compiler/verification
+
+Owner-approved: In the session of 2026-10-05, written in Chinese: Q16, "keep it locally, turn it off on CI; that way both routes are tested and local runs are faster" (translated); after the handoff of PR #226 at `a5fc19e9a`, which showed the decision's text, "Confirmed" (translated).
+
+Summary: Outside CI a program case builds an app under `apps/` with the compiler executable and a persistent incremental cache, reusing the checked module and objects when neither the app nor the compiler changed; under CI it compiles the app in-process as before. A cache record is keyed by the compiler's identity and its exact inputs and every assertion reruns, so this is not the cached test verdict the existing reuse decision refuses, and alternating the routes keeps both builds under test.
+
 ## 2026-10-05 Hoisted dispatch invariants, the frame past the registers and the ledger
 
 Nodes: compiler/match-dispatch-lowering

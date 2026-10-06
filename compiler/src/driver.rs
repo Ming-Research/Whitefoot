@@ -1785,15 +1785,24 @@ pub fn entry_verdict(
         COMPOSITION_VERDICTS,
         (&material, &reading),
         || {
-            for module in &modules {
+            // Each module's verdict reads only its own records and its
+            // dependencies' interfaces, so the verdicts are independent and
+            // run concurrently. The first rejection or failure in module
+            // order is the one reported; unlike a sequential walk, every
+            // module is checked even after an earlier one rejects, and a
+            // panic in any of them propagates.
+            let verdicts = crate::in_parallel(&modules, |module| {
                 let name = graph
                     .modules()
                     .get(module.index())
                     .map_or_else(String::new, crate::ModuleRecord::qualified_name);
-                let verdict = match known.iter().find(|verdict| verdict.subject == name) {
-                    Some(verdict) => verdict.clone(),
-                    None => module_verdict(graph, inputs, &name, false, limits, cache)?,
-                };
+                match known.iter().find(|verdict| verdict.subject == name) {
+                    Some(verdict) => Ok(verdict.clone()),
+                    None => module_verdict(graph, inputs, &name, false, limits, cache),
+                }
+            });
+            for verdict in verdicts {
+                let verdict = verdict?;
                 if let CheckOutcome::Rejected { .. } = verdict.outcome {
                     return Ok(verdict.outcome);
                 }

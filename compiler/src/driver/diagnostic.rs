@@ -852,7 +852,7 @@ impl Report for SemanticIssueKind {
             LinearityBoundMismatch { parameter, bound, argument, actual };
             LivenessJoinDisagreement { binding, live_predecessor, dead_predecessor, mechanical_fix };
             LinearAssignmentTarget { target_type, mechanical_fix };
-            InlineRuntimeCapacityShape { spelling, mechanical_fix };
+            InvalidRestrictedTypePlacement { spelling, mechanical_fix };
             SwapOverCopyPlace { place_type, mechanical_fix };
             HeapTypeUnderNoHeap { spelling, mechanical_fix };
             InvalidElementMove { mechanical_fix };

@@ -965,7 +965,7 @@ impl<'unit> TypeContext<'unit> {
             return self.declarations.issue_node(
                 SemanticRule::Type9,
                 use_node,
-                SemanticIssueKind::InlineRuntimeCapacityShape {
+                SemanticIssueKind::InvalidRestrictedTypePlacement {
                     spelling: self.checked_type_name(referent)?,
                     mechanical_fix: super::super::repairs::runtime_content_move(
                         &cell, window, droppable,

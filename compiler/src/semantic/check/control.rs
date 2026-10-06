@@ -778,9 +778,7 @@ impl<'unit> TypeContext<'unit> {
             let name = self
                 .declarations
                 .resolved
-                .declarations()
-                .iter()
-                .find(|declaration| declaration.id() == local.declaration)
+                .declaration(local.declaration)
                 .map_or_else(String::new, |declaration| declaration.spelling().to_owned());
             self.validate_scope_release(check_context, local.ty, &name, edge)?;
         }

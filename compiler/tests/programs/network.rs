@@ -19,12 +19,12 @@ use whitefoot::{CompilerLimits, OverlapLowering, SourceInput};
 use super::support::{
     CompiledProgram, ProgramChild, build_program, compile_program, compile_program_with_overlap,
 };
+#[cfg(target_os = "linux")]
+use super::support::{build_app, fixture_directory};
 #[cfg(unix)]
 use super::support::{
     compile_and_run, compile_program_without_overlap, emitted_function, program_permission_ledger,
 };
-#[cfg(target_os = "linux")]
-use super::support::{compile_app, fixture_directory};
 
 /// One port the host is not using, released before the program binds it.
 ///
@@ -897,7 +897,7 @@ fn resp(arguments: &[&str]) -> Vec<u8> {
 #[cfg(target_os = "linux")]
 fn firn() -> &'static CompiledProgram {
     static PROGRAM: std::sync::OnceLock<CompiledProgram> = std::sync::OnceLock::new();
-    PROGRAM.get_or_init(|| build_program(&compile_app("firn", "firn")))
+    PROGRAM.get_or_init(|| build_app("firn", "firn"))
 }
 
 /// Reads one reply line through its CR LF.

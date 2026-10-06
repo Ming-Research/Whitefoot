@@ -624,7 +624,12 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         SemanticRule::Type9,
-        |kind| matches!(kind, SemanticIssueKind::InlineRuntimeCapacityShape { .. }),
+        |kind| {
+            matches!(
+                kind,
+                SemanticIssueKind::InvalidRestrictedTypePlacement { .. }
+            )
+        },
     );
 }
 
@@ -639,6 +644,10 @@ fn a_restricted_type_argument_is_refused_at_its_argument() {
             panic!("a map result must be refused: {outcome:?}");
         };
         assert_eq!(issue.rule_id(), "TYPE-9");
+        assert!(matches!(
+            issue.kind(),
+            SemanticIssueKind::InvalidRestrictedTypePlacement { .. }
+        ));
         let coordinate = issue.location().coordinate();
         let start = usize::try_from(coordinate.start().value()).expect("source offset");
         let end = usize::try_from(coordinate.end().value()).expect("source offset");
@@ -692,7 +701,10 @@ fn a_move_of_runtime_capacity_content_is_refused() {
         "../../../../tests/conformance/cases/type9-neg-move-runtime-capacity-content.wf"
     );
     assert_rule_kind(source, SemanticRule::Type9, |kind| {
-        matches!(kind, SemanticIssueKind::InlineRuntimeCapacityShape { .. })
+        matches!(
+            kind,
+            SemanticIssueKind::InvalidRestrictedTypePlacement { .. }
+        )
     });
 }
 

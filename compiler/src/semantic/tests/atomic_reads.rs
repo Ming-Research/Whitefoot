@@ -288,7 +288,11 @@ fn reads_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: u8 reads(st
 #[test]
 fn atomic_type_order_uses_const_values() {
     with_semantics(
-        br#"struct Sized<const n: u64> {
+        br#"fn make_box<T: drop>(value: T) -> result: Box<T> pure {
+  return box_new::<T>(value: move value);
+}
+
+struct Sized<const n: u64> {
   value: u8;
 }
 
@@ -297,7 +301,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let ten_value = Sized<10>(value: 0_u8);
   let two = shared_new::<Sized<2>>(value: two_value);
   let ten = shared_new::<Sized<10>>(value: ten_value);
-  let boxed = box_new::<u8>(value: 0_u8);
+  let boxed = make_box::<u8>(value: 0_u8);
   let cell = shared_new::<Box<u8>>(value: move boxed);
   atomic a = &ten, b = &two, c = &cell {
     set a^.value = 1_u8;
@@ -311,6 +315,17 @@ fn main() -> status: std::process::ExitStatus pure waits {
             let SemanticOutcome::Complete(checked) = outcome else {
                 panic!("must check: {outcome:?}");
             };
+            // [TYPE-9] neither a symbolic Box<T> nor its concrete Box<u8>
+            // instance carries a region that could separate shared-state roots.
+            let mut boxes = 0;
+            for nominal in &checked.data.nominals {
+                if let super::super::model::CheckedNominalKind::Box { region, .. } = nominal.kind {
+                    assert!(region.is_none(), "Box carries no brand");
+                    assert!(checked.data.nominal_confinement[nominal.id.0 as usize].is_empty());
+                    boxes += 1;
+                }
+            }
+            assert!(boxes >= 2, "symbolic and concrete Boxes were checked");
             let main = checked
                 .data
                 .functions
@@ -338,6 +353,55 @@ fn main() -> status: std::process::ExitStatus pure waits {
                 targets[2].lock_order < targets[1].lock_order,
                 "prelude Box must precede a source nominal"
             );
+        },
+    );
+}
+
+/// Host-module nominals share the module-path/name order with source nominals.
+#[test]
+fn atomic_type_order_uses_host_module_path_then_name() {
+    with_semantics(
+        br#"alias ExitStatus = std::process::ExitStatus;
+alias ArgError = std::text::ArgError;
+
+fn main() -> status: ExitStatus pure waits {
+  let process_value = std::process::exit_status(code: 0_u8);
+  let process = shared_new::<ExitStatus>(value: move process_value);
+  let error_value = ArgError::InvalidIndex();
+  let environment = shared_new::<ArgError>(value: error_value);
+  atomic p = &process, e = &environment {
+    set p^ = std::process::exit_status(code: 1_u8);
+    let error = e^;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("host states must check: {outcome:?}");
+            };
+            let main = checked
+                .data
+                .functions
+                .iter()
+                .find(|f| f.name == "main")
+                .expect("main");
+            let targets = main
+                .body
+                .as_deref()
+                .expect("body")
+                .iter()
+                .find_map(|s| {
+                    if let CheckedStatement::Atomic { targets, .. } = s {
+                        Some(targets)
+                    } else {
+                        None
+                    }
+                })
+                .expect("targets");
+            assert_eq!(targets[0].lock_order, ["100", "std.process", "ExitStatus"]);
+            assert_eq!(targets[1].lock_order, ["100", "std.text", "ArgError"]);
+            assert!(targets[0].lock_order < targets[1].lock_order);
         },
     );
 }

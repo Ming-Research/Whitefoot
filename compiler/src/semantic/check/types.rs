@@ -1618,7 +1618,7 @@ impl<'unit> TypeContext<'unit> {
         self.declarations.issue_node(
             SemanticRule::Type9,
             source,
-            SemanticIssueKind::InlineRuntimeCapacityShape {
+            SemanticIssueKind::InvalidRestrictedTypePlacement {
                 spelling: self.checked_type_name(found)?,
                 mechanical_fix,
             },
@@ -1785,6 +1785,10 @@ impl<'unit> TypeContext<'unit> {
                                 &self.source_nominal_instances[right.0 as usize],
                             ) {
                                 (Some((lt, la)), Some((rt, ra))) if lt == rt => {
+                                    // [GRAM-2] nominals declare no region parameters;
+                                    // nominal_region_arguments therefore binds none.
+                                    debug_assert!(la.region_arguments().is_empty());
+                                    debug_assert!(ra.region_arguments().is_empty());
                                     if la.entries().len() != ra.entries().len()
                                         || la.region_arguments() != ra.region_arguments()
                                     {
@@ -1813,7 +1817,14 @@ impl<'unit> TypeContext<'unit> {
                                             region: br,
                                             ..
                                         },
-                                    ) if ar == br => {
+                                    ) => {
+                                        // [TYPE-9] Box has no brand. intern_box_nominal
+                                        // is its sole constructor and sets region to None,
+                                        // including symbolic and concrete instances.
+                                        debug_assert!(ar.is_none() && br.is_none());
+                                        if ar != br {
+                                            return Ok(false);
+                                        }
                                         pending.push((
                                             GenericArgument::Type(*a),
                                             GenericArgument::Type(*b),
