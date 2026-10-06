@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 A file set to a length
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: Q40, adding a way to cut an append-only file whose end did not load, as Redis does, was approved in the firn session of PR #245 (2026-10-05). In the session of 2026-10-05, written in Chinese, after the handoff of PR #251 that showed the amended decision and the v0.93 change: "The two design nodes OK. The spec OK" (translated).
+
+Summary: A file is written by appending and set to a length: `truncate_file` sets the length of an open `WriteFile` so that the next append writes after it, because an append-only log whose end did not load must be cut after its last whole record before anything is appended, as Redis cuts its append-only file. Truncation leaves the refused-for-now list; positioned writes, renaming, a truncation by name and a specified crash model stay refused.
+
 ## 2026-10-05 A box pinned across calls that cannot replace it; cache pruning and derived addresses refused
 
 Nodes: compiler/match-dispatch-lowering, compiler/incremental-compilation
