@@ -16,6 +16,10 @@ alias log_input = pkg::store::log_input;
 alias log_removal = pkg::store::log_removal;
 alias log_word = pkg::store::log_word;
 alias queue_expiry = pkg::store::queue_expiry;
+alias queue_due = pkg::store::queue_due;
+alias Due = pkg::store::Due;
+alias ceiling = pkg::store::ceiling;
+alias PriorityQueue = std::collections::priority_queue::PriorityQueue;
 alias name_is = pkg::bytes::name_is;
 alias read_integer = pkg::bytes::read_integer;
 alias reply_bulk_input = pkg::protocol::reply_bulk_input;
@@ -431,85 +435,141 @@ fn log_without_get(log: &Box<Slots<u8>>, input: &[u8], args: &Box<Slots<Span>>) 
 
 fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, key_index: u64, value_index: u64, flags: u64, at: u64, mode: u64) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
   doc "Stores the argument at value_index under the key at key_index as Redis 7.0.15's setGenericCommand does, in one atomic statement on the key's entry that also appends the change to the append-only file's pending bytes, an expired key counting as absent and its removal recorded as log_removal records it. With GET the string the key held is written as the reply first and a key of another kind is refused, nothing stored; with NX nothing is stored over a live key, with XX nothing in place of an absent one. The value keeps the key's expiry with KEEPTTL, takes at with an expiry option, and has none otherwise. The reply is OK, or nil when nothing was stored; 1 or 0 for SETNX (mode_setnx); with GET the old string or nil alone. The file records a store with an expiry as SET key value PXAT at, GETSET (mode_getset) as SET key value, a SET with GET as it was sent without its GET options, and any other as it was sent, as Redis propagates them.";
-  let key_span = arg(args: args, index: key_index);
   let value_span = arg(args: args, index: value_index);
   let place = key_bounds(input: input, args: args, index: key_index);
   let key = &input^[place.start..place.end];
   let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
-  let getting_flag = iand(flags, option_get);
-  let getting = getting_flag != 0_u64;
-  let fresh_flag = iand(flags, option_nx);
-  let only_fresh = fresh_flag != 0_u64;
-  let present_flag = iand(flags, option_xx);
-  let only_present = present_flag != 0_u64;
-  let keep_flag = iand(flags, option_keepttl);
-  let keep = keep_flag != 0_u64;
   let timed_flag = iand(flags, options_expiry);
   let timed = timed_flag != 0_u64;
   let logged = store^.logging;
   set client^.now = time^.check;
-  let outcome = state_absent;
-  let answered = False();
+  let plan = SetPlan(flags: flags, at: at, mode: mode, key_index: key_index, value_index: value_index);
+  let none = False();
+  let work = SetWork(outcome: state_absent, answered: none, removed: none);
   atomic slot = &store^.keys[key], m = &store^.meta {
-    let kind = entry_kind(slot: slot, client: client);
-    if client^.state == state_expired {
-      if logged {
-        log_removal(log: &m^.log, key: key);
-      }
-    }
-    let found = kind != 0_u64;
-    let text = kind == 1_u64;
-    let other = kind > 1_u64;
-    let refused = band(getting, other);
-    if refused {
-      set outcome = state_wrong;
-      let unused = move value;
-    } else {
-      if getting {
-        if text {
-          reply_held_text(slot: slot, client: client);
-          set answered = True();
-        }
-      }
-      let absent = bnot(found);
-      let occupied = band(only_fresh, found);
-      let missing = band(only_present, absent);
-      let blocked = bor(occupied, missing);
-      if blocked {
-        let unused = move value;
-      } else {
-        let expires = 0_u64;
-        if keep {
-          set expires = held_expiry(slot: slot);
-        }
-        if timed {
-          set expires = at;
-        }
-        put_text(slot: slot, value: move value, expires: expires);
-        if timed {
-          queue_expiry(meta: m, key: key, at: at, env: env);
-        }
-        if logged {
-          if timed {
-            log_set_at(log: &m^.log, input: input, key: key_span, value: value_span, at: at);
-          } else if mode == mode_getset {
-            log_set(log: &m^.log, input: input, key: key_span, value: value_span);
-          } else if getting {
-            log_without_get(log: &m^.log, input: input, args: args);
-          } else {
-            log_command(log: &m^.log, input: input, args: args);
-          }
-        }
-        set outcome = state_done;
-      }
+    set_body(slot: slot, client: client, value: move value, plan: &plan, work: &work);
+    let stored = work.outcome == state_done;
+    let queued = band(stored, timed);
+    let changed = bor(stored, work.removed);
+    let recorded = band(logged, changed);
+    let touches = bor(queued, recorded);
+    if touches {
+      let appended = set_meta(due: &m^.due, log: &m^.log, logged: logged, plan: &plan, work: &work, input: input, args: args, key: key, env: env);
     }
   }
-  if outcome == state_wrong {
+  set_finish(client: client, plan: &plan, work: &work);
+  return unit;
+}
+
+struct SetPlan {
+  doc "What a SET-like command asks of its key: SET's option flags, the expiry at for an expiry option, which command it is, mode_set, mode_setnx or mode_getset, and where its key and value are among its arguments.";
+  flags: u64;
+  at: u64;
+  mode: u64;
+  key_index: u64;
+  value_index: u64;
+}
+
+struct SetWork {
+  doc "What a SET-like command did to its key: outcome is done when it stored, wrong when it refused another kind and absent when it stored nothing; answered records that GET's old string was written as the reply; removed that an expired value was removed first.";
+  outcome: u64;
+  answered: Bool;
+  removed: Bool;
+}
+
+fn set_body(slot: &Option<Entry>, client: &Client, value: Bytes, plan: &SetPlan, work: &SetWork) -> result: unit reads(plan), writes(slot), writes(client), writes(work) {
+  doc "A SET-like command's work on its key's entry, held by the caller, against the client's now, as Redis 7.0.15's setGenericCommand does: an expired value is removed first; with GET the string the key held is written as the reply and a key of another kind is refused, nothing stored; with NX nothing is stored over a live key, with XX nothing in place of an absent one. The value keeps the key's expiry with KEEPTTL, takes the plan's at with an expiry option, and has none otherwise.";
+  let getting_flag = iand(plan^.flags, option_get);
+  let getting = getting_flag != 0_u64;
+  let fresh_flag = iand(plan^.flags, option_nx);
+  let only_fresh = fresh_flag != 0_u64;
+  let present_flag = iand(plan^.flags, option_xx);
+  let only_present = present_flag != 0_u64;
+  let keep_flag = iand(plan^.flags, option_keepttl);
+  let keep = keep_flag != 0_u64;
+  let timed_flag = iand(plan^.flags, options_expiry);
+  let timed = timed_flag != 0_u64;
+  let kind = entry_kind(slot: slot, client: client);
+  set work^.removed = client^.state == state_expired;
+  let found = kind != 0_u64;
+  let text = kind == 1_u64;
+  let other = kind > 1_u64;
+  let refused = band(getting, other);
+  if refused {
+    set work^.outcome = state_wrong;
+    let unused = move value;
+    return unit;
+  }
+  if getting {
+    if text {
+      reply_held_text(slot: slot, client: client);
+      set work^.answered = True();
+    }
+  }
+  let absent = bnot(found);
+  let occupied = band(only_fresh, found);
+  let missing = band(only_present, absent);
+  let blocked = bor(occupied, missing);
+  if blocked {
+    let unused = move value;
+    return unit;
+  }
+  let expires = 0_u64;
+  if keep {
+    set expires = held_expiry(slot: slot);
+  }
+  if timed {
+    set expires = plan^.at;
+  }
+  put_text(slot: slot, value: move value, expires: expires);
+  set work^.outcome = state_done;
+  return unit;
+}
+
+fn set_meta(due: &PriorityQueue<Due, ceiling>, log: &Box<Slots<u8>>, logged: Bool, plan: &SetPlan, work: &SetWork, input: &[u8], args: &Box<Slots<Span>>, key: &[u8], env: &KeyEnv) -> appended: u64 reads(plan), reads(work), reads(input), reads(args), reads(key), reads(env), writes(due), writes(log) {
+  doc "What a SET-like command's work leaves to the keyspace's metadata, and the number of commands it appended to log: a stored value with an expiry option queues that expiry; when logged, an expired value's removal is recorded as log_removal records it, and a store as Redis propagates it: with an expiry as SET key value PXAT at, GETSET as SET key value, a SET with GET as it was sent without its GET options, and any other as it was sent.";
+  let appended = 0_u64;
+  let stored = work^.outcome == state_done;
+  let timed_flag = iand(plan^.flags, options_expiry);
+  let timed = timed_flag != 0_u64;
+  let getting_flag = iand(plan^.flags, option_get);
+  let getting = getting_flag != 0_u64;
+  let key_span = arg(args: args, index: plan^.key_index);
+  let value_span = arg(args: args, index: plan^.value_index);
+  if logged {
+    if work^.removed {
+      log_removal(log: log, key: key);
+      set appended = appended +wrap 1_u64;
+    }
+  }
+  if stored {
+    if timed {
+      queue_due(due: due, key: key, at: plan^.at, env: env);
+    }
+    if logged {
+      if timed {
+        log_set_at(log: log, input: input, key: key_span, value: value_span, at: plan^.at);
+      } else if plan^.mode == mode_getset {
+        log_set(log: log, input: input, key: key_span, value: value_span);
+      } else if getting {
+        log_without_get(log: log, input: input, args: args);
+      } else {
+        log_command(log: log, input: input, args: args);
+      }
+      set appended = appended +wrap 1_u64;
+    }
+  }
+  return appended;
+}
+
+fn set_finish(client: &Client, plan: &SetPlan, work: &SetWork) -> result: unit reads(plan), reads(work), writes(client) {
+  doc "A SET-like command's reply after its work: WRONGTYPE for a refused kind; 1 or 0 for SETNX; with GET the old string, already written, or nil; and otherwise OK, or nil when nothing was stored.";
+  if work^.outcome == state_wrong {
     reply_wrong_type(client: client);
     return unit;
   }
-  let stored = outcome == state_done;
-  if mode == mode_setnx {
+  let stored = work^.outcome == state_done;
+  if plan^.mode == mode_setnx {
     if stored {
       reply_word(client: client, word: &reply_one[0_u64..4_u64]);
     } else {
@@ -517,8 +577,9 @@ fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     }
     return unit;
   }
-  if getting {
-    if answered {
+  let getting_flag = iand(plan^.flags, option_get);
+  if getting_flag != 0_u64 {
+    if work^.answered {
     } else {
       reply_nil(client: client);
     }

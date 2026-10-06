@@ -8,10 +8,13 @@ alias arg = pkg::protocol::arg;
 alias log_removal = pkg::store::log_removal;
 alias name_code = pkg::bytes::name_code;
 alias reply_error = pkg::protocol::reply_error;
+alias bytes_new = pkg::bytes::bytes_new;
 
 const arity_get: i64 = 2_i64;
 
 const arity_incr: i64 = 2_i64;
+
+const arity_set: i64 = -3_i64;
 
 const text_script_unknown: Array<u8, 44> = "ERR Unknown Redis command called from script";
 
@@ -64,7 +67,46 @@ fn script_incr(keys: &ConcurrentHashMap<Entry>, effects: &Box<Slots<u8>>, logged
   return appended;
 }
 
-fn script_command(keys: &ConcurrentHashMap<Entry>, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &Box<Slots<Span>>, client: &Client, time: &Time) -> appended: u64 reads(input), reads(args), reads(time), writes(keys), writes(effects), writes(client) {
+fn script_set(keys: &ConcurrentHashMap<Entry>, meta: &Meta, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> appended: u64 reads(input), reads(args), reads(env), reads(time), writes(keys), writes(meta), writes(effects), writes(client) {
+  doc "SET inside a script holding every key and the metadata: the options, work, effects and reply of run_set, its expiry options read against the script's frozen calendar time.";
+  let setting = True();
+  let options = string_options(input: input, args: args, first: 3_u64, setting: setting);
+  if options.valid {
+  } else {
+    reply_error(client: client, word: &text_syntax[0_u64..16_u64]);
+    return 0_u64;
+  }
+  let at = 0_u64;
+  let timed_flag = iand(options.flags, options_expiry);
+  if timed_flag != 0_u64 {
+    let amount = arg(args: args, index: options.amount);
+    let deadline = string_deadline(input: input, span: amount, flags: options.flags, unix_ms: time^.unix_ms);
+    if deadline.state == 0_u64 {
+      reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);
+      return 0_u64;
+    }
+    if deadline.state == 2_u64 {
+      reply_error(client: client, word: &text_expire_set[0_u64..40_u64]);
+      return 0_u64;
+    }
+    set at = deadline.at;
+  }
+  let value_span = arg(args: args, index: 2_u64);
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
+  set client^.now = time^.check;
+  let plan = SetPlan(flags: options.flags, at: at, mode: mode_set, key_index: 1_u64, value_index: 2_u64);
+  let none = False();
+  let work = SetWork(outcome: state_absent, answered: none, removed: none);
+  let slot = &keys^[key];
+  set_body(slot: slot, client: client, value: move value, plan: &plan, work: &work);
+  let appended = set_meta(due: &meta^.due, log: effects, logged: logged, plan: &plan, work: &work, input: input, args: args, key: key, env: env);
+  set_finish(client: client, plan: &plan, work: &work);
+  return appended;
+}
+
+fn script_command(keys: &ConcurrentHashMap<Entry>, meta: &Meta, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> appended: u64 reads(input), reads(args), reads(env), reads(time), writes(keys), writes(meta), writes(effects), writes(client) {
   doc "Runs one command a script calls, inside the script's statement holding every key and the keyspace's metadata, writing its reply into the client's reply as the network does and returning how many commands it appended to effects, the script's own record of what it changed, which the caller wraps in MULTI and EXEC when it holds more than one, as Redis 7.0.15 propagates a script's effects. time is the script's: its check is the instant the script began. A name no command has is refused as Redis refuses it from a script, a count of arguments outside the command's arity likewise, and a command not yet run from scripts with an error of firn's own.";
   let count = args^.inner.len;
   let name = arg(args: args, index: 0_u64);
@@ -73,6 +115,14 @@ fn script_command(keys: &ConcurrentHashMap<Entry>, effects: &Box<Slots<u8>>, log
     if arity_holds(arity: arity_get, count: count) {
       let got = script_get(keys: keys, effects: effects, logged: logged, input: input, args: args, client: client, time: time);
       return got;
+    }
+    reply_error(client: client, word: &text_script_arity[0_u64..58_u64]);
+    return 0_u64;
+  }
+  if code == code_set {
+    if arity_holds(arity: arity_set, count: count) {
+      let stored = script_set(keys: keys, meta: meta, effects: effects, logged: logged, input: input, args: args, client: client, env: env, time: time);
+      return stored;
     }
     reply_error(client: client, word: &text_script_arity[0_u64..58_u64]);
     return 0_u64;

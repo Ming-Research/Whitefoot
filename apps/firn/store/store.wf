@@ -11,6 +11,7 @@ alias priority_queue_new = std::collections::priority_queue::priority_queue_new;
 alias priority_queue_peek = std::collections::priority_queue::priority_queue_peek;
 alias priority_queue_pop = std::collections::priority_queue::priority_queue_pop;
 alias priority_queue_push = std::collections::priority_queue::priority_queue_push;
+alias PriorityQueue = std::collections::priority_queue::PriorityQueue;
 
 const word_del: Array<u8, 3> =[68_u8, 69_u8, 76_u8];
 
@@ -199,10 +200,16 @@ fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>
 
 fn queue_expiry(meta: &Meta, key: &[u8], at: u64, env: &KeyEnv) -> result: unit reads(key), reads(env), writes(meta) {
   doc "Queues a key's new expiry for active removal; one past the queue's ceiling is left to lazy removal.";
+  queue_due(due: &meta^.due, key: key, at: at, env: env);
+  return unit;
+}
+
+fn queue_due(due: &PriorityQueue<Due, ceiling>, key: &[u8], at: u64, env: &KeyEnv) -> result: unit reads(key), reads(env), writes(due) {
+  doc "Queues a key's new expiry in the queue of expiries, as queue_expiry does, for a caller that holds the queue apart from the rest of the metadata.";
   let length = key^.len;
   let copied = bytes_new(input: key, start: 0_u64, length: length);
-  let due = Due(key: move copied, at: at);
-  let queued = priority_queue_push::<DueOrder, ceiling>(queue: &meta^.due, value: move due, env: env);
+  let queued_due = Due(key: move copied, at: at);
+  let queued = priority_queue_push::<DueOrder, ceiling>(queue: due, value: move queued_due, env: env);
   return unit;
 }
 
