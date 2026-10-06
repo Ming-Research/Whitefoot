@@ -27,6 +27,26 @@ impl ProgramChild {
         command: &mut Command,
         limit: Duration,
     ) -> std::io::Result<Self> {
+        Self::spawn_reporting_output(command, limit, None)
+    }
+
+    /// Spawns as [`Self::spawn`] and reports through the returned receiver
+    /// when the program first writes to its standard output, so a test can
+    /// time an event from the program's own progress rather than from its
+    /// spawn, which a loaded host may delay without bound.
+    pub(crate) fn spawn_signalling_first_output(
+        command: &mut Command,
+    ) -> std::io::Result<(Self, std::sync::mpsc::Receiver<()>)> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let child = Self::spawn_reporting_output(command, PROGRAM_DEADLINE, Some(sender))?;
+        Ok((child, receiver))
+    }
+
+    fn spawn_reporting_output(
+        command: &mut Command,
+        limit: Duration,
+        first_output: Option<std::sync::mpsc::Sender<()>>,
+    ) -> std::io::Result<Self> {
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -40,17 +60,30 @@ impl ProgramChild {
         let mut child = command.spawn()?;
         fn drain(
             reader: impl Read + Send + 'static,
+            mut first: Option<std::sync::mpsc::Sender<()>>,
         ) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
             std::thread::spawn(move || {
                 let mut reader = reader;
                 let mut bytes = Vec::new();
-                reader.read_to_end(&mut bytes)?;
-                Ok(bytes)
+                let mut chunk = [0_u8; 4096];
+                loop {
+                    let read = reader.read(&mut chunk)?;
+                    if read == 0 {
+                        return Ok(bytes);
+                    }
+                    bytes.extend_from_slice(&chunk[..read]);
+                    if let Some(sender) = first.take() {
+                        let _ = sender.send(());
+                    }
+                }
             })
         }
         Ok(Self {
-            output: child.stdout.take().map(drain),
-            errors: child.stderr.take().map(drain),
+            output: child
+                .stdout
+                .take()
+                .map(|stdout| drain(stdout, first_output)),
+            errors: child.stderr.take().map(|stderr| drain(stderr, None)),
             child,
             deadline: Instant::now() + limit,
         })

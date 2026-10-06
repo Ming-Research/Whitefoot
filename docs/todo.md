@@ -78,6 +78,47 @@ rarely insert at the same place.
 ## Checker precision and proof cost
 
 
+- **A loop invariant is lost where a guarded update joins an untouched path.**
+  Minimal witness:
+
+  ```wf
+  fn walk(room: u64, t0: u64, c: u64) -> r: u64 pure {
+    let j = 0_u64;
+    loop (
+      invariant jb: j <= room
+    ) {
+      let t = t0;
+      if c == 1_u64 {
+        if t <= room {
+          set j = t;
+        } else {
+          return j;
+        }
+      } else if c == 2_u64 {
+        return j;
+      }
+    }
+    return j;
+  }
+  ```
+
+  is refused with `INV-1 UndischargedLoopInvariant`, obligation `Backedge`,
+  on `jb` (compiler at 648338c31). Two paths reach the back edge, and each
+  alone re-proves `j <= room`: the update from `t <= room` with `j == t`,
+  the fallthrough from the assumed invariant. Each path alone is accepted:
+  making the fallthrough return, so that only the update reaches the back
+  edge, passes, and so does removing the update. The loss is therefore at
+  the join of the two paths, where neither path's own fact survives. The
+  program is sound; a
+  checker could accept it by proving the header batch on each input of the
+  final join, or by closing each input's facts under its value images before
+  joining. Impact: an interpreter written as `loop { match }` whose arms
+  update different loop variables needs a run-time re-check of the invariant
+  per dispatch; Halo's interpreter (Ming-Research/Halo-wf#2) is written as a
+  self-tail call instead.
+  Reopen when a loop-shaped program cannot be rewritten that way, or with
+  the INV-1 join rules.
+
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
   `left == right`, let `make() -> Pair` return `Pair(1, 1)`. A helper
@@ -696,6 +737,20 @@ rarely insert at the same place.
   against direct C and the current WF implementation. No new language operation
   is selected yet.
 
+- **A frame holding a one-byte slot keeps every slot in one aggregate.**
+  `plan_target_frame` (`compiler/src/target.rs`) gives a function's slots
+  separate allocations only when they share one alignment. A function with
+  an atomic statement's `i1` unit flags therefore gets one frame aggregate,
+  and LLVM keeps copies into its fields that separate allocations would let
+  it remove: firn's `run_pop` copies its 72-byte entry slot into the frame
+  to match on the tag (`lower_match` loads a borrowed scrutinee whole). The
+  copy costs nothing measurable: moving the match into a helper removed it
+  and `RPOP` measured 0.998 over 9 pairs, and giving every slot its own
+  allocation did not make it faster
+  ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)). Match a borrowed
+  scrutinee's tag through its address when a measured path pays for the
+  copy.
+
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn
@@ -998,17 +1053,6 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
-- **The cross-map audit test counts on the scheduler.** `holds_across_maps`
-  (`compiler/src/backend/concurrent_map_test.c`) stops its audit thread
-  when the four writers finish and then requires two audits, one holding
-  keys and one holding both maps whole. On the two-CPU `completion-linux`
-  runner the audit thread can be starved for the writers' whole run: it
-  failed with 1 audit on main and 0 on a work branch, both on 2026-10-04,
-  with no change to the map. The change: keep the writers running until the
-  audit has completed both kinds of hold, so the count no longer depends on
-  how threads are scheduled while every audit still overlaps writers.
-  Reopen with the next change to that test or its next `io-hosts.yml`
-  failure.
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
@@ -1151,20 +1195,16 @@ rarely insert at the same place.
   rates on few cores become a goal, or with the next change to the
   completion wait.
 
-- **`ZADD` is held near a million a second by one key's critical section.**
-  firn answered 907,000 to 1,127,000 a second at every server CPU count on
-  the 14900K, 0.88 of Dragonfly at 2 and 0.95 at 16
-  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
-  For a member already held, `add_ranked` (`apps/firn/commands/sorted.wf`)
-  copies the member twice, descends the order twice to remove and put it,
-  and hashes it again to store the score, inside the one key's statement.
-  The change: reuse the removed rank's member, store the score through the
-  first lookup, and profile what remains. The same session's rerun of the
-  branch with bounded waits (`9d1d5dfcd`, reported in PR #202's comments)
-  answered `ZADD` about 10% lower at 4 and 8 server CPUs (1,011,000 against
-  1,127,000 at 4, two of its three passes lower), so the profile should
-  also say what a waiting statement's patience counting costs on one hot
-  key. Validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
+- **`ZADD` on one key may lose about 10% to the bounded waits' patience
+  counting.** The branch with bounded waits (`9d1d5dfcd`, reported in PR
+  #202's comments) answered `ZADD` about 10% lower at 4 and 8 server CPUs
+  (1,011,000 against 1,127,000 at 4, two of its three passes lower). Since
+  then `add_ranked` (`apps/firn/commands/sorted.wf`) changes a held member's
+  score in one probe and moves it without copies, and firn's `ZADD` at 16
+  server CPUs measured 941,000 a second against Dragonfly's 935,000
+  ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)).
+  Profile what a waiting statement's patience counting costs on one hot key,
+  and validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
   CPUs. Reopen with firn's next performance work.
 
 - **A statement that holds a table whole takes turns by ticket.** A block
@@ -1217,6 +1257,17 @@ rarely insert at the same place.
   ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
   The cause is unattributed: the host had no `perf`. Validate by a profile
   of both on four drivers. Reopen with firn's next performance work.
+
+- **firn answers about 1.3% fewer `RPOP`s of one list on four drivers than
+  `cea9188d4`.** The difference came with #208. It shows only on a list four
+  drivers share that holds elements, and it is not in the concurrent map,
+  the completion bridge or the time the entry is held. What remains is
+  spread over the request path below the resolution of a build's code
+  placement ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)).
+  Compare one request's instructions and cache misses against
+  `cea9188d4` on bare-metal Linux with `perf stat` and `perf c2c`; a
+  difference there names the code to change. Reopen when that host is
+  available.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
@@ -1513,7 +1564,14 @@ rarely insert at the same place.
   they establish no cause or fix. Existing raw data lacks scheduling counters,
   and ARM or emulated results cannot clear this Linux signal. A retained-image
   W4 paired/null counter check is a possible discriminator, not selected or
-  run. Defer mechanism changes until evidence distinguishes the possible causes;
+  run. The [code-placement investigation](../research/investigations/code-placement/DESIGN.md)
+  attributes one class of such readings: byte-identical `records` code shifted
+  by 16 to 48 bytes changes its time by up to 40 percent, and every
+  compiler-produced function now starts on a 64-byte boundary, so a shift
+  below 64 bytes moves no function within its line and qualification runs a
+  32-byte placement control. The readings above predate that alignment and
+  are not attributed one by one; a `records` suspect that recurs after it is
+  not a sub-line placement effect. Defer mechanism changes until evidence distinguishes the possible causes;
   reopen on selection of a bounded Linux attribution experiment and preserve
   the suspect if that experiment is uninformative. Keep this item
   until the observations and measurement/detection tradeoff are explained by
@@ -1723,25 +1781,40 @@ rarely insert at the same place.
   program with small per-connection state, such as a proxy that shares its
   buffers, is written.
 
-- **A 16-byte shift of a kernel's code changes its measured speed by 40
-  percent.** The `records` compute kernel's hot function,
-  `wf__par_seq_summarize_records`, runs about 21 ms at one worker when it
-  starts at image offset 0x3200 and about 29 ms at 0x3210, with identical
-  instructions: cachegrind counts 2,512,523,716 and 2,512,524,120. One more
-  imported libc function adds a PLT entry before `.text`, which is enough to
-  move it. The stackful waiting-context floor's `mprotect`, since removed,
-  did that, and so did an unrelated `getpagesize` import linked beside the
-  base runtime. The measured
-  times were 20.7 ms for the base, 29.5 ms for the base with the extra import
-  and 28.5 ms for the candidate floor: medians of eleven runs on a 2.1 GHz
-  Xeon. `compute-regression` then reports `records` as adverse at two widths
-  for a change that leaves the kernel's generated code identical. Every later
-  runtime import will do the same. Align emitted functions and loop headers
-  (for example 64-byte function alignment, or building kernel objects with
-  `-mbranches-within-32B-boundaries`), measure the kernels under both
-  placements, and adopt whichever makes their time independent of the
-  offset. Reopen when the next compute-regression verdict names a kernel
-  whose generated code did not change.
+- **The aligned layout of `records` is slower on some AMD EPYC hosts.**
+  Every compiler-produced function starts on a 64-byte boundary, which makes
+  the compute kernels' times independent of where they are linked, but on a
+  hosted AMD EPYC 9V74 it fixes `records` at a layout that took 5 to 14
+  percent longer than its median unaligned placement in a three-round run;
+  on the 14900K and the EPYC 7763 the aligned layout costs at most about 3
+  percent against that median, and on a 9V45 and a Xeon 8370C 3 to 5 percent
+  at one worker while gaining at others. Against the regression gate's
+  baseline, the merge base's unaligned module over a runtime aligned by the
+  candidate's flags, four of eight `compute-regression` runs of the change
+  failed on `records`, 8 to 18 percent longer, one of them named as a 9V45,
+  and two passing runs on 7763s read width 4 as a suspect, 0.917 and 0.845,
+  though the decisive 9V45 run and the 7763 run whose placements are
+  tabulated found the aligned layout faster than `main`'s own placement or
+  within 2 percent of it
+  ([code placement](../research/investigations/code-placement/DESIGN.md#results)).
+  A hypothesis, not yet tested: the kernel's UTF-8 validation loop is dense in
+  branches, and which of them share a 64-byte line follows the layout. On the
+  9V45, `-falign-loops=32` on top of the function alignment made `records` 4
+  to 9 percent faster at every width, though its time then moved with
+  placement in a cell that run did not locate; on the 14900K and the EPYC
+  7763 it was faster at two widths of no kernel. Aligning only each module's
+  section start, which keeps the linker's relative layout, is another
+  candidate, refused for now in `design/compiler/code-alignment.md`. Find what the aligned layout costs
+  on the 9V74 and the 9V45, for example with branch-misprediction and
+  op-cache counters on the aligned and the fastest unaligned layout; add
+  the gate's layout, an unaligned module over an aligned runtime, as an arm
+  of the placement experiment to tell whether it is faster or the gate's
+  hosts differ; and look for a deterministic layout rule, such as a loop
+  alignment or an ordering of a function's blocks, that removes the cost
+  without reintroducing placement dependence; validate with the placement
+  experiment on the hosted runner and the 14900K. Reopen when a hosted AMD
+  run or a downstream program's profile shows a branch-dense loop paying
+  more than 5 percent for its layout.
 
 - **Every atomic statement holds its object alone.** Statements whose
   blocks only read could share the object, but lowering always acquires for
@@ -2183,16 +2256,17 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files can only be appended.** `std::fs` opens a file for appending,
-  appends, syncs and closes it [PRE-2], and has no positioned write,
-  truncation, rename, removal, directory creation, directory sync, create rule
-  other than create-if-missing, or way to descend into a subdirectory for
-  writing. A program cannot rewrite a log compactly, as Redis's
-  `BGREWRITEAOF` writes a new file, syncs it, renames it over the old one and
-  syncs the directory, nor clean up a file it made; the append-only surface
-  was chosen as the one the persistent programs in view needed
+- **Files can only be appended or set to a length.** `std::fs` opens a file
+  for appending, appends, sets its length, syncs and closes it [PRE-2], and
+  has no positioned write, rename, removal, directory creation, directory
+  sync, create rule other than create-if-missing, or way to descend into a
+  subdirectory for writing. A program cannot rewrite a log compactly, as
+  Redis's `BGREWRITEAOF` writes a new file, syncs it, renames it over the old
+  one and syncs the directory, nor clean up a file it made; the surface was
+  chosen as the one the persistent programs in view needed
   (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
-  directories and append-only files"). Each addition is a specification
+  directories and append-only files"), and `truncate_file` was added for
+  cutting a log whose end did not load. Each addition is a specification
   change to `std::fs` taking the write half. Validate with a program that
   rewrites its log through a new file and a rename, and survives being
   stopped between the two steps with one of the two files whole. Reopen when
@@ -2374,16 +2448,61 @@ rarely insert at the same place.
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
 
+- **A graph path's spelling changes the cache key.** `push_records` in
+  `compiler/src/driver.rs` puts each input's `display_path` into the
+  composition key material beside its logical path and bytes, so the same
+  graph named by a relative and by an absolute path misses the other's
+  cache entry; Halo's comparison runner
+  ([PR #220](https://github.com/Ming-Research/Whitefoot/blob/b374e880e6749fe5d1a0e4a40b0b2187f52f63b0/research/experiments/halo-e2e/README.md))
+  observed the miss repeating front-end work. Impact: an alternate spelling
+  of an unchanged graph rebuilds. Change: separate semantic input identity
+  from the diagnostic display path, keeping the right paths in fresh and
+  reused diagnostics. Validate relative, absolute and symlink spellings
+  against unchanged-build hits and byte-identical acceptance, plus changed
+  source and graph invalidation. Reopen when incremental compiler work next
+  targets invocation identity.
+
+- **A compiler release carries no documents for its downstream writers.**
+  `compiler-release.yml` publishes `whitefootc`, a manifest and checksums
+  only, so an agent writing a downstream project reads the specification,
+  the maintained programs and the standard library's interfaces in this
+  repository at the release's commit
+  ([downstream releases](../design/compiler/downstream-releases.md)). That
+  ties every downstream writer to this repository's layout and to network
+  access at the moment it writes code, and gives no single list of what a
+  writer needs. The change: choose what a release carries for writers, such
+  as the specification, `lib/std`'s `module.wfm` interfaces, `docs/patterns.md`
+  and selected programs, in what form and under what stable names, and add it
+  to each release. The owner deferred the choice as larger than the release
+  mechanism; future releases are to carry it. Reopen when the downstream
+  projects' first upgrades show which documents their writers read, or when a
+  writer has to work without access to this repository.
+
 ## Interpreter dispatch lowering
 
-- **Build-time toolchain probes are not rerun when the toolchain changes.**
-  `compiler/build.rs` probes the assembler for the no-capture spelling and
-  for `preserve_none`, but declares no `rerun-if` dependency on the
-  assembler, so after a clang upgrade the recorded answers stay until the
-  build script reruns for another reason. A stale `preserve_none` answer
-  after a downgrade would emit a convention the assembler refuses. Track
-  the assembler's identity (its path and version output) as a rerun input.
-  Reopen when a host's clang changes under an existing build directory.
+- **Halo's `AddRR` arm copies its `Value` operands to the stack before
+  testing their tags, for a reason not yet attributed.** In Halo's
+  interpreter (worktree of branch claude/halo-slice1, `lib/halo/vm/
+  dispatch.wf` arm `AddRR` inlining `instruction_add_rr` from
+  `lib/halo/vm/handlers.wf`), the split arm copies both 16-byte operands
+  from the register file to stack temporaries (`ldr q0/q1; stp q0, q1,
+  [sp, #0x70]`) and reads tag and payload back from the stack. Two
+  standalone witnesses of the same `match` shapes (a nested `match` on
+  `regs^.inner[b]`, and `let` bindings handed to an out-of-line slow path)
+  read the tag from the slot itself, so the cause lies in the surrounding
+  `run` (eight parameters, an inlined handler, a large live set, or the
+  `Step` value the arms build), not in the `match` lowering alone. Impact:
+  two stores and two dependent reloads on Halo's hottest arm. The change:
+  reduce `run` until the copy disappears, then fix the lowering that causes
+  it. Validate on `run.body.arm.20`'s machine code and Halo's fib timing.
+  Reopen when Halo's dispatch is next measured.
+- **An enum's tag is an `i32` whatever its variant count.** Halo's `Cell`
+  (a tag, three `u8` and one `u32` payload) has a 12-byte stride where a
+  one-byte tag would pack it into 8; an interpreter's code array is then a
+  half larger than needed, and each fetch spans more cache. The change: size
+  the tag to the variant count and order fields to pack, a layout decision
+  for compiler/payload-enum-layout. Validate with Halo's dispatch timings and
+  the wasm interpreter's `Op` stride. Reopen with that layout decision.
 
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
@@ -2395,22 +2514,18 @@ rarely insert at the same place.
   as the next dispatch-lowering change, the invariant-header work having
   landed.
 
-- **Values kept in the frame past the registers are unmeasured.** A split
-  dispatch loop whose parts need more argument registers than the
-  convention has keeps the values it cannot change in frame slots, which
-  each part loads (compiler/match-dispatch-lowering); its cost against
-  whole-function emission has not been measured. Validate with a loop past
-  twelve parameters on x86-64 or past eight under the C convention on
-  arm64, comparing cycles with whole emission, and Halo's VM under the C
-  convention. Reopen with the first consumer whose loop needs the frame.
-
-- **A `match` on a place copies the scrutinee into a frame slot.** The
-  emitter copies the matched value into a slot to read its tag while the
-  arms read their binders from the place itself. In one function the host
-  removes the copy; in a split loop it cost a store and a store-forwarded
-  load per dispatch until the slot became part-local. Reading the tag from
-  the place would remove the copy everywhere. Low priority; reopen if a
-  profile shows the copy outside split loops.
+- **Values kept in the frame past the registers are measured on one case
+  only.** A split dispatch loop whose parts need more argument registers
+  than the convention has keeps the values it cannot change in frame slots
+  (compiler/match-dispatch-lowering). With one value spilled under
+  `preserve_none` on arm64 the split loop takes 24-36% fewer cycles than
+  the same loop emitted whole
+  (`research/experiments/match-dispatch/RESULTS.md`, "Values kept in the
+  frame past the registers"); more spilled values, the C convention and
+  x86-64 are unmeasured. Validate with the same S/W pair under the C
+  convention on arm64 (8 registers) and on the 14900K. Reopen with the
+  first consumer whose loop spills several values, or a host without
+  `preserve_none`.
 
 - **Firn GET retains an Entry copy because its existing byte slot makes the
   frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
@@ -3256,16 +3371,17 @@ condition under which it is taken up.
 
 ## Verification tooling
 
-- **The local app-build cache never evicts.** Outside CI the corpus tests
-  build firn with the compiler's incremental cache under
-  `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`
-  in `compiler/tests/programs/support.rs`). Each new compiler binary adds
-  records beside the old ones, which no later build reads, and an
-  interrupted write leaves its `.partial` file, so the directory grows
-  until someone removes it. The change: drop records of other compiler
-  identities and stale partial files when the cache opens, or prune by age.
-  Validate with the directory's size staying flat across compiler rebuilds.
-  Reopen when the cache directory's growth is noticed on a developer host.
+- **`make -C compiler format` depends on the host's stable rustfmt.**
+  `compiler/rust-toolchain.toml` pins only the `stable` channel, and
+  rustfmt 1.10.0 (2026-09-28, on the 14900K host) reformats five files that
+  rustfmt 1.9.0 (2026-09-01, on the M1) leaves alone: `driver/packages.rs`,
+  `driver/tests.rs`, `graph.rs`, `prelude.rs` and
+  `tests/conformance/adapter.rs`. Formatting is an authoring command, not a
+  gate, so no check fails, but an author on the newer toolchain must revert
+  unrelated hunks by hand. The change: pin the channel to a dated release, or
+  reformat once with the newer rustfmt when every host has it. Validate with
+  `cargo fmt --all -- --check` clean on both hosts. Reopen when a formatting
+  diff next lands in an unrelated change.
 
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on
@@ -3390,15 +3506,6 @@ condition under which it is taken up.
   bypasses the owned process, or when the tests' process calls are next
   reorganized.
 
-- **The design-tree skill's tests also test this project's CI script.**
-  `design/skill/test_lint.py` runs `.github/design-review-base.sh` in nine
-  of its cases, so a project that copies `design/skill/` gets failing tests,
-  although the skill is meant to move to another project unchanged. Move
-  those cases to a `--self-test` of `design-review-base.sh` wired into
-  `make static`, as the other `.github` scripts do, and keep only the lint's
-  own cases in the skill. Validate that each moved case still fails once for
-  its intended reason. Reopen when the skill is extracted or the CI base
-  selection changes.
 - **Static verification uses inconsistent, mutable comparison refs.** The
   root `spec-archives` target hard-codes local `main`; after a branch integrates
   current upstream, an older local ref can report multiple new archives even
@@ -3454,6 +3561,28 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
+- **The paired comparison compiles both arms' runtime with the candidate's
+  flags.** `tests/performance/Makefile` includes the candidate's
+  `compiler/runtime.mk`, so the baseline's runtime sources compile with the
+  candidate's `NATIVE_OPTIMIZATION_FLAGS` and against the candidate's unit
+  list. A change to how the driver compiles the runtime, as
+  `-falign-functions=64` in the code-placement change, reaches both arms and
+  the comparison cannot see it, and a runtime unit added or removed would
+  fail the baseline's build. The change: include each arm's own
+  `runtime.mk`, from `$(ROOT)`, so each arm builds its runtime as its own
+  driver does; validate that a flag change in the candidate's `runtime.mk`
+  then differs between the arms' native objects. Reopen at the next change to
+  the runtime's compile flags or unit list.
+- **The first cold compiler build in `compute-regression` is 10–15% slower.**
+  Whichever compiler the job builds first takes longer, so the candidate's
+  build time carries a bias its budget now covers
+  ([first build](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  Find the cause (page cache of the restored Cargo cache, dependency
+  extraction or the toolchain's first load) and add an untimed warm-up before
+  both builds, then lower `performance-candidate-compiler` to 1.25 times its
+  new slowest run; validate with swapped-order runs that the first and
+  second builds agree within 5%. Reopen when the candidate stage overruns
+  130 s on a change that does not touch the compiler.
 - **One budget per runner class hides slow growth on faster runners.** On
   identical compiler source the ubuntu `check/unit` stage took 123–187 s,
   so its budget, 1.25 times the slowest run, lets a change grow a fast run by

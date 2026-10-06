@@ -449,10 +449,38 @@ grow a stage on the fastest by about twice before it trips, so a branch
 still reads its stage times against main's on the same processor; a budget
 column per processor model remains in `docs/todo.md`.
 
+**`performance-candidate-compiler` raised to 130 s.** `compute-regression`
+builds the candidate compiler first and the merge-base compiler second, each
+cold at two Cargo jobs in its own target directory, and the first build is
+the slower one whichever compiler it builds. Across the 30 runs before 2026-10-06
+01:00 UTC that built both, the candidate took longer than the baseline every time, by a median of 12%. In
+PR #239's run 37394287196, whose two compilers build the same `whitefootc`
+source because the PR changes only a test file, the candidate took 120.9 s
+and the baseline 90.7 s. Two dispatched runs on an EPYC 7763 of main's
+source separate the build order from the compiler built: in run 37395372973,
+in the workflow's order, the first build took 101.6 s and the second 93.2 s;
+in run 37395370468, with the two build steps swapped, the first took 107.2 s
+and the second 93.2 s. The owner set the budget directly to 130 s on
+2026-10-05, about 10 s over that slowest run, in the same ruling that fixed
+every later raise at 10 s; `performance-baseline-compiler` keeps 105 s, over its slowest run of 97.3 s. Why the first cold build is
+slower was not measured; an untimed warm-up before both builds would remove
+the difference instead of covering it.
+
+**The placement control's two stages, 10 s and 45 s.** The code-placement
+change (PR #252) added `performance-shifted-images`, which links the
+candidate's images again behind 32 bytes of padding, and
+`performance-placement-control`, which compares them with the candidate's.
+The shifted images took 1.8 s at `d4f67df6`, and the control 26.1 s at
+`1bfe9449` and 34.0 s at `d4f67df6`. The shifted images take the
+10-s floor; 1.25 times 34.0 s, rounded up to 5 s, is 45 s, the budget of
+`performance-null`, the same campaign over the same images.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases
-and its host. A cause found is fixed, or its raise goes to the owner; when
+and its host. A cause found is fixed, or its raise goes to the owner; an
+approved raise adds 10 s to the stage and to the group stage that contains
+it, if any, so an overrun of more than 10 s still needs its cause found. When
 the reading is unclear, the job runs once more; and when the change plainly
 cannot slow the stage, as a prose-only change cannot slow a build, the
 overrun is reported as runner variance in the validation handed back and

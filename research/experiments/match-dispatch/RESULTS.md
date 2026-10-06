@@ -272,6 +272,349 @@ work (`wfhoist` on `fib`: 607 million cycles in the interleaved run, 1151
 million in three later launches), the placement effect Silverfir-nano's
 record describes; the tables report medians of interleaved launches.
 
+### Values kept in the frame past the registers
+
+A measurement of compiler/match-dispatch-lowering's spill (the interpreter's
+loop-invariant values moved to frame slots when the parts need more argument
+registers than the convention has), run by GPT-6.1 sol per the owner's
+chore policy and checked here. Criterion, recorded before measuring: the
+split loop that spills is justified when it takes at least 5% fewer cycles
+than the same loop emitted whole, on the median of at least 7 alternating
+launches per kernel. Variants, both from `wf/vm.wf` at main d6d6456cf on
+the M1 Pro: S gives `run` 16 extra `u64` parameters passed through
+unchanged and read by `Movi` (`--dispatch-ledger`: split into 23 arms
+taking all 24 integer registers, one value kept in the frame); W adds
+`if pc == 18446744073709551615_u64 { return ...; }` before the `match`,
+which never fires, so the loop is emitted whole. Both pass every kernel's
+checksum. Cycles, seven alternating launches per variant and kernel
+([run-spill.tsv](run-spill.tsv); fib was repeated once more because of one
+outlier per variant):
+
+| Kernel | S median | W median | Fewer cycles, S |
+|---|---:|---:|---:|
+| loop | 3,979,329,968 | 6,024,855,078 | 34.0% |
+| fib (14 launches) | 636,933,902 | 992,618,892 | 35.8% |
+| sieve | 2,359,838,391 | 3,111,945,191 | 24.2% |
+| mandel | 364,613,536 | 506,358,032 | 28.0% |
+
+The spill meets the criterion on every kernel. This covers one spilled value
+under `preserve_none` on arm64; more spilled values, the C convention and
+x86-64 are not measured.
+
+## Stage 3: a wasm interpreter running CoreMark
+
+The design and criteria are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-a-wasm-interpreter-running-coremark).
+`wasm/gen.py` writes the interpreter; `wasm/coremark.py` alternates
+launches and takes medians. Module: Silverfir-nano's
+`benchmarks/wasi/coremark/coremark.wasm`, arguments `0x0 0x0 0x66 2000`
+(the 2K performance run's seeds, 2000 iterations, about 1.6 s under the
+Whitefoot interpreter and 0.35 s under Silverfir-nano's). M1 Pro;
+Silverfir-nano built from main as `sf-nano-cli --interp`; the Whitefoot
+interpreter compiled by this branch's `whitefootc` with `preserve_none`.
+
+### v1, the direct stack machine
+
+Every launch reported CoreMark's list, matrix and state CRCs (0xe714,
+0x1fd7, 0x8e3a) and one final CRC (0x4983) on both interpreters. Seven
+alternating launches ([run-wasm-v1.tsv](run-wasm-v1.tsv)):
+
+| Interpreter | Median score | Spread | Ratio |
+|---|---:|---:|---:|
+| Whitefoot v1 | 1261.0 | 5.8% | 0.223 |
+| Silverfir-nano | 5665.7 | 6.9% | 1 |
+
+The ratio is below the 0.3-0.5x the criterion predicted. One launch of the
+dispatch-counting build (`gen.py --count`) and one `/usr/bin/time -l` launch
+of the measured build at 2000 iterations:
+
+| Quantity | Value |
+|---|---:|
+| Dispatches | 1,271,009,318 |
+| Instructions retired | 23,117,633,381 |
+| Cycles | 5,014,438,171 |
+| Instructions per dispatch | 18.2 |
+| Cycles per dispatch | 3.94 |
+
+The dispatch count moves by tens between launches, with the digits CoreMark
+prints for its timing. The interpreter function splits into 178 per-arm functions taking 15 of
+the 24 integer argument registers (`--dispatch-ledger`). At 3.94 cycles a
+dispatch costs about what E0's tail-call forms cost with frame round trips
+(4.18-4.25 cycles), and at an IPC of 4.6 the core is not waiting on loads:
+the loss is the number of dispatches and the instructions each executes.
+v1 dispatches once per wasm operation, including every `local.get`,
+`local.set` and constant, and each handler checks the operand stack's depth
+and the fetch index and moves values through the frame. Silverfir-nano's
+interpreter folds locals and constants into its operations' operands
+(its static fallthrough statistics are dominated by `MovSlot`, `MovConst`
+and folded arithmetic), so it executes fewer dispatches for the same work.
+Silverfir-nano's own dispatch count is not reported: `/usr/bin/time -l`
+counts only its startup (about 1.1 million cycles), so its execution is
+not measured on these counters.
+
+### v2a, register form
+
+Operations read and write frame slots named by u16 operands (`I32Add(d, a,
+b)`); the translator tracks each operand's provider (its temporary, a local
+or a constant), so `local.get` and constants emit nothing, a `local.set`
+after an operation retargets that operation's destination, and operands
+reach their temporaries only at control flow. The stack pointer is gone:
+the interpreter function requires `fp + 65536 <= stack.len`, checked once
+per call and return, which covers every slot access. Predicted before
+measuring: dispatches 40-50% of v1's, score 0.45-0.55x.
+
+### v2b, constants in frame slots
+
+Each function's distinct constants, collected before its body is
+translated, are copied into frame slots after its locals when it is
+entered, and a constant operand names its slot. Predicted: about 23% fewer
+dispatches than v2a, score 0.42-0.45x.
+
+### v2 results
+
+Seven alternating launches each ([run-wasm-v2a.tsv](run-wasm-v2a.tsv) with
+v1 in the same run, [run-wasm-v2b.tsv](run-wasm-v2b.tsv) with v2a), every
+launch with correct CRCs:
+
+| Build | Median score | Ratio to Silverfir-nano | Dispatches | Instructions per dispatch | Cycles per dispatch |
+|---|---:|---:|---:|---:|---:|
+| v1 | 1260.2 | 0.221 | 1,271,009,318 | 18.2 | 3.94 |
+| v2a | 1970.4 | 0.346 | 822,373,679 | 18.8 | 3.91 |
+| v2b | 2214.8 | 0.390 | 652,267,155 | 20.9 | 4.35 |
+
+Both scores fall short of their predictions. v2a removed 35% of v1's
+dispatches, not 50-60%; v2b removed the 21% its prediction named, but each
+remaining dispatch cost more, the constant copy on every call adding to the
+calls' cost and the removed `Const` dispatches having been cheap ones.
+v2b's remaining dispatches by kind (`gen.py --profile`): `Copy` 107 million,
+`BrIf` 103 million, `I32Add` 102 million, `I32Load` 53 million, `I32And` 43
+million; the compares that feed a `BrIf` (`I32Ne`, `I32Eqz`, `I32Eq` and the
+ordered compares) total about 70 million.
+
+The machine code of v2b's `I32Add` handler is 18 instructions to its
+indirect branch. Beyond the operation itself, it reloads the stack box's
+pointer from its reference (two instructions and a dependent load), because
+the arm hands the reference to its helper function and the hoisting rule
+pins only a reference used for box projections; it recomputes the next
+cell's address from the cell index; and it adds the frame base to each slot
+index. The first is a compiler limitation recorded in `docs/todo.md`; the
+other two are the derived-address item already there. Writing the handlers'
+bodies back into the arms, which would avoid the reload, does not check: the
+interpreter function then grows past what the checker handles in minutes.
+
+### v2c, compare and branch fused
+
+A `br_if` whose condition is the i32 comparison emitted just before it, and
+that moves no result, becomes one compare-and-branch operation
+(`BrI32Ne(a, b, t)` and the other nine); an `if` on such a comparison
+branches on its negation, and `eqz` maps onto the existing `BrUnless` and
+`BrIf`. The condition no longer reaches a temporary, so a condition held in
+a local is tested in place. Predicted: about 11% fewer dispatches than v2b,
+score about 0.42x. Seven alternating launches
+([run-wasm-v2c.tsv](run-wasm-v2c.tsv)), every launch with correct CRCs:
+
+| Build | Median score | Ratio to Silverfir-nano | Dispatches | Instructions per dispatch | Cycles per dispatch |
+|---|---:|---:|---:|---:|---:|
+| v2b | 2239.6 | 0.390 | 652,267,155 | 20.9 | 4.35 |
+| v2c | 2534.9 | 0.441 | 551,583,965 | 21.6 | 4.53 |
+
+The dispatches fell 15.4%, more than predicted, because `Copy` also fell
+from 107 to 77 million: conditions held in locals no longer needed one. The
+largest remaining kinds are `I32Add` (102 million), `Copy` (77 million),
+`I32Load` (53 million) and `I32And` (43 million).
+
+### v2d, the stack box kept across helper calls
+
+The handlers' helper functions declare `writes(stack.inner)` and
+`writes(mem.inner)`, writes below the boxes' content, in place of
+`writes(stack)` and `writes(mem)`, and the interpreter is compiled by the
+compiler of branch `claude/pin-through-callees`, which keeps such a
+reference pinned across those calls and hands each callee a part-local slot
+holding the hoisted box pointer. The `I32Add` handler's machine code loses
+its reload of the stack box's pointer (`ldr x11, [x22]`): seventeen
+instructions to its indirect branch instead of eighteen, and no dependent
+load. Seven alternating launches ([run-wasm-v2d.tsv](run-wasm-v2d.tsv)), every
+launch with correct CRCs; Silverfir-nano's spread includes one slow launch:
+
+| Build | Median score | Ratio to Silverfir-nano | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2c | 2522.1 | 0.441 | 11,918,394,281 | 2,498,674,814 |
+| v2d | 2617.8 | 0.458 | 11,230,519,951 | 2,431,061,674 |
+
+The score rises 3.8%, above the 2% criterion.
+
+### v2e, handler bodies written into their arms
+
+`gen.py --inline` writes each helper's body into its arm, binding the
+helper's parameters with `let`, except a body that delivers a value from a
+`match` (`give`), which stays a call: the checker's handling of such
+deliveries grows faster than linearly with the function, and the fully
+inlined interpreter took 313 s to check where this form takes 3.5 s. Built
+by the compiler with stack-box pinning and active-term closures merged, the
+`I32Add` arm's machine code is the same seventeen instructions as v2d's: by
+v2d the helpers were already inlined by LLVM, so writing them into the
+source changes the checker's work, not the dispatch. Its median in the v2f
+run below is 2635.0.
+
+### v2f, fewer copies
+
+`gen.py --profile` with each copy site given its own operation kind
+attributed v2e's 77 million `Copy` dispatches: 64 million from a
+`local.get` followed by a `local.set` (a copy between locals, 20.6 million
+of them directly after another such copy), 12.5 million from operands put
+in their temporaries before control flow, 9.2 million of those before a
+`br_table` and 2.1 million before a `return`. v2f reads the operand a
+`br_table` or `return` consumes, and the result at a function's end, from
+its local in place (a `return` and a function's end no longer put any
+other operand in its temporary), and merges a copy between locals emitted
+directly after another into one `Copy2(d, s, e, t)`, which moves `s` to
+`d` and then `t` to `e`; a loop's start, a branch target, ends the merging.
+Criterion, set before measuring: adopt if the median score rises at least
+2%, as for v2d. Dispatches fell from 551,583,984 to 523,297,303 (5.1%),
+`Copy` and `Copy2` together to 49 million. Seven alternating launches
+([run-wasm-v2f.tsv](run-wasm-v2f.tsv)), every launch with correct CRCs,
+and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2e | 2635.0 | 3.6% | 11,229,455,758 | 2,420,843,786 |
+| v2f | 2706.4 | 2.4% | 10,906,830,435 | 2,354,421,800 |
+
+The score rises 2.7%, meeting the criterion, with cycles down 2.7%.
+
+### v2g, address additions folded into loads and stores
+
+An i32 load or store whose address is the temporary an `i32.add` emitted
+just before it wrote takes that addition's two operand slots instead
+(`I32LoadIx(d, a, b, o)` loads from `a + b + o`, the sum wrapping to 32
+bits as the `i32.add` did, and likewise the other i32 loads and stores), and
+the addition is not emitted; a store qualifies when its value comes from a
+local, so that no copy is emitted between the addition and the store.
+Silverfir-nano's translator folds such additions the same way. Predicted
+before measuring: 25-35 million fewer dispatches, from the 37.7 million
+`I32Add` dispatches directly followed by a load or store in v2e's
+operation-pair profile; criterion: adopt if the median score rises at
+least 2%. Dispatches fell from 523,297,303 to 506,088,437 (3.3%), below the
+prediction: 17.2 million additions folded. A load's only operand is its
+address, so an addition directly before an eligible load that was not
+folded wrote a local (`local.set` or `local.tee` took over its
+destination), which the fold does not reach, as for all but 586 of the 8.7
+million additions before an `I32Load8U`; before a store, the addition may
+also be the stored value, or the value a constant. Seven
+alternating launches ([run-wasm-v2g.tsv](run-wasm-v2g.tsv)), every launch
+with correct CRCs, and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2f | 2739.7 | 3.0% | 10,906,796,639 | 2,348,767,399 |
+| v2g | 2832.9 | 3.2% | 10,648,499,411 | 2,284,244,384 |
+
+The score rises 3.4%, meeting the criterion.
+
+### Not adopted: pairs of additions
+
+v2g's operation-pair profile shows 33.3 million `I32Add` dispatches
+directly followed by another. Folding the second into the first's sum
+(`(a + b) + c`, when the second adds the temporary the first wrote) folded
+425: the additions are independent, each written to a local, as in a loop
+that advances two indices. Merging an `I32Add` emitted directly after
+another, with no branch target between them, into one `I32Add2(e, x, y, d,
+a, b)` that performs both in order (and splitting it again when a load or
+store folds the second), was predicted to remove 20-33 million dispatches;
+criterion: adopt if the median score rises at least 2%. It removed 18.4
+million (506,088,437 to 487,719,418, 3.6%); seven alternating launches
+([run-wasm-add-pairs.tsv](run-wasm-add-pairs.tsv)), every launch with
+correct CRCs:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2g | 2762.4 | 1.7% | 10,648,948,853 | 2,285,196,012 |
+| add-pairs | 2809.0 | 0.6% | 10,483,486,410 | 2,247,321,457 |
+
+The score rises 1.7%, short of the criterion with spreads that decide it,
+so the interpreter keeps v2g's form. A merged dispatch saves the indirect
+branch and the fetch but not the second addition's three slot accesses.
+
+### Frame slots addressed from a derived pointer
+
+The interpreter's handlers address frame slots as `stack^.inner[fp + k]`,
+so each split part formed `fp + k` for every slot it touched and the stack
+block's first element again. Branch `claude/derived-addresses` addresses an
+element whose offset is a checked sum, computed in the part, of a value the
+part has from its entry (here `fp`) and another value, from a pointer to
+element `fp` that the part's prelude derives once
+(compiler/match-dispatch-lowering). The `I32Add` arm's machine code goes
+from seventeen instructions to fifteen: its three `fp + k` additions are
+gone, and the block's first element and `fp`'s scaling fold into two
+additions at the top of the arm. Criterion, set before the v2g
+measurement: adopt if the median score rises at least 2%. Each build
+compiled by the compiler with stack-box pinning and active-term closures,
+without and with the change; every launch with correct CRCs:
+
+| Interpreter | Launches | Median score, without | with | Instructions, without | with | Cycles, without | with |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| v2e ([run](run-derived-v2e.tsv)) | 7 | 2567.4 | 2594.0 | 11,230,506,405 | 10,654,763,608 | 2,423,045,295 | 2,414,653,203 |
+| v2g ([run](run-derived-v2g.tsv)) | 15 | 2762.4 | 2820.9 | 10,649,927,045 | 10,072,938,212 | 2,291,486,095 | 2,235,379,256 |
+| v2h ([run](run-wasm-v2h-nano.tsv)) | 7 | 2971.8 | 2998.5 | 9,716,197,938 | 9,397,630,140 | 2,125,190,385 | 2,110,365,739 |
+
+The instructions fall 5.1% and 5.4%. On v2e the cycles and score do not
+move beyond the spread (score +1.0%, cycles -0.3%); on v2g, whose folded
+loads and stores each address two or three slots, the cycles fall 2.4% and
+the score rises 2.1%, meeting the criterion. A seven-launch v2g run
+before this one gave +1.9%, within its 2% spread, which is why the
+fifteen-launch run decides; two `/usr/bin/time -l` launches of each v2g
+build gave cycles within 0.1% of each other. On v2h, whose accumulator
+forms already drop many slot accesses, the instructions fall 3.3% and the
+score rises 0.9% with cycles 0.7% lower, below the criterion: the gain
+shrinks as fewer slots are addressed per dispatch.
+
+### v2h, an accumulator register
+
+The interpreter function takes a `u64` parameter `acc`, carried by every
+tail call; the split lowering keeps it in a register (318 arms taking 16 of
+the 24 integer argument registers, `--dispatch-ledger`). Operations gain
+forms that leave their result in `acc` instead of slot `d` (`I32AddD`), take
+an operand from it (`I32AddA`, `I32StoreV`, `BrIfC`), or both
+(`I32AddAD`): 125 forms of the i32 arithmetic, comparisons, loads and
+stores, the compare-and-branch operations, `BrIf`, `BrUnless` and `Select`.
+When the translator emits an operation that pops the temporary the
+operation emitted just before it wrote, with no label between (the test
+the compare and address fusions use), and both have such forms, the
+earlier one leaves its result in `acc` and the later one reads it there.
+The operand stack's discipline gives that temporary no other reader; a
+result that `local.set` or `local.tee` retargeted to a local keeps its
+store. A form keeps its operation's fields, a field read from `acc`
+holding 65535, which is never a slot, so the compare and address fusions
+and the patching of forward branches carry it. Silverfir-nano's
+interpreter keeps such values in an accumulator register the same way. In
+v2g's profile 202 million of the 506 million dispatches read the slot the
+dispatch before them wrote, locals included. Predicted before measuring:
+the same dispatch count, 4-6% fewer instructions, 3-6% fewer cycles and a
+score 3-6% higher; criterion: adopt if the median score rises at least 2%.
+Dispatches: 506,088,440, of which 134.8 million leave their result in
+`acc`. Both builds compiled by the compiler with stack-box pinning and
+active-term closures; seven alternating launches
+([run-wasm-v2h.tsv](run-wasm-v2h.tsv)), every launch with correct CRCs,
+and one `/usr/bin/time -l` launch each:
+
+| Build | Median score | Spread | Instructions | Cycles |
+|---|---:|---:|---:|---:|
+| v2g | 2805.0 | 0.8% | 10,649,237,559 | 2,287,685,521 |
+| v2h | 3016.6 | 4.1% | 9,715,057,852 | 2,126,003,548 |
+
+The score rises 7.5%, above the prediction and the criterion, with every
+v2h launch faster than every v2g launch; instructions fall 8.8% and cycles
+7.1%. In the same binary the `I32Add` arm is 19 instructions to its
+indirect branch, `I32AddA` 16 and `I32AddAD` 14: a form reading `acc`
+drops its operand's index load and slot load, and a form writing it drops
+its destination's index load, address and store.
+
+Against Silverfir-nano in one run of seven alternating launches
+([run-wasm-v2h-nano.tsv](run-wasm-v2h-nano.tsv)), every launch with correct
+CRCs, v2h's median is 2971.8 (spread 0.3%) and Silverfir-nano's 5730.7
+(0.9%), a ratio of 0.519; v2h compiled by the compiler with derived
+frame-slot addresses as well, below, scores 2998.5 (0.3%), 0.523.
+
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which

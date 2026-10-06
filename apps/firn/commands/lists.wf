@@ -38,6 +38,9 @@ alias key_boxed = pkg::bytes::key_boxed;
 alias byte_at = pkg::bytes::byte_at;
 alias bytes_boxed = pkg::bytes::bytes_boxed;
 alias bytes_new = pkg::bytes::bytes_new;
+alias copy_bytes = pkg::bytes::copy_bytes;
+alias push_item = pkg::protocol::push_item;
+alias Bytes = pkg::bytes::Bytes;
 alias log_removal = pkg::store::log_removal;
 alias name_is = pkg::bytes::name_is;
 
@@ -142,6 +145,23 @@ fn push_element(list: &Box<Ring<Box<Slots<u8>>>>, element: Box<Slots<u8>>, front
   return unit;
 }
 
+fn prepare_elements(input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> result: unit reads(input), reads(args), writes(client) {
+  doc "Copies the arguments from the third on into the client's prepared items, the last argument first, each in the allocation the list will keep and unhashed, since no map holds a list element.";
+  clear_items(client: client);
+  let count = args^.inner.len;
+  let many = count -sat 2_u64;
+  for @elements (step in 0_u64..many) {
+    let back = count -wrap step;
+    let index = back -wrap 1_u64;
+    let span = arg(args: args, index: index);
+    let element = copy_bytes(input: input, start: span.start, length: span.length);
+    let bytes = Bytes::Long(bytes: move element);
+    let prepared = Key(hash: 0_u64, bytes: move bytes);
+    push_item(client: client, item: move prepared);
+  }
+  return unit;
+}
+
 fn push_all(list: &Box<Ring<Box<Slots<u8>>>>, client: &Client, front: Bool) -> result: unit writes(list), writes(client) {
   doc "Pushes the string of every prepared key onto the list, in the order the command named them, at its head or its tail.";
   loop @elements {
@@ -192,7 +212,7 @@ fn push_items(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(valu
 
 fn run_push(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, front: Bool, existing: Bool) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
   doc "LPUSH key element [element ...] and RPUSH: pushes each element in turn at the list's head (front) or tail, creating the list for an absent key, and answers its length; LPUSHX and RPUSHX (existing) push only onto a list that exists and answer 0 for an absent key. A key whose expiry has been reached is removed first, the removal recorded before the push.";
-  prepare_keys(input: input, args: args, client: client, first: 2_u64);
+  prepare_elements(input: input, args: args, client: client);
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;

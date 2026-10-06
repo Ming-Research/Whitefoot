@@ -1,4 +1,4 @@
-# Kernel Specification v0.92
+# Kernel Specification v0.93
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2698,6 +2698,8 @@ public fn append_once(factory: &HandleFactory, file: &WriteFile, source: &[u8], 
 } doc "Appends bytes of source from start toward end to the end of file with one host write; Ok carries the index after the last byte appended.";
 
 public fn sync_file(factory: &HandleFactory, file: &WriteFile) -> result: Result<unit, IoError> writes(factory), writes(file) waits doc "Hands every byte appended to file before this call to the host's durability mechanism; Ok reports that the host accepted them.";
+
+public fn truncate_file(factory: &HandleFactory, file: &WriteFile, length: u64) -> result: Result<unit, IoError> writes(factory), writes(file) waits doc "Sets the length of file to length bytes, removing the bytes past it or adding zero bytes up to it; the next append writes after them. Ok reports that the host set the length.";
 
 public fn close_read(factory: &HandleFactory, file: ReadFile) -> result: Result<unit, IoError> writes(factory) waits doc "Closes file.";
 

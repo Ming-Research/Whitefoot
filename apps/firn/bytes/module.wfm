@@ -26,6 +26,8 @@ public fn byte_at(input: &[u8], index: u64) -> result: u8 reads(input) doc "Read
 
 public fn bytes_new(input: &[u8], start: u64, length: u64) -> made: Bytes reads(input) doc "Copies bytes of the input from a position into a string of its own, held inline when it has at most 24 bytes; a position the input does not hold reads as zero.";
 
+public fn copy_bytes(input: &[u8], start: u64, length: u64) -> made: Box<Slots<u8>> reads(input) doc "Copies bytes of the input from a position into a string of its own; a position the input does not hold reads as zero. A length above 2^62 copies as the empty string.";
+
 public fn bytes_copy(bytes: &Bytes) -> made: Bytes reads(bytes) doc "A copy of a string.";
 
 public fn bytes_length(bytes: &Bytes) -> length: u64 reads(bytes) doc "How many bytes a string holds.";

@@ -26,7 +26,7 @@ $(BUILD)/%.ll: $(FIXTURES)/%.wf $(FIXTURES)/%_host.ll $(FIXTURES)/host-adapter.a
 	@rm "$@.raw" "$@.bound"
 
 $(BUILD)/%.o: $(BUILD)/%.ll $(NATIVE_CONFIG)
-	$(CLANG) -O2 -Wno-override-module -x ir -c "$<" -o "$@"
+	$(CLANG) $(NATIVE_OPTIMIZATION_FLAGS) -Wno-override-module -x ir -c "$<" -o "$@"
 
 $(BUILD)/%_oracle.o: $(FIXTURES)/%_oracle.c $(FIXTURES)/oracle.h $(NATIVE_CONFIG) Makefile
 	@mkdir -p "$(dir $@)"
@@ -35,7 +35,19 @@ $(BUILD)/%_oracle.o: $(FIXTURES)/%_oracle.c $(FIXTURES)/oracle.h $(NATIVE_CONFIG
 $(BUILD)/runner.o: runner.c $(FIXTURES)/oracle.h $(NATIVE_CONFIG) Makefile
 	$(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE -c "$<" -o "$@"
 
-$(BUILD)/%: $(BUILD)/%.o $(BUILD)/%_oracle.o $(BUILD)/runner.o $(NATIVE_OBJECTS)
+# PLACEMENT_PAD bytes of never-executed code linked ahead of the emitted module
+# move the module and everything after it, as one more imported function ahead
+# of .text does, and change nothing else; compute-regression's placement
+# control links the candidate's images this way.
+PLACEMENT_PAD ?= 0
+PAD_OBJECT := $(if $(filter-out 0,$(PLACEMENT_PAD)),$(BUILD)/placement-pad.o)
+
+$(BUILD)/placement-pad.o: Makefile
+	@mkdir -p "$(dir $@)"
+	printf '\t.section .note.GNU-stack,"",@progbits\n\t.text\n\t.p2align 4\nwf_placement_pad:\n\t.fill %s,1,0xcc\n' \
+		"$(PLACEMENT_PAD)" | $(CLANG) -x assembler -c - -o "$@"
+
+$(BUILD)/%: $(PAD_OBJECT) $(BUILD)/%.o $(BUILD)/%_oracle.o $(BUILD)/runner.o $(NATIVE_OBJECTS)
 	$(CLANG) -O2 $^ $(NATIVE_LINK_FLAGS) -o "$@"
 
 .SECONDARY: $(addsuffix .ll,$(IMAGES)) $(addsuffix .o,$(IMAGES)) $(addsuffix _oracle.o,$(IMAGES)) $(BUILD)/runner.o

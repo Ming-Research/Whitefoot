@@ -419,7 +419,7 @@ You need Rust stable, at least the `rust-version` in
 Linux and macOS, or `clang` on `PATH` on Windows.
 
 ```sh
-git clone https://github.com/mbbill/Whitefoot.git && cd Whitefoot
+git clone https://github.com/Ming-Research/Whitefoot.git && cd Whitefoot
 cargo build --release --manifest-path compiler/Cargo.toml
 compiler/target/release/whitefootc tests/programs/wfgrep.wf -o wfgrep
 ./wfgrep invariant tests/programs

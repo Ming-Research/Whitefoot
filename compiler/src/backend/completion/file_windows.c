@@ -11,18 +11,13 @@
  *
  * `file_adapter.c` owns the queue, the helpers, the claim and the progress
  * pass, and is one implementation for every platform.  This unit is the one
- * thing that cannot be, and `file_posix.c` is its twin.  Every call it makes is
- * one of `windows_runtime.c`'s workers, so the NtCreateFile relative open, the
- * WriteFile with the stream's own current position, and the directory batch are
- * written once each and reached from here.
+ * thing that cannot be, and `file_posix.c` is its twin. Shared namespace,
+ * stream-write and directory operations call `windows_runtime.c`'s workers;
+ * completion-specific host calls live here, including explicit EOF writes,
+ * durability and truncation.
  *
- * What this target does *not* qualify is refused as an outcome rather than as
- * a terminated process.  The emitter emits the whole seven-entry submit ABI on
- * every target and the Windows row admits an open, a positioned read, a stream
- * write, a close, a directory batch and the six TCP kinds; a shape the row does
- * not admit reaches this switch and is published as a failed operation with the
- * host's own refusal code, exactly as `wf_bridge_complete_refused` publishes an
- * offset the target ABI cannot express.
+ * A request kind with no host operation is published as a failed operation
+ * with the host's own refusal code, rather than terminating the process.
  *
  * The socket arms are Winsock calls and nothing else, and they are the twin of
  * `file_posix.c`'s in exactly the sense this unit is that unit's twin: the
@@ -285,6 +280,30 @@ static wf_file_result wf_file_windows_write(const wf_file_request *request) {
     );
     if (handle == INVALID_HANDLE_VALUE) {
         result.head.error_code = ERROR_INVALID_HANDLE;
+        return result;
+    }
+    if (request->kind == WF_FILE_APPEND) {
+        DWORD written = 0;
+        OVERLAPPED append;
+        if (request->operation.write.count == 0) {
+            result.head.value = 0;
+            return result;
+        }
+        if (request->operation.write.count > (size_t)MAXDWORD) {
+            result.head.error_code = ERROR_INVALID_PARAMETER;
+            return result;
+        }
+        /* The synchronous WriteFile handle also grants FILE_WRITE_DATA for
+         * truncation. Name EOF for every append instead of its file pointer. */
+        memset(&append, 0, sizeof(append));
+        append.Offset = MAXDWORD;
+        append.OffsetHigh = MAXDWORD;
+        if (WriteFile(handle, request->operation.write.buffer,
+                      (DWORD)request->operation.write.count, &written, &append) == FALSE) {
+            result.head.error_code = (int)GetLastError();
+            return result;
+        }
+        result.head.value = (int64_t)written;
         return result;
     }
     result.head.value = wf__windows_completion_file_write_worker(
@@ -703,6 +722,32 @@ static wf_file_result wf_file_windows_sync(const wf_file_request *request) {
     return result;
 }
 
+/* Set EOF without changing the handle's current file pointer [PRE-2]. */
+static wf_file_result wf_file_windows_truncate(const wf_file_request *request) {
+    wf_file_result result;
+    HANDLE handle;
+    FILE_END_OF_FILE_INFO end;
+    memset(&result, 0, sizeof(result));
+    result.head.kind = request->kind;
+    result.head.value = -1;
+    if (request->operation.truncate.length > INT64_MAX) {
+        result.head.error_code = ERROR_FILE_TOO_LARGE;
+        return result;
+    }
+    handle = wf__windows_completion_descriptor_handle(request->operation.truncate.descriptor);
+    if (handle == INVALID_HANDLE_VALUE) {
+        result.head.error_code = ERROR_INVALID_HANDLE;
+        return result;
+    }
+    end.EndOfFile.QuadPart = (LONGLONG)request->operation.truncate.length;
+    if (SetFileInformationByHandle(handle, FileEndOfFileInfo, &end, sizeof(end)) == FALSE) {
+        result.head.error_code = (int)GetLastError();
+        return result;
+    }
+    result.head.value = 0;
+    return result;
+}
+
 /* Deadlines [PRE-2].  A helper inside a synchronous host call is ended by
  * `CancelSynchronousIo`, which needs a real handle to the helper's thread
  * rather than the pseudo-handle a thread has for itself. */
@@ -744,6 +789,8 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
         return wf_file_windows_write(request);
     case WF_FILE_SYNC:
         return wf_file_windows_sync(request);
+    case WF_FILE_TRUNCATE:
+        return wf_file_windows_truncate(request);
     case WF_FILE_CLOSE:
         return wf_file_windows_close(request);
     case WF_FILE_READ:

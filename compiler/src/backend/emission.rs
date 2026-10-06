@@ -177,6 +177,19 @@ impl Parameter {
     }
 }
 
+/// What closes every emitted function definition's header: its start on a
+/// 64-byte boundary, then its body.
+///
+/// How fast a function runs can depend on where its instructions fall within
+/// 64-byte lines, and any change ahead of it in the image, such as one more
+/// imported library function, moves that. Aligning every definition fixes the
+/// position by construction whatever precedes it. The alignment is written
+/// here rather than passed to the host compiler because clang ignores
+/// `-falign-functions` for LLVM input, and because this module reaches the host
+/// through the driver, `--emit-llvm` consumers and link-time optimization alike
+/// (design/compiler/code-alignment.md).
+pub(crate) const DEFINITION_ALIGNMENT: &str = " align 64 {";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Signature {
     pub(crate) name: String,
@@ -234,7 +247,7 @@ impl Signature {
             self.result,
             self.name,
             self.suffix,
-            if definition { " {" } else { "" }
+            if definition { DEFINITION_ALIGNMENT } else { "" }
         )
     }
 

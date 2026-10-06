@@ -39,6 +39,8 @@ int wf_file_request_valid(const wf_file_request *request) {
             || request->operation.write.count == 0;
     case WF_FILE_SYNC:
         return request->operation.close.descriptor >= 0;
+    case WF_FILE_TRUNCATE:
+        return request->operation.truncate.descriptor >= 0;
     case WF_FILE_PREAD:
         return request->operation.pread.buffer != NULL
             || request->operation.pread.count == 0;

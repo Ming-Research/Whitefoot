@@ -1,0 +1,294 @@
+# Compiler releases for the projects outside this repository that are
+# written in Whitefoot, such as Firn-wf, Halo-wf and Snowghost-wf
+# (design/compiler/downstream-releases.md). A downstream pins one release by
+# name, `wf-` and the first 12 hex digits of a main commit, and its CI
+# downloads that release's compiler instead of building Whitefoot. A release
+# is made by hand when a downstream needs a main commit:
+#
+#   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash>
+#
+# An empty `commit` takes main's tip. The same command makes again a release
+# that compiler-release-cleanup.yml removed. An unmerged compiler change a
+# downstream wants to try, such as a performance experiment, gets an
+# experiment release, `wf-exp-` and the commit's first 12 hex digits, of any
+# commit whose own gate run passed:
+#
+#   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
+#
+# A downstream pins an experiment release only on an experiment branch, never
+# on its main.
+#
+# GitHub refuses a release whose target commit itself changes files under
+# .github/workflows unless the token has workflow permission, which this
+# workflow's token cannot be given, so such a commit is refused before it is
+# built; release the commit after it or the one before. A release holds:
+#
+#   whitefootc-linux-x86_64.tar.gz  whitefootc built on ubuntu-24.04
+#   whitefootc-macos-arm64.tar.gz   whitefootc built on macos-15
+#   whitefoot-release.json          tag, full commit, specification version,
+#                                   the gate run that passed it, asset names
+#   SHA256SUMS                      the checksums of the three files above
+#
+# It carries no documents yet: a downstream's writers read the
+# specification, the maintained programs and the standard library's
+# interfaces in this repository at the release's commit, until the choice
+# of what a release carries for them is made (docs/todo.md, "A compiler
+# release carries no documents").
+#
+# Each compiler is the `gate` Cargo profile the gate tests. Like the gate's,
+# it builds programs with the host's /usr/bin/clang, and on Linux links them
+# with ld.lld, so a downstream host installs both.
+#
+# A push that changes this file runs it as a dry run: it builds, smoke-tests
+# and packages the pushed commit and keeps the files as a workflow artifact,
+# publishing nothing, so a change to the release path runs before it reaches
+# main.
+name: compiler-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: A commit on main whose gate passed; empty takes main's tip
+        type: string
+        default: ""
+      experiment:
+        description: Release an unmerged commit whose gate passed, as wf-exp-<hash>
+        type: boolean
+        default: false
+  push:
+    paths:
+      - .github/workflows/compiler-release.yml
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: compiler-release-${{ github.event_name }}-${{ inputs.commit || github.sha }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  resolve:
+    name: Resolve the release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      spec: ${{ steps.resolve.outputs.spec }}
+      gate_run: ${{ steps.resolve.outputs.gate_run }}
+      build: ${{ steps.resolve.outputs.build }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A release is only ever of a main commit whose own gate run passed; the
+      # dry run takes the pushed commit and reports the gate lookup instead of
+      # requiring it, since the push that triggers it starts that commit's
+      # gate at the same moment.
+      - name: Resolve the commit, its gate run and its specification version
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.commit }}
+          EXPERIMENT: ${{ inputs.experiment }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          prefix=wf-
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            commit=$GITHUB_SHA
+            publish=false
+          elif [ "$EXPERIMENT" = true ]; then
+            if [ -z "$REQUESTED" ]; then
+              echo "::error::an experiment release names its commit"
+              exit 1
+            fi
+            git fetch --no-tags origin "$REQUESTED" 2>/dev/null || true
+            commit=$(git rev-parse --verify "$REQUESTED^{commit}")
+            publish=true
+            prefix=wf-exp-
+          else
+            commit=$(git rev-parse --verify "${REQUESTED:-origin/main}^{commit}")
+            publish=true
+            if ! git merge-base --is-ancestor "$commit" origin/main; then
+              echo "::error::$commit is not on main; an unmerged commit gets an experiment release"
+              exit 1
+            fi
+          fi
+          tag="$prefix${commit:0:12}"
+          spec=$(git show "$commit:spec/kernel-spec.md" | sed -n '1s/^# Kernel Specification //p')
+          if [ -z "$spec" ]; then
+            echo "::error::spec/kernel-spec.md at $commit names no version"
+            exit 1
+          fi
+          if git diff --quiet "$commit^" "$commit" -- .github/workflows; then
+            echo "$commit changes no workflow file"
+          elif [ "$publish" = true ]; then
+            echo "::error::$commit changes files under .github/workflows, and GitHub refuses a release targeting it with this workflow's token; release a neighboring commit"
+            exit 1
+          else
+            echo "dry run: $commit changes workflow files, so a dispatch would refuse it"
+          fi
+          gate_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$commit&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // empty')
+          if [ -z "$gate_run" ]; then
+            if [ "$publish" = true ]; then
+              echo "::error::no successful gate run for $commit; dispatch gate.yml on main or choose another commit"
+              exit 1
+            fi
+            echo "dry run: no successful gate run for $commit yet"
+            gate_run=none
+          fi
+          build=true
+          if [ "$publish" = true ] && gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::$tag already exists; nothing to do"
+            build=false
+            publish=false
+          fi
+          {
+            echo "commit=$commit"
+            echo "tag=$tag"
+            echo "spec=$spec"
+            echo "gate_run=$gate_run"
+            echo "build=$build"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+          echo "$tag: $commit, specification $spec, gate run $gate_run, publish $publish"
+
+  build:
+    name: whitefootc (${{ matrix.platform }})
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+            machine: x86_64
+          - os: macos-15
+            platform: macos-arm64
+            machine: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+
+      - name: Install the host toolchain
+        run: |
+          test "$(uname -m)" = "${{ matrix.machine }}"
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends clang lld
+            ld.lld --version
+          fi
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+
+      - name: Build the compiler
+        run: cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+
+      # The compiler stages its runtime and drives clang itself, so a binary
+      # that builds and runs a program carries everything a downstream needs
+      # from this repository.
+      - name: Build and run a program with it
+        run: |
+          compiler/target/gate/whitefootc -o "$RUNNER_TEMP/geometry_vectors" tests/programs/geometry_vectors.wf
+          "$RUNNER_TEMP/geometry_vectors"
+
+      - name: Package the compiler
+        run: tar -C compiler/target/gate -czf "whitefootc-${{ matrix.platform }}.tar.gz" whitefootc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whitefootc-${{ matrix.platform }}
+          path: whitefootc-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish ${{ needs.resolve.outputs.tag }}
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: whitefootc-*
+          merge-multiple: true
+          path: release
+
+      - name: Write the manifest and checksums
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+          SPEC: ${{ needs.resolve.outputs.spec }}
+          GATE_RUN: ${{ needs.resolve.outputs.gate_run }}
+        run: |
+          set -euo pipefail
+          jq -n --arg tag "$TAG" --arg commit "$COMMIT" --arg spec "$SPEC" --arg gate_run "$GATE_RUN" \
+            '{tag: $tag, commit: $commit, spec: $spec, gate_run: $gate_run,
+              assets: {"linux-x86_64": "whitefootc-linux-x86_64.tar.gz",
+                       "macos-arm64": "whitefootc-macos-arm64.tar.gz"}}' > release/whitefoot-release.json
+          cd release
+          sha256sum whitefootc-linux-x86_64.tar.gz whitefootc-macos-arm64.tar.gz \
+            whitefoot-release.json > SHA256SUMS
+          ls -l
+          cat whitefoot-release.json SHA256SUMS
+
+      - name: Keep the dry run's files
+        if: needs.resolve.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish the release
+        if: needs.resolve.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+          SPEC: ${{ needs.resolve.outputs.spec }}
+          GATE_RUN: ${{ needs.resolve.outputs.gate_run }}
+        run: |
+          set -euo pipefail
+          kind=""
+          again="-f commit=$COMMIT"
+          case "$TAG" in
+            wf-exp-*)
+              kind=" Experiment release of an unmerged commit: pin it only on an experiment branch."
+              again="$again -f experiment=true"
+              ;;
+          esac
+          notes="The Whitefoot compiler at $COMMIT (specification $SPEC), for projects that pin it.$kind
+          Its gate run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GATE_RUN
+
+          whitefootc builds programs with /usr/bin/clang, and on Linux links them with ld.lld.
+          A release is removed 30 days after it is published unless it is the newest of main; make it again with
+          gh workflow run compiler-release.yml -R $GITHUB_REPOSITORY $again"
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$COMMIT" \
+            --prerelease --title "whitefootc $TAG (specification $SPEC)" --notes "$notes"

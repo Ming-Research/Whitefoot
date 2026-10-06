@@ -464,7 +464,11 @@ fn is_infinity(input: &[u8], start: u64, length: u64) -> infinite: Bool reads(in
 }
 
 fn read_magnitude(input: &[u8], start: u64, length: u64, in_range: Bool) -> read: ScoreBits reads(input) {
-  doc "Reads a score after its sign: an infinity, a hexadecimal number after 0x or 0X, or a decimal number, a plain integer of at most 19 digits read at once; in_range refuses a number past the range of a double, as read_decimal and read_hex say.";
+  doc "Reads a score after its sign: an infinity, a hexadecimal number after 0x or 0X, or a decimal number, a plain integer of at most 19 digits read at once, first, since digits alone spell neither an infinity nor a hexadecimal number; in_range refuses a number past the range of a double, as read_decimal and read_hex say.";
+  let whole = read_whole(input: input, start: start, length: length);
+  if whole.valid {
+    return whole;
+  }
   let infinite = is_infinity(input: input, start: start, length: length);
   if infinite {
     return accepted(bits: infinity_bits);
@@ -484,10 +488,6 @@ fn read_magnitude(input: &[u8], start: u64, length: u64, in_range: Bool) -> read
     let digits_start = second +wrap 1_u64;
     let hex = read_hex(input: input, start: digits_start, end: end, in_range: in_range);
     return hex;
-  }
-  let whole = read_whole(input: input, start: start, length: length);
-  if whole.valid {
-    return whole;
   }
   let decimal = read_decimal(input: input, start: start, end: end, in_range: in_range);
   return decimal;
