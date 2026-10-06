@@ -87,6 +87,8 @@ enum wf_file_operation_kind {
     /* A wait for the monotonic clock alone (`sleep_until` [PRE-2]): no host
      * operation, so no arm, and the record's deadline is the instant. */
     WF_FILE_SLEEP = 17,
+    /* Sets a file's byte length (`truncate_file` [PRE-2]). */
+    WF_FILE_TRUNCATE = 18,
 };
 
 /* Which direction of one connection a half-close releases (ordinary native library). */
@@ -184,6 +186,10 @@ typedef struct wf_file_request {
         struct {
             int descriptor;
         } close;
+        struct {
+            int descriptor;
+            uint64_t length;
+        } truncate;
 #if defined(WF_FILE_HAS_DIRECTORY_NEXT)
         struct {
             int descriptor;
