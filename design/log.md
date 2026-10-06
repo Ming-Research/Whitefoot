@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 Raise a time budget by a fixed 10 s
+
+Nodes: compiler/verification
+
+Owner-approved: In the session of 2026-10-05, written in Chinese: every raise is a fixed 10 s and still needs the owner's approval (chosen from the offered options, "Overrun -> +10 s, still approved"); the compute-regression candidate compiler's budget set to 130 s ("use 130"); and Q3, the raise also covering the group stage that contains the stage and new or recomputed budgets keeping one and a quarter times the slowest run ("Q3 agreed", translated).
+
+Summary: compiler/verification's budget decision now sets a budget at one and a quarter times the slowest run only when a stage is added or recomputed over a new sample, and a new decision makes every approved raise add 10 s to the stage and to its group stage, if any, so a raise stays small and fixed and growth beyond it must be explained, instead of recomputing one and a quarter times a slower run. Evidence for the 130 s budget, the first cold build of compute-regression being 10 to 15% slower whichever compiler it builds, is in the [time-budget investigation](../research/investigations/test-economy/time-budgets.md#the-gate).
+
 ## 2026-10-05 Cold compile speed: concurrent verdicts and analyses, reused renamed instances, narrower closures
 
 Nodes: compiler/incremental-closure, compiler/incremental-compilation, compiler/generic-validation-scope

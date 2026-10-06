@@ -185,18 +185,14 @@ const code_time: u64 = 1162692948_u64;
 
 const code_command: u64 = 19226340793077571_u64;
 
-fn admitted(client: &Client, input: &[u8], name: Span, fits: Bool) -> go: Bool reads(input), writes(client) {
-  doc "Whether a known command runs: one outside the arity Redis's command table admits is answered as Redis answers it, and then one from a connection that must authenticate first is answered NOAUTH. Restrictions within that arity, such as MSET's pair count and LPOP's optional count, are checked after authentication.";
+fn refused(client: &Client, input: &[u8], name: Span, fits: Bool) -> result: unit reads(input), writes(client) {
+  doc "Answers a known command that does not run: one outside the arity Redis's command table admits as Redis answers it, and then one from a connection that must authenticate first NOAUTH. Restrictions within that arity, such as MSET's pair count and LPOP's optional count, are checked after authentication.";
   if fits {
+    let stopped = denied(client: client);
   } else {
     reply_arity(client: client, input: input, name: name);
-    return False();
   }
-  let stopped = denied(client: client);
-  if stopped {
-    return False();
-  }
-  return True();
+  return unit;
 }
 
 fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
@@ -204,6 +200,7 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let count = args^.inner.len;
   let name = arg(args: args, index: 0_u64);
   let code = name_code(input: input, start: name.start, length: name.length);
+  let open = bnot(client^.locked);
   let relative = False();
   let calendar = True();
   let whole_seconds = True();
@@ -212,7 +209,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let tail = False();
   if code == code_ping {
     let any = True();
-    let go = admitted(client: client, input: input, name: name, fits: any);
+    let go = band(any, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: any);
+    }
     if go {
       if count <= 2_u64 {
         run_ping(input: input, args: args, client: client);
@@ -224,7 +224,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_echo {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_echo(input: input, args: args, client: client);
     }
@@ -232,7 +235,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_get {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_get(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -240,7 +246,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_set {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_set(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -248,7 +257,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_setnx {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_setnx(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -256,7 +268,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_setex {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, invalid: &text_expire_setex[0_u64..42_u64]);
     }
@@ -264,7 +279,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_psetex {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, invalid: &text_expire_psetex[0_u64..43_u64]);
     }
@@ -272,7 +290,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_getset {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_getset(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -280,7 +301,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_getdel {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_getdel(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -288,7 +312,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_getex {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_getex(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -296,7 +323,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_append {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_append(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -304,7 +334,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_strlen {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_strlen(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -315,7 +348,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let read_range = bor(ranged, substring);
   if read_range {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_getrange(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -323,7 +359,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_setrange {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_setrange(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -331,7 +370,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_del {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_del(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -339,7 +381,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_unlink {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_del(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -347,7 +392,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_exists {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -355,7 +403,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_touch {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -363,7 +414,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_rename {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let fresh = False();
       run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
@@ -372,7 +426,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_renamenx {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let fresh = True();
       run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
@@ -381,7 +438,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_copy {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_copy(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -389,7 +449,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_type {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_type(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -397,7 +460,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_incr {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: 1_i64);
     }
@@ -405,7 +471,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_decr {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: -1_i64);
     }
@@ -413,7 +482,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_incrby {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let negate = False();
       run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
@@ -422,7 +494,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_decrby {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let negate = True();
       run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
@@ -433,7 +508,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_incrbyfloat[0_u64..11_u64]);
     if spelled {
       let fits = count == 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         run_incrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
       }
@@ -442,7 +520,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_mset {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let parity = count % 2_u64;
       if parity == 0_u64 {
@@ -455,7 +536,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_mget {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_mget(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -463,7 +547,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_msetnx {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let parity = count % 2_u64;
       if parity == 0_u64 {
@@ -476,7 +563,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_expire {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: relative, invalid: &text_expire_expire[0_u64..43_u64]);
     }
@@ -484,7 +574,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_pexpire {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: relative, invalid: &text_expire_pexpire[0_u64..44_u64]);
     }
@@ -492,7 +585,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_expireat {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: calendar, invalid: &text_expire_expireat[0_u64..45_u64]);
     }
@@ -502,7 +598,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_pexpireat[0_u64..9_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &text_expire_pexpireat[0_u64..46_u64]);
       }
@@ -511,7 +610,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let timed = name_is(input: input, start: name.start, length: name.length, word: &word_pexpiretime[0_u64..11_u64]);
     if timed {
       let fits = count == 2_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: calendar);
       }
@@ -522,7 +624,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_expiretime[0_u64..10_u64]);
     if spelled {
       let fits = count == 2_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: calendar);
       }
@@ -531,7 +636,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_ttl {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: relative);
     }
@@ -539,7 +647,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_pttl {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: relative);
     }
@@ -547,7 +658,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_persist {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_persist(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -555,7 +669,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_dbsize {
     let fits = count == 1_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_dbsize(store: store, client: client);
     }
@@ -575,7 +692,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let flushing = bor(flushing_all, flushing_one);
   if flushing {
     let fits = count >= 1_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_flush(store: store, input: input, args: args, client: client);
     }
@@ -592,7 +712,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_debug {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_debug(input: input, args: args, client: client);
     }
@@ -600,7 +723,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_info {
     let fits = count >= 1_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_info(store: store, input: input, args: args, client: client, time: time);
     }
@@ -608,7 +734,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lpush {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let creating = False();
       run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: creating);
@@ -617,7 +746,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_rpush {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let creating = False();
       run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: creating);
@@ -626,7 +758,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lpop {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       if count > 3_u64 {
         reply_arity(client: client, input: input, name: name);
@@ -638,7 +773,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_rpop {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       if count > 3_u64 {
         reply_arity(client: client, input: input, name: name);
@@ -650,7 +788,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lrange {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_lrange(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -658,7 +799,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_llen {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_llen(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -666,7 +810,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lindex {
     let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_lindex(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -674,7 +821,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lset {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_lset(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -682,7 +832,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lrem {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_lrem(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -690,7 +843,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_ltrim {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_ltrim(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -698,7 +854,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_linsert {
     let fits = count == 5_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_linsert(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -706,7 +865,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lpos {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_lpos(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -714,7 +876,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lpushx {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let existing = True();
       run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: existing);
@@ -723,7 +888,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_rpushx {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let existing = True();
       run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: existing);
@@ -732,7 +900,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_lmove {
     let fits = count == 5_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_lmove_named(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -742,7 +913,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_rpoplpush[0_u64..9_u64]);
     if spelled {
       let fits = count == 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         run_lmove(store: store, input: input, args: args, client: client, env: env, time: time, from_head: tail, to_head: head);
       }
@@ -751,7 +925,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_sadd {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_sadd(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -759,7 +936,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_srem {
     let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_srem(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -767,7 +947,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_spop {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_spop(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -775,7 +958,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_scard {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_scard(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -783,7 +969,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_smembers {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_smembers(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -793,7 +982,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sismember[0_u64..9_u64]);
     if spelled {
       let fits = count == 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         let one = False();
         run_sismember(store: store, input: input, args: args, client: client, env: env, time: time, many: one);
@@ -805,7 +997,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_smismember[0_u64..10_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         let many = True();
         run_sismember(store: store, input: input, args: args, client: client, env: env, time: time, many: many);
@@ -817,7 +1012,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_srandmember[0_u64..11_u64]);
     if spelled {
       let fits = count >= 2_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         run_srandmember(store: store, input: input, args: args, client: client, env: env, time: time);
       }
@@ -826,7 +1024,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_smove {
     let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_smove(store: store, input: input, args: args, client: client, env: env, time: time);
     }
@@ -834,7 +1035,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_sinter {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let reading = False();
       run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_inter, storing: reading);
@@ -843,7 +1047,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_sunion {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let reading = False();
       run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_union, storing: reading);
@@ -852,7 +1059,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_sdiff {
     let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       let reading = False();
       run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_diff, storing: reading);
@@ -863,7 +1073,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sintercard[0_u64..10_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         run_sintercard(store: store, input: input, args: args, client: client, env: env, time: time);
       }
@@ -874,7 +1087,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sinterstore[0_u64..11_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         let storing = True();
         run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_inter, storing: storing);
@@ -886,7 +1102,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sunionstore[0_u64..11_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         let storing = True();
         run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_union, storing: storing);
@@ -898,7 +1117,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sdiffstore[0_u64..10_u64]);
     if spelled {
       let fits = count >= 3_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
       if go {
         let storing = True();
         run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_diff, storing: storing);
@@ -934,7 +1156,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_select {
     let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_select(input: input, args: args, client: client);
     }
@@ -942,7 +1167,10 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   }
   if code == code_time {
     let fits = count == 1_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
     if go {
       run_time(client: client);
     }

@@ -967,6 +967,38 @@ beyond it). firn's module and the runtime's units were compiled apart at
   3,421,000. The quick table's `LRANGE_100` ratios at 8 and 16 are
   therefore not the servers'.
 
+### A keyed statement's mark without a fence, tried and withdrawn
+
+The measurements here follow the method of
+[firn's single-key comparison](../firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign).
+
+**The cost.** Every keyed statement marks its user active with a
+sequentially consistent store, on x86-64 an `xchg`, a full barrier, before
+reading the whole-map gate and taking its cell. A probe that dropped that
+barrier, unsoundly, answered 1.7% more `RPOP`s of one list on four drivers
+(9 interleaved pairs, 16 client processes, the 14900K VM).
+
+**The design tried.** A hold of the whole map, between closing the gate and
+reading the marks, made every thread execute a full barrier with Linux's
+expedited private `membarrier` (Windows's `FlushProcessWriteBuffers`), and a
+keyed statement ordered its mark and its read by the compiler alone.
+`concurrent-map-test` built that way passed 11 runs, and with the barrier
+made a no-op failed all 5 with a hold seeing a keyed statement half done.
+
+**Why it was withdrawn.** It raised `RPOP` of a list holding elements 1.2%
+(9 pairs, sd 0.010), but `RPOP` of an emptied list, each claiming a cell
+and a node it then gives back, fell to 0.957 of `cea9188d4`, and a build
+that only registered for the barrier, keyed statements keeping their fence,
+fell to 0.943 (6 interleaved runs each, sd 0.011): the registration alone
+costs the process on its kernel path. No criterion was stated before
+these runs. The change was withdrawn on its net effect: the comparison's
+`RPOP` pops an emptied list for a fifth of its requests, so the 1.2% on
+four fifths does not cover the 4% lost on the rest. The withdrawal is
+exploratory, not a refusal, and a barrier without that registration cost
+would reopen it. A barrier that needs no registration, the global `membarrier`,
+waits for a grace period and would make every hold of the whole map take
+milliseconds.
+
 ## The measurement
 
 The bundle is `research/experiments/concurrent-map-bench/`. These rules are

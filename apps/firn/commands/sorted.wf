@@ -19,6 +19,7 @@ alias copy_key = pkg::bytes::copy_key;
 alias clear_items = pkg::protocol::clear_items;
 alias expired = pkg::store::expired;
 alias remove_expired = pkg::store::remove_expired;
+alias hash_map_edit = std::collections::hash_map::hash_map_edit;
 alias hash_map_lookup = std::collections::hash_map::hash_map_lookup;
 alias hash_map_new = std::collections::hash_map::hash_map_new;
 alias hash_map_put = std::collections::hash_map::hash_map_put;
@@ -139,181 +140,6 @@ struct Adding {
   nan: Bool;
 }
 
-fn sorted_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, code: u64, name: Span) -> handled: Bool reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "Answers the sorted-set command code names, when it names one, and returns whether it did. Each command is first given the number of arguments Redis's command table admits, checked before authentication as execute checks every command's; names longer than eight bytes, whose codes several names share, are compared whole.";
-  let count = args^.inner.len;
-  let yes = True();
-  let no = False();
-  if code == code_zadd {
-    let fits = count >= 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zadd(store: store, input: input, args: args, client: client, env: env, time: time, increment: no);
-    }
-    return True();
-  }
-  if code == code_zincrby {
-    let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zadd(store: store, input: input, args: args, client: client, env: env, time: time, increment: yes);
-    }
-    return True();
-  }
-  if code == code_zcard {
-    let fits = count == 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zcard(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_zscore {
-    let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zscore(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_zmscore {
-    let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zmscore(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_zpopmin {
-    let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zpop(store: store, input: input, args: args, client: client, env: env, time: time, from_top: no);
-    }
-    return True();
-  }
-  if code == code_zpopmax {
-    let fits = count >= 2_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zpop(store: store, input: input, args: args, client: client, env: env, time: time, from_top: yes);
-    }
-    return True();
-  }
-  if code == code_zrem {
-    let fits = count >= 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zrem(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_zrank {
-    let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zrank(store: store, input: input, args: args, client: client, env: env, time: time, reverse: no);
-    }
-    return True();
-  }
-  if code == code_zrevrank {
-    let fits = count == 3_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zrank(store: store, input: input, args: args, client: client, env: env, time: time, reverse: yes);
-    }
-    return True();
-  }
-  if code == code_zcount {
-    let fits = count == 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zcount(store: store, input: input, args: args, client: client, env: env, time: time, kind: 1_u64);
-    }
-    return True();
-  }
-  if code == code_zrange {
-    let fits = count >= 4_u64;
-    let go = admitted(client: client, input: input, name: name, fits: fits);
-    if go {
-      run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: 0_u64, direction: 0_u64);
-    }
-    return True();
-  }
-  if code == code_zrevrang {
-    let rank = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrange[0_u64..9_u64]);
-    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrangebyscore[0_u64..16_u64]);
-    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrangebylex[0_u64..14_u64]);
-    let kind = 0_u64;
-    if rank {
-      set kind = 1_u64;
-    } else if score {
-      set kind = 2_u64;
-    } else if lex {
-      set kind = 3_u64;
-    }
-    if kind != 0_u64 {
-      let fits = count >= 4_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
-      if go {
-        run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind, direction: 2_u64);
-      }
-      return True();
-    }
-  }
-  if code == code_zrangeby {
-    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zrangebyscore[0_u64..13_u64]);
-    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zrangebylex[0_u64..11_u64]);
-    let kind = 0_u64;
-    if score {
-      set kind = 2_u64;
-    } else if lex {
-      set kind = 3_u64;
-    }
-    if kind != 0_u64 {
-      let fits = count >= 4_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
-      if go {
-        run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind, direction: 1_u64);
-      }
-      return True();
-    }
-  }
-  if code == code_zremrang {
-    let rank = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebyrank[0_u64..15_u64]);
-    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebyscore[0_u64..16_u64]);
-    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebylex[0_u64..14_u64]);
-    let kind = 3_u64;
-    if rank {
-      set kind = 0_u64;
-    } else if score {
-      set kind = 1_u64;
-    } else if lex {
-      set kind = 2_u64;
-    }
-    if kind != 3_u64 {
-      let fits = count == 4_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
-      if go {
-        run_zremrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind);
-      }
-      return True();
-    }
-  }
-  if code == code_zlexcount {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_zlexcount[0_u64..9_u64]);
-    if spelled {
-      let fits = count == 4_u64;
-      let go = admitted(client: client, input: input, name: name, fits: fits);
-      if go {
-        run_zcount(store: store, input: input, args: args, client: client, env: env, time: time, kind: 2_u64);
-      }
-      return True();
-    }
-  }
-  return False();
-}
-
 fn score_probe(env: &ScoreProbe, key: &Key, value: &f64) -> result: u64 reads(value), writes(env) {
   doc "Records a member's score.";
   set env^.score = value^;
@@ -330,8 +156,61 @@ fn place_rank(sorted: &Sorted, member: Key, score: f64, keys: &KeyEnv) -> result
   return unit;
 }
 
+struct ScoreEdit {
+  doc "One held member's score change under ZADD's options: offered is the command's score, old the member's score, target its new score and outcome what score_edit did with it, one of edit_passed, edit_nan, edit_kept and edit_moved; found reports that the member was held.";
+  offered: f64;
+  old: f64;
+  target: f64;
+  outcome: u64;
+  found: Bool;
+  nx: Bool;
+  gt: Bool;
+  lt: Bool;
+  incr: Bool;
+}
+
+const edit_passed: u64 = 0_u64;
+
+const edit_nan: u64 = 1_u64;
+
+const edit_kept: u64 = 2_u64;
+
+const edit_moved: u64 = 3_u64;
+
+fn score_edit(env: &ScoreEdit, key: &Key, value: &f64) -> result: u64 writes(env), writes(value) {
+  doc "Gives a held member its new score as Redis's zsetAdd does under ZADD's options: NX passes over it; INCR adds the offered score to its score, a NaN sum stopping the command; GT and LT pass over a score not greater or not less than its score; an equal score keeps it, and another is stored as kept_score keeps it.";
+  set env^.found = True();
+  let old = value^;
+  set env^.old = old;
+  let target = env^.offered;
+  if env^.incr {
+    set target = fadd.strict(old, target);
+  }
+  set env^.target = target;
+  let number = feq(target, target);
+  let invalid = bnot(number);
+  let not_less = fge(target, old);
+  let not_greater = fle(target, old);
+  let lt_refuses = band(env^.lt, not_less);
+  let gt_refuses = band(env^.gt, not_greater);
+  let refused = bor(lt_refuses, gt_refuses);
+  if env^.nx {
+    set env^.outcome = edit_passed;
+  } else if invalid {
+    set env^.outcome = edit_nan;
+  } else if refused {
+    set env^.outcome = edit_passed;
+  } else if fne(target, old) {
+    set value^ = kept_score(score: target);
+    set env^.outcome = edit_moved;
+  } else {
+    set env^.outcome = edit_kept;
+  }
+  return env^.outcome;
+}
+
 fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding) -> result: unit writes(sorted), writes(client), writes(adding) {
-  doc "Gives every prepared member its prepared score as Redis's zsetAdd does under ZADD's options: NX passes over a member the set holds and XX one it does not; INCR adds the score to the member's, stopping the command with nan set when the sum is NaN; GT and LT pass over a member whose new score is not greater or not less than its score; a held member whose new score equals its score keeps it, counted as processed. A member is kept at its score as kept_score keeps it, moved to its new place in the order when its score changes.";
+  doc "Gives every prepared member its prepared score as Redis's zsetAdd does under ZADD's options: a held member's score is changed in place as score_edit changes it, and the member moved to its new place in the order when its score changed; XX passes over a member the set does not hold, and a new member is kept at its score as kept_score keeps it.";
   loop @pairs {
     let have_member = client^.items.inner.len > 0_u64;
     let have_score = client^.scores.inner.len > 0_u64;
@@ -344,38 +223,26 @@ fn add_ranked(sorted: &Sorted, client: &Client, adding: &Adding) -> result: unit
     let score = take_back(window: &client^.scores.inner);
     let keys = client^.keys;
     let absent = False();
-    let probe = ScoreProbe(score: 0.0_f64, found: absent);
-    let seen = hash_map_lookup::<KeyHash, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
-    if probe.found {
-      let target = score;
-      if adding^.incr {
-        set target = fadd.strict(probe.score, score);
-      }
-      let number = feq(target, target);
-      let invalid = bnot(number);
-      let not_less = fge(target, probe.score);
-      let not_greater = fle(target, probe.score);
-      let lt_refuses = band(adding^.lt, not_less);
-      let gt_refuses = band(adding^.gt, not_greater);
-      let refused = bor(lt_refuses, gt_refuses);
-      if adding^.nx {
-        let passed = move member;
-      } else if invalid {
+    let edit = ScoreEdit(offered: score, old: 0.0_f64, target: score, outcome: edit_passed, found: absent, nx: adding^.nx, gt: adding^.gt, lt: adding^.lt, incr: adding^.incr);
+    let edited = hash_map_edit::<KeyHash, f64, ScoreEdit, u64, fn score_edit, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, edit_env: &edit);
+    if edit.found {
+      if edit.outcome == edit_nan {
         let stopped = move member;
         set adding^.nan = True();
         break @pairs;
-      } else if refused {
+      }
+      if edit.outcome == edit_passed {
         let passed = move member;
       } else {
-        set adding^.score = target;
+        set adding^.score = edit.target;
         set adding^.processed = adding^.processed +wrap 1_u64;
-        let changed = fne(target, probe.score);
-        if changed {
-          let old_member = copy_key(key: &member);
-          let old = Rank(score: probe.score, member: move old_member);
+        if edit.outcome == edit_moved {
+          let old = Rank(score: edit.old, member: move member);
           let removed = ordered_map_remove::<RankOrder, unit, ceiling>(map: &sorted^.order, key: &old, env: &keys);
-          let kept = kept_score(score: target);
-          place_rank(sorted: sorted, member: move member, score: kept, keys: &keys);
+          let Rank(score: dropped, member: moved) = move old;
+          let kept = kept_score(score: edit.target);
+          let rank = Rank(score: kept, member: move moved);
+          let placed = ordered_map_put::<RankOrder, unit, ceiling>(map: &sorted^.order, key: move rank, value: unit, env: &keys);
           set adding^.updated = adding^.updated +wrap 1_u64;
         } else {
           let unchanged = move member;
@@ -441,6 +308,16 @@ fn run_zadd(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       break @options;
     }
     let option = arg(args: args, index: first);
+    let lead = byte_at(input: input, index: option.start);
+    let folded = ior(lead, 32_u8);
+    let above = folded >= 97_u8;
+    let below = folded <= 122_u8;
+    let cased = band(above, below);
+    let filled = option.length > 0_u64;
+    let letter = band(cased, filled);
+    if bnot(letter) {
+      break @options;
+    }
     let is_nx = option_matches(input: input, span: option, word: &word_nx[0_u64..2_u64]);
     let is_xx = option_matches(input: input, span: option, word: &word_xx[0_u64..2_u64]);
     let is_ch = option_matches(input: input, span: option, word: &word_ch[0_u64..2_u64]);
@@ -1248,4 +1125,228 @@ fn run_zrank(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   }
   reply_nil(client: client);
   return unit;
+}
+
+fn sorted_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, code: u64, name: Span) -> handled: Bool reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "Answers the sorted-set command code names, when it names one, and returns whether it did. Each command is first given the number of arguments Redis's command table admits, checked before authentication as execute checks every command's; names longer than eight bytes, whose codes several names share, are compared whole.";
+  let count = args^.inner.len;
+  let open = bnot(client^.locked);
+  let yes = True();
+  let no = False();
+  if code == code_zadd {
+    let fits = count >= 4_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zadd(store: store, input: input, args: args, client: client, env: env, time: time, increment: no);
+    }
+    return True();
+  }
+  if code == code_zincrby {
+    let fits = count == 4_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zadd(store: store, input: input, args: args, client: client, env: env, time: time, increment: yes);
+    }
+    return True();
+  }
+  if code == code_zcard {
+    let fits = count == 2_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zcard(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_zscore {
+    let fits = count == 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zscore(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_zmscore {
+    let fits = count >= 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zmscore(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_zpopmin {
+    let fits = count >= 2_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zpop(store: store, input: input, args: args, client: client, env: env, time: time, from_top: no);
+    }
+    return True();
+  }
+  if code == code_zpopmax {
+    let fits = count >= 2_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zpop(store: store, input: input, args: args, client: client, env: env, time: time, from_top: yes);
+    }
+    return True();
+  }
+  if code == code_zrem {
+    let fits = count >= 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zrem(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_zrank {
+    let fits = count == 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zrank(store: store, input: input, args: args, client: client, env: env, time: time, reverse: no);
+    }
+    return True();
+  }
+  if code == code_zrevrank {
+    let fits = count == 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zrank(store: store, input: input, args: args, client: client, env: env, time: time, reverse: yes);
+    }
+    return True();
+  }
+  if code == code_zcount {
+    let fits = count == 4_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zcount(store: store, input: input, args: args, client: client, env: env, time: time, kind: 1_u64);
+    }
+    return True();
+  }
+  if code == code_zrange {
+    let fits = count >= 4_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: 0_u64, direction: 0_u64);
+    }
+    return True();
+  }
+  if code == code_zrevrang {
+    let rank = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrange[0_u64..9_u64]);
+    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrangebyscore[0_u64..16_u64]);
+    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zrevrangebylex[0_u64..14_u64]);
+    let kind = 0_u64;
+    if rank {
+      set kind = 1_u64;
+    } else if score {
+      set kind = 2_u64;
+    } else if lex {
+      set kind = 3_u64;
+    }
+    if kind != 0_u64 {
+      let fits = count >= 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind, direction: 2_u64);
+      }
+      return True();
+    }
+  }
+  if code == code_zrangeby {
+    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zrangebyscore[0_u64..13_u64]);
+    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zrangebylex[0_u64..11_u64]);
+    let kind = 0_u64;
+    if score {
+      set kind = 2_u64;
+    } else if lex {
+      set kind = 3_u64;
+    }
+    if kind != 0_u64 {
+      let fits = count >= 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind, direction: 1_u64);
+      }
+      return True();
+    }
+  }
+  if code == code_zremrang {
+    let rank = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebyrank[0_u64..15_u64]);
+    let score = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebyscore[0_u64..16_u64]);
+    let lex = name_is(input: input, start: name.start, length: name.length, word: &word_zremrangebylex[0_u64..14_u64]);
+    let kind = 3_u64;
+    if rank {
+      set kind = 0_u64;
+    } else if score {
+      set kind = 1_u64;
+    } else if lex {
+      set kind = 2_u64;
+    }
+    if kind != 3_u64 {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zremrange(store: store, input: input, args: args, client: client, env: env, time: time, kind: kind);
+      }
+      return True();
+    }
+  }
+  if code == code_zlexcount {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_zlexcount[0_u64..9_u64]);
+    if spelled {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_zcount(store: store, input: input, args: args, client: client, env: env, time: time, kind: 2_u64);
+      }
+      return True();
+    }
+  }
+  return False();
 }

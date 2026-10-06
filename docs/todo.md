@@ -696,6 +696,20 @@ rarely insert at the same place.
   against direct C and the current WF implementation. No new language operation
   is selected yet.
 
+- **A frame holding a one-byte slot keeps every slot in one aggregate.**
+  `plan_target_frame` (`compiler/src/target.rs`) gives a function's slots
+  separate allocations only when they share one alignment. A function with
+  an atomic statement's `i1` unit flags therefore gets one frame aggregate,
+  and LLVM keeps copies into its fields that separate allocations would let
+  it remove: firn's `run_pop` copies its 72-byte entry slot into the frame
+  to match on the tag (`lower_match` loads a borrowed scrutinee whole). The
+  copy costs nothing measurable: moving the match into a helper removed it
+  and `RPOP` measured 0.998 over 9 pairs, and giving every slot its own
+  allocation did not make it faster
+  ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)). Match a borrowed
+  scrutinee's tag through its address when a measured path pays for the
+  copy.
+
 - **Deque scalar costs remain after payload-address qualification.** The
   [paired comparison](../research/experiments/container-representation/deque-library/RESULTS.md)
   isolates the qualified index fact and reduces normal scalar forward churn
@@ -1151,20 +1165,16 @@ rarely insert at the same place.
   rates on few cores become a goal, or with the next change to the
   completion wait.
 
-- **`ZADD` is held near a million a second by one key's critical section.**
-  firn answered 907,000 to 1,127,000 a second at every server CPU count on
-  the 14900K, 0.88 of Dragonfly at 2 and 0.95 at 16
-  ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
-  For a member already held, `add_ranked` (`apps/firn/commands/sorted.wf`)
-  copies the member twice, descends the order twice to remove and put it,
-  and hashes it again to store the score, inside the one key's statement.
-  The change: reuse the removed rank's member, store the score through the
-  first lookup, and profile what remains. The same session's rerun of the
-  branch with bounded waits (`9d1d5dfcd`, reported in PR #202's comments)
-  answered `ZADD` about 10% lower at 4 and 8 server CPUs (1,011,000 against
-  1,127,000 at 4, two of its three passes lower), so the profile should
-  also say what a waiting statement's patience counting costs on one hot
-  key. Validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
+- **`ZADD` on one key may lose about 10% to the bounded waits' patience
+  counting.** The branch with bounded waits (`9d1d5dfcd`, reported in PR
+  #202's comments) answered `ZADD` about 10% lower at 4 and 8 server CPUs
+  (1,011,000 against 1,127,000 at 4, two of its three passes lower). Since
+  then `add_ranked` (`apps/firn/commands/sorted.wf`) changes a held member's
+  score in one probe and moves it without copies, and firn's `ZADD` at 16
+  server CPUs measured 941,000 a second against Dragonfly's 935,000
+  ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)).
+  Profile what a waiting statement's patience counting costs on one hot key,
+  and validate by `ZADD` at depth 16 against Dragonfly at 2 and 16 server
   CPUs. Reopen with firn's next performance work.
 
 - **A statement that holds a table whole takes turns by ticket.** A block
@@ -1217,6 +1227,17 @@ rarely insert at the same place.
   ([many cores](../research/investigations/concurrent-map/DESIGN.md#many-cores)).
   The cause is unattributed: the host had no `perf`. Validate by a profile
   of both on four drivers. Reopen with firn's next performance work.
+
+- **firn answers about 1.3% fewer `RPOP`s of one list on four drivers than
+  `cea9188d4`.** The difference came with #208. It shows only on a list four
+  drivers share that holds elements, and it is not in the concurrent map,
+  the completion bridge or the time the entry is held. What remains is
+  spread over the request path below the resolution of a build's code
+  placement ([measured](../research/investigations/firn/DESIGN.md#single-key-commands-against-cea9188d4-after-the-shared-state-redesign)).
+  Compare one request's instructions and cache misses against
+  `cea9188d4` on bare-metal Linux with `perf stat` and `perf c2c`; a
+  difference there names the code to change. Reopen when that host is
+  available.
 
 - **Validate reuse of selected-target element layouts during emission.**
   [Zero-stride addressing](../compiler/src/target.rs) currently queries
@@ -3454,6 +3475,16 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
+- **The first cold compiler build in `compute-regression` is 10–15% slower.**
+  Whichever compiler the job builds first takes longer, so the candidate's
+  build time carries a bias its budget now covers
+  ([first build](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  Find the cause (page cache of the restored Cargo cache, dependency
+  extraction or the toolchain's first load) and add an untimed warm-up before
+  both builds, then lower `performance-candidate-compiler` to 1.25 times its
+  new slowest run; validate with swapped-order runs that the first and
+  second builds agree within 5%. Reopen when the candidate stage overruns
+  130 s on a change that does not touch the compiler.
 - **One budget per runner class hides slow growth on faster runners.** On
   identical compiler source the ubuntu `check/unit` stage took 123–187 s,
   so its budget, 1.25 times the slowest run, lets a change grow a fast run by
