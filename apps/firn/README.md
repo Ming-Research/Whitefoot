@@ -143,8 +143,10 @@ Up to four arguments may come first by position, in this order:
 2. how many clients to accept before stopping, 0, the default, for no
    limit;
 3. the name of an append-only file in the working directory, or `-` for
-   none, the default: firn replays the file before it listens, appends every
-   change to it and syncs it once a second, as Redis's
+   none, the default: firn replays the file before it listens, cutting a
+   file whose end did not load back to its last whole command or before an
+   unfinished `MULTI` block, as Redis does with `aof-load-truncated yes`,
+   appends every change to it and syncs it once a second, as Redis's
    `appendfsync everysec` does;
 4. how many seconds a silent client is kept before it is closed, 0, the
    default, for no limit.

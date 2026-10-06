@@ -7,6 +7,13 @@ alias WriteFile = std::fs::WriteFile;
 
 public fn write_log(store: Keyspace, factory: HandleFactory, file: WriteFile, clock: Clock) -> result: unit pure waits doc "The append-only file's writer: every 10 milliseconds it exchanges the keyspace's pending bytes for an empty buffer in one atomic statement and appends what it took to the file, syncing the file once a second has passed since the last sync, as appendfsync everysec does. Once the server stops it writes the last bytes, syncs and closes the file.";
 
-public fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> applied: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
+public struct Loaded {
+  doc "What replaying an append-only file found: applied, how many commands it applied, and, when cut, kept, the length the file is to be cut to before anything is appended to it, as Redis 7.0.15 truncates a file whose end it could not load.";
+  public applied: u64;
+  public kept: u64;
+  public cut: Bool;
+}
+
+public fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> loaded: Loaded reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
   requires name_length <= name^.len;
-} doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. The commands between MULTI and EXEC apply only once their EXEC is read, so a block the file ends inside, as a write cut short leaves one, applies none of its commands, as Redis 7.0.15 reverts an incomplete MULTI/EXEC block while loading; an EXEC outside a block is passed over. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";
+} doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied and how much of the file to keep. The commands between MULTI and EXEC apply only once their EXEC is read, so a block the file ends inside, as a write cut short leaves one, applies none of its commands, as Redis 7.0.15 reverts an incomplete MULTI/EXEC block while loading; an EXEC outside a block is passed over. A file whose reading reaches its end inside a command is to be cut after the last whole command, and one that ends cleanly inside a block before its latest MULTI, as Redis cuts each with aof-load-truncated, its default, so the commands appended after the replay follow whole commands; a file that ends after a whole command outside a block is kept whole. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";

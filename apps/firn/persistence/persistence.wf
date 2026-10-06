@@ -83,11 +83,13 @@ const word_multi: Array<u8, 5> = "MULTI";
 
 const word_exec: Array<u8, 4> = "EXEC";
 
-fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> applied: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
+fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> loaded: Loaded reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
   requires name_length <= name^.len;
 } {
-  doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. The commands between MULTI and EXEC apply only once their EXEC is read, so a block the file ends inside, as a write cut short leaves one, applies none of its commands, as Redis 7.0.15 reverts an incomplete MULTI/EXEC block while loading; an EXEC outside a block is passed over. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";
+  doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied and how much of the file to keep. The commands between MULTI and EXEC apply only once their EXEC is read, so a block the file ends inside, as a write cut short leaves one, applies none of its commands, as Redis 7.0.15 reverts an incomplete MULTI/EXEC block while loading; an EXEC outside a block is passed over. A file whose reading reaches its end inside a command is to be cut after the last whole command, and one that ends cleanly inside a block before its latest MULTI, as Redis cuts each with aof-load-truncated, its default, so the commands appended after the replay follow whole commands; a file that ends after a whole command outside a block is kept whole. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";
   let applied = 0_u64;
+  let kept = 0_u64;
+  let cut = False();
   match open_file(factory: factory, root: root, name: name, start: 0_u64, end: name_length) {
     Ok(value: file) => {
       let env = KeyEnv();
@@ -103,6 +105,7 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
       let scanning = False();
       let block_start = 0_u64;
       let block_body = 0_u64;
+      let latest_multi = 0_u64;
       loop @chunks {
         if held >= input.inner.len {
           input_grow(input: &input);
@@ -111,6 +114,7 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
           }
         }
         let ended = False();
+        let failed = False();
         let length = input.inner.len;
         let window = &input.inner[0_u64..length];
         match read_at(factory: factory, file: &file, destination: window, file_offset: offset, start: held, end: length) {
@@ -124,12 +128,29 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
           }
           Err(error: stop) => {
             set ended = True();
+            match stop {
+              ReadEnd() => {
+              }
+              ReadFailed(error: problem) => {
+                set failed = True();
+              }
+            }
           }
         }
         if ended {
+          let base = offset -wrap held;
+          if failed {
+          } else if held > resume {
+            set kept = base +wrap resume;
+            set cut = True();
+          } else if scanning {
+            set kept = latest_multi;
+            set cut = True();
+          }
           break @chunks;
         }
         let consumed = resume;
+        let window_base = offset -wrap held;
         let broken = False();
         let executing = False();
         loop @commands {
@@ -153,6 +174,8 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
                 set scanning = False();
                 set executing = True();
                 set next = block_body;
+              } else if multi {
+                set latest_multi = window_base +wrap consumed;
               }
             } else if executing {
               if exec {
@@ -164,6 +187,7 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
               }
             } else if multi {
               set scanning = True();
+              set latest_multi = window_base +wrap consumed;
               set block_start = consumed;
               set block_body = parsed.next;
             } else if exec {
@@ -195,5 +219,5 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
     Err(error: problem) => {
     }
   }
-  return applied;
+  return Loaded(applied: applied, kept: kept, cut: cut);
 }

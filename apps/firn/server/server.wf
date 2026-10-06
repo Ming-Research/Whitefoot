@@ -21,6 +21,7 @@ alias args_count = std::text::args_count;
 alias bytes_length = pkg::bytes::bytes_length;
 alias bytes_new = pkg::bytes::bytes_new;
 alias client_new = pkg::protocol::client_new;
+alias close_write = std::fs::close_write;
 alias clock_share = std::time::clock_share;
 alias close_directory = std::fs::close_directory;
 alias close_directory_write = std::fs::close_directory_write;
@@ -53,6 +54,7 @@ alias keyspace_new = pkg::store::keyspace_new;
 alias keyspace_share = pkg::store::keyspace_share;
 alias tcp_accept = std::net::tcp_accept;
 alias tcp_listen = std::net::tcp_listen;
+alias truncate_file = std::fs::truncate_file;
 alias unix_nanoseconds = std::time::unix_nanoseconds;
 alias wall_clock_share = std::time::wall_clock_share;
 alias write_log = pkg::persistence::write_log;
@@ -823,7 +825,7 @@ fn read_options(args: &std::text::Args) -> options: Options reads(args) {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "firn, a server of Redis's protocol for the commands apps/firn/README.md lists, over TCP in RESP2 or as inline commands, with pipelining. It serves each accepted client in a context of its own over one keyspace with separate shared map, metadata and server objects. Atomic statements hold the entries of the keys a command names together with any metadata they use, or the map whole for DBSIZE, FLUSHALL, FLUSHDB and INFO. Its invocation, which read_options reads, names up to four arguments by position, the port, how many clients to accept, zero for no limit, the append-only file's name or - for none, and the idle limit, then options by name, --port, --bind, --timeout, --appendonly, --appendfilename, --requirepass and --clients; an invocation that does not read stops firn with status 1. firn listens on the address --bind names, the loopback address by default. An append-only file is replayed before firn listens and every change is appended to it, the file synced once a second. A client silent for the idle limit, when it is not zero, is closed, and while a password is required a client that has not authenticated, by giving it or by being accepted while none was required, must give it before other commands; CONFIG SET changes both while firn runs, in the server's state beside the keyspace. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
+  doc "firn, a server of Redis's protocol for the commands apps/firn/README.md lists, over TCP in RESP2 or as inline commands, with pipelining. It serves each accepted client in a context of its own over one keyspace with separate shared map, metadata and server objects. Atomic statements hold the entries of the keys a command names together with any metadata they use, or the map whole for DBSIZE, FLUSHALL, FLUSHDB and INFO. Its invocation, which read_options reads, names up to four arguments by position, the port, how many clients to accept, zero for no limit, the append-only file's name or - for none, and the idle limit, then options by name, --port, --bind, --timeout, --appendonly, --appendfilename, --requirepass and --clients; an invocation that does not read stops firn with status 1. firn listens on the address --bind names, the loopback address by default. An append-only file is replayed before firn listens, cut to what replay keeps when its end did not load, and every change is appended to it, the file synced once a second; a file that cannot be opened for appending or cut stops firn with status 4. A client silent for the idle limit, when it is not zero, is closed, and while a password is required a client that has not authenticated, by giving it or by being accepted while none was required, must give it before other commands; CONFIG SET changes both while firn runs, in the server's state beside the keyspace. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
   let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   let options = read_options(args: &args);
@@ -859,14 +861,27 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     let read = read_time(wall: &wall_clock);
     let replaying = True();
     let time = Time(unix_ms: read.time.unix_ms, check: 0_u64, loading: replaying);
-    let applied = replay(store: &root, factory: &handles, root: &cwd, name: name, name_length: name_length, time: &time);
+    let loaded = replay(store: &root, factory: &handles, root: &cwd, name: name, name_length: name_length, time: &time);
     match open_append(factory: &handles, root: &cwd_write, name: name, start: 0_u64, end: name_length) {
       Ok(value: file) => {
-        set logging = True();
-        let writer_store = keyspace_logging(store: &root, logging: logging);
-        let writer_factory = factory_share(factory: &handles);
-        let writer_clock = clock_share(clock: &clock);
-        spawn write_log(store: move writer_store, factory: move writer_factory, file: move file, clock: move writer_clock);
+        if loaded.cut {
+          match truncate_file(factory: &handles, file: &file, length: loaded.kept) {
+            Ok(value: done) => {
+            }
+            Err(error: problem) => {
+              set failed = True();
+            }
+          }
+        }
+        if failed {
+          let closed = close_write(factory: &handles, file: move file);
+        } else {
+          set logging = True();
+          let writer_store = keyspace_logging(store: &root, logging: logging);
+          let writer_factory = factory_share(factory: &handles);
+          let writer_clock = clock_share(clock: &clock);
+          spawn write_log(store: move writer_store, factory: move writer_factory, file: move file, clock: move writer_clock);
+        }
       }
       Err(error: problem) => {
         set failed = True();
