@@ -444,3 +444,75 @@ with a ratio of at least 0.45. So the next lowering change is the
 loop-carried index carried as an address. The 14900K's clang 18 has no
 `preserve_none`, so timing that form there needs a newer clang on the host,
 which the runner's other users share.
+
+## Stage 3: the code cursor
+
+Every dispatch of v2h computes its next operation's address from an index.
+An arm computes `next = pc + 1` or a branch target, tests `next < n`, and
+transfers. The header then addresses `code^.inner[pc]`, the hoisted
+`Slots<Op>` payload plus `pc` times the `Op` stride, before it loads the
+tag. E1 put the C interpreter's index form 1.1 to 1.3 times above its
+pointer form with every other mechanism equal, almost all of it computing
+`code[pc]` and `regs[base + a]` from indices
+([E1](../../experiments/match-dispatch/RESULTS.md#e1-silverfir-nanos-register-residency-in-the-same-interpreter)).
+The frame half, `regs[base + a]`, was measured in the compiler and refused
+(compiler/match-dispatch-lowering, derived frame-slot addresses: +0.9%).
+This section takes the other half.
+
+**Question.** How many of each dispatch's instructions go to turning `pc`
+into the next operation's address and checking it? Which way of carrying
+the address instead would remove them, on x86-64 and AArch64?
+
+**Candidates.**
+- **Cursor beside the index.** The parts carry `&code^.inner[pc]` in
+  addition to `pc`, and the arms advance both. It costs one more argument
+  register, which on x86-64 is one of 11.
+- **Cursor instead of the index.** The parts carry only the address. The
+  rare uses of `pc` itself recover it as the cursor's distance from the
+  payload divided by the stride: a trap's report, a call's return address,
+  a branch's relative target. The bounds test becomes an end-pointer
+  comparison.
+- **A power-of-two `Op` stride.** Padding `Op` lets an index become an
+  address in one shifted add. This interacts with the enum tag width
+  (`docs/todo.md`, "An enum's tag is an `i32` whatever its variant count").
+- **None.** If the attribution below finds few instructions, the index stays.
+
+**First step: attribution, no compiler change.** Compile v2h at main with
+the gate's pinned LLVM on x86-64 (`preserve_none`), and with macOS's clang
+on AArch64. Disassemble the hot arms: `I32Add`, `I32AddA`, `I32AddAD`,
+`LocalGet`-shaped copies, `BrIf` and the compare-and-branch fusions. Count
+each arm's instructions by role: the operation, operand and result slots,
+the next operation's address, the bounds test, and the transfer.
+
+**Rule for the next step, fixed now.**
+- **Average at least 2 instructions per hot arm** on the address and the
+  bounds test: build the cursor-instead-of-index candidate in an
+  experiment branch. Judge it by CoreMark against its base under the
+  stage-3 criterion: adopt if the median score rises at least 2%.
+- **Fewer:** record the attribution and close this candidate.
+
+**Attribution**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-code-cursor)).
+Every hot arm ends in the same dispatch steps, in an order of its own.
+Forming the next operation's address and testing it takes 7
+of the 21 instructions `I32Add` executes on x86-64: the next index, a
+compare and a branch, then a move, a shift and two additions that turn the
+index into an address. On AArch64 it takes 4 of 19, the shift folding into
+one addition. Both exceed the rule's 2, so the next step is the
+cursor-instead-of-index candidate.
+
+Three findings bear on how to build it:
+- **The arms already hold the cursor.** Each arm receives the matched
+  element's address, the header value it reads the operation's fields
+  through. The dispatch forms the next element's address again from the
+  next index, not from that address. On v2h a cursor beside the index
+  would therefore cost no register; the cursor instead of the index also
+  frees the index's register.
+- **`Op` is already 16 bytes.** A power-of-two stride is in place, and
+  x86-64 addressing scales an index by at most 8, so the shift stays.
+  That candidate is closed.
+- **x86-64 forms what a free register would hold.** With the index's
+  register freed, the handler table's address could become a parameter
+  again: every x86-64 arm forms it with `leaq table(%rip)`. Every arm that
+  reads a frame slot also reloads the stack's payload pointer from the
+  enclosing frame. On AArch64 both stay in registers.
