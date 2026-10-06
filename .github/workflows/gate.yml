@@ -103,17 +103,18 @@ jobs:
 
       # A cached build links its ThinLTO fragments with LLD on Linux; the
       # macOS toolchain's own linker does ThinLTO itself. Linux takes the
-      # current stable LLVM from apt.llvm.org, not Ubuntu's older clang, and
-      # makes it the /usr/bin/clang and ld.lld the compiler runs, so the
-      # gate builds as current toolchains do, including the dispatch parts'
-      # preserve_none convention, which LLVM 19 added
-      # (compiler/verification).
+      # project's pinned LLVM major from apt.llvm.org, not Ubuntu's older
+      # clang, and makes it the /usr/bin/clang and ld.lld the compiler runs,
+      # so the gate builds with the toolchain releases are built with,
+      # including the dispatch parts' preserve_none convention, which LLVM 19
+      # added. Raising the pin is its own change (compiler/verification).
       - name: Install the host toolchain
+        env:
+          LLVM_MAJOR: "22"
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-            version=$(sed -n 's/^CURRENT_LLVM_STABLE=//p' "$RUNNER_TEMP/llvm.sh")
-            test -n "$version"
+            version="$LLVM_MAJOR"
             sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
             sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
             sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
