@@ -713,7 +713,8 @@ registers of their own: `I32AddA`, `I32AddAD`, `BrIf`, `BrI32LtS`, `Copy`,
 shift by 4 and one 16-byte address adjustment, and each leaves the next
 index in its carried register. Most move it there after forming the
 address. `I32AddAD` increments that register in place and first copies the
-old index for the trap report. `Call` moves it there before the shift. A
+old index for the trap report. On x86-64, `Call` moves it there before
+the shift. A
 branch arm loads its target from the operation in place of
 `leaq 0x1(%r14)`. Forming and testing the next address therefore takes
 about 7 instructions per dispatch on x86-64 and 4 on AArch64. v2h has no
