@@ -799,6 +799,19 @@ and the first M1 row are from run 37544282861, the others from run
 above the base, B 1.6% below A, each in every pair. The hosted runners
 agree that A gains and disagree on B, within their spreads.
 
+A second run on the 14900K repeated A against the base with a copy of the
+base's interpreter, the twin, as the noise control
+([run 37545234428](https://github.com/Ming-Research/Whitefoot/actions/runs/37545234428);
+A's compiler at `82cba945e`, equal to `7f86697b1`'s):
+
+| host | base | twin | A | twin / base | A / base |
+|---|---:|---:|---:|---|---|
+| 14900K, 22.1.8, `preserve_none` | 4683.8 (1.4%) | 4728.1 (0.7%) | 5305.0 (1.3%) | 1.009; 4 of 7, 0.998-1.014 | 1.133; 7 of 7, 1.122-1.135 |
+| hosted EPYC 7763, 22.1.8 | 1906.6 (6.2%) | 1902.9 (7.4%) | 1970.4 (2.7%) | 0.998; 4 of 7 | 1.034; 7 of 7 |
+
+The twin sits within 1% of the base and A 13.3% above it. The macos-15
+job of the same run spread by 30-51% and is not shown.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

@@ -567,7 +567,8 @@ candidate is built and measured in two steps.
 **Outcome**
 ([results](../../experiments/match-dispatch/RESULTS.md#a-and-b-on-the-14900k)).
 On the 14900K with the pinned LLVM, A raised the median score 13.0% over
-the base, above it in all 7 pairs, so A is adopted. B scored 1.6% below A,
+the base, above it in all 7 pairs, so A is adopted. A repeat with a twin
+of the base gave 13.3%, with the twin within 1% of the base. B scored 1.6% below A,
 below it in all 7 pairs, so its further changes are refused. B fell short
 for three reasons:
 - B's sequential arms saved one instruction, not the predicted two: the
