@@ -180,5 +180,24 @@ reach SET's path. After inlining, `set_key` has no parameter entry copy left
 for it to remove. The byte stores #245 attributed to that copy come from
 another construction, recorded in `docs/todo.md`, "firn's SET stores its
 inline text byte by byte inside the lock". So the change is not adopted on
-the ground it was proposed for. The Firn-wf session's longer timing run, 7
-passes of 10 s, is still to be recorded here.
+the ground it was proposed for.
+
+**Longer timing, 14900K, 1 server CPU, 7 interleaved passes of 10 s**
+([Firn-wf run 37476401996](https://github.com/Ming-Research/Firn-wf/actions/runs/37476401996)).
+Medians:
+
+| test | depth | head vs base | head vs twin | twin vs base |
+|---|---|---|---|---|
+| SET | 16 | -1.80% | -4.79% | +3.14% |
+| SET | 1 | -1.75% | -1.00% | -0.76% |
+| MSET | 16 | -0.35% | +0.07% | -0.42% |
+| MSET | 1 | +2.51% | +1.34% | +1.16% |
+
+The head and its twin differ by 4.8% at SET depth 16, so this host's spread
+still exceeds 1% at this length. Nothing here contradicts the verdict.
+
+The base image hashed the same in both timing runs. The head image did not
+(`9289439815a0...` and then `30fc8d9137d3...`), from the same firn commit and
+the same release, which was not republished between the runs. Whether the
+firn build's state on the runner or the compiler's output differs between
+builds is not yet established.
