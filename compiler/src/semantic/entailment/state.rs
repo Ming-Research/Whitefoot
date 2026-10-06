@@ -3591,7 +3591,7 @@ impl FactState {
     }
 }
 
-fn ordered(left: TermId, right: TermId) -> (TermId, TermId) {
+pub(crate) fn ordered(left: TermId, right: TermId) -> (TermId, TermId) {
     if left <= right {
         (left, right)
     } else {
@@ -4840,14 +4840,11 @@ pub(crate) fn contradiction_without_proofs(
     if state.all_derivable {
         return true;
     }
+    let universe = closure_universe(state, terms, goals, None);
     if let Some(EdgeClosure {
         dense, distinct, ..
-    }) = insert_fresh_edges(
-        state,
-        terms,
-        &closure_universe(state, terms, goals, None),
-        &mut NoProofs,
-    ) {
+    }) = insert_fresh_edges(state, terms, &universe, &mut NoProofs)
+    {
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::InsertionWithoutProofs);
         let contradictory = terms
@@ -4866,21 +4863,57 @@ pub(crate) fn contradiction_without_proofs(
         }
         return contradictory;
     }
-    let dimension = terms.ids().count();
-    let ids = terms.ids().collect::<Vec<_>>();
-    let active_middles = closure_middle_terms(state, terms, goals, &ids, None);
+    let contradictory = complete_contradiction_probe(state, terms, goals, &universe);
+    // The probe over the closure's terms is compared with the probe over
+    // every registered term, the reference the universe argument elides.
+    #[cfg(test)]
+    if tests::verifying_seeded_closures() && !tests::closing_every_term() {
+        let every = ActiveMiddles(vec![true; terms.ids().count()]);
+        assert_eq!(
+            contradictory,
+            complete_contradiction_probe(state, terms, goals, &every),
+            "the probe over the closure's terms disagrees with the probe over every term"
+        );
+    }
+    contradictory
+}
+
+/// The complete proof-free fixed point over the terms of `universe`: every
+/// stored cell and implicit bound among them, closed by transitivity and
+/// disequality strengthening [ENT-4], decides a negative cycle or a goal held
+/// in both signs. A term outside the universe takes part in no path tighter
+/// than its reading through zero (see [`closure_middle_terms`]), so a
+/// negative cycle through it is one through zero of no greater bound among
+/// the universe's terms, and a goal names only universe terms.
+fn complete_contradiction_probe(
+    state: &FactState,
+    terms: &TermTable,
+    goals: &GoalTable,
+    universe: &ActiveMiddles,
+) -> bool {
+    let term_count = terms.ids().count();
+    let ids = terms
+        .ids()
+        .filter(|id| universe.contains(*id))
+        .collect::<Vec<_>>();
+    let dimension = ids.len();
+    let mut slots = vec![NO_SLOT; term_count];
+    for (slot, id) in ids.iter().enumerate() {
+        slots[id.0 as usize] = u32::try_from(slot).expect("slot fits the u32 identity");
+    }
+    let slot = |term: TermId| {
+        let slot = slots[term.0 as usize];
+        (slot != NO_SLOT).then_some(slot as usize)
+    };
     let cells = dimension
         .checked_mul(dimension)
         .expect("ENT contradiction matrix exceeds the address space");
     let mut bounds = vec![None; cells];
-    let index = |left: TermId, right: TermId| {
-        let left = left.0 as usize;
-        let right = right.0 as usize;
-        assert!(left < dimension && right < dimension);
-        left * dimension + right
-    };
     let insert = |bounds: &mut [Option<i128>], left: TermId, right: TermId, bound: i128| {
-        let cell = &mut bounds[index(left, right)];
+        let (Some(left), Some(right)) = (slot(left), slot(right)) else {
+            return;
+        };
+        let cell = &mut bounds[left * dimension + right];
         if cell.is_none_or(|current| bound < current) {
             *cell = Some(bound);
         }
@@ -4888,19 +4921,19 @@ pub(crate) fn contradiction_without_proofs(
     for (left, right, bound, _) in state.bounds.cells() {
         insert(&mut bounds, left, right, bound);
     }
-    for id in terms.ids() {
-        for_each_implicit_bound(terms, id, |left, right, bound, _| {
+    for id in &ids {
+        for_each_implicit_bound(terms, *id, |left, right, bound, _| {
             insert(&mut bounds, left, right, bound);
         });
     }
 
     let mut distinct = (*state.distinct).clone();
+    distinct.retain(|(left, right)| slot(*left).is_some() && slot(*right).is_some());
     loop {
         // Floyd-Warshall over the exact same saturating difference bounds.
         // One pass closes the current edge set; a second is needed only when
         // a newly derived disequality strengthens a weak bound below.
-        for middle in ids.iter().filter(|id| active_middles.contains(**id)) {
-            let middle = middle.0 as usize;
+        for middle in 0..dimension {
             let middle_row = middle * dimension;
             for left in 0..dimension {
                 let left_row = left * dimension;
@@ -4930,17 +4963,17 @@ pub(crate) fn contradiction_without_proofs(
                 if forward.is_some_and(|bound| bound <= -1)
                     || reverse.is_some_and(|bound| bound <= -1)
                 {
-                    distinct.insert((
-                        TermId(u32::try_from(left).expect("term index fits u32")),
-                        TermId(u32::try_from(right).expect("term index fits u32")),
-                    ));
+                    distinct.insert((ids[left], ids[right]));
                 }
             }
         }
         let mut strengthened = false;
         for &(left, right) in &distinct {
             for (from, to) in [(left, right), (right, left)] {
-                let cell = &mut bounds[index(from, to)];
+                let (Some(from), Some(to)) = (slot(from), slot(to)) else {
+                    continue;
+                };
+                let cell = &mut bounds[from * dimension + to];
                 if *cell == Some(0) {
                     *cell = Some(-1);
                     strengthened = true;
@@ -4954,17 +4987,11 @@ pub(crate) fn contradiction_without_proofs(
 
     // Reuse the ordinary goal truth table over proof-free relation cells.
     // `derives_goal` consults no proof identity.
-    let mut matrix = DenseClosureBounds::new(dimension);
+    let mut matrix = DenseClosureBounds::with_terms(term_count, ids.clone());
     for left in 0..dimension {
         for right in 0..dimension {
             if let Some(bound) = bounds[left * dimension + right] {
-                matrix.set(
-                    TermId(u32::try_from(left).expect("term index fits u32")),
-                    TermId(u32::try_from(right).expect("term index fits u32")),
-                    bound,
-                    DerivationId(0),
-                    0,
-                );
+                matrix.set(ids[left], ids[right], bound, DerivationId(0), 0);
             }
         }
     }
@@ -6969,7 +6996,7 @@ pub(crate) fn join_at(
     ledger: &mut DerivationLedger,
     event: FlowEventId,
 ) -> FactState {
-    let mut joined = join_at_once(states, terms, goals, ledger, event);
+    let mut joined = join_at_once(states, terms, goals, ledger, event, &[]);
     if joined.all_derivable {
         return joined;
     }
@@ -6987,10 +7014,24 @@ pub(crate) fn join_at(
         joined.ordinary_closure = ClosureRecord::Unknown;
         return joined;
     }
-    let ordinary = join_at_once(&ordinary_states, terms, goals, ledger, event);
+    let ordinary = join_at_once(&ordinary_states, terms, goals, ledger, event, &[]);
     joined.ordinary_closure = if ordinary.all_derivable {
         ClosureRecord::Unknown
     } else {
+        // A predecessor contradictory only through call-dependent facts
+        // contributes nothing to the full join while its ordinary layer
+        // contributes, so the ordinary join can hold rows for terms the full
+        // join reads through zero. Every pair that receives an ordinary
+        // fallback must hold the full join's own selection, at least as
+        // strong as its reading, so the full join is retaken over those
+        // terms as well.
+        let ordinary_rows = ordinary.bounds.live_terms();
+        if ordinary_rows
+            .iter()
+            .any(|term| joined.bounds.slot(*term).is_none())
+        {
+            joined = join_at_once(states, terms, goals, ledger, event, &ordinary_rows);
+        }
         joined.merge_fallback_candidates(&ordinary, false, ledger);
         // A pair the ordinary join stores no cell for has a term read through
         // zero there; a postcondition-dependent selection of it still needs
@@ -7032,12 +7073,15 @@ pub(crate) fn join_at(
     joined
 }
 
+/// `also` names terms the join stores rows for beyond the rows of the
+/// inputs' closures, read through each input's view.
 fn join_at_once(
     states: &[FactState],
     terms: &TermTable,
     goals: &GoalTable,
     ledger: &mut DerivationLedger,
     event: FlowEventId,
+    also: &[TermId],
 ) -> FactState {
     // Close before filtering: a contradiction established immediately before
     // an edge is already the absorbing all-derivable state even when no kill
@@ -7074,15 +7118,18 @@ fn join_at_once(
     let mut bounds = BoundStore::default();
     // Every pair of terms some predecessor computed a row for. A term no
     // predecessor has a row for joins as zero's row shifted again.
-    let mut rows = vec![false; terms.ids().count()];
+    let mut row_flags = vec![false; terms.ids().count()];
     for index in &contributing {
         for (left, _, _, _) in closed[*index].matrix.cells() {
-            rows[left.0 as usize] = true;
+            row_flags[left.0 as usize] = true;
         }
+    }
+    for term in also {
+        row_flags[term.0 as usize] = true;
     }
     let rows = terms
         .ids()
-        .filter(|id| rows[id.0 as usize])
+        .filter(|id| row_flags[id.0 as usize])
         .collect::<Vec<_>>();
     let pairs = rows
         .iter()
@@ -7170,6 +7217,75 @@ fn join_at_once(
             .iter()
             .all(|index| closed[*index].holds_distinct(*pair))
     });
+    // A pair with a term no input has a row for is held through zero in each
+    // input [ENT-4]; the join's own view derives it again from the joined
+    // zero bounds unless the inputs bound the row term strictly above the
+    // other term's range on one path and strictly below it on another, the
+    // one case where the pair must be stored to stay derivable [ENT-5]. The
+    // prefilter takes each side's least zero bound over the inputs holding
+    // one.
+    let mut outside: Option<Vec<TermId>> = None;
+    for &term in &rows {
+        if term == ZERO {
+            continue;
+        }
+        let zero_bounds = contributing
+            .iter()
+            .map(|input| {
+                let input = &closed[*input];
+                (input.value(ZERO, term), input.value(term, ZERO))
+            })
+            .collect::<Vec<_>>();
+        let lowest_from_zero = zero_bounds.iter().filter_map(|(from, _)| *from).min();
+        let lowest_to_zero = zero_bounds.iter().filter_map(|(_, to)| *to).min();
+        let (Some(lowest_from_zero), Some(lowest_to_zero)) = (lowest_from_zero, lowest_to_zero)
+        else {
+            continue;
+        };
+        if compose_transitive_bounds(lowest_from_zero, lowest_to_zero) > -2 {
+            continue;
+        }
+        let joined_from_zero = zero_bounds
+            .iter()
+            .map(|(from, _)| *from)
+            .collect::<Option<Vec<_>>>()
+            .and_then(|all| all.into_iter().max());
+        let joined_to_zero = zero_bounds
+            .iter()
+            .map(|(_, to)| *to)
+            .collect::<Option<Vec<_>>>()
+            .and_then(|all| all.into_iter().max());
+        let outside = outside.get_or_insert_with(|| {
+            terms
+                .ids()
+                .filter(|id| !row_flags[id.0 as usize])
+                .collect()
+        });
+        for &other in outside.iter() {
+            let to_zero = implicit_bound_between(terms, (other, ZERO)).map(|(bound, _)| bound);
+            let from_zero = implicit_bound_between(terms, (ZERO, other)).map(|(bound, _)| bound);
+            let derived = to_zero
+                .zip(joined_from_zero)
+                .is_some_and(|(to_zero, joined)| compose_transitive_bounds(to_zero, joined) <= -1)
+                || joined_to_zero
+                    .zip(from_zero)
+                    .is_some_and(|(joined, from_zero)| {
+                        compose_transitive_bounds(joined, from_zero) <= -1
+                    });
+            if derived {
+                continue;
+            }
+            let pair = ordered(other, term);
+            if contributing
+                .iter()
+                .all(|input| closed[*input].holds_distinct(pair))
+            {
+                distinct_keys.push(pair);
+            }
+        }
+    }
+    distinct_keys.sort_unstable();
+    distinct_keys.dedup();
     let distinct = distinct_keys.iter().copied().collect::<WordHashSet<_>>();
     let mut distinct_proofs = HashMap::default();
     for pair in distinct_keys {
@@ -7719,6 +7835,241 @@ pub(crate) mod tests {
         assert!(closed.derives_bound(second, first, 0));
         assert!(closed.derives_bound(parameter, ZERO, u64::MAX.into()));
         assert!(closed.derives_bound(ZERO, parameter, 0));
+    }
+
+    /// A predecessor contradictory only through call-dependent facts is
+    /// neutral in the full join and a live input of the ordinary join, so the
+    /// ordinary join can hold rows for terms the full join answers through
+    /// Z. The full join must then be retaken over those terms: otherwise the
+    /// ordinary fallback for such a pair, merged into a store that has no
+    /// cell for it, would become the full selection, weaker than the view.
+    /// The input is not promoted, as the result-image joins of the flow
+    /// leave their inputs.
+    #[test]
+    fn a_join_retakes_rows_the_ordinary_layer_adds() {
+        let mut terms = TermTable::new();
+        let place = |binding, ty| {
+            TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                ty,
+            )
+        };
+        let t = terms.intern(place(0, IntegerType::U8));
+        let x = terms.intern(place(1, IntegerType::I32));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        // The dead input: an ordinary fact on `t` and a call-dependent
+        // contradiction `Z - Z <= -1`, nothing on `x`.
+        let mut dead = FactState::new();
+        dead.establish(
+            &Relation::Bound {
+                left: t,
+                right: ZERO,
+                bound: 100,
+            },
+            &mut ledger,
+            event,
+        );
+        let impossible = Relation::Bound {
+            left: ZERO,
+            right: ZERO,
+            bound: -1,
+        };
+        let call = postcondition_call_proof(&mut ledger, impossible.clone());
+        dead.establish_from_proof(&impossible, call, &ledger);
+        // The live input: `x` bounded below ordinarily and more tightly by a
+        // call; `t` holds no fact.
+        let mut live = FactState::new();
+        live.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: x,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let tighter = Relation::Bound {
+            left: ZERO,
+            right: x,
+            bound: -400,
+        };
+        let call = postcondition_call_proof(&mut ledger, tighter.clone());
+        live.establish_from_proof(&tighter, call, &ledger);
+        assert!(close(&dead, &terms, &goals, &mut ledger).contradictory());
+        let join_event = ledger.event(FlowEventKind::Join, None);
+        let joined = join_at(&[dead, live], &terms, &goals, &mut ledger, join_event);
+        // The full join is the live input: `t - x` through Z is 255 - 400.
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(t, x), Some(-145));
+        assert_eq!(closed.tight_bound(ZERO, x), Some(-400));
+        // The ordinary join has both inputs: the dead one knows nothing of
+        // `x`, so the ordinary layer bounds `x` only by its type, and its
+        // `t - x` is the weaker of the two inputs' pairs, the dead input's
+        // `t <= 100` composed with the type range of `x`.
+        let mut ordinary = joined.clone();
+        ordinary.retain_non_postcondition_candidates(&ledger);
+        let closed = close(&ordinary, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(ZERO, x), Some(i128::from(i32::MAX) + 1));
+        assert_eq!(
+            closed.tight_bound(t, x),
+            Some(100 + i128::from(i32::MAX) + 1)
+        );
+        assert_eq!(closed.tight_bound(t, ZERO), Some(255));
+    }
+
+    /// A term with no stored relation is answered through Z by every view, so
+    /// a join stores a disequality on it only where the joined Z bounds no
+    /// longer imply it: here one path puts `b` above the whole `u8` range of
+    /// `a` and the other below it, each path derives `a != b`, and the join
+    /// of the two Z bounds on `b` says nothing about `a`.
+    #[test]
+    fn a_join_keeps_a_disequality_held_through_zero_on_opposite_sides() {
+        let mut terms = TermTable::new();
+        let a = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+            IntegerType::U8,
+        ));
+        let b = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(1)),
+            IntegerType::I32,
+        ));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut above = FactState::new();
+        above.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: b,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let mut below = FactState::new();
+        below.establish(
+            &Relation::Bound {
+                left: b,
+                right: ZERO,
+                bound: -5,
+            },
+            &mut ledger,
+            event,
+        );
+        let distinct = Relation::Distinct {
+            left: a,
+            right: b,
+            difference: 0,
+        };
+        for state in [&above, &below] {
+            assert!(close(state, &terms, &goals, &mut ledger).derives(&distinct));
+            assert!(!state.bounds.slot(a).is_some());
+        }
+        let joined = join(&[above, below], &terms, &goals, &mut ledger);
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert!(closed.derives(&distinct));
+        assert!(closed.tight_bound(a, b).is_some_and(|bound| bound > -1));
+        assert!(closed.tight_bound(b, a).is_some_and(|bound| bound > -1));
+        assert!(joined.distinct.contains(&(a, b)));
+        // A disequality the joined bounds imply is not stored: `c` holds
+        // only its range and `b` stays above it on both paths.
+        let c = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(2)),
+            IntegerType::U8,
+        ));
+        let mut high = FactState::new();
+        high.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: b,
+                bound: -400,
+            },
+            &mut ledger,
+            event,
+        );
+        let mut above = FactState::new();
+        above.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: b,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let joined = join(&[above, high], &terms, &goals, &mut ledger);
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert!(closed.derives(&Relation::Distinct {
+            left: c,
+            right: b,
+            difference: 0,
+        }));
+        assert!(!joined.distinct.contains(&(b, c)));
+        assert!(!joined.bounds.slot(c).is_some());
+    }
+
+    /// A term active only through a call-dependent disequality has no row in
+    /// the ordinary closure, which answers its pairs through Z. The
+    /// materialization must still give every call-dependent cell of such a
+    /// term its ordinary fallback, so that removing the call-dependent
+    /// candidates leaves the bound the ordinary layer derives.
+    #[test]
+    fn a_materialized_ordinary_layer_keeps_a_bound_on_a_distinct_only_term() {
+        let mut terms = TermTable::new();
+        let place = |binding, ty| {
+            TermKind::Place(
+                super::super::term::ResolvedPlace::binding(BindingId(binding)),
+                ty,
+            )
+        };
+        let t = terms.intern(place(0, IntegerType::U8));
+        let y = terms.intern(place(1, IntegerType::U8));
+        let x = terms.intern(place(2, IntegerType::I32));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish(
+            &Relation::Bound {
+                left: ZERO,
+                right: x,
+                bound: -300,
+            },
+            &mut ledger,
+            event,
+        );
+        let stronger = Relation::Bound {
+            left: ZERO,
+            right: x,
+            bound: -400,
+        };
+        let call = postcondition_call_proof(&mut ledger, stronger.clone());
+        state.establish_from_proof(&stronger, call, &ledger);
+        let distinct = Relation::Distinct {
+            left: t,
+            right: y,
+            difference: 0,
+        };
+        let call = postcondition_call_proof(&mut ledger, distinct.clone());
+        state.establish_from_proof(&distinct, call, &ledger);
+        let mut direct = state.clone();
+        direct.retain_non_postcondition_candidates(&ledger);
+        let direct = close(&direct, &terms, &goals, &mut ledger);
+        assert_eq!(direct.tight_bound(t, x), Some(-45));
+        let snapshot = ledger.event(FlowEventKind::Snapshot, None);
+        let materialized = materialize_closure_at(&state, &terms, &goals, &mut ledger, snapshot);
+        assert_eq!(
+            close(&materialized, &terms, &goals, &mut ledger).tight_bound(t, x),
+            Some(-145)
+        );
+        let mut ordinary = materialized.clone();
+        ordinary.retain_non_postcondition_candidates(&ledger);
+        let closed = close(&ordinary, &terms, &goals, &mut ledger);
+        assert_eq!(closed.tight_bound(t, x), Some(-45));
+        assert_eq!(closed.tight_bound(x, t), direct.tight_bound(x, t));
+        assert!(!closed.derives(&distinct));
     }
 
     #[test]

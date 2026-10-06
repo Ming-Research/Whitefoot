@@ -4582,6 +4582,191 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// A delivery image stores only the disequalities among its active terms; a
+/// disequality the receiver's Z bound implies through another term's range is
+/// evaluated at the join from each image's Z bound. The receiver `x` of
+/// `pick` is given one edge per entry of `edges`, each a literal or one of the
+/// `i32` parameters `d` (required below zero), `e` (required above 255) and
+/// `w` (unbounded), and is then required unequal to the `u8` parameter
+/// `small`, on which the edges' states hold no fact.
+fn opposite_sides_program(edges: &[&str]) -> String {
+    let variants = (0..edges.len())
+        .map(|index| format!("  P{index}();\n"))
+        .collect::<String>();
+    let arms = edges
+        .iter()
+        .enumerate()
+        .map(|(index, edge)| format!("    P{index}() => {{\n      give {edge};\n    }}\n"))
+        .collect::<String>();
+    format!(
+        r#"enum Pick {{
+{variants}}}
+
+fn touch(v: u8) -> result: unit pure contract {{
+  requires v <= 255_u8;
+}} {{
+  return unit;
+}}
+
+fn unequal(value: i32, other: u8) -> result: unit pure contract {{
+  requires value != cvt::<u8, i32>(other);
+}} {{
+  return unit;
+}}
+
+fn pick(choice: Pick, small: u8, d: i32, e: i32, w: i32) -> result: unit pure contract {{
+  requires d < 0_i32;
+  requires e > 255_i32;
+}} {{
+  touch(v: small);
+  let x = match choice {{
+{arms}  }}
+  unequal(value: x, other: small);
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+/// The delivery joins of `pick` delivering a disequality between the
+/// receiver `x` and the `u8` parameter `small`, the only `u8` binding.
+fn delivered_receiver_small_disequalities(
+    summary: &FunctionEntailment,
+) -> Vec<&PostconditionDeliveryJoinDetail> {
+    let bare_binding = |term: TermId, ty: IntegerType| match retained_term(summary, term) {
+        TermKind::Place(place, held) if *held == ty && place.path.is_empty() => match place.root {
+            PlaceRoot::Binding(binding) => Some(binding),
+            _ => None,
+        },
+        _ => None,
+    };
+    summary
+        .derivations
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            DerivationNode::PostconditionDeliveryJoin { detail } => Some(detail.as_ref()),
+            _ => None,
+        })
+        .filter(|detail| {
+            let Relation::Distinct { left, right, .. } = detail.relation else {
+                return false;
+            };
+            [(left, right), (right, left)]
+                .into_iter()
+                .any(|(left, right)| {
+                    bare_binding(left, IntegerType::I32) == Some(detail.receiver)
+                        && bare_binding(right, IntegerType::U8).is_some()
+                })
+        })
+        .collect()
+}
+
+/// `pick` with `edges` is accepted, and the join delivers `x != small` once,
+/// with one Give parent per edge deriving the disequality.
+fn assert_opposite_sides_delivered(edges: &[&str]) {
+    let program = opposite_sides_program(edges);
+    let summary = accepted_entailment(program.as_bytes(), "pick");
+    validate_derivations(&summary);
+    let joins = delivered_receiver_small_disequalities(&summary);
+    assert_eq!(
+        joins.len(),
+        1,
+        "the join delivers `x != small` once for edges {edges:?}: {joins:?}"
+    );
+    let parents = &joins[0].parents;
+    assert_eq!(
+        parents.len(),
+        edges.len(),
+        "one parent per edge for {edges:?}"
+    );
+    for parent in parents {
+        let node = &summary.derivations.nodes[parent.parent.0 as usize];
+        assert!(
+            matches!(
+                node,
+                DerivationNode::PostconditionGive { relation, .. }
+                    if matches!(**relation, Relation::Distinct { .. })
+            ),
+            "each parent is the edge's Give node of the disequality: {node:?}"
+        );
+    }
+}
+
+/// `pick` with `edges` is refused at FN-8: the call's requirement
+/// `x != small` stays unproved.
+fn assert_opposite_sides_refused(edges: &[&str]) {
+    let program = opposite_sides_program(edges);
+    with_semantics(program.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("edges {edges:?} deliver no disequality with `small`: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn8, "edges {edges:?}");
+        assert!(
+            matches!(
+                issue.kind(),
+                SemanticIssueKind::UndischargedCallRequirement(..)
+            ),
+            "edges {edges:?}: {issue:?}"
+        );
+    });
+}
+
+/// Two edges bounding the receiver strictly above a `u8` term's range and
+/// strictly below it both hold `x != small`, and the joined bounds do not, so
+/// the join delivers it, in either edge order and with a third edge; an edge
+/// whose constant lies inside that range holds no such disequality and the
+/// call's requirement stays unproved.
+#[test]
+fn value_match_delivers_a_disequality_held_through_zero_on_opposite_sides() {
+    assert_opposite_sides_delivered(&["300_i32", "-5_i32"]);
+    assert_opposite_sides_delivered(&["-5_i32", "300_i32"]);
+    assert_opposite_sides_delivered(&["300_i32", "-5_i32", "e"]);
+    assert_opposite_sides_refused(&["200_i32", "-5_i32"]);
+}
+
+/// An image bounding the receiver on one side only is a valid above or below
+/// image: an edge giving a parameter required above 255 holds a lower bound
+/// alone, one giving a parameter required below zero an upper bound alone,
+/// and the join delivers `x != small` from them in either order.
+#[test]
+fn value_match_delivers_a_disequality_from_one_sided_edges() {
+    assert_opposite_sides_delivered(&["e", "d"]);
+    assert_opposite_sides_delivered(&["d", "e"]);
+    assert_opposite_sides_delivered(&["e", "-5_i32"]);
+}
+
+/// An edge without a Z bound on the receiver holds no disequality with
+/// `small`, so no join delivers one whatever the other edges hold.
+#[test]
+fn value_match_delivers_no_disequality_past_an_unbounded_edge() {
+    assert_opposite_sides_refused(&["300_i32", "-5_i32", "w"]);
+    assert_opposite_sides_refused(&["w", "e", "d"]);
+    assert_opposite_sides_refused(&["e", "w"]);
+}
+
+/// Edges bounding the receiver on the same side of the `u8` range hold
+/// `x != small` as a consequence of the joined Z bound, which the
+/// continuation's closure derives, so the join delivers no disequality and
+/// the program is accepted.
+#[test]
+fn value_match_leaves_a_same_side_disequality_to_the_joined_bound() {
+    for edges in [["300_i32", "400_i32"], ["e", "300_i32"], ["d", "-5_i32"]] {
+        let program = opposite_sides_program(&edges);
+        let summary = accepted_entailment(program.as_bytes(), "pick");
+        validate_derivations(&summary);
+        let joins = delivered_receiver_small_disequalities(&summary);
+        assert!(
+            joins.is_empty(),
+            "the joined Z bound implies `x != small` for edges {edges:?}: {joins:?}"
+        );
+    }
+}
+
 #[test]
 fn value_match_delivers_common_bounds_while_a_missing_branch_does_not() {
     let source = br#"enum Choice {
