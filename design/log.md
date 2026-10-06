@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 The derived-address refusal states only its measured ground
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: In the session of 2026-10-05, after PR #250 showed the Q21 Rejected line before ("below the 2% criterion set for it, for about 165 lines of emitter code, so it is not adopted now;") and after ("below the 2% criterion set for it, so it is not adopted now;"): "q21 ok".
+
+Summary: The refusal of addressing frame slots from a pointer each split part derives at entry no longer cites the size of its emitter code, which AGENTS.md does not allow as a reason; its ground stays the measured 0.9% score gain against the 2% criterion, and its reopening condition is unchanged (Q21).
+
 ## 2026-10-06 Every compiler-produced function on a 64-byte boundary
 
 Nodes: compiler/code-alignment, compiler/verification, compiler/parallel-lowering
@@ -20,6 +28,7 @@ Nodes: language/system-interface/writable-directory
 Owner-approved: Q40, adding a way to cut an append-only file whose end did not load, as Redis does, was approved in the firn session of PR #245 (2026-10-05). In the session of 2026-10-05, written in Chinese, after the handoff of PR #251 that showed the amended decision and the v0.93 change: "The two design nodes OK. The spec OK" (translated).
 
 Summary: A file is written by appending and set to a length: `truncate_file` sets the length of an open `WriteFile` so that the next append writes after it, because an append-only log whose end did not load must be cut after its last whole record before anything is appended, as Redis cuts its append-only file. Truncation leaves the refused-for-now list; positioned writes, renaming, a truncation by name and a specified crash model stay refused.
+
 ## 2026-10-05 Compiler releases for projects outside this repository
 
 Nodes: compiler/downstream-releases
@@ -35,6 +44,7 @@ Nodes: compiler/match-dispatch-lowering, compiler/incremental-compilation
 Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff that presented decisions Q17-Q23 on PRs #228, #229, #232, #233 and #235 (heads `382e2b05e`, `357f343e4`, `ccb71f1ef`, `312273610` and `b2d9af410`): "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated), and then, asking for one combined PR: "just put all the content together, one PR, I'll look at it and merge if it is fine" (translated). The checker decisions Q20, Q22 and Q23 are carried by a separate change onto main's closure work.
 
 Summary: A passed-through reference whose box the loop keeps stays pinned when the loop hands it to non-waiting callees whose every declared write lies below that box's content, because such a callee cannot replace the box [EFF-1, EFF-5]; removing the stack box's per-dispatch reload raised the stage-3 wasm interpreter's CoreMark score 3.8% (Q17). Addressing frame slots from a pointer each split part derives at entry is refused for now: with an accumulator register it raised the score 0.9%, below its 2% criterion, and it reopens when another interpreter or an x86-64 measurement shows at least 2% (Q21). The compiler does not prune cache directories: a developer's local cache is the developer's to clean (Q18). Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md).
+
 ## 2026-10-05 Raise a time budget by a fixed 10 s
 
 Nodes: compiler/verification
@@ -58,6 +68,7 @@ Nodes: language/generics, language/waiting/shared-objects, language/waiting/shar
 Owner-approved: In the session of 2026-10-05, written in Chinese, translated: the direction that a concurrent hash table is shared by nature and is created together with its guard ("KeyedTable is by nature a concurrent hash table, so it should by nature be shared"; "a type's behavior should not change with where it is put"); several objects per atomic statement ("why can atomic take only one? taking several at once is convenient"); Q11 ("agree"); Q14, Q15 (`ConcurrentHashMap`), Q18, Q20, Q23, Q24, Q25 and Q26 ("all agreed"); Q17, FLUSHALL by swapping in a fresh map ("obviously, map_clear is not needed at all"); Q21, a swap of two maps the statement holds ("swap inside atomic is fine, provided the atomic takes both"); after the handoff of PR #231 at `a5d7b3840`, Q28 ("agree", with TYPE-9 written simply), Q29 ("agree"), Q30 ("A"), Q31 ("agree") and Q32 ("Q32 agree").
 
 Summary: `ConcurrentHashMap<V>` replaces `KeyedTable<V>` and exists only as the state of a shared object, made with its guard by `shared_map_new`, so one type has one runtime regime; TYPE-9's placement table gives each restricted type one home, a reference takes no place, and a type argument is placed where its parameter lands in the instance. An atomic statement holds several objects, each header item a target (`&h`, `&h[k]`, `&h[ks]`); same-type targets may name one object, which the runtime holds once and the checker treats as possibly overlapping by the ordinary rules; locks follow a static order of types by identity, then object identity, with later groups taken at first use; FLUSHALL swaps in a fresh map. Amendment A's table bindings, header grants, provenance sets and local-table pending holds retire, and `map_clear`, `map_reserve` and a `shared struct` form are refused with their reasons in the nodes.
+
 ## 2026-10-05 App builds in the program cases: cached locally, in-process under CI
 
 Nodes: compiler/verification
@@ -81,6 +92,7 @@ Nodes: compiler/match-dispatch-lowering, compiler/backend-facts
 Owner-approved: In the session of 2026-10-04, written in Chinese: Q3, the unreachable default of an enum-tag switch ("Change 3", translated); and, after the handoff of PR #217 at `9a09561d9`, which presented decision cards Q4-Q8 and the backend-facts ground edit, "Agree to all" (translated).
 
 Summary: A loop whose header ends in a `match` over a nominal enum, entered only through the header and left only by returning or jumping back, is emitted as an enclosing function that calls an always-inline dispatch function once, plus one function per arm chained by guaranteed tail calls through a per-loop handler table (Q4), all parts sharing one parameter list (Q5), under `preserve_none` where a build-time probe finds it and the C convention otherwise, with a loop that needs more argument registers than the convention has emitted whole (Q6); the enclosing frame is shared by pointer and a slot only one part uses is that part's own (Q7); waiting, budgeted, cloned, overlapped, synthesized and prelude-carrying functions stay whole and the table holds function addresses (Q8, which closes Q2 provisionally). The default of every enum-tag switch is `unreachable` (Q3), its ground now naming the runtime's linked bodies. The owner's direction for values beyond the registers, a spill block in the enclosing frame (Q1), is deferred to `docs/todo.md`. Measurements and refused alternatives are in [the match-dispatch investigation](../research/investigations/match-dispatch/DESIGN.md) and [its results](../research/experiments/match-dispatch/RESULTS.md).
+
 ## 2026-10-04 Key sets in insertion order, the lock order the runtime's
 
 Nodes: language/waiting/shared-objects/keyed-tables, compiler/waiting-contexts/concurrent-map
@@ -279,6 +291,7 @@ Nodes: language/waiting/shared-objects, language/ownership, language/parallelism
 Owner-approved: The owner approved all four decision cards for PR #173 and the specification revisions ("all decisions approved, the spec revisions approved too", written in Chinese) on 2026-09-29, choosing for the fourth card the recommendation revised after the question about one thread waiting on itself: the language promises progress while a statement waits for its guard.
 
 Summary: Add language/waiting/shared-objects: state that several contexts reach is a `Shared<T>` object changed only in `atomic` statements, which count as waiting calls with no waiting call or atomic statement inside, hold a handle of their own, take an optional `when` guard the block may use as a proved fact (kernel-spec v0.82 ENT-3 S1), release the state with the last handle (STOR-3 now leaves that one release to the count), and provisionally all hold the object exclusively. Per the fourth card, add its progress decision (SHARE-3, WAIT-2): while a statement waits for its guard, each call around it that the permission covers executes as a context and its starter waits for it only at a statement that needs its result or exit, and a statement whose guard stays true takes effect while every context keeps reaching its end or a wait for something not yet there; the reason in its first decision drops the in-order conformance it no longer has, and decision 3's note that STOR-3 awaited a ruling now cites the ruled rule. Correct the channel refusal there: the sharing rule no longer separates channels from shared objects, and a channel whose send waits is a guarded ring over this form, so the refusal rests on expressiveness and cost. Restate language/ownership's global-state decision and language/parallelism's context decision with their reasons, the latter without the amendment's clause that running a call early leaves open whether a statement waiting on a guard completes, which the fourth card reverses, and replace the parallelism refusal of a progress marker with the reason that SHARE-3 promises that progress for every covered call. Add the object layout, the spin-then-park lock that wakes the queue's head to retry, and guard watchers to compiler/waiting-contexts. The [shared-objects record](../research/investigations/io-model/SHARED.md) holds the grounds and Experiment 7. Remove the four accepted amendments; a new amendment to compiler/waiting-contexts, which bounds overtaking and changes which calls start and where a bound start joins to meet the promise, awaits its own ruling. This ruling authorizes no merge.
+
 ## 2026-09-29 Admit element-subtree loop accesses and add segmented storage
 
 Nodes: language/parallelism/loop-permission, language/data-model/storage-shapes, compiler/storage-representation, language/data-model, language/data-model/opaque-struct, language/ownership/affine-replacement
@@ -382,6 +395,7 @@ Nodes: language/checks-and-proofs/obligation-discharge/loop-fact-retention, lang
 Owner-approved: 2026-09-28, the owner approved the writer-lost-facts amendments for loop exits and give carriers in the session handoff ("all the Whitefoot decisions are approved", written in Chinese).
 
 Summary: Apply two of the writer-lost-facts amendments unchanged apart from link depth. loop-fact-retention adds that a proved header invariant conclusion leaves its loop on every exit edge and survives the continuation join as a local invariant conclusion does, while the name still ends with the loop body, because the conclusion is a theorem over the exiting iteration's immutable value images; the removal accounted for 11 of the URL parser's 23 clamp blocks. automatic-facts adds that a `give d;` edge delivers the receiver's equality to d, or to the value of a literal or named-const carrier, beside the existing substitution, because `give length;` otherwise lost the bound `let bound = length; give bound;` delivers. The [investigation](../research/investigations/writer-lost-facts/DESIGN.md) holds the probes, soundness arguments and census. Specification v0.79 implements both [ENT-2, ENT-5, ENT-6, GIVE-1, INV-1, DIAG-2]. The approved `Option` success route lands with PR #169's implementation, which applies it to the tree with its specification text. Remove the accepted loop-exit amendment and the carrier part of the automatic-facts amendment. This ruling authorizes no merge.
+
 ## 2026-09-28 Lay out multi-payload enums as unions of variant views
 
 Nodes: compiler/payload-enum-layout
