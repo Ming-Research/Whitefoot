@@ -7,10 +7,11 @@ The first table is the largest n for which a function of n `i64` (or n
 `double`) parameters reads no argument from the stack. The second is the
 largest n for which a dispatch part's own shape still compiles with no
 argument on the stack: n integer parameters, the next handler loaded from a
-global table by a tag the first parameter points at, and a guaranteed tail
-call (`musttail`) through that loaded address passing all n on. The second
-can be smaller, because the indirect call's target needs a register of its
-own.
+global table by a tag the first parameter points at, every parameter
+recomputed, and a guaranteed tail call (`musttail`) through that loaded
+address passing all n on. The second can be smaller, because the indirect
+call's target and the table's address need registers of their own while
+every argument is live.
 """
 
 import os
@@ -54,12 +55,12 @@ def spills(cc, target, n, ty):
 
 def indirect_fits(cc, target, n):
     """Whether a part with n integer parameters, the first the code
-    pointer, compiles and passes all of them on through a table-loaded
-    guaranteed tail call without touching the stack."""
+    pointer, compiles and passes all of them on, each recomputed so that
+    every one is live at the call, through a table-loaded guaranteed tail
+    call without touching the stack."""
     params = ", ".join(["ptr %code"] + [f"i64 %a{i}" for i in range(1, n)])
-    args = ", ".join(["ptr %next_code", "i64 %b1"] + [f"i64 %a{i}" for i in range(2, n)])
-    if n == 1:
-        args = "ptr %next_code"
+    body = "".join(f"  %b{i} = add i64 %a{i}, %index\n" for i in range(1, n))
+    args = ", ".join(["ptr %next_code"] + [f"i64 %b{i}" for i in range(1, n)])
     ir = (
         f"@table = internal constant [2 x ptr] [ptr @part, ptr @part]\n\n"
         f"define {cc} i64 @part({params}) {{\n"
@@ -68,7 +69,7 @@ def indirect_fits(cc, target, n):
         "  %slot = getelementptr [2 x ptr], ptr @table, i64 0, i64 %index\n"
         "  %next = load ptr, ptr %slot\n"
         "  %next_code = getelementptr i8, ptr %code, i64 1\n"
-        + ("  %b1 = add i64 %a1, %index\n" if n > 1 else "")
+        + body
         + f"  %r = musttail call {cc} i64 %next({args})\n"
         "  ret i64 %r\n"
         "}\n"
