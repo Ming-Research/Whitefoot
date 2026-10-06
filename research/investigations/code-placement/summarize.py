@@ -168,8 +168,11 @@ def main():
             slower_cells += bad
             faster[kernel] += gain
             print(f"  {kernel} W={width}: FR/FRL ratio {ratio:.3f}{' slower' if bad else ''}{' faster' if gain else ''}")
-    frl_invariant = all(invariant("FRL", PLACEMENTS, k, w) is None
-                        for k in KERNELS for w in WIDTHS if not inconclusive(k, w))
+    frl_moved = [f"{k} W={w}: {problem}" for k in KERNELS for w in WIDTHS
+                 if not inconclusive(k, w) and (problem := invariant("FRL", PLACEMENTS, k, w))]
+    for line in frl_moved:
+        print(f"  FRL moved at {line}")
+    frl_invariant = not frl_moved
     selects = frl_invariant and slower_cells == 0 and any(count >= 2 for count in faster.values())
     print(f"  {'SELECTS loop alignment' if selects else 'does not select loop alignment'} "
           f"(invariant: {frl_invariant}, slower cells: {slower_cells})")

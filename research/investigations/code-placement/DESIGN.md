@@ -257,16 +257,77 @@ The replay of PR #251's runtime change under the aligned compiler passed
 with one single-width suspect, `stencil` at width 1, 0.947191 with four of five
 pairs lower.
 
-### Hosted ubuntu-24.04
+### Hosted ubuntu-24.04, AMD EPYC 7763, three runs of 12 rounds
 
-Pending.
+The hosted pool assigns an AMD EPYC 7763 (Zen 3), 9V74 (Zen 4) or 9V45
+machine of four vCPUs, two cores of two threads, and a dispatch cannot choose
+one. Three decisive runs landed on a 7763: runs 37434120227 at `d4f67df6`,
+and 37436514442 and 37436517830 at `8097c03a`, which differs from `d4f67df6`
+only in records and workflow text. In all three the null moved no cell, and
+`U` met C1 in two or three `records` cells, always at width 1 under `m16`
+(0.933, 0.926 and 0.933) and at width 4 under `m32` (0.920, 0.885 and 0.884).
+No placement moved `FR` in any cell of any of the three, and `FR` cost nothing
+against `F` in any cell (Q2). `F` was invariant and cost nothing in two runs;
+in run 37436514442 it read 10.261 ms at `p0` against 9.622 to 10.031 ms at the
+other placements of `records` at width 4, a `m32` against `p0` ratio of 1.044,
+and a cost ratio of 0.969 against `U` with 92 percent of the rounds slower, so
+Q1 as written fails in that one cell. The module pads move `F`'s emitted
+functions by whole 64-byte lines and its unaligned runtime by 0 or 64 bytes,
+so that cell is an effect of a whole-line shift, which `FR` of the same run
+does not show. Q3 never selects loop alignment: `FRL` was faster than `FR`
+only at `records` width 2 in the first run, 1.040. The other four kernels
+spread by at most 1.8 percent under `U` in the first run. Every replay of PR
+#251's runtime change passed, with a `records` width-2 suspect in the second
+(0.946963) and third (0.906576) runs. `records` in the first run:
+
+| width | arm | p0 | m16 | m32 | m48 | r16 | r48 |
+|---|---|---|---|---|---|---|---|
+| 1 | U | 17.134 | 18.378 | 17.140 | 17.148 | 17.136 | 17.121 |
+| 1 | FR | 17.100 | 17.144 | 17.105 | 17.093 | 17.185 | 17.145 |
+| 2 | U | 8.825 | 9.051 | 9.280 | 8.652 | 9.132 | 9.141 |
+| 2 | FR | 9.041 | 8.835 | 9.570 | 9.003 | 8.924 | 9.031 |
+| 4 | U | 9.643 | 9.606 | 10.526 | 8.520 | 9.576 | 9.183 |
+| 4 | FR | 9.778 | 9.590 | 9.389 | 9.639 | 9.862 | 10.155 |
+
+### Hosted ubuntu-24.04, AMD EPYC 9V45, 12 rounds (run 37436510214)
+
+The null moved no cell; `U` met C1 in all three `records` cells, spreading by
+9.7, 15.1 and 32.8 percent. Q1 and Q2 hold in every cell; aligned `records` is
+faster than `U` at width 4, a cost ratio of 1.107. `FRL` was faster than `FR`
+at every width of `records`, 1.069, 1.087 and 1.042, but moved with placement
+in some cell (the reducer at that revision did not name which), so Q3 does not
+select it. The replay passed. `records`:
+
+| width | arm | p0 | m16 | m32 | m48 | r16 | r48 |
+|---|---|---|---|---|---|---|---|
+| 1 | U | 10.974 | 11.862 | 10.845 | 11.694 | 10.816 | 10.815 |
+| 1 | FR | 11.482 | 11.394 | 11.508 | 11.470 | 11.424 | 11.402 |
+| 2 | U | 6.132 | 5.834 | 6.354 | 5.520 | 6.101 | 6.137 |
+| 2 | FR | 5.996 | 5.937 | 6.060 | 6.152 | 6.081 | 6.024 |
+| 4 | U | 5.836 | 6.166 | 6.774 | 5.099 | 5.958 | 5.964 |
+| 4 | FR | 5.388 | 5.406 | 5.410 | 5.385 | 5.362 | 5.366 |
+
+### Hosted ubuntu-24.04, AMD EPYC 9V74
+
+The three-round sizing run (run 37432965442) landed on a 9V74 and read the
+aligned layout of `records` slower than every unaligned placement: at width 2,
+`U` 7.533 to 8.151 ms across its six placements against `F` 8.664 to 8.735,
+a cost ratio of 0.898 against `U` in all three rounds, 0.955 at width 1 and
+0.929 at width 4. Three rounds select nothing. Two `compute-regression` runs
+of this change against `main` agree with it without naming their processor:
+run 37432958961 at `1bfe9449` failed `records` at width 2, 0.875429, and width
+4, 0.850267, five of five pairs lower each, close to that sizing run's `U` at
+`p0` over `F` at `p0`, 0.877 and 0.945; run 37434115541 at `d4f67df6` passed,
+`records` reading 0.992475, 0.969618 and 0.998555. Decisive runs on a 9V74
+are pending.
 
 ## Limitations
 
 - A 64-byte boundary fixes where instructions fall within their line. Effects
   keyed on higher address bits, such as branch-predictor aliasing between
-  functions or 4 KiB aliasing, can remain; the `m` and `r` placements measure
-  what remains only for shifts below 64 bytes.
+  functions or 4 KiB aliasing, can remain: the aligned arms' `m` and `r`
+  placements shift by 0 or 64 bytes, and one cell of one 7763 run moved under
+  such a shift.
 - Apple's arm64 cores use 128-byte lines. The macOS runner resolves only
   about 20 percent ([compute-runtime results](../compute-runtime/RESULTS.md)),
   so nothing here is measured on arm64.
