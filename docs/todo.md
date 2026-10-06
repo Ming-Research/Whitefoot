@@ -681,6 +681,46 @@ rarely insert at the same place.
   Change: an in-memory receipt store for one invocation. Reopen when a
   workflow builds without a cache.
 
+- **An ordinary relation that does not improve the full selection may not
+  be materialized before a kill.** `materialize_closure_before_kill` in
+  `compiler/src/semantic/entailment/state.rs` returns early when the state's
+  `closure` record is closed and no opaque goal is live, without reading
+  its `ordinary_closure` record. On the active-term closure of PR 232, the
+  generated-flow comparison at 3000 cases found this shape (case 1379): an
+  ordinary fact weaker than the call-dependent selection of its pair
+  (`p - x <= -1` beside a call's `p - x <= -2`) left the record closed while
+  the ordinary fallbacks it improves (`Z - x` through `p`) were not stored,
+  so a kill of its support removed them from the ordinary layer, and a later
+  removal of the call's candidates left the pair at its type range. Main's
+  closure has the same early return. Whether it reaches the shape is
+  unverified, since its generated-flow test runs 400 cases. Impact: a weaker
+  ordinary fallback after an S12 holder kill in that shape, never a wrong
+  acceptance. The change: skip the materialization only when the ordinary
+  record is also closed, or store the improved ordinary fallbacks alone.
+  Validate with the generated flows at 3000 cases and the paired comparison
+  on wfgrep and fixed_run_library. Reopen when a program's postcondition
+  reasoning is refused after a write that its ordinary facts should survive.
+
+- **A term registration discards an unchanged state's remembered closure.**
+  `close` in `compiler/src/semantic/entailment/state.rs` keys a state's
+  remembered closed view on the term table's revision and term count, so a
+  `let` that registers a term discards the view of a state that has not
+  changed, although a term without a fact changes no answer. A state with a
+  recorded closure core continues from it (`close_by_edge_insertion`), and a
+  state that gained facts since its view continues from that view
+  (`close_from_view_seed`); a state with neither, an `Unknown` record that
+  gained nothing since its view, is closed completely again. On the
+  active-term closure of PR 232, about half of the roughly fourteen closures
+  per arm of the synthetic N-arm interpreter of
+  [the probe measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#the-probe-the-join-and-delivery-over-the-closure-universe)
+  recomputed states that had not changed. Main's closure routes were not
+  counted, so this path's share there is unknown. The change: key the
+  remembered view on the closure universe's terms and the measure bounds, or
+  keep a view that only term registrations invalidated as the state's seed.
+  Validate by counting closure routes with the test route recorder on the
+  synthetic series before and after. Reopen when a profile of a real program
+  attributes a substantial share to complete closures of unchanged states.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**
@@ -2613,10 +2653,10 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 9,223 lines, including a
-  1,901-line inline test module (the compile-speed work added its slot
+  `compiler/src/semantic/entailment/state.rs` has 9,574 lines, including a
+  2,136-line inline test module (the compile-speed work added its slot
   layouts, dormant components and implicit structure), and the tests in
-  `compiler/src/semantic/tests/entailment.rs` have 10,920 lines and 156
+  `compiler/src/semantic/tests/entailment.rs` have 11,238 lines and 162
   tests. The flow itself is divided into its sub-contexts and component
   modules (`design/compiler/engine-components.md`), none over 3,200 lines.
   `state.rs` can move its test module to its own file and its dense-closure
@@ -3580,7 +3620,7 @@ condition under which it is taken up.
   the same way. It is not the gate's critical path while the unit job is
   longer; reopen when the corpus job becomes the longest or its budget trips.
   This changes conformance evidence wiring, so the PR states it under
-  AGENTS.md rule 4.
+  AGENTS.md, Branch and main boundary.
   The local macOS amendment S gate at
   `f1fba77c3fa422348b72a00301105d4908e68e5a` took 214.72 s in
   `compiler/test-corpus`, above its 125 s budget; the native conformance walk

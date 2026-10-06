@@ -28,8 +28,8 @@ the work-branch and merge boundary.
 - `notes/` and existing documents at this directory's root: bounded design
   questions and supporting analysis.
 - [Design trees](../design/): what was settled, why, and which alternatives
-  were refused. The [design-tree procedure](../design/skill/SKILL.md) owns
-  how decisions reach the tree and the owner's rulings on them.
+  were refused. The owner-wide agent instructions own how decisions reach
+  the tree and the owner's rulings on them.
 - [Archive promotion audit](archive-promotion-audit.md): a non-authoritative
   map from historical findings to useful successors and remaining questions.
 - [Decision workflow investigation](investigations/decision-workflow/DESIGN.md):

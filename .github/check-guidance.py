@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Check that the agent guidance's references resolve, not what it says.
 
-- Review item IDs cited in the guidance (A1, T4-T7, G3, DC2, ...) are defined
-  in docs/review-checklist.md or the design-tree skill.
+- Review item IDs cited in the guidance (A4, T4-T7, G3, DC2, ...) are defined
+  in docs/review-checklist.md or are the owner-wide design and correspondence
+  checks G1-G3 and DC1-DC4.
 - Repository paths written in backticks in the entry documents exist.
 
 A green run says only that these references resolve. Whether the guidance is
@@ -16,18 +17,17 @@ import tempfile
 import unittest
 
 CHECKLIST = "docs/review-checklist.md"
-DESIGN_SKILL = "design/skill/SKILL.md"
+# The owner-wide instructions, outside this repository, define these.
+OWNER_WIDE = {"G1", "G2", "G3", "DC1", "DC2", "DC3", "DC4"}
 # Documents that cite review items.
-CITING = ["AGENTS.md", CHECKLIST, DESIGN_SKILL, ".github/pull_request_template.md"]
-# Entry documents whose backticked repository paths must exist. The design-tree
-# skill is excluded: it names its roles generically for reuse in any project.
+CITING = ["AGENTS.md", CHECKLIST, ".github/pull_request_template.md"]
+# Entry documents whose backticked repository paths must exist.
 PATHS = ["AGENTS.md", "README.md", "README.zh-CN.md", CHECKLIST,
          ".github/pull_request_template.md"]
 
 ITEM = r"(?:DC|[ACDGMRTV])\d+"
 CITATION = re.compile(r"(?<![\w-])(" + ITEM + r")(?:\s*[-–]\s*(" + ITEM + r"|\d+))?(?![\w-])")
 CHECKLIST_DEFINITION = re.compile(r"\*\*(" + ITEM + r") —")
-SKILL_DEFINITION = re.compile(r"^(" + ITEM + r")\. ", re.M)
 BACKTICKED = re.compile(r"`([^`\s]+)`")
 PLACEHOLDER = re.compile(r"[<>*{}$]|\bvN\b|YYYY|\.\.\.")
 FENCE = re.compile(r"^```.*?^```", re.M | re.S)
@@ -43,13 +43,10 @@ def prose(text):
 
 
 def defined_items(root):
-    items = set()
+    items = set(OWNER_WIDE)
     checklist = root / CHECKLIST
     if checklist.is_file():
         items |= set(CHECKLIST_DEFINITION.findall(checklist.read_text()))
-    design = root / DESIGN_SKILL
-    if design.is_file():
-        items |= set(SKILL_DEFINITION.findall(design.read_text()))
     return items
 
 
@@ -90,10 +87,7 @@ def item_findings(root):
 
 def path_findings(root):
     findings = []
-    generic = (root / DESIGN_SKILL).resolve()
     for name, path in distinct(root, PATHS):
-        if path.resolve() == generic:
-            continue
         text = prose(path.read_text())
         for match in BACKTICKED.finditer(text):
             token = match[1]
@@ -121,11 +115,8 @@ class GuidanceTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         (root / "docs").mkdir()
-        (root / "design/skill").mkdir(parents=True)
         (root / CHECKLIST).write_text("- [ ] **A1 — Fit.** x\n- [ ] **A2 — New.** x\n"
                                       "- [ ] **M1 — Design.** x\n")
-        (root / DESIGN_SKILL).write_text("Record decisions.\n"
-                                         "G1. Decision test.\nDC1. Decisions in code.\n")
         (root / "AGENTS.md").write_text("Use `docs/review-checklist.md`.\n")
         return root
 
@@ -135,10 +126,13 @@ class GuidanceTests(unittest.TestCase):
 
     def test_undefined_item_and_range(self):
         root = self.fixture()
-        (root / "AGENTS.md").write_text("Checks A1, G1 and DC1.\nSee M1–M3 and A1-A2.\n")
+        (root / "AGENTS.md").write_text("Checks A1, G1 and DC1.\nSee M1–M3 and A1-A2.\n"
+                                        "G4 and DC5 are not owner-wide checks.\n")
         self.assertEqual(item_findings(root), [
             "AGENTS.md:2: M1–M3 cites undefined review item M2",
-            "AGENTS.md:2: M1–M3 cites undefined review item M3"])
+            "AGENTS.md:2: M1–M3 cites undefined review item M3",
+            "AGENTS.md:3: G4 cites undefined review item G4",
+            "AGENTS.md:3: DC5 cites undefined review item DC5"])
 
     def test_rule_ids_and_fences_are_not_items(self):
         root = self.fixture()

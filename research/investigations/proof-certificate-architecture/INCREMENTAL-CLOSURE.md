@@ -375,3 +375,185 @@ paths. Set `BASELINE`, `CANDIDATE` and `WORK_ROOT` explicitly and run under
 `.github/run-check.pl`. The runner requires `shasum` for retained SHA-256
 evidence. Later test-only route counters and conformance evidence do not alter
 the measured production mechanisms.
+
+## The probe, the join and delivery over the closure universe
+
+### Question
+
+The [compile-speed work](../compile-speed/DESIGN.md#terms-without-facts)
+made each closure compute rows only for the terms whose facts are tighter
+than their path through zero, and lay matrices and stores out over those
+terms. A parallel branch had reached the same representation from a
+different workload, one function whose `match` has many arms (the N-arm
+synthetic interpreter below, and the stage-3 wasm interpreter of the
+match-dispatch investigation), together with two further changes that the
+compile-speed work did not make. With the compile-speed work on `main`
+(`13453860b`), the synthetic interpreter at N = 160 still took 8.83 s to
+check on the 14900K host and its variant with one `value_if` per arm giving
+`300_u64` or a `u8` operand 74.10 s, both accepted, while the parallel
+branch checked them in 0.24 and 0.52 s. What still scaled with the function,
+and which of the branch's changes did `main` still need?
+
+The generators are not kept as files; they are these scripts, run as
+`python3 synth.py N` and `python3 synth3.py N`:
+
+```python
+import sys
+n = int(sys.argv[1])
+o = ["alias ExitStatus = std::process::ExitStatus;",
+     "alias exit_status = std::process::exit_status;", "", "enum Op {"]
+o += [f"  A{i}(x: u16);" for i in range(n)]
+o += ["}", "",
+      "fn run(code: &Box<Slots<Op>>, stack: &Box<Array<u64>>, pc: u64, sp: u64)"
+      " -> r: u64 reads(code), writes(stack) contract {",
+      "  requires pc < code^.inner.len;", "  requires sp <= stack^.inner.len;",
+      "} {", "  let n = code^.inner.len;", "  match code^.inner[pc] {"]
+for i in range(n):
+    o += [f"    A{i}(x: xv) => {{", "      if sp >= 2_u64 {",
+          "        let s1 = sp - 1_u64;", "        let s2 = sp - 2_u64;",
+          "        let a = stack^.inner[s2];", "        let b = stack^.inner[s1];",
+          "        let c = a +wrap b;", "        set stack^.inner[s2] = c;",
+          "        let next = pc + 1_u64;", "        if next < n {",
+          "          return musttail run(code: code, stack: stack, pc: next, sp: s1);",
+          "        }", "      }", "      return 0_u64;", "    }"]
+o += ["  }", "}", "", "fn main() -> status: ExitStatus pure {",
+      "  return exit_status(code: 0_u8);", "}", ""]
+open(f"synth{n}.wf", "w").write("\n".join(o))
+```
+
+```python
+import sys
+n = int(sys.argv[1])
+o = ["alias ExitStatus = std::process::ExitStatus;",
+     "alias exit_status = std::process::exit_status;", "", "enum Op {"]
+o += [f"  A{i}(x: u8);" for i in range(n)]
+o += ["}", "",
+      "fn run(code: &Box<Slots<Op>>, stack: &Box<Array<u8>>, pc: u64, sp: u64)"
+      " -> r: u64 reads(code), writes(stack) contract {",
+      "  requires pc < code^.inner.len;", "  requires sp <= stack^.inner.len;",
+      "} {", "  let n = code^.inner.len;", "  match code^.inner[pc] {"]
+for i in range(n):
+    o += [f"    A{i}(x: xv) => {{", "      if sp >= 2_u64 {",
+          "        let s1 = sp - 1_u64;", "        let s2 = sp - 2_u64;",
+          "        let a = stack^.inner[s2];", "        let b = stack^.inner[s1];",
+          "        let w = cvt::<u8, u64>(xv^);",
+          "        let aw = cvt::<u8, u64>(a);",
+          "        let c = if aw < w {", "          give 300_u64;", "        } else {", "          give aw;", "        }",
+          "        let cw = cvt.wrap::<u64, u8>(c);", "        set stack^.inner[s2] = cw;",
+          "        let next = pc + 1_u64;", "        if next < n {",
+          "          return musttail run(code: code, stack: stack, pc: next, sp: s1);",
+          "        }", "      }", "      return 0_u64;", "    }"]
+o += ["  }", "}", "", "fn main() -> status: ExitStatus pure {",
+      "  return exit_status(code: 0_u8);", "}", ""]
+open(f"synth3_{n}.wf", "w").write("\n".join(o))
+```
+
+### Measurement
+
+A `perf` profile of `main` checking the N = 160 program on the 14900K host
+put 73.7% of samples in `contradiction_without_proofs`, 6.2% in
+`DenseClosureBounds::set`, 1.8% in `DenseClosureBounds::with_terms` and 3.7%
+in page faults raised from the probe and the implicit bounds it inserted.
+The probe's route for a state without a recorded closure, every fresh state
+such as a delivery image or a state a kill left unrecorded, laid its matrix
+over every registered term, inserted every term's implicit bounds and ran
+the fixed point with every term as a row and column, so each probe cost the
+square of the function's term count times the universe, after the closures
+themselves no longer did; its route for a recorded closure already used the
+closure universe.
+
+Two completeness losses against the compiler before the compile-speed work
+(`d6d6456cf`) appeared when the parallel branch's tests ran on `main`. A
+join kept only the disequalities its inputs stored, which are among their
+rows, so two inputs bounding a term `b` above the whole range of a `u8`
+term `a` and below it, each deriving `a != b` through zero, joined to a
+state that no longer derived it
+(`a_join_keeps_a_disequality_held_through_zero_on_opposite_sides`). A
+delivery join did the same with the edge images' stored disequalities, so a
+receiver given `300_i32` on one edge and `-5_i32` on the other was not
+delivered its disequality with a `u8` parameter the edges' states held no
+fact on, and a call requiring it was refused at FN-8
+(`value_match_delivers_a_disequality_held_through_zero_on_opposite_sides`).
+A third test found the ordinary layer of a join weaker than the join of the
+ordinary inputs: with one input contradictory only through a call-dependent
+fact, the full join has no row for that input's terms, and the ordinary
+fallback of a pair on them was never attached
+(`a_join_retakes_rows_the_ordinary_layer_adds`, `t - x` answered as
+`255 + 2^31` instead of `100 + 2^31`).
+
+### Selection
+
+Of the parallel branch, `main` already covered the matrices and stores laid
+out over the closure's terms, the implicit structure kept by the term table,
+the views through zero with transitive proofs, the promotion of a goal
+contradiction before a kill of a state with a recorded closure, and the
+ordinary layer's cells for pairs the ordinary join has no row for, each by
+its own mechanism; none of that was ported. Edge images on `main` store only
+the disequalities among their rows, so the branch's restriction of an image
+to the closure's active terms was not needed either. Three changes were
+ported, each as an amendment of `main`'s mechanism:
+
+- the proof-free probe of an unrecorded state closes the closure universe,
+  laid out over its terms, with the matrix for the goal check over the same
+  terms; under the test switch that verifies seeded closures, the probe over
+  the universe is compared with the probe over every registered term, and
+  that comparison failed on a deliberately narrowed universe (zero withheld)
+  before the change was kept;
+- a join stores a disequality between a row term and a term outside its
+  rows where the inputs bound the row term strictly above the other term's
+  range on one path and strictly below it on another, the one case the
+  joined zero bounds do not derive, the prefilter taking each side's least
+  zero bound over the inputs holding one; and the full join is retaken over
+  the rows the ordinary join holds beyond it, so every pair that receives an
+  ordinary fallback holds the full selection;
+- the delivery join evaluates each candidate disequality through every
+  image, a stored pair or a strict bound held through the image's zero bound
+  on the receiver, scanning every registered term only when the images'
+  least upper and least lower zero bounds on the receiver lie on opposite
+  sides of a value, and derives the delivered disequality on the carrier
+  side so the join's parents stay Give nodes, as the parallel branch's
+  record of its delivery work describes.
+
+### Result
+
+14900K host, `main` at `13453860b` against the port, `whitefootc FILE
+--check`, every output identical, LLVM identical across every compile
+unless noted; paired runs alternate the two compilers and report medians:
+
+| program | `main` | port | ratio |
+|---|---|---|---|
+| synthetic interpreter, N = 160 (3 paired rounds) | 9.47 s | 0.22 s | 0.024 |
+| synthetic with a `value_if` per arm, N = 160 (3 paired rounds) | 75.4 s | 0.46 s | 0.006 |
+| stage-3 wasm interpreter `v2d.wf`, 200 arms with handler calls (3 paired rounds) | 1.68 s | 0.94 s | 0.562 |
+| stage-3 wasm interpreter from `gen.py`, 21,324 lines (one run, `--emit-llvm`) | 73.71 s | 3.89 s | 0.053 |
+| the same with handlers in their arms, `gen.py --inline`, 20,642 lines (one run, `--emit-llvm`) | 431.57 s | 3.31 s | 0.008 |
+| `tests/programs/wfgrep.wf` (3 paired rounds) | 774.7 ms | 758.3 ms | 0.979 |
+| `tests/programs/fixed_run_library.wf` (3 paired rounds) | 1216.4 ms | 1221.6 ms | 1.004 |
+| Snowghost `pkg::html::tree_builder` module check, fresh cache (3 paired rounds) | 2.09 s | 1.83 s | 0.874 |
+| Snowghost `style_oracle` entry check, fresh cache (3 paired rounds) | 41.68 s | 41.47 s | 0.995 |
+
+The paired programs' LLVM was identical across every compile of both
+compilers, as was the `style_oracle` entry's. The two `gen.py` rows come
+from one CI job on the same host
+([run 37456162482](https://github.com/Ming-Research/Whitefoot/actions/runs/37456162482)),
+`main` at `2d3940ae0`, whose entailment sources equal `13453860b`'s, against
+the port at `e1c9948a2`. Each times one `whitefootc --emit-llvm` compile
+(checking, lowering and emission), the port first, of the interpreter that
+`research/experiments/match-dispatch/wasm/gen.py` writes at that revision.
+Each interpreter's LLVM is identical between the two compilers (SHA-256
+`e4d5508c...` and `38a34872...`), and peak memory falls from 0.72 to
+0.30 GB and from 1.72 to 0.29 GB.
+The Snowghost `tree_builder` medians are within the spread of its single
+runs (1.82 to 3.67 s); the entry check, the compile-speed work's own target,
+is unchanged within noise.
+
+The porting session reported these mutation outcomes for the ported tests,
+run on the 14900K host at `e557bef77` before later `main` merges and not
+repeated since: with the delivery evaluation reverted, the opposite-sides
+and one-sided delivery tests are refused at FN-8 and the unbounded-edge and
+same-side tests still pass; without the join's scan and retake, the two
+join tests fail as the measurement describes; with zero withheld from the
+probe's universe, the generated-flow test fails at the probe's own oracle.
+At `62b422f07` the repository gate passed the unit suite, the corpus and
+the static checks on Linux and macOS
+([run 37456306208](https://github.com/Ming-Research/Whitefoot/actions/runs/37456306208)).
