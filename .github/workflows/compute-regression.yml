@@ -69,6 +69,7 @@ jobs:
           test -x /usr/bin/clang
           /usr/bin/clang --version
           test "$(nproc)" -ge 2
+          lscpu | grep -E '^(Model name|CPU\(s\)):'
       - uses: actions/cache@v4
         if: steps.scope.outputs.measure == 'true'
         with:
@@ -186,18 +187,27 @@ jobs:
           test "$status" -eq 1
           grep -F -q 'VERDICT: FAIL -- 5 kernel(s) adverse at two widths' \
             "$RUNNER_TEMP/performance-results/slow/verdict.txt"
-      # The same candidate images against a copy linked with 32 bytes of
-      # never-executed code ahead of the emitted module, which moves every
-      # function after it as one more imported library function does. Every
-      # compiler-produced function starts on a 64-byte boundary
-      # (design/compiler/code-alignment.md), so the shift must change no
-      # kernel's time; a failure means this instrument would charge a change
-      # with a slowdown that placement alone produces.
+      # The same candidate images against a copy linked with 96 bytes of
+      # never-executed code ahead of the emitted module, which moves the module
+      # and everything after it as one more imported library function does:
+      # by 96 bytes, 32 within a 64-byte line, if functions are not aligned,
+      # and by one or two whole lines if every compiler-produced function
+      # starts on a 64-byte boundary (design/compiler/code-alignment.md). The
+      # control first requires that the module moved, then that the move
+      # changed no kernel's time; a failure means this instrument would charge
+      # a change with a slowdown that placement alone produces.
       - name: Qualify insensitivity to code placement
         if: steps.scope.outputs.measure == 'true' && steps.scope.outputs.qualify == 'true'
         run: |
           WHITEFOOT_CHECK_TIMEOUT=180 perl .github/run-check.pl performance-shifted-images \
-            make -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-shifted" PLACEMENT_PAD=32
+            make -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-shifted" PLACEMENT_PAD=96
+          for kernel in $(sed -n 's/^KERNELS := //p' tests/performance/Makefile); do
+            before=$(nm "$RUNNER_TEMP/performance-candidate/$kernel" | awk '$3 == "wf_fixture_body" { print $1 }')
+            after=$(nm "$RUNNER_TEMP/performance-shifted/$kernel" | awk '$3 == "wf_fixture_body" { print $1 }')
+            test -n "$before" && test -n "$after" || { echo "::error::$kernel has no wf_fixture_body"; exit 1; }
+            test "$before" != "$after" || { echo "::error::the placement pad did not move $kernel's module"; exit 1; }
+            echo "$kernel: wf_fixture_body $before -> $after"
+          done
           WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-placement-control \
             bash tests/performance/compare.sh "$RUNNER_TEMP/performance-candidate" \
             "$RUNNER_TEMP/performance-shifted" "$RUNNER_TEMP/performance-results/placement"

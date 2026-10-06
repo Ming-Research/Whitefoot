@@ -51,7 +51,9 @@ remedy's own A/B, alignment on the Whitefoot side of the link against the flags
 `whitefootc` passes clang, holds every one of its sixteen lines inside
 [0.954, 1.010]. **So the compiler driver is unchanged**: the flags cost nothing
 and buy less than this host can resolve, and the sensitivity they were meant to
-remove is not the kind of thing they reach. Two sections then carry that
+remove is not the kind of thing they reach. (2026-10-06: those flags never
+aligned an emitted function, and the compiler now does; see the dated note
+below.) Two sections then carry that
 same null check off the development host and onto the hosted runners, run
 `34626670962` at `7c18d3e6`, `ubuntu-24.04` then `macos-14`, both arms built at
 the work unit the runtime already compiles: they are A/B instruments and neither

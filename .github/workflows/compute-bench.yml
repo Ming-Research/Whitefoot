@@ -92,10 +92,11 @@ defaults:
     shell: bash
 
 # Hosted placement runs land on whichever processor model the pool assigns, so
-# several may run at once to reach a given model; the 14900K's runs queue.
+# several may run at once to reach a given model; a placement run on the
+# 14900K waits for the one before it instead of cancelling it.
 concurrency:
   group: compute-bench-${{ github.ref }}-${{ inputs.experiment }}-${{ inputs.placement_runner }}${{ inputs.experiment == 'placement' && inputs.placement_runner == 'github' && format('-{0}', github.run_id) || '' }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ inputs.experiment != 'placement' }}
 
 env:
   CARGO_TERM_COLOR: never

@@ -112,6 +112,13 @@ functions does to a kernel that moves.
 - **The same alignment through host-compiler arguments**,
   `-mllvm -align-all-functions=6`: an internal LLVM option the regression
   Makefile and a link-time-optimized link would each have to repeat.
+- **Aligning each module's code section without padding each function**: one
+  `align 64` definition raises the object's `.text` alignment to 64 bytes, so
+  the module's functions keep their offsets within a line whatever precedes
+  the module, without padding between them. A change in one function's size,
+  which most compiler changes make, still moves every later function of the
+  module within its line, and the C runtime has no such option short of
+  aligning its functions.
 - **Aligning only the functions that are hot**: the readings below show
   that a kernel's time depends on where several of its functions fall, and
   which are hot is not known when the module is emitted.
@@ -152,7 +159,8 @@ placement of several functions rather than the chunk function's start alone:
 slowest unaligned image at widths 2 and 4. Six rounds of the other four
 kernels showed spreads of a few percent under either build and no cost of
 alignment beyond that noise. Alignment adds 48 bytes of never-executed padding
-per function on average: 576 to 1,280 bytes per kernel module.
+per kernel module, 576 to 1,280 bytes, 46 to 56 bytes for each function the
+module defines.
 
 ## Method
 
@@ -171,7 +179,11 @@ each at six placements: `p0`; `m16`, `m32` and `m48`, that many bytes linked
 ahead of the module, which moves the module and everything after it as a new
 import does; and `r16` and `r48`, that many bytes linked ahead of the runtime
 only, as a grown runtime unit does. A byte-identical copy of `U p0`, `null`,
-is timed as its own image. Every image is verified at widths 1, 2 and 4, then
+is timed as its own image. Under alignment a pad cannot move code within a
+line: in a local build with the hosted runners' toolchain, `FR`'s `m16` and
+`r16` reproduce `p0`'s addresses, and its `m32`, `m48` and `r48` move code by
+exactly 64 bytes, so `FR`'s invariance is invariance to whole-line shifts,
+and its `m16` and `r16` act as further nulls. Every image is verified at widths 1, 2 and 4, then
 each round runs every image once per kernel and width, one process each, with
 the regression runner's one warmup and five recorded calls, in an order that
 rotates and alternates direction from round to round. Every process is
@@ -227,9 +239,29 @@ revision's compiler and flags, and compares it with the `FR` images.
 
 ## Results
 
-Both decisive runs are at `d4f67df6`, the unaligned tree being its merge base
-with `main`, `364f86c2`. Cells are milliseconds per call, the median over the
+The decisive runs are at `d4f67df6` or `8097c03a`, which differ only in
+records and workflow text, the unaligned tree being their merge base with
+`main`, `364f86c2`. Cells are milliseconds per call, the median over the
 rounds of each process's median call.
+
+The criterion compares `FR` with `F`, not with `U`. On the cell medians,
+`U`'s median placement over `FR`'s, for `records` (below 1 means the aligned
+images are slower):
+
+| run | processor | width 1 | width 2 | width 4 |
+|---|---|---|---|---|
+| 37434117176 | i9-14900K | 0.994 | 0.995 | 0.997 |
+| 37434120227 | EPYC 7763 | 1.001 | 1.008 | 0.988 |
+| 37436514442 | EPYC 7763 | 1.001 | 1.010 | 0.990 |
+| 37436517830 | EPYC 7763 | 1.000 | 1.012 | 0.985 |
+| 37439142869 | EPYC 7763 | 0.999 | 0.982 | 0.986 |
+| 37439146282 | EPYC 7763 | 0.999 | 1.021 | 0.968 |
+| 37439150433 | EPYC 7763 | 1.003 | 1.051 | 0.975 |
+| 37436510214 | EPYC 9V45 | 0.953 | 1.012 | 1.107 |
+| 37439138936 | Xeon 8370C | 0.970 | 1.021 | 1.001 |
+| 37432965442, three rounds | EPYC 9V74 | 0.954 | 0.877 | 0.910 |
+
+The reducer now prints this comparison, paired by round, for later runs.
 
 ### i9-14900K, 20 rounds (run 37434117176)
 
@@ -325,17 +357,27 @@ select it. The replay passed. `records`:
 
 ### Hosted ubuntu-24.04, AMD EPYC 9V74
 
-The three-round sizing run (run 37432965442) landed on a 9V74 and read the
-aligned layout of `records` slower than every unaligned placement: at width 2,
-`U` 7.533 to 8.151 ms across its six placements against `F` 8.664 to 8.735,
-a cost ratio of 0.898 against `U` in all three rounds, 0.955 at width 1 and
-0.929 at width 4. Three rounds select nothing. Two `compute-regression` runs
-of this change against `main` agree with it without naming their processor:
-run 37432958961 at `1bfe9449` failed `records` at width 2, 0.875429, and width
-4, 0.850267, five of five pairs lower each, close to that sizing run's `U` at
-`p0` over `F` at `p0`, 0.877 and 0.945; run 37434115541 at `d4f67df6` passed,
-`records` reading 0.992475, 0.969618 and 0.998555. Decisive runs on a 9V74
-are pending.
+No decisive run reached a 9V74. The three-round sizing run (run 37432965442)
+did, and read the aligned `records` slower than every unaligned placement at
+width 2: `U` 7.533 to 8.151 ms across its six placements against `FR` 8.637
+to 8.833 and `F` 8.664 to 8.735. On the medians `FR` took 4.8, 14.0 and 9.9
+percent longer than `U` at widths 1, 2 and 4. Three rounds select nothing.
+
+`compute-regression` on this change compares the aligned candidate with
+`main`'s unaligned images on whichever processor the hosted pool assigns,
+which its log did not name until this change added it. It passed at
+`d4f67df6` and `8097c03a` and failed on `records` at three commits that change
+no compiler source, five of five or four of five pairs lower each time:
+
+| run | commit | width 2 | width 4 |
+|---|---|---|---|
+| 37432958961 | `1bfe9449` | 0.875429 | 0.850267 |
+| 37439315247 | `3ce59221` | 0.879152 | 0.862255 |
+| 37441911232 | `210e06ae` | 0.914782 | 0.926627 |
+
+These are of the size the 9V74 sizing run reads for `main`'s placement, `U`
+at `p0` over `FR` at `p0`: 0.884 at width 2 and 0.917 at width 4. Every one of
+those runs passed its placement control.
 
 ## Conclusion
 
@@ -346,27 +388,33 @@ are pending.
 - **The module alone.** `F` failed Q1 as written in one cell in three of the
   eight hosted runs (`records` on two 7763s, `stencil` on the 8370C) and held
   on the 14900K and the 9V45. The adopted configuration is `FR`.
-- **Cost.** `FR` cost nothing against `F` anywhere. Against the unaligned
-  layouts it lay within about 3 percent on the cell medians everywhere a
-  decisive run landed; the criterion did not compare `FR` with `U` directly,
-  and the reducer now prints that comparison for later runs. The one larger
-  reading is the 9V74's three-round run, 5 to 10 percent for `records`, with
-  a `compute-regression` run that agrees.
+- **Cost.** `FR` cost nothing against `F` anywhere. Against `U`'s median
+  placement, the criterion did not judge it; on the cell medians the aligned
+  `records` took between 4.9 percent longer (the 9V45 at width 1) and 9.7
+  percent less time (the 9V45 at width 4) in every decisive run. The larger
+  readings are the 9V74's: 4.8 to 14.0 percent longer in a three-round run,
+  and three of five `compute-regression` runs of this change failing on
+  `records` against `main` at ratios of 0.850 to 0.927, 7.9 to 17.6 percent
+  longer.
 - **Loop alignment** was selected nowhere, though it made `records` faster at
   some widths on the 9V45 and the 8370C.
 - **The event.** Every replay of PR #251's runtime change under the aligned
-  compiler passed `compare.sh`, and `compute-regression`'s new placement
-  control passed on the aligned compiler in the hosted runs at `1bfe9449`,
-  `d4f67df6` and `8097c03a` and failed locally on the unaligned one
-  (`records` 0.748 at width 1 and 0.882 at width 4).
+  compiler passed `compare.sh`. `compute-regression`'s placement control
+  passed on the aligned compiler in all five hosted runs, with a 32-byte pad,
+  which moves aligned code by 0 or 64 bytes depending on where the code ahead
+  of the module ends (64 in a local build). It now pads by 96 bytes, which
+  moves aligned code by one or two whole lines and unaligned code by 32 bytes
+  within a line, and checks that the module moved; locally it fails on the
+  unaligned compiler (`records` 0.790, 0.905 and 0.863) and passes on the
+  aligned one.
 
 ## Limitations
 
 - A 64-byte boundary fixes where instructions fall within their line. Effects
   keyed on higher address bits, such as branch-predictor aliasing between
   functions or 4 KiB aliasing, can remain: the aligned arms' `m` and `r`
-  placements shift by 0 or 64 bytes, and one cell of one 7763 run moved under
-  such a shift.
+  placements shift by 0 or 64 bytes, and `F`, the module aligned over the
+  unaligned runtime, moved under such a shift in one cell of one 7763 run.
 - Apple's arm64 cores use 128-byte lines. The macOS runner resolves only
   about 20 percent ([compute-runtime results](../compute-runtime/RESULTS.md)),
   so nothing here is measured on arm64.

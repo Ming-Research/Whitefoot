@@ -115,6 +115,45 @@ fn every_emitted_and_linked_llvm_definition_starts_on_a_64_byte_boundary() {
     }
 }
 
+/// The compiler-owned C runtime compiles with the host arguments every link
+/// takes, which start each of its functions on a 64-byte boundary as the
+/// emitted module's are, and the regression instrument's `runtime.mk`, which
+/// compiles the same runtime outside the driver, names the same arguments.
+#[test]
+fn the_c_runtime_compiles_with_64_byte_function_alignment() {
+    let makefile = include_str!("../../../runtime.mk");
+    let instrument: Vec<&str> = makefile
+        .lines()
+        .find_map(|line| line.strip_prefix("NATIVE_OPTIMIZATION_FLAGS := "))
+        .expect("runtime.mk must name NATIVE_OPTIMIZATION_FLAGS")
+        .split_whitespace()
+        .collect();
+    assert_eq!(
+        instrument,
+        crate::HOST_OPTIMIZATION_ARGUMENTS,
+        "runtime.mk must compile the runtime with the driver's host arguments"
+    );
+    let mut child = Command::new("/usr/bin/clang")
+        .args(["-x", "c", "-", "-S", "-o", "-"])
+        .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("invoke host clang");
+    std::io::Write::write_all(
+        child.stdin.as_mut().expect("clang stdin"),
+        b"int wf_alignment_probe(int x) { return x + 1; }\n",
+    )
+    .expect("send the probe to clang");
+    let output = child.wait_with_output().expect("wait for host clang");
+    assert!(output.status.success(), "clang rejected the probe");
+    let assembly = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        assembly.contains(".p2align\t6"),
+        "a runtime function compiled with the host arguments must start on a 64-byte boundary:\n{assembly}"
+    );
+}
+
 const LANE_FRAME_LAYOUT_FUNCTIONS: &[u8] =
     br#"fn exact_frame(values: Array<u8, 255>) -> result: u8 pure {
   return values[0_u64];

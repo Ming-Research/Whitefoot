@@ -1477,7 +1477,7 @@ compiler aligned its own definitions
 ([code placement](../../investigations/code-placement/DESIGN.md#clang-does-not-align-llvm-input-with--falign-functions))
 no kernel function was aligned by this variable; since then `whitefootc`
 itself starts every emitted and runtime function on a 64-byte boundary, and
-only `-falign-loops=32` is a flag the driver does not pass. It exists for the regression gate's paired
+only `-falign-loops=32` is a flag the driver does not pass. `WF_ALIGN` exists for the regression gate's paired
 comparison: the gate's two arms are separate images linked from separate
 objects, their functions do not land at the same offsets even from
 byte-identical sources, and under these flags **those translation units'**

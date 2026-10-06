@@ -1742,16 +1742,22 @@ rarely insert at the same place.
 
 - **The aligned layout of `records` is slower on AMD Zen 4.** Every
   compiler-produced function starts on a 64-byte boundary, which makes the
-  compute kernels' times independent of where they are linked, but on the
-  hosted AMD EPYC 9V74 it fixes `records` at a layout about 5 to 10 percent
-  slower than each unaligned shift that was measured, while the 14900K, a
-  local Intel Xeon and the other four kernels show no such cost
+  compute kernels' times independent of where they are linked, but on a
+  hosted AMD EPYC 9V74 it fixes `records` at a layout that took 5 to 14
+  percent longer than its median unaligned placement in a three-round run,
+  and three of five `compute-regression` runs of the change failed on
+  `records` against `main`, 8 to 18 percent longer; on the 14900K and the
+  EPYC 7763 the aligned layout costs nothing, and on a 9V45 and a Xeon 8370C
+  it costs 3 to 5 percent at one worker and gains at others
   ([code placement](../research/investigations/code-placement/DESIGN.md#results)).
-  The kernel's UTF-8 validation loop is dense in branches, and which of them
-  share a 64-byte line follows the layout. On a hosted EPYC 9V45,
-  `-falign-loops=32` on top of the function alignment made `records` 4 to 9
-  percent faster at every width, though its time then moved with placement
-  in some cell; on the 14900K and the EPYC 7763 it changed nothing. Find what the aligned layout costs
+  A hypothesis, not yet tested: the kernel's UTF-8 validation loop is dense in
+  branches, and which of them share a 64-byte line follows the layout. On the
+  9V45, `-falign-loops=32` on top of the function alignment made `records` 4
+  to 9 percent faster at every width, though its time then moved with
+  placement in a cell that run did not locate; on the 14900K and the EPYC
+  7763 it was faster at two widths of no kernel. Aligning only each module's
+  section start, which keeps the linker's relative layout, is another
+  candidate, refused for now in `design/compiler/code-alignment.md`. Find what the aligned layout costs
   on Zen 4, for example with branch-misprediction and op-cache counters on
   the aligned and the fastest unaligned layout, and look for a deterministic
   layout rule, such as a loop alignment or an ordering of a function's
