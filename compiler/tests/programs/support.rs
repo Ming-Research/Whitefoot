@@ -688,17 +688,8 @@ impl CompiledProgram {
 
     /// Runs the program with standard input on a pipe its writer holds open
     /// and silent for `delay` before it writes `bytes` and closes, so the
-    /// program can wait on a writer that has sent nothing yet.
-    pub fn run_with_late_input(
-        &self,
-        bytes: &[u8],
-        delay: std::time::Duration,
-        native_ring: bool,
-    ) -> Output {
-        self.run_with_late_input_and_settings(bytes, delay, native_ring, &[])
-    }
-
-    /// [`Self::run_with_late_input`] with the runtime settings named.
+    /// program can wait on a writer that has sent nothing yet, with the
+    /// runtime settings named.
     pub fn run_with_late_input_and_settings(
         &self,
         bytes: &[u8],
@@ -722,6 +713,49 @@ impl CompiledProgram {
         let writer = std::thread::spawn(move || {
             std::thread::sleep(delay);
             writer.write_all(&bytes)
+        });
+        let output = child.wait_with_output().expect("wait for compiled program");
+        writer
+            .join()
+            .expect("input writer thread")
+            .expect("fill input pipe");
+        output
+    }
+
+    /// Runs the program with `bytes` written to its standard input `delay`
+    /// after the program first writes to its standard output, the signal
+    /// that it has reached the point the case times from.
+    pub fn run_with_input_after_first_output(
+        &self,
+        bytes: &[u8],
+        delay: std::time::Duration,
+        native_ring: bool,
+        settings: &[(&str, &str)],
+    ) -> Output {
+        let (reader, mut writer) = std::io::pipe().expect("create the input pipe");
+        let mut command = Command::new(&self.executable);
+        command
+            .current_dir(&self.directory)
+            .stdin(Stdio::from(reader))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        select_route(&mut command, native_ring);
+        for (name, value) in settings {
+            command.env(name, value);
+        }
+        let (child, started) = ProgramChild::spawn_signalling_first_output(&mut command)
+            .expect("spawn compiled program");
+        let bytes = bytes.to_vec();
+        let writer = std::thread::spawn(move || {
+            if started
+                .recv_timeout(crate::support::PROGRAM_DEADLINE)
+                .is_ok()
+            {
+                std::thread::sleep(delay);
+                writer.write_all(&bytes)
+            } else {
+                Ok(())
+            }
         });
         let output = child.wait_with_output().expect("wait for compiled program");
         writer

@@ -77,6 +77,13 @@ void wf__completion_file_sync_submit(
     void *record
 );
 
+/* Sets the file's byte length [PRE-2], leaving appends at its new end. */
+void wf__completion_file_truncate_submit(
+    int descriptor,
+    uint64_t length,
+    void *record
+);
+
 /* A record no host operation completes: the driver whose context waits on
  * it completes it once the monotonic clock has reached `deadline`
  * (`sleep_until` [PRE-2]). */

@@ -152,10 +152,13 @@ in the local worktree. Updating a work-branch PR never authorizes a merge into
 `main`.
 
 **The design tree in this project.** The `design-tree` skill is the one
-recurring procedure kept as a skill. It is written for any project and lives
-in `design/skill/`; `.agents/skills/` (Codex) and `.claude/skills/` (Claude
-Code) hold only links to it, and its body loads when its description matches
-the task. Here its roles are:
+recurring procedure kept as a skill. It is written for any project, is
+maintained in [Design-skill](https://github.com/Ming-Research/Design-skill)
+and is pinned here as the `design/skill/` submodule, which this repository
+never edits: a change is made in Design-skill and adopted by moving the pin,
+naming the revision adopted and why. `.agents/skills/` (Codex) and
+`.claude/skills/` (Claude Code) hold only links to it, and its body loads when
+its description matches the task. Here its roles are:
 
 - live trees: `design/language.md` and `design/compiler.md` with their
   subdirectories;
@@ -317,8 +320,8 @@ status banner or self-description merely to satisfy this list.
 - `AGENTS.md`: goal and priorities, authority, how work proceeds, the approval
   and merge rules, integrity and hygiene rules, checks and review; not
   research narration or a design procedure the `design-tree` skill holds.
-- `design/skill/`: the project-independent design-tree procedure; nothing
-  specific to Whitefoot.
+- `design/skill/`: the project-independent design-tree procedure, a
+  submodule of Design-skill; nothing specific to Whitefoot.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff; not
   language semantics, task outcomes or a procedure stated in full elsewhere.
 - `docs/constitution.md`: complete statements of purpose, objectives,
@@ -389,7 +392,8 @@ preserve the full gate before merge.
   repository invariants, the specification archives, the README and its
   translation changed together, prose integrity, guidance references,
   compiler sources over 4,000 lines named in `docs/todo.md`, and the design
-  tree's form.
+  tree's form. It needs the `design/skill` submodule
+  (`git submodule update --init`).
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime; `make check-groups`
   lists the groups. `gate.yml` runs those groups on Linux and macOS on every
@@ -403,6 +407,13 @@ preserve the full gate before merge.
   `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
   timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
   experiments and never a gate.
+- Compiler releases: `compiler-release.yml`, dispatched when a downstream
+  project needs a main commit, publishes that commit's compiler as release
+  `wf-<12 hex digits>`, or an unmerged commit's as experiment release
+  `wf-exp-<12 hex digits>`, and `compiler-release-cleanup.yml` removes
+  releases older than 30 days each week, keeping the newest of main; each
+  file's header gives the commands and contents
+  ([downstream releases](design/compiler/downstream-releases.md)).
 - `make install-hooks` optionally reports an edit of a released archive at
   commit.
 

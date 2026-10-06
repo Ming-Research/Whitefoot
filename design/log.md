@@ -5,6 +5,28 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 A file set to a length
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: Q40, adding a way to cut an append-only file whose end did not load, as Redis does, was approved in the firn session of PR #245 (2026-10-05). In the session of 2026-10-05, written in Chinese, after the handoff of PR #251 that showed the amended decision and the v0.93 change: "The two design nodes OK. The spec OK" (translated).
+
+Summary: A file is written by appending and set to a length: `truncate_file` sets the length of an open `WriteFile` so that the next append writes after it, because an append-only log whose end did not load must be cut after its last whole record before anything is appended, as Redis cuts its append-only file. Truncation leaves the refused-for-now list; positioned writes, renaming, a truncation by name and a specified crash model stay refused.
+## 2026-10-05 Compiler releases for projects outside this repository
+
+Nodes: compiler/downstream-releases
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, translated: Firn and Halo leave for repositories of their own (Q43 A); a downstream takes a published compiler instead of building it (Q44 B); no scheduled downstream CI, "I only need to have an agent often update every downstream project to the latest Whitefoot" (Q45); the design-tree skill as a submodule everywhere (Q49 B); releases made when a downstream needs one, "clean up those older than a month" (Q51); the documentation bundle deferred, "put it in the TODO; future releases will certainly carry it, not now"; "no automatic releases, manual is fine; the 30-day cleanup is fine for now, it may need another way once the rapid-development period is over"; and after the handoff of PR #249: "The two design nodes OK".
+
+Summary: Programs written in Whitefoot that are projects of their own live in their own repositories with their own gates, because one shared gate ran the compiler's suite on every application push and the applications' cases on every compiler push while their real gates belong in no compiler gate. A downstream pins a compiler release by name, `wf-` and twelve hex digits of a main commit whose gate passed, made by hand on request, with experiment releases `wf-exp-` for unmerged commits on experiment branches; a specification version is no pin, since the compiler changes within one. Releases carry no documents for now, provisionally. A weekly run removes releases published more than 30 days ago except the newest of main, provisionally for the period of rapid change. This repository's gate builds no downstream program; the periodic upgrade finds a compiler change that breaks one. Refused: application lanes in this gate, one repository for every application, releases per specification version or per day, a Whitefoot submodule in each downstream, and a scheduled downstream run.
+
+## 2026-10-05 A box pinned across calls that cannot replace it; cache pruning and derived addresses refused
+
+Nodes: compiler/match-dispatch-lowering, compiler/incremental-compilation
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff that presented decisions Q17-Q23 on PRs #228, #229, #232, #233 and #235 (heads `382e2b05e`, `357f343e4`, `ccb71f1ef`, `312273610` and `b2d9af410`): "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated), and then, asking for one combined PR: "just put all the content together, one PR, I'll look at it and merge if it is fine" (translated). The checker decisions Q20, Q22 and Q23 are carried by a separate change onto main's closure work.
+
+Summary: A passed-through reference whose box the loop keeps stays pinned when the loop hands it to non-waiting callees whose every declared write lies below that box's content, because such a callee cannot replace the box [EFF-1, EFF-5]; removing the stack box's per-dispatch reload raised the stage-3 wasm interpreter's CoreMark score 3.8% (Q17). Addressing frame slots from a pointer each split part derives at entry is refused for now: with an accumulator register it raised the score 0.9%, below its 2% criterion, and it reopens when another interpreter or an x86-64 measurement shows at least 2% (Q21). The compiler does not prune cache directories: a developer's local cache is the developer's to clean (Q18). Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md).
 ## 2026-10-05 Raise a time budget by a fixed 10 s
 
 Nodes: compiler/verification

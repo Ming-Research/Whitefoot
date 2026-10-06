@@ -1053,17 +1053,6 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
-- **The cross-map audit test counts on the scheduler.** `holds_across_maps`
-  (`compiler/src/backend/concurrent_map_test.c`) stops its audit thread
-  when the four writers finish and then requires two audits, one holding
-  keys and one holding both maps whole. On the two-CPU `completion-linux`
-  runner the audit thread can be starved for the writers' whole run: it
-  failed with 1 audit on main and 0 on a work branch, both on 2026-10-04,
-  with no change to the map. The change: keep the writers running until the
-  audit has completed both kinds of hold, so the count no longer depends on
-  how threads are scheduled while every audit still overlaps writers.
-  Reopen with the next change to that test or its next `io-hosts.yml`
-  failure.
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to
@@ -2245,16 +2234,17 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files can only be appended.** `std::fs` opens a file for appending,
-  appends, syncs and closes it [PRE-2], and has no positioned write,
-  truncation, rename, removal, directory creation, directory sync, create rule
-  other than create-if-missing, or way to descend into a subdirectory for
-  writing. A program cannot rewrite a log compactly, as Redis's
-  `BGREWRITEAOF` writes a new file, syncs it, renames it over the old one and
-  syncs the directory, nor clean up a file it made; the append-only surface
-  was chosen as the one the persistent programs in view needed
+- **Files can only be appended or set to a length.** `std::fs` opens a file
+  for appending, appends, sets its length, syncs and closes it [PRE-2], and
+  has no positioned write, rename, removal, directory creation, directory
+  sync, create rule other than create-if-missing, or way to descend into a
+  subdirectory for writing. A program cannot rewrite a log compactly, as
+  Redis's `BGREWRITEAOF` writes a new file, syncs it, renames it over the old
+  one and syncs the directory, nor clean up a file it made; the surface was
+  chosen as the one the persistent programs in view needed
   (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
-  directories and append-only files"). Each addition is a specification
+  directories and append-only files"), and `truncate_file` was added for
+  cutting a log whose end did not load. Each addition is a specification
   change to `std::fs` taking the write half. Validate with a program that
   rewrites its log through a new file and a rename, and survives being
   stopped between the two steps with one of the two files whole. Reopen when
@@ -2450,16 +2440,47 @@ rarely insert at the same place.
   source and graph invalidation. Reopen when incremental compiler work next
   targets invocation identity.
 
+- **A compiler release carries no documents for its downstream writers.**
+  `compiler-release.yml` publishes `whitefootc`, a manifest and checksums
+  only, so an agent writing a downstream project reads the specification,
+  the maintained programs and the standard library's interfaces in this
+  repository at the release's commit
+  ([downstream releases](../design/compiler/downstream-releases.md)). That
+  ties every downstream writer to this repository's layout and to network
+  access at the moment it writes code, and gives no single list of what a
+  writer needs. The change: choose what a release carries for writers, such
+  as the specification, `lib/std`'s `module.wfm` interfaces, `docs/patterns.md`
+  and selected programs, in what form and under what stable names, and add it
+  to each release. The owner deferred the choice as larger than the release
+  mechanism; future releases are to carry it. Reopen when the downstream
+  projects' first upgrades show which documents their writers read, or when a
+  writer has to work without access to this repository.
+
 ## Interpreter dispatch lowering
 
-- **Build-time toolchain probes are not rerun when the toolchain changes.**
-  `compiler/build.rs` probes the assembler for the no-capture spelling and
-  for `preserve_none`, but declares no `rerun-if` dependency on the
-  assembler, so after a clang upgrade the recorded answers stay until the
-  build script reruns for another reason. A stale `preserve_none` answer
-  after a downgrade would emit a convention the assembler refuses. Track
-  the assembler's identity (its path and version output) as a rerun input.
-  Reopen when a host's clang changes under an existing build directory.
+- **Halo's `AddRR` arm copies its `Value` operands to the stack before
+  testing their tags, for a reason not yet attributed.** In Halo's
+  interpreter (worktree of branch claude/halo-slice1, `lib/halo/vm/
+  dispatch.wf` arm `AddRR` inlining `instruction_add_rr` from
+  `lib/halo/vm/handlers.wf`), the split arm copies both 16-byte operands
+  from the register file to stack temporaries (`ldr q0/q1; stp q0, q1,
+  [sp, #0x70]`) and reads tag and payload back from the stack. Two
+  standalone witnesses of the same `match` shapes (a nested `match` on
+  `regs^.inner[b]`, and `let` bindings handed to an out-of-line slow path)
+  read the tag from the slot itself, so the cause lies in the surrounding
+  `run` (eight parameters, an inlined handler, a large live set, or the
+  `Step` value the arms build), not in the `match` lowering alone. Impact:
+  two stores and two dependent reloads on Halo's hottest arm. The change:
+  reduce `run` until the copy disappears, then fix the lowering that causes
+  it. Validate on `run.body.arm.20`'s machine code and Halo's fib timing.
+  Reopen when Halo's dispatch is next measured.
+- **An enum's tag is an `i32` whatever its variant count.** Halo's `Cell`
+  (a tag, three `u8` and one `u32` payload) has a 12-byte stride where a
+  one-byte tag would pack it into 8; an interpreter's code array is then a
+  half larger than needed, and each fetch spans more cache. The change: size
+  the tag to the variant count and order fields to pack, a layout decision
+  for compiler/payload-enum-layout. Validate with Halo's dispatch timings and
+  the wasm interpreter's `Op` stride. Reopen with that layout decision.
 
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,
@@ -2471,22 +2492,18 @@ rarely insert at the same place.
   as the next dispatch-lowering change, the invariant-header work having
   landed.
 
-- **Values kept in the frame past the registers are unmeasured.** A split
-  dispatch loop whose parts need more argument registers than the
-  convention has keeps the values it cannot change in frame slots, which
-  each part loads (compiler/match-dispatch-lowering); its cost against
-  whole-function emission has not been measured. Validate with a loop past
-  twelve parameters on x86-64 or past eight under the C convention on
-  arm64, comparing cycles with whole emission, and Halo's VM under the C
-  convention. Reopen with the first consumer whose loop needs the frame.
-
-- **A `match` on a place copies the scrutinee into a frame slot.** The
-  emitter copies the matched value into a slot to read its tag while the
-  arms read their binders from the place itself. In one function the host
-  removes the copy; in a split loop it cost a store and a store-forwarded
-  load per dispatch until the slot became part-local. Reading the tag from
-  the place would remove the copy everywhere. Low priority; reopen if a
-  profile shows the copy outside split loops.
+- **Values kept in the frame past the registers are measured on one case
+  only.** A split dispatch loop whose parts need more argument registers
+  than the convention has keeps the values it cannot change in frame slots
+  (compiler/match-dispatch-lowering). With one value spilled under
+  `preserve_none` on arm64 the split loop takes 24-36% fewer cycles than
+  the same loop emitted whole
+  (`research/experiments/match-dispatch/RESULTS.md`, "Values kept in the
+  frame past the registers"); more spilled values, the C convention and
+  x86-64 are unmeasured. Validate with the same S/W pair under the C
+  convention on arm64 (8 registers) and on the 14900K. Reopen with the
+  first consumer whose loop spills several values, or a host without
+  `preserve_none`.
 
 - **Firn GET retains an Entry copy because its existing byte slot makes the
   frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
@@ -3332,16 +3349,17 @@ condition under which it is taken up.
 
 ## Verification tooling
 
-- **The local app-build cache never evicts.** Outside CI the corpus tests
-  build firn with the compiler's incremental cache under
-  `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`
-  in `compiler/tests/programs/support.rs`). Each new compiler binary adds
-  records beside the old ones, which no later build reads, and an
-  interrupted write leaves its `.partial` file, so the directory grows
-  until someone removes it. The change: drop records of other compiler
-  identities and stale partial files when the cache opens, or prune by age.
-  Validate with the directory's size staying flat across compiler rebuilds.
-  Reopen when the cache directory's growth is noticed on a developer host.
+- **`make -C compiler format` depends on the host's stable rustfmt.**
+  `compiler/rust-toolchain.toml` pins only the `stable` channel, and
+  rustfmt 1.10.0 (2026-09-28, on the 14900K host) reformats five files that
+  rustfmt 1.9.0 (2026-09-01, on the M1) leaves alone: `driver/packages.rs`,
+  `driver/tests.rs`, `graph.rs`, `prelude.rs` and
+  `tests/conformance/adapter.rs`. Formatting is an authoring command, not a
+  gate, so no check fails, but an author on the newer toolchain must revert
+  unrelated hunks by hand. The change: pin the channel to a dated release, or
+  reformat once with the newer rustfmt when every host has it. Validate with
+  `cargo fmt --all -- --check` clean on both hosts. Reopen when a formatting
+  diff next lands in an unrelated change.
 
 - **firn's network cases now and then lose their first connection when many
   cases run at once on a 32-CPU host.** `cargo test --test corpus` on
@@ -3466,15 +3484,6 @@ condition under which it is taken up.
   bypasses the owned process, or when the tests' process calls are next
   reorganized.
 
-- **The design-tree skill's tests also test this project's CI script.**
-  `design/skill/test_lint.py` runs `.github/design-review-base.sh` in nine
-  of its cases, so a project that copies `design/skill/` gets failing tests,
-  although the skill is meant to move to another project unchanged. Move
-  those cases to a `--self-test` of `design-review-base.sh` wired into
-  `make static`, as the other `.github` scripts do, and keep only the lint's
-  own cases in the skill. Validate that each moved case still fails once for
-  its intended reason. Reopen when the skill is extracted or the CI base
-  selection changes.
 - **Static verification uses inconsistent, mutable comparison refs.** The
   root `spec-archives` target hard-codes local `main`; after a branch integrates
   current upstream, an older local ref can report multiple new archives even

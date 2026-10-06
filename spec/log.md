@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-05 v0.93: setting a file's length
+
+Rules: changed PRE-2
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff of PR #251 that showed the change with its before and after behavior: "The spec OK" (translated); the choice is Q40, approved in the firn session of PR #245.
+
+Summary: PRE-2's `std::fs` gains `truncate_file(factory, file: &WriteFile, length: u64) -> Result<unit, IoError>`, which sets the open file's length to `length`, removing the bytes past it or adding zero bytes up to it, the next append writing after them; before it, no operation changed a file's length. firn needs it to cut an append-only file whose end did not load before appending, as Redis 7.0.15 does with `aof-load-truncated`.
+
 ## 2026-10-05 v0.92: shared maps and several objects per atomic statement
 
 Rules: TYPE-6, TYPE-9, TYPE-10, TYPE-11, REF-1, REF-4, OWN-7, OP-4, OP-9, ENT-2, MSR-1, WAIT-2, SHARE-1, SHARE-2, SHARE-3, PRE-1

@@ -3906,6 +3906,18 @@ void wf__completion_file_sync_submit(
     wf_bridge_dispatch(held);
 }
 
+void wf__completion_file_truncate_submit(
+    int descriptor,
+    uint64_t length,
+    void *record
+) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_TRUNCATE;
+    held->request.operation.truncate.descriptor = descriptor;
+    held->request.operation.truncate.length = length;
+    wf_bridge_dispatch(held);
+}
+
 /* A sleep has no engine: the driver whose context waits on the record
  * completes it at its deadline, and one already reached completes here. */
 void wf__completion_sleep_submit(
