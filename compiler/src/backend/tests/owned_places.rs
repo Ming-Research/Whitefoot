@@ -624,11 +624,98 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
-        // The call inside relay can place its result in its consumed second
-        // input's backing while choose returns its first input. Retained calls
-        // keep snapshot ordering observable: save the second input privately
-        // before the first input initializes result storage, or the branch
-        // changes and returns 99 instead of 11.
+        // `Row` is one word, so `choose` returns it in registers and its
+        // public entry constructs it in a slot of its own
+        // (compiler/result-registers); the caller's destination cannot alias
+        // an input here. The destination-sized form is
+        // `destination_results_keep_snapshots_of_inputs_their_caller_aliases`.
+        // Retained calls keep each call boundary observable.
+        assert_success(&retain_calls(&module));
+    }
+}
+
+/// The destination-sized form of the case above: `Row` is four words, more
+/// than the return registers hold (compiler/result-registers), so `choose`
+/// constructs its result through the caller's destination, and `relay`
+/// passes the consumed `held`'s backing both as that destination and as
+/// `right`. `choose` must capture `right` before `left` initializes the
+/// result, so it keeps its entry copies even though nothing in it writes
+/// `right` (compiler/storage-placement); reading `right` in place would see
+/// `left`'s value and return 99.
+#[test]
+fn destination_results_keep_snapshots_of_inputs_their_caller_aliases() {
+    let source = br#"nocopy struct Row {
+  value: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+struct Holder {
+  row: Row;
+}
+
+fn discard(value: Row) -> result: unit pure {
+  return unit;
+}
+
+fn choose(left: Row, right: Row, watch: &u64) -> result: Row reads(watch) {
+  let expected = watch^;
+  if right.value != expected {
+    let ignored = discard(value: move left);
+    return Row(value: 99_u64, b: 0_u64, c: 0_u64, d: 0_u64);
+  }
+  return move left;
+}
+
+fn relay(held: Row, watch: &u64, offered: u64) -> result: Row reads(watch) {
+  let row = Row(value: offered, b: 1_u64, c: 2_u64, d: 3_u64);
+  let fresh = Holder(row: move row);
+  return choose(left: move fresh.row, right: move held, watch: watch);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let watch = 29_u64;
+  let first_input = Row(value: 29_u64, b: 4_u64, c: 5_u64, d: 6_u64);
+  let second_input = Row(value: 31_u64, b: 7_u64, c: 8_u64, d: 9_u64);
+  let first = relay(held: move first_input, watch: &watch, offered: 11_u64);
+  let second = relay(held: move second_input, watch: &watch, offered: 17_u64);
+  if first.value != 11_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if second.value != 99_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if watch != 29_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
+        let module = super::emit_lowered(source, overlap);
+        let relay = super::emitted_function(&module, "relay");
+        let call = relay
+            .lines()
+            .find(|line| line.contains(" @wf_choose("))
+            .unwrap_or_else(|| panic!("{overlap:?}: relay calls choose: {relay}"));
+        let arguments: Vec<&str> = call
+            .split_once(" @wf_choose(")
+            .and_then(|(_, rest)| rest.rsplit_once(')'))
+            .map(|(list, _)| list.split(", ").collect())
+            .unwrap_or_default();
+        let pointer = |index: usize| {
+            arguments
+                .get(index)
+                .and_then(|argument| argument.split_whitespace().last())
+                .unwrap_or_else(|| panic!("{overlap:?}: argument {index} of {call}"))
+        };
+        assert_eq!(
+            pointer(0),
+            pointer(2),
+            "{overlap:?}: the result destination is right's backing: {call}"
+        );
+        assert_success(&module);
         assert_success(&retain_calls(&module));
     }
 }
