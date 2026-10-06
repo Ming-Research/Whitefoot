@@ -197,7 +197,6 @@ jobs:
       # from this repository.
       - name: Build and run a program with it
         run: |
-          compiler/target/gate/whitefootc --version
           compiler/target/gate/whitefootc -o "$RUNNER_TEMP/geometry_vectors" tests/programs/geometry_vectors.wf
           "$RUNNER_TEMP/geometry_vectors"
 
