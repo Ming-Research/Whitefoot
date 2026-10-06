@@ -36,7 +36,9 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        options: [scoreboard, placement]
+        # stage3-x86 is temporary, for the stage-3 interpreter on x86-64,
+        # and is removed before claude/stage3-x86 is ready.
+        options: [scoreboard, placement, stage3-x86]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -107,7 +109,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -356,3 +358,120 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  # Temporary: the stage-3 wasm interpreter on x86-64, research/investigations/
+  # match-dispatch/DESIGN.md, "Stage 3 on x86-64": the 14900K with its clang 18
+  # and a hosted runner with clang 19.
+  stage3-x86-14900k:
+    if: inputs.experiment == 'stage3-x86'
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select the host compiler
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends clang-19 lld-19
+            sudo ln -sf /usr/bin/clang-19 /usr/bin/clang
+            sudo ln -sf /usr/bin/ld.lld-19 /usr/bin/ld.lld
+            rustup default stable
+          elif [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+          /usr/bin/clang --version | head -1
+
+      - name: Build whitefootc and the interpreter
+        run: |
+          set -eo pipefail
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          out="$RUNNER_TEMP/stage3"
+          mkdir -p "$out"
+          gen=research/experiments/match-dispatch/wasm/gen.py
+          python3 "$gen" "$out/interp.wf"
+          compiler=compiler/target/gate/whitefootc
+          "$compiler" --dispatch-ledger "$out/interp.wf"
+          "$compiler" --emit-llvm "$out/interp.wf" -o "$out/interp.ll"
+          echo "preserve_nonecc definitions: $(grep -c '^define.*preserve_nonecc' "$out/interp.ll" || true)"
+          echo "arm parts: $(grep -c '^define.*\.arm\.' "$out/interp.ll" || true)"
+          "$compiler" "$out/interp.wf" -o "$out/wasm-interp"
+
+      - name: Build Silverfir-nano
+        run: |
+          set -eo pipefail
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
+          git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
+          git -C "$RUNNER_TEMP/sf" log --oneline -1
+          cargo build --release --quiet --manifest-path "$RUNNER_TEMP/sf/Cargo.toml" -p sf-nano-cli
+
+      - name: Run CoreMark under both interpreters
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/stage3"
+          python3 research/experiments/match-dispatch/wasm/coremark.py \
+            --module "$RUNNER_TEMP/sf/benchmarks/wasi/coremark/coremark.wasm" \
+            --iterations 2000 --launches 7 --tsv "$out/run.tsv" \
+            wf="$out/wasm-interp" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp"
+          cat "$out/run.tsv"
+
+  stage3-x86-hosted:
+    if: inputs.experiment == 'stage3-x86'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select the host compiler
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends clang-19 lld-19
+            sudo ln -sf /usr/bin/clang-19 /usr/bin/clang
+            sudo ln -sf /usr/bin/ld.lld-19 /usr/bin/ld.lld
+            rustup default stable
+          elif [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+          /usr/bin/clang --version | head -1
+
+      - name: Build whitefootc and the interpreter
+        run: |
+          set -eo pipefail
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          out="$RUNNER_TEMP/stage3"
+          mkdir -p "$out"
+          gen=research/experiments/match-dispatch/wasm/gen.py
+          python3 "$gen" "$out/interp.wf"
+          compiler=compiler/target/gate/whitefootc
+          "$compiler" --dispatch-ledger "$out/interp.wf"
+          "$compiler" --emit-llvm "$out/interp.wf" -o "$out/interp.ll"
+          echo "preserve_nonecc definitions: $(grep -c '^define.*preserve_nonecc' "$out/interp.ll" || true)"
+          echo "arm parts: $(grep -c '^define.*\.arm\.' "$out/interp.ll" || true)"
+          "$compiler" "$out/interp.wf" -o "$out/wasm-interp"
+
+      - name: Build Silverfir-nano
+        run: |
+          set -eo pipefail
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
+          git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
+          git -C "$RUNNER_TEMP/sf" log --oneline -1
+          cargo build --release --quiet --manifest-path "$RUNNER_TEMP/sf/Cargo.toml" -p sf-nano-cli
+
+      - name: Run CoreMark under both interpreters
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/stage3"
+          python3 research/experiments/match-dispatch/wasm/coremark.py \
+            --module "$RUNNER_TEMP/sf/benchmarks/wasi/coremark/coremark.wasm" \
+            --iterations 2000 --launches 7 --tsv "$out/run.tsv" \
+            wf="$out/wasm-interp" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp"
+          cat "$out/run.tsv"
