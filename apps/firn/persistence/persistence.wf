@@ -13,6 +13,8 @@ alias close_write = std::fs::close_write;
 alias execute = pkg::commands::execute;
 alias input_grow = pkg::protocol::input_grow;
 alias input_new = pkg::protocol::input_new;
+alias arg = pkg::protocol::arg;
+alias name_is = pkg::bytes::name_is;
 alias instant_after = std::time::instant_after;
 alias keep_rest = pkg::protocol::keep_rest;
 alias nanoseconds_from = std::time::nanoseconds_from;
@@ -77,10 +79,14 @@ fn write_log(store: Keyspace, factory: HandleFactory, file: WriteFile, clock: Cl
   return unit;
 }
 
+const word_multi: Array<u8, 5> = "MULTI";
+
+const word_exec: Array<u8, 4> = "EXEC";
+
 fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name: &[u8], name_length: u64, time: &Time) -> applied: u64 reads(store), reads(root), reads(name), reads(time), writes(factory) waits contract {
   requires name_length <= name^.len;
 } {
-  doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";
+  doc "Applies every command of the append-only file the name names, when one exists, and returns how many it applied. The commands between MULTI and EXEC apply only once their EXEC is read, so a block the file ends inside, as a write cut short leaves one, applies none of its commands, as Redis 7.0.15 reverts an incomplete MULTI/EXEC block while loading; an EXEC outside a block is passed over. As Redis does while loading, no key counts as expired during the replay, time's check being zero, and an expiry whose calendar time has passed is kept as one already reached, so the commands after it in the file apply as they did when they were written; lazy and active expiry remove such a key once the server listens.";
   let applied = 0_u64;
   match open_file(factory: factory, root: root, name: name, start: 0_u64, end: name_length) {
     Ok(value: file) => {
@@ -93,6 +99,10 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
       let input = input_new(capacity: 65536_u64);
       let held = 0_u64;
       let offset = 0_u64;
+      let resume = 0_u64;
+      let scanning = False();
+      let block_start = 0_u64;
+      let block_body = 0_u64;
       loop @chunks {
         if held >= input.inner.len {
           input_grow(input: &input);
@@ -119,8 +129,9 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
         if ended {
           break @chunks;
         }
-        let consumed = 0_u64;
+        let consumed = resume;
         let broken = False();
+        let executing = False();
         loop @commands {
           let current = input.inner.len;
           let bytes = &input.inner[0_u64..current];
@@ -129,20 +140,55 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
           if parsed.state == 0_u64 {
             break @commands;
           }
+          let next = parsed.next;
           if parsed.state == 1_u64 {
-            execute(store: store, input: bytes, args: &args, client: &client, env: &env, time: time);
-            set client.at = 0_u64;
-            set applied = applied +wrap 1_u64;
+            let command = arg(args: &args, index: 0_u64);
+            let only = args.inner.len == 1_u64;
+            let multi_word = name_is(input: bytes, start: command.start, length: command.length, word: &word_multi[0_u64..5_u64]);
+            let exec_word = name_is(input: bytes, start: command.start, length: command.length, word: &word_exec[0_u64..4_u64]);
+            let multi = band(only, multi_word);
+            let exec = band(only, exec_word);
+            if scanning {
+              if exec {
+                set scanning = False();
+                set executing = True();
+                set next = block_body;
+              }
+            } else if executing {
+              if exec {
+                set executing = False();
+              } else {
+                execute(store: store, input: bytes, args: &args, client: &client, env: &env, time: time);
+                set client.at = 0_u64;
+                set applied = applied +wrap 1_u64;
+              }
+            } else if multi {
+              set scanning = True();
+              set block_start = consumed;
+              set block_body = parsed.next;
+            } else if exec {
+            } else {
+              execute(store: store, input: bytes, args: &args, client: &client, env: &env, time: time);
+              set client.at = 0_u64;
+              set applied = applied +wrap 1_u64;
+            }
           } else if parsed.state != 6_u64 {
             set broken = True();
             break @commands;
           }
-          set consumed = parsed.next;
+          set consumed = next;
         }
         if broken {
           break @chunks;
         }
-        set held = keep_rest(input: &input, from: consumed, held: held);
+        let kept_from = consumed;
+        if scanning {
+          set kept_from = block_start;
+        }
+        set resume = consumed -sat kept_from;
+        set block_body = block_body -sat kept_from;
+        set block_start = 0_u64;
+        set held = keep_rest(input: &input, from: kept_from, held: held);
       }
       let closed = close_read(factory: factory, file: move file);
     }
