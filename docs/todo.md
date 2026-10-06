@@ -3256,6 +3256,17 @@ condition under which it is taken up.
 
 ## Verification tooling
 
+- **Calibrate stage budgets by host speed.** Hosted Linux runners report
+  the same CPU (AMD EPYC 7763, four processors) but one build took 158 s of
+  CPU on one and about 245 s on others, so the Linux budgets now sit at 1.25
+  times the slowest of 55 runs (research/investigations/test-economy/
+  time-budgets.md, "Linux budgets after the slow-host overruns"). Impact:
+  a 20 to 30% slowdown of a stage on a fast host passes unnoticed. Change:
+  time a fixed calibration workload at the start of each job and scale each
+  budget by the host's ratio to a reference, then tighten the budgets back.
+  Reopen when a regression slips past a budget, or before relying on the
+  budgets to catch a compile-time regression.
+
 - **The local app-build cache never evicts.** Outside CI the corpus tests
   build firn with the compiler's incremental cache under
   `WHITEFOOT_SCRATCH_ROOT` or the host's temporary directory (`build_app`

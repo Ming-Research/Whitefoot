@@ -382,6 +382,37 @@ replay suites, and `compiler/test-corpus` inside the group stayed within its
 145 s (125.1 s). 1.25 times the slower run, rounded up to 5 s, is 265 s,
 which the owner approved on 2026-10-04 (Q37, "37 agreed", translated from Chinese); macOS stays at 255 s.
 
+**Linux budgets after the slow-host overruns.** Over the 55 gate runs on
+2026-10-05 from 12:57 to 23:47 UTC (every branch), Linux stages went over
+their budgets on research-only and test-only changes as well as compiler
+changes; `compiler/test-unit`'s median was 103.5 s against its 105 s budget.
+The spread is the host's, not the work's: one research-only revision built
+`compiler/test-build-corpus` in 57.6 s on one runner (centralus, user
+158 s) and in 84.8 and 100.9 s on others (westus3, eastus, user 244 and
+250 s), every one an AMD EPYC 7763 with four processors, so the same build
+took about 55% more CPU time on the slower hosts while its parallelism
+stayed between 2.5 and 2.9. Slowest runs, medians, and 1.25 times the
+slowest rounded up to 5 s, which this change sets as the Linux budgets and
+the owner approved on 2026-10-05 ("CI: choose A, simpler", translated from
+Chinese):
+
+| Stage | Runs | Median | Slowest | Budget, before | after |
+|---|---:|---:|---:|---:|---:|
+| `check/static` | 55 | 50.6 | 70.0 | 65 | 90 |
+| `compiler/lint` | 54 | 27.3 | 46.5 | 40 | 60 |
+| `check/unit` | 44 | 227.6 | 257.6 | 235 | 325 |
+| `compiler/test-build-unit` | 44 | 120.6 | 140.2 | 135 | 180 |
+| `compiler/test-unit` | 44 | 103.5 | 127.8 | 105 | 160 |
+| `check/corpus` | 45 | 212.0 | 278.5 | 265 | 350 |
+| `compiler/test-build-corpus` | 45 | 85.0 | 116.2 | 95 | 150 |
+| `compiler/test-corpus` | 45 | 125.5 | 175.8 | 145 | 220 |
+| `check/runtime` | 54 | 10.6 | 14.3 | 15 | 20 |
+
+Every other Linux gate stage's slowest run stayed within its budget. Budgets
+this wide no longer catch a 20 to 30% slowdown of a stage on a fast host;
+a host-speed calibration at the start of each job would keep them tight,
+and is recorded as deferred work.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases
