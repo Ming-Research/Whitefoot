@@ -66,34 +66,34 @@ evidence, not a workflow step.
 
 ## How work proceeds
 
+The owner-wide instructions, which Claude Code loads from ~/.claude/CLAUDE.md
+and Codex from ~/.codex/AGENTS.md, govern reports, when to stop, the ledger and
+decision cards, one task per pull request, the completion sequence, fixing or
+recording what you notice, and the design-tree procedure. This section adds
+what is specific to Whitefoot.
+
 A *material choice* changes accepted behavior, a safety or trust condition, a
 shared interface or representation, a significant performance commitment or a
 standing project rule. Restoring specified behavior or editing prose without
 changing its meaning is routine; task size and file count do not decide which
 a change is. Only a material choice between viable alternatives is a design
-decision; this is the project's threshold for the `design-tree` skill's
-decisions.
+decision; this is the project's threshold for design-tree decisions.
 
 1. **Before starting,** read the affected current owners; for a material
    choice, also the relevant constitutional aims and existing decision
-   grounds. On resumption, verify the actual worktree and PR state. Settle
-   the direction with the owner first, as the `design-tree` skill describes.
+   grounds. On resumption, verify the actual worktree and PR state.
 2. **While working,** state why each material choice fits its requirements and
    evidence, and record a discriminating experiment's criterion before using
    it to choose; `research/README.md` holds the method for attributing a
    performance loss or proof cost and for agent writer trials. Change the
    code, the specification and the design tree together on a Draft PR; when a
    conclusion or its grounds change, update current guidance and material
-   dependents in the same work. Work through to completion, as the skill
-   describes.
+   dependents in the same work.
 3. **At completion,** validate (see [Checks](#checks)), run the one
-   [review](#review), fix what it finds, and hand the work back as the
-   `design-tree` skill describes. After the skill's parts, the handoff
-   shows every specification change rule by rule, with its before and after
-   behavior and the card that selected it or why it needed none; the
-   validation actually run, its revision and what remains unverified; the
-   review's scope and the findings it fixed; and what the work found along
-   the way. A version number or PR link does not replace this.
+   [review](#review), fix what it finds, and write the report. The completion
+   report also shows every specification change rule by rule, with its before
+   and after behavior and the card that selected it or why it needed none. A
+   version number or PR link does not replace this.
 4. **After the owner approves** every decision the work needs, including every
    design-tree and specification change, write the log entries and mark the PR
    ready (rule 1 below).
@@ -117,16 +117,11 @@ that design and is judged as one. The rule governs which design is chosen, not
 which work comes first. No decision card, tree reason, investigation or PR
 text uses such a cost or count as a reason or a drawback.
 
-**Fix or record what you notice.** Work in one place exposes defects in
-others: a bug, an awkward interface or architecture, duplicated logic, a file
-or function grown past what one reader can hold, a stale document or test.
-When you notice one, fix it in the same change if it is small and within the
-files you are changing; otherwise add an item to `docs/todo.md` before moving
-on, with its impact, the change you would make and when to reopen it. List
-each in the PR's *Found along the way* section with its disposition. Low
-priority defers the work, never the record: a finding kept only in the
-conversation is lost. `make static` requires every compiler source file over
-4,000 lines to be named in the Code structure section of `docs/todo.md`.
+**Fix or record what you notice** goes to `docs/todo.md` and the PR's *Found
+along the way* section. Low priority defers the work, never the record: a
+finding kept only in the conversation is lost. `make static` requires every
+compiler source file over 4,000 lines to be named in the Code structure
+section of `docs/todo.md`.
 
 **Verify with observations that could have come out otherwise.** A passing
 result is evidence only if a wrong result would have failed it. Prefer an
@@ -143,22 +138,18 @@ measurement or experiment, run the smallest useful sample, time it and look
 at its spread, then choose the scale; repeat or lengthen only where the
 spread is too large to decide. Never open with a run of hours.
 
-Use a PR as the owner's ongoing review surface from the start, as a Draft
-until rule 1 below lets it become ready. Push coherent progress to the same
-branch and keep its description and actual validation results current;
-publish the reviewed result before reporting completion and link it. Do not
-wait for another request to update the PR or leave the reviewable result only
-in the local worktree. Updating a work-branch PR never authorizes a merge into
-`main`.
+The PR is the owner's ongoing review surface from the start, a Draft until
+rule 1 below lets it become ready. Push coherent progress to it and keep its
+description and actual validation results current. Updating a work-branch PR
+never authorizes a merge into `main`.
 
-**The design tree in this project.** The `design-tree` skill is the one
-recurring procedure kept as a skill. It is written for any project, is
-maintained in [Design-skill](https://github.com/Ming-Research/Design-skill)
-and is pinned here as the `design/skill/` submodule, which this repository
-never edits: a change is made in Design-skill and adopted by moving the pin,
-naming the revision adopted and why. `.agents/skills/` (Codex) and
-`.claude/skills/` (Claude Code) hold only links to it, and its body loads when
-its description matches the task. Here its roles are:
+**The design tree in this project.** The design-tree procedure is part of the
+owner-wide instructions. The `design/skill/` submodule pins
+[Design-skill](https://github.com/Ming-Research/Design-skill), which supplies
+`lint.py`, `review-base.sh` and a copy of the procedure in `SKILL.md` that
+defines the review check IDs G1–G3 and DC1–DC4. This repository never edits
+it: a change is made in Design-skill and adopted by moving the pin, naming
+the revision adopted and why. Here the procedure's roles are:
 
 - live trees: `design/language.md` and `design/compiler.md` with their
   subdirectories;
@@ -319,9 +310,9 @@ status banner or self-description merely to satisfy this list.
   inventory, a second specification or task history.
 - `AGENTS.md`: goal and priorities, authority, how work proceeds, the approval
   and merge rules, integrity and hygiene rules, checks and review; not
-  research narration or a design procedure the `design-tree` skill holds.
-- `design/skill/`: the project-independent design-tree procedure, a
-  submodule of Design-skill; nothing specific to Whitefoot.
+  research narration or a procedure the owner-wide instructions hold.
+- `design/skill/`: the Design-skill submodule, with the design-tree lint and a
+  copy of the project-independent procedure; nothing specific to Whitefoot.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff; not
   language semantics, task outcomes or a procedure stated in full elsewhere.
 - `docs/constitution.md`: complete statements of purpose, objectives,
@@ -377,9 +368,9 @@ The compiler's implementation rules are its design decisions in
 `design/compiler`, each with its reason. Before changing the compiler, read the
 subtree you are changing and its ancestors; a decision the tree does not
 cover is added to the tree for the owner's approval, never left only in
-code. Apply the design-tree skill's
-[structural-choice assessment](design/skill/SKILL.md#workflow) when choosing
-or revising compiler code structure, including during implementation.
+code. Apply the owner-wide instructions' examination of responsibilities,
+interfaces, representations and consumers when choosing or revising compiler
+code structure, including during implementation.
 
 Automatic CI checks current correctness and performance regressions;
 exploratory timing runs only when requested. Separate build time from
@@ -441,7 +432,7 @@ change adds to that stage, such as cases, fixtures or work on its path, and
 at the job's slowest cases and host. Fix a cause you find, or bring the raise
 it needs to the owner; re-run the job once when you cannot tell; and when the
 change plainly cannot slow the stage, report the overrun as runner variance in
-the validation you hand back, where it does not hold the revision back.
+the validation you report, where it does not hold the revision back.
 Raising a budget is a decision for the owner, and a raise adds 10 s to the
 stage and to the group stage that contains it, if any; lower a budget in the
 change that makes its stage much faster, and give a new labeled CI stage its
@@ -455,14 +446,14 @@ TSV path to record the phases of the shared test helpers.
 
 ## Review
 
-One review per task, when the work is complete and before the handoff, and
+One review per task, when the work is complete and before the report, and
 whenever the owner asks for one. Start a separate, read-only agent that did
 not implement the change:
 
 - for a change to code, tests, the specification, gate wiring, the design
   tree or agent guidance, a mid-sized model and every applicable group of
-  [the review checklist](docs/review-checklist.md), whose M group is the
-  `design-tree` skill's design correspondence review;
+  [the review checklist](docs/review-checklist.md), whose M group applies the
+  owner-wide instructions' design and correspondence checks;
 - when only research records or other prose changed, a small model and
   groups A, D, M and V, plus R for a material choice.
 
@@ -483,9 +474,9 @@ quoted text or missing evidence, reason; quote both sides of a
 contradiction), or "none within scope".
 ```
 
-Fix every finding and review again as the `design-tree` skill's workflow
-describes; a fix that changes a specification rule is also shown with the
-specification changes at handoff. Merging main without conflicts in reviewed
+Fix every finding and review again as the owner-wide instructions describe;
+a fix that changes a specification rule is also shown with the specification
+changes in the report. Merging main without conflicts in reviewed
 content needs no new review; a resolved conflict is reviewed as changed
 content, those hunks only. Then commit and push, verify that the remote head
 is the reviewed revision, and fill the PR's review section. A failed

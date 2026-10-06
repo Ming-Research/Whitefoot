@@ -106,8 +106,8 @@ Source: [compiler rules](../AGENTS.md#compiler-rules) and
   relevant evidence is supplied when those paths change. If a semantic safety
   question cannot be settled by local inspection and cases, flag it for deeper
   review rather than certifying soundness.
-- [ ] **C5 — Architectural fit.** Apply the design skill's
-  [G3](../design/skill/SKILL.md#design-checks) to structural choices. Check that
+- [ ] **C5 — Architectural fit.** Apply the design-tree procedure's G3
+  (`design/skill/SKILL.md`) to structural choices. Check that
   assessment occurred when making or revising the choice and was explained
   to the owner, rather than supplied retrospectively at completion.
 
@@ -175,10 +175,10 @@ Source: [specification and test integrity](../AGENTS.md#specification-and-test-i
 ## R. Decisions — changed choices, premises or relevant evidence
 
 Source: [How work proceeds](../AGENTS.md#how-work-proceeds) and the
-[design-tree skill](../design/skill/SKILL.md#what-is-a-decision). Applies to
-changes under `design/`, `docs/constitution.md`, `spec/kernel-spec.md` or
-`research/investigations/`, and to any task that made a material choice
-elsewhere. These are checks on observable artifacts, not a claim to know an
+design-tree procedure's *What is a decision* (`design/skill/SKILL.md`).
+Applies to changes under `design/`, `docs/constitution.md`,
+`spec/kernel-spec.md` or `research/investigations/`, and to any task that
+made a material choice elsewhere. These are checks on observable artifacts, not a claim to know an
 agent's internal reasoning or a second design review. A routine fix under
 unchanged design can skip this group; absence of a tree diff does not
 establish that the group is inapplicable.
@@ -206,22 +206,22 @@ establish that the group is inapplicable.
   and direct references to check the named affected set. The explanation says
   which choices still stand, stand on different grounds, or need replacement.
   Their current owners agree with the design record maintained under the
-  design skill. Remaining questions have a concrete source; a log entry does
+  design-tree procedure. Remaining questions have a concrete source; a log entry does
   not supersede contradictory standing guidance.
   Do not require an unrelated project-wide sweep.
 - [ ] **R4 — Maintained tree.** Added, changed, or retired rules and changed
-  grounds have corresponding design records under the design skill, and the
-  sources a decision cites resolve and support the stated scope. A log entry
+  grounds have corresponding design records under the design-tree procedure,
+  and the sources a decision cites resolve and support the stated scope. A log entry
   or a lint success is not proof that a cited argument is true.
 
 ## M. Design review — every change
 
-- [ ] **M1 — Design procedure.** Apply the design-tree skill
-  (`design/skill/SKILL.md`) to the reviewed scope: its design checks G1–G3,
-  correspondence checks DC1–DC4 and structural validation. That skill owns the
-  procedure; include its actual results in this review.
+- [ ] **M1 — Design procedure.** Apply the design-tree procedure's review
+  checks (`design/skill/SKILL.md`) to the reviewed scope: design checks G1–G3,
+  correspondence checks DC1–DC4 and structural validation. Include their
+  actual results in this review.
 
-## V. Validation and handoff — every change
+## V. Validation and report — every change
 
 Source: [How work proceeds](../AGENTS.md#how-work-proceeds) and the
 [merge boundary](../AGENTS.md#branch-and-main-boundary).

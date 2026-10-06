@@ -10,7 +10,7 @@
 # research/investigations/test-economy/time-budgets.md, rounded up to 5 s,
 # and never under 10 s; that file also records any value the owner set
 # directly. AGENTS.md "Checks" says how to judge an overrun. A raise needs
-# the owner's approval as a decision in the handoff and adds 10 s to the
+# the owner's approval as a decision in the report and adds 10 s to the
 # stage over its budget and to the group stage that contains it, if any;
 # lower a budget in the change that makes its stage much faster. "-" marks a
 # stage that does not run on that host.

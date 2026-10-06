@@ -2,7 +2,8 @@
 """Check that the agent guidance's references resolve, not what it says.
 
 - Review item IDs cited in the guidance (A1, T4-T7, G3, DC2, ...) are defined
-  in docs/review-checklist.md or the design-tree skill.
+  in docs/review-checklist.md or the design-tree procedure's copy in
+  design/skill/SKILL.md.
 - Repository paths written in backticks in the entry documents exist.
 
 A green run says only that these references resolve. Whether the guidance is
@@ -20,7 +21,7 @@ DESIGN_SKILL = "design/skill/SKILL.md"
 # Documents that cite review items.
 CITING = ["AGENTS.md", CHECKLIST, DESIGN_SKILL, ".github/pull_request_template.md"]
 # Entry documents whose backticked repository paths must exist. The design-tree
-# skill is excluded: it names its roles generically for reuse in any project.
+# procedure is excluded: it names its roles generically for reuse in any project.
 PATHS = ["AGENTS.md", "README.md", "README.zh-CN.md", CHECKLIST,
          ".github/pull_request_template.md"]
 
