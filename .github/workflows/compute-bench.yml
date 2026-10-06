@@ -454,8 +454,10 @@ jobs:
           rm -rf "$RUNNER_TEMP/sf"
           git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
           git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
-          python3 research/experiments/match-dispatch/wasm/coremark.py \
-            --module "$RUNNER_TEMP/sf/benchmarks/wasi/coremark/coremark.wasm" \
+          probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
+          # The interpreter opens its module relative to its working directory.
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          python3 "$probe" --module coremark.wasm \
             --iterations 2000 --launches 7 --tsv "$out/run.tsv" \
             head="$out/wasm-head" base="$out/wasm-base"
           cat "$out/run.tsv"
