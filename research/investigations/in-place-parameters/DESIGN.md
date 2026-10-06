@@ -201,3 +201,16 @@ The base image hashed the same in both timing runs. The head image did not
 the same release, which was not republished between the runs. Whether the
 firn build's state on the runner or the compiler's output differs between
 builds is not yet established.
+
+A direct probe found the compiler deterministic
+([run 37479044280](https://github.com/Ming-Research/Whitefoot/actions/runs/37479044280),
+hosted `ubuntu-24.04`). Each compiler built firn from Whitefoot main's
+`apps/firn`, with the same sources for both:
+
+| compiler | `--emit-llvm`, 4 runs | `--full-lto` image, 2 runs |
+|---|---|---|
+| base, main `ff1894f7b` | `aa371955c215...` all 4 | `a5fb4b4c1b2b...` both |
+| this change | `3ec07b5cd164...` all 4 | `ae77e1d6c8a5...` both |
+
+So the changed head hash on the 14900K comes from the firn build's inputs,
+not from whitefootc's output.
