@@ -660,6 +660,46 @@ rarely insert at the same place.
   Change: an in-memory receipt store for one invocation. Reopen when a
   workflow builds without a cache.
 
+- **An ordinary relation that does not improve the full selection may not
+  be materialized before a kill.** `materialize_closure_before_kill` in
+  `compiler/src/semantic/entailment/state.rs` returns early when the state's
+  `closure` record is closed and no opaque goal is live, without reading
+  its `ordinary_closure` record. On the active-term closure of PR 232, the
+  generated-flow comparison at 3000 cases found this shape (case 1379): an
+  ordinary fact weaker than the call-dependent selection of its pair
+  (`p - x <= -1` beside a call's `p - x <= -2`) left the record closed while
+  the ordinary fallbacks it improves (`Z - x` through `p`) were not stored,
+  so a kill of its support removed them from the ordinary layer, and a later
+  removal of the call's candidates left the pair at its type range. Main's
+  closure has the same early return. Whether it reaches the shape is
+  unverified, since its generated-flow test runs 400 cases. Impact: a weaker
+  ordinary fallback after an S12 holder kill in that shape, never a wrong
+  acceptance. The change: skip the materialization only when the ordinary
+  record is also closed, or store the improved ordinary fallbacks alone.
+  Validate with the generated flows at 3000 cases and the paired comparison
+  on wfgrep and fixed_run_library. Reopen when a program's postcondition
+  reasoning is refused after a write that its ordinary facts should survive.
+
+- **A remembered closure is discarded by every term registration.** `close`
+  in `compiler/src/semantic/entailment/state.rs` keys a state's remembered
+  closed view on the term table's revision and term count, so each `let`
+  that registers a term discards the view, although a term without a fact
+  changes no answer. It also takes the state by shared reference, so a
+  complete closure of a state whose record is `Unknown` never marks the
+  record closed, and an arm's entry state is closed from scratch at each of
+  its first judgments. On the active-term closure of PR 232, the synthetic
+  N-arm interpreter of
+  [the probe measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#the-probe-the-join-and-delivery-over-the-closure-universe)
+  ran about fourteen computed closures per arm, about half of them on
+  states that had not changed. Main's closure was not counted. With the
+  closure universe narrowed each closure is small, so the saving is a
+  constant factor. The change: key the remembered view on the closure
+  universe's terms and the measure bounds rather than on every
+  registration, and let a complete closure of an `Unknown` record mark it
+  closed. Validate with the seeded-closure verification and the synthetic
+  series. Reopen when a profile of a real program attributes a substantial
+  share to repeated closures of unchanged states.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**
