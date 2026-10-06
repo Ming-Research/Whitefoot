@@ -12,9 +12,6 @@ a local `invariant`, checked as written. Proofs are erased before lowering and
 may authorize check removal, optimization and parallel independence without
 adding runtime branches, locks, dependencies or scheduling edges.
 
-This file holds what is specific to Whitefoot; the owner-wide agent
-instructions govern everything else.
-
 ## Project goal
 
 A serious research compiler: general enough to implement the real language,
@@ -25,35 +22,24 @@ compiler-independent correctness tests where they help, useful diagnostics,
 an executable backend, and real programs that expose language and compiler
 weaknesses.
 
-When priorities conflict:
-
-1. reach the next meaningful end-to-end language or performance experiment;
-2. preserve semantic correctness and required safety checks;
-3. keep the implementation understandable and easy to change;
-4. add only the evidence needed to trust the current result; and
-5. defer robustness, infrastructure and polish that no current experiment
-   needs.
-
-Work that does not help compile a real program, test a language rule, measure
-a compiler idea or remove the immediate blocker to one of those is probably
-not the next work.
+First priorities: reach the next meaningful end-to-end language or
+performance experiment, then preserve semantic correctness and required
+safety checks. Work that does not help compile a real program, test a
+language rule, measure a compiler idea or remove the immediate blocker to one
+of those is probably not the next work.
 
 ## Authority and reading
 
 The active specification `spec/kernel-spec.md`, including its normative worked
 example, defines the language and toolchain judgments, and the conformance
 results state what the compiler implements. Compiler behavior, tests,
-archived code and design prose do not define the language. `design/` holds
-the decisions with their reasons and refused alternatives.
+archived code and design prose do not define the language.
 `docs/constitution.md` owns purpose, objectives, tradeoffs and conditional
-design principles; a concrete choice needs its own grounds, not just a
-constitutional ancestor.
+design principles.
 
-A selected direction gets `research/investigations/<name>/` for its design,
-measurements and rejected alternatives, and its surviving decision goes to
-the design tree; historical research is not an implied implementation
-requirement. A claim cites the specification, a conformance case, a
-measurement under `research/experiments/`, a design under
+The research record is `research/investigations/<name>/` and
+`research/experiments/`. A claim cites the specification, a conformance case,
+a measurement under `research/experiments/`, a design under
 `research/investigations/`, or a design-tree decision where the
 [citation boundaries](#citation-boundaries) permit. `archive/` keeps
 superseded material frozen; `archive/done/` is not written to or cited.
@@ -62,91 +48,49 @@ describe evidence, not a workflow step.
 
 ## How work proceeds
 
-A *material choice* changes accepted behavior, a safety or trust condition, a
-shared interface or representation, a significant performance commitment or a
-standing project rule; task size and file count do not decide it. Only a
-material choice between viable alternatives is a design-tree decision.
-
-- Before a material choice, read the relevant constitutional aims and existing
-  decision grounds as well as its current owners.
+- Before a material choice, also read the relevant constitutional aims; the
+  constitution's
+  [compatibility clause](docs/constitution.md#compatibility-and-evolution)
+  decides when compatibility starts to count.
 - `research/README.md` holds the method for attributing a performance loss or
   proof cost and for agent writer trials.
-- Change the code, the specification and the design tree together on one
-  Draft PR.
+- A specification change travels on the same pull request as the code and
+  tree changes it requires.
 - The completion report also shows every specification change rule by rule,
   with its before and after behavior and the card that selected it or why it
   needed none.
-- After approval, write the `design/log.md` and `spec/log.md` entries and mark
-  the PR ready (rule 1 below).
-
-**Judging designs.** The constitution's
-[compatibility clause](docs/constitution.md#compatibility-and-evolution)
-decides when compatibility starts to count. Programs in this repository were
-written to exercise the compiler (`design/language.md`): a program that fails
-still witnesses a gap, and measuring a change's effect on them is still
-evidence.
-
-**Fix or record what you notice** in `docs/todo.md` and the PR's *Found along
-the way* section. `make static` requires every compiler source file over
-4,000 lines to be named in the Code structure section of `docs/todo.md`.
-
-**The design tree.** The `design/skill/` submodule pins
-[Design-skill](https://github.com/Ming-Research/Design-skill): `lint.py`,
-`review-base.sh` and `SKILL.md`, a copy of the design-tree procedure that
-defines the check IDs G1–G3 and DC1–DC4. Change it in Design-skill and adopt
-the change by moving the pin, naming the revision and why. Roles:
-
-- live trees: `design/language.md` and `design/compiler.md` with their
-  subdirectories;
-- change log: `design/log.md`;
-- research record: `research/investigations/` and `research/experiments/`;
-- maintained TODO: `docs/todo.md`;
-- form check: `make design-lint`, part of `make static`;
-- readiness check: `make design-ready`, which also requires an approved
-  `spec/log.md` entry for a changed specification, run by
-  `.github/workflows/design-readiness.yml` on ready PRs and on main.
+- Programs in this repository were written to exercise the compiler
+  (`design/language.md`): a program that fails still witnesses a gap, and
+  measuring a change's effect on them is still evidence.
+- **Fix or record what you notice** in `docs/todo.md` and the PR's *Found
+  along the way* section. `make static` requires every compiler source file
+  over 4,000 lines to be named in the Code structure section of
+  `docs/todo.md`.
+- The design tree's maintained TODO is `docs/todo.md`, and `make
+  design-ready` also requires an approved `spec/log.md` entry for a changed
+  specification.
 
 ## Branch and main boundary
 
-These are the complete approval and merge rules:
+Whitefoot's extra merge preconditions:
 
-1. Work-branch changes need no approval, including plans, repository layout,
-   the design tree, specifications, conformance evidence, gate wiring, code,
-   tests, and documentation, except that new repository-root entries require
-   owner approval. A PR becomes ready only after the owner has approved every
-   decision it needs, including every design-tree and specification change;
-   the approval is recorded in `design/log.md` and `spec/log.md` only then,
-   and `make design-ready` checks the records.
-2. Every change merged into `main` requires owner approval of the exact
-   revision to be merged.
-3. The exact revision merged into `main` must pass all repository tests through
-   the canonical `make check` entry point before the merge.
-4. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
-   pull request states what changed and its selection ground, answered against
-   the exact revision being merged. The specification's bytes are its
-   identity, the released archives are immutable, `spec/log.md` records the
-   owner's approval of each change, and git is the history.
+1. The gate is the root `make check`: the compiler build, Rust type/lint
+   checks, maintained compiler/runtime/program tests, specification and
+   guidance checks, conformance structure and coverage, and the full native
+   conformance adapter. Formatting and Rust API documentation are authoring
+   commands, performance comparison has its own workflow, and research is
+   never a gate dependency. `make check-groups` lists the groups and
+   [Checks](#checks) says where each runs.
+2. Specification approvals are recorded in `spec/log.md`.
+3. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
+   pull request states what changed and its selection ground, answered
+   against the exact revision being merged. The specification's bytes are its
+   identity, the released archives are immutable, and git is the history.
 
-- **Work branch** is any branch other than `main`; its work, including edits
-  to a specification, conformance evidence or these rules, proceeds within
-  rule 1's boundaries.
-- **Exact revision** is the complete tree that will enter `main`. If that tree
-  changes after approval or after its successful test run, rules 2 and 3 apply
-  to the new revision.
-- **All repository tests** is the root `make check` target: the compiler
-  build, Rust type/lint checks, maintained compiler/runtime/program tests,
-  specification and guidance checks, conformance structure and coverage, and
-  the full native conformance adapter. Formatting and Rust API documentation
-  are authoring commands, performance comparison has its own workflow, and
-  research is never a gate dependency. `make check-groups` lists the groups
-  and [Checks](#checks) says where each runs.
-- **Conformance evidence** is `tests/conformance` case source and manifest
-  content, its runner and adapter, gate-integrity tests, and any collection or
-  invocation wiring that can change which cases run or how their results are
-  read.
-
-No other workflow step, such as a plan, record, audit, rebase method or commit
-shape, is an approval or merge precondition.
+**Conformance evidence** is `tests/conformance` case source and manifest
+content, its runner and adapter, gate-integrity tests, and any collection or
+invocation wiring that can change which cases run or how their results are
+read.
 
 ## Specification and test integrity
 
@@ -160,8 +104,7 @@ shape, is an approval or merge precondition.
      `git show "$(git merge-base main HEAD)":spec/kernel-spec.md > spec/kernel-spec-v0.69.md`.
   2. Retitle the active file to the next version, `v0.70`, or `v1.0` for a
      major revision.
-  3. Edit the rules under the bullets below, and record a rule chosen among
-     viable alternatives in the design tree.
+  3. Edit the rules under the bullets below.
   4. If `main` advanced the version meanwhile, merging it conflicts on the
      title: keep main's text, reapply this branch's rule changes, archive
      main's active bytes under main's version and retitle to the next one.
@@ -179,34 +122,26 @@ shape, is an approval or merge precondition.
   comparing and recording semantic differences, and only when meanings match.
 - When the spec changes, bring everything derived from it to the newest version
   in the same work: conformance cases and verdicts, the lexer/parser and
-  generated syntax data, tests and docs; no machine enforces this.
-- Editing a conformance verdict, deleting a failing test or regenerating
-  evidence to go green is a governance breach even though no script blocks
-  it. Add ordinary compiler tests freely.
-- A compiler limitation, internal error, timeout or unimplemented feature is
-  not a source-language rejection.
+  generated syntax data, tests and docs.
+- Conformance verdicts and evidence change only with the specification;
+  editing a verdict or regenerating evidence to go green is a governance
+  breach. A compiler limitation, internal error, timeout or unimplemented
+  feature is not a source-language rejection.
 - A language gap is stated as its minimal semantic witness, apart from the
   compiler that exposed it. A project-local issue is fixed in the project, not
   by generalizing the language or compiler. A soundness defect is a
   correctness issue whatever the plan says.
-- A test case earns its place with an observation no existing case makes and a
-  failure that means something. Specification requirements go in
+- Specification requirements go in
   `tests/conformance/`, whole-program behavior in `tests/programs/`, and other
   implementation obligations in compiler or runtime tests. Formal tests never
   import `research/`; research may consume formal fixtures.
 
 ## Repository structure and hygiene
 
-The active `spec/`, the `compiler/` and the guidance in `docs/` are found
-first; keep `spec/`, `compiler/`, `tests/` and the research directories as
-clean as the root.
-
 - Check the Rust compiler with `cargo test`, `cargo clippy` and the workspace
   `forbid(unsafe_code)` lint, never with a Python script that re-implements
   them or a script forked per spec version; Python belongs only to genuinely
   compiler-independent tooling.
-- Never relocate a load-bearing path for tidiness: paths are pinned by the
-  spec, tests, oracle scripts and gates.
 - No active source, build, test or tool depends on `archive/`.
 - `README.zh-CN.md` is the owner's Chinese translation of `README.md`: a
   change to either changes the other in the same change, and `make static`
@@ -217,7 +152,6 @@ clean as the root.
 - `README.md`: introduction, getting started and navigation.
 - `AGENTS.md`: Whitefoot's goal, authority, process additions, approval and
   merge rules, integrity rules, checks and review.
-- `design/skill/`: the Design-skill submodule; nothing specific to Whitefoot.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff.
 - `docs/constitution.md`: complete statements of purpose, objectives,
   obligations, prohibitions, tradeoffs and their conditions; not
@@ -238,11 +172,7 @@ clean as the root.
 - `research/` and `governance/spec-evolution/`: questions, alternatives,
   designs, experiments, results and limitations; not a proposal presented as
   an implemented rule, or daily test implementations and inputs.
-- `design/`: live decisions with their reasons and refused alternatives and
-  the approval log.
 - `archive/`: superseded material kept frozen.
-- The PR description: this change's problem, behavior, grounds, validation,
-  limitations and what it found along the way.
 
 ### Citation boundaries
 
@@ -252,19 +182,15 @@ clean as the root.
   the design trees: they do not link to `design/` or use it as authority.
 - Maintainer navigation (README, this file, the research index) may point to
   the design trees. Research records and PRs may cite decisions as historical
-  rationale, not as language definitions or proof of an empirical claim. A
-  tree node may cite specifications, designs and evidence in its reason.
+  rationale, not as language definitions or proof of an empirical claim.
 - Historical references may name their historical versions; current guidance
   uses the active specification's stable path.
 
 ## Compiler rules
 
 The compiler's implementation rules are its design decisions in
-`design/compiler`. Before changing the compiler, read the subtree you are
-changing and its ancestors; a decision the tree does not cover is added to
-the tree for the owner's approval, never left only in code. Exploratory
-timing runs only when requested; measure build time apart from test and
-program execution.
+`design/compiler`. Exploratory timing runs only when requested; measure
+build time apart from test and program execution.
 
 ## Checks
 
@@ -278,11 +204,9 @@ program execution.
   build, tests, the conformance adapter and the runtime; `make check-groups`
   lists the groups. `gate.yml` runs those groups on Linux and macOS on every
   push, and its green run on the exact revision to be merged, a head current
-  with `main`, is that revision's `make check`; reproduce a failure on CI as
-  well, and run it locally only when CI is unavailable. It needs `python3`, LLD on Linux
-  (`ld.lld`) and the `time` utility.
-- `make design-ready`, before marking ready and in `design-readiness.yml` on
-  ready PRs and main: approved tree and specification changes.
+  with `main`, is that revision's `make check`. It needs `python3`, LLD on
+  Linux (`ld.lld`) and the `time` utility.
+- `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml` on every push (Linux io_uring and Windows IOCP),
   `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
   timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
@@ -320,38 +244,20 @@ recorded PID and command before removing a stale lock.
 
 When a stage exceeds its budget, look at what the change adds to it and at the
 job's slowest cases and host; fix a cause you find or bring the raise to the
-owner, re-run once when you cannot tell, and report an overrun the change
-plainly cannot cause as runner variance, which does not hold the revision
-back. A raise is the owner's decision and adds 10 s to the stage and to its
-group stage, if any; lower a budget when a change makes
-its stage much faster, and give a new labeled stage a budget. The `gate`
-Cargo profile builds the Rust compiler with optimization, debug assertions
-and overflow checks; it does not change how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>` records the
-phases of the shared test helpers for a slow compiler test.
+owner, and re-run once when you cannot tell; an overrun the change plainly
+cannot cause is reported as runner variance and cleared by a passing re-run.
+A raise is the owner's decision and adds 10 s to the stage and to its group
+stage, if any; lower a budget when a change makes its stage much faster, and
+give a new labeled stage a budget. The `gate` Cargo profile builds the Rust
+compiler with optimization, debug assertions and overflow checks; it does
+not change how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
+records the phases of the shared test helpers for a slow compiler test.
 
 ## Review
 
-The completion review uses a mid-sized model and every applicable group of
+The completion review checks every applicable group of
 [the review checklist](docs/review-checklist.md) for a change to code, tests,
-the specification, gate wiring, the design tree or agent guidance, and a
-small model with groups A, D, M and V, plus R for a material choice, when
-only research records or other prose changed. Prompt:
-
-```text
-You are reviewing a Whitefoot change you did not write. Do not edit files.
-Task outcome and constraints: <...>
-Base and head: <...>; validation already run: <commands, results, revision>.
-Read the diff from the base (git diff <base>, plus untracked files, without
-the released archives spec/kernel-spec-v*.md), the changed sections in
-context, and "How to review" in docs/review-checklist.md. Check each group
-whose trigger applies. For M1, apply the design checks and correspondence
-checks of design/skill/SKILL.md to the relevant tree nodes and ancestors.
-Do not rerun green suites. Report Scope (your model, base..head, groups
-checked and skipped), Checks (what you ran) and Findings (item ID, file:line,
-quoted text or missing evidence, reason; quote both sides of a
-contradiction), or "none within scope".
-```
-
-Merging main without conflicts in reviewed content needs no new review; a
-resolved conflict is reviewed as changed content, those hunks only. Fill the
-PR's review section.
+the specification, gate wiring, the design tree or agent guidance, and
+groups A, D and V when only research records or other prose changed. The released archives
+`spec/kernel-spec-v*.md` are mechanically checked copies left out of the
+reviewed diff.
