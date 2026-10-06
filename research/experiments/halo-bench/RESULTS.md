@@ -1825,3 +1825,21 @@ correctness binary; stress and candidate observations are recorded below.
 The script and expected bytes are retained in the raw JSON and leave the
 original oracle untouched. The pre-existing CJSON/iterator sentinel overlap
 remains recorded in TODO and the general routing order remains unchanged.
+
+
+### Repeat module-check result
+
+Candidate checks pass in 278.31 and 284.70 s, median 281.505 s
+(relative range 2.27%), versus before 280.045 s:
+**1.0052×**, +0.52% median change. Even the slower candidate
+against the faster baseline is 1.0820×, below 1.25.
+The samples are sufficient for this threshold; no checking-speed improvement
+is established. Baseline stress fallback replies pass 3/3, with 17 collections
+each; PUC's bytecode listing confirms ordinary CALL in the invocation helper.
+The baseline stress runner's current-input digest names candidate sources,
+but executes the separately hash-verified before binary; it is not a build
+identity. This reused-binary reporting limitation is recorded in TODO.
+
+A single full-LTO benchmark construction is the smallest executable sample
+for this comparison; do not batch or repeat constructions without a failure.
+Execution is sized separately after that construction.

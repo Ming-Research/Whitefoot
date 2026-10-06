@@ -2342,6 +2342,17 @@ rarely insert at the same place.
   coverage update; validate that an order-only permutation fails comparison.
   The [bounded growth experiment](../research/experiments/halo-bench/RESULTS.md#iteration-order-evidence-correction)
   uses scratch unsorted PUC comparisons to qualify its own change.
+- **Halo reused-binary reports identify current inputs, not build inputs.**
+  `research/experiments/halo-e2e/run.py --binary` hashes the current library
+  and harness source even when the supplied executable was built from other
+  bytes. Impact: the printed source digest can be mistaken for the binary's
+  provenance; the fixed-call repeat uses separately retained source and
+  executable hashes for its before build. Change: accept and verify an
+  explicit build-input manifest for reused binaries, and label current
+  fixture/runner inputs separately. Reopen at the next reused-binary
+  experiment; validate that a mismatched source/binary manifest fails and
+  that current fixture changes remain identified independently.
+
 - **Checking Halo's vm module takes minutes.** The whole lib/halo package
   checked in roughly 60 s with the dispatch core alone and 156 s once the
   slice-1 library joined it (M1 Pro, 2026-10-04), almost all of it the vm
