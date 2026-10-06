@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 The derived-address refusal states only its measured ground
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: In the session of 2026-10-05, after PR #250 showed the Q21 Rejected line before ("below the 2% criterion set for it, for about 165 lines of emitter code, so it is not adopted now;") and after ("below the 2% criterion set for it, so it is not adopted now;"): "q21 ok".
+
+Summary: The refusal of addressing frame slots from a pointer each split part derives at entry no longer cites the size of its emitter code, which AGENTS.md does not allow as a reason; its ground stays the measured 0.9% score gain against the 2% criterion, and its reopening condition is unchanged (Q21).
+
 ## 2026-10-05 A box pinned across calls that cannot replace it; cache pruning and derived addresses refused
 
 Nodes: compiler/match-dispatch-lowering, compiler/incremental-compilation
