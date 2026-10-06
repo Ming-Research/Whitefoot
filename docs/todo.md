@@ -1740,6 +1740,23 @@ rarely insert at the same place.
   program with small per-connection state, such as a proxy that shares its
   buffers, is written.
 
+- **The aligned layout of `records` is slower on AMD Zen 4.** Every
+  compiler-produced function starts on a 64-byte boundary, which makes the
+  compute kernels' times independent of where they are linked, but on the
+  hosted AMD EPYC 9V74 it fixes `records` at a layout about 5 to 10 percent
+  slower than each unaligned shift that was measured, while the 14900K, a
+  local Intel Xeon and the other four kernels show no such cost
+  ([code placement](../research/investigations/code-placement/DESIGN.md#results)).
+  The kernel's UTF-8 validation loop is dense in branches, and which of them
+  share a 64-byte line follows the layout. Find what the aligned layout costs
+  on Zen 4, for example with branch-misprediction and op-cache counters on
+  the aligned and the fastest unaligned layout, and look for a deterministic
+  layout rule, such as a loop alignment or an ordering of a function's
+  blocks, that removes the cost without reintroducing placement dependence;
+  validate with the placement experiment on the hosted runner and the
+  14900K. Reopen when a hosted Zen 4 run or a downstream program's profile
+  shows a branch-dense loop paying more than 5 percent for its layout.
+
 - **Every atomic statement holds its object alone.** Statements whose
   blocks only read could share the object, but lowering always acquires for
   writing

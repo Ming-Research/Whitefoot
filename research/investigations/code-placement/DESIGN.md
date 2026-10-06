@@ -227,7 +227,39 @@ revision's compiler and flags, and compares it with the `FR` images.
 
 ## Results
 
-Pending the runs.
+Both decisive runs are at `d4f67df6`, the unaligned tree being its merge base
+with `main`, `364f86c2`. Cells are milliseconds per call, the median over the
+rounds of each process's median call.
+
+### i9-14900K, 20 rounds (run 37434117176)
+
+The null moved no cell (C0). `U` met C1 in three cells, all `records`:
+`m16` against `p0` 0.947 at width 1, and `m32` against `p0` 0.947 at width 2 and
+0.952 at width 4. Q1 and Q2 hold: `F` and `FR` differ from their `p0` in no
+cell at any placement, and neither costs in any cell, the cost ratios lying
+between 0.994 and 1.011. Q3 does not select loop alignment: `FRL` is invariant
+and slower in no cell, but faster than `FR` by the gate's rule in none either,
+its ratios lying between 0.993 and 1.013. The other four kernels move by at
+most 3.8 percent across `U`'s placements and in no cell by the paired rule.
+`records`:
+
+| width | arm | p0 | m16 | m32 | m48 | r16 | r48 |
+|---|---|---|---|---|---|---|---|
+| 1 | U | 8.851 | 9.318 | 8.842 | 8.875 | 8.833 | 8.877 |
+| 1 | FR | 8.836 | 8.924 | 8.911 | 8.945 | 8.935 | 8.860 |
+| 2 | U | 4.688 | 4.555 | 4.913 | 4.601 | 4.534 | 4.659 |
+| 2 | FR | 4.662 | 4.569 | 4.652 | 4.650 | 4.672 | 4.643 |
+| 4 | U | 2.441 | 2.405 | 2.548 | 2.399 | 2.391 | 2.418 |
+| 4 | FR | 2.400 | 2.421 | 2.427 | 2.418 | 2.409 | 2.446 |
+
+The replay of PR #251's runtime change under the aligned compiler passed
+`compare.sh`: `records` 1.003421, 1.034001 and 1.021749 at widths 1, 2 and 4,
+with one single-width suspect, `stencil` at width 1, 0.947191 with four of five
+pairs lower.
+
+### Hosted ubuntu-24.04
+
+Pending.
 
 ## Limitations
 
