@@ -3258,15 +3258,7 @@ fn instruction_call<interface Host<E>>(code: &Box<Slots<Cell>>, consts: &Box<Slo
     set wanted = cvt::<u64, i64>(nr);
   }
   let tailing = False();
-  let step = Step::Error();
-  match enter_fixed_lua(vm: vm, stack: stack, func: ra, argc: argc, wanted: wanted, return_pc: next) {
-    Some(value: entered) => {
-      set step = entered;
-    }
-    None() => {
-      set step = prepare::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: ra, argc: argc, wanted: wanted, return_pc: next, base: base, kbase: kbase, tail: tailing);
-    }
-  }
+  let step = prepare::<Host<E>>(code: code, consts: consts, vm: vm, stack: stack, env: env, func: ra, argc: argc, wanted: wanted, return_pc: next, base: base, kbase: kbase, tail: tailing);
   let final_step = step;
   match step {
     Error() => {
