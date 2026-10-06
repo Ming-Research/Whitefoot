@@ -695,6 +695,67 @@ fn a_reference_handed_to_a_writer_is_reloaded_in_the_loop() {
     assert!(output.status.success(), "{output:?}");
 }
 
+#[test]
+fn a_reference_handed_to_a_content_writer_keeps_its_box() {
+    // `touch_content` writes only what the box holds, so it cannot replace
+    // the box `regs` reaches: each part hands it a slot holding the box the
+    // enclosing function projected, and no part loads the box again.
+    let source = REGISTER_FILE
+        .replace("NAME", "content")
+        .replace("DECREMENT", "let ignored = touch_content(regs: regs);")
+        .replace(
+            "fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {",
+            "fn touch_content(regs: &Box<Slots<u64>>) -> r: u64 writes(regs.inner) contract {",
+        );
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_content", 4);
+    assert!(
+        !some_part_reloads_a_box(&module, "wf_content", 4),
+        "no part reloads a box a content writer cannot replace: {module}"
+    );
+    let handed = (0..4).any(|arm| {
+        let part = definition(&module, &format!("wf_content.arm.{arm}"));
+        part.contains("= alloca ptr")
+            && part
+                .lines()
+                .any(|line| line.contains("@wf_touch_content(ptr %wf.pin."))
+    });
+    assert!(handed, "a part hands the callee its pin slot: {module}");
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_read_only_reference_handed_to_a_reader_keeps_its_box() {
+    // `code` is read-only, so the header's projection of its box is hoisted
+    // by the read-only rule; an arm that also hands `code` to a reader keeps
+    // it pinned, and that arm hands the reader a pin slot.
+    let source = REGISTER_FILE
+        .replace("NAME", "reader")
+        .replace(
+            "DECREMENT",
+            "let seen = peek(code: code);\n      let c = regs^.inner[1_u64];\n      let d = c -wrap 1_u64;\n      set regs^.inner[1_u64] = d;",
+        )
+        .replace(
+            "fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {",
+            "fn peek(code: &Box<Slots<Op>>) -> r: u64 reads(code) {\n  return code^.inner.len;\n}\n\nfn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {",
+        );
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_reader", 4);
+    assert!(
+        !some_part_reloads_a_box(&module, "wf_reader", 4),
+        "no part reloads a box a reader cannot replace: {module}"
+    );
+    let handed = (0..4).any(|arm| {
+        definition(&module, &format!("wf_reader.arm.{arm}"))
+            .lines()
+            .any(|line| line.contains("@wf_peek(ptr %wf.pin."))
+    });
+    assert!(handed, "the arm hands the reader its pin slot: {module}");
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
 /// An interpreter whose `Dec` arm replaces the box `regs` holds, returning
 /// its result through memory and carrying twenty-four values it never
 /// changes: `regs` cannot be kept, past the registers the unchanged values

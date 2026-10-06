@@ -48,9 +48,9 @@ pub(crate) use loop_permission::{LoopActualization, LoopCombine, LoopPermission}
 pub(crate) use model::{
     BindingId, CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation,
     CheckedBufferRoot, CheckedConst, CheckedContainerRoot, CheckedConversionMode, CheckedDrop,
-    CheckedElement, CheckedEnumType, CheckedExpression, CheckedFloatOperation, CheckedFunction,
-    CheckedIntegerOperation, CheckedLoopId, CheckedMatchArm, CheckedMeasure, CheckedMode,
-    CheckedNominalKind, CheckedNumericType, CheckedOwnedTakeCleanup, CheckedParameter,
+    CheckedEffectStep, CheckedElement, CheckedEnumType, CheckedExpression, CheckedFloatOperation,
+    CheckedFunction, CheckedIntegerOperation, CheckedLoopId, CheckedMatchArm, CheckedMeasure,
+    CheckedMode, CheckedNominalKind, CheckedNumericType, CheckedOwnedTakeCleanup, CheckedParameter,
     CheckedPlaceStep, CheckedProgramData, CheckedProjectedDrop, CheckedRangeElementPlace,
     CheckedRangeRoot, CheckedRangeSource, CheckedReleaseClass, CheckedSegmentIndex,
     CheckedSegmentSelect, CheckedSetTarget, CheckedShared, CheckedStatement, CheckedTarget,
