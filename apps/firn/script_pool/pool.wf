@@ -1,0 +1,5 @@
+fn new_pool() -> pool: EnginePool pure {
+  let idle = box_slots_new::<PooledEngine>(capacity: 0_u64);
+  let registry = box_slots_new::<Registered>(capacity: 0_u64);
+  return EnginePool(idle: move idle, registry: move registry, source_bytes: 0_u64, generation: 0_u64);
+}

@@ -59,7 +59,9 @@ fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64, started
   }
   let server = ServerState(password: move password, timeout: timeout, encodings: encodings, connections: 0_u64, started: started);
   let beside = shared_new::<ServerState>(value: move server);
-  return Keyspace(keys: move keys, meta: move kept, server: move beside, logging: logging);
+  let pool = pkg::script_pool::new_pool();
+  let scripts = shared_new::<pkg::script_pool::EnginePool>(value: move pool);
+  return Keyspace(keys: move keys, meta: move kept, server: move beside, scripts: move scripts, logging: logging);
 }
 
 fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) {
@@ -73,7 +75,8 @@ fn keyspace_logging(store: &Keyspace, logging: Bool) -> made: Keyspace reads(sto
   let keys = shared_share::<ConcurrentHashMap<Entry>>(shared: &store^.keys);
   let kept = shared_share::<Meta>(shared: &store^.meta);
   let beside = shared_share::<ServerState>(shared: &store^.server);
-  return Keyspace(keys: move keys, meta: move kept, server: move beside, logging: logging);
+  let scripts = shared_share::<pkg::script_pool::EnginePool>(shared: &store^.scripts);
+  return Keyspace(keys: move keys, meta: move kept, server: move beside, scripts: move scripts, logging: logging);
 }
 
 fn expired(expires: u64, now: u64) -> reached: Bool pure {

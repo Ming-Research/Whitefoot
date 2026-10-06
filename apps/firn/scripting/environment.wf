@@ -1,0 +1,321 @@
+alias no_handle = halo::heap::no_handle;
+alias HostOutcome = halo::vm::HostOutcome;
+alias num_of = halo::value::num_of;
+alias Value = halo::value::Value;
+alias Vm = halo::vm::Vm;
+alias Engine = halo::embed::Engine;
+alias Span = pkg::protocol::Span;
+
+fn install_host(engine: &Engine) -> r: unit writes(engine) {
+  let vm = &engine^.vm;
+  let redis = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 16_u32);
+  let k_4096 = literal(vm: vm, text: &env_text_0[0_u64..4_u64]);
+  let v_4096 = Value::Builtin(id: 4096_u32);
+  raw(vm: vm, table: redis, key: k_4096, value: v_4096);
+  let k_4097 = literal(vm: vm, text: &env_text_1[0_u64..5_u64]);
+  let v_4097 = Value::Builtin(id: 4097_u32);
+  raw(vm: vm, table: redis, key: k_4097, value: v_4097);
+  let k_4098 = literal(vm: vm, text: &env_text_2[0_u64..12_u64]);
+  let v_4098 = Value::Builtin(id: 4098_u32);
+  raw(vm: vm, table: redis, key: k_4098, value: v_4098);
+  let k_4099 = literal(vm: vm, text: &env_text_3[0_u64..11_u64]);
+  let v_4099 = Value::Builtin(id: 4099_u32);
+  raw(vm: vm, table: redis, key: k_4099, value: v_4099);
+  let k_4100 = literal(vm: vm, text: &env_text_4[0_u64..3_u64]);
+  let v_4100 = Value::Builtin(id: 4100_u32);
+  raw(vm: vm, table: redis, key: k_4100, value: v_4100);
+  let k_4102 = literal(vm: vm, text: &env_text_5[0_u64..7_u64]);
+  let v_4102 = Value::Builtin(id: 4102_u32);
+  raw(vm: vm, table: redis, key: k_4102, value: v_4102);
+  let k_4103 = literal(vm: vm, text: &env_text_6[0_u64..7_u64]);
+  let v_4103 = Value::Builtin(id: 4103_u32);
+  raw(vm: vm, table: redis, key: k_4103, value: v_4103);
+  let level_0 = literal(vm: vm, text: &env_text_7[0_u64..9_u64]);
+  let number_0 = num(x: 0.0_f64);
+  raw(vm: vm, table: redis, key: level_0, value: number_0);
+  let level_1 = literal(vm: vm, text: &env_text_8[0_u64..11_u64]);
+  let number_1 = num(x: 1.0_f64);
+  raw(vm: vm, table: redis, key: level_1, value: number_1);
+  let level_2 = literal(vm: vm, text: &env_text_9[0_u64..10_u64]);
+  let number_2 = num(x: 2.0_f64);
+  raw(vm: vm, table: redis, key: level_2, value: number_2);
+  let level_3 = literal(vm: vm, text: &env_text_10[0_u64..11_u64]);
+  let number_3 = num(x: 3.0_f64);
+  raw(vm: vm, table: redis, key: level_3, value: number_3);
+  let result = halo::embed::set_global(engine: engine, name: &env_text_11[0_u64..5_u64], value: redis);
+  set vm = &engine^.vm;
+  let meta = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 1_u32);
+  let index = literal(vm: vm, text: &env_text_12[0_u64..7_u64]);
+  let callback = Value::Builtin(id: 4101_u32);
+  raw(vm: vm, table: meta, key: index, value: callback);
+  match halo::value::tab_of(v: meta) {
+    Handle(h: mh) => {
+      let g = cvt::<u32, u64>(vm^.globals);
+      if g < vm^.heap.tables.inner.len {
+        set vm^.heap.tables.inner[g].payload.meta = mh;
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  let globals = Value::Tab(h: vm^.globals);
+  protect_table(vm: vm, table: globals);
+  return unit;
+}
+
+fn protect_table(vm: &Vm, table: Value) -> r: unit writes(vm) {
+  doc "Redis 7 protects globals and the tables reachable through them. Mark before walking so cycles are finite; KEYS/ARGV are installed later and remain script-local mutable tables.";
+  match halo::value::tab_of(v: table) {
+    Handle(h: handle) => {
+      let h = cvt::<u32, u64>(handle);
+      if h < vm^.heap.tables.inner.len {
+        if vm^.heap.tables.inner[h].payload.read_only {
+          return unit;
+        }
+        set vm^.heap.tables.inner[h].payload.read_only = True();
+        let key = Value::Nil();
+        loop {
+          match halo::heap::table_next(heap: &vm^.heap, t: table, key: key) {
+            Ok(value: found) => {
+              match found {
+                Some(value: pair) => {
+                  set key = pair.key;
+                  protect_table(vm: vm, table: pair.val);
+                }
+                None() => {
+                  break;
+                }
+              }
+            }
+            Err(..) => {
+              break;
+            }
+          }
+        }
+        if h < vm^.heap.tables.inner.len {
+          let metatable = vm^.heap.tables.inner[h].payload.meta;
+          if metatable != no_handle {
+            let meta_value = Value::Tab(h: metatable);
+            protect_table(vm: vm, table: meta_value);
+          }
+        }
+      }
+    }
+    NoHandle() => {
+    }
+  }
+  return unit;
+}
+
+fn prepare(engine: &Engine, input: &[u8], args: &Box<Slots<Span>>, keys: u64) -> r: unit reads(input), reads(args), writes(engine) {
+  let kt = halo::embed::new_table(engine: engine, asize: 0_u32, hsize: 0_u32);
+  let at = halo::embed::new_table(engine: engine, asize: 0_u32, hsize: 0_u32);
+  let keys_global = halo::embed::set_global(engine: engine, name: &env_text_13[0_u64..4_u64], value: kt);
+  let argv_global = halo::embed::set_global(engine: engine, name: &env_text_14[0_u64..4_u64], value: at);
+  let count = args^.inner.len;
+  let first_arg = keys +sat 3_u64;
+  for (i in 3_u64..count) {
+    let span = pkg::protocol::arg(args: args, index: i);
+    let bytes = copy_source(input: input, span: span);
+    let n = bytes.inner.len;
+    let v = halo::embed::intern(engine: engine, bytes: &bytes.inner[0_u64..n]);
+    let table = at;
+    let offset = i -sat first_arg;
+    let index = offset +sat 1_u64;
+    if i < first_arg {
+      set table = kt;
+      set index = i - 2_u64;
+    }
+    let x = cvt.nearest::<u64, f64>(index);
+    let key = num(x: x);
+    let result = halo::embed::table_set(engine: engine, table: table, key: key, value: v);
+  }
+  return unit;
+}
+
+fn raise(vm: &Vm, text: &[u8]) -> r: HostOutcome reads(text), writes(vm) {
+  let message = literal(vm: vm, text: text);
+  let error = redis_raised(vm: vm, message: message);
+  set vm^.error = error;
+  return HostOutcome::Raised();
+}
+
+fn numeric(vm: &Vm, v: Value) -> r: Bool reads(vm) {
+  match num_of(v: v) {
+    Is(..) => {
+      return True();
+    }
+    Not() => {
+    }
+  }
+  match halo::heap::string_of(heap: &vm^.heap, value: v) {
+    Some(value: view) => {
+      let h = cvt::<u32, u64>(view.handle);
+      if h < vm^.heap.strings.inner.len {
+        let n = vm^.heap.strings.inner[h].payload.bytes.inner.len;
+        match halo::number::str2number(bytes: &vm^.heap.strings.inner[h].payload.bytes.inner[0_u64..n]) {
+          Some(..) => {
+            return True();
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return False();
+}
+
+fn error_reply_value(vm: &Vm, v: Value) -> r: Value writes(vm) {
+  doc "Redis's error_reply first supplies a leading minus to luaPushErrorBuff. Split the explicit code at the first space, default to ERR when there is none, and trim both ends of the message's CR/LF range.";
+  let bytes = box_slots_new::<u8>(capacity: 0_u64);
+  value_bytes(vm: vm, v: v, out: &bytes);
+  let start = 0_u64;
+  if bytes.inner.len > 0_u64 {
+    if bytes.inner[0_u64] == 45_u8 {
+      set start = 1_u64;
+    }
+  }
+  let end = bytes.inner.len;
+  for (i in start..bytes.inner.len) {
+    if bytes.inner[i] == 0_u8 {
+      set end = i;
+      break;
+    }
+  }
+  let code_end = end;
+  for (i in start..end) {
+    if i < bytes.inner.len {
+      if bytes.inner[i] == 32_u8 {
+        set code_end = i;
+        break;
+      }
+    }
+  }
+  let has_code = code_end < end;
+  let first = start;
+  if has_code {
+    set first = code_end + 1_u64;
+  }
+  loop {
+    if first >= end {
+      break;
+    }
+    if first < bytes.inner.len {
+      let b = bytes.inner[first];
+      let cr = b == 13_u8;
+      let lf = b == 10_u8;
+      let newline = bor(cr, lf);
+      if newline {
+        set first = first + 1_u64;
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  loop {
+    if end <= first {
+      break;
+    }
+    let last = end - 1_u64;
+    if last < bytes.inner.len {
+      let b = bytes.inner[last];
+      let cr = b == 13_u8;
+      let lf = b == 10_u8;
+      let newline = bor(cr, lf);
+      if newline {
+        set end = last;
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  let out = box_slots_new::<u8>(capacity: 0_u64);
+  if has_code {
+    if start <= code_end {
+      if code_end <= bytes.inner.len {
+        text_bytes(out: &out, bytes: &bytes.inner[start..code_end]);
+      }
+    }
+    push(out: &out, byte: 32_u8);
+  } else {
+    text_bytes(out: &out, bytes: &env_text_15[0_u64..4_u64]);
+  }
+  if first <= end {
+    if end <= bytes.inner.len {
+      text_bytes(out: &out, bytes: &bytes.inner[first..end]);
+    }
+  }
+  let n = out.inner.len;
+  let message = literal(vm: vm, text: &out.inner[0_u64..n]);
+  return reply_table(vm: vm, field: &env_text_16[0_u64..3_u64], v: message);
+}
+
+const env_text_0: Array<u8, 4> = "call";
+
+const env_text_1: Array<u8, 5> = "pcall";
+
+const env_text_2: Array<u8, 12> = "status_reply";
+
+const env_text_3: Array<u8, 11> = "error_reply";
+
+const env_text_4: Array<u8, 3> = "log";
+
+const env_text_5: Array<u8, 7> = "sha1hex";
+
+const env_text_6: Array<u8, 7> = "setresp";
+
+const env_text_7: Array<u8, 9> = "LOG_DEBUG";
+
+const env_text_8: Array<u8, 11> = "LOG_VERBOSE";
+
+const env_text_9: Array<u8, 10> = "LOG_NOTICE";
+
+const env_text_10: Array<u8, 11> = "LOG_WARNING";
+
+const env_text_11: Array<u8, 5> = "redis";
+
+const env_text_12: Array<u8, 7> = "__index";
+
+const env_text_13: Array<u8, 4> = "KEYS";
+
+const env_text_14: Array<u8, 4> = "ARGV";
+
+const env_text_15: Array<u8, 4> = "ERR ";
+
+const env_text_16: Array<u8, 3> = "err";
+
+fn config_snapshot(vm: &Vm) -> saved: Box<Slots<Array<u64, 9>>> reads(vm) {
+  doc "Cjson setters are engine-visible effects even before a keyspace write. Snapshot settings so an abandoned attempt leaves the engine's Lua environment as it found it.";
+  let n = vm^.cjson_configs.inner.len;
+  let saved = box_slots_new::<Array<u64, 9>>(capacity: n);
+  for (i in 0_u64..n) {
+    let settings = vm^.cjson_configs.inner[i].settings;
+    if saved.inner.len < saved.inner.cap {
+      place_back(window: &saved.inner, value: settings);
+    }
+  }
+  return move saved;
+}
+
+fn config_restore(vm: &Vm, saved: &Box<Slots<Array<u64, 9>>>, active: u64) -> r: unit reads(saved), writes(vm) {
+  loop {
+    if vm^.cjson_configs.inner.len <= saved^.inner.len {
+      break;
+    }
+    let dropped = take_back(window: &vm^.cjson_configs.inner);
+  }
+  for (i in 0_u64..saved^.inner.len) {
+    if i < vm^.cjson_configs.inner.len {
+      set vm^.cjson_configs.inner[i].settings = saved^.inner[i];
+    }
+  }
+  set vm^.cjson_active_config = active;
+  return unit;
+}

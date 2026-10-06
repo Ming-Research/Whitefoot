@@ -1,0 +1,25 @@
+public struct Cached {
+  public sha: Array<u8, 40>;
+  public id: halo::embed::ScriptId;
+}
+
+public struct PooledEngine {
+  public engine: halo::embed::Engine;
+  public generation: u64;
+  public cache: Box<Slots<Cached>>;
+}
+
+public struct Registered {
+  public sha: Array<u8, 40>;
+  public source: Box<Slots<u8>>;
+}
+
+public struct EnginePool {
+  doc "Idle engines and SHA1-to-source registry. A connection owns its engine outside short pool statements; script execution never holds the pool.";
+  public idle: Box<Slots<PooledEngine>>;
+  public registry: Box<Slots<Registered>>;
+  public source_bytes: u64;
+  public generation: u64;
+}
+
+public fn new_pool() -> pool: EnginePool pure doc "An empty pool, allocating engines only when taken.";

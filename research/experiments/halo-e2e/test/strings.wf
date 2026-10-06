@@ -62,28 +62,6 @@ const s_30: Array<u8, 3> = "err";
 
 const s_31: Array<u8, 25> = "unsupported host function";
 
-const s_32: Array<u8, 4> = "\\u00";
-
-const s_33: Array<u8, 4> = "ERR ";
-
-const s_34: Array<u8, 28> = "{\"type\":\"nil\",\"kind\":\"bulk\"}";
-
-const s_35: Array<u8, 50> = "{\"type\":\"error\",\"bytes\":\"ERR reply nesting limit\"}";
-
-const s_36: Array<u8, 28> = "{\"type\":\"integer\",\"value\":1}";
-
-const s_37: Array<u8, 26> = "{\"type\":\"integer\",\"value\":";
-
-const s_38: Array<u8, 23> = "{\"type\":\"bulk\",\"bytes\":";
-
-const s_39: Array<u8, 24> = "{\"type\":\"error\",\"bytes\":";
-
-const s_40: Array<u8, 25> = "{\"type\":\"status\",\"bytes\":";
-
-const s_41: Array<u8, 25> = "{\"type\":\"array\",\"items\":[";
-
-const s_42: Array<u8, 2> = "]}";
-
 const s_43: Array<u8, 4> = "call";
 
 const s_44: Array<u8, 5> = "pcall";
@@ -109,5 +87,3 @@ const sha_name: Array<u8, 7> = "sha1hex";
 const sha_arity: Array<u8, 29> = "ERR wrong number of arguments";
 
 const lua_source: Array<u8, 12> = "user_script:";
-
-const readonly_error: Array<u8, 34> = "Attempt to modify a readonly table";

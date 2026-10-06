@@ -41,6 +41,19 @@ clients send on their own:
   `ZSCORE`, `ZMSCORE`, `ZCARD`, `ZREM`, `ZPOPMIN` and `ZPOPMAX` with a count,
   `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE` and `ZREMRANGEBYLEX`, with scores
   read and written as Redis 7.0.15 reads and writes them;
+- scripting: `EVAL`, `EVALSHA`, `SCRIPT LOAD`, `SCRIPT EXISTS` and
+  `SCRIPT FLUSH [SYNC|ASYNC]` over Halo. `KEYS`, `ARGV`, the Redis Lua
+  helpers and reply conversions are installed; `redis.call` and `redis.pcall`
+  currently refuse command bodies as not yet supported in firn scripts,
+  and permanently refuse Redis's noscript commands. Like Redis 7.0.15,
+  successfully compiled EVAL and LOAD scripts remain cached until FLUSH,
+  without a script-count cap or eviction. Both flush modes invalidate before
+  OK; firn reclaims sources synchronously even for ASYNC. The registry tracks
+  source/hash payload bytes separately from allocator overhead and engine
+  heaps; INFO's script-memory fields are not yet connected. The interim
+  `script_command` in `scripting/commands.wf` is the one shared-registry
+  integration point; `command_reply` in `scripting/replies.wf` converts a
+  captured byte range before the host rewinds its reply buffer;
 - connection: `PING`, `ECHO`, `QUIT`, `AUTH`, `HELLO` with no version or
   version 2, version 3 being refused as unsupported, `SELECT 0`, firn
   having one database, and `CLIENT ID`, `CLIENT GETNAME` and
@@ -190,5 +203,8 @@ default.
   started;
 - `commands`: one file per kind of value, sorted sets' ranges in a second,
   the connection and server commands, and the dispatch;
+- `scripting`: the Redis Lua host, reply conversions, script commands and
+  budgeted whole-map attempts; `script_pool` owns the engines and registry
+  shared through Keyspace;
 - `persistence`: the append-only file's writer and its replay;
 - `server`: connections, active expiry, the invocation's options and `main`.

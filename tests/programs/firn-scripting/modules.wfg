@@ -1,0 +1,6 @@
+package halo = "../../../lib/halo";
+package firn = "../../../apps/firn";
+
+pkg::test: [firn::script_pool, firn::scripting, halo::embed, firn::commands, firn::bytes, firn::protocol, firn::store, std::io, std::fs, std::time, std::process];
+
+entry test = pkg::test::main;

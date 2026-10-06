@@ -49,6 +49,50 @@ def fixture(source):
     return '\n'.join(setup).encode('ascii') + b'\0' + source
 
 
+def wire_replies(data):
+    # Independent RESP decoder; Lua conversion is owned by firn, not this runner.
+    import io
+    stream = io.BytesIO(data)
+
+    def line():
+        value = stream.readline()
+        if not value.endswith(b'\r\n'):
+            raise ValueError('truncated RESP line')
+        return value[:-2]
+
+    def read():
+        tag = stream.read(1)
+        if tag in (b'+', b'-'):
+            return {'type': 'status' if tag == b'+' else 'error', 'bytes': line().decode('latin1')}
+        if tag == b':':
+            return {'type': 'integer', 'value': int(line())}
+        if tag in (b'$', b'*'):
+            n = int(line())
+            if n == -1:
+                return {'type': 'nil', 'kind': 'bulk' if tag == b'$' else 'array'}
+            if n < 0:
+                raise ValueError('invalid RESP length')
+            if tag == b'*':
+                return {'type': 'array', 'items': [read() for _ in range(n)]}
+            value = stream.read(n)
+            if len(value) != n or stream.read(2) != b'\r\n':
+                raise ValueError('truncated RESP bulk')
+            return {'type': 'bulk', 'bytes': value.decode('latin1')}
+        raise ValueError('unknown RESP prefix: ' + repr(tag))
+
+    replies = []
+    while stream.tell() < len(data):
+        replies.append(read())
+    return replies
+
+
+def wire_reply(data):
+    replies = wire_replies(data)
+    if len(replies) != 1:
+        raise ValueError('expected one RESP reply')
+    return replies[0]
+
+
 def canonical(reply):
     # Validate the schema before comparing; Python bool must not pass as int.
     if not isinstance(reply, dict):
@@ -139,18 +183,18 @@ def verify_errors(binary, stress=False):
                     + f', on @user_script:{line}.'}
         for extra in (['one'], ['seven', 'seven'], []):
             result, _ = run([str(binary)] + extra + (['--gc-stress'] if stress else []), input=fixture(source))
-            if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
+            if result.returncode or canonical(wire_reply(result.stdout)) != canonical(expected):
                 raise AssertionError(f'error probe {source!r}, args {extra}: {result.stdout!r}, expected {expected}')
     protected = b'return {pcall(function() return redis.call("GET","key","extra") end)}'
     expected = {'type': 'array', 'items': [{'type': 'nil', 'kind': 'bulk'},
                                          {'type': 'bulk', 'bytes': wrong}]}
     result, _ = run([str(binary)] + (['--gc-stress'] if stress else []), input=fixture(protected))
-    if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
+    if result.returncode or canonical(wire_reply(result.stdout)) != canonical(expected):
         raise AssertionError(f'protected command error: {result.stdout!r}')
     protected = b'return {pcall(function() return missing_global end)}'
     expected['items'][1]['bytes'] = 'user_script:1: ' + missing
     result, _ = run([str(binary)] + (['--gc-stress'] if stress else []), input=fixture(protected))
-    if result.returncode or canonical(json.loads(result.stdout)) != canonical(expected):
+    if result.returncode or canonical(wire_reply(result.stdout)) != canonical(expected):
         raise AssertionError(f'protected global error: {result.stdout!r}')
     print('Redis errors: 10 source/location/value probes at each budget + 2 protected-error probes pass', flush=True)
 
@@ -171,7 +215,7 @@ def verify_sha1(binary, stress=False):
         times.append(seconds)
         if result.returncode:
             raise AssertionError(f'SHA-1 vector {index}: native exit {result.returncode}')
-        actual = canonical(json.loads(result.stdout))
+        actual = canonical(wire_reply(result.stdout))
         expected = canonical({'type': 'bulk', 'bytes': hashlib.sha1(data).hexdigest()})
         if actual != expected:
             raise AssertionError(f'SHA-1 vector {index}, length {len(data)}: {actual} != {expected}')
@@ -186,7 +230,7 @@ def verify_memory(binary, stress, budgets):
         extra = [] if budget == 1000 else ['one'] if budget == 1 else ['seven', 'seven']
         extra += ['--memory-recovery'] + (['--gc-stress'] if stress else [])
         result, seconds = run([str(binary)] + extra, input=fixture(source) + b'\0' + following)
-        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        replies = wire_replies(result.stdout)
         if result.returncode or len(replies) != 2:
             raise AssertionError(f'memory/recovery transport exit {result.returncode}: {result.stdout!r}')
         canonical(replies[0])
@@ -297,7 +341,7 @@ def main():
                         collections = stats['collections']
                         if type(collections) is not int or collections < 0:
                             raise ValueError('invalid collection count')
-                        actual = json.loads(result.stdout)
+                        actual = wire_reply(result.stdout)
                         actual_bytes = canonical(actual)
                         status = 'PASS' if actual_bytes == expected_bytes else 'FAIL'
                         why = '' if status == 'PASS' else reason(actual, expected)

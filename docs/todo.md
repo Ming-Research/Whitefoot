@@ -2243,6 +2243,15 @@ rarely insert at the same place.
   or before claiming every-allocation validation; verify omitted-reference
   controls and allocating helpers with live temporary values.
 
+- **Move Redis error formatting out of Halo's embedding package.**
+  `lib/halo/embed/redis-error.wf` and its exported `format_redis_error`
+  still name Redis, and firn's new host consumes that existing helper.
+  Impact: Halo's package boundary retains a Redis dependency despite the
+  intended independent engine. Move the formatter into firn's scripting
+  module and update the differential host's caller. Reopen with the shared
+  command-body integration; validate the same uncaught and protected error
+  bytes and check that the standalone Halo interface has no Redis helper.
+
 - **Halo codec error names need Lua debug metadata.** The library comparison
   in `research/experiments/halo-luacodecs/RESULTS.md` includes
   `local f=bit.tobit; return f(false)` and operations on `cjson.null`.
@@ -3615,6 +3624,14 @@ condition under which it is taken up.
 
 ## firn
 
+- **Firn's INFO script counters remain fixed at zero.** The new engine pool
+  and registry give scripts real lifetime across connections, but INFO's
+  existing script and memory fields still report their pre-scripting values.
+  Report the registry's script count and distinguish measured engine memory
+  from unmeasured server memory. Reopen when integrating script command
+  bodies; validate LOAD/EVAL/FLUSH counter transitions against the registry
+  and compare the selected fields with Redis 7.0.15.
+
 - **Complete firn's standalone deployment workloads.** The
   [deployment direction](../research/investigations/firn/DESIGN.md#deployment-direction)
   requires usable cache/session storage and scripted conditional updates,
@@ -3652,30 +3669,18 @@ condition under which it is taken up.
   select them with that consumer rather than promising a partial queue.
   Reopen now with the command integration and Lua vertical slice, and revisit
   deferred families when a real consumer makes them necessary.
-- **Implement firn's Redis-compatible Lua interpreter in Whitefoot.** Missing
-  scripting prevents applications from composing conditional multi-command
-  operations through `EVAL` and `EVALSHA`. Target the Redis Lua 5.1 execution
-  environment ([Lua semantics](https://www.lua.org/manual/5.1/manual.html),
-  [Redis Lua API](https://redis.io/docs/latest/develop/programmability/lua-api/)),
-  pinning the Redis reference version for tests; this is not a JIT, a native
-  Lua embedding, or a recognizer for selected script templates. Important
-  work, with representation and algorithms still to be investigated:
-  - Parse and compile scripts to an executable form; implement dynamic
-    values, tables, lexical scopes, closures/upvalues, multiple returns,
-    varargs, calls/tail calls, metatables and protected error propagation.
-    Implement the library behavior Redis exposes, including strings/patterns,
-    tables, math, bit operations, JSON and MessagePack, rather than importing
-    the standalone interpreter's host I/O or native-module facilities.
-  - Establish object identity, roots, cyclic-object reclamation and bounded
-    resource behavior within Whitefoot's checked ownership and access rules.
-    Compare viable VM/GC representations and their dependent accesses before
-    selecting one; do not assume reference counting alone collects cycles.
-  - Add `KEYS`/`ARGV`, `redis.call`/`redis.pcall`, Lua/RESP conversions,
-    script caching and `NOSCRIPT`, `SCRIPT LOAD`/`EXISTS`/`FLUSH`/`KILL`, and
-    the sandbox and busy-script behavior of the pinned reference. Distinguish
-    script errors and allowed termination from rollback; compare the state
-    left by an error after a write. Persistent `FUNCTION`/`FCALL` support is
-    later work unless the selected consumer requires it.
+- **Finish firn's Redis-compatible Lua command integration.** The initial
+  Halo scripting commands do not yet execute command bodies, preventing
+  applications from composing conditional multi-command operations through
+  `EVAL` and `EVALSHA`. Connect the statement-callable command bodies to the
+  scripting module's interim `script_command` adapter and the connection's
+  RESP reply buffer, and supply the held
+  keys, metadata and frozen start time to the Halo callback without storing
+  references or entering another atomic statement. Validate the same command
+  through ordinary dispatch and through `redis.call`/`redis.pcall`, including
+  the state left by an error after its first write. Add `SCRIPT KILL` and
+  busy-script behavior against Redis 7.0.15. Persistent `FUNCTION`/`FCALL`
+  support remains later work unless the selected consumer requires it.
   - Execute each script with Redis-compatible atomic visibility, expiry
     behavior and AOF effects. Share command semantics with transactions;
     identify the true conflicting key/state dependencies, retain independent

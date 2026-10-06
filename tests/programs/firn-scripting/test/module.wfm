@@ -1,0 +1,1 @@
+public fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits doc "Serve production firn requests over stdin/stdout for scripting tests.";

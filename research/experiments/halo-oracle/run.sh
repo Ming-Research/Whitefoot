@@ -19,12 +19,15 @@ mode = parser.add_mutually_exclusive_group()
 mode.add_argument('--generate', action='store_true', help='write replies from a fresh Redis 7.0.15 (default)')
 mode.add_argument('--check', action='store_true', help='compare replies with expected files; never rewrite them')
 parser.add_argument('--port', type=int, help='compare an existing server; requires --check')
+parser.add_argument('--stdio', type=Path, help='in-process firn request driver; requires --check')
 parser.add_argument('--host', default='127.0.0.1', help='existing server host (default: 127.0.0.1)')
 parser.add_argument('--server', default='/private/tmp/wf-redis-7.0.15/src/redis-server')
 parser.add_argument('--output', type=Path, help='generation directory (default: expected/)')
 parser.add_argument('--expected', type=Path, default=ROOT / 'expected', help='comparison directory')
 parser.add_argument('--filter', help='one group or group/name, without .lua, for a small sample')
 args = parser.parse_args(sys.argv[2:])
+if args.stdio is not None and (not args.check or args.port is not None):
+    parser.error('--stdio requires --check and excludes --port')
 if args.port is not None and not args.check:
     parser.error('--port requires --check: expected replies may only be generated with pinned Redis')
 if args.check and args.output is not None:
@@ -65,15 +68,41 @@ class RESP:
         self.sock = socket.create_connection((host, port), timeout=5)
         self.file = self.sock.makefile('rb')
 
+    @classmethod
+    def stdio(cls, executable):
+        self = cls.__new__(cls)
+        self.process = subprocess.Popen([str(executable.resolve())], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.sock = None
+        self.file = self.process.stdout
+        return self
+
     def close(self):
         self.file.close()
-        self.sock.close()
+        if self.sock is not None:
+            self.sock.close()
+        else:
+            self.process.stdin.close()
+            try:
+                code = self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+                raise
+            error = self.process.stderr.read()
+            self.process.stderr.close()
+            if code != 0:
+                raise RuntimeError(f'firn driver exit {code}: {error!r}')
 
     def command(self, *parts):
         parts = [p if isinstance(p, bytes) else str(p).encode('utf-8') for p in parts]
         wire = b'*%d\r\n' % len(parts)
         wire += b''.join(b'$%d\r\n' % len(p) + p + b'\r\n' for p in parts)
-        self.sock.sendall(wire)
+        if self.sock is not None:
+            self.sock.sendall(wire)
+        else:
+            self.process.stdin.write(wire)
+            self.process.stdin.flush()
         return self.reply()
 
     def line(self):
@@ -190,14 +219,17 @@ def main():
     # Explicit system temp root: never leave Redis files in the repository.
     with tempfile.TemporaryDirectory(prefix='halo-oracle-', dir='/private/tmp') as scratch:
         try:
-            if args.port is None:
+            if args.stdio is not None:
+                connection = RESP.stdio(args.stdio)
+                successful(connection.command('PING'), 'PING')
+            elif args.port is None:
                 process, connection = start_server(scratch)
             else:
                 connection = RESP(args.host, args.port)
                 successful(connection.command('PING'), 'PING')
 
             def flush():
-                if args.port is None:
+                if args.port is None and args.stdio is None:
                     successful(connection.command('FLUSHDB'), 'FLUSHDB')
                 elif corpus_keys:
                     # Firn has DEL but no FLUSHDB. All corpus writes use declared keys.

@@ -1,3 +1,11 @@
+alias raw = firn::scripting::raw;
+alias literal = firn::scripting::literal;
+alias num = firn::scripting::num;
+alias push = firn::scripting::push;
+alias text_bytes = firn::scripting::text_bytes;
+alias decimal = firn::scripting::decimal;
+alias readonly_message = firn::scripting::readonly_message;
+alias callback_line = firn::scripting::callback_line;
 alias Inputs = std::process::Inputs;
 alias ExitStatus = std::process::ExitStatus;
 alias HandleFactory = std::io::HandleFactory;
@@ -9,285 +17,6 @@ alias no_handle = halo::heap::no_handle;
 alias Engine = halo::embed::Engine;
 alias ScriptId = halo::embed::ScriptId;
 alias Outcome = halo::vm::Outcome;
-
-fn push(out: &Box<Slots<u8>>, byte: u8) -> r: unit writes(out) {
-  let cap_v0 = out^.inner.cap;
-  if out^.inner.len == cap_v0 {
-    let twice_v1 = cap_v0 +sat cap_v0;
-    let target_v2 = imax(twice_v1, 4096_u64);
-    if target_v2 > cap_v0 {
-      grow(cell: out, capacity: target_v2);
-    }
-  }
-  if out^.inner.len < out^.inner.cap {
-    place_back(window: &out^.inner, value: byte);
-  }
-  return unit;
-}
-
-fn text_bytes(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) {
-  for (i_v3 in 0_u64..bytes^.len) {
-    let b_v4 = bytes^[i_v3];
-    push(out: out, byte: b_v4);
-  }
-  return unit;
-}
-
-fn decimal(out: &Box<Slots<u8>>, n: u64) -> r: unit writes(out) {
-  let digits_v5 = slots_new::<u8, 20>();
-  let n_v6 = n;
-  loop {
-    let d_v7 = n_v6 % 10_u64;
-    let digit_v8 = cvt.wrap::<u64, u8>(d_v7);
-    let b_v9 = digit_v8 +wrap 48_u8;
-    if digits_v5.len < digits_v5.cap {
-      place_back(window: &digits_v5, value: b_v9);
-    }
-    set n_v6 = n_v6 / 10_u64;
-    if n_v6 == 0_u64 {
-      break;
-    }
-  }
-  loop {
-    if digits_v5.len == 0_u64 {
-      break;
-    }
-    let b_v10 = take_back(window: &digits_v5);
-    push(out: out, byte: b_v10);
-  }
-  return unit;
-}
-
-fn value_bytes(vm: &Vm, v: Value, out: &Box<Slots<u8>>) -> r: unit reads(vm), writes(out) {
-  match halo::heap::string_of(heap: &vm^.heap, value: v) {
-    None() => {
-    }
-    Some(value: view_v11) => {
-      let h_v12 = cvt::<u32, u64>(view_v11.handle);
-      if h_v12 < vm^.heap.strings.inner.len {
-        let n_v13 = vm^.heap.strings.inner[h_v12].payload.bytes.inner.len;
-        text_bytes(out: out, bytes: &vm^.heap.strings.inner[h_v12].payload.bytes.inner[0_u64..n_v13]);
-      }
-    }
-  }
-  return unit;
-}
-
-fn hex(n: u8) -> r: u8 pure {
-  if n < 10_u8 {
-    return n +wrap 48_u8;
-  }
-  return n +wrap 87_u8;
-}
-
-fn json_string(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) {
-  push(out: out, byte: 34_u8);
-  for (i_v14 in 0_u64..bytes^.len) {
-    let b_v15 = bytes^[i_v14];
-    let quote_v16 = b_v15 == 34_u8;
-    let slash_v17 = b_v15 == 92_u8;
-    if bor(quote_v16, slash_v17) {
-      push(out: out, byte: 92_u8);
-      push(out: out, byte: b_v15);
-    } else {
-      let low_v18 = b_v15 < 32_u8;
-      let high_v19 = b_v15 > 126_u8;
-      if bor(low_v18, high_v19) {
-        text_bytes(out: out, bytes: &s_32[0_u64..4_u64]);
-        let hi_v20 = b_v15 / 16_u8;
-        let lo_v21 = b_v15 % 16_u8;
-        let h_v22 = hex(n: hi_v20);
-        let l_v23 = hex(n: lo_v21);
-        push(out: out, byte: h_v22);
-        push(out: out, byte: l_v23);
-      } else {
-        push(out: out, byte: b_v15);
-      }
-    }
-  }
-  push(out: out, byte: 34_u8);
-  return unit;
-}
-
-fn json_bytes(vm: &Vm, value: Value, out: &Box<Slots<u8>>, sanitize: Bool, error: Bool) -> r: unit reads(vm), writes(out) {
-  let bytes_v24 = box_slots_new::<u8>(capacity: 0_u64);
-  value_bytes(vm: vm, v: value, out: &bytes_v24);
-  if sanitize {
-    let n_v25 = bytes_v24.inner.len;
-    let end_v26 = n_v25;
-    for (i_v27 in 0_u64..n_v25) {
-      if i_v27 < bytes_v24.inner.len {
-        let b_v28 = bytes_v24.inner[i_v27];
-        if b_v28 == 0_u8 {
-          if i_v27 < end_v26 {
-            set end_v26 = i_v27;
-          }
-        }
-        let lf_v29 = b_v28 == 10_u8;
-        let cr_v30 = b_v28 == 13_u8;
-        if bor(lf_v29, cr_v30) {
-          set bytes_v24.inner[i_v27] = 32_u8;
-        }
-      }
-    }
-    loop {
-      if bytes_v24.inner.len <= end_v26 {
-        break;
-      }
-      let b_v31 = take_back(window: &bytes_v24.inner);
-    }
-  }
-  let prefix_v32 = False();
-  if error {
-    for (i_v33 in 0_u64..bytes_v24.inner.len) {
-      let b_v34 = bytes_v24.inner[i_v33];
-      if b_v34 == 32_u8 {
-        set prefix_v32 = True();
-        break;
-      }
-      let low_v35 = b_v34 < 65_u8;
-      let high_v36 = b_v34 > 90_u8;
-      if bor(low_v35, high_v36) {
-        break;
-      }
-    }
-  }
-  let missing_prefix_v37 = bnot(prefix_v32);
-  if band(error, missing_prefix_v37) {
-    let all_v38 = box_slots_new::<u8>(capacity: 0_u64);
-    text_bytes(out: &all_v38, bytes: &s_33[0_u64..4_u64]);
-    let n_v39 = bytes_v24.inner.len;
-    text_bytes(out: &all_v38, bytes: &bytes_v24.inner[0_u64..n_v39]);
-    let n_v40 = all_v38.inner.len;
-    json_string(out: out, bytes: &all_v38.inner[0_u64..n_v40]);
-  } else {
-    let n_v41 = bytes_v24.inner.len;
-    json_string(out: out, bytes: &bytes_v24.inner[0_u64..n_v41]);
-  }
-  return unit;
-}
-
-fn nil_reply(out: &Box<Slots<u8>>) -> r: unit writes(out) {
-  text_bytes(out: out, bytes: &s_34[0_u64..28_u64]);
-  return unit;
-}
-
-fn reply(vm: &Vm, value: Value, out: &Box<Slots<u8>>, depth: u64) -> r: unit writes(vm), writes(out) {
-  if depth >= 128_u64 {
-    text_bytes(out: out, bytes: &s_35[0_u64..50_u64]);
-    return unit;
-  }
-  match value {
-    Nil() => {
-      nil_reply(out: out);
-    }
-    False() => {
-      nil_reply(out: out);
-    }
-    True() => {
-      text_bytes(out: out, bytes: &s_36[0_u64..28_u64]);
-    }
-    Num(n: number_v42) => {
-      let n_v43 = ftrunc(number_v42);
-      let v_v44 = -9223372036854775808_i64;
-      if cvt.defined::<f64, i64>(n_v43) {
-        set v_v44 = cvt::<f64, i64>(n_v43);
-      }
-      text_bytes(out: out, bytes: &s_37[0_u64..26_u64]);
-      let bytes_v45 = integer_string(vm: vm, value: v_v44);
-      value_bytes(vm: vm, v: bytes_v45, out: out);
-      push(out: out, byte: 125_u8);
-    }
-    Str(..) => {
-      text_bytes(out: out, bytes: &s_38[0_u64..23_u64]);
-      let no_v46 = False();
-      json_bytes(vm: vm, value: value, out: out, sanitize: no_v46, error: no_v46);
-      push(out: out, byte: 125_u8);
-    }
-    Tab(..) => {
-      let errkey_v47 = literal(vm: vm, text: &s_30[0_u64..3_u64]);
-      let okkey_v48 = literal(vm: vm, text: &s_5[0_u64..2_u64]);
-      let err_v49 = get(vm: vm, table: value, key: errkey_v47);
-      let ok_v50 = get(vm: vm, table: value, key: okkey_v48);
-      let error_v51 = is_string(v: err_v49);
-      let status_v52 = is_string(v: ok_v50);
-      if error_v51 {
-        text_bytes(out: out, bytes: &s_39[0_u64..24_u64]);
-        let yes_v53 = True();
-        let keep = False();
-        json_bytes(vm: vm, value: err_v49, out: out, sanitize: yes_v53, error: keep);
-        push(out: out, byte: 125_u8);
-      } else if status_v52 {
-        text_bytes(out: out, bytes: &s_40[0_u64..25_u64]);
-        let yes_v54 = True();
-        let no_v55 = False();
-        json_bytes(vm: vm, value: ok_v50, out: out, sanitize: yes_v54, error: no_v55);
-        push(out: out, byte: 125_u8);
-      } else {
-        text_bytes(out: out, bytes: &s_41[0_u64..25_u64]);
-        let i_v56 = 1_u64;
-        loop {
-          let x_v57 = cvt.nearest::<u64, f64>(i_v56);
-          let key_v58 = num(x: x_v57);
-          let v_v59 = get(vm: vm, table: value, key: key_v58);
-          let absent_v60 = is_nil(v: v_v59);
-          if absent_v60 {
-            break;
-          }
-          if i_v56 > 1_u64 {
-            push(out: out, byte: 44_u8);
-          }
-          let next_v61 = depth + 1_u64;
-          reply(vm: vm, value: v_v59, out: out, depth: next_v61);
-          set i_v56 = i_v56 +sat 1_u64;
-        }
-        text_bytes(out: out, bytes: &s_42[0_u64..2_u64]);
-      }
-    }
-    Fun(..) => {
-      nil_reply(out: out);
-    }
-    Builtin(..) => {
-      nil_reply(out: out);
-    }
-  }
-  return unit;
-}
-
-fn readonly_message(vm: &Vm, value: Value) -> r: Bool reads(vm) {
-  match halo::heap::string_of(heap: &vm^.heap, value: value) {
-    None() => {
-      return False();
-    }
-    Some(value: view) => {
-      let h = cvt::<u32, u64>(view.handle);
-      if h < vm^.heap.strings.inner.len {
-        if vm^.heap.strings.inner[h].payload.bytes.inner.len == 34_u64 {
-          for (i in 0_u64..34_u64) {
-            let b = vm^.heap.strings.inner[h].payload.bytes.inner[i];
-            if b != readonly_error[i] {
-              return False();
-            }
-          }
-          return True();
-        }
-      }
-    }
-  }
-  return False();
-}
-
-fn callback_line(vm: &Vm) -> r: u64 reads(vm) {
-  doc "Global slow paths keep their continuation PC. Direct redis.member calls in this experiment use the member lookup's line; this is not a general failing-PC API.";
-  let pc = vm^.callback_plan.pc;
-  if pc > 0_u64 {
-    let previous = pc - 1_u64;
-    if previous < vm^.lineinfo.inner.len {
-      return cvt::<u32, u64>(vm^.lineinfo.inner[previous]);
-    }
-  }
-  return 0_u64;
-}
 
 fn run_script(engine: &Engine, env: &Env, id: ScriptId, budget: u64, collect_suspended: Bool, isolate_frames: Bool, omit_suspended_root: Bool) -> r: Outcome writes(engine), writes(env) {
   let out_v62 = halo::embed::start::<TestHost>(engine: engine, env: env, script: id, budget: budget);
@@ -473,6 +202,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let no_v116 = False();
   let env_v117 = Env(db: nil_v115, types: nil_v115, expiry: nil_v115, error: no_v116);
   install_host(engine: &engine_v114, env: &env_v117);
+  let reply_client = firn::protocol::client_new(capacity: 4096_u64);
   let out_v118 = box_slots_new::<u8>(capacity: 0_u64);
   let budget_v119 = 1000_u64;
   let argc_v120 = positional +sat 1_u64;
@@ -533,10 +263,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
         let compiled_v125 = halo::embed::compile(engine: &engine_v114, chunk_name: &s_52[0_u64..12_u64], source: &source_v109.inner[start_v124..end_v124]);
         match move compiled_v125 {
           Err(error: problem_v126) => {
-            text_bytes(out: &out_v118, bytes: &s_39[0_u64..24_u64]);
-            let len_v127 = problem_v126.message.inner.len;
-            json_string(out: &out_v118, bytes: &problem_v126.message.inner[0_u64..len_v127]);
-            push(out: &out_v118, byte: 125_u8);
+            firn::scripting::compile_error(client: &reply_client, error: &problem_v126);
           }
           Ok(value: id_v128) => {
             let outcome_v129 = run_script(engine: &engine_v114, env: &env_v117, id: id_v128, budget: budget_v119, collect_suspended: collect_suspended, isolate_frames: isolate_frames, omit_suspended_root: omit_suspended_root);
@@ -552,7 +279,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
                     }
                   }
                 }
-                reply(vm: &engine_v114.vm, value: v_v131, out: &out_v118, depth: 0_u64);
+                firn::scripting::lua_to_protocol(vm: &engine_v114.vm, value: v_v131, client: &reply_client, resp: 2_u8);
               }
               Error() => {
                 let line = callback_line(vm: &engine_v114.vm);
@@ -561,11 +288,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
                 let formatted = halo::embed::format_redis_error(engine: &engine_v114, source: &source_v109.inner[start_v124..end_v124], line: line, locate: locate);
                 let formatted_len = formatted.inner.len;
                 let error_reply = literal(vm: &engine_v114.vm, text: &formatted.inner[0_u64..formatted_len]);
-                text_bytes(out: &out_v118, bytes: &s_39[0_u64..24_u64]);
-                let yes_v134 = True();
-                let no_prefix = False();
-                json_bytes(vm: &engine_v114.vm, value: error_reply, out: &out_v118, sanitize: yes_v134, error: no_prefix);
-                push(out: &out_v118, byte: 125_u8);
+                firn::scripting::value_reply(vm: &engine_v114.vm, value: error_reply, client: &reply_client, mode: 1_u8);
               }
               Budget() => {
                 return std::process::exit_status(code: 5_u8);
@@ -582,8 +305,13 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     } else {
       return std::process::exit_status(code: 2_u8);
     }
-    push(out: &out_v118, byte: 10_u8);
   }
+  let wire_length = reply_client.at;
+  let allocated = reply_client.bytes.inner.len;
+  if wire_length > allocated {
+    return std::process::exit_status(code: 7_u8);
+  }
+  text_bytes(out: &out_v118, bytes: &reply_client.bytes.inner[0_u64..wire_length]);
   let wrote = write_bytes(factory: &factory_v103, output: &output_v101, bytes: &out_v118);
   if bnot(wrote) {
     return std::process::exit_status(code: 2_u8);

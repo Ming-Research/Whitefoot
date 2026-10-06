@@ -1,6 +1,6 @@
 alias Inputs = std::process::Inputs;
 alias ExitStatus = std::process::ExitStatus;
 
-public fn main(inputs: Inputs) -> status: ExitStatus pure waits doc "Runs one oracle script with a Whitefoot Redis test host and prints typed RESP2 JSON.";
+public fn main(inputs: Inputs) -> status: ExitStatus pure waits doc "Runs one oracle script with a Whitefoot Redis test host and prints RESP2 bytes.";
 
 public fn smoke() -> status: ExitStatus pure doc "Checks embedding lifecycle, budget continuation, host outcomes and collector root retention and release.";

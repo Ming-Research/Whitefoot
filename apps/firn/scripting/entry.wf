@@ -1,0 +1,432 @@
+alias Client = pkg::protocol::Client;
+alias reply_word = pkg::protocol::reply_word;
+alias reply_bulk_input = pkg::protocol::reply_bulk_input;
+alias reply_error = pkg::protocol::reply_error;
+alias reply_integer = pkg::protocol::reply_integer;
+alias Value = halo::value::Value;
+alias Vm = halo::vm::Vm;
+alias Keyspace = pkg::store::Keyspace;
+alias Time = pkg::store::Time;
+alias Span = pkg::protocol::Span;
+alias Engine = halo::embed::Engine;
+alias ScriptId = halo::embed::ScriptId;
+alias PooledEngine = pkg::script_pool::PooledEngine;
+alias Cached = pkg::script_pool::Cached;
+alias Registered = pkg::script_pool::Registered;
+alias EnginePool = pkg::script_pool::EnginePool;
+
+fn same_sha(left: &Array<u8, 40>, right: &Array<u8, 40>) -> yes: Bool reads(left), reads(right) {
+  for (i in 0_u64..40_u64) {
+    if left^[i] != right^[i] {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn registry_find(pool: &EnginePool, sha: &Array<u8, 40>) -> index: u64 reads(pool), reads(sha) {
+  for (i in 0_u64..pool^.registry.inner.len) {
+    if same_sha(left: &pool^.registry.inner[i].sha, right: sha) {
+      return i;
+    }
+  }
+  return pool^.registry.inner.len;
+}
+
+fn copy_source(input: &[u8], span: Span) -> bytes: Box<Slots<u8>> reads(input) {
+  let bytes = box_slots_new::<u8>(capacity: 0_u64);
+  for (i in 0_u64..span.length) {
+    let at = span.start +sat i;
+    let b = pkg::bytes::byte_at(input: input, index: at);
+    push(out: &bytes, byte: b);
+  }
+  return move bytes;
+}
+
+fn take_engine(store: &Keyspace) -> pooled: PooledEngine reads(store) waits {
+  let held = None<PooledEngine>();
+  let generation = 0_u64;
+  atomic p = &store^.scripts {
+    set generation = p^.generation;
+    if p^.idle.inner.len > 0_u64 {
+      let engine = take_back(window: &p^.idle.inner);
+      set held = Some<PooledEngine>(value: move engine);
+    }
+  }
+  match move held {
+    Some(value: engine) => {
+      if engine.generation != generation {
+        let stale = move engine;
+        return new_pooled(generation: generation);
+      }
+      return move engine;
+    }
+    None() => {
+      return new_pooled(generation: generation);
+    }
+  }
+}
+
+fn new_pooled(generation: u64) -> pooled: PooledEngine pure {
+  doc "A flush generation starts a fresh Lua environment as Redis scriptingReset does, dropping compiled constants and library configuration as well as the cache index.";
+  let engine = halo::embed::new_engine(limit: 18446744073709551615_u64);
+  install_host(engine: &engine);
+  let cache = box_slots_new::<Cached>(capacity: 0_u64);
+  return PooledEngine(engine: move engine, generation: generation, cache: move cache);
+}
+
+fn return_engine(store: &Keyspace, pooled: PooledEngine) -> r: unit reads(store) waits {
+  halo::embed::reset(engine: &pooled.engine);
+  atomic p = &store^.scripts {
+    if p^.idle.inner.len == p^.idle.inner.cap {
+      let room = p^.idle.inner.cap +sat 1_u64;
+      let twice = p^.idle.inner.cap +sat p^.idle.inner.cap;
+      let target = imax(room, twice);
+      grow(cell: &p^.idle, capacity: target);
+    }
+    if p^.idle.inner.len < p^.idle.inner.cap {
+      place_back(window: &p^.idle.inner, value: move pooled);
+    } else {
+      let exhausted = move pooled;
+    }
+  }
+  return unit;
+}
+
+fn register(store: &Keyspace, sha: &Array<u8, 40>, source: &[u8]) -> r: unit reads(store), reads(sha), reads(source) waits {
+  doc "Redis 7.0.15 luaCreateFunction retains every successfully compiled EVAL/LOAD source until scriptingReset; duplicate SHA1 does not grow the registry. No script-count cap or LRU eviction. Source/hash payload accounting is separate from allocator overhead and each engine heap.";
+  let span = Span(start: 0_u64, length: source^.len);
+  let copied = copy_source(input: source, span: span);
+  atomic p = &store^.scripts {
+    let index = registry_find(pool: p, sha: sha);
+    if index == p^.registry.inner.len {
+      if p^.registry.inner.len == p^.registry.inner.cap {
+        let room = p^.registry.inner.cap +sat 1_u64;
+        let twice = p^.registry.inner.cap +sat p^.registry.inner.cap;
+        let target = imax(room, twice);
+        grow(cell: &p^.registry, capacity: target);
+      }
+      if p^.registry.inner.len < p^.registry.inner.cap {
+        let payload = source^.len +sat 40_u64;
+        set p^.source_bytes = p^.source_bytes +sat payload;
+        let row = Registered(sha: sha^, source: move copied);
+        place_back(window: &p^.registry.inner, value: move row);
+      } else {
+        let exhausted = move copied;
+      }
+    } else {
+      let duplicate = move copied;
+    }
+  }
+  return unit;
+}
+
+fn cached(pooled: &PooledEngine, sha: &Array<u8, 40>, source: &[u8]) -> id: Result<ScriptId, halo::compile::CompileError> reads(sha), reads(source), writes(pooled) {
+  for (i in 0_u64..pooled^.cache.inner.len) {
+    if same_sha(left: &pooled^.cache.inner[i].sha, right: sha) {
+      return Ok<ScriptId, halo::compile::CompileError>(value: pooled^.cache.inner[i].id);
+    }
+  }
+  let compiled = halo::embed::compile(engine: &pooled^.engine, chunk_name: &entry_text_0[0_u64..12_u64], source: source);
+  match move compiled {
+    Err(error: e) => {
+      return Err<ScriptId, halo::compile::CompileError>(error: move e);
+    }
+    Ok(value: id) => {
+      if pooled^.cache.inner.len == pooled^.cache.inner.cap {
+        let room = pooled^.cache.inner.cap +sat 1_u64;
+        let twice = pooled^.cache.inner.cap +sat pooled^.cache.inner.cap;
+        let target = imax(room, twice);
+        grow(cell: &pooled^.cache, capacity: target);
+      }
+      if pooled^.cache.inner.len < pooled^.cache.inner.cap {
+        let row = Cached(sha: sha^, id: id);
+        place_back(window: &pooled^.cache.inner, value: row);
+      }
+      return Ok<ScriptId, halo::compile::CompileError>(value: id);
+    }
+  }
+}
+
+fn compile_error(client: &Client, error: &halo::compile::CompileError) -> r: unit reads(error), writes(client) {
+  reply_word(client: client, word: &entry_text_1[0_u64..44_u64]);
+  let n = error^.message.inner.len;
+  reply_word(client: client, word: &error^.message.inner[0_u64..n]);
+  reply_word(client: client, word: &entry_text_2[0_u64..2_u64]);
+  return unit;
+}
+
+fn read_sha(input: &[u8], span: Span, fold: Bool) -> sha: Array<u8, 40> reads(input) {
+  let sha = array_filled::<u8, 40>(value: 0_u8);
+  if span.length == 40_u64 {
+    for (i in 0_u64..40_u64) {
+      let at = span.start +sat i;
+      let b = pkg::bytes::byte_at(input: input, index: at);
+      if fold {
+        set b = pkg::bytes::lower(byte: b);
+      }
+      set sha[i] = b;
+    }
+  }
+  return sha;
+}
+
+fn eval(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, time: &Time, by_sha: Bool) -> r: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "Read both states before dispatch to take the entire keys and metadata holds even while command bodies are refused. Engine allocation follows Redis's default of no script-specific memory cap; host resource exhaustion remains the environment's limit.";
+  let count = args^.inner.len;
+  let body = pkg::protocol::arg(args: args, index: 1_u64);
+  if by_sha {
+    if body.length != 40_u64 {
+      reply_error(client: client, word: &entry_text_6[0_u64..45_u64]);
+      return unit;
+    }
+  }
+  let number = pkg::protocol::arg(args: args, index: 2_u64);
+  let parsed = pkg::bytes::read_integer(input: input, start: number.start, length: number.length);
+  if parsed.state != 1_u64 {
+    reply_error(client: client, word: &entry_text_3[0_u64..43_u64]);
+    return unit;
+  }
+  if parsed.value < 0_i64 {
+    reply_error(client: client, word: &entry_text_4[0_u64..36_u64]);
+    return unit;
+  }
+  let keys = cvt.wrap::<i64, u64>(parsed.value);
+  let remaining = count -sat 3_u64;
+  if keys > remaining {
+    reply_error(client: client, word: &entry_text_5[0_u64..55_u64]);
+    return unit;
+  }
+  let source = box_slots_new::<u8>(capacity: 0_u64);
+  let yes_fold = True();
+  let sha = read_sha(input: input, span: body, fold: yes_fold);
+  let present = bnot(by_sha);
+  if by_sha {
+    atomic p = &store^.scripts {
+      let index = registry_find(pool: p, sha: &sha);
+      if index < p^.registry.inner.len {
+        let n = p^.registry.inner[index].source.inner.len;
+        text_bytes(out: &source, bytes: &p^.registry.inner[index].source.inner[0_u64..n]);
+        set present = True();
+      }
+    }
+  } else {
+    let copied = copy_source(input: input, span: body);
+    set source = move copied;
+    let n = source.inner.len;
+    set sha = halo::embed::sha1hex(bytes: &source.inner[0_u64..n]);
+  }
+  if bnot(present) {
+    reply_error(client: client, word: &entry_text_6[0_u64..45_u64]);
+    return unit;
+  }
+  let budget = 1000_u64;
+  loop {
+    let pooled = take_engine(store: store);
+    let n = source.inner.len;
+    let compiled = cached(pooled: &pooled, sha: &sha, source: &source.inner[0_u64..n]);
+    let retry = False();
+    match move compiled {
+      Err(error: e) => {
+        compile_error(client: client, error: &e);
+      }
+      Ok(value: id) => {
+        if bnot(by_sha) {
+          register(store: store, sha: &sha, source: &source.inner[0_u64..n]);
+        }
+        prepare(engine: &pooled.engine, input: input, args: args, keys: keys);
+        let reply = box_slots_new::<u8>(capacity: 0_u64);
+        let no = False();
+        let held = HeldState(start_ms: time^.check, start_us: client^.unix_us, wrote: no, command_ran: no);
+        let env = Env(held: held, resp: 2_u8, error: no, reply: move reply);
+        let random = pooled.engine.vm.random_state;
+        let configs = config_snapshot(vm: &pooled.engine.vm);
+        let config_active = pooled.engine.vm.cjson_active_config;
+        atomic t = &store^.keys, m = &store^.meta {
+          let held_keys = map_count::<pkg::store::Entry>(map: t);
+          let held_clients = m^.clients;
+          let outcome = halo::embed::start::<ScriptHost>(engine: &pooled.engine, env: &env, script: id, budget: budget);
+          loop {
+            match outcome {
+              Budget() => {
+                if env.held.wrote {
+                  set outcome = halo::embed::resume::<ScriptHost>(engine: &pooled.engine, env: &env, budget: 18446744073709551615_u64);
+                } else {
+                  set retry = True();
+                  set pooled.engine.vm.random_state = random;
+                  halo::embed::reset(engine: &pooled.engine);
+                  config_restore(vm: &pooled.engine.vm, saved: &configs, active: config_active);
+                  break;
+                }
+              }
+              Done(..) => {
+                let v = Value::Nil();
+                match halo::embed::result(engine: &pooled.engine, index: 0_u64) {
+                  Some(value: result) => {
+                    set v = result;
+                  }
+                  None() => {
+                  }
+                }
+                lua_to_protocol(vm: &pooled.engine.vm, value: v, client: client, resp: env.resp);
+                break;
+              }
+              Error() => {
+                let line = callback_line(vm: &pooled.engine.vm);
+                let value = halo::embed::error_value(engine: &pooled.engine);
+                let locate = readonly_message(vm: &pooled.engine.vm, value: value);
+                let formatted = halo::embed::format_redis_error(engine: &pooled.engine, source: &source.inner[0_u64..n], line: line, locate: locate);
+                let length = formatted.inner.len;
+                reply_error(client: client, word: &formatted.inner[0_u64..length]);
+                break;
+              }
+              HostStopped() => {
+                reply_error(client: client, word: &entry_text_7[0_u64..23_u64]);
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    return_engine(store: store, pooled: move pooled);
+    if bnot(retry) {
+      break;
+    }
+    set budget = budget +sat budget;
+  }
+  return unit;
+}
+
+fn script(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client) -> r: unit reads(store), reads(input), reads(args), writes(client) waits {
+  doc "SYNC and ASYNC both invalidate the visible registry before replying OK in Redis 7.0.15. Firn frees registry sources synchronously for either option; engines discard stale environments before reuse.";
+  let count = args^.inner.len;
+  let sub = pkg::protocol::arg(args: args, index: 1_u64);
+  let exists = pkg::bytes::name_is(input: input, start: sub.start, length: sub.length, word: &entry_text_8[0_u64..6_u64]);
+  let flushing = pkg::bytes::name_is(input: input, start: sub.start, length: sub.length, word: &entry_text_9[0_u64..5_u64]);
+  let loading = pkg::bytes::name_is(input: input, start: sub.start, length: sub.length, word: &entry_text_13[0_u64..4_u64]);
+  let known = bor(exists, flushing);
+  set known = bor(known, loading);
+  if bnot(known) {
+    script_unknown(client: client, input: input, sub: sub);
+    return unit;
+  }
+  if loading {
+    if count != 3_u64 {
+      reply_error(client: client, word: &load_arity_error[0_u64..55_u64]);
+      return unit;
+    }
+  }
+  if client^.locked {
+    reply_error(client: client, word: &script_noauth[0_u64..31_u64]);
+    return unit;
+  }
+  if exists {
+    let replies = count -sat 2_u64;
+    pkg::protocol::reply_array(client: client, count: replies);
+    for (i in 2_u64..count) {
+      let span = pkg::protocol::arg(args: args, index: i);
+      let no_fold = False();
+      let sha = read_sha(input: input, span: span, fold: no_fold);
+      let yes = False();
+      if span.length == 40_u64 {
+        atomic p = &store^.scripts {
+          let index = registry_find(pool: p, sha: &sha);
+          set yes = index < p^.registry.inner.len;
+        }
+      }
+      let value = 0_i64;
+      if yes {
+        set value = 1_i64;
+      }
+      reply_integer(client: client, value: value);
+    }
+    return unit;
+  }
+  if flushing {
+    let valid = count == 2_u64;
+    if count == 3_u64 {
+      let option = pkg::protocol::arg(args: args, index: 2_u64);
+      let sync = pkg::bytes::name_is(input: input, start: option.start, length: option.length, word: &entry_text_10[0_u64..4_u64]);
+      let async = pkg::bytes::name_is(input: input, start: option.start, length: option.length, word: &entry_text_11[0_u64..5_u64]);
+      set valid = bor(sync, async);
+    }
+    if bnot(valid) {
+      reply_error(client: client, word: &entry_text_12[0_u64..47_u64]);
+      return unit;
+    }
+    atomic p = &store^.scripts {
+      let empty = box_slots_new::<Registered>(capacity: 0_u64);
+      set p^.registry = move empty;
+      set p^.source_bytes = 0_u64;
+      set p^.generation = p^.generation +wrap 1_u64;
+    }
+    pkg::protocol::reply_ok(client: client);
+    return unit;
+  }
+  let load_arity = count == 3_u64;
+  if band(loading, load_arity) {
+    let body = pkg::protocol::arg(args: args, index: 2_u64);
+    let source = copy_source(input: input, span: body);
+    let n = source.inner.len;
+    let sha = halo::embed::sha1hex(bytes: &source.inner[0_u64..n]);
+    let pooled = take_engine(store: store);
+    let compiled = cached(pooled: &pooled, sha: &sha, source: &source.inner[0_u64..n]);
+    match move compiled {
+      Err(error: e) => {
+        compile_error(client: client, error: &e);
+      }
+      Ok(..) => {
+        register(store: store, sha: &sha, source: &source.inner[0_u64..n]);
+        reply_bulk_input(client: client, input: &sha[0_u64..40_u64], start: 0_u64, length: 40_u64);
+      }
+    }
+    return_engine(store: store, pooled: move pooled);
+    return unit;
+  }
+  return unit;
+}
+
+fn script_unknown(client: &Client, input: &[u8], sub: Span) -> r: unit reads(input), writes(client) {
+  reply_word(client: client, word: &entry_text_14[0_u64..58_u64]);
+  let shown = imin(sub.length, 128_u64);
+  let echoed = pkg::protocol::reply_echoed(client: client, input: input, span: sub, limit: shown);
+  reply_word(client: client, word: &entry_text_15[0_u64..21_u64]);
+  return unit;
+}
+
+const entry_text_0: Array<u8, 12> = "@user_script";
+
+const entry_text_1: Array<u8, 44> = "-ERR Error compiling script (new function): ";
+
+const entry_text_2: Array<u8, 2> = "\r\n";
+
+const entry_text_3: Array<u8, 43> = "ERR value is not an integer or out of range";
+
+const entry_text_4: Array<u8, 36> = "ERR Number of keys can't be negative";
+
+const entry_text_5: Array<u8, 55> = "ERR Number of keys can't be greater than number of args";
+
+const entry_text_6: Array<u8, 45> = "NOSCRIPT No matching script. Please use EVAL.";
+
+const entry_text_7: Array<u8, 23> = "ERR script host stopped";
+
+const entry_text_8: Array<u8, 6> = "EXISTS";
+
+const entry_text_9: Array<u8, 5> = "FLUSH";
+
+const entry_text_10: Array<u8, 4> = "SYNC";
+
+const entry_text_11: Array<u8, 5> = "ASYNC";
+
+const entry_text_12: Array<u8, 47> = "ERR SCRIPT FLUSH only support SYNC|ASYNC option";
+
+const entry_text_13: Array<u8, 4> = "LOAD";
+
+const entry_text_14: Array<u8, 58> = "-ERR unknown subcommand or wrong number of arguments for '";
+
+const entry_text_15: Array<u8, 21> = "'. Try SCRIPT HELP.\r\n";
+
+const load_arity_error: Array<u8, 55> = "ERR wrong number of arguments for 'script|load' command";
+
+const script_noauth: Array<u8, 31> = "NOAUTH Authentication required.";

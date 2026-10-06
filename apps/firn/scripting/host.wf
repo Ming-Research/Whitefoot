@@ -1,0 +1,396 @@
+alias Value = halo::value::Value;
+alias Vm = halo::vm::Vm;
+alias HostOutcome = halo::vm::HostOutcome;
+alias Host = halo::vm::Host;
+alias num_of = halo::value::num_of;
+alias str_of = halo::value::str_of;
+alias tab_of = halo::value::tab_of;
+alias protected_flag = halo::vm::protected_flag;
+
+struct HeldState {
+  start_ms: u64;
+  start_us: u64;
+  wrote: Bool;
+  command_ran: Bool;
+}
+
+struct Env {
+  held: HeldState;
+  resp: u8;
+  error: Bool;
+  reply: Box<Slots<u8>>;
+}
+
+fn raw(vm: &Vm, table: Value, key: Value, value: Value) -> r: unit writes(vm) {
+  let written_v0 = halo::heap::table_set(heap: &vm^.heap, t: table, key: key, val: value);
+  return unit;
+}
+
+fn get(vm: &Vm, table: Value, key: Value) -> r: Value reads(vm) {
+  return halo::heap::table_get(heap: &vm^.heap, t: table, key: key);
+}
+
+fn literal(vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(vm) {
+  return halo::heap::intern(heap: &vm^.heap, bytes: text);
+}
+
+fn num(x: f64) -> r: Value pure {
+  return Value::Num(n: x);
+}
+
+fn kind(v: Value) -> r: u8 pure {
+  return halo::embed::kind(value: v);
+}
+
+fn is_nil(v: Value) -> r: Bool pure {
+  let k_v1 = kind(v: v);
+  return k_v1 == 0_u8;
+}
+
+fn is_string(v: Value) -> r: Bool pure {
+  let k_v2 = kind(v: v);
+  return k_v2 == 3_u8;
+}
+
+fn arg(stack: &Box<Slots<Value>>, func: u64, argc: u64, index: u64) -> r: Value reads(stack) {
+  if index < argc {
+    let first_v3 = func +sat 1_u64;
+    let at_v4 = first_v3 +sat index;
+    if at_v4 < stack^.inner.len {
+      return stack^.inner[at_v4];
+    }
+  }
+  return Value::Nil();
+}
+
+fn string_arg(vm: &Vm, v: Value) -> r: Value writes(vm) {
+  match num_of(v: v) {
+    Is(x: n_v5) => {
+      let bytes_v6 = array_filled::<u8, 32>(value: 0_u8);
+      let count_v7 = halo::number::format_number(value: n_v5, out: &bytes_v6[0_u64..32_u64]);
+      return literal(vm: vm, text: &bytes_v6[0_u64..count_v7]);
+    }
+    Not() => {
+      return v;
+    }
+  }
+}
+
+fn number(vm: &Vm, v: Value) -> r: f64 reads(vm) {
+  match num_of(v: v) {
+    Is(x: n_v8) => {
+      return n_v8;
+    }
+    Not() => {
+    }
+  }
+  match halo::heap::string_of(heap: &vm^.heap, value: v) {
+    None() => {
+    }
+    Some(value: view_v9) => {
+      let h_v10 = cvt::<u32, u64>(view_v9.handle);
+      if h_v10 < vm^.heap.strings.inner.len {
+        let n_v11 = vm^.heap.strings.inner[h_v10].payload.bytes.inner.len;
+        match halo::number::str2number(bytes: &vm^.heap.strings.inner[h_v10].payload.bytes.inner[0_u64..n_v11]) {
+          Some(value: x_v12) => {
+            return x_v12;
+          }
+          None() => {
+          }
+        }
+      }
+    }
+  }
+  return 0.0_f64;
+}
+
+fn equals_text(vm: &Vm, value: Value, text: &[u8]) -> r: Bool reads(vm), reads(text) {
+  match halo::heap::string_of(heap: &vm^.heap, value: value) {
+    None() => {
+      return False();
+    }
+    Some(value: view_v13) => {
+      let h_v14 = cvt::<u32, u64>(view_v13.handle);
+      if h_v14 < vm^.heap.strings.inner.len {
+        if vm^.heap.strings.inner[h_v14].payload.bytes.inner.len == text^.len {
+          for (i_v15 in 0_u64..text^.len) {
+            if i_v15 < vm^.heap.strings.inner[h_v14].payload.bytes.inner.len {
+              let b_v16 = vm^.heap.strings.inner[h_v14].payload.bytes.inner[i_v15];
+              if b_v16 >= 97_u8 {
+                if b_v16 <= 122_u8 {
+                  set b_v16 = b_v16 - 32_u8;
+                }
+              }
+              if b_v16 != text^[i_v15] {
+                return False();
+              }
+            } else {
+              return False();
+            }
+          }
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn reply_table(vm: &Vm, field: &[u8], v: Value) -> r: Value reads(field), writes(vm) {
+  let t_v17 = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 1_u32);
+  let key_v18 = literal(vm: vm, text: field);
+  raw(vm: vm, table: t_v17, key: key_v18, value: v);
+  return t_v17;
+}
+
+fn fail(env: &Env, vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(env), writes(vm) {
+  set env^.error = True();
+  let message = literal(vm: vm, text: text);
+  return reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: message);
+}
+
+fn push(out: &Box<Slots<u8>>, byte: u8) -> r: unit writes(out) {
+  let cap_v0 = out^.inner.cap;
+  if out^.inner.len == cap_v0 {
+    let twice_v1 = cap_v0 +sat cap_v0;
+    let target_v2 = imax(twice_v1, 4096_u64);
+    if target_v2 > cap_v0 {
+      grow(cell: out, capacity: target_v2);
+    }
+  }
+  if out^.inner.len < out^.inner.cap {
+    place_back(window: &out^.inner, value: byte);
+  }
+  return unit;
+}
+
+fn text_bytes(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) {
+  for (i_v3 in 0_u64..bytes^.len) {
+    let b_v4 = bytes^[i_v3];
+    push(out: out, byte: b_v4);
+  }
+  return unit;
+}
+
+fn decimal(out: &Box<Slots<u8>>, n: u64) -> r: unit writes(out) {
+  let digits_v5 = slots_new::<u8, 20>();
+  let n_v6 = n;
+  loop {
+    let d_v7 = n_v6 % 10_u64;
+    let digit_v8 = cvt.wrap::<u64, u8>(d_v7);
+    let b_v9 = digit_v8 +wrap 48_u8;
+    if digits_v5.len < digits_v5.cap {
+      place_back(window: &digits_v5, value: b_v9);
+    }
+    set n_v6 = n_v6 / 10_u64;
+    if n_v6 == 0_u64 {
+      break;
+    }
+  }
+  loop {
+    if digits_v5.len == 0_u64 {
+      break;
+    }
+    let b_v10 = take_back(window: &digits_v5);
+    push(out: out, byte: b_v10);
+  }
+  return unit;
+}
+
+fn value_bytes(vm: &Vm, v: Value, out: &Box<Slots<u8>>) -> r: unit reads(vm), writes(out) {
+  match halo::heap::string_of(heap: &vm^.heap, value: v) {
+    None() => {
+    }
+    Some(value: view_v11) => {
+      let h_v12 = cvt::<u32, u64>(view_v11.handle);
+      if h_v12 < vm^.heap.strings.inner.len {
+        let n_v13 = vm^.heap.strings.inner[h_v12].payload.bytes.inner.len;
+        text_bytes(out: out, bytes: &vm^.heap.strings.inner[h_v12].payload.bytes.inner[0_u64..n_v13]);
+      }
+    }
+  }
+  return unit;
+}
+
+fn readonly_message(vm: &Vm, value: Value) -> r: Bool reads(vm) {
+  match halo::heap::string_of(heap: &vm^.heap, value: value) {
+    None() => {
+      return False();
+    }
+    Some(value: view) => {
+      let h = cvt::<u32, u64>(view.handle);
+      if h < vm^.heap.strings.inner.len {
+        if vm^.heap.strings.inner[h].payload.bytes.inner.len == 34_u64 {
+          for (i in 0_u64..34_u64) {
+            let b = vm^.heap.strings.inner[h].payload.bytes.inner[i];
+            if b != readonly_error[i] {
+              return False();
+            }
+          }
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn callback_line(vm: &Vm) -> r: u64 reads(vm) {
+  doc "Global slow paths keep their continuation PC. Direct redis.member calls use the member lookup's line; this is not a general failing-PC API.";
+  let pc = vm^.callback_plan.pc;
+  if pc > 0_u64 {
+    let previous = pc - 1_u64;
+    if previous < vm^.lineinfo.inner.len {
+      return cvt::<u32, u64>(vm^.lineinfo.inner[previous]);
+    }
+  }
+  return 0_u64;
+}
+
+fn redis_raised(vm: &Vm, message: Value) -> r: Value writes(vm) {
+  doc "Redis's replacement pcall unwraps an error table to its err string. Apply that conversion when the nearest active protection will catch this host error.";
+  let i = vm^.frames.inner.len;
+  loop {
+    if i == 0_u64 {
+      break;
+    }
+    set i = i - 1_u64;
+    if i < vm^.frames.inner.len {
+      let frame = vm^.frames.inner[i];
+      if frame.activation != vm^.activation {
+        break;
+      }
+      if frame.flags == protected_flag {
+        return message;
+      }
+    }
+  }
+  return reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: message);
+}
+
+fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  if id == 4102_u32 {
+    if argc != 1_u64 {
+      let message = literal(vm: vm, text: &sha_arity[0_u64..29_u64]);
+      let error = redis_raised(vm: vm, message: message);
+      set vm^.error = error;
+      return HostOutcome::Raised();
+    }
+    let input = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+    let coerced = string_arg(vm: vm, v: input);
+    let bytes = box_slots_new::<u8>(capacity: 0_u64);
+    value_bytes(vm: vm, v: coerced, out: &bytes);
+    let n = bytes.inner.len;
+    let digest = halo::embed::sha1hex(bytes: &bytes.inner[0_u64..n]);
+    let value = literal(vm: vm, text: &digest[0_u64..40_u64]);
+    if func < stack^.inner.len {
+      set stack^.inner[func] = value;
+    }
+    return HostOutcome::Returned(count: 1_u64);
+  }
+  if id == 4100_u32 {
+    if argc < 2_u64 {
+      return raise(vm: vm, text: &host_text_0[0_u64..47_u64]);
+    }
+    let v = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+    let valid_number = numeric(vm: vm, v: v);
+    if bnot(valid_number) {
+      return raise(vm: vm, text: &host_text_1[0_u64..48_u64]);
+    }
+    let x = number(vm: vm, v: v);
+    let level = ftrunc(x);
+    let low = flt(level, 0.0_f64);
+    let high = fgt(level, 3.0_f64);
+    if bor(low, high) {
+      return raise(vm: vm, text: &host_text_2[0_u64..24_u64]);
+    }
+    return HostOutcome::Returned(count: 0_u64);
+  }
+  if id == 4103_u32 {
+    if argc != 1_u64 {
+      return raise(vm: vm, text: &host_text_3[0_u64..42_u64]);
+    }
+    let v = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+    let x = number(vm: vm, v: v);
+    let version = ftrunc(x);
+    if feq(version, 2.0_f64) {
+      set env^.resp = 2_u8;
+    } else if feq(version, 3.0_f64) {
+      set env^.resp = 3_u8;
+    } else {
+      return raise(vm: vm, text: &host_text_4[0_u64..32_u64]);
+    }
+    return HostOutcome::Returned(count: 0_u64);
+  }
+  if id == 4101_u32 {
+    let name_v212 = arg(stack: stack, func: func, argc: argc, index: 1_u64);
+    let text_v213 = box_slots_new::<u8>(capacity: 0_u64);
+    let line = callback_line(vm: vm);
+    if line > 0_u64 {
+      text_bytes(out: &text_v213, bytes: &lua_source[0_u64..12_u64]);
+      decimal(out: &text_v213, n: line);
+      push(out: &text_v213, byte: 58_u8);
+      push(out: &text_v213, byte: 32_u8);
+    }
+    text_bytes(out: &text_v213, bytes: &s_29[0_u64..56_u64]);
+    value_bytes(vm: vm, v: name_v212, out: &text_v213);
+    push(out: &text_v213, byte: 39_u8);
+    let len_v214 = text_v213.inner.len;
+    let e_v215 = literal(vm: vm, text: &text_v213.inner[0_u64..len_v214]);
+    set vm^.error = e_v215;
+    return HostOutcome::Raised();
+  }
+  let value_v216 = Value::Nil();
+  let call_v217 = id == 4096_u32;
+  let protected_v218 = id == 4097_u32;
+  if bor(call_v217, protected_v218) {
+    set value_v216 = command(env: env, vm: vm, stack: stack, func: func, argc: argc);
+    if env^.error {
+      if id == 4096_u32 {
+        let message = field(vm: vm, table: value_v216, name: &s_30[0_u64..3_u64]);
+        let error = redis_raised(vm: vm, message: message);
+        set vm^.error = error;
+        return HostOutcome::Raised();
+      }
+    }
+  } else {
+    let v_v220 = arg(stack: stack, func: func, argc: argc, index: 0_u64);
+    let single = argc == 1_u64;
+    let text = is_string(v: v_v220);
+    let valid_single = band(single, text);
+    if bnot(valid_single) {
+      let error = literal(vm: vm, text: &host_text_5[0_u64..37_u64]);
+      set value_v216 = reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: error);
+    } else if id == 4098_u32 {
+      set value_v216 = reply_table(vm: vm, field: &s_5[0_u64..2_u64], v: v_v220);
+    } else if id == 4099_u32 {
+      set value_v216 = error_reply_value(vm: vm, v: v_v220);
+    } else {
+      let e_v221 = literal(vm: vm, text: &s_31[0_u64..25_u64]);
+      set vm^.error = e_v221;
+      return HostOutcome::Raised();
+    }
+  }
+  if func < stack^.inner.len {
+    set stack^.inner[func] = value_v216;
+  }
+  return HostOutcome::Returned(count: 1_u64);
+}
+
+binding ScriptHost : Host<Env> {
+  call = host_call;
+}
+
+const host_text_0: Array<u8, 47> = "ERR redis.log() requires two arguments or more.";
+
+const host_text_1: Array<u8, 48> = "ERR First argument must be a number (log level).";
+
+const host_text_2: Array<u8, 24> = "ERR Invalid debug level.";
+
+const host_text_3: Array<u8, 42> = "ERR redis.setresp() requires one argument.";
+
+const host_text_4: Array<u8, 32> = "ERR RESP version must be 2 or 3.";
+
+const host_text_5: Array<u8, 37> = "ERR wrong number or type of arguments";

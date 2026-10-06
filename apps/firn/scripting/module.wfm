@@ -1,0 +1,52 @@
+alias Value = halo::value::Value;
+alias Vm = halo::vm::Vm;
+
+public fn eval(store: &pkg::store::Keyspace, input: &[u8], args: &Box<Slots<pkg::protocol::Span>>, client: &pkg::protocol::Client, time: &pkg::store::Time, by_sha: Bool) -> r: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits doc "EVAL or EVALSHA, taking and returning an engine outside the whole-map script statement.";
+
+public fn script(store: &pkg::store::Keyspace, input: &[u8], args: &Box<Slots<pkg::protocol::Span>>, client: &pkg::protocol::Client) -> r: unit reads(store), reads(input), reads(args), writes(client) waits doc "SCRIPT LOAD, EXISTS and FLUSH with Redis 7.0.15 checks.";
+
+public fn raw(vm: &Vm, table: Value, key: Value, value: Value) -> r: unit writes(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn get(vm: &Vm, table: Value, key: Value) -> r: Value reads(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn literal(vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn num(x: f64) -> r: Value pure doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn kind(v: Value) -> r: u8 pure doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn is_nil(v: Value) -> r: Bool pure doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn is_string(v: Value) -> r: Bool pure doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn arg(stack: &Box<Slots<Value>>, func: u64, argc: u64, index: u64) -> r: Value reads(stack) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn string_arg(vm: &Vm, v: Value) -> r: Value writes(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn number(vm: &Vm, v: Value) -> r: f64 reads(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn equals_text(vm: &Vm, value: Value, text: &[u8]) -> r: Bool reads(vm), reads(text) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn reply_table(vm: &Vm, field: &[u8], v: Value) -> r: Value reads(field), writes(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn push(out: &Box<Slots<u8>>, byte: u8) -> r: unit writes(out) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn text_bytes(out: &Box<Slots<u8>>, bytes: &[u8]) -> r: unit reads(bytes), writes(out) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn decimal(out: &Box<Slots<u8>>, n: u64) -> r: unit writes(out) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn value_bytes(vm: &Vm, v: Value, out: &Box<Slots<u8>>) -> r: unit reads(vm), writes(out) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn readonly_message(vm: &Vm, value: Value) -> r: Bool reads(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn callback_line(vm: &Vm) -> r: u64 reads(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn redis_raised(vm: &Vm, message: Value) -> r: Value writes(vm) doc "Shared Redis Lua host helper used by firn and the Halo differential host.";
+
+public fn lua_to_protocol(vm: &Vm, value: Value, client: &pkg::protocol::Client, resp: u8) -> r: unit writes(vm), writes(client) doc "Redis 7.0.15 script-result conversion for a RESP2 requesting client.";
+
+public fn value_reply(vm: &Vm, value: Value, client: &pkg::protocol::Client, mode: u8) -> r: unit reads(vm), writes(client) doc "Serialize a string as bulk (0), sanitized error (1), or status (2).";
+
+public fn compile_error(client: &pkg::protocol::Client, error: &halo::compile::CompileError) -> r: unit reads(error), writes(client) doc "Redis EVAL compilation error reply.";
+
+public fn command_reply(vm: &Vm, bytes: &[u8], start: u64, end: u64, resp: u8) -> v: Value reads(bytes), writes(vm) doc "Redis RESP-to-Lua conversion of a captured byte range, before the host rewinds its reply buffer.";

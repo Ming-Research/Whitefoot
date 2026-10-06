@@ -61,10 +61,11 @@ public struct ServerState {
 }
 
 public struct Keyspace {
-  doc "One context's handles to the keyspace's keys, to its metadata and to the server's state, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
+  doc "One context's handles to the keyspace's keys, to its metadata, to the server's state and to the script engine pool, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
   public keys: Shared<ConcurrentHashMap<Entry>>;
   public meta: Shared<Meta>;
   public server: Shared<ServerState>;
+  public scripts: Shared<pkg::script_pool::EnginePool>;
   public logging: Bool;
 }
 

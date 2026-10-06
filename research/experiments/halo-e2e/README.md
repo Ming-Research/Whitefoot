@@ -14,8 +14,10 @@ Reused binaries must have been built with the corresponding mode.
 This explicitly invoked experiment runs the unchanged Halo oracle scripts through
 `pkg::embed` and an in-memory Whitefoot Redis test host. It compares typed RESP2
 JSON with the existing Redis 7.0.15 observations; it never regenerates them.
-The runner owns fixture transport, JSON formatting and comparison, not Lua
-execution. The Whitefoot host owns commands and both reply conversions.
+The runner owns fixture transport, independent RESP decoding, JSON formatting
+and comparison, not Lua execution. The Whitefoot test host owns commands; the
+production firn scripting module owns Lua-to-RESP conversion and shared host
+helpers.
 
 The embedding module, test program, runner and result record serve VM.md section
 6 and its first end-to-end comparison. They live in the existing Halo library

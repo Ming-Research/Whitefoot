@@ -1,3 +1,20 @@
+alias raw = firn::scripting::raw;
+alias get = firn::scripting::get;
+alias literal = firn::scripting::literal;
+alias num = firn::scripting::num;
+alias kind = firn::scripting::kind;
+alias is_nil = firn::scripting::is_nil;
+alias arg = firn::scripting::arg;
+alias string_arg = firn::scripting::string_arg;
+alias number = firn::scripting::number;
+alias equals_text = firn::scripting::equals_text;
+alias reply_table = firn::scripting::reply_table;
+alias push = firn::scripting::push;
+alias text_bytes = firn::scripting::text_bytes;
+alias decimal = firn::scripting::decimal;
+alias value_bytes = firn::scripting::value_bytes;
+alias callback_line = firn::scripting::callback_line;
+alias redis_raised = firn::scripting::redis_raised;
 alias Value = halo::value::Value;
 alias Vm = halo::vm::Vm;
 alias HostOutcome = halo::vm::HostOutcome;
@@ -12,128 +29,6 @@ struct Env {
   types: Value;
   expiry: Value;
   error: Bool;
-}
-
-fn raw(vm: &Vm, table: Value, key: Value, value: Value) -> r: unit writes(vm) {
-  let written_v0 = halo::heap::table_set(heap: &vm^.heap, t: table, key: key, val: value);
-  return unit;
-}
-
-fn get(vm: &Vm, table: Value, key: Value) -> r: Value reads(vm) {
-  return halo::heap::table_get(heap: &vm^.heap, t: table, key: key);
-}
-
-fn literal(vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(vm) {
-  return halo::heap::intern(heap: &vm^.heap, bytes: text);
-}
-
-fn num(x: f64) -> r: Value pure {
-  return Value::Num(n: x);
-}
-
-fn kind(v: Value) -> r: u8 pure {
-  return halo::embed::kind(value: v);
-}
-
-fn is_nil(v: Value) -> r: Bool pure {
-  let k_v1 = kind(v: v);
-  return k_v1 == 0_u8;
-}
-
-fn is_string(v: Value) -> r: Bool pure {
-  let k_v2 = kind(v: v);
-  return k_v2 == 3_u8;
-}
-
-fn arg(stack: &Box<Slots<Value>>, func: u64, argc: u64, index: u64) -> r: Value reads(stack) {
-  if index < argc {
-    let first_v3 = func +sat 1_u64;
-    let at_v4 = first_v3 +sat index;
-    if at_v4 < stack^.inner.len {
-      return stack^.inner[at_v4];
-    }
-  }
-  return Value::Nil();
-}
-
-fn string_arg(vm: &Vm, v: Value) -> r: Value writes(vm) {
-  match num_of(v: v) {
-    Is(x: n_v5) => {
-      let bytes_v6 = array_filled::<u8, 32>(value: 0_u8);
-      let count_v7 = halo::number::format_number(value: n_v5, out: &bytes_v6[0_u64..32_u64]);
-      return literal(vm: vm, text: &bytes_v6[0_u64..count_v7]);
-    }
-    Not() => {
-      return v;
-    }
-  }
-}
-
-fn number(vm: &Vm, v: Value) -> r: f64 reads(vm) {
-  match num_of(v: v) {
-    Is(x: n_v8) => {
-      return n_v8;
-    }
-    Not() => {
-    }
-  }
-  match halo::heap::string_of(heap: &vm^.heap, value: v) {
-    None() => {
-    }
-    Some(value: view_v9) => {
-      let h_v10 = cvt::<u32, u64>(view_v9.handle);
-      if h_v10 < vm^.heap.strings.inner.len {
-        let n_v11 = vm^.heap.strings.inner[h_v10].payload.bytes.inner.len;
-        match halo::number::str2number(bytes: &vm^.heap.strings.inner[h_v10].payload.bytes.inner[0_u64..n_v11]) {
-          Some(value: x_v12) => {
-            return x_v12;
-          }
-          None() => {
-          }
-        }
-      }
-    }
-  }
-  return 0.0_f64;
-}
-
-fn equals_text(vm: &Vm, value: Value, text: &[u8]) -> r: Bool reads(vm), reads(text) {
-  match halo::heap::string_of(heap: &vm^.heap, value: value) {
-    None() => {
-      return False();
-    }
-    Some(value: view_v13) => {
-      let h_v14 = cvt::<u32, u64>(view_v13.handle);
-      if h_v14 < vm^.heap.strings.inner.len {
-        if vm^.heap.strings.inner[h_v14].payload.bytes.inner.len == text^.len {
-          for (i_v15 in 0_u64..text^.len) {
-            if i_v15 < vm^.heap.strings.inner[h_v14].payload.bytes.inner.len {
-              let b_v16 = vm^.heap.strings.inner[h_v14].payload.bytes.inner[i_v15];
-              if b_v16 >= 97_u8 {
-                if b_v16 <= 122_u8 {
-                  set b_v16 = b_v16 - 32_u8;
-                }
-              }
-              if b_v16 != text^[i_v15] {
-                return False();
-              }
-            } else {
-              return False();
-            }
-          }
-          return True();
-        }
-      }
-    }
-  }
-  return False();
-}
-
-fn reply_table(vm: &Vm, field: &[u8], v: Value) -> r: Value reads(field), writes(vm) {
-  let t_v17 = halo::heap::new_table(heap: &vm^.heap, asize: 0_u32, hsize: 1_u32);
-  let key_v18 = literal(vm: vm, text: field);
-  raw(vm: vm, table: t_v17, key: key_v18, value: v);
-  return t_v17;
 }
 
 fn fail(env: &Env, vm: &Vm, text: &[u8]) -> r: Value reads(text), writes(env), writes(vm) {
@@ -764,27 +659,6 @@ fn command(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64) 
     return num(x: x_v211);
   }
   return fail(env: env, vm: vm, text: &s_28[0_u64..41_u64]);
-}
-
-fn redis_raised(vm: &Vm, message: Value) -> r: Value writes(vm) {
-  doc "Redis's replacement pcall unwraps an error table to its err string. Apply that conversion when the nearest active protection will catch this host error.";
-  let i = vm^.frames.inner.len;
-  loop {
-    if i == 0_u64 {
-      break;
-    }
-    set i = i - 1_u64;
-    if i < vm^.frames.inner.len {
-      let frame = vm^.frames.inner[i];
-      if frame.activation != vm^.activation {
-        break;
-      }
-      if frame.flags == protected_flag {
-        return message;
-      }
-    }
-  }
-  return reply_table(vm: vm, field: &s_30[0_u64..3_u64], v: message);
 }
 
 fn host_call(env: &Env, vm: &Vm, stack: &Box<Slots<Value>>, func: u64, argc: u64, id: u32) -> r: HostOutcome writes(env), writes(vm), writes(stack) contract {

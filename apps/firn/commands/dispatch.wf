@@ -210,6 +210,29 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let milliseconds = False();
   let head = True();
   let tail = False();
+  if code == 1279350341_u64 {
+    let fits = count >= 3_u64;
+    if admitted(client: client, input: input, name: name, fits: fits) {
+      let by_sha = False();
+      pkg::scripting::eval(store: store, input: input, args: args, client: client, time: time, by_sha: by_sha);
+    }
+    return unit;
+  }
+  if code == 18375396085028421_u64 {
+    let fits = count >= 3_u64;
+    if admitted(client: client, input: input, name: name, fits: fits) {
+      pkg::scripting::eval(store: store, input: input, args: args, client: client, time: time, by_sha: calendar);
+    }
+    return unit;
+  }
+  if code == 92703804244819_u64 {
+    if count < 2_u64 {
+      reply_arity(client: client, input: input, name: name);
+    } else {
+      pkg::scripting::script(store: store, input: input, args: args, client: client);
+    }
+    return unit;
+  }
   if code == code_ping {
     let any = True();
     let go = admitted(client: client, input: input, name: name, fits: any);

@@ -1,3 +1,4 @@
+alias literal = firn::scripting::literal;
 alias Engine = halo::embed::Engine;
 alias Value = halo::value::Value;
 alias Outcome = halo::vm::Outcome;

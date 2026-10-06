@@ -179,11 +179,18 @@ pub fn compile_app(name: &str, entry: &str) -> whitefoot::LlvmModule {
         .expect("the compiler package lives directly under the repository root")
         .join("apps")
         .join(name);
+    compile_graph(&root, entry)
+}
+
+/// Compiles a maintained module-program fixture through the same graph path as apps.
+#[cfg(unix)]
+pub fn compile_graph(root: &Path, entry: &str) -> whitefoot::LlvmModule {
+    let label = root.display();
     let graph =
         whitefoot::form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
-            .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure:?}"));
-    let sources = whitefoot::discover_module_sources(&root, &graph)
-        .unwrap_or_else(|failure| panic!("{name}'s records must read: {failure}"));
+            .unwrap_or_else(|failure| panic!("{label}'s graph must form: {failure:?}"));
+    let sources = whitefoot::discover_module_sources(root, &graph)
+        .unwrap_or_else(|failure| panic!("{label}'s records must read: {failure}"));
     let inputs = sources
         .iter()
         .map(|source| {
@@ -199,7 +206,7 @@ pub fn compile_app(name: &str, entry: &str) -> whitefoot::LlvmModule {
             CompilerLimits::default(),
             OverlapLowering::On,
         )
-        .unwrap_or_else(|failure| panic!("{name} must compile: {failure}"))
+        .unwrap_or_else(|failure| panic!("{label} must compile: {failure}"))
     })
 }
 

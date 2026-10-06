@@ -20,6 +20,8 @@ mod programs {
     #[cfg(unix)]
     mod contexts;
     #[cfg(unix)]
+    mod firn;
+    #[cfg(unix)]
     mod hashing;
     #[cfg(unix)]
     mod heap;

@@ -35,10 +35,10 @@ research/experiments/halo-oracle/run.sh --check --filter lua-core/assert
 research/experiments/halo-oracle/run.sh --check
 ```
 
-This runner only executes Redis and never builds or checks Whitefoot code.
+This runner executes protocol requests and never builds or checks Whitefoot code.
 Compiler cache, `--no-cache` and `--full-lto` options belong to the
 [Halo comparison runner](../halo-e2e/README.md), not this RESP2 client.
-It uses a local TCP connection, so omit it from runs that prohibit network access.
+The server modes use TCP; `--stdio` uses only process pipes.
 
 The default server is `/private/tmp/wf-redis-7.0.15/src/redis-server`.
 Python 3 and that executable are the only dependencies. `--server PATH`
@@ -82,13 +82,29 @@ mode requires `--check` and cannot regenerate expected replies. It does not
 start or stop the candidate. Use a dedicated test instance: before and after
 each case it deletes every declared corpus key with `DEL`. All writes in
 this corpus target declared `halo-oracle:*` keys, so this isolates cases
-without requiring `FLUSHDB`, which firn currently lacks. Other clients must
+without requiring `FLUSHDB`. Other clients must
 not alter these keys or scripting state during the run. A nonzero exit means
 a setup/protocol failure, an unexpected top-level error state, or at least
 one byte-for-byte reply mismatch; mismatches identify the case and expected
-file. The current firn lacks EVAL, so this comparison becomes executable
-when its Halo binding exists. The sliding-window case additionally needs
-`ZREMRANGEBYSCORE`; it is retained and marked rather than silently skipped.
+file. Firn's initial scripting slice accepts the 48 `lua-core` cases;
+command-calling scripts remain unsupported until the shared command bodies
+are connected. All groups remain in this oracle.
+
+On a host without TCP access, build the maintained firn request driver and
+compare the Lua-only group through its production parser and dispatch:
+
+```sh
+compiler/target/gate/whitefootc --graph tests/programs/firn-scripting/modules.wfg --entry test --cache /private/tmp/firn-scripting-cache -o /private/tmp/firn-script-driver
+research/experiments/halo-oracle/run.sh --check --stdio /private/tmp/firn-script-driver --filter lua-core
+```
+
+Run each build or comparison under `perl .github/run-check.pl <label> <command> ...`.
+`--stdio` requires `--check`, excludes `--port`, starts one persistent driver
+for the selected cases, and checks its exit status after closing stdin. The
+driver lives in `tests/programs/firn-scripting` for the macOS scripting cases
+and is replaced if firn gains a directly testable server route on that host.
+No Redis executable or network connection is needed in this mode; expected
+files are read without modification.
 
 ## Reply format
 
