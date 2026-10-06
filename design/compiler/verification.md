@@ -30,6 +30,8 @@ Decision: Conformance has only the `runnable` manifest status and pass/fail adap
 
 Decision: Accept/reject conformance reaches complete source-semantic publication through the same ordinary front-end continuation that full compilation consumes; run/unsupported cases continue through lowering and target compilation, because STOR-6 begins after source acceptance and an incidental host address domain cannot replace the source verdict, instead of an adapter-specific checker or requiring every source-only verdict to generate a native image.
 
+Decision: The gate's Linux jobs, on GitHub's hosted x86-64 runners, build with the current stable LLVM from apt.llvm.org as the `/usr/bin/clang` and `ld.lld` the compiler runs, rather than Ubuntu's own clang, because the owner's standing toolchain rule is the latest clang everywhere, and the dispatch lowering's `preserve_none` parts need LLVM 19 or later: under Ubuntu 24.04's clang 18 no gate job reached that path, and a register budget that LLVM 19 could not allocate went unnoticed until the [stage-3 measurement on x86-64](../../research/investigations/match-dispatch/DESIGN.md#stage-3-on-x86-64-outcome), instead of pinning one LLVM version or adding a separate job beside an older default. A new LLVM release can change a gate result, which is then a defect to fix, not a reason to stay behind.
+
 Rejected:
 - Shortening repeated schedules or removing normative cases merely because they are slow: rejected because those changes would remove the behavior evidence the gate is meant to preserve.
 - A fixed pool of two processes for local verification: rejected because the host-wide lock already excludes the commands it reserved capacity for, so it only left processors idle.
