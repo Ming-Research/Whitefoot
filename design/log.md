@@ -9,9 +9,9 @@ a mechanism since retired.
 
 Nodes: compiler/storage-placement
 
-Owner-approved: In the session of 2026-10-06, written in Chinese, after the report that the read-in-place change (Q41, PR #255) left firn's SET code and instructions per SET unchanged: "Do not merge Q41 for now. Keep the record in the design tree. The code can go in research or somewhere" (translated).
+Owner-approved: In the session of 2026-10-06, written in Chinese, after the report that the read-in-place change (Q41, PR #255) left firn's SET code unchanged and its instructions per SET within one of the base's: "Do not merge Q41 for now. Keep the record in the design tree. The code can go in research or somewhere" (translated).
 
-Summary: Reading a by-value aggregate parameter through its caller's pointer instead of copying it at entry is recorded as not adopted: on firn, the program that motivated it, SET's inlined statement body and its 1,615 instructions per SET did not change, so the gain criterion set before measuring was not met, while the change would bind every later storage-planning change to an exact slot condition and give up the private copy's freedom from aliasing. The branch `research/in-place-parameters` keeps the implementation; the question reopens when a measured program shows the entry copy surviving inlining at a cost. [The investigation](../research/investigations/in-place-parameters/DESIGN.md) has the measurements.
+Summary: Reading a by-value aggregate parameter through its caller's pointer instead of copying it at entry is recorded as not adopted: on firn, the program that motivated it, SET's inlined statement body did not change and its instructions per SET measured 1,616 against 1,615 without it and for its twin, so the gain criterion set before measuring was not met, while the change would bind every later storage-planning change to an exact slot condition and give up the private copy's freedom from aliasing. The branch `research/in-place-parameters` keeps the implementation; the question reopens when a measured program shows the entry copy surviving inlining at a cost. [The investigation](../research/investigations/in-place-parameters/DESIGN.md) has the measurements.
 
 ## 2026-10-06 The probe, the join and delivery over the closure universe
 

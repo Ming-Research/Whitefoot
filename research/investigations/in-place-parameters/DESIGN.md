@@ -6,12 +6,15 @@ A stored aggregate parameter crosses the call boundary as a pointer to the
 caller's storage of the value it consumes (`ptr %wf.arg.v<N>`,
 `compiler/src/backend/abi.rs`), and every definition copies it into a slot
 of its own at entry with one `llvm.memmove` (the entry copy in
-`FunctionEmitter::emit`, `compiler/src/backend/emitter.rs`). When the host
-optimizer inlines such a definition, scalar replacement splits that copy
-along the aggregate's representation. For a union-laid-out enum
-(compiler/payload-enum-layout) the pieces are single bytes.
+`FunctionEmitter::emit`, `compiler/src/backend/emitter.rs`). The
+hypothesis this investigation tested: when the host optimizer inlines such a
+definition, scalar replacement splits that copy along the aggregate's
+representation, into single bytes for a union-laid-out enum
+(compiler/payload-enum-layout).
 
-PR #245 observed this in firn, the Redis-compatible server. Its
+PR #245 attributed a firn cost to that copy. The Results below find
+otherwise: the byte stores it saw remain once the copy is gone, and their
+cause is unattributed. In firn, the Redis-compatible server,
 `set_key` stored a by-value `Bytes`, an enum of an inline text of up to 24
 bytes and a boxed one, into the entry under its key's lock. After inlining,
 that store grew from 3 SSE moves to about 25 instructions of shifts and

@@ -1012,8 +1012,8 @@ rarely insert at the same place.
   shifted registers instead of in one or two vector moves
   ([Firn-wf run 37476541818](https://github.com/Ming-Research/Firn-wf/actions/runs/37476541818),
   artifact `q41-images`). It is not the by-value parameter entry copy:
-  removing that copy left this function's code and the instructions per SET
-  unchanged
+  removing that copy left this function's code unchanged and the
+  instructions per SET within one (1,616 against 1,615)
   ([in-place parameters](../research/investigations/in-place-parameters/DESIGN.md#results)).
   The cause is unattributed. Candidates: the host splitting the short
   text's inline array into scalars after the text is built from the request
