@@ -116,14 +116,18 @@ Written before measuring.
 
 ## Validation
 
+The implementation and its validation stay on the branch
+`research/in-place-parameters` (`d7b9b2466`). Its gate passed at
+`e35cc5f95` (run 37473286649).
+
 - `a_by_value_parameter_nothing_writes_is_read_in_place`
-  (`compiler/src/backend/tests/payload_enums.rs`):
+  (`compiler/src/backend/tests/payload_enums.rs` on that branch):
   - an eligible reader of a union-laid-out enum has no copy;
   - firn's store shape runs with inline and boxed texts, and every owner is
     released once, with and without retained call boundaries.
 - `destination_results_keep_snapshots_of_inputs_their_caller_aliases`
-  (`compiler/src/backend/tests/owned_places.rs`): pins the destination
-  condition. Its caller passes one pointer as both the result destination
+  (`compiler/src/backend/tests/owned_places.rs`, also on main): pins the
+  destination condition. Its caller passes one pointer as both the result destination
   and the second input, and reading that input in place would return the
   wrong row.
 - The existing union-enum, waiting, tail-call, parallel and dispatch suites
@@ -221,3 +225,15 @@ spawned context's argument copy. So the changed head hash is that host's
 build variation, found in both compilers, and not this change. It is
 recorded in `docs/todo.md`, "A full-LTO build of firn is not
 byte-reproducible on a 32-processor host".
+
+## Disposition
+
+Not adopted (owner, 2026-10-06): the entry copy stays.
+compiler/storage-placement records the refusal and its reopening
+condition, and the branch above keeps the implementation.
+
+The change's independent parts are on main:
+- the destination-alias test;
+- the corrected one-word test comment;
+- the `place_back` test's locator fix;
+- this record and its two todo entries.
