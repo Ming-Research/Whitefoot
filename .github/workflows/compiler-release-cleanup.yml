@@ -1,7 +1,11 @@
 # Removes the compiler releases compiler-release.yml makes, tags `wf-*`,
-# once they are more than 30 days old, always keeping the newest release of
-# a main commit; experiment releases, `wf-exp-*`, are never kept past 30 days
-# (design/compiler/downstream-releases.md). A downstream whose pinned release
+# once they were published more than 30 days ago, always keeping the most
+# recently published release of a main commit; experiment releases,
+# `wf-exp-*`, are never kept past 30 days
+# (design/compiler/downstream-releases.md). Age is the release's
+# `published_at`: GitHub's `created_at` is the date of the commit it names,
+# so a release made again for an old commit would look old at once.
+# A downstream whose pinned release
 # was removed has it made again by dispatching compiler-release.yml with the
 # release's commit.
 #
@@ -41,18 +45,18 @@ jobs:
           set -euo pipefail
           cutoff=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq '.[] | select(.tag_name | startswith("wf-")) | [.created_at, .tag_name] | @tsv' \
+            --jq '.[] | select((.tag_name | startswith("wf-")) and .published_at != null) | [.published_at, .tag_name] | @tsv' \
             | LC_ALL=C sort -r > "$RUNNER_TEMP/releases.tsv"
           echo "compiler releases, newest first, cutoff $cutoff:"
           cat "$RUNNER_TEMP/releases.tsv"
           newest=$(awk -F '\t' '$2 !~ /^wf-exp-/ { print $2; exit }' "$RUNNER_TEMP/releases.tsv")
           echo "kept as the newest release of main: ${newest:-none}"
-          while IFS=$'\t' read -r created tag; do
-            if [ "$tag" != "$newest" ] && [[ "$created" < "$cutoff" ]]; then
+          while IFS=$'\t' read -r published tag; do
+            if [ "$tag" != "$newest" ] && [[ "$published" < "$cutoff" ]]; then
               if [ "$GITHUB_EVENT_NAME" = push ]; then
-                echo "dry run: would remove $tag, made $created"
+                echo "dry run: would remove $tag, published $published"
               else
-                echo "removing $tag, made $created"
+                echo "removing $tag, published $published"
                 gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
               fi
             fi

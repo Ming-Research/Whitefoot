@@ -16,7 +16,12 @@
 #   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
 #
 # A downstream pins an experiment release only on an experiment branch, never
-# on its main. A release holds:
+# on its main.
+#
+# GitHub refuses a release whose target commit itself changes files under
+# .github/workflows unless the token has workflow permission, which this
+# workflow's token cannot be given, so such a commit is refused before it is
+# built; release the commit after it or the one before. A release holds:
 #
 #   whitefootc-linux-x86_64.tar.gz  whitefootc built on ubuntu-24.04
 #   whitefootc-macos-arm64.tar.gz   whitefootc built on macos-15
@@ -128,6 +133,14 @@ jobs:
           if [ -z "$spec" ]; then
             echo "::error::spec/kernel-spec.md at $commit names no version"
             exit 1
+          fi
+          if git diff --quiet "$commit^" "$commit" -- .github/workflows; then
+            echo "$commit changes no workflow file"
+          elif [ "$publish" = true ]; then
+            echo "::error::$commit changes files under .github/workflows, and GitHub refuses a release targeting it with this workflow's token; release a neighboring commit"
+            exit 1
+          else
+            echo "dry run: $commit changes workflow files, so a dispatch would refuse it"
           fi
           gate_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$commit&status=success&per_page=1" \
             --jq '.workflow_runs[0].id // empty')
@@ -264,12 +277,18 @@ jobs:
         run: |
           set -euo pipefail
           kind=""
-          case "$TAG" in wf-exp-*) kind=" Experiment release of an unmerged commit: pin it only on an experiment branch.";; esac
+          again="-f commit=$COMMIT"
+          case "$TAG" in
+            wf-exp-*)
+              kind=" Experiment release of an unmerged commit: pin it only on an experiment branch."
+              again="$again -f experiment=true"
+              ;;
+          esac
           notes="The Whitefoot compiler at $COMMIT (specification $SPEC), for projects that pin it.$kind
           Its gate run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GATE_RUN
 
           whitefootc builds programs with /usr/bin/clang, and on Linux links them with ld.lld.
-          A release is removed 30 days after it is made unless it is the newest of main; make it again with
-          gh workflow run compiler-release.yml -R $GITHUB_REPOSITORY -f commit=$COMMIT"
+          A release is removed 30 days after it is published unless it is the newest of main; make it again with
+          gh workflow run compiler-release.yml -R $GITHUB_REPOSITORY $again"
           gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$COMMIT" \
             --prerelease --title "whitefootc $TAG (specification $SPEC)" --notes "$notes"
