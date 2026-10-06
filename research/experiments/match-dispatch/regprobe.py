@@ -62,11 +62,13 @@ def indirect_fits(cc, target, n):
     body = "".join(f"  %b{i} = add i64 %a{i}, %index\n" for i in range(1, n))
     args = ", ".join(["ptr %next_code"] + [f"i64 %b{i}" for i in range(1, n)])
     ir = (
-        f"@table = internal constant [2 x ptr] [ptr @part, ptr @part]\n\n"
+        # An external table, so the optimizer cannot resolve the target and
+        # turn the transfer into a loop.
+        "@table = external global [256 x ptr]\n\n"
         f"define {cc} i64 @part({params}) {{\n"
         "  %tag = load i8, ptr %code\n"
         "  %index = zext i8 %tag to i64\n"
-        "  %slot = getelementptr [2 x ptr], ptr @table, i64 0, i64 %index\n"
+        "  %slot = getelementptr [256 x ptr], ptr @table, i64 0, i64 %index\n"
         "  %next = load ptr, ptr %slot\n"
         "  %next_code = getelementptr i8, ptr %code, i64 1\n"
         + body
