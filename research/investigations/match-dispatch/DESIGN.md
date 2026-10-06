@@ -412,3 +412,32 @@ x86-64 host?
 - **Clang 18 only:** the C convention's result is recorded as the cost of a
   host without the convention. Whether the 14900K gets a clang with it goes
   to the owner, because the runner is shared with other repositories.
+
+## Stage 3 on x86-64 outcome
+
+**The first `preserve_none` build failed.** With clang 19, the lowering
+split v2h's loop into parts taking all 12 integer registers it counted for
+x86-64. The build then failed in register allocation: the parts' transfer,
+a guaranteed tail call through a table-loaded address, needs one of those
+registers for the address. `regprobe.py` now measures that transfer itself.
+It gives 11 on x86-64 Linux, 12 on Windows x64 and 24 on AArch64, under
+clang 19 and 20
+([argument registers](../../experiments/match-dispatch/RESULTS.md#argument-registers)).
+The budget is corrected to those counts.
+
+**After the correction, the loop splits under both conventions**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-on-x86-64)):
+- `preserve_none` on a hosted EPYC: 11 registers and 4 values in the frame,
+  0.771 of Silverfir-nano. This is indicative only, since the processor is
+  not chosen.
+- The C convention on the 14900K under clang 18: 6 registers and 9 values in
+  the frame, 0.560 of Silverfir-nano.
+
+Both ratios are above the M1's 0.519. So the split form costs x86-64
+nothing beyond having a clang with the convention.
+
+By the rule fixed before measuring, the loop splits under `preserve_none`
+with a ratio of at least 0.45. So the next lowering change is the
+loop-carried index carried as an address. The 14900K's clang 18 has no
+`preserve_none`, so timing that form there needs a newer clang on the host,
+which the runner's other users share.

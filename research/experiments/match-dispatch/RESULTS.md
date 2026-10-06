@@ -625,20 +625,59 @@ frame-slot addresses as well, below, scores 2998.5 (0.3%), 0.523.
 ## Argument registers
 
 How many arguments each calling convention passes in registers, which
-compiler/match-dispatch-lowering uses as its register budget: `regprobe.py`
-compiles a function of n `i64` (or n `double`) parameters with clang
-21.0.0 for each target and reports the largest n whose assembly reads no
-argument from the stack.
+compiler/match-dispatch-lowering uses as its register budget. `regprobe.py`
+reports two numbers for each target:
+- **Direct:** the largest n for which a function of n `i64` (or n `double`)
+  parameters reads no argument from the stack.
+- **Table-loaded:** the largest n for which a dispatch part's own transfer
+  compiles with no argument on the stack. Here n integer parameters are each
+  recomputed, and a guaranteed tail call goes through an address loaded from
+  an external table.
 
-| convention | target | integer | floating |
-|---|---|---:|---:|
-| `preserve_none` | aarch64 (Apple, Linux) | 24 | 8 |
-| `preserve_none` | x86-64 (Linux, Windows) | 12 | 8 |
-| C | aarch64 (Apple, Linux) | 8 | 8 |
-| C | x86-64 Linux | 6 | 8 |
-| C | x86-64 Windows | 4 | 4 |
+The parts transfer the second way, so the budget is the table-loaded
+column. With clang 19.1.1 and 20.1.2 on a hosted `ubuntu-24.04` runner
+([run 37521521191](https://github.com/Ming-Research/Whitefoot/actions/runs/37521521191)):
+
+| convention | target | direct integer | direct floating | table-loaded integer |
+|---|---|---:|---:|---:|
+| `preserve_none` | aarch64 (Apple, Linux) | 24 | 8 | 24 |
+| `preserve_none` | x86-64 Linux | 12 | 8 | 11 |
+| `preserve_none` | x86-64 Windows | 12 | 8 | 12 |
+| C | aarch64 (Apple, Linux) | 8 | 8 | 8 |
+| C | x86-64 Linux | 6 | 8 | 6 |
+| C | x86-64 Windows | 4 | 4 | 4 |
 
 The Windows C convention's four positions are shared between the two kinds.
+
+On x86-64 Linux the transfer's loaded address takes one of the twelve
+registers `preserve_none` passes arguments in. A split that used all twelve
+failed in clang 19's register allocation ("ran out of registers during
+register allocation"); see "Stage 3 on x86-64" below. Clang 18.1.3 has no
+`preserve_none` (every count 0), and its C counts match those above. The
+earlier direct-only measurement, with clang 21.0.0, gave the same direct
+counts. Before this run, the probe also counted a module the compiler
+refused as one with no stack argument; it now counts it as one that does
+not fit.
+
+## Stage 3 on x86-64
+
+The design, prediction and decision rule are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-on-x86-64).
+v2h was written by `wasm/gen.py` and compiled by the branch's `whitefootc`
+after the budget correction. It was compared with Silverfir-nano `5f248e44`
+`sf-nano-cli --interp` on the CoreMark 2K performance run, 7 alternating
+launches, every launch with correct CRCs
+([run 37522471290](https://github.com/Ming-Research/Whitefoot/actions/runs/37522471290)):
+
+| host | clang, convention | the dispatch loop | Whitefoot | Silverfir-nano | ratio |
+|---|---|---|---:|---:|---:|
+| 14900K | 18.1.3, C | split into 318 arms, 6 integer registers, 9 values in the frame | 4376.4 (1.1%) | 7812.5 (1.2%) | 0.560 |
+| hosted EPYC 7763 | 19.1.1, `preserve_none` | split into 318 arms, 11 integer registers, 4 values in the frame | 1984.1 (3.1%) | 2574.0 (1.9%) | 0.771 |
+
+Medians, with each engine's spread across its launches. The hosted
+runner's processor is not chosen, so its row indicates only. Before the
+budget correction, the `preserve_none` build failed in register allocation
+([run 37519332120](https://github.com/Ming-Research/Whitefoot/actions/runs/37519332120)).
 
 ## Limitations
 
