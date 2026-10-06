@@ -725,6 +725,39 @@ the operation's fields through (`%r9` on x86-64, `x4` on AArch64). The
 dispatch forms the next element's address from the next index, not from
 it.
 
+### A, the address beside the index
+
+The construction and the adoption rule are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-the-code-cursor).
+The branch `claude/stage3-cursor` at `a8afbbe88`, whose compiler change is
+`7f86697b1`, was measured against its merge base `e1708490c` by the
+temporary `stage3-cursor` job: CoreMark 2K, 7 alternating launches, every
+launch with correct CRCs
+([run 37542365068](https://github.com/Ming-Research/Whitefoot/actions/runs/37542365068)).
+Both compilers split the loop the same way. The branch's ledger adds
+"carries the matched Op's address between the parts".
+
+`I32Add`'s path from entry to its transfer:
+- **x86-64:** 18 instructions, down from 21. The move, the shift and the
+  two additions became one addition (`add $0x10, %r9`), and the tag is
+  loaded through the received address (`mov 0x10(%r9), %r10d`).
+- **AArch64:** 18 instructions, down from 19. The shifted addition went,
+  and the pre-indexed tag load (`ldr w9, [x4, #0x10]!`) now advances the
+  received address.
+
+Both match the prediction. A branch arm forms its target's address from
+the received one: `sub`, `shl` and `lea` on x86-64.
+
+| host | clang, convention | base | A | ratio | A above base, in pairs |
+|---|---|---:|---:|---:|---|
+| hosted EPYC 7763 | 22.1.8, `preserve_none` | 1892.1 (8.1%) | 1974.3 (4.3%) | 1.043 | 6 of 7, 0.995-1.090 |
+| macos-15, M1 (virtual) | Apple 17.0.0, `preserve_none` | 2074.7 (15.5%) | 2252.3 (12.3%) | 1.086 | 7 of 7, 1.039-1.158 |
+
+Medians, with each side's spread across its launches. Under the rule these
+hosts are indications only: neither processor is chosen, and the
+virtualized M1 spreads by more than the effect. The decision waits for the
+14900K with the pinned LLVM.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic
