@@ -1096,7 +1096,9 @@ int wf__windows_completion_file_open_at_worker(
 
     desired_access = FILE_READ_ATTRIBUTES | SYNCHRONIZE;
     if (descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE) {
-        desired_access |= FILE_APPEND_DATA;
+        /* Setting EOF also needs write-data access; append requests name EOF
+         * explicitly in the file adapter. */
+        desired_access |= FILE_APPEND_DATA | FILE_WRITE_DATA;
         create_options |= FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE;
     } else if (expected_kind == WF_WINDOWS_EXPECT_REGULAR) {
         desired_access |= FILE_READ_DATA;
