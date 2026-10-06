@@ -1004,6 +1004,29 @@ rarely insert at the same place.
   SSA construction and general aggregate forwarding are separate paths, not
   improvements established by this candidate.
 
+- **firn's SET stores its inline text byte by byte inside the lock.** In
+  firn at Firn-wf `6239de8c8`, `put_text` and `set_body` inline into
+  `wf_commands.set_key.resume`. There the store of a `Value::Text(Short)`
+  into the entry, between `wf__table_lock_entry` and
+  `wf__table_unlock_entry`, writes the short text's bytes one at a time from
+  shifted registers instead of in one or two vector moves
+  ([Firn-wf run 37476541818](https://github.com/Ming-Research/Firn-wf/actions/runs/37476541818),
+  artifact `q41-images`). It is not the by-value parameter entry copy:
+  removing that copy left this function's code unchanged and the
+  instructions per SET within one (1,616 against 1,615)
+  ([in-place parameters](../research/investigations/in-place-parameters/DESIGN.md#results)).
+  The cause is unattributed. Candidates: the host splitting the short
+  text's inline array into scalars after the text is built from the request
+  bytes, or the emitter constructing the union payload field by field.
+  Impact: PR #245 measured about 1.2% of SET throughput for a store of this
+  shape, against the earlier code's three vector moves; about 20
+  instructions inside the critical section on firn's hottest command.
+  The change: reduce `set_key` to the smallest program that keeps the
+  pattern, then find which emitted construction or which host pass produces
+  it. Validate with the instructions per SET under callgrind and the
+  disassembly of the store. Reopen with firn's next SET performance work or
+  another program whose inline byte arrays show the same pattern.
+
 - **Consumed aggregate locals can retain an argument snapshot.** An exposed
   mutable local is loaded into an immutable argument snapshot before a consuming
   call. Clang 21 forwards that snapshot in the large-record regression, while
@@ -3676,22 +3699,34 @@ condition under which it is taken up.
   they were built from; setting the variable avoids it meanwhile. Reopen when
   two worktrees next validate on one host, or with the next change to the
   check runner.
-- **The gate-profile compiler does not build exactly the release
-  compiler's executable.** At `cea9188d4`, `whitefootc` built with the gate
-  profile and with the release profile emits byte-identical LLVM IR for
-  firn (`--emit-llvm`), and two gate builds of firn are byte-identical, yet
-  the release compiler's firn differs in 21 bytes of `.text` besides the
-  build ID, all in `wf__ctx_start_server.main.0.resume`, where a few vector
-  loads and stores of equal length come in another order or register, with
-  every function's size and place unchanged
+- **A full-LTO build of firn is not byte-reproducible on a 32-processor
+  host.** On the 14900K runner (32 processors), one compiler building
+  firn's `--full-lto` image twice at one tree path gives two images
+  ([Firn-wf run 37480216530](https://github.com/Ming-Research/Firn-wf/actions/runs/37480216530)).
+  This held for main `ff1894f7b`'s compiler and for PR #255's. Each pair
+  differs in 29 bytes: the build ID, and 21 bytes of
+  `wf__ctx_start_server.main.0.resume`. There, two pairs of equal-length
+  vector stores into the first spawned context's argument frame come in
+  another order or register, with every function's size and place
+  unchanged. On a 4-processor hosted runner, both compilers built the image
+  identically twice and emitted identical LLVM four times
+  ([run 37479044280](https://github.com/Ming-Research/Whitefoot/actions/runs/37479044280)).
+  At `cea9188d4` the same 21 bytes differed between the gate-profile and
+  release-profile compilers' images, whose LLVM IR was identical
   ([redis-compat](../research/experiments/redis-compat/README.md#limitations)).
-  The difference is harmless here, but AGENTS.md says the gate profile does
-  not change how WF source is compiled, and a gate-built executable is what
-  the checks run. Find which step after IR emission depends on the
-  compiler's profile, by comparing the commands and inputs of both
-  compilers' native builds, and make the two agree or state the exception.
-  Reopen when an executable built for a measurement or a check must match
-  the release compiler's byte for byte.
+  The processor count may explain that difference rather than the profile.
+  Unverified: whether whitefootc's IR differs between builds on that host,
+  or only the native code LLVM and LLD make from it.
+  Impact: an image's hash does not identify a build there, and comparing
+  images between builds, profiles or compilers reports this difference too.
+  Program behavior is unaffected. The change: compare `--emit-llvm` twice on
+  the 14900K. If the IR differs, find the state shared among `in_parallel`
+  items (`compiler/src/lib.rs`) that orders that frame's stores. If not,
+  find which LTO or code-generation step depends on the processor count,
+  and fix its thread count or partitioning in the driver. Validate with
+  four byte-identical images on the 14900K. Reopen when a downstream or a
+  measurement needs byte-identical images, or with the next change to the
+  release workflow.
 
 ## firn
 

@@ -176,12 +176,18 @@ fn main() -> status: std::process::ExitStatus pure {
         }),
         "stored aggregates must not cross the write as SSA values: {replace}"
     );
-    let marker = module
-        .find("@wf_place_back$instance$")
-        .expect("the aggregate place_back instance must be emitted");
-    let start = module[..marker]
-        .rfind("define ")
-        .expect("the place_back definition must start");
+    // The instance's definition line, not the first line naming it, which is
+    // `append_record`'s call.
+    let start = module
+        .match_indices("define ")
+        .map(|(start, _)| start)
+        .find(|start| {
+            module[*start..]
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains("@wf_place_back$instance$"))
+        })
+        .expect("the aggregate place_back instance must be defined");
     let end = module[start..]
         .find("\n}\n")
         .map(|offset| start + offset + 2)
