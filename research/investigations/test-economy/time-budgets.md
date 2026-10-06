@@ -440,8 +440,8 @@ EPYC 7763. Seconds:
 | `compiler/test-corpus` | 139.7 | 145 → 175 | 137.3 | 125 → 175 |
 | `check/runtime` | 12.9 | 15 → 20 | 14.4 | 15 → 20 |
 
-The other gate stages keep their budgets, which their slowest runs stay
-under. These values replace the separate raises proposed in PRs #230
+The owner approved this table on 2026-10-05. The other gate stages keep
+their budgets, which their slowest runs stay under. These values replace the separate raises proposed in PRs #230
 (`compiler/test-unit` 115 s and `check/unit` 250 s on ubuntu) and #237 (the
 macOS column over 29 to 30 runs of 2026-10-04 and 2026-10-05), which drop
 their budget edits. A budget that covers the slowest processor lets a change
