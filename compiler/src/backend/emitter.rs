@@ -1404,6 +1404,9 @@ struct FunctionEmitter<'program, 'state> {
     frame: FunctionFramePlan,
     storage: FunctionStoragePlan,
     result_slot: Option<usize>,
+    /// Slots of by-value parameters read in place through the pointer the
+    /// caller passed, with no entry copy (compiler/storage-placement).
+    incoming_places: HashMap<usize, String>,
     /// Per-operation snapshots for legacy value consumers. Place operations
     /// read their actual storage directly; a snapshot never becomes an alias.
     materialized: HashMap<IrValueId, String>,
@@ -1553,6 +1556,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             frame,
             storage,
             result_slot,
+            incoming_places: HashMap::new(),
             materialized: HashMap::new(),
             pin_names: HashMap::new(),
             temporary: 0,
@@ -1833,6 +1837,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
+        if !declaration {
+            self.select_incoming_places(&public, &abi, waiting);
+        }
         if abi.result().uses_destination() && (declaration || !waiting) {
             parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
         }
@@ -1901,7 +1908,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 // A result can alias any consumed caller input. Snapshot
                 // every other indirect input first, then initialize the one
                 // entry group using the result. Scalar/address parameters
-                // already arrived as SSA values before either pass.
+                // already arrived as SSA values before either pass, and an
+                // input read in place (`select_incoming_places`) is not
+                // copied.
                 for writes_result in [false, true] {
                     for ((value, _), parameter) in
                         self.function.parameters().iter().zip(abi.parameters())
@@ -1911,7 +1920,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                                 self.storage.allocation_root(slot) == result_slot
                             })
                         });
-                        if !parameter.is_indirect() || uses_result != writes_result {
+                        let in_place = self
+                            .storage
+                            .slot(*value)
+                            .is_some_and(|slot| self.incoming_places.contains_key(&slot));
+                        if !parameter.is_indirect() || in_place || uses_result != writes_result {
                             continue;
                         }
                         let destination = self.value_place(*value)?;
@@ -1952,6 +1965,38 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             module.text(format!("{DISPATCH_LEDGER_PREFIX}{line}\n"));
         }
         Ok(module)
+    }
+
+    /// Selects the by-value parameters this definition reads in place
+    /// through the pointer its caller passed, with no entry copy
+    /// (compiler/storage-placement). A caller hands over the storage of the
+    /// value it consumes, which stays untouched for the whole synchronous
+    /// call when the definition has no result destination that the caller
+    /// could have placed in that storage, no frame that outlives the call,
+    /// no deferred hand-out, and no split part, and when the parameter's
+    /// slot is a complete allocation that only the parameter occupies and
+    /// no address exposes.
+    fn select_incoming_places(&mut self, public: &FunctionAbi, abi: &FunctionAbi, waiting: bool) {
+        if waiting
+            || public.result().uses_destination()
+            || !self.function.overlaps().is_empty()
+            || self.dispatch.is_some()
+        {
+            return;
+        }
+        for ((value, _), parameter) in self.function.parameters().iter().zip(abi.parameters()) {
+            if !parameter.is_indirect() || !self.storage.holds_only(*value) {
+                continue;
+            }
+            let Some(slot) = self.storage.slot(*value) else {
+                continue;
+            };
+            if Some(slot) == self.result_slot {
+                continue;
+            }
+            self.incoming_places
+                .insert(slot, format!("%wf.arg.v{}", value.ordinal()));
+        }
     }
 
     /// Every parameter of this definition's signature, with the facts the
