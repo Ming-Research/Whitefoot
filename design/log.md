@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-05 Compiler releases for projects outside this repository
+
+Nodes: compiler/downstream-releases
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, translated: Firn and Halo leave for repositories of their own (Q43 A); a downstream takes a published compiler instead of building it (Q44 B); no scheduled downstream CI, "I only need to have an agent often update every downstream project to the latest Whitefoot" (Q45); the design-tree skill as a submodule everywhere (Q49 B); releases made when a downstream needs one, "clean up those older than a month" (Q51); the documentation bundle deferred, "put it in the TODO; future releases will certainly carry it, not now"; "no automatic releases, manual is fine; the 30-day cleanup is fine for now, it may need another way once the rapid-development period is over"; and after the handoff of PR #249: "The two design nodes OK".
+
+Summary: Programs written in Whitefoot that are projects of their own live in their own repositories with their own gates, because one shared gate ran the compiler's suite on every application push and the applications' cases on every compiler push while their real gates belong in no compiler gate. A downstream pins a compiler release by name, `wf-` and twelve hex digits of a main commit whose gate passed, made by hand on request, with experiment releases `wf-exp-` for unmerged commits on experiment branches; a specification version is no pin, since the compiler changes within one. Releases carry no documents for now, provisionally. A weekly run removes releases published more than 30 days ago except the newest of main, provisionally for the period of rapid change. This repository's gate builds no downstream program; the periodic upgrade finds a compiler change that breaks one. Refused: application lanes in this gate, one repository for every application, releases per specification version or per day, a Whitefoot submodule in each downstream, and a scheduled downstream run.
+
 ## 2026-10-05 A box pinned across calls that cannot replace it; cache pruning and derived addresses refused
 
 Nodes: compiler/match-dispatch-lowering, compiler/incremental-compilation
