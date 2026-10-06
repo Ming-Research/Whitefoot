@@ -1803,7 +1803,7 @@ Baseline module checks pass in 296.96 and 263.13 s (wrapper wall),
 median 280.045 s, relative range 12.08%.
 Two candidate checks are selected initially; the threshold is 350.0562 s.
 The first baseline command started after the criterion file was written but
-before its milestone commit: Git staging/commit initially failed because the
+before its milestone commit: Git staging initially failed (exit 128) because the
 linked worktree metadata is outside the sandbox. Local Git authorization
 then permitted the milestone; no network or publication was attempted.
 
@@ -1884,10 +1884,21 @@ compiler; their inputs and all selected launches are retained in
 Fib improves 18.99%, passing 10%. Every other loss is below
 the larger relative range: the runtime noise gate passes. Every native and
 PUC exit is 0, printed checksums agree, suspensions are zero, and paired GC
-counts agree. One fib candidate launch is much slower than the other five;
-its cause is unmeasured and it is retained, not discarded. Leaving out any
+counts agree. Two fib candidate launches (0.270310 and 0.208316 s) are
+slower than the remaining four (0.159018–0.166682 s); their causes are
+unmeasured and every launch is retained, not discarded. Leaving out any
 one pair gives 17.64–20.32% fib median improvement, an exploratory robustness
 observation, not a replacement selection batch. Loop and sort also have wide
 spread, limiting stronger performance claims. This measures the combined
 entry qualification/helper and code-layout change, not isolated cycle shares.
 The check-time and runtime gates pass; selection awaits behavior/root gates.
+
+
+### Repeat correctness construction and sizing
+
+The candidate oracle host builds in 521.32 s, exit 0, from the measured
+candidate library bytes. It uses the existing module cache for behavior
+checks only; all benchmark pairs use full LTO. The counter-closure sample
+passes 3/3 ordinary in 0.42 s and 3/3 at stress in 0.21 s, exits 0, at
+budgets 1, 7 and 1000. These samples justify the complete batches. Build,
+source and binary hashes and sample reports are retained in the raw JSON.
