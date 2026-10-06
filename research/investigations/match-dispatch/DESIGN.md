@@ -516,3 +516,50 @@ Three findings bear on how to build it:
   again: every x86-64 arm forms it with `leaq table(%rip)`. Every arm that
   reads a frame slot also reloads the stack's payload pointer from the
   enclosing frame. On AArch64 both stay in registers.
+
+**Building the candidate.** The arms already hold the address, so the
+candidate is built and measured in two steps.
+- **A, the cursor beside the index.** The lowering recognises a header that
+  addresses the matched element by a carried index into a run of slots
+  whose address the loop cannot change, when the arms read the element
+  through that address. The parts carry the address in the parameter that
+  held it as a header value, so the parameter list is unchanged. Entering
+  the loop, the enclosing function forms the address from the entry's
+  index. An edge back to the header moves the address the arm received by
+  `next - pc` elements, which the host folds to one addition when
+  `next = pc + 1`. The header uses the address it receives. The moved
+  address is exactly the element's: the edge passes `next` to a header
+  whose indexing of it was proved, so `next` lies inside the run.
+- **B, the cursor instead of the index.** A, and the index is no part's
+  parameter. A part that reads it recovers it as the address's distance
+  from the run's first element divided by the element's size. A
+  comparison of `pc + 1` with the run's length becomes a comparison of
+  the moved address with the run's end address, which the enclosing
+  function computes once and the parts receive. Only a step of one
+  element is compared that way: `pc` is below the length, so the moved
+  address is at most the end address, and no address outside the run and
+  its end is formed.
+
+**Predictions**, from the attribution's `I32Add` path, before measuring:
+- **A:** 3 fewer instructions per sequential arm on x86-64, where the
+  move, the shift and two additions become one addition, and 1 fewer on
+  AArch64, where the shifted addition and the tag's load become one
+  pre-indexed load. Branch arms keep about their counts.
+- **B:** 2 fewer again per sequential arm on both, the index's increment
+  and move. A branch arm whose next index joins `pc + 1` and a target pays
+  2 or 3 instructions to recover `pc`.
+
+**Criterion, fixed before measuring.**
+- **Correctness.** Every launch reports CoreMark's CRCs, and the gate
+  passes.
+- **Measurement.** CoreMark 2K, the branch's compiler against its merge
+  base's on v2h, 7 alternating launches, medians.
+- **Host.** The 14900K decides, with the gate's pinned LLVM and
+  `preserve_none`. Its `/usr/bin/clang` stays at 18 until the downstream
+  projects pin a release built with the pinned major. Until then, the
+  14900K under clang 18, the hosted x86-64 runner and macos-15 (AArch64)
+  are indications only.
+- **Adoption.** A is adopted if its median is at least 2% above the
+  base's. B's further changes are adopted if B's median is at least 2%
+  above A's. If A falls short and B is at least 2% above the base, B is
+  adopted whole.
