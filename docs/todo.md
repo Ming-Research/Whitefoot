@@ -2204,16 +2204,17 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files can only be appended.** `std::fs` opens a file for appending,
-  appends, syncs and closes it [PRE-2], and has no positioned write,
-  truncation, rename, removal, directory creation, directory sync, create rule
-  other than create-if-missing, or way to descend into a subdirectory for
-  writing. A program cannot rewrite a log compactly, as Redis's
-  `BGREWRITEAOF` writes a new file, syncs it, renames it over the old one and
-  syncs the directory, nor clean up a file it made; the append-only surface
-  was chosen as the one the persistent programs in view needed
+- **Files can only be appended or set to a length.** `std::fs` opens a file
+  for appending, appends, sets its length, syncs and closes it [PRE-2], and
+  has no positioned write, rename, removal, directory creation, directory
+  sync, create rule other than create-if-missing, or way to descend into a
+  subdirectory for writing. A program cannot rewrite a log compactly, as
+  Redis's `BGREWRITEAOF` writes a new file, syncs it, renames it over the old
+  one and syncs the directory, nor clean up a file it made; the surface was
+  chosen as the one the persistent programs in view needed
   (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
-  directories and append-only files"). Each addition is a specification
+  directories and append-only files"), and `truncate_file` was added for
+  cutting a log whose end did not load. Each addition is a specification
   change to `std::fs` taking the write half. Validate with a program that
   rewrites its log through a new file and a rename, and survives being
   stopped between the two steps with one of the two files whole. Reopen when
