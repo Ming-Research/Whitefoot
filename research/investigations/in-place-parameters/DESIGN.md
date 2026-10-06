@@ -212,5 +212,12 @@ hosted `ubuntu-24.04`). Each compiler built firn from Whitefoot main's
 | base, main `ff1894f7b` | `aa371955c215...` all 4 | `a5fb4b4c1b2b...` both |
 | this change | `3ec07b5cd164...` all 4 | `ae77e1d6c8a5...` both |
 
-So the changed head hash on the 14900K comes from the firn build's inputs,
-not from whitefootc's output.
+On the 14900K's 32 processors, though, each compiler builds firn two ways
+([Firn-wf run 37480216530](https://github.com/Ming-Research/Firn-wf/actions/runs/37480216530)).
+Four builds at one tree path gave two images from main's compiler and two
+from this change's. The two head hashes are exactly those of the timing
+runs above. Each pair differs only in the build ID and in 21 bytes of one
+spawned context's argument copy. So the changed head hash is that host's
+build variation, found in both compilers, and not this change. It is
+recorded in `docs/todo.md`, "A full-LTO build of firn is not
+byte-reproducible on a 32-processor host".
