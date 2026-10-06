@@ -16,9 +16,11 @@
 #                                   the gate run that passed it, asset names
 #   SHA256SUMS                      the checksums of the three files above
 #
-# It carries no documents: a downstream's writers read the specification,
-# the maintained programs and the standard library's interfaces in this
-# repository at the release's commit.
+# It carries no documents yet: a downstream's writers read the
+# specification, the maintained programs and the standard library's
+# interfaces in this repository at the release's commit, until the choice
+# of what a release carries for them is made (docs/todo.md, "A compiler
+# release carries no documents").
 #
 # Each compiler is the `gate` Cargo profile the gate tests. Like the gate's,
 # it builds programs with the host's /usr/bin/clang, and on Linux links them
