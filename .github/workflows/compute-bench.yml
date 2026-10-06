@@ -36,7 +36,9 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        options: [scoreboard, placement]
+        # stage3-attribution is temporary, for the code-cursor attribution,
+        # and is removed before claude/stage3-cursor is ready.
+        options: [scoreboard, placement, stage3-attribution]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -107,7 +109,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -356,3 +358,73 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  # Temporary: research/investigations/match-dispatch/DESIGN.md, "Stage 3:
+  # the code cursor", first step: the hot arms' machine code.
+  stage3-attribution:
+    if: inputs.experiment == 'stage3-attribution'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            version=$(tr -d '[:space:]' < .github/llvm-major)
+            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+            echo "OBJDUMP=llvm-objdump-$version" >> "$GITHUB_ENV"
+          else
+            echo "OBJDUMP=objdump" >> "$GITHUB_ENV"
+          fi
+          /usr/bin/clang --version | head -1
+          rustup default stable
+
+      - name: Build the interpreter
+        run: |
+          set -eo pipefail
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          out="$RUNNER_TEMP/stage3"
+          mkdir -p "$out"
+          python3 research/experiments/match-dispatch/wasm/gen.py "$out/interp.wf"
+          compiler/target/gate/whitefootc --dispatch-ledger "$out/interp.wf" | grep wf_run
+          compiler/target/gate/whitefootc "$out/interp.wf" -o "$out/wasm-interp"
+
+      - name: Print the hot arms' machine code
+        run: |
+          out="$RUNNER_TEMP/stage3"
+          python3 - "$out/interp.wf" > "$out/arms.txt" <<'PY'
+          import re, sys
+          body = open(sys.argv[1]).read()
+          body = body[body.index("fn run("):]
+          names = []
+          for line in body[body.index("match code^.inner[pc] {"):].split("\n")[1:]:
+              m = re.match(r"^    ([A-Z][A-Za-z0-9]*)\(", line)
+              if m:
+                  names.append(m.group(1))
+              if line.startswith("  }"):
+                  break
+          for i, n in enumerate(names):
+              print(i, n)
+          PY
+          echo "arms: $(wc -l < "$out/arms.txt")"
+          "$OBJDUMP" -d --no-show-raw-insn "$out/wasm-interp" > "$out/all.s"
+          for name in I32Add I32AddA I32AddAD BrIf BrI32LtS BrI32LtSC Copy Copy2 LocalTee I32Load I32Store Call Return; do
+            index=$(awk -v n="$name" '$2 == n {print $1}' "$out/arms.txt" | head -1)
+            [ -n "$index" ] || { echo "=== $name: no arm"; continue; }
+            echo "=== $name: arm $index"
+            awk -v sym="wf_run.arm.$index" '
+              $0 ~ "<_?" sym "(\\.[^>]*)?>:$" {on = 1; count = 0; print; next}
+              on && (/^$/ || /^[0-9a-f]+ <.*>:$/) {print "--- " count " instructions"; on = 0}
+              on {print; count++}' "$out/all.s"
+          done
+          echo "=== header (wf_run.dispatch or the enclosing wf_run)"
+          grep -n "<_\?wf_run[^>]*>:$" "$out/all.s" | head -12
