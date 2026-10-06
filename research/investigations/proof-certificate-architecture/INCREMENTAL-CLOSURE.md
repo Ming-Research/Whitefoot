@@ -525,25 +525,35 @@ unless noted; paired runs alternate the two compilers and report medians:
 | synthetic interpreter, N = 160 (3 paired rounds) | 9.47 s | 0.22 s | 0.024 |
 | synthetic with a `value_if` per arm, N = 160 (3 paired rounds) | 75.4 s | 0.46 s | 0.006 |
 | stage-3 wasm interpreter `v2d.wf`, 200 arms with handler calls (3 paired rounds) | 1.68 s | 0.94 s | 0.562 |
-| inline-handler wasm interpreter `v2e_inline.wf`, 9,456 lines (single runs) | {{V2E_MAIN}} | 1.32 s | |
-| accumulator wasm interpreter `v2acc.wf` (single runs) | 475.2 s | 3.39 s | 0.007 |
+| stage-3 wasm interpreter from `gen.py`, 21,324 lines (one run, `--emit-llvm`) | 73.71 s | 3.89 s | 0.053 |
+| the same with handlers in their arms, `gen.py --inline`, 20,642 lines (one run, `--emit-llvm`) | 431.57 s | 3.31 s | 0.008 |
 | `tests/programs/wfgrep.wf` (3 paired rounds) | 774.7 ms | 758.3 ms | 0.979 |
 | `tests/programs/fixed_run_library.wf` (3 paired rounds) | 1216.4 ms | 1221.6 ms | 1.004 |
 | Snowghost `pkg::html::tree_builder` module check, fresh cache (3 paired rounds) | 2.09 s | 1.83 s | 0.874 |
 | Snowghost `style_oracle` entry check, fresh cache (3 paired rounds) | 41.68 s | 41.47 s | 0.995 |
 
 The paired programs' LLVM was identical across every compile of both
-compilers, as was the `style_oracle` entry's; the inline-handler
-interpreter's LLVM from the port equals that of the parallel branch
-(`efacec20...`), {{V2E_ID}}, and the accumulator interpreter's {{V2ACC_ID}}.
+compilers, as was the `style_oracle` entry's. The two `gen.py` rows come
+from one CI job on the same host
+([run 37456162482](https://github.com/Ming-Research/Whitefoot/actions/runs/37456162482)),
+`main` at `2d3940ae0`, whose entailment sources equal `13453860b`'s, against
+the port at `e1c9948a2`. Each times one `whitefootc --emit-llvm` compile
+(checking, lowering and emission), the port first, of the interpreter that
+`research/experiments/match-dispatch/wasm/gen.py` writes at that revision.
+Each interpreter's LLVM is identical between the two compilers (SHA-256
+`e4d5508c...` and `38a34872...`), and peak memory falls from 0.72 to
+0.30 GB and from 1.72 to 0.29 GB.
 The Snowghost `tree_builder` medians are within the spread of its single
 runs (1.82 to 3.67 s); the entry check, the compile-speed work's own target,
 is unchanged within noise.
 
-The ported tests and their mutations on `main` with the port: with the
-delivery evaluation reverted, the opposite-sides and one-sided delivery tests
-are refused at FN-8 and the unbounded-edge and same-side tests still pass;
-without the join's scan and retake, the two join tests fail as the
-measurement describes; with zero withheld from the probe's universe, the
-generated-flow test fails at the probe's own oracle. The unit suite (1,961
-cases), the corpus (136 and 23 cases) and `make static` passed on the port.
+The porting session reported these mutation outcomes for the ported tests,
+run on the 14900K host at `e557bef77` before later `main` merges and not
+repeated since: with the delivery evaluation reverted, the opposite-sides
+and one-sided delivery tests are refused at FN-8 and the unbounded-edge and
+same-side tests still pass; without the join's scan and retake, the two
+join tests fail as the measurement describes; with zero withheld from the
+probe's universe, the generated-flow test fails at the probe's own oracle.
+At `62b422f07` the repository gate passed the unit suite, the corpus and
+the static checks on Linux and macOS
+([run 37456306208](https://github.com/Ming-Research/Whitefoot/actions/runs/37456306208)).
