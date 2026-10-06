@@ -161,6 +161,31 @@ impl FunctionStoragePlan {
             .map_or(slot, |field| field.parent_slot)
     }
 
+    /// Whether `value` is the only value its slot holds and that slot is a
+    /// complete allocation of its own: no binding destination, no field
+    /// placement in a parent, no child placed in it, and no exposed address.
+    /// Nothing but `value`'s own definition then writes the allocation
+    /// (compiler/storage-placement).
+    pub(super) fn holds_only(&self, value: IrValueId) -> bool {
+        let Some(slot) = self.slot(value) else {
+            return false;
+        };
+        self.destination(slot).is_none()
+            && self.field_destination(slot).is_none()
+            && !self.is_exposed(slot)
+            && !self
+                .fields
+                .iter()
+                .flatten()
+                .any(|field| field.parent_slot == slot)
+            && self
+                .values
+                .iter()
+                .filter(|held| **held == Some(slot))
+                .count()
+                == 1
+    }
+
     fn select_field_destinations(
         &mut self,
         program: &IrProgram,
