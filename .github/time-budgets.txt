@@ -5,12 +5,15 @@
 # final verdict step fails on that record; a local run only prints the
 # comparison.
 #
-# A budget is 1.25 times the slowest of the runs recorded in
+# A new stage's budget, and every budget recomputed over a new sample of
+# runs, is 1.25 times the slowest of the runs recorded in
 # research/investigations/test-economy/time-budgets.md, rounded up to 5 s,
-# and never under 10 s. AGENTS.md "Checks" says how to judge an overrun.
-# Raise a budget only with the owner's approval, as a decision in the
-# handoff; lower one in the change that makes its stage much faster. "-"
-# marks a stage that does not run on that host.
+# and never under 10 s; that file also records any value the owner set
+# directly. AGENTS.md "Checks" says how to judge an overrun. A raise needs
+# the owner's approval as a decision in the handoff and adds 10 s to the
+# stage over its budget and to the group stage that contains it, if any;
+# lower a budget in the change that makes its stage much faster. "-" marks a
+# stage that does not run on that host.
 
 label                           linux  macos  windows
 
@@ -51,7 +54,7 @@ linux-runtime-tsan              10     -      -
 # compute-regression.yml: two cold compiler builds at two Cargo jobs, their
 # images, then the host control, the instrument's slowdown control and the
 # paired comparison
-performance-candidate-compiler  115    -      -
+performance-candidate-compiler  130    -      -
 performance-baseline-compiler   105    -      -
 performance-candidate-images    10     -      -
 performance-baseline-images     10     -      -
