@@ -563,3 +563,19 @@ candidate is built and measured in two steps.
   base's. B's further changes are adopted if B's median is at least 2%
   above A's. If A falls short and B is at least 2% above the base, B is
   adopted whole.
+
+**Outcome**
+([results](../../experiments/match-dispatch/RESULTS.md#a-and-b-on-the-14900k)).
+On the 14900K with the pinned LLVM, A raised the median score 13.0% over
+the base, above it in all 7 pairs, so A is adopted. B scored 1.6% below A,
+below it in all 7 pairs, so its further changes are refused. B fell short
+for three reasons:
+- B's sequential arms saved one instruction, not the predicted two: the
+  moved address still passes through a move into its carried register.
+- Its branch arms recover `pc` on every dispatch.
+- The end address took the index's register, so no register was freed
+  for the handler table's address.
+
+The hosted runners agree that A gains and disagree on B, within their
+spreads. B's implementation stays on the branch
+`claude/stage3-cursor-instead`.
