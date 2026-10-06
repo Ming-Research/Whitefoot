@@ -54,6 +54,15 @@ pub(super) const ENTRY: &str = "wf.coro.entry";
 /// The block the body continues in after the ramp's first suspension.
 const START: &str = "wf.coro.start";
 
+/// `llvm.coro.end`'s result type in the build's toolchain, which LLVM
+/// changed from `i1` to `void` (`build.rs`), and the call that names it.
+const CORO_END_RESULT: &str = env!("WHITEFOOT_CORO_END_RESULT");
+const CORO_END_CALL: &str = if matches!(CORO_END_RESULT.as_bytes(), b"void") {
+    "call void"
+} else {
+    "%wf.coro.end = call i1"
+};
+
 /// The coroutine intrinsics and the context entries a module with a waiting
 /// definition names, including the two a launcher of a waiting entry calls
 /// and the no-op coroutine it gives the entry's frame as its parent.
@@ -67,7 +76,7 @@ pub(super) fn frame_runtime_declarations() -> Module {
         ("llvm.coro.save", "token", &["ptr"]),
         ("llvm.coro.suspend", "i8", &["token", "i1"]),
         ("llvm.coro.free", "ptr", &["token", "ptr"]),
-        ("llvm.coro.end", "i1", &["ptr", "i1", "token"]),
+        ("llvm.coro.end", CORO_END_RESULT, &["ptr", "i1", "token"]),
         ("llvm.coro.resume", "void", &["ptr"]),
         ("llvm.coro.destroy", "void", &["ptr"]),
         ("llvm.coro.noop", "ptr", &[]),
@@ -207,7 +216,7 @@ impl FunctionEmitter<'_, '_> {
              call void @wf__context_frame_release(ptr %wf.coro.freed)\n  \
              br label %{SUSPENDED}\n\
              {SUSPENDED}:\n  \
-             %wf.coro.end = call i1 @llvm.coro.end(ptr null, i1 false, token none)\n  \
+             {CORO_END_CALL} @llvm.coro.end(ptr null, i1 false, token none)\n  \
              ret ptr {HANDLE}"
         )
         .map_err(|_| BackendFailure::TextEmission)

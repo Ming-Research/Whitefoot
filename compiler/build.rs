@@ -76,6 +76,33 @@ pub const SPEC_SHA256_HEX: &str = "{hex}";
         "cargo::rustc-env=WHITEFOOT_PRESERVE_NONE={}",
         u8::from(preserve_none_supported())
     );
+    println!(
+        "cargo::rustc-env=WHITEFOOT_CORO_END_RESULT={}",
+        coro_end_result()
+    );
+}
+
+/// The result type of `llvm.coro.end` in the toolchain this build hands its
+/// modules to (compiler/backend-facts): `i1` until LLVM changed it to
+/// `void`, and the verifier refuses a declaration of the other one. A module
+/// declaring the newer form is handed to the assembler `whitefootc` runs.
+fn coro_end_result() -> &'static str {
+    const OLD: &str = "i1";
+    const NEW: &str = "void";
+    let Ok(directory) = env::var("OUT_DIR") else {
+        return OLD;
+    };
+    let probe = Path::new(&directory).join("coro_end_probe.ll");
+    if fs::write(&probe, "declare void @llvm.coro.end(ptr, i1, token)\n").is_err() {
+        return OLD;
+    }
+    let accepted = Command::new(assembler())
+        .args(["-x", "ir", "-c", "-o"])
+        .arg(Path::new(&directory).join("coro_end_probe.o"))
+        .arg(&probe)
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if accepted { NEW } else { OLD }
 }
 
 /// Whether the toolchain this build hands its modules to accepts a
