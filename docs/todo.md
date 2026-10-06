@@ -111,19 +111,6 @@ rarely insert at the same place.
   Reopen when a loop-shaped program cannot be rewritten that way, or with
   the INV-1 join rules.
 
-- **Checking Halo's interpreter takes about four minutes.** In
-  [Halo's C1 experiment](https://github.com/Ming-Research/Whitefoot/blob/b374e880e6749fe5d1a0e4a40b0b2187f52f63b0/research/experiments/halo-bench/RESULTS.md#check-and-kernel-observations)
-  (PR #220, M1 Pro), checking the whole package graph of Halo's benchmark
-  entry took a median of 210.07 s over three runs, and 241.00 s after 18
-  checked hot-instruction continuations were added to the vm module; every
-  check accepted. These are process wall times; no stage (formation,
-  derivation, certificates, propagation) or function was attributed.
-  Impact: each edit to the interpreter waits minutes for acceptance, and a
-  downstream gate that checks Halo pays it on every run. Change: attribute
-  the time by stage and by function before restructuring source for the
-  checker's sake. Reopen with the next checker cost work or when Halo's
-  edit-check loop becomes its bottleneck.
-
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
   `left == right`, let `make() -> Pair` return `Pair(1, 1)`. A helper
