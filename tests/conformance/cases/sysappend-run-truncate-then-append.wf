@@ -114,15 +114,17 @@ fn check_file(factory: &std::io::HandleFactory, root: &std::fs::DirectoryRead, e
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
-  let outcome = change_file(factory: &handles, root: &cwd_write, extend: False());
+  let shrink = False();
+  let extend = True();
+  let outcome = change_file(factory: &handles, root: &cwd_write, extend: shrink);
   if outcome == 0_u8 {
-    set outcome = check_file(factory: &handles, root: &cwd, extended: False());
+    set outcome = check_file(factory: &handles, root: &cwd, extended: shrink);
   }
   if outcome == 0_u8 {
-    set outcome = change_file(factory: &handles, root: &cwd_write, extend: True());
+    set outcome = change_file(factory: &handles, root: &cwd_write, extend: extend);
   }
   if outcome == 0_u8 {
-    set outcome = check_file(factory: &handles, root: &cwd, extended: True());
+    set outcome = check_file(factory: &handles, root: &cwd, extended: extend);
   }
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   std::fs::close_directory(factory: &handles, directory: move cwd);

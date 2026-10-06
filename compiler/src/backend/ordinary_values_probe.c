@@ -694,7 +694,7 @@ static void append_probe(wf_inputs *inputs) {
     wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
     assert(opened.tag == 0);
     wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, sizeof bytes);
-    assert(read.tag == 0 && read.ok.value == 0);
+    assert(read.tag == 1 && read.err.error.tag == 0);
     wf__body_close_read(&closed, &inputs->handles, &opened.ok.value);
     check_close(&closed);
     if (wf_unlink("appended") != 0) {
