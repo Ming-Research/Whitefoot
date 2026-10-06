@@ -580,3 +580,32 @@ for three reasons:
 The hosted runners agree that A gains and disagree on B, within their
 spreads. B's implementation stays on the branch
 `claude/stage3-cursor-instead`.
+
+## Stage 3: x86-64 register pressure
+
+With the code cursor, x86-64's `I32Add` runs 18 instructions. Two kinds of
+them exist because the parts have more values than registers. Every arm
+that reads a frame slot first reloads a value kept in the enclosing frame
+(`addq 0xc8(%r11)`). Every arm also forms the handler table's address
+(`leaq table(%rip)`), since no register is left to pass it. The split keeps
+4 values in the frame, choosing first those that the fewest arms read,
+regardless of how often those arms run (compiler/match-dispatch-lowering).
+
+**Question.** Which values are kept in the frame? Which of them do the hot
+arms read on every dispatch? Would keeping a different set in registers
+remove those reloads, or leave a register for the table's address?
+
+**First step: attribution, no compiler change.** Emit v2h's module on
+x86-64 with the gate's pinned LLVM at this branch. From it:
+- list the parts' parameters and the values kept in the frame, with the
+  number of arms that read each;
+- identify the value the hot arms reload;
+- count the hot arms' instructions spent on reloads and on forming the
+  table's address.
+
+**Rule for the next step, fixed now.**
+- **The hot arms reload a kept value on every dispatch:** build a
+  candidate that changes which values the frame keeps. Judge it by CoreMark
+  on the 14900K against its base, with a twin of the base as the noise
+  control, and adopt it if the median rises at least 2%.
+- **Otherwise:** record the attribution and close this step.

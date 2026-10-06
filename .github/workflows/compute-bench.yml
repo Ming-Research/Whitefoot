@@ -36,7 +36,9 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        options: [scoreboard, placement]
+        # stage3-x86-ir is temporary, for the x86-64 register-pressure
+        # attribution, and is removed before claude/stage3-cursor is ready.
+        options: [scoreboard, placement, stage3-x86-ir]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -107,7 +109,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -356,3 +358,44 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  # Temporary: research/investigations/match-dispatch/DESIGN.md, "Stage 3:
+  # x86-64 register pressure", first step: the x86-64 module and machine
+  # code of the stage-3 interpreter, kept as an artifact.
+  stage3-x86-ir:
+    if: inputs.experiment == 'stage3-x86-ir'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          /usr/bin/clang --version | head -1
+          rustup default stable
+
+      - name: Emit the interpreter's module and machine code
+        run: |
+          set -eo pipefail
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          out="$RUNNER_TEMP/stage3-ir"
+          mkdir -p "$out"
+          python3 research/experiments/match-dispatch/wasm/gen.py "$out/interp.wf"
+          compiler/target/gate/whitefootc --dispatch-ledger "$out/interp.wf" -o "$out/wasm-interp" | grep wf_run
+          compiler/target/gate/whitefootc --emit-llvm "$out/interp.wf" -o "$out/interp.ll"
+          objdump -d --no-show-raw-insn "$out/wasm-interp" > "$out/interp.s"
+          ls -la "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage3-x86-ir
+          path: |
+            ${{ runner.temp }}/stage3-ir/interp.wf
+            ${{ runner.temp }}/stage3-ir/interp.ll
+            ${{ runner.temp }}/stage3-ir/interp.s
