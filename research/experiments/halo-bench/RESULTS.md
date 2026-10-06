@@ -1795,3 +1795,33 @@ are removed after retaining their evidence; `fixed-call-measurements.json`
 in this experiment retains raw observations until this repeat is superseded.
 On any failed criterion, restore source bytes to the task base and commit
 the reversion while retaining the results.
+
+
+### Repeat baseline sizing and routing assessment
+
+Baseline module checks pass in 296.96 and 263.13 s (wrapper wall),
+median 280.045 s, relative range 12.08%.
+Two candidate checks are selected initially; the threshold is 350.0562 s.
+The first baseline command started after the criterion file was written but
+before its milestone commit: Git staging/commit initially failed because the
+linked worktree metadata is outside the sandbox. Local Git authorization
+then permitted the milestone; no network or publication was attempted.
+
+The candidate checks `proto != no_handle` before conversion and lookup, so
+for every u64 prototype-window length the sentinel returns `None` and enters
+unchanged `prepare`. Builtin and nonfunction tags, out-of-range/dead handles,
+invalid prototypes and varargs also return `None` without stack/frame changes.
+The ordinary call retains its budget charge and collector safepoint. Its
+function-slot fact follows from the existing 256-slot dispatch precondition;
+the shared `checked_step` still establishes the next code/stack/constants
+windows before C1 dispatch. No public type, frame, root or return path changes.
+
+The scratch fallback witness expects `[17, "a", 0, 1, 0, 1, 21]`: `math.abs`,
+a sentinel-backed gmatch iterator, number and nil call failures (with their
+message classes), and a vararg argument count. Each callee is invoked as
+`local result = f(a, b)`, forcing ordinary CALL rather than a tail call.
+The independently stated typed reply passes 3/3 on the verified before
+correctness binary; stress and candidate observations are recorded below.
+The script and expected bytes are retained in the raw JSON and leave the
+original oracle untouched. The pre-existing CJSON/iterator sentinel overlap
+remains recorded in TODO and the general routing order remains unchanged.
