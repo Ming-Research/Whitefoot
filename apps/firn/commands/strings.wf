@@ -193,17 +193,29 @@ fn run_get(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   set client^.now = time^.check;
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
-    match slot^ {
-      Some(value: held) => {
-        let kind = text_value(env: client, value: held);
-      }
-      None() => {
-      }
-    }
+    get_body(slot: slot, client: client);
   }
   if client^.state == state_expired {
     remove_expired(store: store, key: key, now: client^.now);
   }
+  get_finish(client: client);
+  return unit;
+}
+
+fn get_body(slot: &Option<Entry>, client: &Client) -> result: unit reads(slot), writes(client) {
+  doc "GET's work on its key's entry, held by the caller, against the client's now: a live string is written as a bulk string reply, recording done; another kind records wrong and an expired entry expired, writing nothing; an absent entry leaves the state as the caller set it.";
+  match slot^ {
+    Some(value: held) => {
+      let kind = text_value(env: client, value: held);
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn get_finish(client: &Client) -> result: unit writes(client) {
+  doc "GET's reply after its work: nothing more once a string was written, WRONGTYPE for another kind, and the null bulk string for an absent or expired key.";
   if client^.state == state_done {
     return unit;
   }
@@ -809,38 +821,60 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let key = &input^[place.start..place.end];
   let counted = Counted(value: 0_i64, delta: delta, now: time^.check, state: state_absent);
   atomic slot = &store^.keys[key], m = &store^.meta {
-    let fresh_needed = True();
-    match slot^ {
-      Some(value: held) => {
-        let outcome = bump_value(env: &counted, value: held);
-        set fresh_needed = False();
-      }
-      None() => {
-      }
-    }
-    if counted.state == state_expired {
-      set fresh_needed = True();
-      if store^.logging {
-        log_removal(log: &m^.log, key: key);
-      }
-    }
-    if fresh_needed {
-      let fresh = decimal_text(value: delta);
-      put_text(slot: slot, value: move fresh, expires: 0_u64);
-      set counted.value = delta;
-      set counted.state = state_done;
-    }
-    if counted.state == state_done {
-      if store^.logging {
-        log_command(log: &m^.log, input: input, args: args);
-      }
+    let removed = incr_body(slot: slot, counted: &counted);
+    if store^.logging {
+      let appended = incr_log(log: &m^.log, removed: removed, counted: &counted, input: input, args: args, key: key);
     }
   }
-  if counted.state == state_done {
-    reply_integer(client: client, value: counted.value);
-  } else if counted.state == state_wrong {
+  incr_finish(client: client, counted: &counted);
+  return unit;
+}
+
+fn incr_body(slot: &Option<Entry>, counted: &Counted) -> removed: Bool writes(slot), writes(counted) {
+  doc "INCR's work on its key's entry, held by the caller: adds counted's delta to a live stored decimal in place, keeping its expiry, or stores the delta without one for an absent or expired entry, recording done; another kind and a string that is not an integer or whose sum leaves the range of i64 record their refusal and change nothing. Returns whether an expired entry was replaced, whose removal the file records first.";
+  let fresh_needed = True();
+  match slot^ {
+    Some(value: held) => {
+      let outcome = bump_value(env: counted, value: held);
+      set fresh_needed = False();
+    }
+    None() => {
+    }
+  }
+  let removed = counted^.state == state_expired;
+  if removed {
+    set fresh_needed = True();
+  }
+  if fresh_needed {
+    let fresh = decimal_text(value: counted^.delta);
+    put_text(slot: slot, value: move fresh, expires: 0_u64);
+    set counted^.value = counted^.delta;
+    set counted^.state = state_done;
+  }
+  return removed;
+}
+
+fn incr_log(log: &Box<Slots<u8>>, removed: Bool, counted: &Counted, input: &[u8], args: &Box<Slots<Span>>, key: &[u8]) -> appended: u64 reads(counted), reads(input), reads(args), reads(key), writes(log) {
+  doc "Appends what INCR changed to the file's bytes and returns how many commands it appended: an expired key's removal as log_removal records it, then the command as it was sent once it stored a number.";
+  let appended = 0_u64;
+  if removed {
+    log_removal(log: log, key: key);
+    set appended = appended +wrap 1_u64;
+  }
+  if counted^.state == state_done {
+    log_command(log: log, input: input, args: args);
+    set appended = appended +wrap 1_u64;
+  }
+  return appended;
+}
+
+fn incr_finish(client: &Client, counted: &Counted) -> result: unit reads(counted), writes(client) {
+  doc "INCR's reply after its work: the new number, WRONGTYPE for another kind, and Redis's errors for a sum past the range of i64 or a string that is not an integer.";
+  if counted^.state == state_done {
+    reply_integer(client: client, value: counted^.value);
+  } else if counted^.state == state_wrong {
     reply_wrong_type(client: client);
-  } else if counted.state == 6_u64 {
+  } else if counted^.state == 6_u64 {
     reply_error(client: client, word: &text_overflow[0_u64..41_u64]);
   } else {
     reply_error(client: client, word: &text_not_integer[0_u64..43_u64]);

@@ -1,0 +1,90 @@
+alias Client = pkg::protocol::Client;
+alias Entry = pkg::store::Entry;
+alias KeyEnv = pkg::bytes::KeyEnv;
+alias Meta = pkg::store::Meta;
+alias Span = pkg::protocol::Span;
+alias Time = pkg::store::Time;
+alias arg = pkg::protocol::arg;
+alias log_removal = pkg::store::log_removal;
+alias name_code = pkg::bytes::name_code;
+alias reply_error = pkg::protocol::reply_error;
+
+const arity_get: i64 = 2_i64;
+
+const arity_incr: i64 = 2_i64;
+
+const text_script_unknown: Array<u8, 44> = "ERR Unknown Redis command called from script";
+
+const text_script_arity: Array<u8, 58> = "ERR Wrong number of args calling Redis command from script";
+
+const text_script_unsplit: Array<u8, 53> = "ERR This command is not yet supported in firn scripts";
+
+fn arity_holds(arity: i64, count: u64) -> fits: Bool pure {
+  doc "Whether a command of count arguments, its name among them, fits the arity Redis's command table gives it: exactly arity arguments when arity is positive, and at least its magnitude when negative.";
+  let wide = cvt.wrap::<u64, i64>(count);
+  if arity >= 0_i64 {
+    return wide == arity;
+  }
+  let least = 0_i64 -wrap arity;
+  return wide >= least;
+}
+
+fn script_get(keys: &ConcurrentHashMap<Entry>, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &Box<Slots<Span>>, client: &Client, time: &Time) -> appended: u64 reads(input), reads(args), reads(time), writes(keys), writes(effects), writes(client) {
+  doc "GET inside a script holding every key: the work and reply of run_get, an expired key removed at once, as Redis 7.0.15 removes one a script's lookup finds expired, its removal appended to the script's effects when the keyspace keeps a file.";
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  set client^.now = time^.check;
+  set client^.state = state_absent;
+  let slot = &keys^[key];
+  get_body(slot: slot, client: client);
+  let appended = 0_u64;
+  if client^.state == state_expired {
+    set slot^ = None<Entry>();
+    if logged {
+      log_removal(log: effects, key: key);
+      set appended = 1_u64;
+    }
+  }
+  get_finish(client: client);
+  return appended;
+}
+
+fn script_incr(keys: &ConcurrentHashMap<Entry>, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &Box<Slots<Span>>, client: &Client, time: &Time) -> appended: u64 reads(input), reads(args), reads(time), writes(keys), writes(effects), writes(client) {
+  doc "INCR inside a script holding every key: the work, effects and reply of run_incr with a delta of 1.";
+  let place = key_bounds(input: input, args: args, index: 1_u64);
+  let key = &input^[place.start..place.end];
+  let counted = Counted(value: 0_i64, delta: 1_i64, now: time^.check, state: state_absent);
+  let slot = &keys^[key];
+  let removed = incr_body(slot: slot, counted: &counted);
+  let appended = 0_u64;
+  if logged {
+    set appended = incr_log(log: effects, removed: removed, counted: &counted, input: input, args: args, key: key);
+  }
+  incr_finish(client: client, counted: &counted);
+  return appended;
+}
+
+fn script_command(keys: &ConcurrentHashMap<Entry>, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &Box<Slots<Span>>, client: &Client, time: &Time) -> appended: u64 reads(input), reads(args), reads(time), writes(keys), writes(effects), writes(client) {
+  doc "Runs one command a script calls, inside the script's statement holding every key and the keyspace's metadata, writing its reply into the client's reply as the network does and returning how many commands it appended to effects, the script's own record of what it changed, which the caller wraps in MULTI and EXEC when it holds more than one, as Redis 7.0.15 propagates a script's effects. time is the script's: its check is the instant the script began. A name no command has is refused as Redis refuses it from a script, a count of arguments outside the command's arity likewise, and a command not yet run from scripts with an error of firn's own.";
+  let count = args^.inner.len;
+  let name = arg(args: args, index: 0_u64);
+  let code = name_code(input: input, start: name.start, length: name.length);
+  if code == code_get {
+    if arity_holds(arity: arity_get, count: count) {
+      let got = script_get(keys: keys, effects: effects, logged: logged, input: input, args: args, client: client, time: time);
+      return got;
+    }
+    reply_error(client: client, word: &text_script_arity[0_u64..58_u64]);
+    return 0_u64;
+  }
+  if code == code_incr {
+    if arity_holds(arity: arity_incr, count: count) {
+      let bumped = script_incr(keys: keys, effects: effects, logged: logged, input: input, args: args, client: client, time: time);
+      return bumped;
+    }
+    reply_error(client: client, word: &text_script_arity[0_u64..58_u64]);
+    return 0_u64;
+  }
+  reply_error(client: client, word: &text_script_unknown[0_u64..44_u64]);
+  return 0_u64;
+}
