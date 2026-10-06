@@ -1,5 +1,6 @@
 # Removes the compiler releases compiler-release.yml makes, tags `wf-*`,
-# once they are more than 30 days old, always keeping the newest
+# once they are more than 30 days old, always keeping the newest release of
+# a main commit; experiment releases, `wf-exp-*`, are never kept past 30 days
 # (design/compiler/downstream-releases.md). A downstream whose pinned release
 # was removed has it made again by dispatching compiler-release.yml with the
 # release's commit.
@@ -44,8 +45,10 @@ jobs:
             | LC_ALL=C sort -r > "$RUNNER_TEMP/releases.tsv"
           echo "compiler releases, newest first, cutoff $cutoff:"
           cat "$RUNNER_TEMP/releases.tsv"
-          tail -n +2 "$RUNNER_TEMP/releases.tsv" | while IFS=$'\t' read -r created tag; do
-            if [[ "$created" < "$cutoff" ]]; then
+          newest=$(awk -F '\t' '$2 !~ /^wf-exp-/ { print $2; exit }' "$RUNNER_TEMP/releases.tsv")
+          echo "kept as the newest release of main: ${newest:-none}"
+          while IFS=$'\t' read -r created tag; do
+            if [ "$tag" != "$newest" ] && [[ "$created" < "$cutoff" ]]; then
               if [ "$GITHUB_EVENT_NAME" = push ]; then
                 echo "dry run: would remove $tag, made $created"
               else
@@ -53,4 +56,4 @@ jobs:
                 gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
               fi
             fi
-          done
+          done < "$RUNNER_TEMP/releases.tsv"

@@ -8,7 +8,15 @@
 #   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash>
 #
 # An empty `commit` takes main's tip. The same command makes again a release
-# that compiler-release-cleanup.yml removed. A release holds:
+# that compiler-release-cleanup.yml removed. An unmerged compiler change a
+# downstream wants to try, such as a performance experiment, gets an
+# experiment release, `wf-exp-` and the commit's first 12 hex digits, of any
+# commit whose own gate run passed:
+#
+#   gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true
+#
+# A downstream pins an experiment release only on an experiment branch, never
+# on its main. A release holds:
 #
 #   whitefootc-linux-x86_64.tar.gz  whitefootc built on ubuntu-24.04
 #   whitefootc-macos-arm64.tar.gz   whitefootc built on macos-15
@@ -39,6 +47,10 @@ on:
         description: A commit on main whose gate passed; empty takes main's tip
         type: string
         default: ""
+      experiment:
+        description: Release an unmerged commit whose gate passed, as wf-exp-<hash>
+        type: boolean
+        default: false
   push:
     paths:
       - .github/workflows/compiler-release.yml
@@ -86,21 +98,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED: ${{ inputs.commit }}
+          EXPERIMENT: ${{ inputs.experiment }}
         run: |
           set -euo pipefail
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          prefix=wf-
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             commit=$GITHUB_SHA
             publish=false
+          elif [ "$EXPERIMENT" = true ]; then
+            if [ -z "$REQUESTED" ]; then
+              echo "::error::an experiment release names its commit"
+              exit 1
+            fi
+            git fetch --no-tags origin "$REQUESTED" 2>/dev/null || true
+            commit=$(git rev-parse --verify "$REQUESTED^{commit}")
+            publish=true
+            prefix=wf-exp-
           else
             commit=$(git rev-parse --verify "${REQUESTED:-origin/main}^{commit}")
             publish=true
             if ! git merge-base --is-ancestor "$commit" origin/main; then
-              echo "::error::$commit is not on main"
+              echo "::error::$commit is not on main; an unmerged commit gets an experiment release"
               exit 1
             fi
           fi
-          tag="wf-${commit:0:12}"
+          tag="$prefix${commit:0:12}"
           spec=$(git show "$commit:spec/kernel-spec.md" | sed -n '1s/^# Kernel Specification //p')
           if [ -z "$spec" ]; then
             echo "::error::spec/kernel-spec.md at $commit names no version"
@@ -241,11 +264,13 @@ jobs:
           GATE_RUN: ${{ needs.resolve.outputs.gate_run }}
         run: |
           set -euo pipefail
-          notes="The Whitefoot compiler at $COMMIT (specification $SPEC), for projects that pin it.
+          kind=""
+          case "$TAG" in wf-exp-*) kind=" Experiment release of an unmerged commit: pin it only on an experiment branch.";; esac
+          notes="The Whitefoot compiler at $COMMIT (specification $SPEC), for projects that pin it.$kind
           Its gate run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GATE_RUN
 
           whitefootc builds programs with /usr/bin/clang, and on Linux links them with ld.lld.
-          A release is removed 30 days after it is made unless it is the newest; make it again with
+          A release is removed 30 days after it is made unless it is the newest of main; make it again with
           gh workflow run compiler-release.yml -R $GITHUB_REPOSITORY -f commit=$COMMIT"
           gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" --target "$COMMIT" \
             --prerelease --title "whitefootc $TAG (specification $SPEC)" --notes "$notes"
