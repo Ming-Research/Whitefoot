@@ -201,7 +201,7 @@ C 程序员一眼就能读懂其中大部分。不同之处在于，Whitefoot �
 你需要 Rust stable（版本不低于 [compiler/Cargo.toml](compiler/Cargo.toml) 中的 `rust-version`）和 clang：Linux 和 macOS 上是 `/usr/bin/clang`，Windows 上是 `PATH` 中的 `clang`。
 
 ```sh
-git clone https://github.com/mbbill/Whitefoot.git && cd Whitefoot
+git clone https://github.com/Ming-Research/Whitefoot.git && cd Whitefoot
 cargo build --release --manifest-path compiler/Cargo.toml
 compiler/target/release/whitefootc tests/programs/wfgrep.wf -o wfgrep
 ./wfgrep invariant tests/programs
