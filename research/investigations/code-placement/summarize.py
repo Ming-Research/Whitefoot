@@ -155,6 +155,17 @@ def main():
             "F", MODULE_PLACEMENTS, "U", MODULE_PLACEMENTS)
     verdict("Q2 FR: invariant over every placement, no cost against F",
             "FR", PLACEMENTS, "F", PLACEMENTS)
+    print("\nThe shipped arm: FR's median over its placements against U's, by the gate's rule")
+    for kernel in KERNELS:
+        for width in WIDTHS:
+            if inconclusive(kernel, width):
+                continue
+            reference = series(process, rounds, "U", PLACEMENTS, kernel, width)
+            candidate = series(process, rounds, "FR", PLACEMENTS, kernel, width)
+            ratio, slower, faster = paired(reference, candidate)
+            verdict = "slower" if ratio < 0.97 and slower >= 0.8 else \
+                "faster" if ratio > 1 / 0.97 and faster >= 0.8 else "same"
+            print(f"  {kernel} W={width}: U/FR {ratio:.3f} {verdict}")
     print("\nQ3 FRL against FR: loop alignment stays refused unless FRL is invariant and,")
     print("  in some kernel at two or more widths, faster than FR by the gate's rule with no cell slower")
     faster = collections.Counter()

@@ -257,28 +257,34 @@ The replay of PR #251's runtime change under the aligned compiler passed
 with one single-width suspect, `stencil` at width 1, 0.947191 with four of five
 pairs lower.
 
-### Hosted ubuntu-24.04, AMD EPYC 7763, three runs of 12 rounds
+### Hosted ubuntu-24.04, AMD EPYC 7763, six runs of 12 rounds
 
-The hosted pool assigns an AMD EPYC 7763 (Zen 3), 9V74 (Zen 4) or 9V45
-machine of four vCPUs, two cores of two threads, and a dispatch cannot choose
-one. Three decisive runs landed on a 7763: runs 37434120227 at `d4f67df6`,
-and 37436514442 and 37436517830 at `8097c03a`, which differs from `d4f67df6`
-only in records and workflow text. In all three the null moved no cell, and
-`U` met C1 in two or three `records` cells, always at width 1 under `m16`
-(0.933, 0.926 and 0.933) and at width 4 under `m32` (0.920, 0.885 and 0.884).
-No placement moved `FR` in any cell of any of the three, and `FR` cost nothing
-against `F` in any cell (Q2). `F` was invariant and cost nothing in two runs;
-in run 37436514442 it read 10.261 ms at `p0` against 9.622 to 10.031 ms at the
-other placements of `records` at width 4, a `m32` against `p0` ratio of 1.044,
-and a cost ratio of 0.969 against `U` with 92 percent of the rounds slower, so
-Q1 as written fails in that one cell. The module pads move `F`'s emitted
-functions by whole 64-byte lines and its unaligned runtime by 0 or 64 bytes,
-so that cell is an effect of a whole-line shift, which `FR` of the same run
-does not show. Q3 never selects loop alignment: `FRL` was faster than `FR`
-only at `records` width 2 in the first run, 1.040. The other four kernels
-spread by at most 1.8 percent under `U` in the first run. Every replay of PR
-#251's runtime change passed, with a `records` width-2 suspect in the second
-(0.946963) and third (0.906576) runs. `records` in the first run:
+The hosted pool assigns an AMD EPYC 7763 (Zen 3), 9V74 (Zen 4) or 9V45, or an
+Intel Xeon Platinum 8370C, machine of four vCPUs, two cores of two threads,
+and a dispatch cannot choose one. Of eight decisive hosted runs, six landed on
+a 7763: run 37434120227 at `d4f67df6`, and runs 37436514442, 37436517830,
+37439142869, 37439146282 and 37439150433 at `8097c03a`, which differs from
+`d4f67df6` only in records and workflow text. In all six the null moved no
+cell, and `U` met C1 in two or three `records` cells, always at width 1 under
+`m16` (0.926 to 0.938) and at width 4 under `m32` or `m48` (0.883 to 0.920, and
+1.082 to 1.109).
+
+No placement moved `FR` in any cell of any of the six, and `FR` cost nothing
+against `F` in any cell (Q2). `F`, the module aligned over the unaligned
+runtime, failed C2 or C3 in one cell in two of the six. In run 37436514442 it
+read 10.261 ms at `p0` against 9.622 to 10.031 ms at the other placements of
+`records` at width 4, a `m32` against `p0` ratio of 1.044 and a cost of 0.969
+against `U` with 92 percent of the rounds slower. In run 37439142869 it cost
+0.948 against `U` at `records` width 2, again with 92 percent of the rounds
+slower. Q1 as written therefore fails on this host. The module pads move `F`'s
+emitted functions by whole 64-byte lines and its unaligned runtime by 0 or 64
+bytes, and `FR` in the same runs shows neither effect; on the cell medians of
+those two runs `FR` lies within 2 percent of `U`'s median placement. Q3 never
+selects loop alignment: `FRL` was faster than `FR` only at `records` width 2
+in the first run, 1.040. The other four kernels spread by at most 1.8 percent
+under `U` in the first run. Every replay of PR #251's runtime change passed,
+two of them with a `records` width-2 suspect (0.946963 and 0.906576).
+`records` in the first run:
 
 | width | arm | p0 | m16 | m32 | m48 | r16 | r48 |
 |---|---|---|---|---|---|---|---|
@@ -288,6 +294,16 @@ spread by at most 1.8 percent under `U` in the first run. Every replay of PR
 | 2 | FR | 9.041 | 8.835 | 9.570 | 9.003 | 8.924 | 9.031 |
 | 4 | U | 9.643 | 9.606 | 10.526 | 8.520 | 9.576 | 9.183 |
 | 4 | FR | 9.778 | 9.590 | 9.389 | 9.639 | 9.862 | 10.155 |
+
+### Hosted ubuntu-24.04, Intel Xeon Platinum 8370C, 12 rounds (run 37439138936)
+
+The null moved no cell; `U` met C1 at `records` widths 1 and 2, spreading by
+12.4 and 13.9 percent. Q2 holds: `FR`'s `records` spreads are 1.4, 0.3 and 0.2
+percent. `F` failed C2 in one cell, `stencil` at width 2, `m48` against `p0`
+1.042. The aligned `records` at width 1 reads 19.24 to 19.50 ms against
+`U`'s 18.73 to 21.04, whose median placement is 18.77, about 3 percent
+faster. `FRL` was faster than `FR` at `records` width 1, 1.036, and slower in
+one cell, so Q3 does not select it. The replay passed.
 
 ### Hosted ubuntu-24.04, AMD EPYC 9V45, 12 rounds (run 37436510214)
 
@@ -320,6 +336,29 @@ run 37432958961 at `1bfe9449` failed `records` at width 2, 0.875429, and width
 `p0` over `F` at `p0`, 0.877 and 0.945; run 37434115541 at `d4f67df6` passed,
 `records` reading 0.992475, 0.969618 and 0.998555. Decisive runs on a 9V74
 are pending.
+
+## Conclusion
+
+- **Invariance.** With the module and the runtime aligned (`FR`), no shift
+  changed any kernel's time by the gate's rule in any cell of the nine
+  decisive runs, on the 14900K, six 7763s, a 9V45 and an 8370C, while the
+  unaligned images moved `records` on every one of them (Q2).
+- **The module alone.** `F` failed Q1 as written in one cell in three of the
+  eight hosted runs (`records` on two 7763s, `stencil` on the 8370C) and held
+  on the 14900K and the 9V45. The adopted configuration is `FR`.
+- **Cost.** `FR` cost nothing against `F` anywhere. Against the unaligned
+  layouts it lay within about 3 percent on the cell medians everywhere a
+  decisive run landed; the criterion did not compare `FR` with `U` directly,
+  and the reducer now prints that comparison for later runs. The one larger
+  reading is the 9V74's three-round run, 5 to 10 percent for `records`, with
+  a `compute-regression` run that agrees.
+- **Loop alignment** was selected nowhere, though it made `records` faster at
+  some widths on the 9V45 and the 8370C.
+- **The event.** Every replay of PR #251's runtime change under the aligned
+  compiler passed `compare.sh`, and `compute-regression`'s new placement
+  control passed on the aligned compiler in the hosted runs at `1bfe9449`,
+  `d4f67df6` and `8097c03a` and failed locally on the unaligned one
+  (`records` 0.748 at width 1 and 0.882 at width 4).
 
 ## Limitations
 

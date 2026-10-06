@@ -1748,7 +1748,10 @@ rarely insert at the same place.
   local Intel Xeon and the other four kernels show no such cost
   ([code placement](../research/investigations/code-placement/DESIGN.md#results)).
   The kernel's UTF-8 validation loop is dense in branches, and which of them
-  share a 64-byte line follows the layout. Find what the aligned layout costs
+  share a 64-byte line follows the layout. On a hosted EPYC 9V45,
+  `-falign-loops=32` on top of the function alignment made `records` 4 to 9
+  percent faster at every width, though its time then moved with placement
+  in some cell; on the 14900K and the EPYC 7763 it changed nothing. Find what the aligned layout costs
   on Zen 4, for example with branch-misprediction and op-cache counters on
   the aligned and the fastest unaligned layout, and look for a deterministic
   layout rule, such as a loop alignment or an ordering of a function's
