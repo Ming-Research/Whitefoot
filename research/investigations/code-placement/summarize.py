@@ -117,10 +117,14 @@ def main():
     noisy = [f"{k} W={w}" for k in KERNELS for w in WIDTHS if inconclusive(k, w)]
     print(f"\nC0 host control: the null moved {len(noisy)} of {len(KERNELS) * len(WIDTHS)} cells"
           + (f" ({', '.join(noisy)})" if noisy else ""))
-    print("\nC1 discrimination: U spread over all placements >= 1.10 somewhere")
+    print("\nC1 discrimination: some placement of U differs from U p0 in a conclusive cell")
+    moved = [f"{k} W={w}: {problem}" for k in KERNELS for w in WIDTHS
+             if not inconclusive(k, w) and (problem := invariant("U", PLACEMENTS, k, w))]
     worst_u = max(((spread("U", PLACEMENTS, k, w), k, w) for k in KERNELS for w in WIDTHS))
-    c1 = worst_u[0] >= 1.10
-    print(f"  {'MET' if c1 else 'NOT MET'}: largest U spread {worst_u[0]:.3f} ({worst_u[1]} W={worst_u[2]})")
+    print(f"  {'MET' if moved else 'NOT MET'}: {len(moved)} cell(s); "
+          f"largest U spread {worst_u[0]:.3f} ({worst_u[1]} W={worst_u[2]})")
+    for line in moved:
+        print(f"  {line}")
 
     def verdict(title, arm, placements, cost_reference, cost_placements):
         print(f"\n{title}")

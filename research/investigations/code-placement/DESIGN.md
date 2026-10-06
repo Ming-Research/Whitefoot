@@ -195,9 +195,15 @@ the rounds leaning the same way, the regression gate's own threshold.
 
 - **C0, host control.** A kernel and width where `null` differs from `U p0`
   is inconclusive on that host and counts for nothing below.
-- **C1, discrimination.** On a host where no kernel and width of `U` spreads
-  by 10 percent or more across its six placements, the host cannot
-  discriminate and its readings select nothing.
+- **C1, discrimination.** On a host where no placement of `U` differs from
+  `U`'s `p0` in any conclusive cell, the host cannot discriminate and its
+  readings select nothing. C1 first required a spread of 10 percent across
+  `U`'s placements. The three-round sizing run on the 14900K (run
+  37432962314) read `U`'s `records` spreads at 7.7, 5.7 and 8.8 percent, with
+  width 1 at 9.48 ms under `m16` against 8.80 to 9.00 ms elsewhere, so the
+  10 percent line would have excluded a host that shows the effect. C1 was
+  restated as the paired rule above before any decisive run. Admitting more
+  hosts makes Q1 and Q2 harder to meet, not easier.
 - **C2, invariance.** An arm is invariant at a kernel and width when no
   placement differs from that arm's `p0`, in either direction.
 - **C3, cost.** An arm costs time at a kernel and width when the per-round
@@ -215,6 +221,9 @@ the rounds leaning the same way, the regression gate's own threshold.
 
 Finally the event itself: the PR #251 pair, the merge base's runtime against
 the PR's under the aligned compiler, must pass `tests/performance/compare.sh`.
+The workflow's replay step builds the merge base's runtime (`c2e5a180`, its
+`ordinary_values.ll` given the alignment its successors carry) with this
+revision's compiler and flags, and compares it with the `FR` images.
 
 ## Results
 

@@ -55,6 +55,10 @@ on:
         description: The vCPUs every timed placement process is pinned to with taskset
         type: string
         default: "0-3"
+      placement_event:
+        description: Runtime revision whose images the aligned compiler's are compared with by compare.sh; the default is main before PR 251; empty skips the replay
+        type: string
+        default: c2e5a1808a7ab194c1523a809e88de64316bd15a
       par_control_flags:
         description: WF_PAR_CONTROL_FLAGS for the B image (emission)
         default: ""
@@ -310,6 +314,33 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The event that reopened the investigation: the same aligned compiler
+      # and flags over the runtime before and after a change that adds one
+      # import, judged by the regression instrument itself. The event
+      # revision's hand-written LLVM gets the alignment its successors carry.
+      - name: Replay the runtime change under the aligned compiler
+        if: inputs.placement_event != ''
+        env:
+          EVENT: ${{ inputs.placement_event }}
+        run: |
+          rm -rf "$RUNNER_TEMP/event" "$RUNNER_TEMP/event-images" "$RUNNER_TEMP/placement/event"
+          git worktree add --detach "$RUNNER_TEMP/event" "$EVENT"
+          sed -i -E 's/^(define .*\)) \{$/\1 align 64 {/' \
+            "$RUNNER_TEMP/event/compiler/src/backend/ordinary_values.ll"
+          make -s -C tests/performance build BUILD="$RUNNER_TEMP/event-images" \
+            ROOT="$RUNNER_TEMP/event" WFC="$GITHUB_WORKSPACE/compiler/target/gate/whitefootc"
+          status=0
+          bash tests/performance/compare.sh "$RUNNER_TEMP/event-images" \
+            "$RUNNER_TEMP/placement/fr" "$RUNNER_TEMP/placement/event" || status=$?
+          {
+            echo "### replay of $EVENT against this revision's runtime, aligned compiler"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/placement/event/verdict.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "compare.sh exit status: $status"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -320,3 +351,4 @@ jobs:
             ${{ runner.temp }}/placement/raw.tsv
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
+            ${{ runner.temp }}/placement/event/
