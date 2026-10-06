@@ -78,6 +78,47 @@ rarely insert at the same place.
 ## Checker precision and proof cost
 
 
+- **A loop invariant is lost where a guarded update joins an untouched path.**
+  Minimal witness:
+
+  ```wf
+  fn walk(room: u64, t0: u64, c: u64) -> r: u64 pure {
+    let j = 0_u64;
+    loop (
+      invariant jb: j <= room
+    ) {
+      let t = t0;
+      if c == 1_u64 {
+        if t <= room {
+          set j = t;
+        } else {
+          return j;
+        }
+      } else if c == 2_u64 {
+        return j;
+      }
+    }
+    return j;
+  }
+  ```
+
+  is refused with `INV-1 UndischargedLoopInvariant`, obligation `Backedge`,
+  on `jb` (compiler at 648338c31). Two paths reach the back edge, and each
+  alone re-proves `j <= room`: the update from `t <= room` with `j == t`,
+  the fallthrough from the assumed invariant. Each path alone is accepted:
+  making the fallthrough return, so that only the update reaches the back
+  edge, passes, and so does removing the update. The loss is therefore at
+  the join of the two paths, where neither path's own fact survives. The
+  program is sound; a
+  checker could accept it by proving the header batch on each input of the
+  final join, or by closing each input's facts under its value images before
+  joining. Impact: an interpreter written as `loop { match }` whose arms
+  update different loop variables needs a run-time re-check of the invariant
+  per dispatch; Halo's interpreter (Ming-Research/Halo-wf#2) is written as a
+  self-tail call instead.
+  Reopen when a loop-shaped program cannot be rewritten that way, or with
+  the INV-1 join rules.
+
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
   `left == right`, let `make() -> Pair` return `Pair(1, 1)`. A helper
@@ -2406,6 +2447,20 @@ rarely insert at the same place.
   Subtree-private independently compiled modules remain unselected; reconsider
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
+
+- **A graph path's spelling changes the cache key.** `push_records` in
+  `compiler/src/driver.rs` puts each input's `display_path` into the
+  composition key material beside its logical path and bytes, so the same
+  graph named by a relative and by an absolute path misses the other's
+  cache entry; Halo's comparison runner
+  ([PR #220](https://github.com/Ming-Research/Whitefoot/blob/b374e880e6749fe5d1a0e4a40b0b2187f52f63b0/research/experiments/halo-e2e/README.md))
+  observed the miss repeating front-end work. Impact: an alternate spelling
+  of an unchanged graph rebuilds. Change: separate semantic input identity
+  from the diagnostic display path, keeping the right paths in fresh and
+  reused diagnostics. Validate relative, absolute and symlink spellings
+  against unchanged-build hits and byte-identical acceptance, plus changed
+  source and graph invalidation. Reopen when incremental compiler work next
+  targets invocation identity.
 
 - **A compiler release carries no documents for its downstream writers.**
   `compiler-release.yml` publishes `whitefootc`, a manifest and checksums
