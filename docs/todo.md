@@ -1740,15 +1740,21 @@ rarely insert at the same place.
   program with small per-connection state, such as a proxy that shares its
   buffers, is written.
 
-- **The aligned layout of `records` is slower on AMD Zen 4.** Every
-  compiler-produced function starts on a 64-byte boundary, which makes the
-  compute kernels' times independent of where they are linked, but on a
+- **The aligned layout of `records` is slower on some AMD EPYC hosts.**
+  Every compiler-produced function starts on a 64-byte boundary, which makes
+  the compute kernels' times independent of where they are linked, but on a
   hosted AMD EPYC 9V74 it fixes `records` at a layout that took 5 to 14
-  percent longer than its median unaligned placement in a three-round run,
-  and three of five `compute-regression` runs of the change failed on
-  `records` against `main`, 8 to 18 percent longer; on the 14900K and the
-  EPYC 7763 the aligned layout costs at most about 3 percent, and on a 9V45
-  and a Xeon 8370C 3 to 5 percent at one worker while gaining at others
+  percent longer than its median unaligned placement in a three-round run;
+  on the 14900K and the EPYC 7763 the aligned layout costs at most about 3
+  percent against that median, and on a 9V45 and a Xeon 8370C 3 to 5 percent
+  at one worker while gaining at others. Against the regression gate's
+  baseline, the merge base's unaligned module over a runtime aligned by the
+  candidate's flags, four of eight `compute-regression` runs of the change
+  failed on `records`, 8 to 18 percent longer, one of them named as a 9V45,
+  and two passing runs on 7763s read width 4 as a suspect, 0.917 and 0.845,
+  though the decisive 9V45 run and the 7763 run whose placements are
+  tabulated found the aligned layout faster than `main`'s own placement or
+  within 2 percent of it
   ([code placement](../research/investigations/code-placement/DESIGN.md#results)).
   A hypothesis, not yet tested: the kernel's UTF-8 validation loop is dense in
   branches, and which of them share a 64-byte line follows the layout. On the
@@ -1758,13 +1764,16 @@ rarely insert at the same place.
   7763 it was faster at two widths of no kernel. Aligning only each module's
   section start, which keeps the linker's relative layout, is another
   candidate, refused for now in `design/compiler/code-alignment.md`. Find what the aligned layout costs
-  on Zen 4, for example with branch-misprediction and op-cache counters on
-  the aligned and the fastest unaligned layout, and look for a deterministic
-  layout rule, such as a loop alignment or an ordering of a function's
-  blocks, that removes the cost without reintroducing placement dependence;
-  validate with the placement experiment on the hosted runner and the
-  14900K. Reopen when a hosted Zen 4 run or a downstream program's profile
-  shows a branch-dense loop paying more than 5 percent for its layout.
+  on the 9V74 and the 9V45, for example with branch-misprediction and
+  op-cache counters on the aligned and the fastest unaligned layout; add
+  the gate's layout, an unaligned module over an aligned runtime, as an arm
+  of the placement experiment to tell whether it is faster or the gate's
+  hosts differ; and look for a deterministic layout rule, such as a loop
+  alignment or an ordering of a function's blocks, that removes the cost
+  without reintroducing placement dependence; validate with the placement
+  experiment on the hosted runner and the 14900K. Reopen when a hosted AMD
+  run or a downstream program's profile shows a branch-dense loop paying
+  more than 5 percent for its layout.
 
 - **Every atomic statement holds its object alone.** Statements whose
   blocks only read could share the object, but lowering always acquires for

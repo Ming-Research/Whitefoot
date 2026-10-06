@@ -363,9 +363,14 @@ to 8.833 and `F` 8.664 to 8.735. On the medians `FR` took 4.8, 14.0 and 9.9
 percent longer than `U` at widths 1, 2 and 4. Three rounds select nothing.
 
 `compute-regression` on this change compares the aligned candidate with
-`main`'s unaligned images on whichever processor the hosted pool assigns,
-which its log did not name until this change added it. The five runs below
-had byte-identical compiler and `tests/performance` inputs. Two passed, at
+images of the merge base's compiler on whichever processor the hosted pool
+assigns, which its log did not name until this change added it. That baseline
+is not the experiment's `U`: `tests/performance/Makefile` includes the
+candidate's `compiler/runtime.mk`, so the baseline's C runtime compiles with
+`-falign-functions=64` while its module and `ordinary_values.ll` stay
+unaligned, a layout no arm of the experiment built
+([TODO](../../../docs/todo.md#verification-tooling)). The five runs below had
+byte-identical compiler and `tests/performance` inputs. Two passed, at
 `d4f67df6` and `8097c03a`, and three failed on `records`, five of five or four
 of five pairs lower each time:
 
@@ -375,16 +380,27 @@ of five pairs lower each time:
 | 37439315247 | `3ce59221` | 0.879152 | 0.862255 |
 | 37441911232 | `210e06ae` | 0.914782 | 0.926627 |
 
-The run at `d1a13082` (37445053860), the first whose log names its processor,
-ran on an EPYC 7763 and passed, `records` at width 4 a single-width suspect at
-0.917337; its 96-byte placement control moved each kernel's module by 128
-bytes and passed.
+The later runs name their processor; their compiler and `tests/performance`
+inputs differ from those five only in a compiler test and the README:
 
-These are of the size the 9V74 sizing run reads for `main`'s placement, `U`
-at `p0` over `FR` at `p0`: 0.884 at width 2 and 0.917 at width 4. Every one of
-those runs passed its placement control; the one at `210e06ae` reported a
-single-width suspect there, `records` at width 1, 0.962886 with four of five
-pairs lower.
+| run | commit | processor | width 2 | width 4 | verdict |
+|---|---|---|---|---|---|
+| 37445053860 | `d1a13082` | EPYC 7763 | 0.992566 | 0.917337 | pass, width 4 a suspect |
+| 37446065946 | `02aa1489` | EPYC 9V45 | 0.905475 | 0.927351 | fail |
+| 37447392813 | `e7f10360` | EPYC 7763 | 0.971279 | 0.845258 | pass, width 4 a suspect |
+
+The failures are therefore not the 9V74's alone, though their size matches
+what the 9V74 sizing run reads for `main`'s placement, `U` at `p0` over `FR`
+at `p0`: 0.884 at width 2 and 0.917 at width 4. The 9V45 and 7763 readings do
+not match those processors' decisive runs, where `FR` was faster than `U` at
+`p0` or within 2 percent of it: on the 9V45 5.996 against 6.132 ms at width 2 and 5.388
+against 5.836 at width 4, and on the first 7763 run 9.778 against 9.643 ms at
+width 4. Either hosts reporting the same model differ, or the baseline's aligned
+runtime under its unaligned module is a faster layout of `records` on these
+processors; no run here separates the two. Every one of these runs passed its
+placement control, the three with a 96-byte pad after moving each kernel's
+module by 128 bytes; the one at `210e06ae` reported a single-width suspect
+there, `records` at width 1, 0.962886 with four of five pairs lower.
 
 ## Conclusion
 
@@ -398,11 +414,14 @@ pairs lower.
 - **Cost.** `FR` cost nothing against `F` anywhere. Against `U`'s median
   placement, the criterion did not judge it; on the cell medians the aligned
   `records` took between 4.9 percent longer (the 9V45 at width 1) and 9.7
-  percent less time (the 9V45 at width 4) in every decisive run. The larger
-  readings are the 9V74's: 4.8 to 14.0 percent longer in a three-round run,
-  and three of five `compute-regression` runs of this change failing on
-  `records` against `main` at ratios of 0.850 to 0.927, 7.9 to 17.6 percent
-  longer.
+  percent less time (the 9V45 at width 4) in every decisive run, and 4.8 to
+  14.0 percent longer on the 9V74 in a three-round run. Against the
+  regression gate's baseline, the merge base's module over an aligned
+  runtime, four of eight `compute-regression` runs of this change failed on
+  `records` at ratios of 0.850 to 0.927, 7.8 to 17.6 percent longer; the only
+  one of them that names its processor ran on a 9V45, and both passing runs
+  that name theirs ran on 7763s and read width 4 as a suspect, 0.917 and
+  0.845.
 - **Loop alignment** was selected nowhere, though it made `records` faster at
   some widths on the 9V45 and the 8370C.
 - **The event.** Every replay of PR #251's runtime change under the aligned
