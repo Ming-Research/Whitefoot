@@ -16,11 +16,11 @@ const arity_incr: i64 = 2_i64;
 
 const arity_set: i64 = -3_i64;
 
-const text_script_unknown: Array<u8, 44> = "ERR Unknown Redis command called from script";
-
 const text_script_arity: Array<u8, 58> = "ERR Wrong number of args calling Redis command from script";
 
-const text_script_unsplit: Array<u8, 53> = "ERR This command is not yet supported in firn scripts";
+const text_script_unknown_or_unsplit: Array<u8, 87> = "ERR Unknown Redis command called from script, or one firn does not yet run from scripts";
+
+const text_script_refused: Array<u8, 49> = "ERR This Redis command is not allowed from script";
 
 fn arity_holds(arity: i64, count: u64) -> fits: Bool pure {
   doc "Whether a command of count arguments, its name among them, fits the arity Redis's command table gives it: exactly arity arguments when arity is positive, and at least its magnitude when negative.";
@@ -105,7 +105,7 @@ fn script_set(keys: &ConcurrentHashMap<Entry>, meta: &Meta, effects: &Box<Slots<
 }
 
 fn script_command(keys: &ConcurrentHashMap<Entry>, meta: &Meta, effects: &Box<Slots<u8>>, logged: Bool, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> appended: u64 reads(input), reads(args), reads(env), reads(time), writes(keys), writes(meta), writes(effects), writes(client) {
-  doc "Runs one command a script calls, inside the script's statement holding every key and the keyspace's metadata, writing its reply into the client's reply as the network does and returning how many commands it appended to effects, the script's own record of what it changed, which the caller wraps in MULTI and EXEC when it holds more than one, as Redis 7.0.15 propagates a script's effects. time is the script's: its check is the instant the script began. A name no command has is refused as Redis refuses it from a script, a count of arguments outside the command's arity likewise, and a command not yet run from scripts with an error of firn's own.";
+  doc "Runs one command a script calls, inside the script's statement holding every key and the keyspace's metadata, writing its reply into the client's reply as the network does and returning how many commands it appended to effects, the script's own record of what it changed, which the caller wraps in MULTI and EXEC when it holds more than one, as Redis 7.0.15 propagates a script's effects. time is the script's: its check is the instant the script began. A count of arguments outside a command's arity is refused as Redis refuses it from a script, and AUTH, HELLO, QUIT, DEBUG, CONFIG, CLIENT and FUNCTION, which Redis 7.0.15 marks noscript, as Redis refuses them. Every other name is answered with Redis's error for a name no command has, extended to say that firn may know the command and not yet run it from scripts: firn names its commands only in execute's rows, so a script cannot tell an unknown name from a command firn has not split into its parts, and the extended text keeps the words Redis's own tests match.";
   let count = args^.inner.len;
   let name = arg(args: args, index: 0_u64);
   let code = name_code(input: input, start: name.start, length: name.length);
@@ -133,6 +133,23 @@ fn script_command(keys: &ConcurrentHashMap<Entry>, meta: &Meta, effects: &Box<Sl
     reply_error(client: client, word: &text_script_arity[0_u64..58_u64]);
     return 0_u64;
   }
-  reply_error(client: client, word: &text_script_unknown[0_u64..44_u64]);
+  let auth = code == code_auth;
+  let hello = code == code_hello;
+  let quit = code == code_quit;
+  let debug = code == code_debug;
+  let config = code == code_config;
+  let client_command = code == code_client;
+  let function = code == code_function;
+  let greeting = bor(auth, hello);
+  let leaving = bor(quit, debug);
+  let settings = bor(config, client_command);
+  let connection = bor(greeting, leaving);
+  let administration = bor(settings, function);
+  let refused = bor(connection, administration);
+  if refused {
+    reply_error(client: client, word: &text_script_refused[0_u64..49_u64]);
+    return 0_u64;
+  }
+  reply_error(client: client, word: &text_script_unknown_or_unsplit[0_u64..87_u64]);
   return 0_u64;
 }
