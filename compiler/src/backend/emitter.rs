@@ -2505,6 +2505,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::ConcurrentHashMapSwap { first, second } => {
                 self.emit_keyed_table_swap(result, *first, *second)
             }
+            IrOperation::ConcurrentHashMapScan {
+                table,
+                cursor,
+                count,
+                set,
+            } => self.emit_keyed_table_scan(result, *table, *cursor, *count, *set),
+            IrOperation::ConcurrentHashMapClear { table } => {
+                self.emit_keyed_table_clear(result, *table)
+            }
             IrOperation::TableLockEntry {
                 record,
                 table,
@@ -2565,6 +2574,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => self.emit_keyed_entries_fill(result, *entries, *hold, *position, *set),
             IrOperation::KeySetNew { capacity } => self.emit_key_set_new(result, ty, *capacity),
             IrOperation::KeySetInsert { set, key } => self.emit_key_set_insert(result, *set, *key),
+            IrOperation::KeySetReadKey { set, index, out } => {
+                self.emit_key_set_read_key(result, *set, *index, *out)
+            }
             IrOperation::WatchBegin { record } => {
                 self.emit_watch_call(result, *record, None, "wf__watch_begin")
             }

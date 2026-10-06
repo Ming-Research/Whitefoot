@@ -209,6 +209,27 @@ uint64_t wf_cmap_count(wf_cmap *map);
  * counted as they stand now, each slot's tag read as wf_cmap_hold_release
  * reads it. */
 uint64_t wf_cmap_count_held(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
+/* One step of a scan [SHARE-1] by a statement holding the map whole, or
+ * reading it whole: inserts into set, in increasing order of position and
+ * then of bytes, every key whose slot is present, read by its tag as
+ * wf_cmap_hold_release reads it, and whose position, its tag times the
+ * golden ratio, lies in [cursor, the answer), the answer being 0 when the
+ * step reaches the last position. The step's homes run from cursor's up to
+ * about count keys later. It writes nothing of the map or any hold, so
+ * statements reading the map whole may scan it at once. */
+uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set *set, uint64_t tag_offset,
+                      uint32_t tag_width, uint64_t none_tag);
+/* Empties a map its caller's hold holds whole, as wf_cmap_swap with a new
+ * empty map of its layout would, and keeps that map, now holding the old
+ * entries, for the caller to release once the hold is given up:
+ * wf_cmap_take_cleared, before the hold's release, answers the maps
+ * cleared under it, and wf_cmap_release_cleared, after, runs each one's
+ * release on it, which drains and frees it. */
+void wf_cmap_clear(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
+                   void (*release)(void *));
+wf_cmap *wf_cmap_take_cleared(wf_cmap *map);
+void wf_cmap_release_cleared(wf_cmap *cleared);
+
 /* With no users left: the slot of an entry not yet drained, whose value the
  * caller releases before calling again, or NULL once every entry has been. */
 void *wf_cmap_drain(wf_cmap *map);

@@ -225,6 +225,12 @@ struct wf_cmap {
     /* The hold that holds the map whole, from its take to its release, whose
      * entries a swap settles before it exchanges the map's (wf_cmap_swap). */
     wf_cmap_holding *whole_hold;
+    /* Maps holding the entries a clear took out under the whole hold
+     * (wf_cmap_clear), released after it: the list's head on the cleared
+     * map, and on each listed map the next one and its release. */
+    struct wf_cmap *cleared;
+    struct wf_cmap *cleared_next;
+    void (*cleared_release)(void *);
     void *raw;
     wf_cmap_user users[WF_CMAP_MAX_USERS];
 };
@@ -265,8 +271,13 @@ static inline unsigned wait_for_cell(unsigned *round) {
 }
 
 /* One multiplication by the 64-bit golden ratio: cheap, and it spreads keys
- * over the high bits the starting cell is taken from. */
-static inline uint64_t start_of(const table *t, uint64_t key) { return (key * 0x9E3779B97F4A7C15ull) >> t->shift; }
+ * over the high bits the starting cell is taken from. The product is the
+ * key's position [SHARE-1]: odd multiplication is a bijection of 64-bit
+ * words, so distinct keys have distinct positions, and a key's starting
+ * cell is its position's top bits in a table of every size, which is what
+ * lets a scan resume across moves (wf_cmap_scan). */
+static inline uint64_t position_of(uint64_t key) { return key * 0x9E3779B97F4A7C15ull; }
+static inline uint64_t start_of(const table *t, uint64_t key) { return position_of(key) >> t->shift; }
 
 static void bad_key(void) { abort(); }
 
@@ -1846,6 +1857,10 @@ static void fill_slots(wf_cmap_user *u, wf_cmap_holding *hold) {
                 if (e->fresh == CLAIMED)
                     count(u, 1, 0);
             }
+            /* From here the key's bytes are the node's: the caller's may
+             * change once the hold is taken, and a move under a whole hold
+             * finds the entry again by them (wf_cmap_held_entry). */
+            e->key = n->bytes;
             slot = slot_of(map, n);
         }
         e->slot = slot;
@@ -2440,6 +2455,150 @@ uint64_t wf_cmap_count_held(wf_cmap *map, uint64_t tag_offset, uint32_t tag_widt
         }
     }
     return live > 0 ? (uint64_t)live : 0;
+}
+
+/* A key a scan keeps: its position and its node. */
+typedef struct {
+    uint64_t position;
+    const node *n;
+} scanned;
+
+/* The order a scan inserts keys in [SHARE-1]: by position, then by bytes,
+ * a proper prefix first. */
+static int scanned_before(const scanned *a, const scanned *b) {
+    if (a->position != b->position)
+        return a->position < b->position;
+    uint64_t la = a->n->length, lb = b->n->length;
+    uint64_t shorter = la < lb ? la : lb;
+    int order = shorter == 0 ? 0 : memcmp(a->n->bytes, b->n->bytes, (size_t)shorter);
+    return order != 0 ? order < 0 : la < lb;
+}
+
+/* Sorts in place, without memory of its own; a step keeps few keys. */
+static void sift_scanned(scanned *keys, uint64_t root, uint64_t count) {
+    for (;;) {
+        uint64_t child = 2 * root + 1;
+        if (child >= count)
+            return;
+        if (child + 1 < count && scanned_before(&keys[child], &keys[child + 1]))
+            child++;
+        if (!scanned_before(&keys[root], &keys[child]))
+            return;
+        scanned held = keys[root];
+        keys[root] = keys[child];
+        keys[child] = held;
+        root = child;
+    }
+}
+
+static void sort_scanned(scanned *keys, uint64_t count) {
+    for (uint64_t i = count / 2; i-- != 0;)
+        sift_scanned(keys, i, count);
+    for (uint64_t end = count; end > 1; end--) {
+        scanned held = keys[0];
+        keys[0] = keys[end - 1];
+        keys[end - 1] = held;
+        sift_scanned(keys, 0, end - 1);
+    }
+}
+
+/* Keys a scan keeps in its own frame before it takes memory from the host. */
+#define SCAN_INLINE 32
+
+uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set *set, uint64_t tag_offset,
+                      uint32_t tag_width, uint64_t none_tag) {
+    if (map->slot_size == 0)
+        abort();
+    table *t = atomic_load_explicit(&map->current, memory_order_acquire);
+    /* Every statement that starts a move finishes it before it leaves the
+     * map, and the caller holds the map, so no move is under way. */
+    if (atomic_load_explicit(&t->next, memory_order_acquire) != NULL)
+        abort();
+    uint64_t first = cursor >> t->shift;
+    /* The step's homes are [first, end): a cell is read for each until
+     * about `count` keys, or ten times as many cells, have been passed. */
+    uint64_t want = count != 0 ? count : 10;
+    uint64_t cells = want > UINT64_MAX / 10 ? UINT64_MAX : want * 10;
+    uint64_t end = first, passed = 0;
+    while (end < t->capacity) {
+        uint64_t k = atomic_load_explicit(&t->cells[end].key, memory_order_relaxed) & KEY_MASK;
+        end++;
+        if (k != EMPTY && k != REMOVED && ++passed >= want)
+            break;
+        if (end - first >= cells)
+            break;
+    }
+    /* The last home's position bound: past every position when the step
+     * reaches the table's end. */
+    int last = end == t->capacity;
+    uint64_t bound = last ? 0 : end << t->shift;
+    scanned inline_keys[SCAN_INLINE];
+    scanned *keys = inline_keys;
+    uint64_t kept = 0, room = SCAN_INLINE;
+    /* A key lies at its home or after it, before the first empty cell
+     * after it, wrapping at the table's end; removed cells end no run. So
+     * the cells from the first home to the first empty cell at or past the
+     * last home hold every key of the step's homes, and a full table is
+     * read once. */
+    for (uint64_t step = 0; step < t->capacity; step++) {
+        cell *c = &t->cells[(first + step) & t->mask];
+        uint64_t k = atomic_load_explicit(&c->key, memory_order_relaxed) & KEY_MASK;
+        if (k == EMPTY) {
+            if (first + step + 1 >= end)
+                break;
+            continue;
+        }
+        if (k == REMOVED)
+            continue;
+        uint64_t position = position_of(k);
+        if (position < cursor || (!last && position >= bound))
+            continue;
+        const node *n = node_at(c);
+        if (!slot_present(slot_of(map, (node *)n), tag_offset, tag_width, none_tag))
+            continue;
+        if (kept == room) {
+            scanned *grown = take((size_t)(2 * room) * sizeof(scanned));
+            memcpy(grown, keys, (size_t)kept * sizeof(scanned));
+            if (keys != inline_keys)
+                WF_CMAP_GIVE(keys, (size_t)room * sizeof(scanned));
+            keys = grown;
+            room *= 2;
+        }
+        keys[kept].position = position;
+        keys[kept].n = n;
+        kept++;
+    }
+    sort_scanned(keys, kept);
+    for (uint64_t i = 0; i < kept; i++)
+        wf_cmap_key_set_insert(set, keys[i].n->bytes, keys[i].n->length);
+    if (keys != inline_keys)
+        WF_CMAP_GIVE(keys, (size_t)room * sizeof(scanned));
+    return bound;
+}
+
+void wf_cmap_clear(wf_cmap *map, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
+                   void (*release)(void *)) {
+    if (map->slot_size == 0 || map->whole_hold == NULL)
+        abort();
+    wf_cmap *cleared = wf_cmap_create_entries(map->slot_size, map->slot_align, 0);
+    wf_cmap_swap(map, cleared, tag_offset, tag_width, none_tag);
+    cleared->cleared_release = release;
+    cleared->cleared_next = map->cleared;
+    map->cleared = cleared;
+}
+
+wf_cmap *wf_cmap_take_cleared(wf_cmap *map) {
+    wf_cmap *cleared = map->cleared;
+    map->cleared = NULL;
+    return cleared;
+}
+
+void wf_cmap_release_cleared(wf_cmap *cleared) {
+    while (cleared != NULL) {
+        wf_cmap *next = cleared->cleared_next;
+        cleared->cleared_release(cleared);
+        cleared = next;
+    }
 }
 
 uint64_t wf_cmap_count(wf_cmap *map) {

@@ -138,6 +138,7 @@ macro_rules! operation_operands {
             }
             | IrOperation::AtomicGroupTarget { object: value, .. }
             | IrOperation::ConcurrentHashMapCount { table: value }
+            | IrOperation::ConcurrentHashMapClear { table: value }
             | IrOperation::TableHoldBegin { table: value, .. }
             | IrOperation::TableHoldKey { key: value, .. }
             | IrOperation::TableHoldKeys { set: value, .. }
@@ -162,6 +163,15 @@ macro_rules! operation_operands {
                 ..
             } => vec![$value(entries), $value(position), $value(set)],
             IrOperation::KeySetInsert { set, key } => vec![$value(set), $value(key)],
+            IrOperation::ConcurrentHashMapScan {
+                table,
+                cursor,
+                count,
+                set,
+            } => vec![$value(table), $value(cursor), $value(count), $value(set)],
+            IrOperation::KeySetReadKey { set, index, out } => {
+                vec![$value(set), $value(index), $value(out)]
+            }
             IrOperation::ArrayIndex { root, offset, .. } => match root {
                 IrArrayRoot::Value(value) => vec![$value(value), $value(offset)],
                 IrArrayRoot::Constant(_) => vec![$value(offset)],
