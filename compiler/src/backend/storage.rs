@@ -161,31 +161,6 @@ impl FunctionStoragePlan {
             .map_or(slot, |field| field.parent_slot)
     }
 
-    /// Whether `value` is the only value its slot holds and that slot is a
-    /// complete allocation of its own: no binding destination, no field
-    /// placement in a parent, no child placed in it, and no exposed address.
-    /// Nothing but `value`'s own definition then writes the allocation
-    /// (compiler/storage-placement).
-    pub(super) fn holds_only(&self, value: IrValueId) -> bool {
-        let Some(slot) = self.slot(value) else {
-            return false;
-        };
-        self.destination(slot).is_none()
-            && self.field_destination(slot).is_none()
-            && !self.is_exposed(slot)
-            && !self
-                .fields
-                .iter()
-                .flatten()
-                .any(|field| field.parent_slot == slot)
-            && self
-                .values
-                .iter()
-                .filter(|held| **held == Some(slot))
-                .count()
-                == 1
-    }
-
     fn select_field_destinations(
         &mut self,
         program: &IrProgram,
@@ -781,12 +756,9 @@ impl FlowGraph {
 }
 
 /// Selects the one checked owned binding whose dead backing may receive this
-/// ordinary call's whole result. A callee whose result crosses through a
-/// destination snapshots its stored parameters in its prologue before any
-/// body or result write, so making that destination equal this one input
-/// address preserves argument evaluation; a callee whose result returns as
-/// a value or in registers may read an input in place, and its caller
-/// stores the result only after the call returns (compiler/storage-placement).
+/// ordinary call's whole result. Stored parameters are snapshotted in the
+/// callee prologue before any body or result write, so making its result
+/// destination equal this one input address preserves argument evaluation.
 /// Calls which can leave the current synchronous extent keep distinct storage.
 fn call_reuse_operand(
     program: &IrProgram,

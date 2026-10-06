@@ -598,8 +598,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())
-        } else if let Some(incoming) = self.incoming_places.get(&slot) {
-            Ok(incoming.clone())
         } else {
             self.entry_slot(FunctionSlot::OwnedValue(slot))
         }
