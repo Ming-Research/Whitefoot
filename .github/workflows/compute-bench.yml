@@ -38,7 +38,7 @@ on:
         type: choice
         # stage3-x86 is temporary, for the stage-3 interpreter on x86-64,
         # and is removed before claude/stage3-x86 is ready.
-        options: [scoreboard, placement, stage3-x86]
+        options: [scoreboard, placement, stage3-x86, stage3-regprobe]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -475,3 +475,21 @@ jobs:
             --iterations 2000 --launches 7 --tsv "$out/run.tsv" \
             wf="$out/wasm-interp" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp"
           cat "$out/run.tsv"
+
+  stage3-regprobe:
+    if: inputs.experiment == 'stage3-regprobe'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe the argument registers under each clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 clang-19
+          sudo apt-get install -y --no-install-recommends clang-20 || echo "clang-20 is not packaged here"
+          cd research/experiments/match-dispatch
+          for clang in clang-18 clang-19 clang-20; do
+            command -v "$clang" >/dev/null || continue
+            CLANG="$clang" python3 regprobe.py
+          done
