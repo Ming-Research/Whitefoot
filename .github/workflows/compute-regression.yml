@@ -121,7 +121,7 @@ jobs:
           done
           {
             printf 'candidate=%s\nbaseline=%s\n' "$(git rev-parse HEAD)" "$BASE"
-            printf 'native=-O2; ordinary host runtime; no alignment overrides\n'
+            printf 'native=NATIVE_OPTIMIZATION_FLAGS of compiler/runtime.mk, as the driver passes them; ordinary host runtime; no instrument-only flags\n'
             printf 'kernels=%s\n' "$candidate_kernels"
             rustc -vV
             /usr/bin/clang --version
@@ -186,6 +186,21 @@ jobs:
           test "$status" -eq 1
           grep -F -q 'VERDICT: FAIL -- 5 kernel(s) adverse at two widths' \
             "$RUNNER_TEMP/performance-results/slow/verdict.txt"
+      # The same candidate images against a copy linked with 32 bytes of
+      # never-executed code ahead of the emitted module, which moves every
+      # function after it as one more imported library function does. Every
+      # compiler-produced function starts on a 64-byte boundary
+      # (design/compiler/code-alignment.md), so the shift must change no
+      # kernel's time; a failure means this instrument would charge a change
+      # with a slowdown that placement alone produces.
+      - name: Qualify insensitivity to code placement
+        if: steps.scope.outputs.measure == 'true' && steps.scope.outputs.qualify == 'true'
+        run: |
+          WHITEFOOT_CHECK_TIMEOUT=180 perl .github/run-check.pl performance-shifted-images \
+            make -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-shifted" PLACEMENT_PAD=32
+          WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-placement-control \
+            bash tests/performance/compare.sh "$RUNNER_TEMP/performance-candidate" \
+            "$RUNNER_TEMP/performance-shifted" "$RUNNER_TEMP/performance-results/placement"
       - name: Compare the candidate with its merge base
         if: steps.scope.outputs.measure == 'true'
         run: |
@@ -198,7 +213,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/performance-results/inconclusive.txt" ]; then
             cat "$RUNNER_TEMP/performance-results/inconclusive.txt" >> "$GITHUB_STEP_SUMMARY"
           fi
-          for run in null slow comparison; do
+          for run in null slow placement comparison; do
             file="$RUNNER_TEMP/performance-results/$run/verdict.txt"
             if [ -f "$file" ]; then
               { printf '\n### %s\n\n```text\n' "$run"; cat "$file"; printf '\n```\n'; } >> "$GITHUB_STEP_SUMMARY"
