@@ -26,7 +26,9 @@
 #   whitefootc-linux-x86_64.tar.gz  whitefootc built on ubuntu-24.04
 #   whitefootc-macos-arm64.tar.gz   whitefootc built on macos-15
 #   whitefoot-release.json          tag, full commit, specification version,
-#                                   the gate run that passed it, asset names
+#                                   the gate run that passed it, the LLVM
+#                                   major its Linux compiler is built with,
+#                                   asset names
 #   SHA256SUMS                      the checksums of the three files above
 #
 # It carries no documents yet: a downstream's writers read the
@@ -37,7 +39,11 @@
 #
 # Each compiler is the `gate` Cargo profile the gate tests. Like the gate's,
 # it builds programs with the host's /usr/bin/clang, and on Linux links them
-# with ld.lld, so a downstream host installs both.
+# with ld.lld, so a downstream host installs both. The Linux compiler is
+# built with the LLVM major the commit pins in .github/llvm-major, and fixes
+# the forms that clang accepts into the executable, so a downstream's Linux
+# host uses that same major, which Whitefoot-kit installs from the manifest's
+# linux_llvm_major (compiler/downstream-releases).
 #
 # A push that changes this file runs it as a dry run: it builds, smoke-tests
 # and packages the pushed commit and keeps the files as a workflow artifact,
@@ -86,6 +92,7 @@ jobs:
       commit: ${{ steps.resolve.outputs.commit }}
       tag: ${{ steps.resolve.outputs.tag }}
       spec: ${{ steps.resolve.outputs.spec }}
+      llvm: ${{ steps.resolve.outputs.llvm }}
       gate_run: ${{ steps.resolve.outputs.gate_run }}
       build: ${{ steps.resolve.outputs.build }}
       publish: ${{ steps.resolve.outputs.publish }}
@@ -130,6 +137,16 @@ jobs:
           fi
           tag="$prefix${commit:0:12}"
           spec=$(git show "$commit:spec/kernel-spec.md" | sed -n '1s/^# Kernel Specification //p')
+          # The LLVM major the commit's gate built its Linux jobs with, which its
+          # Linux compiler is built with (compiler/downstream-releases): the
+          # commit's .github/llvm-major, else the major its gate.yml named
+          # inline before that file existed, else none, Ubuntu's own clang, as
+          # such a commit was gated.
+          llvm=$(git show "$commit:.github/llvm-major" 2>/dev/null | tr -d '[:space:]' || true)
+          if [ -z "$llvm" ]; then
+            llvm=$(git show "$commit:.github/workflows/gate.yml" 2>/dev/null \
+              | sed -n 's/^ *LLVM_MAJOR: "\([0-9][0-9]*\)"$/\1/p' | head -n 1 || true)
+          fi
           if [ -z "$spec" ]; then
             echo "::error::spec/kernel-spec.md at $commit names no version"
             exit 1
@@ -162,6 +179,7 @@ jobs:
             echo "commit=$commit"
             echo "tag=$tag"
             echo "spec=$spec"
+            echo "llvm=$llvm"
             echo "gate_run=$gate_run"
             echo "build=$build"
             echo "publish=$publish"
@@ -190,11 +208,21 @@ jobs:
           ref: ${{ needs.resolve.outputs.commit }}
 
       - name: Install the host toolchain
+        env:
+          LLVM: ${{ needs.resolve.outputs.llvm }}
         run: |
           test "$(uname -m)" = "${{ matrix.machine }}"
           if [ "$RUNNER_OS" = Linux ]; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends clang lld
+            if [ -n "$LLVM" ]; then
+              curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+              sudo bash "$RUNNER_TEMP/llvm.sh" "$LLVM"
+              sudo ln -sf "/usr/bin/clang-$LLVM" /usr/bin/clang
+              sudo ln -sf "/usr/bin/ld.lld-$LLVM" /usr/bin/ld.lld
+              test "$(/usr/bin/clang -dumpversion | cut -d. -f1)" = "$LLVM"
+            else
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends clang lld
+            fi
             ld.lld --version
           fi
           test -x /usr/bin/clang
@@ -244,11 +272,14 @@ jobs:
           TAG: ${{ needs.resolve.outputs.tag }}
           COMMIT: ${{ needs.resolve.outputs.commit }}
           SPEC: ${{ needs.resolve.outputs.spec }}
+          LLVM: ${{ needs.resolve.outputs.llvm }}
           GATE_RUN: ${{ needs.resolve.outputs.gate_run }}
         run: |
           set -euo pipefail
           jq -n --arg tag "$TAG" --arg commit "$COMMIT" --arg spec "$SPEC" --arg gate_run "$GATE_RUN" \
+            --arg llvm "$LLVM" \
             '{tag: $tag, commit: $commit, spec: $spec, gate_run: $gate_run,
+              linux_llvm_major: (if $llvm == "" then null else $llvm end),
               assets: {"linux-x86_64": "whitefootc-linux-x86_64.tar.gz",
                        "macos-arm64": "whitefootc-macos-arm64.tar.gz"}}' > release/whitefoot-release.json
           cd release

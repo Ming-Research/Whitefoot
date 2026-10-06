@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-06 Releases built with the gate's pinned LLVM, which Whitefoot-kit gives each downstream
+
+Nodes: compiler/downstream-releases, compiler/verification
+
+Owner-approved: In the session of 2026-10-06, written in Chinese, after Q124 asked how a released compiler and its consumers' clang should agree: "Q124: use A for now" (translated), A being one LLVM for releases and consumers, moved together; then "the consumers are just ourselves for now, and we have whitefoot-kit, so defining it in the kit should be enough" (translated); and, on ownership, "you are now responsible for wf" (translated).
+
+Summary: A release's Linux compiler is built with the LLVM major its commit pins for the gate in `.github/llvm-major`, now 22. The release manifest records it as `linux_llvm_major`, and Whitefoot-kit installs or checks that major for each downstream. The reason is that `whitefootc` fixes the forms its build's clang accepts, and clang 22 refuses the `llvm.coro.end` of a compiler built against clang 18. Bundling clang into releases waits for the first formal release (`docs/todo.md`, "A formal release must carry its own clang").
+
 ## 2026-10-06 x86-64 dispatch parts budget for their table-loaded transfer; one pinned LLVM in the gate
 
 Nodes: compiler/match-dispatch-lowering, compiler/verification, compiler/backend-facts
