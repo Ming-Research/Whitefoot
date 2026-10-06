@@ -599,6 +599,26 @@ rarely insert at the same place.
   meanwhile report it as unsupported, with a conformance case either way.
   Reopen when a program needs a payload read without a binder.
 
+- **Edge insertion recomposes every row for a term with an exact value.**
+  Inserting the two implicit edges of a constant, or of a measure with a
+  standing constant value, finds every row tight and recomposes all n columns
+  of each, n² products that improve no cell, in `insert_pending_edges` in
+  [`semantic/entailment/state.rs`](../compiler/src/semantic/entailment/state.rs).
+  It is 46% of the samples of Snowghost's `pkg::style` check, now its slowest
+  module ([compile-speed remaining costs](../research/investigations/compile-speed/DESIGN.md#remaining-costs)).
+  Change: fill such a term's closed row and column from zero's, shifted by
+  its value, with the transitive proof through zero, after showing that the
+  insertion order still closes the matrix. Validate with the seeded-closure
+  verification, byte-identical Snowghost LLVM and at least 1.2x on the
+  `pkg::style` module check. Reopen when that module limits a build.
+
+- **A cacheless entry check analyzes every function body twice.** Without
+  `--cache`, a composition cannot reuse the analyses its own module verdicts
+  just made, so `style_oracle` takes 190 s instead of the fresh-cache 95 s
+  on the baseline ([compile-speed baseline](../research/investigations/compile-speed/DESIGN.md#baseline)).
+  Change: an in-memory receipt store for one invocation. Reopen when a
+  workflow builds without a cache.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**
@@ -2434,8 +2454,9 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 7,737 lines, including a
-  1,729-line inline test module, and the tests in
+  `compiler/src/semantic/entailment/state.rs` has 9,223 lines, including a
+  1,901-line inline test module (the compile-speed work added its slot
+  layouts, dormant components and implicit structure), and the tests in
   `compiler/src/semantic/tests/entailment.rs` have 10,920 lines and 156
   tests. The flow itself is divided into its sub-contexts and component
   modules (`design/compiler/engine-components.md`), none over 3,200 lines.
@@ -2546,6 +2567,17 @@ rarely insert at the same place.
   differs from what the ownership judgment says the code touches.
 
 ## Open language questions
+
+- **A const argument of another integer type is accepted.** The checker
+  accepts `fn g<const m: u64>() -> r: u64 pure { return f::<m>(); }` for
+  `fn f<const n: u8>()`, and the reverse from `u8` to `u64`; [MSR-6] gives a
+  const generic its `gparam`'s exact type, but no rule found by reading says
+  whether an [FN-2] const argument must have the formal's exact type, fit it,
+  or be checked only at concrete instantiation. Symbolic summary reuse keys
+  renamed instances by each const parameter's written type, so this does not
+  affect it. Change: state the rule, then check it with a conformance case
+  either way. Found by the compile-speed review; reopen when a program passes
+  a const generic across integer types.
 
 Questions the owner has left open on purpose. None of them is a decision;
 each is resolved by a discussion and a tree change.
@@ -3428,10 +3460,14 @@ condition under which it is taken up.
   about 90% before the stage trips, and the overrun may land on a later
   change's run
   ([budget size](../research/investigations/test-economy/time-budgets.md#the-gate)).
-  The gate's host record now prints the processor model. If the fast and
-  slow runs separate by model, give each model its own budget column, with
-  the current one kept for an unknown model, and lower the margin as far as
-  the within-model spread allows; validate that a leave-one-out over at
+  The processor model now shows that they separate: on 2026-10-05
+  `compiler/test-unit` had a median of 105 s on the AMD EPYC 7763 and 65 s
+  on the EPYC 9V45, and the budgets were raised to cover the 7763
+  ([mixed processors](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  Give each model its own budget column, with the slowest kept for an
+  unknown model, and lower the margin as far as the within-model spread
+  allows; macOS, one virtual model with `compiler/test-unit` at 56–137 s,
+  gains nothing from it; validate that a leave-one-out over at
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.

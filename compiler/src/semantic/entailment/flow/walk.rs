@@ -1560,7 +1560,7 @@ impl Analyzer<'_, '_> {
                     .vocabulary
                     .derivations
                     .event(FlowEventKind::Snapshot, None);
-                state.facts = materialize_closure_at(
+                state.facts = materialize_counted_preheader_at(
                     &state.facts,
                     &self.vocabulary.terms,
                     &self.vocabulary.goals,

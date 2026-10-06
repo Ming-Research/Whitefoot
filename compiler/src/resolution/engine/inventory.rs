@@ -1,5 +1,5 @@
 use crate::Production;
-use crate::syntax::{FinalizedExtent, FinalizedTopology};
+use crate::syntax::{FinalizedExtent, FinalizedTopology, NodeId};
 
 use super::super::catalog::{PRELUDE_DECLARATIONS, reserved_name};
 use super::super::scopes::ScopeBuild;
@@ -73,6 +73,9 @@ struct InventoryTables<'a> {
     metas: &'a [DeclarationMeta],
     index: &'a DeclarationIndex,
     prelude_origins: &'a [super::super::PreludeDeclarationId],
+    /// The first match-field role of each owner node, so a binder finds
+    /// its paired field without scanning every role.
+    match_fields: std::collections::HashMap<NodeId, usize>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -125,12 +128,22 @@ fn check_inventory(
     {
         return Err(ResolutionCompilerFailure::InvalidRoleShape);
     }
+    let mut match_fields = std::collections::HashMap::new();
+    for (role_index, role) in roles.iter().enumerate() {
+        if matches!(
+            role.kind,
+            RawRoleKind::DeferredUse(DeferredUseRole::MatchField)
+        ) {
+            match_fields.entry(role.owner).or_insert(role_index);
+        }
+    }
     let tables = InventoryTables {
         roles,
         declarations,
         metas,
         index,
         prelude_origins,
+        match_fields,
     };
     for (role_index, role) in roles.iter().enumerate() {
         if !include(role) {
@@ -308,15 +321,9 @@ fn match_binder_issue(
     let arm = ancestor_with_production(topology, role.owner, Production::Arm)
         .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
     let paired_field = tables
-        .roles
-        .iter()
-        .find(|candidate| {
-            candidate.owner == role.owner
-                && matches!(
-                    candidate.kind,
-                    RawRoleKind::DeferredUse(DeferredUseRole::MatchField)
-                )
-        })
+        .match_fields
+        .get(&role.owner)
+        .map(|index| &tables.roles[*index])
         .ok_or(ResolutionCompilerFailure::InvalidRoleShape)?;
     let earlier_binder = tables
         .index

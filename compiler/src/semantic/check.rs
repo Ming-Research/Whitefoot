@@ -17,6 +17,7 @@ mod receipts;
 mod references;
 mod repairs;
 mod requires;
+mod schedule;
 mod spawn;
 mod support;
 mod tail_calls;
@@ -37,11 +38,7 @@ use crate::{
     SemanticRule,
 };
 
-use super::entailment::{
-    EntailmentCallee, EntailmentContext, PostconditionSchedule, VerifiedPostconditionSummary,
-    analyze_function, analyze_function_candidate, collect_statement_calls,
-    finalize_function_entailment, postcondition_schedule,
-};
+use super::entailment::{EntailmentCallee, collect_statement_calls, finalize_function_entailment};
 use super::goal::{
     CheckedCallRequirement, CheckedRequirement, ConcreteGoal, GoalDatum, GoalExpression,
     GoalOperation, GoalProjection,
@@ -658,6 +655,10 @@ struct AnalysisState {
     /// Per concrete function: whether its analysis stands on a receipt
     /// rather than a fresh run [FN-9].
     reused_analyses: Vec<bool>,
+    /// Per symbolic instance: whether it took the summary of a renamed
+    /// instance's analysis rather than analyzing its body [FN-2]. Such a
+    /// summary is already settled and is not finalized again.
+    renamed_summaries: Vec<bool>,
     /// The receipt key of each function analyzed afresh, recorded once its
     /// analysis is accepted.
     receipt_keys: Vec<(usize, Vec<u8>)>,
@@ -806,9 +807,7 @@ impl<'unit> DeclarationInventory<'unit> {
         declaration: DeclarationId,
     ) -> Result<String, CheckStop> {
         self.resolved
-            .declarations()
-            .iter()
-            .find(|record| record.id() == declaration)
+            .declaration(declaration)
             .map(|record| record.spelling().to_owned())
             .ok_or_else(|| SemanticCompilerFailure::InvalidResolution.into())
     }
@@ -971,11 +970,7 @@ impl<'unit> DeclarationInventory<'unit> {
         let mut dependencies = vec![Vec::new(); nodes.len()];
         for (index, node) in nodes.iter().enumerate() {
             let owner = self.tree.path(*node)?.components().to_vec();
-            for usage in self.resolved.lexical_uses() {
-                let path = usage.origin().node().components();
-                if path.len() < owner.len() || !path.starts_with(&owner) {
-                    continue;
-                }
+            for usage in self.resolved.lexical_uses_under(&owner) {
                 if let crate::ResolvedTarget::Source {
                     declaration,
                     class: crate::DeclarationClass::NamedConst,
@@ -1230,6 +1225,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             optimistic_batch,
             Some(&ordinary),
             true,
+            None,
         )?;
         let baseline_functions = function_inventory
             .iter()
@@ -2064,16 +2060,21 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // again by the concrete phase, so analyzing them here would repeat
         // that whole cost for a result nothing reads.
         let analyzed = Checker::generic_validation_scope(functions, canonical)?;
+        let mut judged = vec![false; functions.len()];
+        for (index, _) in canonical {
+            judged[*index] = true;
+        }
         self.analyze_function_inventory(
             functions,
             callees,
             optimistic_batch,
             Some(&analyzed),
             false,
+            Some(&judged),
         )?;
         if optimistic_batch {
-            for (checked, analyzed) in functions.iter_mut().zip(&analyzed) {
-                if *analyzed {
+            for (index, (checked, analyzed)) in functions.iter_mut().zip(&analyzed).enumerate() {
+                if *analyzed && !self.analysis.renamed_summaries[index] {
                     finalize_function_entailment(&mut checked.function.entailment);
                 }
             }
@@ -2124,211 +2125,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             pending.extend(calls.iter().map(|call| call.callee.0 as usize));
         }
         Ok(analyzed)
-    }
-
-    /// Analyzes every function of the inventory, or only those `analyzed`
-    /// marks. A caller that restricts the set must close it under callees.
-    fn analyze_function_inventory(
-        &mut self,
-        functions: &mut [CheckedFunctionInventory],
-        callees: &[EntailmentCallee],
-        optimistic_batch: bool,
-        analyzed: Option<&[bool]>,
-        allow_receipts: bool,
-    ) -> Result<PostconditionSchedule, CheckStop> {
-        let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
-        let contract_queries = self.analysis.contract_queries.clone();
-        let const_parameter_types = self.types.const_generic_types().collect();
-        // [MOD-8] the concrete inventory's analyses may stand on receipts;
-        // the symbolic validation of generic templates always runs afresh.
-        let receipts = self
-            .receipts
-            .filter(|_| allow_receipts && self.reject_entailment);
-        let items = receipts
-            .map(|_| self.types.declarations.receipt_items())
-            .transpose()?;
-        if receipts.is_some() {
-            self.analysis.reused_analyses = vec![false; functions.len()];
-        }
-        // ENT is the single acceptance-bearing proof path for ordinary
-        // obligations, call requirements, invariants and postconditions.
-        let mut schedule =
-            postcondition_schedule(functions.iter().map(|checked| &checked.function))
-                .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-        if schedule.components.is_empty() {
-            for index in 0..functions.len() {
-                if !selected(index) {
-                    continue;
-                }
-                if let (Some(store), Some(items)) = (receipts, &items)
-                    && let Some(entailment) = self.recorded_analysis(
-                        store,
-                        items,
-                        functions,
-                        index,
-                        callees,
-                        &[],
-                        &const_parameter_types,
-                    )
-                {
-                    functions[index].function.entailment = entailment;
-                    continue;
-                }
-                let checked = &mut functions[index];
-                let context = EntailmentContext {
-                    declarations: self.types.declarations.resolved.declarations(),
-                    callees,
-                    constants: &self.types.checked_constants,
-                    constant_ids: &self.types.constants,
-                    const_parameter_types: &const_parameter_types,
-                    nominals: &self.types.nominals,
-                    elements: &self.types.elements,
-                    contract_queries: &contract_queries,
-                    verified_postconditions: &[],
-                    verified_postcondition_proofs: &[],
-                    binding_names: &checked.binding_names,
-                };
-                checked.function.entailment = if optimistic_batch {
-                    analyze_function_candidate(&checked.function, &context)
-                } else {
-                    analyze_function(&checked.function, &context)
-                };
-            }
-        } else {
-            for component in &mut schedule.components {
-                // Callee closure keeps components whole: skipping one skips
-                // both its analysis and the summaries no analyzed body reads.
-                if !component
-                    .functions
-                    .iter()
-                    .any(|function| selected(function.0 as usize))
-                {
-                    continue;
-                }
-                for function in &component.functions {
-                    let function_index = function.0 as usize;
-                    let verified_postconditions = functions
-                        .iter()
-                        .map(|checked| {
-                            checked
-                                .function
-                                .entailment
-                                .postconditions
-                                .iter()
-                                .filter(|proof| {
-                                    selected(checked.function.id.0 as usize)
-                                        && proof.summary.as_ref().is_some_and(|summary| {
-                                            summary.component < component.ordinal
-                                        })
-                                })
-                                .filter_map(|proof| {
-                                    checked
-                                        .function
-                                        .postconditions
-                                        .get(proof.relation_ordinal as usize)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    let verified_postcondition_proofs = functions
-                        .iter()
-                        .map(|checked| {
-                            checked
-                                .function
-                                .entailment
-                                .postconditions
-                                .iter()
-                                .filter(|proof| {
-                                    selected(checked.function.id.0 as usize)
-                                        && proof.summary.as_ref().is_some_and(|summary| {
-                                            summary.component < component.ordinal
-                                        })
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    let checked = functions
-                        .get(function_index)
-                        .filter(|checked| checked.function.id == *function)
-                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    let recorded = match (receipts, &items) {
-                        (Some(store), Some(items)) => self.recorded_analysis(
-                            store,
-                            items,
-                            functions,
-                            function_index,
-                            callees,
-                            &verified_postconditions,
-                            &const_parameter_types,
-                        ),
-                        _ => None,
-                    };
-                    let entailment = if let Some(entailment) = recorded {
-                        entailment
-                    } else {
-                        let context = EntailmentContext {
-                            declarations: self.types.declarations.resolved.declarations(),
-                            callees,
-                            constants: &self.types.checked_constants,
-                            constant_ids: &self.types.constants,
-                            const_parameter_types: &const_parameter_types,
-                            nominals: &self.types.nominals,
-                            elements: &self.types.elements,
-                            contract_queries: &contract_queries,
-                            verified_postconditions: &verified_postconditions,
-                            verified_postcondition_proofs: &verified_postcondition_proofs,
-                            binding_names: &checked.binding_names,
-                        };
-                        analyze_function_candidate(&checked.function, &context)
-                    };
-                    drop(verified_postconditions);
-                    drop(verified_postcondition_proofs);
-                    functions[function_index].function.entailment = entailment;
-                }
-
-                let publish = component.functions.iter().all(|function| {
-                    let checked = &functions[function.0 as usize].function;
-                    checked
-                        .entailment
-                        .loop_invariants
-                        .iter()
-                        .all(|invariant| invariant.proof.discharged())
-                        && (matches!(
-                            checked.entailment.body_disposition,
-                            super::model::CheckedBodyDisposition::Uninhabited { .. }
-                        ) || checked.postconditions.is_empty()
-                            || (checked.entailment.postconditions.len()
-                                == checked.postconditions.len()
-                                && checked
-                                    .entailment
-                                    .postconditions
-                                    .iter()
-                                    .all(|proof| proof.aggregate.discharged)))
-                });
-                if publish {
-                    for function in &component.functions {
-                        let checked = &mut functions[function.0 as usize].function;
-                        if matches!(
-                            checked.entailment.body_disposition,
-                            super::model::CheckedBodyDisposition::Uninhabited { .. }
-                        ) {
-                            continue;
-                        }
-                        for proof in &mut checked.entailment.postconditions {
-                            let summary = VerifiedPostconditionSummary {
-                                function: *function,
-                                block: proof.block.clone(),
-                                relation_ordinal: proof.relation_ordinal,
-                                component: component.ordinal,
-                            };
-                            proof.summary = Some(summary.clone());
-                            component.summaries.push(summary);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(schedule)
     }
 
     fn install_call_requirements(
@@ -3813,19 +3609,16 @@ impl<'unit> TypeContext<'unit> {
         if self
             .declarations
             .resolved
-            .lexical_uses()
-            .iter()
+            .lexical_uses_under(owner)
+            .into_iter()
             .any(|usage| {
-                let path = usage.origin().node().components();
-                path.len() >= owner.len()
-                    && path.starts_with(owner)
-                    && matches!(
-                        usage.target(),
-                        crate::ResolvedTarget::Source {
-                            declaration,
-                            class: crate::DeclarationClass::NamedConst,
-                        } if !self.constants.contains_key(&declaration)
-                    )
+                matches!(
+                    usage.target(),
+                    crate::ResolvedTarget::Source {
+                        declaration,
+                        class: crate::DeclarationClass::NamedConst,
+                    } if !self.constants.contains_key(&declaration)
+                )
             })
         {
             return Ok(false);

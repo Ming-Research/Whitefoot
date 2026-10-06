@@ -357,7 +357,19 @@ PIPELINES=${PIPELINES:-"1 16"}
 
 # One test's rate on the running server at one depth after a given number of
 # requests, the list refill of an LRANGE test left out.
+# The scale run's client: by default one single-threaded redis-benchmark per
+# client CPU (quick_client), since one threaded process stops near 6.7
+# million requests a second, below firn on 16 server CPUs (21 million with
+# the processes, measured on the i9-14900K); SCALE_CLIENT=threads keeps the
+# threaded process, whose rate and latencies redis-benchmark reports itself.
+procs_client() {
+    test "${SCALE_CLIENT:-procs}" != threads && test "$MODE" = scale && test "$2" = 16
+}
 pilot_rate() {
+    if procs_client "$1" "$2"; then
+        quick_client "$3" "$1"
+        return
+    fi
     taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
         --threads "$CLIENT_THREADS" -c 50 -n "$3" -r 100000 -t "$1" -P "$2" \
         --csv 2>/dev/null | grep -v '^"test"' | grep -v '^"LPUSH (needed' |
@@ -400,6 +412,10 @@ suite_run() {
     for pipeline in $PIPELINES; do
         for test in $SUITE_TESTS; do
             requests=$(requests_for "$test" "$pipeline")
+            if procs_client "$test" "$pipeline"; then
+                echo "$1,$2,$3,pipeline $pipeline,\"$test\",\"$(quick_client "$requests" "$test")\",processes"
+                continue
+            fi
             taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" \
                 --threads "$CLIENT_THREADS" -c 50 -n "$requests" -r 100000 \
                 -t "$test" -P "$pipeline" --csv 2>/dev/null |
@@ -489,11 +505,30 @@ server_ticks() {
 # the run's wall time, the server's CPU microseconds per request, and the
 # client's p50 and p99. redis-benchmark's own rate divides by a clock that
 # ticks every 250 ms, a step of 5% in a five-second run, so it is not used.
+# COMPARE_CLIENT=threads runs one redis-benchmark with CLIENT_THREADS
+# threads instead of one process per client CPU.
 compare_client() {
     ticks=$(server_ticks)
     begin=$(date +%s%N)
-    taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" --threads "$CLIENT_THREADS" \
-        -c 50 -n "$3" -r 100000 -d 3 -P "$2" -t "$1" --csv >"$OUT/compare-client.csv" 2>"$OUT/compare-client.err"
+    if [ "${COMPARE_CLIENT:-procs}" = threads ]; then
+        taskset -c "$CLIENT_CPUS" redis-benchmark -p "$PORT" --threads "$CLIENT_THREADS" \
+            -c 50 -n "$3" -r 100000 -d 3 -P "$2" -t "$1" --csv >"$OUT/compare-client.csv" 2>"$OUT/compare-client.err"
+    else
+        # One process per client CPU, three connections each: one process's
+        # threads stop near 6.6M requests a second on the 14900K, below what
+        # four server CPUs answer. The first process's latencies are kept.
+        pids=
+        index=0
+        for cpu in $(echo "$CLIENT_CPUS" | tr ',' ' '); do
+            taskset -c "$cpu" redis-benchmark -p "$PORT" -c 3 -n $(($3 / CLIENT_THREADS)) \
+                -r 100000 -d 3 -P "$2" -t "$1" --csv >"$OUT/compare-client-$index.csv" 2>"$OUT/compare-client.err" &
+            pids="$pids $!"
+            index=$((index + 1))
+        done
+        wait $pids
+        cp "$OUT/compare-client-0.csv" "$OUT/compare-client.csv"
+        set -- "$1" "$2" $(($3 / CLIENT_THREADS * CLIENT_THREADS))
+    fi
     end=$(date +%s%N)
     ticks=$(($(server_ticks) - ticks))
     # The fields between the first and last quoted ones hold no quote.
@@ -561,33 +596,36 @@ if [ "$MODE" = compare ]; then
             pass=$((pass + 1))
         done
         if [ -n "$PERF" ]; then
-            set -- ${COMPARE_PROFILE:-mset 16}
-            requests=$(awk -v t="$1" -v d="$2" '$1 == t && $2 == d { print $3 }' "$sizes")
-            for name in $names; do
-                start "image-$name"
-                # With PERF_CALLERS set, each sample carries a DWARF-unwound
-                # stack, since firn keeps no frame pointers.
-                "$PERF" record ${PERF_CALLERS:+--call-graph dwarf,16384} -F "${PERF_FREQUENCY:-4999}" \
-                    -p "$server" -o "$OUT/perf-$name-$n.data" >/dev/null 2>&1 &
-                recorder=$!
-                sleep 1
-                compare_client "$1" "$2" "$requests" | sed "s/^/profiled,$name,$n,/"
-                kill -INT "$recorder"
-                wait "$recorder" || true
-                stop
-                "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
-                    --sort dso,symbol --percent-limit 0.01 -g none >"$OUT/profile-$name-$n.txt" 2>/dev/null
-                for symbol in $PERF_ANNOTATE; do
-                    "$PERF" annotate -i "$OUT/perf-$name-$n.data" --stdio -s "$symbol" \
-                        >"$OUT/annotate-$name-$n-$symbol.txt" 2>/dev/null || true
+            # COMPARE_PROFILE lists test and depth pairs, separated by ';'.
+            echo "${COMPARE_PROFILE:-mset 16}" | tr ';' '\n' | while read -r ptest pdepth; do
+                test -n "$ptest" || continue
+                requests=$(awk -v t="$ptest" -v d="$pdepth" '$1 == t && $2 == d { print $3 }' "$sizes")
+                test -n "$requests" || { echo "skip,profile,$ptest $pdepth not measured"; continue; }
+                for name in $names; do
+                    start "image-$name"
+                    # With PERF_CALLERS set, each sample carries a DWARF-unwound
+                    # stack, since firn keeps no frame pointers.
+                    "$PERF" record ${PERF_CALLERS:+--call-graph dwarf,16384} -F "${PERF_FREQUENCY:-4999}" \
+                        -p "$server" -o "$OUT/perf-$name-$n-$ptest.data" >/dev/null 2>&1 &
+                    recorder=$!
+                    sleep 1
+                    compare_client "$ptest" "$pdepth" "$requests" | sed "s/^/profiled,$name,$n,$ptest,/"
+                    kill -INT "$recorder"
+                    wait "$recorder" || true
+                    stop
+                    "$PERF" report -i "$OUT/perf-$name-$n-$ptest.data" --stdio --no-children \
+                        --sort dso,symbol --percent-limit 0.01 -g none >"$OUT/profile-$name-$n-$ptest.txt" 2>/dev/null
+                    for symbol in $PERF_ANNOTATE; do
+                        "$PERF" annotate -i "$OUT/perf-$name-$n-$ptest.data" --stdio -s "$symbol" \
+                            >"$OUT/annotate-$name-$n-$ptest-$symbol.txt" 2>/dev/null || true
+                    done
+                    if [ -n "$PERF_CALLERS" ]; then
+                        "$PERF" report -i "$OUT/perf-$name-$n-$ptest.data" --stdio --no-children \
+                            --sort dso,symbol --percent-limit 0.3 -g caller,0.5,callee,function,percent \
+                            >"$OUT/callers-$name-$n-$ptest.txt" 2>/dev/null
+                    fi
+                    rm -f "$OUT/perf-$name-$n-$ptest.data"
                 done
-                if [ -n "$PERF_CALLERS" ]; then
-                    "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --no-children \
-                        --sort dso,symbol --percent-limit 0.3 -g caller,0.5,callee,function,percent \
-                        >"$OUT/callers-$name-$n.txt" 2>/dev/null
-                    "$PERF" report -i "$OUT/perf-$name-$n.data" --stdio --children \
-                        --sort symbol --percent-limit 1 -g none >"$OUT/inclusive-$name-$n.txt" 2>/dev/null
-                fi
             done
         fi
     done
@@ -654,8 +692,10 @@ if [ "$MODE" = scale ]; then
             continue
         fi
         SERVER_CPUS=$(seq -s, 0 $((n - 1)))
-        CLIENT_CPUS=$(seq -s, "$n" $((total - 1)))
         CLIENT_THREADS=$((total - n < 16 ? total - n : 16))
+        # quick_client starts one process per client CPU and counts
+        # CLIENT_THREADS of them, so the two must name the same CPUs.
+        CLIENT_CPUS=$(seq -s, "$n" $((n + CLIENT_THREADS - 1)))
         lines="reference valkey-io dragonfly-$n garnet-$n firn-$n firn-base-$n"
         for line in $lines; do
             if available "$line"; then
