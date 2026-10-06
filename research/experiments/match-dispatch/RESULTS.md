@@ -679,6 +679,48 @@ runner's processor is not chosen, so its row indicates only. Before the
 budget correction, the `preserve_none` build failed in register allocation
 ([run 37519332120](https://github.com/Ming-Research/Whitefoot/actions/runs/37519332120)).
 
+## Stage 3: the code cursor
+
+The design and the decision rule are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-the-code-cursor).
+v2h was written by `wasm/gen.py` and compiled by `whitefootc` at main
+`c1034407f`. A temporary job on the branch `claude/stage3-cursor`, at
+`0eca64937`, disassembled the hot arms
+([run 37536017866](https://github.com/Ming-Research/Whitefoot/actions/runs/37536017866)).
+The Linux job then failed in its last command, a header listing whose pipe
+closed early; every arm had been printed by then.
+
+| host | clang, convention | the dispatch loop |
+|---|---|---|
+| ubuntu-24.04, x86-64 | 22.1.8, `preserve_none` | split into 318 arms, 11 integer registers, 4 values in the frame |
+| macos-15, AArch64 | Apple 17.0.0, `preserve_none` | split into 318 arms, 16 of 24 integer registers |
+
+`I32Add`'s path from entry to its transfer, by role:
+
+| role | x86-64 | count | AArch64 | count |
+|---|---|---:|---|---:|
+| operation, operand and result slots | `movzwl` ×3, `movl`, `addl`, `movq` | 6 | `ldrh` ×3, `add` ×5, `ldr` ×2, `str` | 11 |
+| frame base | `leaq (,%r15,8)`, `addq 0xc8(%r11)` | 2 | (in the slot additions) | 0 |
+| next index and bounds test | `leaq 0x1(%r14)`, `cmpq %rsi`, `jae` | 3 | `add x8, x22, #1`, `cmp x8, x25`, `b.hs` | 3 |
+| index to address | `movq`, `shlq $0x4`, `leaq (%rdx,%r10)`, `addq $0x10` | 4 | `add x4, x26, x8, lsl #4` | 1 |
+| tag, handler and transfer | `movl 0x10(%rdx,%r10)`, `leaq table(%rip)`, `movq (%rbx,%r10,8)`, `jmpq` | 4 | `ldr w9, [x4, #0x10]!`, `ldr x7, [x5, x9, lsl #3]`, `br x7` | 3 |
+| moves | `movq %rax, %r14`, `movq %r10, %rax` | 2 | `mov x22, x8` | 1 |
+| total | | 21 | | 19 |
+
+The same sequence ends every other arm the job printed: `I32AddA`,
+`I32AddAD`, `BrIf`, `BrI32LtS`, `Copy`, `Copy2`, `I32Load`, `I32Store`,
+`Call` and `Return`. Each has exactly one shift by 4 and one 16-byte
+address adjustment. All but `I32AddAD` and `Call` also move the next index
+into its carried register. A branch arm loads its target from the operation
+in place of `leaq 0x1(%r14)`. Forming and testing the next address
+therefore takes 7 instructions per dispatch on x86-64 and 4 on AArch64.
+v2h has no `BrI32LtSC` or `LocalTee` arm.
+
+The arms receive the matched element's address, the header value they read
+the operation's fields through (`%r9` on x86-64, `x4` on AArch64). The
+dispatch forms the next element's address from the next index, not from
+it.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic
