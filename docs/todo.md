@@ -1523,7 +1523,14 @@ rarely insert at the same place.
   they establish no cause or fix. Existing raw data lacks scheduling counters,
   and ARM or emulated results cannot clear this Linux signal. A retained-image
   W4 paired/null counter check is a possible discriminator, not selected or
-  run. Defer mechanism changes until evidence distinguishes the possible causes;
+  run. The [code-placement investigation](../research/investigations/code-placement/DESIGN.md)
+  attributes one class of such readings: byte-identical `records` code shifted
+  by 16 to 48 bytes changes its time by up to 40 percent, and every
+  compiler-produced function now starts on a 64-byte boundary, so a shift
+  below 64 bytes moves no function within its line and qualification runs a
+  32-byte placement control. The readings above predate that alignment and
+  are not attributed one by one; a `records` suspect that recurs after it is
+  not a sub-line placement effect. Defer mechanism changes until evidence distinguishes the possible causes;
   reopen on selection of a bounded Linux attribution experiment and preserve
   the suspect if that experiment is uninformative. Keep this item
   until the observations and measurement/detection tradeoff are explained by
@@ -1732,26 +1739,6 @@ rarely insert at the same place.
   the stackful build, before claiming a memory advantage; reopen when a
   program with small per-connection state, such as a proxy that shares its
   buffers, is written.
-
-- **A 16-byte shift of a kernel's code changes its measured speed by 40
-  percent.** The `records` compute kernel's hot function,
-  `wf__par_seq_summarize_records`, runs about 21 ms at one worker when it
-  starts at image offset 0x3200 and about 29 ms at 0x3210, with identical
-  instructions: cachegrind counts 2,512,523,716 and 2,512,524,120. One more
-  imported libc function adds a PLT entry before `.text`, which is enough to
-  move it. The stackful waiting-context floor's `mprotect`, since removed,
-  did that, and so did an unrelated `getpagesize` import linked beside the
-  base runtime. The measured
-  times were 20.7 ms for the base, 29.5 ms for the base with the extra import
-  and 28.5 ms for the candidate floor: medians of eleven runs on a 2.1 GHz
-  Xeon. `compute-regression` then reports `records` as adverse at two widths
-  for a change that leaves the kernel's generated code identical. Every later
-  runtime import will do the same. Align emitted functions and loop headers
-  (for example 64-byte function alignment, or building kernel objects with
-  `-mbranches-within-32B-boundaries`), measure the kernels under both
-  placements, and adopt whichever makes their time independent of the
-  offset. Reopen when the next compute-regression verdict names a kernel
-  whose generated code did not change.
 
 - **Every atomic statement holds its object alone.** Statements whose
   blocks only read could share the object, but lowering always acquires for
@@ -3484,6 +3471,18 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
+- **The paired comparison compiles both arms' runtime with the candidate's
+  flags.** `tests/performance/Makefile` includes the candidate's
+  `compiler/runtime.mk`, so the baseline's runtime sources compile with the
+  candidate's `NATIVE_OPTIMIZATION_FLAGS` and against the candidate's unit
+  list. A change to how the driver compiles the runtime, as
+  `-falign-functions=64` in the code-placement change, reaches both arms and
+  the comparison cannot see it, and a runtime unit added or removed would
+  fail the baseline's build. The change: include each arm's own
+  `runtime.mk`, from `$(ROOT)`, so each arm builds its runtime as its own
+  driver does; validate that a flag change in the candidate's `runtime.mk`
+  then differs between the arms' native objects. Reopen at the next change to
+  the runtime's compile flags or unit list.
 - **The first cold compiler build in `compute-regression` is 10–15% slower.**
   Whichever compiler the job builds first takes longer, so the candidate's
   build time carries a bias its budget now covers

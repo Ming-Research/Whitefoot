@@ -257,6 +257,16 @@ host is the "loop and function alignment on the Whitefoot side" section below,
 sixteen twin lines inside [0.954, 1.010]; the decision they were rejected for
 was a change to the compiler driver, which is still unchanged.
 
+2026-10-06: `-falign-functions=64` never reached the emitted module, which
+clang compiles as LLVM input and to which it applies no function alignment
+([code placement](../code-placement/DESIGN.md#clang-does-not-align-llvm-input-with--falign-functions)).
+The three 2026-09-11 placement sections therefore aligned the runtime's
+functions and every unit's loops but no kernel function, and the
+mechanism stated in the second of them holds for the runtime alone. Since
+that investigation the compiler starts every emitted and runtime function on a
+64-byte boundary itself, and of `WF_ALIGN` only `-falign-loops=32` is a flag
+`whitefootc` does not pass clang.
+
 Each run that matters is added the same way, newest last.
 
 The question every table here answers is the bundle's: for each kernel, at each

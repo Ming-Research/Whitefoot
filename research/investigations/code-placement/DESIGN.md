@@ -21,6 +21,14 @@ import linked beside the base runtime. The times were 20.7 ms for the base,
 eleven runs on a 2.1 GHz Xeon. These readings were recorded in `docs/todo.md`
 until this investigation replaced that entry.
 
+The [result-register placement controls](../result-registers/DESIGN.md#hosted-compute-regression)
+had found the same on a local Intel host: a never-called function that
+shifted `records`' loop copies by 16 to 48 bytes, with no executed instruction
+changed, moved either of two lowerings by up to 15 percent at one worker and
+18 percent at two and four, and reversed their order, while moving only the
+runtime did not. One further control compiled both arms with
+`-falign-loops=64`; none aligned a function.
+
 PR #251 (`std::fs::truncate_file`) then failed `compute-regression` on
 `records` in three of its four measured runs, each time against a merge base
 whose kernel objects were byte-identical to the candidate's:
