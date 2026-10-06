@@ -1469,9 +1469,15 @@ include code generation, representation and decomposition costs; they do not
 establish competitiveness against optimized native implementations.
 
 **`WF_ALIGN` controls placement within the WF A/B pair.** On x86_64 it appends
-`-falign-functions=64 -falign-loops=32` to `WF_FLAGS`, so every Whitefoot
-translation unit of **both** images starts its functions on a 64-byte boundary
-and its hot loops on a 32-byte one. It exists for the regression gate's paired
+`-falign-functions=64 -falign-loops=32` to `WF_FLAGS`, so every Whitefoot C
+runtime unit of **both** images starts its functions on a 64-byte boundary and
+every Whitefoot translation unit its hot loops on a 32-byte one. The emitted
+module is LLVM input, for which clang ignores `-falign-functions`, so until the
+compiler aligned its own definitions
+([code placement](../../investigations/code-placement/DESIGN.md#clang-does-not-align-llvm-input-with--falign-functions))
+no kernel function was aligned by this variable; since then `whitefootc`
+itself starts every emitted and runtime function on a 64-byte boundary, and
+only `-falign-loops=32` is a flag the driver does not pass. `WF_ALIGN` exists for the regression gate's paired
 comparison: the gate's two arms are separate images linked from separate
 objects, their functions do not land at the same offsets even from
 byte-identical sources, and under these flags **those translation units'**
@@ -1504,15 +1510,15 @@ different offsets once split a width-one median 7.3 ms against 10.7 ms with no
 scheduler involved.
 
 **Function alignment is another difference between WF and the references.**
-On x86_64, `-falign-functions=64` reaches the Whitefoot translation units and
-no reference, oracle or harness. Its effect is part of each WF/reference
+On x86_64, function alignment reaches the Whitefoot runtime and, through its own
+definitions, the emitted module, and no reference, oracle or harness. Its effect is part of each WF/reference
 comparison; the bundle's historical placement results do not establish a
 direction or size for that effect in a new image. The retained tables keep
 their original flags and measurements.
 
 **Remaining build differences.** On x86_64, `-march=x86-64-v3` reaches the C and
-C++ kernels and no Whitefoot translation unit, and `-falign-functions=64`
-reaches the Whitefoot units and nothing else. The separately built oneTBB
+C++ kernels and no Whitefoot translation unit, and function alignment reaches
+the Whitefoot units and nothing else. The separately built oneTBB
 shared library gets only the three scalar flags, with no `-march` and no
 alignment. The Rust staticlib gets only its four rustflags plus `target-cpu`
 where `BENCH_ARCH` names it, and Rust's precompiled standard library is not

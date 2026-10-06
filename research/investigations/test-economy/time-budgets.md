@@ -466,6 +466,15 @@ every later raise at 10 s; `performance-baseline-compiler` keeps 105 s, over its
 slower was not measured; an untimed warm-up before both builds would remove
 the difference instead of covering it.
 
+**The placement control's two stages, 10 s and 45 s.** The code-placement
+change (PR #252) added `performance-shifted-images`, which links the
+candidate's images again behind 32 bytes of padding, and
+`performance-placement-control`, which compares them with the candidate's.
+The shifted images took 1.8 s at `d4f67df6`, and the control 26.1 s at
+`1bfe9449` and 34.0 s at `d4f67df6`. The shifted images take the
+10-s floor; 1.25 times 34.0 s, rounded up to 5 s, is 45 s, the budget of
+`performance-null`, the same campaign over the same images.
+
 **Judging an overrun.** A stage over its budget fails the job's verdict
 step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases

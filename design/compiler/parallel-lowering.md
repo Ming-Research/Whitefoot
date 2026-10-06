@@ -22,7 +22,6 @@ Decision: Retain runtime-query entry through the overlapping splitter, with the 
 
 Rejected:
 - Individual-iteration leaves with grain delegated to the runtime: rejected because they remove the loop shape needed for the body's own optimization.
-- Forcing function and loop alignment on emitted modules and runtime sources: rejected because the [alignment controls](https://github.com/mbbill/Whitefoot/blob/b3341e32ab8d69e2974227aee7146ac16eb2fe00/research/investigations/compute-runtime/RESULTS.md#alignment-comparison) did not remove placement sensitivity or isolate a gain beyond the instrument's variation.
 - Denying every call-rooted match after the reference-only port: rejected because the existing if-condition compute call can still be the last member of a group that joins before dispatch. Permission includes all arm footprints and refuses an unclassified or exiting arm, so it does not recover the former scrutinee-only exception or ignore arm interference. Lowering retains its single-block boundary and never moves an arm into the overlap group.
 - Keeping only a run's leading call-rooted prefix: rejected because every contiguous part has the same pairwise permission, and this policy suppresses the recursive fold after its independent scalar seed; starting a later group preserves adjacency without changing the judgment.
 - Treating adjacent-pair permission as transitive: rejected because a larger group needs every ordered pair proved independent; adjacent-pair recovery therefore creates only two-member groups and never extends them using adjacency alone.

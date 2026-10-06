@@ -140,7 +140,7 @@ pub(super) fn assert_stack_probes(module: &str) {
     );
     let probed = module
         .lines()
-        .filter(|line| line.starts_with("define ") && line.ends_with(" #0 {"))
+        .filter(|line| line.starts_with("define ") && line.ends_with(" #0 align 64 {"))
         .count();
     assert_eq!(
         probed,
@@ -914,7 +914,7 @@ fn a_frame_larger_than_the_guard_region_is_still_reported() {
 
     let ablated = ablate_large_frame_probe(&module);
     assert_eq!(
-        module.matches(" #0 {").count() - ablated.matches(" #0 {").count(),
+        module.matches(" #0 align 64 {").count() - ablated.matches(" #0 align 64 {").count(),
         1,
         "the ablation must remove the group from exactly one definition"
     );
@@ -962,7 +962,7 @@ fn expose_large_frame_spine(module: &str) -> String {
         .lines()
         .map(|line| {
             if line.starts_with("define i64 @wf_read_pad(") {
-                line.replace(" #0 {", " noinline #0 {")
+                line.replace(" #0 align 64 {", " noinline #0 align 64 {")
             } else {
                 line.to_owned()
             }
@@ -1020,8 +1020,8 @@ fn ablate_probe(module: &str, signature: &str) -> String {
         .lines()
         .map(|line| {
             if line.starts_with("define ") && line.contains(signature) {
-                line.strip_suffix(" #0 {")
-                    .map(|head| format!("{head} #1 {{"))
+                line.strip_suffix(" #0 align 64 {")
+                    .map(|head| format!("{head} #1 align 64 {{"))
                     .unwrap_or_else(|| line.to_owned())
             } else {
                 line.to_owned()
@@ -1048,8 +1048,8 @@ fn ablate_large_frame_probe(module: &str) -> String {
         .map(|line| {
             if line.starts_with("define void @wf_array_filled$instance$") {
                 fills += 1;
-                line.strip_suffix(" #0 {")
-                    .map(|head| format!("{head} noinline #0 {{"))
+                line.strip_suffix(" #0 align 64 {")
+                    .map(|head| format!("{head} noinline #0 align 64 {{"))
                     .unwrap_or_else(|| line.to_owned())
             } else {
                 line.to_owned()
@@ -1439,7 +1439,7 @@ fn a_buffer_in_a_cleanup_cycle_is_walked_in_the_order_the_rule_fixes() {
     let [run_definition] = run_definitions.as_slice() else {
         panic!("the module must define one runtime-window release: {run_definitions:?}");
     };
-    let buffer_drop = definition_body(&module, run_definition.trim_end_matches(" #0 {"));
+    let buffer_drop = definition_body(&module, run_definition.trim_end_matches(" #0 align 64 {"));
     assert!(
         buffer_drop.contains("%index = phi i64 [ 0, %entry ], [ %next, %body ]")
             && buffer_drop.contains("%next = add i64 %index, 1"),

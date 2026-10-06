@@ -51,7 +51,9 @@ remedy's own A/B, alignment on the Whitefoot side of the link against the flags
 `whitefootc` passes clang, holds every one of its sixteen lines inside
 [0.954, 1.010]. **So the compiler driver is unchanged**: the flags cost nothing
 and buy less than this host can resolve, and the sensitivity they were meant to
-remove is not the kind of thing they reach. Two sections then carry that
+remove is not the kind of thing they reach. (2026-10-06: those flags never
+aligned an emitted function, and the compiler now does; see the dated note
+below.) Two sections then carry that
 same null check off the development host and onto the hosted runners, run
 `34626670962` at `7c18d3e6`, `ubuntu-24.04` then `macos-14`, both arms built at
 the work unit the runtime already compiles: they are A/B instruments and neither
@@ -256,6 +258,16 @@ was touched. The measured cost of those flags on the Whitefoot side of this
 host is the "loop and function alignment on the Whitefoot side" section below,
 sixteen twin lines inside [0.954, 1.010]; the decision they were rejected for
 was a change to the compiler driver, which is still unchanged.
+
+2026-10-06: `-falign-functions=64` never reached the emitted module, which
+clang compiles as LLVM input and to which it applies no function alignment
+([code placement](../code-placement/DESIGN.md#clang-does-not-align-llvm-input-with--falign-functions)).
+The three 2026-09-11 placement sections therefore aligned the runtime's
+functions and every unit's loops but no kernel function, and the
+mechanism stated in the second of them holds for the runtime alone. Since
+that investigation the compiler starts every emitted and runtime function on a
+64-byte boundary itself, and of `WF_ALIGN` only `-falign-loops=32` is a flag
+`whitefootc` does not pass clang.
 
 Each run that matters is added the same way, newest last.
 
