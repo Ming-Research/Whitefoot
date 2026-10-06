@@ -1361,3 +1361,183 @@ fn run_hrandfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
   reply_array(client: client, count: 0_u64);
   return unit;
 }
+
+fn hash_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, code: u64, name: Span) -> handled: Bool reads(store), reads(input), reads(args), reads(time), writes(client) waits {
+  doc "Answers the hash command code names, when it names one, and returns whether it did. Each command is first given the number of arguments Redis's command table admits, checked before authentication as execute checks every command's; a count the table admits but the command refuses, such as HSET's unpaired field, is the command's own reply, after authentication.";
+  let count = args^.inner.len;
+  let open = bnot(client^.locked);
+  let counting = True();
+  let plain = False();
+  if code == code_hset {
+    let fits = count >= 4_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: counting);
+    }
+    return True();
+  }
+  if code == code_hmset {
+    let fits = count >= 4_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: plain);
+    }
+    return True();
+  }
+  if code == code_hsetnx {
+    let fits = count == 4_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hsetnx(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hget {
+    let fits = count == 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hget(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hmget {
+    let fits = count >= 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hmget(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hdel {
+    let fits = count >= 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hdel(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hexists {
+    let fits = count == 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: plain);
+    }
+    return True();
+  }
+  if code == code_hstrlen {
+    let fits = count == 3_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: counting);
+    }
+    return True();
+  }
+  if code == code_hlen {
+    let fits = count == 2_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hlen(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hgetall {
+    let fits = count == 2_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 2_i64);
+    }
+    return True();
+  }
+  if code == code_hkeys {
+    let fits = count == 2_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 0_i64);
+    }
+    return True();
+  }
+  if code == code_hvals {
+    let fits = count == 2_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 1_i64);
+    }
+    return True();
+  }
+  if code == code_hincrby {
+    let fits = count == 4_u64;
+    let go = band(fits, open);
+    if bnot(go) {
+      refused(client: client, input: input, name: name, fits: fits);
+    }
+    if go {
+      run_hincrby(store: store, input: input, args: args, client: client, env: env, time: time);
+    }
+    return True();
+  }
+  if code == code_hincrbyfloat {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hincrbyfloat[0_u64..12_u64]);
+    if spelled {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hincrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+  }
+  if code == code_hrandfield {
+    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hrandfield[0_u64..10_u64]);
+    if spelled {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hrandfield(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+  }
+  return False();
+}

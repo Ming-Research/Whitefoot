@@ -1228,17 +1228,6 @@ rarely insert at the same place.
   The cause is unattributed: the host had no `perf`. Validate by a profile
   of both on four drivers. Reopen with firn's next performance work.
 
-- **firn's `execute` routes by a hand-balanced tree of name codes.**
-  `apps/firn/commands/dispatch.wf` compares each command's packed name code
-  with `<` and `==` against about 116 `code_*` constants, whose numeric order
-  the source does not show, and repeats the four-line admission check at
-  every leaf. A command placed out of order is unreachable and answers
-  "unknown command" with no error from the compiler. The tree routes every
-  command as the `if` chain before it did, checked by walking each leaf's
-  path conditions. Generate the tree and its constants from one command
-  table, or add a test that sends every command name and refuses "unknown
-  command". Reopen before the next command is added to dispatch.
-
 - **firn answers about 1.3% fewer `RPOP`s of one list on four drivers than
   `cea9188d4`.** The difference came with #208. It shows only on a list four
   drivers share that holds elements, and it is not in the concurrent map,
