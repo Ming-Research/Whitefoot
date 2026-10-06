@@ -131,4 +131,54 @@ Written before measuring.
 
 ## Results
 
-Pending: the experiment release and firn's measurement.
+Releases:
+- **Base:** `wf-ff1894f7b53c`, main `ff1894f7b`, this change's merge base.
+- **Head:** `wf-exp-e35cc5f95c4d`, this change at `e35cc5f95`; its gate passed in run 37473286649.
+
+Both sides build firn from the same source, Firn-wf `6239de8c8`.
+
+**Timing, 14900K, 1 server CPU, 3 interleaved passes of 5 s**
+([Firn-wf run 37475611172](https://github.com/Ming-Research/Firn-wf/actions/runs/37475611172)).
+The head and its twin are byte-identical images.
+
+| test | depth | head vs base | head vs twin |
+|---|---|---|---|
+| SET | 16 | -3.70% | -0.65% |
+| SET | 1 | +0.42% | -0.19% |
+| MSET | 16 | -2.05% | -1.88% |
+| MSET | 1 | -1.54% | -6.0% |
+
+Identical code differed by up to 6%, and single passes of one image spanned
+about 3% either way. So this run cannot resolve the 1% the criterion needs.
+
+**Instructions per SET under callgrind**
+([Firn-wf run 37476541818](https://github.com/Ming-Research/Firn-wf/actions/runs/37476541818)).
+Each image took 20,000 SETs to warm up, then 100,000 SETs at depth 16 with
+3-byte values, 4 clients and 1,000 keys:
+
+| image | instructions | per SET |
+|---|---|---|
+| base | 161,506,641 | 1,615 |
+| head | 161,681,212 | 1,616 |
+| head twin | 161,554,826 | 1,615 |
+
+**The disassembly.** The Firn-wf session compared the same run's images
+(artifact `q41-images`) and reported the following. This record has not
+re-read the artifact.
+- `put_text` and `set_body` are inlined into `wf_commands.set_key.resume`.
+- That function has the same 1,028 instructions in both images, identical
+  once addresses are masked.
+- The store of the entry's `Value::Text(Short)` inside the key's lock is
+  still the byte-by-byte pattern #245 saw. Its bytes are assembled from
+  shifted registers, not copied from a parameter.
+- Nine other functions differ, among them `run_expire.resume` (787 to 740
+  instructions), `run_persist.resume` (178 to 140), `bytes_boxed` (102 to
+  82) and `log_key_word` (130 to 147).
+
+**Verdict against the criterion: not met.** In this firn the change does not
+reach SET's path. After inlining, `set_key` has no parameter entry copy left
+for it to remove. The byte stores #245 attributed to that copy come from
+another construction, recorded in `docs/todo.md`, "firn's SET stores its
+inline text byte by byte inside the lock". So the change is not adopted on
+the ground it was proposed for. The Firn-wf session's longer timing run, 7
+passes of 10 s, is still to be recorded here.

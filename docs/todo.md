@@ -964,6 +964,29 @@ rarely insert at the same place.
   SSA construction and general aggregate forwarding are separate paths, not
   improvements established by this candidate.
 
+- **firn's SET stores its inline text byte by byte inside the lock.** In
+  firn at Firn-wf `6239de8c8`, `put_text` and `set_body` inline into
+  `wf_commands.set_key.resume`. There the store of a `Value::Text(Short)`
+  into the entry, between `wf__table_lock_entry` and
+  `wf__table_unlock_entry`, writes the short text's bytes one at a time from
+  shifted registers instead of in one or two vector moves
+  ([Firn-wf run 37476541818](https://github.com/Ming-Research/Firn-wf/actions/runs/37476541818),
+  artifact `q41-images`). It is not the by-value parameter entry copy:
+  removing that copy left this function's code and the instructions per SET
+  unchanged
+  ([in-place parameters](../research/investigations/in-place-parameters/DESIGN.md#results)).
+  The cause is unattributed. Candidates: the host splitting the short
+  text's inline array into scalars after the text is built from the request
+  bytes, or the emitter constructing the union payload field by field.
+  Impact: PR #245 measured about 1.2% of SET throughput for a store of this
+  shape, against the earlier code's three vector moves; about 20
+  instructions inside the critical section on firn's hottest command.
+  The change: reduce `set_key` to the smallest program that keeps the
+  pattern, then find which emitted construction or which host pass produces
+  it. Validate with the instructions per SET under callgrind and the
+  disassembly of the store. Reopen with firn's next SET performance work or
+  another program whose inline byte arrays show the same pattern.
+
 - **Consumed aggregate locals can retain an argument snapshot.** An exposed
   mutable local is loaded into an immutable argument snapshot before a consuming
   call. Clang 21 forwards that snapshot in the large-record regression, while
