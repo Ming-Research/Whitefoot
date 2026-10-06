@@ -103,6 +103,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         )
     }
 
+    /// Whether every element of `run` lies its offset times the element's
+    /// stride past the first one, whatever the window stores: the run is
+    /// reached by its address, after which its slots follow in the same
+    /// block, and it is a `Slots`, whose logical offset is its physical one.
+    pub(super) fn run_slots_follow_address(&self, run: IrValueId) -> Result<bool, BackendFailure> {
+        if !matches!(self.value_type(run), Some(IrType::Address(_))) {
+            return Ok(false);
+        }
+        Ok(RunShape::of(self.run_value_type(run)?)
+            .is_some_and(|shape| shape.shape == IrWindowShape::Slots))
+    }
+
     fn run_storage(&mut self, run: IrValueId) -> Result<Option<String>, BackendFailure> {
         if matches!(self.value_type(run), Some(IrType::Address(_))) {
             Ok(Some(self.value_name(run)))

@@ -309,6 +309,42 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
 }
 
 #[test]
+fn the_matched_element_s_address_travels_between_the_parts() {
+    // The header matches `code^.inner[pc]` and the arms read the operation
+    // through its address, so the parts carry that address: the dispatch
+    // function no longer forms it from `pc`, and an arm moves the address it
+    // received by the change of `pc`, `Add` and `Dec` by one and `Jnz` by a
+    // branch's distance, which the program's result checks.
+    let module = emit(scalar_interpreter().as_bytes());
+    if !verdict(&module, "wf_run").starts_with("split") {
+        return;
+    }
+    assert!(
+        module.contains(&format!(
+            "{}wf_run: carries the matched Op's address between the parts",
+            crate::DISPATCH_LEDGER_PREFIX
+        )),
+        "the ledger reports the carried address: {module}"
+    );
+    let dispatch = definition(&module, "wf_run.dispatch");
+    assert!(
+        !dispatch
+            .lines()
+            .any(|line| line.contains("= getelementptr inbounds {") && !line.contains("%wf.frame")),
+        "the dispatch function receives the element's address instead of forming it: {dispatch}"
+    );
+    for arm in 0..3 {
+        let arm = definition(&module, &format!("wf_run.arm.{arm}"));
+        assert!(
+            arm.contains(" = sub i64 ") && arm.contains(" = getelementptr %"),
+            "a looping arm moves the address it received: {arm}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
 fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
     // A tag-only enum of two variants has a one-bit tag, which must index
     // the table as 0 or 1, never as -1. Ten alternating steps add 25.
