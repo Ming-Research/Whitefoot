@@ -490,3 +490,29 @@ the next operation's address, the bounds test, and the transfer.
   experiment branch. Judge it by CoreMark against its base under the
   stage-3 criterion: adopt if the median score rises at least 2%.
 - **Fewer:** record the attribution and close this candidate.
+
+**Attribution**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-code-cursor)).
+Every hot arm ends in the same dispatch steps, in an order of its own.
+Forming the next operation's address and testing it takes 7
+of the 21 instructions `I32Add` executes on x86-64: the next index, a
+compare and a branch, then a move, a shift and two additions that turn the
+index into an address. On AArch64 it takes 4 of 19, the shift folding into
+one addition. Both exceed the rule's 2, so the next step is the
+cursor-instead-of-index candidate.
+
+Three findings bear on how to build it:
+- **The arms already hold the cursor.** Each arm receives the matched
+  element's address, the header value it reads the operation's fields
+  through. The dispatch forms the next element's address again from the
+  next index, not from that address. On v2h a cursor beside the index
+  would therefore cost no register; the cursor instead of the index also
+  frees the index's register.
+- **`Op` is already 16 bytes.** A power-of-two stride is in place, and
+  x86-64 addressing scales an index by at most 8, so the shift stays.
+  That candidate is closed.
+- **x86-64 forms what a free register would hold.** With the index's
+  register freed, the handler table's address could become a parameter
+  again: every x86-64 arm forms it with `leaq table(%rip)`. Every arm that
+  reads a frame slot also reloads the stack's payload pointer from the
+  enclosing frame. On AArch64 both stay in registers.
