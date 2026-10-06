@@ -2299,9 +2299,16 @@ rarely insert at the same place.
   work remain; their isolated costs are unmeasured. The
   [frame inspection](../research/experiments/halo-bench/RESULTS.md#fib-frame-input-for-the-next-experiment)
   points to metadata checks, native call storage and 80-byte frame/result
-  transport; sampled offsets do not isolate cycle shares. Change: compare frame
-  construction, residual table allocation/copying, the VM.md candidates and library/heap paths
-  with same-source,
+  transport; sampled offsets do not isolate cycle shares. The
+  [bounded call-entry trial](../research/experiments/halo-bench/RESULTS.md#sentinel-qualification-defect-found-before-selection)
+  improves fib by 19.47% but is reverted because prototype bounds alone do not
+  preserve explicit native-sentinel routing for the public prototype window.
+  Change: repeat fixed Lua entry with explicit sentinel exclusion, preserving
+  every native/invalid/vararg fallback; establish that exclusion independent
+  of the prototype count and repeat the full runtime, check-time, oracle and
+  removed-root criterion. Frame/result transport and residual table copying
+  remain separate attribution targets. Compare these, the VM.md candidates
+  and library/heap paths with same-source,
   full-LTO pairs, preserving checksums, normal GC, roots and handle validity.
   Reopen at the next performance experiment; require a discriminating native
   comparison before selecting a candidate or claiming a causal speedup.

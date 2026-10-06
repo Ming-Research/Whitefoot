@@ -1503,7 +1503,7 @@ Per fib invocation, the source paths perform:
 | Work | Halo before | PUC Lua 5.1.5 |
 |---|---|---|
 | Frame | 80 bytes, 11 named field initializations: func, base, return_pc, kbase, closure, nresults, activation, flags, varbase, varcount, frame_top; passed to push_frame and copied into frame storage; taken and passed to finish on return | 40 bytes, five new-frame writes: func, base, top, tailcalls, nresults; saves caller savedpc separately; savedpc is the sixth record field |
-| Function classification | Value to FuncView; iterator test; CJSON binding test | function tag, then Lua/C flag |
+| Function classification | One function-slot bound; Value to FuncView; iterator test; CJSON binding test | function tag, then Lua/C flag |
 | Closure/prototype validation | Three closure-bound and three live tests (iterator, CJSON, entry), two native-sentinel tests, one prototype-bound test; 16-byte Proto snapshot | Direct closure/prototype pointers, with no slab/live/index tests or whole Proto copy |
 | Stack/frame checks | Saturating base/room arithmetic, room sentinel, ensure_stack extent check for base+256; push_frame depth/capacity checks | luaD_checkstack for maxstack+numparams (5 slots); inc_ci capacity check |
 | Arguments | zero moves, zero missing-argument fills | zero moves, clamps top to parameter end |
@@ -1521,7 +1521,8 @@ growth differs: Halo reserves a 256-slot dispatch window, PUC requests five
 slots. No startup-growth count for Halo is claimed by the PUC counters.
 
 Avoidable without weakening checked conditions: classify ordinary live Lua
-closures once, prove their prototype exists once, and enter fixed-arity calls
+closures once, retain explicit native-sentinel exclusion, prove their
+prototype exists once, and enter fixed-arity calls
 without transporting tail/vararg/native-path state. Frame transport might be
 reduced after a separate representation/continuation comparison. Copying the
 single result remains required when its source and destination differ;
@@ -1531,8 +1532,9 @@ validity assumptions are not a reason to remove Halo handle checks.
 
 Selected single trial: a fixed-arity Lua entry helper called by ordinary
 instruction_call after its existing budget and collector safepoint. It
-qualifies the function Value, live closure, valid prototype and nonvararg
-status once; unsupported kinds use prepare unchanged. It retains room,
+qualifies the function Value, live closure, prototype bound and nonvararg
+status once; calls outside those guards use prepare. Its missing explicit
+sentinel exclusion is the defect recorded below. It retains room,
 stack extent and frame-depth checks, argument padding, all Frame fields,
 register clearing and the shared return path. This isolates ordinary-entry
 classification and native helper traffic against the current general path.
@@ -1546,7 +1548,9 @@ interface, collector root or language rule changes are selected.
 Found during attribution: iterator classification and CJSON binding use the
 same no-prototype sentinel, and prepare tests iterator classification first.
 This pre-existing routing overlap is deferred in docs/todo.md; the trial
-qualifies only real prototypes and leaves both sentinel paths unchanged.
+leaves the observed sentinel paths unchanged at the measured prototype counts,
+but does not preserve them for every public window extent (see the sentinel
+qualification defect below).
 
 
 ### Check sizing and candidate boundary
@@ -1557,8 +1561,9 @@ smaller than the 25% gate; lengthen only if the observed ratio is close enough
 for it to matter. The threshold is 305.2375 s on that median. The call helper
 adds no public type or new module; its stack-slot requirement is discharged
 at instruction_call's existing dispatch window. The source trial changes
-only calls.wf and instruction_call in handlers.wf. Native sentinel closures,
-invalid handles/prototypes and varargs return to the unchanged general path.
+only calls.wf and instruction_call in handlers.wf. Invalid handles/prototypes and varargs return to the unchanged general path.
+Native sentinel closures also fall back at the measured prototype counts;
+the larger-window boundary is the defect below.
 
 
 Candidate vm checks pass in 241.14 and 245.90 s (median 243.52 s,
@@ -1612,6 +1617,141 @@ fib 0, loop 0, integer-table 5, string-key 0, concat 0, sort 3 and trees 176.
 This measures the combined fixed-entry qualification and helper-traffic
 change; it does not isolate repeated-check removal from native storage,
 branching or code-layout effects. Return and frame transport remain unchanged.
-The runtime and module-check gates pass; behavior/root gates are still pending.
+The runtime and module-check gates pass; completed behavior/root gates are
+recorded below. The sentinel qualification defect prevents keeping the trial.
 The oracle host uses the existing module cache for correctness builds, not
 for performance measurements; all timed benchmark binaries use full LTO.
+
+
+### Sentinel qualification defect found before selection
+
+The trial guards the closure's prototype only with `pi < vm.protos.len`.
+That excludes the native sentinel on the measured scripts, but is not the
+same predicate as prepare's explicit sentinel classification. `Vm.protos`
+is a public u64-length window (`vm/module.wfm`), and no entry contract caps
+it below `no_handle`. A live closure with proto `no_handle` and a window
+containing that index can therefore enter the fixed Lua path instead of
+prepare's native path. The source-level witness is this state relation,
+independent of whether this 32 GiB host can allocate that window. No such
+large allocation is attempted, and the corpus does not observe this boundary.
+
+The measured trial is therefore **ineligible and reverted**:
+runtime and check-time successes cannot substitute for preservation of
+routing conditions. Removing repeated classification remains a viable future
+trial with an explicit native-sentinel exclusion before prototype lookup;
+this result does not reject that guarded design. The requested root
+controls were completed on the measured trial, then the original call code
+was restored. A second
+performance candidate is outside this single bounded comparison. Record the
+missing predicate and its required follow-up in the existing Halo TODO.
+
+
+### Call behavior, root controls and reversion
+
+The cached oracle host builds in 540.20 s (exit 0), using the measured trial's
+library bytes and the unchanged host. Before full batches, counter-closure
+passes 3/3 ordinary in 0.62 s and 3/3 stress in 0.21 s. Ordinary **240/240**
+and GC-stress **240/240** comparisons then pass (1.23 and 1.34 s, exits 0),
+at budgets 1, 7 and 1000: 80 distinct scripts at three budgets. All 480
+actual typed replies and all report rows were independently checked against
+the original expected bytes. Stress reports 20,450 collections per budget;
+ordinary reports zero. These are behavior timings, not performance pairs.
+
+The existing local root cases pass 9/9 at stress and the three budgets.
+The sole-frame probe passes 1/1 at budget 1 with `--isolate-frames`, and the
+parked-stack probe passes 1/1 with `--collect-suspended`. Each removal below
+retains the same script and expected reply. Collector mutants remove one
+marking call at a time; original collector bytes are hash-verified between
+mutants. The parked-root control uses the existing harness flag.
+
+| Removed root | Positive observation | Removal observation | Runner exit |
+|---|---|---|---:|
+| Open upvalues | `kept` at all three budgets | `wrong` at all three budgets, 3 collections each | 1 |
+| Frame closure | `qqq`, isolated budget 1 | `invalid upvalue index`, 9 collections | 1 |
+| Constants | original stress corpus 240/240 | 90/240 pass, 150 failures; sizing hash-cas fails during setup with native exit 4 | 1 |
+| Parked stack | `zzz`, synthetic collection at budget 1 | function-index error at user_script:5, 5 collections | 1 |
+
+Mutant constructions exit 0 in 564.49, 563.76 and 602.83 s for open,
+frame and constants. Constant sizing takes 0.52 s (expected exit 1), then
+its full 240-comparison negative batch takes 1.45 s (expected exit 1).
+Replies, single-call source patches, input/binary hashes and reports are
+retained in the raw JSON. The three root probe scripts and all original
+oracle expectations remain byte-identical. These controls detect the selected
+omissions; they do not establish every-allocation reachability.
+
+**Reverted.** calls.wf and handlers.wf are restored byte-for-byte from task
+base 8f69de695; collect.wf is restored from its original bytes. Every retained
+baseline benchmark input hash and every library-source hash agrees again.
+No compiler, specification, conformance, runtime, gate, fixture or tree change
+survives. No rule has changed before/after behavior in the delivered source.
+There is no kept Halo decision, no open decision card and no approval log.
+
+Found along the way: repeated entry work is attributed, but its guarded
+replacement remains a follow-up; explicit sentinel exclusion is required by
+this source audit. The existing Halo performance TODO records that comparison
+and the unchanged 80-byte frame/result transport costs. A separate TODO
+records the iterator/CJSON sentinel routing overlap and its required minimal
+executable witness. The isolated contributions of checks, helper storage,
+branching and native layout remain uncertain. The native inspection finds no
+separate enter_fixed_lua symbol (objdump exits 0 but warns that the symbol is
+missing); no standalone candidate helper stack size is claimed.
+
+### Call experiment commands and limits
+
+Every heavy command below is a direct host-lock wrapper. Complete expanded
+commands, exits, wall times and authoring failures are retained in the raw
+JSON's `commands`. `<PUC_LUA>` is the supplied unmodified interpreter,
+`<PUC_SOURCE>` its source directory; native temporaries use this experiment's
+existing ignored target. Successful native constructions/checks exit 0;
+root omission comparisons exit 1 as intended.
+
+```sh
+perl .github/run-check.pl halo-call-counter-compile clang -O2 -I <PUC_SOURCE> -c research/experiments/halo-bench/target/call-counter/ldo.c -o research/experiments/halo-bench/target/call-counter/ldo.o
+perl .github/run-check.pl halo-call-counter-link clang -o research/experiments/halo-bench/target/call-counter/lua <PUC_SOURCE>/lua.o research/experiments/halo-bench/target/call-counter/ldo.o <PUC_SOURCE>/liblua.a -lm
+perl .github/run-check.pl halo-call-counter-full research/experiments/halo-bench/target/call-counter/lua research/experiments/halo-bench/kernels/fib.lua
+perl .github/run-check.pl halo-call-check-before compiler/target/gate/whitefootc --graph lib/halo/modules.wfg --check-module pkg::vm
+perl .github/run-check.pl halo-call-bench-build compiler/target/gate/whitefootc --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto -o research/experiments/halo-bench/target/halo-call
+perl .github/run-check.pl halo-call-six python3 -B research/experiments/halo-bench/run.py --lua <PUC_LUA> --before-binary research/experiments/halo-bench/target/halo-table --binary research/experiments/halo-bench/target/halo-call --kernels fib,loop,integer-table,string-key,concat,sort,binary-trees --scale binary-trees=14 --runs 6 --out research/experiments/halo-bench/target/call-six.json
+perl .github/run-check.pl halo-call-e2e-build compiler/target/gate/whitefootc --graph research/experiments/halo-e2e/modules.wfg --entry test --cache research/experiments/halo-bench/target/frame-gc-cache -o research/experiments/halo-bench/target/call-e2e
+perl .github/run-check.pl halo-call-oracle python3 -B research/experiments/halo-e2e/run.py --compiler compiler/target/gate/whitefootc --binary research/experiments/halo-bench/target/call-e2e --scratch-root research/experiments/halo-bench/target --budgets 1,7,1000 --actual research/experiments/halo-bench/target/call-actual-ordinary --report research/experiments/halo-bench/target/call-oracle.md
+```
+
+For the second before check, both candidate checks and all sizing pairs, use
+the raw JSON's corresponding labels, outputs and committed source states.
+The counter patch there reconstructs ldo-counter.c from the hashed supplied
+ldo.c; its fib(10) input replaces only N=30 with N=10. For oracle stress add
+`--gc-stress` and distinct report/actual paths. For local roots add
+`--cases research/experiments/halo-gc/cases`; the raw commands state each
+filter, budget and isolation/checkpoint flag. For each collector mutant,
+apply only its retained patch to collect.wf, build with the same cached oracle
+command under its own label/output, run its unchanged witness, then restore.
+The frame flag is `--isolate-frames`; the parked omission adds
+`--collect-suspended --omit-suspended-root` at stress, budget 1. Constant
+removal uses the original full stress corpus after the one-case sizing run.
+
+Six busy attempts exit 75 before later retries: counter compilation, two
+oracle sizing attempts, the frame probe, one premature constant-build attempt,
+and constant sizing. No busy wrapper starts a child. After the frame probe's
+75, dependent preparation was attempted too early; its missing-reply assertion
+stopped before source mutation, and the premature constant wrapper also
+returned 75. The collector remained the frame mutant, verified by hash. After
+waiting, the frame probe was retried successfully as a negative control;
+only then was the collector restored and the constant mutation built. The
+sequence error is retained, rather than described as a clean first attempt.
+Other authoring rejections are recorded outside successful medians: C include
+placement, canonical WF syntax/trivia/binder spelling, and a doc token in a
+mutant loop body, all exit 1 before their corrected commands pass.
+
+Unverified: execution of the large prototype-window boundary, precise cycle
+shares and isolated contribution of each entry cost, a repaired sentinel
+predicate's performance, other hosts/compilers, depth-16 trees, budgeted kernel
+performance, full every-allocation GC reachability, canonical make check and
+CI. Cargo and network are excluded; no push, PR or merge action is used.
+
+
+The first form-lint sample (`make design-lint`) passed but was inadvertently
+invoked without an outer host-lock wrapper. This execution error is excluded
+from locked timing claims and repeated under `perl .github/run-check.pl
+halo-call-design-lint make design-lint`. No performance or compilation stage
+was concurrent in this worktree; activity elsewhere during that unwrapped
+sample is not established. The record does not present it as a locked run.
