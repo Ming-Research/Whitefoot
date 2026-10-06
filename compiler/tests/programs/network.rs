@@ -1929,6 +1929,157 @@ fn firn_records_its_writes_as_redis_propagates_them() {
     );
 }
 
+/// [PRE-2] firn applies append-only blocks only after their EXEC, including
+/// blocks crossing its read buffer, and passes over EXEC outside a block,
+/// as Redis 7.0.15 does. A clean end inside a block cuts before its latest
+/// MULTI; an end inside a command cuts after the last whole command, even
+/// inside a block. The retained bytes and a second replay show why that
+/// distinction matters: a write appended inside a retained unfinished block
+/// is dropped on restart, as Redis drops it.
+#[cfg(target_os = "linux")]
+#[test]
+fn firn_replays_blocks_and_cuts_an_unloaded_end_as_redis_does() {
+    let program = firn();
+    let fixture = fixture_directory();
+    let a = resp(&["SET", "a", "1"]);
+    let m = resp(&["MULTI"]);
+    let e = resp(&["EXEC"]);
+    let b = resp(&["SET", "b", "2"]);
+    let c = resp(&["SET", "c", "3"]);
+    let value = "v".repeat(100);
+    let blocks: Vec<u8> = (0..2000)
+        .flat_map(|i| resp(&["SET", &format!("k{i}"), &value]))
+        .collect();
+    let whole = [
+        a.clone(),
+        m.clone(),
+        b.clone(),
+        resp(&["INCR", "a"]),
+        e.clone(),
+        c.clone(),
+    ]
+    .concat();
+    let crossing = [
+        a.clone(),
+        m.clone(),
+        blocks.clone(),
+        e.clone(),
+        resp(&["SET", "z", "9"]),
+    ]
+    .concat();
+    let unfinished = [a.clone(), m.clone(), b.clone()].concat();
+    let outside_exec = [a.clone(), e, b.clone()].concat();
+    let cases = [
+        (
+            "block-applies.aof",
+            whole.clone(),
+            vec![
+                (resp(&["GET", "a"]), b"$1\r\n2\r\n".to_vec()),
+                (resp(&["GET", "b"]), b"$1\r\n2\r\n".to_vec()),
+                (resp(&["GET", "c"]), b"$1\r\n3\r\n".to_vec()),
+            ],
+            whole,
+            b"$1\r\n1\r\n:4\r\n".to_vec(),
+        ),
+        (
+            "block-crosses-buffer.aof",
+            crossing.clone(),
+            vec![
+                (resp(&["DBSIZE"]), b":2002\r\n".to_vec()),
+                (
+                    resp(&["GET", "k1999"]),
+                    format!("$100\r\n{value}\r\n").into_bytes(),
+                ),
+            ],
+            crossing,
+            b"$1\r\n1\r\n:2003\r\n".to_vec(),
+        ),
+        (
+            "clean-end-in-block.aof",
+            [a.clone(), m.clone(), blocks].concat(),
+            vec![(resp(&["DBSIZE"]), b":1\r\n".to_vec())],
+            a.clone(),
+            b"$1\r\n1\r\n:2\r\n".to_vec(),
+        ),
+        (
+            "partial-command-in-block.aof",
+            [unfinished.clone(), c[..9].to_vec()].concat(),
+            vec![(resp(&["DBSIZE"]), b":1\r\n".to_vec())],
+            unfinished.clone(),
+            b"$-1\r\n:1\r\n".to_vec(),
+        ),
+        (
+            "partial-command-outside-block.aof",
+            [a.clone(), b[..12].to_vec()].concat(),
+            vec![(resp(&["DBSIZE"]), b":1\r\n".to_vec())],
+            a,
+            b"$1\r\n1\r\n:2\r\n".to_vec(),
+        ),
+        (
+            "nested-multi.aof",
+            [unfinished.clone(), m, c].concat(),
+            vec![(resp(&["DBSIZE"]), b":1\r\n".to_vec())],
+            unfinished,
+            b"$-1\r\n:1\r\n".to_vec(),
+        ),
+        (
+            "exec-outside-block.aof",
+            outside_exec.clone(),
+            vec![(resp(&["DBSIZE"]), b":2\r\n".to_vec())],
+            outside_exec,
+            b"$1\r\n1\r\n:3\r\n".to_vec(),
+        ),
+    ];
+    for (name, input, checks, mut kept, reload) in cases {
+        let path = fixture.path().join(name);
+        std::fs::write(&path, input)
+            .unwrap_or_else(|error| panic!("{name}: write the fixture: {error}"));
+        let mut batch = Vec::new();
+        let mut expected = Vec::new();
+        for (request, reply) in checks {
+            batch.extend(request);
+            expected.extend(reply);
+        }
+        let after = resp(&["SET", "after", "1"]);
+        batch.extend_from_slice(&after);
+        expected.extend_from_slice(b"+OK\r\n");
+        kept.extend(after);
+        let port = free_port();
+        let text = port.to_string();
+        let client = std::thread::spawn(move || {
+            let mut client = connect_when_ready(port);
+            client
+                .write_all(&batch)
+                .unwrap_or_else(|error| panic!("{name}: send the checks and write: {error}"));
+            expect_replies(&mut client, &expected, &format!("{name}: first replay"));
+        });
+        let output = program.run(fixture.path(), &[text.as_bytes(), b"1", name.as_bytes()]);
+        client
+            .join()
+            .unwrap_or_else(|error| panic!("{name}: first client: {error:?}"));
+        assert!(output.status.success(), "{name}: first run: {output:?}");
+        let file = std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("{name}: read the retained file: {error}"));
+        assert_eq!(file, kept, "{name}: retained bytes and appended write");
+
+        let port = free_port();
+        let text = port.to_string();
+        let client = std::thread::spawn(move || {
+            let mut client = connect_when_ready(port);
+            let batch = [resp(&["GET", "after"]), resp(&["DBSIZE"])].concat();
+            client
+                .write_all(&batch)
+                .unwrap_or_else(|error| panic!("{name}: send the reload checks: {error}"));
+            expect_replies(&mut client, &reload, &format!("{name}: second replay"));
+        });
+        let output = program.run(fixture.path(), &[text.as_bytes(), b"1", name.as_bytes()]);
+        client
+            .join()
+            .unwrap_or_else(|error| panic!("{name}: second client: {error:?}"));
+        assert!(output.status.success(), "{name}: second run: {output:?}");
+    }
+}
+
 /// [PRE-2] a deadline on `receive_next` closes a client silent past
 /// firn's idle limit: with a limit of one second, the connection ends after
 /// at least 0.9 and at most two seconds of silence. A limit CONFIG SET
