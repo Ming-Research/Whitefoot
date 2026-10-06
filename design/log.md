@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-06 x86-64 dispatch parts budget for their table-loaded transfer; one pinned LLVM in the gate
+
+Nodes: compiler/match-dispatch-lowering, compiler/verification, compiler/backend-facts
+
+Owner-approved: In the session of 2026-10-06, written in Chinese, after the report on PR #256 that presented its three tree changes as Q123 and the release-compatibility question as Q124: "Agree to Q123. For 124 I think fixing one version is better" (translated). Earlier the same day the owner directed the gate's toolchain: "if it is daily CI it must use GitHub's x64 machines, and I suggest using the latest clang" (translated).
+
+Summary: The dispatch parts' `preserve_none` budget is 11 integer registers on x86-64 outside Windows, because the parts' guaranteed tail call through a table-loaded address needs one of the twelve, and with all twelve clang 19 failed in register allocation; Windows keeps 12 and AArch64 24. The gate's Linux jobs build with one pinned LLVM major from apt.llvm.org, now 22, so CI exercises `preserve_none`, which Ubuntu's clang 18 lacks, and a raise of the pin is its own change. The build probes `llvm.coro.end`'s result type, which LLVM changed from `i1` to `void`, as it probes the no-capture spelling. Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md#argument-registers).
+
 ## 2026-10-06 By-value parameters keep their entry copy
 
 Nodes: compiler/storage-placement

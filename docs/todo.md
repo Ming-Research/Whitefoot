@@ -2126,14 +2126,31 @@ rarely insert at the same place.
   Take it up after the current correctness fixes land; close when one route
   ships with its boundary specified and tested, or the owner records why one
   route suffices.
-- **The driver's clang lookup is a fixed path.** `clang_executable()` in
-  `compiler/src/bin/whitefootc.rs` hard-codes `/usr/bin/clang` on Linux/macOS
-  (`clang` on PATH on Windows), so a host whose clang lives only elsewhere — a versioned-only `clang-18`, a
-  Nix profile, or Homebrew LLVM — cannot run the driver even with clang
-  installed. Validate whether to accept an
-  explicit override, for example an environment variable, without changing
-  which clang CI uses. Close when the owner decides for or against the
-  override and, if accepted, its implementation lands.
+- **A formal release must carry its own clang.** `clang_executable()` in
+  `compiler/src/bin/whitefootc.rs` hard-codes `/usr/bin/clang` on Linux and
+  macOS (`clang` on PATH on Windows), and `build.rs` probes that same clang
+  for `preserve_none`, the no-capture spelling and `llvm.coro.end`'s result
+  type. The probed answers are fixed into the executable. A release built
+  against one LLVM can therefore emit IR the host's clang refuses: clang
+  22.1.8 rejects the `i1` `llvm.coro.end` that compilers built against
+  clang 18 emit. A host whose clang lives elsewhere (a versioned `clang-22`,
+  Nix, Homebrew) also cannot run the driver.
+
+  Until then, releases and their consumers use the gate's pinned LLVM major
+  (compiler/verification, compiler/downstream-releases). Bundling clang
+  into every release waits: at about 100 to 200 MB per release, not
+  measured, it costs too much at the current release rate. A formal release
+  still needs it.
+
+  The change, for the first formal release:
+  - each release ships the pinned LLVM's clang, lld and the files they need;
+  - `whitefootc` runs that clang, next to itself, instead of `/usr/bin/clang`;
+  - the build-time probes ask the bundled clang;
+  - on macOS, the bundled clang uses the system SDK and linker.
+
+  Validate with a release that builds and links a waiting program on a host
+  with no clang installed, and on one whose system clang is another major.
+  Reopen with the first formal release, or when the release rate drops.
 - **One rejection per compilation.** The pipeline stops at its first
   violation, so an agent with several independent defects — two unproved
   subscripts in different functions, say — meets them one compile at a time.

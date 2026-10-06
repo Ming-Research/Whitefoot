@@ -133,7 +133,8 @@ fn host_convention() -> (&'static str, usize) {
     let preserve_none = env!("WHITEFOOT_PRESERVE_NONE") == "1";
     match (preserve_none, cfg!(target_arch = "aarch64"), cfg!(windows)) {
         (true, true, _) => ("preserve_nonecc ", 24),
-        (true, false, _) => ("preserve_nonecc ", 12),
+        (true, false, true) => ("preserve_nonecc ", 12),
+        (true, false, false) => ("preserve_nonecc ", 11),
         (false, _, true) => ("", 4),
         (false, true, false) => ("", 8),
         (false, false, false) => ("", 6),

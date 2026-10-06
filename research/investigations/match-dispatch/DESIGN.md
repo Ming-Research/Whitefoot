@@ -359,3 +359,88 @@ accumulator register instead of a frame slot, for 135 million of the 506
 million dispatches. The checker's growth with function size still limits
 the interpreter's form: a handler that delivers a value from a `match`
 stays a helper function.
+
+## Stage 3 on x86-64
+
+Every stage-3 result so far is from the M1 Pro, where the convention without
+callee-saved registers, `preserve_none`, passes 24 integer arguments in
+registers. On x86-64 it passes 12
+([argument registers](../../experiments/match-dispatch/RESULTS.md#argument-registers)),
+and the C convention passes 6. v2h's split loop takes 16. Below that budget,
+compiler/match-dispatch-lowering moves the values the loop cannot change into
+frame slots, and emits the loop whole when the parts still do not fit. The
+convention is chosen by a build-time probe of `/usr/bin/clang`, and LLVM 19
+added `preserve_none`. So the form depends on the host's clang:
+
+- the 14900K runner has clang 18 and so builds parts under the C convention;
+- an x86-64 host with clang 19 or later uses `preserve_none`.
+
+The question: how does the lowering emit v2h on x86-64 under each
+convention, and how far is the interpreter from Silverfir-nano's on the same
+x86-64 host?
+
+**Method.**
+- **Interpreter:** v2h as `wasm/gen.py` writes it at the measured revision,
+  compiled by that revision's `whitefootc`.
+- **Emission:** `--dispatch-ledger` reports whether the dispatch loop split
+  and otherwise the first condition it failed.
+- **Workload:** the CoreMark 2K performance run, `0x0 0x0 0x66 2000`.
+- **Comparison:** Silverfir-nano at `5f248e44`, release `sf-nano-cli
+  --interp`, alternating launches with `wasm/coremark.py`, medians.
+- **Hosts:**
+  - the 14900K, with its clang 18, for timing;
+  - a GitHub-hosted `ubuntu-24.04` runner with clang 19 as `/usr/bin/clang`,
+    for the `preserve_none` emission. Its timing indicates only, since the
+    runner's processor is not chosen.
+
+**Prediction, written before measuring.**
+- **Clang 18 (C convention):** the loop does not fit the 6 registers even
+  with the values it cannot change in the frame, so it is emitted whole,
+  and the ratio to Silverfir-nano falls well below the M1's 0.519.
+- **Clang 19 (`preserve_none`):** the loop splits with some values in the
+  frame. The ratio stays near the M1's, 0.40 to 0.52.
+
+**What decides the next step.** The rule is fixed now.
+- **Split with `preserve_none` and ratio at least 0.45:** x86-64 needs
+  nothing of its own beyond a clang that has the convention. The next
+  lowering change is the loop-carried index carried as an address
+  (`docs/todo.md`, "A loop-carried index is recomputed into an address in
+  every arm").
+- **Not split under `preserve_none`, or ratio below 0.45 with the parts
+  reading frame slots on the hot path:** the next change is the x86-64
+  register budget, meaning which values the parts carry in registers.
+- **Clang 18 only:** the C convention's result is recorded as the cost of a
+  host without the convention. Whether the 14900K gets a clang with it goes
+  to the owner, because the runner is shared with other repositories.
+
+## Stage 3 on x86-64 outcome
+
+**The first `preserve_none` build failed.** With clang 19, the lowering
+split v2h's loop into parts taking all 12 integer registers it counted for
+x86-64. The build then failed in register allocation: the parts' transfer,
+a guaranteed tail call through a table-loaded address, needs one of those
+registers for the address. `regprobe.py` now measures that transfer itself.
+It gives 11 on x86-64 Linux, 12 on Windows x64 and 24 on AArch64, under
+clang 19 and 20
+([argument registers](../../experiments/match-dispatch/RESULTS.md#argument-registers)).
+The budget is corrected to those counts.
+
+**After the correction, the loop splits under both conventions**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-on-x86-64)):
+- `preserve_none` on a hosted EPYC: 11 registers and 4 values in the frame,
+  0.771 of Silverfir-nano. This is indicative only, since the processor is
+  not chosen.
+- The C convention on the 14900K under clang 18: 6 registers and 9 values in
+  the frame, 0.560 of Silverfir-nano.
+
+The measured interpreter splits on both hosts, and each ratio clears the
+threshold the rule set. These runs compare Whitefoot with Silverfir-nano on
+different processors and toolchains. They do not isolate what the split, or
+either convention, costs on x86-64, and the M1's 0.519 was measured on
+another processor.
+
+By the rule fixed before measuring, the loop splits under `preserve_none`
+with a ratio of at least 0.45. So the next lowering change is the
+loop-carried index carried as an address. The 14900K's clang 18 has no
+`preserve_none`, so timing that form there needs a newer clang on the host,
+which the runner's other users share.
