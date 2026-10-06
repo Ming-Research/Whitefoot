@@ -54,8 +54,6 @@ describe evidence, not a workflow step.
   decides when compatibility starts to count.
 - `research/README.md` holds the method for attributing a performance loss or
   proof cost and for agent writer trials.
-- A specification change travels on the same pull request as the code and
-  tree changes it requires.
 - The completion report also shows every specification change rule by rule,
   with its before and after behavior and the card that selected it or why it
   needed none.
@@ -155,8 +153,9 @@ read.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff.
 - `docs/constitution.md`: complete statements of purpose, objectives,
   obligations, prohibitions, tradeoffs and their conditions; not
-  conversations, progress, maintenance instructions, abbreviated labels or a
-  selected mechanism presented as an inevitable consequence of the purpose.
+  conversations, progress, maintenance instructions, abbreviated labels,
+  per-clause usage checklists or a selected mechanism presented as an
+  inevitable consequence of the purpose.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
   `spec/log.md` holds its approvals.

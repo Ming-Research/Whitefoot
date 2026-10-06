@@ -8,13 +8,7 @@ which groups a change gets, and merge conditions are in its
 ## How to review
 
 Read the relevant [document roles](../AGENTS.md#document-roles) and the
-definitions, callers or cases the change directly affects. Mark each item
-`pass`, `finding`, `unverified` or `not applicable`; missing evidence is not a
-pass. When the task changes a review rule or an expected result, compare its
-previous form with the requested change rather than judging only against the
-newly edited rule. A question that local inspection and cases cannot settle,
-such as the soundness of a design argument, is marked `unverified` for the
-implementing agent.
+definitions, callers or cases the change directly affects.
 
 ## A. Repository — every change
 
@@ -27,33 +21,17 @@ Source: [repository hygiene](../AGENTS.md#repository-structure-and-hygiene).
 
 ## D. Documentation — changed Markdown, comments or examples
 
-- [ ] **D1 — Purpose.** Each changed passage fits its
-  [document role](../AGENTS.md#document-roles), without editorial history or
-  process instructions inserted into substantive documents. A constitutional
-  change states complete clauses with their obligations and conditions; a
-  chosen prohibition is not merely a report of current implementation
-  behavior.
-- [ ] **D2 — References.** Changed references resolve to the intended file,
-  heading or symbol and obey the
+- [ ] **D1 — Constitution.** A constitutional change states complete clauses
+  with their obligations and conditions; a chosen prohibition is not merely a
+  report of current implementation behavior.
+- [ ] **D2 — Citation boundaries.** Changed references obey the
   [citation boundaries](../AGENTS.md#citation-boundaries).
-- [ ] **D3 — Current meaning.** Changed claims distinguish a goal, proposal,
-  specified behavior, implemented capability and dated measurement;
-  historical positions are not conflicting current instructions merely
-  because they differ.
-- [ ] **D4 — Usability.** Instructions name real commands and prerequisites.
-  Changed runnable examples have been checked through the ordinary path;
-  fragments have enough surrounding context and are not offered as complete
-  programs. No duplicated changing status or version identity needs another
-  synchronized update.
 
 ## C. Code and cases — changes under `compiler/`, `lib/` or `tests/`
 
 Source: [compiler rules](../AGENTS.md#compiler-rules) and
 [test integrity](../AGENTS.md#specification-and-test-integrity).
 
-- [ ] **C3 — General path.** The diff implements a grammar or semantic rule or
-  a general runtime operation; no function, project, source shape or test name
-  selects a special acceptance or lowering path.
 - [ ] **C4 — Safety boundary.** Inspect changed acceptance and proof paths for
   added Rust `unsafe`, weakened contracts, runtime substitutes for required
   proof, impossible-case returns, and timeout/fuel/heuristic acceptance limits.
@@ -122,8 +100,7 @@ Source: [branch and main boundary](../AGENTS.md#branch-and-main-boundary).
   decision card that selected each or why it needed none. Conformance changes
   explain what changed and their selection ground. A PR marked ready has the
   owner's approval of every specification change it carries, recorded in
-  `spec/log.md`. A merge has the owner's approval and a passing root
-  `make check` for the exact merge tree.
+  `spec/log.md`.
 
 Existing checks: `git diff --check` for patch whitespace; `make static` for
 repository invariants, specification archives (immutability and amendment

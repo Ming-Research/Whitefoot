@@ -3459,7 +3459,7 @@ condition under which it is taken up.
   the same way. It is not the gate's critical path while the unit job is
   longer; reopen when the corpus job becomes the longest or its budget trips.
   This changes conformance evidence wiring, so the PR states it under
-  AGENTS.md rule 4.
+  AGENTS.md, Branch and main boundary.
   The local macOS amendment S gate at
   `f1fba77c3fa422348b72a00301105d4908e68e5a` took 214.72 s in
   `compiler/test-corpus`, above its 125 s budget; the native conformance walk
