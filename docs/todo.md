@@ -3460,10 +3460,14 @@ condition under which it is taken up.
   about 90% before the stage trips, and the overrun may land on a later
   change's run
   ([budget size](../research/investigations/test-economy/time-budgets.md#the-gate)).
-  The gate's host record now prints the processor model. If the fast and
-  slow runs separate by model, give each model its own budget column, with
-  the current one kept for an unknown model, and lower the margin as far as
-  the within-model spread allows; validate that a leave-one-out over at
+  The processor model now shows that they separate: on 2026-10-05
+  `compiler/test-unit` had a median of 105 s on the AMD EPYC 7763 and 65 s
+  on the EPYC 9V45, and the budgets were raised to cover the 7763
+  ([mixed processors](../research/investigations/test-economy/time-budgets.md#the-gate)).
+  Give each model its own budget column, with the slowest kept for an
+  unknown model, and lower the margin as far as the within-model spread
+  allows; macOS, one virtual model with `compiler/test-unit` at 56–137 s,
+  gains nothing from it; validate that a leave-one-out over at
   least seven runs per model trips no build or case stage. Reopen when an
   overrun is traced to a change that earlier runs on faster machines passed,
   or when clippy's variance overruns come more than about once a week.
