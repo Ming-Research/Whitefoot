@@ -609,3 +609,39 @@ x86-64 with the gate's pinned LLVM at this branch. From it:
   on the 14900K against its base, with a twin of the base as the noise
   control, and adopt it if the median rises at least 2%.
 - **Otherwise:** record the attribution and close this step.
+
+**Attribution**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-x86-64-register-pressure)).
+The hot arms reload a kept value on every dispatch: the stack's element
+address, which 129 of the 318 arms read. Meanwhile three values that at
+most two arms read hold registers. So the rule's first branch applies.
+Both causes are defects of the general lowering, not of this program:
+- **Reads through replaced projections are not counted.** The spill order
+  counts the arms that name a value, while an arm reaches a box the loop
+  keeps through its own projection, which emission replaces by the hoisted
+  one.
+- **An unread address stays a parameter.** With the code cursor, the run's
+  address remains a part parameter although no part reads it.
+
+**The candidate.** Count an arm as reading a value when it reads any
+projection that emission replaces by that value, or hands such a value to
+a callee through a part's pin slot. Leave out of the parts' parameters a
+hoisted value that no instruction emitted in a part reads.
+
+**Prediction:** on x86-64 the stack's element address moves to a
+register, removing the reload from every arm that reads a frame slot. The
+register freed by the code's element address keeps one more value out of
+the frame, or passes the handler table's address.
+
+**Criterion, fixed before measuring**, extended by the owner's direction
+that this lowering serves Lua and other interpreters, not this one:
+- **Measurement on two interpreters, the 14900K deciding:**
+  - the stage-3 wasm interpreter on CoreMark 2K;
+  - Halo's Lua interpreter on its `fib` and `loop` kernels, built from
+    Halo-wf at a commit pinned to a release built with LLVM 22.
+- **Each comparison:** the branch's compiler against its base, with a
+  twin of the base, 7 interleaved launches, medians.
+- **Adoption:** if CoreMark's median rises at least 2% and no Halo kernel
+  falls more than 2%.
+- **The code cursor itself** is measured on the same Halo kernels against
+  its own base, as a check that it serves another interpreter.

@@ -812,6 +812,47 @@ A's compiler at `82cba945e`, equal to `7f86697b1`'s):
 The twin sits within 1% of the base and A 13.3% above it. The macos-15
 job of the same run spread by 30-51% and is not shown.
 
+## Stage 3: x86-64 register pressure
+
+The question and the rule are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-x86-64-register-pressure).
+The branch `claude/stage3-x86-regs` at `2eccb0f94`, whose compiler equals
+the code cursor's `f1db34716`, emitted v2h's x86-64 module with clang
+22.1.8
+([run 37548771908](https://github.com/Ming-Research/Whitefoot/actions/runs/37548771908),
+artifact `stage3-x86-ir`). The loop splits into 318 arms and takes all 11
+integer registers. The arms counted below use the value in an emitted
+instruction other than loading it from the frame, storing it into a
+part's pin slot, passing it on unchanged, or joining it.
+
+| part parameter | the `run` parameter it comes from | arms using it | where the parts keep it |
+|---|---|---:|---|
+| `fp`, the frame base | `fp` | 304 | register |
+| the code's length | `code` | 254 | register |
+| the stack's elements | `stack` | 129 | **frame** |
+| `acc` | `acc` | 102 | register |
+| the memory's elements | `mem` | 40 | register |
+| the constants' reference | `consts` | 2 | register |
+| the globals' elements | `globals` | 2 | register |
+| the function table's elements | `funcs` | 2 | frame |
+| the branch table's elements | `brtab` | 2 | frame |
+| the indirect-call table's elements | `table` | 1 | frame |
+| the code's elements | `code` | 0 | register |
+
+The parts also take `pc`, the matched element's address, the result's
+destination and the frame. Every arm that reads a frame slot reloads the
+stack's element address (`add 0xc8(%r11), %r10`). The split keeps that
+value in the frame although 129 arms read it, while three values that at
+most two arms read hold registers, one of them read by none. Two causes:
+- **The spill order misses reads through replaced projections.** It counts
+  the arms whose instructions name a value. An arm reads the stack's box
+  through its own projection, which emission replaces by the one computed
+  before the loop, so the count misses those reads.
+- **The cursor leaves the code's element address a parameter.** Since the
+  code cursor, the header receives the element's address instead of
+  forming it, so no part reads the run's address. It still counts as read
+  by every arm, because the header's indexing instruction names it.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic
