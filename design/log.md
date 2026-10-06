@@ -13,6 +13,29 @@ Owner-approved: In the session of 2026-10-05, after PR #250 showed the Q21 Rejec
 
 Summary: The refusal of addressing frame slots from a pointer each split part derives at entry no longer cites the size of its emitter code, which AGENTS.md does not allow as a reason; its ground stays the measured 0.9% score gain against the 2% criterion, and its reopening condition is unchanged (Q21).
 
+## 2026-10-06 Every compiler-produced function on a 64-byte boundary
+
+Nodes: compiler/code-alignment, compiler/verification, compiler/parallel-lowering
+
+Owner-approved: In the session of 2026-10-06, written in Chinese, translated: after the fix plan for the 16-byte code shift that changed `records` by 40 percent, "1-5 approved as recommended" (Q1-Q5): `align 64` written on every definition of the module (Q1), the C runtime compiled with `-falign-functions=64` (Q2), loop headers left at LLVM's alignment and measured only as an arm (Q3), a unit test and a placement control in the regression qualification (Q4) and 64 bytes on every target (Q5); and after the handoff of PR #252 at `02aa1489` that presented Q6: "OK, agree with the recommendation", accepting the aligned layout's cost to `records` on some processors (Q6 A).
+
+Summary: Every function the compiler produces starts on a 64-byte boundary, the module's through an `align 64` attribute on each definition because clang ignores `-falign-functions` for LLVM input, the C runtime's through `-falign-functions=64`, because a kernel whose code did not change failed the paired regression comparison when one runtime import moved every function by 16 bytes, and with every function aligned no shift moved any kernel's time on the four processor models the [placement experiment](../research/investigations/code-placement/DESIGN.md#conclusion) reached. Each function is padded rather than only each module's start, 64 bytes holds on every target provisionally until arm64 can be measured, loop headers keep LLVM's alignment since `-falign-loops=32` met the selection rule on no host, and the fixed layout's cost to `records` on some processors is accepted provisionally with a TODO to find a deterministic layout without it. The regression qualification gains a control that shifts the candidate's images by 96 bytes and first checks that each module moved. The parallel-lowering refusal of forced alignment is retired: its evidence passed `-falign-functions=64` to the module's LLVM, which aligned no kernel function. Refused: aligning only hot functions, aligning only each module's code section, `-mbranches-within-32B-boundaries`, and a placement-robust measurement with the compiler unchanged.
+
+## 2026-10-05 A file set to a length
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: Q40, adding a way to cut an append-only file whose end did not load, as Redis does, was approved in the firn session of PR #245 (2026-10-05). In the session of 2026-10-05, written in Chinese, after the handoff of PR #251 that showed the amended decision and the v0.93 change: "The two design nodes OK. The spec OK" (translated).
+
+Summary: A file is written by appending and set to a length: `truncate_file` sets the length of an open `WriteFile` so that the next append writes after it, because an append-only log whose end did not load must be cut after its last whole record before anything is appended, as Redis cuts its append-only file. Truncation leaves the refused-for-now list; positioned writes, renaming, a truncation by name and a specified crash model stay refused.
+## 2026-10-05 Compiler releases for projects outside this repository
+
+Nodes: compiler/downstream-releases
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, translated: Firn and Halo leave for repositories of their own (Q43 A); a downstream takes a published compiler instead of building it (Q44 B); no scheduled downstream CI, "I only need to have an agent often update every downstream project to the latest Whitefoot" (Q45); the design-tree skill as a submodule everywhere (Q49 B); releases made when a downstream needs one, "clean up those older than a month" (Q51); the documentation bundle deferred, "put it in the TODO; future releases will certainly carry it, not now"; "no automatic releases, manual is fine; the 30-day cleanup is fine for now, it may need another way once the rapid-development period is over"; and after the handoff of PR #249: "The two design nodes OK".
+
+Summary: Programs written in Whitefoot that are projects of their own live in their own repositories with their own gates, because one shared gate ran the compiler's suite on every application push and the applications' cases on every compiler push while their real gates belong in no compiler gate. A downstream pins a compiler release by name, `wf-` and twelve hex digits of a main commit whose gate passed, made by hand on request, with experiment releases `wf-exp-` for unmerged commits on experiment branches; a specification version is no pin, since the compiler changes within one. Releases carry no documents for now, provisionally. A weekly run removes releases published more than 30 days ago except the newest of main, provisionally for the period of rapid change. This repository's gate builds no downstream program; the periodic upgrade finds a compiler change that breaks one. Refused: application lanes in this gate, one repository for every application, releases per specification version or per day, a Whitefoot submodule in each downstream, and a scheduled downstream run.
+
 ## 2026-10-05 A box pinned across calls that cannot replace it; cache pruning and derived addresses refused
 
 Nodes: compiler/match-dispatch-lowering, compiler/incremental-compilation

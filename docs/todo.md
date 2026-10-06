@@ -1544,7 +1544,14 @@ rarely insert at the same place.
   they establish no cause or fix. Existing raw data lacks scheduling counters,
   and ARM or emulated results cannot clear this Linux signal. A retained-image
   W4 paired/null counter check is a possible discriminator, not selected or
-  run. Defer mechanism changes until evidence distinguishes the possible causes;
+  run. The [code-placement investigation](../research/investigations/code-placement/DESIGN.md)
+  attributes one class of such readings: byte-identical `records` code shifted
+  by 16 to 48 bytes changes its time by up to 40 percent, and every
+  compiler-produced function now starts on a 64-byte boundary, so a shift
+  below 64 bytes moves no function within its line and qualification runs a
+  32-byte placement control. The readings above predate that alignment and
+  are not attributed one by one; a `records` suspect that recurs after it is
+  not a sub-line placement effect. Defer mechanism changes until evidence distinguishes the possible causes;
   reopen on selection of a bounded Linux attribution experiment and preserve
   the suspect if that experiment is uninformative. Keep this item
   until the observations and measurement/detection tradeoff are explained by
@@ -1754,25 +1761,40 @@ rarely insert at the same place.
   program with small per-connection state, such as a proxy that shares its
   buffers, is written.
 
-- **A 16-byte shift of a kernel's code changes its measured speed by 40
-  percent.** The `records` compute kernel's hot function,
-  `wf__par_seq_summarize_records`, runs about 21 ms at one worker when it
-  starts at image offset 0x3200 and about 29 ms at 0x3210, with identical
-  instructions: cachegrind counts 2,512,523,716 and 2,512,524,120. One more
-  imported libc function adds a PLT entry before `.text`, which is enough to
-  move it. The stackful waiting-context floor's `mprotect`, since removed,
-  did that, and so did an unrelated `getpagesize` import linked beside the
-  base runtime. The measured
-  times were 20.7 ms for the base, 29.5 ms for the base with the extra import
-  and 28.5 ms for the candidate floor: medians of eleven runs on a 2.1 GHz
-  Xeon. `compute-regression` then reports `records` as adverse at two widths
-  for a change that leaves the kernel's generated code identical. Every later
-  runtime import will do the same. Align emitted functions and loop headers
-  (for example 64-byte function alignment, or building kernel objects with
-  `-mbranches-within-32B-boundaries`), measure the kernels under both
-  placements, and adopt whichever makes their time independent of the
-  offset. Reopen when the next compute-regression verdict names a kernel
-  whose generated code did not change.
+- **The aligned layout of `records` is slower on some AMD EPYC hosts.**
+  Every compiler-produced function starts on a 64-byte boundary, which makes
+  the compute kernels' times independent of where they are linked, but on a
+  hosted AMD EPYC 9V74 it fixes `records` at a layout that took 5 to 14
+  percent longer than its median unaligned placement in a three-round run;
+  on the 14900K and the EPYC 7763 the aligned layout costs at most about 3
+  percent against that median, and on a 9V45 and a Xeon 8370C 3 to 5 percent
+  at one worker while gaining at others. Against the regression gate's
+  baseline, the merge base's unaligned module over a runtime aligned by the
+  candidate's flags, four of eight `compute-regression` runs of the change
+  failed on `records`, 8 to 18 percent longer, one of them named as a 9V45,
+  and two passing runs on 7763s read width 4 as a suspect, 0.917 and 0.845,
+  though the decisive 9V45 run and the 7763 run whose placements are
+  tabulated found the aligned layout faster than `main`'s own placement or
+  within 2 percent of it
+  ([code placement](../research/investigations/code-placement/DESIGN.md#results)).
+  A hypothesis, not yet tested: the kernel's UTF-8 validation loop is dense in
+  branches, and which of them share a 64-byte line follows the layout. On the
+  9V45, `-falign-loops=32` on top of the function alignment made `records` 4
+  to 9 percent faster at every width, though its time then moved with
+  placement in a cell that run did not locate; on the 14900K and the EPYC
+  7763 it was faster at two widths of no kernel. Aligning only each module's
+  section start, which keeps the linker's relative layout, is another
+  candidate, refused for now in `design/compiler/code-alignment.md`. Find what the aligned layout costs
+  on the 9V74 and the 9V45, for example with branch-misprediction and
+  op-cache counters on the aligned and the fastest unaligned layout; add
+  the gate's layout, an unaligned module over an aligned runtime, as an arm
+  of the placement experiment to tell whether it is faster or the gate's
+  hosts differ; and look for a deterministic layout rule, such as a loop
+  alignment or an ordering of a function's blocks, that removes the cost
+  without reintroducing placement dependence; validate with the placement
+  experiment on the hosted runner and the 14900K. Reopen when a hosted AMD
+  run or a downstream program's profile shows a branch-dense loop paying
+  more than 5 percent for its layout.
 
 - **Every atomic statement holds its object alone.** Statements whose
   blocks only read could share the object, but lowering always acquires for
@@ -2214,16 +2236,17 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files can only be appended.** `std::fs` opens a file for appending,
-  appends, syncs and closes it [PRE-2], and has no positioned write,
-  truncation, rename, removal, directory creation, directory sync, create rule
-  other than create-if-missing, or way to descend into a subdirectory for
-  writing. A program cannot rewrite a log compactly, as Redis's
-  `BGREWRITEAOF` writes a new file, syncs it, renames it over the old one and
-  syncs the directory, nor clean up a file it made; the append-only surface
-  was chosen as the one the persistent programs in view needed
+- **Files can only be appended or set to a length.** `std::fs` opens a file
+  for appending, appends, sets its length, syncs and closes it [PRE-2], and
+  has no positioned write, rename, removal, directory creation, directory
+  sync, create rule other than create-if-missing, or way to descend into a
+  subdirectory for writing. A program cannot rewrite a log compactly, as
+  Redis's `BGREWRITEAOF` writes a new file, syncs it, renames it over the old
+  one and syncs the directory, nor clean up a file it made; the surface was
+  chosen as the one the persistent programs in view needed
   (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
-  directories and append-only files"). Each addition is a specification
+  directories and append-only files"), and `truncate_file` was added for
+  cutting a log whose end did not load. Each addition is a specification
   change to `std::fs` taking the write half. Validate with a program that
   rewrites its log through a new file and a rename, and survives being
   stopped between the two steps with one of the two files whole. Reopen when
@@ -2404,6 +2427,22 @@ rarely insert at the same place.
   Subtree-private independently compiled modules remain unselected; reconsider
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
+
+- **A compiler release carries no documents for its downstream writers.**
+  `compiler-release.yml` publishes `whitefootc`, a manifest and checksums
+  only, so an agent writing a downstream project reads the specification,
+  the maintained programs and the standard library's interfaces in this
+  repository at the release's commit
+  ([downstream releases](../design/compiler/downstream-releases.md)). That
+  ties every downstream writer to this repository's layout and to network
+  access at the moment it writes code, and gives no single list of what a
+  writer needs. The change: choose what a release carries for writers, such
+  as the specification, `lib/std`'s `module.wfm` interfaces, `docs/patterns.md`
+  and selected programs, in what form and under what stable names, and add it
+  to each release. The owner deferred the choice as larger than the release
+  mechanism; future releases are to carry it. Reopen when the downstream
+  projects' first upgrades show which documents their writers read, or when a
+  writer has to work without access to this repository.
 
 ## Interpreter dispatch lowering
 
@@ -3488,6 +3527,18 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
+- **The paired comparison compiles both arms' runtime with the candidate's
+  flags.** `tests/performance/Makefile` includes the candidate's
+  `compiler/runtime.mk`, so the baseline's runtime sources compile with the
+  candidate's `NATIVE_OPTIMIZATION_FLAGS` and against the candidate's unit
+  list. A change to how the driver compiles the runtime, as
+  `-falign-functions=64` in the code-placement change, reaches both arms and
+  the comparison cannot see it, and a runtime unit added or removed would
+  fail the baseline's build. The change: include each arm's own
+  `runtime.mk`, from `$(ROOT)`, so each arm builds its runtime as its own
+  driver does; validate that a flag change in the candidate's `runtime.mk`
+  then differs between the arms' native objects. Reopen at the next change to
+  the runtime's compile flags or unit list.
 - **The first cold compiler build in `compute-regression` is 10–15% slower.**
   Whichever compiler the job builds first takes longer, so the candidate's
   build time carries a bias its budget now covers

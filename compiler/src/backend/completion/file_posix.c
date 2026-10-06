@@ -293,6 +293,20 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
             request->operation.write.count
         );
         break;
+    case WF_FILE_TRUNCATE:
+        /* Preserve the unsigned source length until the host boundary. */
+        if (request->operation.truncate.length > INT64_MAX
+            || (uint64_t)(off_t)request->operation.truncate.length
+                != request->operation.truncate.length) {
+            result.head.value = -1;
+            errno = EFBIG;
+            break;
+        }
+        result.head.value = ftruncate(
+            request->operation.truncate.descriptor,
+            (off_t)request->operation.truncate.length
+        );
+        break;
     /* The host's own interface for handing written bytes to durable storage
      * [PRE-2]: Darwin's fsync hands them only to the drive's cache, and
      * F_FULLFSYNC is what asks the drive; a file system that refuses it gets
@@ -538,11 +552,12 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
             return result;
         }
         switch (request->kind) {
-        /* An append or a sync of a regular file never waits for readiness,
+        /* An append, sync or truncate of a regular file never waits for readiness,
          * and carries no deadline, so an interruption by some other signal
          * is retried and any other refusal is its answer. */
         case WF_FILE_APPEND:
         case WF_FILE_SYNC:
+        case WF_FILE_TRUNCATE:
             if (result.head.error_code == EINTR) {
                 continue;
             }

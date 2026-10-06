@@ -878,6 +878,37 @@ void wf__body_sync_file(wf_close_result *result, wf_value *factory, wf_value *fi
         wf__body_sync_file_finish(result, factory, file, &operation);
 }
 
+/* [PRE-2] set the file length, retaining append-at-end behavior. */
+int wf__body_truncate_file_start(wf_close_result *result, wf_value *factory, wf_value *file,
+                                 uint64_t length, wf_host_operation *operation) {
+    (void)result;
+    wf_transition(factory);
+    wf_transition(file);
+    wf__completion_file_truncate_submit(wf_descriptor(file), length, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_truncate_file_finish(wf_close_result *result, wf_value *factory, wf_value *file,
+                                   uint64_t length, wf_host_operation *operation) {
+    int64_t amount;
+    int error;
+    (void)factory;
+    (void)file;
+    (void)length;
+    wf__completion_file_join(&operation->record, &amount, &error);
+    memset(result, 0, sizeof(*result));
+    if (amount < 0) {
+        result->tag = 1;
+        wf_error(&result->err.error, error, 9);
+    }
+}
+
+void wf__body_truncate_file(wf_close_result *result, wf_value *factory, wf_value *file, uint64_t length) {
+    wf_host_operation operation;
+    if (wf__body_truncate_file_start(result, factory, file, length, &operation))
+        wf__body_truncate_file_finish(result, factory, file, length, &operation);
+}
+
 int wf__body_open_directory_source_start(wf_open_result *result, wf_value *factory,
                                          const wf_value *directory,
                                          wf_host_operation *operation) {
