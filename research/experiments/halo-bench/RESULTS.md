@@ -1843,3 +1843,51 @@ identity. This reused-binary reporting limitation is recorded in TODO.
 A single full-LTO benchmark construction is the smallest executable sample
 for this comparison; do not batch or repeat constructions without a failure.
 Execution is sized separately after that construction.
+
+
+### Repeat runtime sizing
+
+Full-LTO benchmark construction passes in 561.64 s, exit 0. The one-pair
+launch sample takes 13.10 s and the three warm pairs 31.25 s, exits 0.
+Warm fib improves 20.08% with before/candidate relative ranges
+3.23%/0.52%; select the six requested interleaved
+pairs. Sizing remains outside selected medians. Every sizing checksum agrees
+with PUC. Some other-kernel sizing losses are close to their ranges; the six
+pairs, not these sizing results, determine the fixed noise gate.
+
+All library/runtime and benchmark/oracle host inputs are unchanged between
+the retained baseline construction revision and the task base. Compiler
+source has advanced, but the supplied compiler executable hash matches the
+baseline, and its native runtime sources are embedded with `include_str!`.
+Both variants use that executable; it is not rebuilt at current source HEAD.
+The source/binary maps and broader input audit are retained in the raw JSON.
+
+
+### Repeat six-pair runtime result
+
+Selected six-pair batch: 59.60 s, exit 0. Process wall times include startup,
+Lua source compilation, execution and teardown, M1 Pro/macOS, normal GC,
+unlimited budget. Both benchmark binaries use full LTO and the same supplied
+compiler; their inputs and all selected launches are retained in
+[fixed-call-measurements.json](fixed-call-measurements.json).
+
+| Kernel | Before median s | Candidate median s | Improvement | Before min–max s | Candidate min–max s | Before/candidate range |
+|---|---:|---:|---:|---|---|---|
+| fib | 0.202835 | 0.164326 | 18.99% | 0.200329–0.204864 | 0.159018–0.270310 | 2.24% / 67.73% |
+| loop | 0.581221 | 0.582421 | -0.21% | 0.569314–0.592788 | 0.565982–0.634371 | 4.04% / 11.74% |
+| integer-table | 0.596881 | 0.595351 | 0.26% | 0.579897–0.621996 | 0.581595–0.612972 | 7.05% / 5.27% |
+| string-key | 0.039602 | 0.039761 | -0.40% | 0.039160–0.039921 | 0.038994–0.040081 | 1.92% / 2.73% |
+| concat | 0.182877 | 0.184112 | -0.68% | 0.177550–0.185815 | 0.176211–0.185361 | 4.52% / 4.97% |
+| sort | 0.763706 | 0.757662 | 0.79% | 0.738119–0.816155 | 0.740026–0.778439 | 10.22% / 5.07% |
+| binary-trees | 2.481454 | 2.266137 | 8.68% | 2.475321–2.483546 | 2.260854–2.266970 | 0.33% / 0.27% |
+
+Fib improves 18.99%, passing 10%. Every other loss is below
+the larger relative range: the runtime noise gate passes. Every native and
+PUC exit is 0, printed checksums agree, suspensions are zero, and paired GC
+counts agree. One fib candidate launch is much slower than the other five;
+its cause is unmeasured and it is retained, not discarded. Leaving out any
+one pair gives 17.64–20.32% fib median improvement, an exploratory robustness
+observation, not a replacement selection batch. Loop and sort also have wide
+spread, limiting stronger performance claims. This measures the combined
+entry qualification/helper and code-layout change, not isolated cycle shares.
+The check-time and runtime gates pass; selection awaits behavior/root gates.
