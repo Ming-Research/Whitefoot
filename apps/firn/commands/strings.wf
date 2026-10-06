@@ -447,7 +447,7 @@ fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let none = False();
   let work = SetWork(outcome: state_absent, answered: none, removed: none);
   atomic slot = &store^.keys[key], m = &store^.meta {
-    set_body(slot: slot, client: client, value: move value, plan: &plan, work: &work);
+    set work = set_body(slot: slot, client: client, value: move value, flags: flags, at: at);
     let stored = work.outcome == state_done;
     let queued = band(stored, timed);
     let changed = bor(stored, work.removed);
@@ -477,34 +477,32 @@ struct SetWork {
   removed: Bool;
 }
 
-fn set_body(slot: &Option<Entry>, client: &Client, value: Bytes, plan: &SetPlan, work: &SetWork) -> result: unit reads(plan), writes(slot), writes(client), writes(work) {
-  doc "A SET-like command's work on its key's entry, held by the caller, against the client's now, as Redis 7.0.15's setGenericCommand does: an expired value is removed first; with GET the string the key held is written as the reply and a key of another kind is refused, nothing stored; with NX nothing is stored over a live key, with XX nothing in place of an absent one. The value keeps the key's expiry with KEEPTTL, takes the plan's at with an expiry option, and has none otherwise.";
-  let getting_flag = iand(plan^.flags, option_get);
+fn set_body(slot: &Option<Entry>, client: &Client, value: Bytes, flags: u64, at: u64) -> work: SetWork writes(slot), writes(client) {
+  doc "A SET-like command's work on its key's entry, held by the caller, against the client's now, under SET's option flags, returning what it did, as Redis 7.0.15's setGenericCommand does: an expired value is removed first; with GET the string the key held is written as the reply and a key of another kind is refused, nothing stored; with NX nothing is stored over a live key, with XX nothing in place of an absent one. The value keeps the key's expiry with KEEPTTL, takes at with an expiry option, and has none otherwise.";
+  let getting_flag = iand(flags, option_get);
   let getting = getting_flag != 0_u64;
-  let fresh_flag = iand(plan^.flags, option_nx);
+  let fresh_flag = iand(flags, option_nx);
   let only_fresh = fresh_flag != 0_u64;
-  let present_flag = iand(plan^.flags, option_xx);
+  let present_flag = iand(flags, option_xx);
   let only_present = present_flag != 0_u64;
-  let keep_flag = iand(plan^.flags, option_keepttl);
+  let keep_flag = iand(flags, option_keepttl);
   let keep = keep_flag != 0_u64;
-  let timed_flag = iand(plan^.flags, options_expiry);
+  let timed_flag = iand(flags, options_expiry);
   let timed = timed_flag != 0_u64;
   let kind = entry_kind(slot: slot, client: client);
-  set work^.removed = client^.state == state_expired;
+  let removed = client^.state == state_expired;
+  let none = False();
   let found = kind != 0_u64;
   let text = kind == 1_u64;
   let other = kind > 1_u64;
   let refused = band(getting, other);
   if refused {
-    set work^.outcome = state_wrong;
     let unused = move value;
-    return unit;
+    return SetWork(outcome: state_wrong, answered: none, removed: removed);
   }
-  if getting {
-    if text {
-      reply_held_text(slot: slot, client: client);
-      set work^.answered = True();
-    }
+  let answered = band(getting, text);
+  if answered {
+    reply_held_text(slot: slot, client: client);
   }
   let absent = bnot(found);
   let occupied = band(only_fresh, found);
@@ -512,18 +510,17 @@ fn set_body(slot: &Option<Entry>, client: &Client, value: Bytes, plan: &SetPlan,
   let blocked = bor(occupied, missing);
   if blocked {
     let unused = move value;
-    return unit;
+    return SetWork(outcome: state_absent, answered: answered, removed: removed);
   }
   let expires = 0_u64;
   if keep {
     set expires = held_expiry(slot: slot);
   }
   if timed {
-    set expires = plan^.at;
+    set expires = at;
   }
   put_text(slot: slot, value: move value, expires: expires);
-  set work^.outcome = state_done;
-  return unit;
+  return SetWork(outcome: state_done, answered: answered, removed: removed);
 }
 
 fn set_meta(due: &PriorityQueue<Due, ceiling>, log: &Box<Slots<u8>>, logged: Bool, plan: &SetPlan, work: &SetWork, input: &[u8], args: &Box<Slots<Span>>, key: &[u8], env: &KeyEnv) -> appended: u64 reads(plan), reads(work), reads(input), reads(args), reads(key), reads(env), writes(due), writes(log) {

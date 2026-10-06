@@ -97,10 +97,8 @@ fn script_set(keys: &ConcurrentHashMap<Entry>, meta: &Meta, effects: &Box<Slots<
   let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
   set client^.now = time^.check;
   let plan = SetPlan(flags: options.flags, at: at, mode: mode_set, key_index: 1_u64, value_index: 2_u64);
-  let none = False();
-  let work = SetWork(outcome: state_absent, answered: none, removed: none);
   let slot = &keys^[key];
-  set_body(slot: slot, client: client, value: move value, plan: &plan, work: &work);
+  let work = set_body(slot: slot, client: client, value: move value, flags: options.flags, at: at);
   let appended = set_meta(due: &meta^.due, log: effects, logged: logged, plan: &plan, work: &work, input: input, args: args, key: key, env: env);
   set_finish(client: client, plan: &plan, work: &work);
   return appended;
