@@ -493,8 +493,8 @@ the next operation's address, the bounds test, and the transfer.
 
 **Attribution**
 ([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-code-cursor)).
-Every hot arm ends in the same dispatch sequence once its next index is in
-a register. Forming the next operation's address and testing it takes 7
+Every hot arm ends in the same dispatch steps, in an order of its own.
+Forming the next operation's address and testing it takes 7
 of the 21 instructions `I32Add` executes on x86-64: the next index, a
 compare and a branch, then a move, a shift and two additions that turn the
 index into an address. On AArch64 it takes 4 of 19, the shift folding into

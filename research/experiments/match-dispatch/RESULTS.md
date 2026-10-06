@@ -707,14 +707,17 @@ closed early; every arm had been printed by then.
 | moves | `movq %rax, %r14`, `movq %r10, %rax` | 2 | `mov x22, x8` | 1 |
 | total | | 21 | | 19 |
 
-The same sequence ends every other arm the job printed: `I32AddA`,
-`I32AddAD`, `BrIf`, `BrI32LtS`, `Copy`, `Copy2`, `I32Load`, `I32Store`,
-`Call` and `Return`. Each has exactly one shift by 4 and one 16-byte
-address adjustment. All but `I32AddAD` and `Call` also move the next index
-into its carried register. A branch arm loads its target from the operation
-in place of `leaq 0x1(%r14)`. Forming and testing the next address
-therefore takes 7 instructions per dispatch on x86-64 and 4 on AArch64.
-v2h has no `BrI32LtSC` or `LocalTee` arm.
+The other arms the job printed end in the same steps, in an order and with
+registers of their own: `I32AddA`, `I32AddAD`, `BrIf`, `BrI32LtS`, `Copy`,
+`Copy2`, `I32Load`, `I32Store`, `Call` and `Return`. Each has exactly one
+shift by 4 and one 16-byte address adjustment, and each leaves the next
+index in its carried register. Most move it there after forming the
+address. `I32AddAD` increments that register in place and first copies the
+old index for the trap report. `Call` moves it there before the shift. A
+branch arm loads its target from the operation in place of
+`leaq 0x1(%r14)`. Forming and testing the next address therefore takes
+about 7 instructions per dispatch on x86-64 and 4 on AArch64. v2h has no
+`BrI32LtSC` or `LocalTee` arm.
 
 The arms receive the matched element's address, the header value they read
 the operation's fields through (`%r9` on x86-64, `x4` on AArch64). The
