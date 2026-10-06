@@ -47,7 +47,13 @@ use crate::{
 /// static source obligation, or insert a runtime proof fallback,
 /// so no writer decision exists and the default shape is the only shape. The
 /// level is provisional and may move once a measurement asks for it.
-pub const HOST_OPTIMIZATION_ARGUMENTS: &[&str] = &["-O2"];
+///
+/// `-falign-functions=64` starts every function of the compiler-owned C
+/// runtime on a 64-byte boundary, as the emitter's own definitions do, so a
+/// change elsewhere in the image cannot move the runtime's code within those
+/// lines (design/compiler/code-alignment.md). Clang ignores it for the emitted
+/// module, which is LLVM input and carries its alignment in its own text.
+pub const HOST_OPTIMIZATION_ARGUMENTS: &[&str] = &["-O2", "-falign-functions=64"];
 
 /// The host libraries a link of an emitted module names, for the same
 /// one-definition reason.

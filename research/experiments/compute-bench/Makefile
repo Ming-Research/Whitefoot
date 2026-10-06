@@ -80,9 +80,12 @@ RFLAGS := -C no-vectorize-loops -C no-vectorize-slp -C lto=off \
 # the other, and this bundle's largest confound is exactly that: six
 # byte-identical kernel bodies at 0/16/48 mod 64 once split a width-one median
 # 7.3 ms against 10.7 ms with no scheduler involved. Under -falign-functions=64
-# every function OF THE WHITEFOOT TRANSLATION UNITS starts on a 64-byte
-# boundary in either image and every hot loop of theirs on a 32-byte one, so
-# their internal alignment is identical BY CONSTRUCTION and the residual offset
+# every function OF THE WHITEFOOT C RUNTIME starts on a 64-byte boundary in
+# either image, and every hot loop of every Whitefoot unit on a 32-byte one.
+# Clang applies no -falign-functions to LLVM input, so the emitted module's
+# functions are aligned by their own `align 64`, which whitefootc has written
+# since research/investigations/code-placement and not before. Their internal
+# alignment is then identical BY CONSTRUCTION and the residual offset
 # difference between the arms is a multiple of the boundary rather than an
 # arbitrary number of bytes. It says nothing about the rest of either image:
 # the harness, the kernel object, the references and the prebuilt libraries are
@@ -104,7 +107,8 @@ WF_ALIGN := $(if $(filter x86_64,$(ARCH)),-falign-functions=64 -falign-loops=32,
 # What whitefootc itself passes clang, plus $(WF_ALIGN). The first four are
 # VERIFIED in compiler/src/bin/whitefootc.rs and compiler/src/driver.rs:
 # -std=c11, TARGET_COMPILE_ARGUMENTS = -pthread, HOST_OPTIMIZATION_ARGUMENTS =
-# -O2, HOST_LINK_LIBRARIES = -lm, plus -Wno-override-module on the IR input.
+# -O2 -falign-functions=64, HOST_LINK_LIBRARIES = -lm, plus
+# -Wno-override-module on the IR input.
 # The Whitefoot runtime and the emitted module are otherwise built the way the
 # compiler builds them, not the way the kernels are built, because anything
 # else would measure a runtime no Whitefoot program ever gets. THIS IS AN
@@ -112,10 +116,10 @@ WF_ALIGN := $(if $(filter x86_64,$(ARCH)),-falign-functions=64 -falign-loops=32,
 # -march while every reference is built at -O3 with -march=x86-64-v3. It cuts
 # against the WF row, and README.md states it in its own paragraph. The
 # alignment half of that asymmetry is closed by $(WF_ALIGN), on both arms and
-# on the plain image alike, so a table recorded from the commit that added it
-# onward times a WF side the driver does not build; RESULTS.md's status
-# paragraph says so with its date rather than leaving it to be inferred from
-# this line.
+# on the plain image alike; its -falign-loops=32 is a flag the driver does not
+# pass, so a table recorded from the commit that added it onward times a WF
+# side the driver does not build; RESULTS.md's status paragraph says so with
+# its date rather than leaving it to be inferred from this line.
 WF_FLAGS := -std=c11 -pthread -O2 -Wno-override-module $(WF_ALIGN)
 
 # WF_FLAGS is kept in a stamp for the reason the three control flags below are,

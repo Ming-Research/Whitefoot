@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-06 Every compiler-produced function on a 64-byte boundary
+
+Nodes: compiler/code-alignment, compiler/verification, compiler/parallel-lowering
+
+Owner-approved: In the session of 2026-10-06, written in Chinese, translated: after the fix plan for the 16-byte code shift that changed `records` by 40 percent, "1-5 approved as recommended" (Q1-Q5): `align 64` written on every definition of the module (Q1), the C runtime compiled with `-falign-functions=64` (Q2), loop headers left at LLVM's alignment and measured only as an arm (Q3), a unit test and a placement control in the regression qualification (Q4) and 64 bytes on every target (Q5); and after the handoff of PR #252 at `02aa1489` that presented Q6: "OK, agree with the recommendation", accepting the aligned layout's cost to `records` on some processors (Q6 A).
+
+Summary: Every function the compiler produces starts on a 64-byte boundary, the module's through an `align 64` attribute on each definition because clang ignores `-falign-functions` for LLVM input, the C runtime's through `-falign-functions=64`, because a kernel whose code did not change failed the paired regression comparison when one runtime import moved every function by 16 bytes, and with every function aligned no shift moved any kernel's time on the four processor models the [placement experiment](../research/investigations/code-placement/DESIGN.md#conclusion) reached. Each function is padded rather than only each module's start, 64 bytes holds on every target provisionally until arm64 can be measured, loop headers keep LLVM's alignment since `-falign-loops=32` met the selection rule on no host, and the fixed layout's cost to `records` on some processors is accepted provisionally with a TODO to find a deterministic layout without it. The regression qualification gains a control that shifts the candidate's images by 96 bytes and first checks that each module moved. The parallel-lowering refusal of forced alignment is retired: its evidence passed `-falign-functions=64` to the module's LLVM, which aligned no kernel function. Refused: aligning only hot functions, aligning only each module's code section, `-mbranches-within-32B-boundaries`, and a placement-robust measurement with the compiler unchanged.
+
 ## 2026-10-05 A file set to a length
 
 Nodes: language/system-interface/writable-directory

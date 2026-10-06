@@ -48,7 +48,15 @@ with inconclusive measurement evidence and does not run the compiler
 comparison. A previous runner's qualification cannot validate a new host
 invocation. Instrument or fixture changes additionally run an explicit
 slowdown control, which repeats real WF work and intermediate checking/release
-inside the candidate interval and must fail all five kernels. These controls
+inside the candidate interval and must fail all five kernels, and a placement
+control, which compares the candidate images with copies linked by
+`make build PLACEMENT_PAD=96`, 96 bytes of never-executed code ahead of the
+emitted module, and must pass. Such a shift moves the module and everything
+after it, as one more imported library function does: by one or two whole
+64-byte lines, since every compiler-produced function starts on such a
+boundary, or by 32 bytes within a line if functions were not aligned. The
+workflow first requires each kernel's module to have moved; a failed
+comparison means placement alone would read as a regression. These controls
 do not establish a statistical false-alarm rate or sensitivity to every small
 regression. Failed controls retain their raw data; there is no automatic retry
 or threshold adjustment. The identical-image control needs no third native
