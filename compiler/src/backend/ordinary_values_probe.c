@@ -647,6 +647,56 @@ static void append_probe(wf_inputs *inputs) {
     assert(read.tag == 0 && read.ok.value == 5 && memcmp(bytes, "abcde", 5) == 0);
     wf__body_close_read(&closed, &inputs->handles, &opened.ok.value);
     check_close(&closed);
+    /* Shrinking keeps the prefix and the next append uses the new EOF. */
+    wf__body_open_append(&opened, &inputs->handles, &inputs->cwd_write, &name, 0, name.length);
+    assert(opened.tag == 0);
+    wf__body_truncate_file(&closed, &inputs->handles, &opened.ok.value, 2);
+    check_close(&closed);
+    source.data = (void *)"x";
+    source.length = 1;
+    wf__body_append_once(&written, &inputs->handles, &opened.ok.value, &source, 0, 1);
+    assert(written.tag == 0 && written.ok.value == 1);
+    wf__body_close_write(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
+    assert(opened.tag == 0);
+    memset(bytes, 0xff, sizeof bytes);
+    wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, sizeof bytes);
+    assert(read.tag == 0 && read.ok.value == 3 && memcmp(bytes, "abx", 3) == 0);
+    wf__body_close_read(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    /* An unrepresentable length fails without wrapping or changing the file.
+     * Extension then supplies zeros and moves the next append beyond them. */
+    wf__body_open_append(&opened, &inputs->handles, &inputs->cwd_write, &name, 0, name.length);
+    assert(opened.tag == 0);
+    wf__body_truncate_file(&closed, &inputs->handles, &opened.ok.value, UINT64_MAX);
+    assert(closed.tag == 1 && closed.err.error.tag == WF_IO_FILE_TOO_LARGE);
+    wf__body_truncate_file(&closed, &inputs->handles, &opened.ok.value, 6);
+    check_close(&closed);
+    wf__body_append_once(&written, &inputs->handles, &opened.ok.value, &source, 0, 1);
+    assert(written.tag == 0 && written.ok.value == 1);
+    wf__body_close_write(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
+    assert(opened.tag == 0);
+    memset(bytes, 0xff, sizeof bytes);
+    wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, sizeof bytes);
+    assert(read.tag == 0 && read.ok.value == 7 && memcmp(bytes, "abx\0\0\0x", 7) == 0);
+    wf__body_close_read(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    /* Zero is a real truncation, not an empty-transfer shortcut. */
+    wf__body_open_append(&opened, &inputs->handles, &inputs->cwd_write, &name, 0, name.length);
+    assert(opened.tag == 0);
+    wf__body_truncate_file(&closed, &inputs->handles, &opened.ok.value, 0);
+    check_close(&closed);
+    wf__body_close_write(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, &name, 0, name.length);
+    assert(opened.tag == 0);
+    wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, sizeof bytes);
+    assert(read.tag == 0 && read.ok.value == 0);
+    wf__body_close_read(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
     if (wf_unlink("appended") != 0) {
 #if defined(_WIN32)
         fprintf(stderr, "removing the appended file failed: errno %d, Windows error %lu\n",
@@ -718,7 +768,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         assert(closed.tag == 0 && *budget == before);
     }
     if (files) { wf_test_guard_phase("ordinary file/credits"); file_probe(&inputs, wf__body_open_file, wf__body_read_at); file_probe(&inputs, wf_test_public_open, wf_test_public_read); puts("ordinary file/credits public+body: PASS"); }
-    if (files) { wf_test_guard_phase("ordinary append/sync/clock"); append_probe(&inputs); time_probe(&inputs); puts("ordinary append/sync/clock: PASS"); }
+    if (files) { wf_test_guard_phase("ordinary append/sync/truncate/clock"); append_probe(&inputs); time_probe(&inputs); puts("ordinary append/sync/truncate/clock: PASS"); }
     if (directory) { wf_test_guard_phase("ordinary directory/cursors"); directory_probe(&inputs); puts("ordinary directory/cursors: PASS"); }
 #if defined(_WIN32)
     if (directory) {

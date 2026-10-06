@@ -151,6 +151,7 @@ void wf__body_factory_share(wf_value *result, const wf_value *factory);
 void wf__body_open_append(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
 void wf__body_append_once(wf_write_result *result, wf_value *factory, wf_value *file, const wf_view *source, uint64_t start, uint64_t end);
 void wf__body_sync_file(wf_close_result *result, wf_value *factory, wf_value *file);
+void wf__body_truncate_file(wf_close_result *result, wf_value *factory, wf_value *file, uint64_t length);
 void wf__body_close_write(wf_close_result *result, wf_value *factory, const wf_value *file);
 void wf__body_close_directory_write(wf_close_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_clock_share(wf_value *result, const wf_value *clock);
