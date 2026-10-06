@@ -311,7 +311,14 @@ launches and takes medians. Module: Silverfir-nano's
 (the 2K performance run's seeds, 2000 iterations, about 1.6 s under the
 Whitefoot interpreter and 0.35 s under Silverfir-nano's). M1 Pro;
 Silverfir-nano built from main as `sf-nano-cli --interp`; the Whitefoot
-interpreter compiled by this branch's `whitefootc` with `preserve_none`.
+interpreter compiled with `preserve_none` by `whitefootc` built from the
+branch each step names: v1-v2c from `claude/wasm-interp`, which changes no
+compiler source from main; v2d from `claude/pin-through-callees`, which
+adds stack-box pinning; and v2e-v2h from a local merge, not kept, of that
+branch with `claude/checker-closure-scaling`, whose active-term closures
+change the checker and were not merged into main. The compiler of the
+branch that carries these results has the pinning but not the active-term
+closures, and no step was measured again with it.
 
 ### v1, the direct stack machine
 
@@ -397,8 +404,8 @@ pointer from its reference (two instructions and a dependent load), because
 the arm hands the reference to its helper function and the hoisting rule
 pins only a reference used for box projections; it recomputes the next
 cell's address from the cell index; and it adds the frame base to each slot
-index. The first is a compiler limitation recorded in `docs/todo.md`; the
-other two are the derived-address item already there. Writing the handlers'
+index. The first was a compiler limitation, which v2d removes (below); the
+other two are the derived-address item in `docs/todo.md`. Writing the handlers'
 bodies back into the arms, which would avoid the reload, does not check: the
 interpreter function then grows past what the checker handles in minutes.
 

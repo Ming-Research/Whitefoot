@@ -12,6 +12,7 @@ Nodes: compiler/match-dispatch-lowering, compiler/incremental-compilation
 Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff that presented decisions Q17-Q23 on PRs #228, #229, #232, #233 and #235 (heads `382e2b05e`, `357f343e4`, `ccb71f1ef`, `312273610` and `b2d9af410`): "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated), and then, asking for one combined PR: "just put all the content together, one PR, I'll look at it and merge if it is fine" (translated). The checker decisions Q20, Q22 and Q23 are carried by a separate change onto main's closure work.
 
 Summary: A passed-through reference whose box the loop keeps stays pinned when the loop hands it to non-waiting callees whose every declared write lies below that box's content, because such a callee cannot replace the box [EFF-1, EFF-5]; removing the stack box's per-dispatch reload raised the stage-3 wasm interpreter's CoreMark score 3.8% (Q17). Addressing frame slots from a pointer each split part derives at entry is refused for now: with an accumulator register it raised the score 0.9%, below its 2% criterion, and it reopens when another interpreter or an x86-64 measurement shows at least 2% (Q21). The compiler does not prune cache directories: a developer's local cache is the developer's to clean (Q18). Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md).
+
 ## 2026-10-05 Raise a time budget by a fixed 10 s
 
 Nodes: compiler/verification

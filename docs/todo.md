@@ -77,6 +77,27 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **Checking one function grows faster than its size.** The stage-3 wasm
+  interpreter's interpreter function, a `match` whose arms each hold their
+  handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s
+  with 20 and 144.6 s with 40 (M1 Pro, `whitefootc --check`), and the full
+  178-arm form had not finished after several minutes at 5 GB. A
+  15-second profile of the 20-arm check spends most of its samples in the
+  entailment closure (`close_with_row_pruning` and `DerivationLedger::intern`
+  in `compiler/src/semantic/entailment/state.rs`). Moving each handler's
+  body into its own function, the arm keeping only the stack-depth test and
+  the tail call, checks 20 arms in 3.7 s and 40 in 7.2 s, but the full
+  interpreter (8,500 lines, one 178-arm function) still takes about 100 s.
+  These measurements predate the narrower closures of
+  compiler/incremental-closure and were not repeated with them.
+  Impact: a writer of a large dispatch function, the shape an interpreter
+  has, must split it to check it at all, and each change costs minutes.
+  Change: find what the closure's cost scales with (the function's term
+  count against the facts live on the path being checked) and bound it by
+  the latter. Validate with the 10/20/40-arm series growing linearly and the
+  interpreter's verdicts unchanged. Reopen when the next stage-3 step needs
+  repeated checks of the interpreter, or another program meets the same
+  growth.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
