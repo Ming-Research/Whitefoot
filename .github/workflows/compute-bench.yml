@@ -413,8 +413,10 @@ jobs:
         run: |
           set -eo pipefail
           out="$RUNNER_TEMP/stage3"
-          python3 research/experiments/match-dispatch/wasm/coremark.py \
-            --module "$RUNNER_TEMP/sf/benchmarks/wasi/coremark/coremark.wasm" \
+          probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
+          # The interpreter opens its module relative to its working directory.
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          python3 "$probe" --module coremark.wasm \
             --iterations 2000 --launches 7 --tsv "$out/run.tsv" \
             wf="$out/wasm-interp" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp"
           cat "$out/run.tsv"
@@ -470,8 +472,10 @@ jobs:
         run: |
           set -eo pipefail
           out="$RUNNER_TEMP/stage3"
-          python3 research/experiments/match-dispatch/wasm/coremark.py \
-            --module "$RUNNER_TEMP/sf/benchmarks/wasi/coremark/coremark.wasm" \
+          probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
+          # The interpreter opens its module relative to its working directory.
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          python3 "$probe" --module coremark.wasm \
             --iterations 2000 --launches 7 --tsv "$out/run.tsv" \
             wf="$out/wasm-interp" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp"
           cat "$out/run.tsv"

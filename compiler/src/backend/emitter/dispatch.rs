@@ -29,14 +29,22 @@ use crate::{
 /// target: the convention without callee-saved registers where the build's
 /// assembler accepts it, so the values the parts pass stay in registers
 /// across the chain, and the C convention otherwise. The register counts
-/// are those measured for each convention and target
-/// (compiler/match-dispatch-lowering); a loop whose parts would need more is
-/// not split.
+/// are those measured for each convention and target with the parts' own
+/// transfer, a guaranteed tail call through a table-loaded address
+/// (compiler/match-dispatch-lowering): on x86-64 outside Windows that
+/// address takes one of the twelve registers `preserve_none` passes
+/// arguments in. A loop whose parts would need more is not split.
 fn convention(triple: &str) -> (&'static str, ArgumentRegisters) {
     let aarch64 = triple.starts_with("aarch64");
     let windows = triple.contains("windows");
     if env!("WHITEFOOT_PRESERVE_NONE") == "1" {
-        let integer = if aarch64 { 24 } else { 12 };
+        let integer = if aarch64 {
+            24
+        } else if windows {
+            12
+        } else {
+            11
+        };
         (
             "preserve_nonecc ",
             ArgumentRegisters::Separate { integer, float: 8 },
