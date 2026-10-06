@@ -1755,3 +1755,43 @@ from locked timing claims and repeated under `perl .github/run-check.pl
 halo-call-design-lint make design-lint`. No performance or compilation stage
 was concurrent in this worktree; activity elsewhere during that unwrapped
 sample is not established. The record does not present it as a locked run.
+
+
+## Sentinel-qualified fixed Lua entry repeat
+
+### Repeat criterion recorded before measurement
+
+Task base: `b374e880e6749fe5d1a0e4a40b0b2187f52f63b0`. Repeat the reverted entry helper with an explicit
+`proto != no_handle` guard before prototype lookup, independent of prototype
+window length. Every native, invalid-callee and vararg miss retains `prepare`;
+room, frame-depth and dispatch window facts, roots and return handling remain.
+Keep only if fib(30) improves at least 10% in six interleaved full-LTO pairs
+against this base, no other kernel regresses beyond noise, median
+`--check-module pkg::vm` time is at most 1.25 times before, ordinary and
+GC-stress oracle batches each pass 240/240 at budgets 1, 7 and 1000, every
+existing removed-root control fails as required, and a new ordinary-CALL
+witness for native (including sentinel closure), invalid and vararg callees
+retains the independently specified reply on before and candidate.
+
+Noise means a median loss exceeding the larger variant's relative min–max
+range in the selected six pairs, as in the prior trial. Use all seven kernels,
+binary-trees depth 14 and the original remaining counts; retain launches,
+checksums and GC counts. Size with one pair then three warm pairs; size each
+check/build with its smallest useful existing entry and each behavior batch
+with one relevant case. Use two module-check samples initially, lengthening
+only near the 1.25 threshold or if spread prevents a decision.
+
+The helper owns qualification and fixed stack preparation; existing
+`push_frame` owns frame capacity and `finish` owns results. Changing frames,
+return handling or public representation would mix another cost into this
+comparison and remains deferred. This preserves the C1 window contracts and
+shared frame-changing epilogue. The owner's task selects this bounded
+direction; any kept decision belongs in the Halo tree, pending its ruling.
+
+No network, Cargo, push or PR actions. All heavy commands use their own
+direct host-lock wrapper and retry exit 75 after waiting. Scratch sources,
+logs, binaries and probes live in the existing ignored benchmark target and
+are removed after retaining their evidence; `fixed-call-measurements.json`
+in this experiment retains raw observations until this repeat is superseded.
+On any failed criterion, restore source bytes to the task base and commit
+the reversion while retaining the results.
