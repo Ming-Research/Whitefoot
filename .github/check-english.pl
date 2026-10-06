@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# Repository artifacts are in English (AGENTS.md). This rejects Han
+# Repository artifacts are in English (the owner-wide agent instructions). This rejects Han
 # characters, the script of Chinese writing, in the names and the text of
 # tracked files outside archive/, which is frozen and keeps its historical
 # text, and outside README.zh-CN.md, the owner's Chinese translation of the
@@ -110,6 +110,6 @@ if (@ARGV) {
 my @findings = scan();
 exit 0 unless @findings;
 print STDERR "english: tracked files outside archive/ contain Han characters; "
-    . "repository artifacts are in English (AGENTS.md):\n";
+    . "repository artifacts are in English (owner-wide agent instructions):\n";
 print STDERR "$_\n" for @findings;
 exit 1;
