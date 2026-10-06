@@ -416,7 +416,7 @@ jobs:
           echo "base $base, step ${step:-none}, head $(git rev-parse HEAD)"
           echo "$sides head" > "$out/sides"
           # CoreMark's order: the base last, the engine ratios are against.
-          echo "head${step:+ step} base" > "$out/engines"
+          echo "head${step:+ step} twin base" > "$out/engines"
           for side in $sides head; do
             if [ "$side" = head ]; then dir=.; else dir="$RUNNER_TEMP/$side"; fi
             cargo fetch --locked --manifest-path "$dir/compiler/Cargo.toml"
@@ -428,6 +428,8 @@ jobs:
             echo "== $side"
             "$out/whitefootc-$side" --dispatch-ledger "$out/interp.wf" -o "$out/wasm-$side" | grep wf_run
           done
+          # A second copy of the base's interpreter: the noise control.
+          cp "$out/wasm-base" "$out/wasm-twin"
 
       - name: Print the hot arms' machine code
         run: |

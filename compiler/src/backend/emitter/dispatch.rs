@@ -416,16 +416,12 @@ enum Role {
 
 /// The header's `match` reads the element a header parameter indexes in a
 /// run of slots at an address the loop cannot change, and the arms read
-/// that element through its address. The parts then carry the address: an
-/// edge into the header passes the address of the element its index
-/// selects, formed from the address the part received where the index is
-/// that one moved by a constant, and the header uses the address it
-/// receives instead of forming it from the index. Where the element has a
-/// size, the address replaces the index, which each part recovers from it;
-/// a comparison of the index moved by one element with the run's length
-/// then compares the moved address with the run's end address, which the
-/// parts receive.
-#[derive(Clone)]
+/// that element through its address. The parts then carry the address as
+/// well as the index: an edge into the header passes the address of the
+/// element its index selects, formed from the address the part received,
+/// and the header uses the address it receives instead of forming it from
+/// the index.
+#[derive(Clone, Copy)]
 struct Cursor {
     /// The header value addressing the matched element.
     place: IrValueId,
@@ -439,23 +435,6 @@ struct Cursor {
     element: IrType,
     /// The header projection's target-domain obligation.
     target_domain: crate::IrTargetDomainObligation,
-    /// Whether the address replaces the index as the parts' parameter.
-    instead: bool,
-    /// The values that are the index moved by a constant number of
-    /// elements, with that number.
-    steps: HashMap<IrValueId, u64>,
-    /// The run's length the header reads, when the parts receive the run's
-    /// end address.
-    length: Option<IrValueId>,
-    /// The comparisons of the index moved by one element with that length.
-    bounds: HashSet<IrValueId>,
-}
-
-impl Cursor {
-    /// Whether the parts receive the run's end address.
-    fn end(&self) -> bool {
-        self.instead && !self.bounds.is_empty()
-    }
 }
 
 /// The emission state of one split function.
@@ -632,17 +611,13 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         let cursor = self.element_cursor(&header, &parameters)?;
-        if let Some(cursor) = &cursor {
+        if let Some(cursor) = cursor {
             for (value, _, role) in &mut parameters {
                 if *value == cursor.place {
                     *role = Role::Cursor;
                 }
             }
-            if cursor.instead {
-                parameters.retain(|(value, _, _)| *value != cursor.index);
-            }
         }
-        let cursor_end = cursor.as_ref().is_some_and(Cursor::end);
         let (convention, registers) = convention(self.target.triple());
         let mut scratch = References::default();
         let mut typed: Vec<(IrValueId, String)> = Vec::new();
@@ -664,9 +639,6 @@ impl FunctionEmitter<'_, '_> {
                     .filter(|(value, _)| !spilled.contains(value))
                     .map(|(_, ty)| ty.clone()),
             );
-            if cursor_end {
-                types.push("ptr".to_owned());
-            }
             if frame_before || !spilled.is_empty() {
                 types.push("ptr".to_owned());
             }
@@ -757,17 +729,10 @@ impl FunctionEmitter<'_, '_> {
             .program
             .nominal(plan.matched)
             .map_or("an enum", |nominal| nominal.name.as_str());
-        if let Some(cursor) = &cursor {
-            let instead = if cursor.instead {
-                " in place of its index"
-            } else {
-                ""
-            };
+        if cursor.is_some() {
             ledger.insert(
                 0,
-                format!(
-                    "{body_symbol}: carries the matched {matched}'s address between the parts{instead}"
-                ),
+                format!("{body_symbol}: carries the matched {matched}'s address between the parts"),
             );
         }
         if !spills.is_empty() {
@@ -853,7 +818,6 @@ impl FunctionEmitter<'_, '_> {
         carried: &[(IrValueId, IrValueId)],
         into_arm: bool,
         cursor: Option<&str>,
-        end: Option<&str>,
     ) -> Result<String, BackendFailure> {
         let dispatch = self.dispatch.as_ref().ok_or(BackendFailure::InvalidIr)?;
         let parameters = dispatch.parameters.clone();
@@ -892,9 +856,6 @@ impl FunctionEmitter<'_, '_> {
             };
             arguments.push(format!("{ty_name} {operand}"));
         }
-        if let Some(end) = end {
-            arguments.push(format!("ptr {end}"));
-        }
         arguments.extend(base);
         if frame {
             arguments.push("ptr %wf.frame".to_owned());
@@ -922,7 +883,7 @@ impl FunctionEmitter<'_, '_> {
         let symbol = dispatch.symbol.clone();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
-        let cursor = dispatch.cursor.clone();
+        let cursor = dispatch.cursor;
         let header = self.block(target)?;
         if header.parameters().len() != arguments.len()
             || arguments
@@ -1038,22 +999,11 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         self.emit_place_edge(target, arguments, drops)?;
-        // The run's end address: formed once entering the loop, and the
-        // one the part received on an edge back to the header.
-        let end = match &cursor {
-            Some(cursor) if cursor.end() && !tail => {
-                let length = cursor.length.ok_or(BackendFailure::InvalidIr)?;
-                let length = self.value_name(length);
-                Some(self.run_slot_pointer(cursor.run, &length)?)
-            }
-            Some(cursor) if cursor.end() => Some(CURSOR_END.to_owned()),
-            _ => None,
-        };
-        let cursor = match &cursor {
+        let cursor = match cursor {
             Some(cursor) => Some(self.edge_cursor(cursor, &carried, tail)?),
             None => None,
         };
-        let list = self.dispatch_arguments(&carried, false, cursor.as_deref(), end.as_deref())?;
+        let list = self.dispatch_arguments(&carried, false, cursor.as_deref())?;
         self.output.symbol(symbol.clone());
         let call = if tail { "musttail call" } else { "call" };
         let text = if result == "void" {
@@ -1092,11 +1042,6 @@ impl FunctionEmitter<'_, '_> {
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
-        let end = dispatch
-            .cursor
-            .as_ref()
-            .is_some_and(Cursor::end)
-            .then_some(CURSOR_END);
         self.materialize_operands([scrutinee])?;
         let (tag, tag_ty) = self.match_tag(scrutinee, enum_type)?;
         let carried: Vec<(IrValueId, IrValueId)> = self
@@ -1105,7 +1050,7 @@ impl FunctionEmitter<'_, '_> {
             .iter()
             .map(|(parameter, _)| (*parameter, *parameter))
             .collect();
-        let list = self.dispatch_arguments(&carried, true, None, end)?;
+        let list = self.dispatch_arguments(&carried, true, None)?;
         let slot = self.next_temporary()?;
         let handler = self.next_temporary()?;
         self.output.symbol(table_symbol);
@@ -1161,9 +1106,6 @@ impl FunctionEmitter<'_, '_> {
             };
             parameters.push(Parameter::named(format!("{ty}{facts}"), name));
         }
-        if dispatch.cursor.as_ref().is_some_and(Cursor::end) {
-            parameters.push(Parameter::named("ptr", CURSOR_END));
-        }
         if dispatch.table_base {
             parameters.push(Parameter::named("ptr", "%wf.dispatch.base"));
         }
@@ -1199,7 +1141,6 @@ impl FunctionEmitter<'_, '_> {
         let table_symbol = dispatch.table_symbol.clone();
         let dropped = dispatch.dropped.clone();
         let spilled = dispatch.spilled.clone();
-        let cursor = dispatch.cursor.clone();
         let pins = dispatch.pins.clone();
         let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
 
@@ -1221,7 +1162,7 @@ impl FunctionEmitter<'_, '_> {
         let carried_place = self
             .dispatch
             .as_ref()
-            .and_then(|dispatch| dispatch.cursor.as_ref())
+            .and_then(|dispatch| dispatch.cursor)
             .map(|cursor| cursor.instruction);
         for (index, instruction) in block.instructions().iter().enumerate() {
             if !hoisted.contains(&index) && Some(index) != carried_place {
@@ -1294,9 +1235,6 @@ impl FunctionEmitter<'_, '_> {
                 let ty = llvm_type_with_references(self.program, *ty, &mut body.references.types)?;
                 writeln!(prelude, "  {} = freeze {ty} poison", value_name(*value))
                     .map_err(|_| BackendFailure::TextEmission)?;
-            }
-            if let Some(cursor) = cursor.as_ref().filter(|cursor| cursor.instead) {
-                prelude.push_str(&self.recovered_index(cursor, &mut body.references)?);
             }
             for (parameter, canonical) in &pins {
                 let slot = pin_slot_name(*parameter);
@@ -1742,26 +1680,6 @@ impl FunctionEmitter<'_, '_> {
         instruction: &IrInstruction,
     ) -> Result<(), BackendFailure> {
         if let IrInstruction::Define { result, .. } = instruction
-            && let Some((place, element)) = self
-                .dispatch
-                .as_ref()
-                .and_then(|dispatch| dispatch.cursor.as_ref())
-                .filter(|cursor| cursor.end() && cursor.bounds.contains(result))
-                .map(|cursor| (value_name(cursor.place), cursor.element))
-        {
-            // The index moved by one element against the run's length: the
-            // address moved by one element against the run's end address.
-            let element = self.output.type_name(self.program, element)?;
-            let moved = self.next_temporary()?;
-            writeln!(
-                self.output,
-                "  %{moved} = getelementptr {element}, ptr {place}, i64 1\n  {} = icmp ult ptr %{moved}, {CURSOR_END}",
-                value_name(*result)
-            )
-            .map_err(|_| BackendFailure::TextEmission)?;
-            return Ok(());
-        }
-        if let IrInstruction::Define { result, .. } = instruction
             && let Some(canonical) = self
                 .dispatch
                 .as_ref()
@@ -1865,24 +1783,14 @@ impl FunctionEmitter<'_, '_> {
                 && matches!(role(*address), Some(Role::Hoisted | Role::Invariant))
                 && self.run_slots_follow_address(*address)?
             {
-                let element = referent.ty();
-                let instead =
-                    !crate::target::element_has_zero_stride(self.target, self.program, element)
-                        .map_err(BackendFailure::TargetLayout)?;
-                let mut cursor = Cursor {
+                return Ok(Some(Cursor {
                     place: *result,
                     index: *offset,
                     run: *address,
                     instruction,
-                    element,
+                    element: referent.ty(),
                     target_domain: *target_domain,
-                    instead,
-                    steps: HashMap::new(),
-                    length: None,
-                    bounds: HashSet::new(),
-                };
-                self.index_steps(&mut cursor, header, &role);
-                return Ok(Some(cursor));
+                }));
             }
         }
         Ok(None)
@@ -1896,7 +1804,7 @@ impl FunctionEmitter<'_, '_> {
     /// index changes by a constant.
     fn edge_cursor(
         &mut self,
-        cursor: &Cursor,
+        cursor: Cursor,
         carried: &[(IrValueId, IrValueId)],
         tail: bool,
     ) -> Result<String, BackendFailure> {
@@ -1913,27 +1821,12 @@ impl FunctionEmitter<'_, '_> {
                 cursor.target_domain,
             );
         }
-        let element = self.output.type_name(self.program, cursor.element)?;
-        match cursor.steps.get(&argument) {
-            Some(0) => return Ok(self.value_name(cursor.place)),
-            Some(step) => {
-                let moved = self.next_temporary()?;
-                writeln!(
-                    self.output,
-                    "  %{moved} = getelementptr {element}, ptr {}, i64 {step}",
-                    self.value_name(cursor.place)
-                )
-                .map_err(|_| BackendFailure::TextEmission)?;
-                return Ok(format!("%{moved}"));
-            }
-            None if cursor.instead => {
-                let index = self.value_name(argument);
-                return self.run_slot_pointer(cursor.run, &index);
-            }
-            None => {}
+        if argument == cursor.index {
+            return Ok(self.value_name(cursor.place));
         }
         let step = self.next_temporary()?;
         let moved = self.next_temporary()?;
+        let element = self.output.type_name(self.program, cursor.element)?;
         let scaled = self
             .element_address_index(cursor.element, &format!("%{step}"))?
             .to_owned();
@@ -1946,144 +1839,6 @@ impl FunctionEmitter<'_, '_> {
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         Ok(format!("%{moved}"))
-    }
-
-    /// Fills in which values are the cursor's index moved by a constant
-    /// number of elements, and, when the header reads the run's length
-    /// through a projection the parts receive, which comparisons test the
-    /// index moved by one element against that length. The index is below
-    /// the length on every entry to the header, so the address moved by one
-    /// element is at most the run's end address, and the unsigned address
-    /// comparison agrees with the index comparison.
-    fn index_steps(
-        &self,
-        cursor: &mut Cursor,
-        header: &IrBlock,
-        role: &dyn Fn(IrValueId) -> Option<Role>,
-    ) {
-        let definitions: HashMap<IrValueId, &crate::IrOperation> = self
-            .function
-            .blocks()
-            .iter()
-            .flat_map(|block| block.instructions())
-            .filter_map(|instruction| match instruction {
-                IrInstruction::Define {
-                    result, operation, ..
-                } => Some((*result, operation)),
-                _ => None,
-            })
-            .collect();
-        let constant = |value: &IrValueId| match definitions.get(value) {
-            Some(crate::IrOperation::Constant(crate::IrConstant::Integer { bits, .. }))
-                if *bits <= u64::from(u32::MAX) =>
-            {
-                Some(*bits)
-            }
-            _ => None,
-        };
-        cursor.steps.insert(cursor.index, 0);
-        for (result, operation) in &definitions {
-            let crate::IrOperation::Integer {
-                operation:
-                    crate::IrIntegerOperation::AddExact
-                    | crate::IrIntegerOperation::AddChecked
-                    | crate::IrIntegerOperation::AddDefined
-                    | crate::IrIntegerOperation::AddWrap,
-                arguments,
-                ..
-            } = operation
-            else {
-                continue;
-            };
-            let step = match arguments.as_slice() {
-                [left, right] if *left == cursor.index => constant(right),
-                [left, right] if *right == cursor.index => constant(left),
-                _ => None,
-            };
-            if let Some(step) = step {
-                cursor.steps.insert(*result, step);
-            }
-        }
-        if !cursor.instead {
-            return;
-        }
-        // The run's address, or a projection the header makes by the same
-        // operation as the run's, both computed on one entry to the header.
-        let made_by_header = |value: IrValueId| {
-            header
-                .instructions()
-                .iter()
-                .find_map(|instruction| match instruction {
-                    IrInstruction::Define {
-                        result, operation, ..
-                    } if *result == value => Some(operation),
-                    _ => None,
-                })
-        };
-        let run = made_by_header(cursor.run);
-        let same_run = |container: IrValueId| {
-            container == cursor.run || run.is_some_and(|run| made_by_header(container) == Some(run))
-        };
-        cursor.length = header
-            .instructions()
-            .iter()
-            .find_map(|instruction| match instruction {
-                IrInstruction::Define {
-                    result,
-                    operation:
-                        crate::IrOperation::ContainerMeasure {
-                            measure: crate::IrMeasure::Length,
-                            container,
-                        },
-                    ..
-                } if same_run(*container)
-                    && matches!(role(*result), Some(Role::Hoisted | Role::Invariant)) =>
-                {
-                    Some(*result)
-                }
-                _ => None,
-            });
-        let Some(length) = cursor.length else {
-            return;
-        };
-        for (result, operation) in &definitions {
-            if let crate::IrOperation::Integer {
-                operation: crate::IrIntegerOperation::Less,
-                operand_type:
-                    IrType::Integer {
-                        width: 64,
-                        signed: false,
-                    },
-                arguments,
-            } = operation
-                && let [left, right] = arguments.as_slice()
-                && cursor.steps.get(left) == Some(&1)
-                && *right == length
-                && self.storage.slot(*result).is_none()
-            {
-                cursor.bounds.insert(*result);
-            }
-        }
-    }
-
-    /// The part prelude that recovers the cursor's index from the address
-    /// the part received: its distance from the run's first slot divided by
-    /// the element's size.
-    fn recovered_index(
-        &self,
-        cursor: &Cursor,
-        references: &mut References,
-    ) -> Result<String, BackendFailure> {
-        let (run_type, slots) = self.run_slots_layout(cursor.run)?;
-        let run_type = llvm_type_with_references(self.program, run_type, &mut references.types)?;
-        let element =
-            llvm_type_with_references(self.program, cursor.element, &mut references.types)?;
-        Ok(format!(
-            "  %wf.cursor.first = getelementptr inbounds {run_type}, ptr {run}, i64 0, i32 {slots}, i64 0\n  %wf.cursor.at = ptrtoint ptr {place} to i64\n  %wf.cursor.from = ptrtoint ptr %wf.cursor.first to i64\n  %wf.cursor.offset = sub nuw i64 %wf.cursor.at, %wf.cursor.from\n  {index} = udiv exact i64 %wf.cursor.offset, ptrtoint (ptr getelementptr ({element}, ptr null, i32 1) to i64)\n",
-            run = value_name(cursor.run),
-            place = value_name(cursor.place),
-            index = value_name(cursor.index),
-        ))
     }
 
     /// How many arms read a value: every arm when the header reads it.
@@ -2116,9 +1871,6 @@ impl FunctionEmitter<'_, '_> {
         }
     }
 }
-
-/// The parameter holding the run's end address (see [`Cursor`]).
-const CURSOR_END: &str = "%wf.cursor.end";
 
 /// The part-local slot holding the kept box of a pinned reference, which the
 /// part hands to callees in its place.

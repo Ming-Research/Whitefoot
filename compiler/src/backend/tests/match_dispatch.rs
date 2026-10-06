@@ -311,20 +311,17 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
 #[test]
 fn the_matched_element_s_address_travels_between_the_parts() {
     // The header matches `code^.inner[pc]` and the arms read the operation
-    // through its address, so the parts carry that address in place of
-    // `pc`: the dispatch function no longer forms it, `Add` and `Dec` move
-    // the address they received by one element and compare it with the
-    // run's end address instead of comparing `pc + 1` with the length, and
-    // `Jnz`, whose next index may be a branch target, forms the address from
-    // the run beside the run's first slot its prelude forms to recover `pc`.
-    // The program's result checks every path.
+    // through its address, so the parts carry that address: the dispatch
+    // function no longer forms it from `pc`, and an arm moves the address it
+    // received by the change of `pc`, `Add` and `Dec` by one and `Jnz` by a
+    // branch's distance, which the program's result checks.
     let module = emit(scalar_interpreter().as_bytes());
     if !verdict(&module, "wf_run").starts_with("split") {
         return;
     }
     assert!(
         module.contains(&format!(
-            "{}wf_run: carries the matched Op's address between the parts in place of its index",
+            "{}wf_run: carries the matched Op's address between the parts",
             crate::DISPATCH_LEDGER_PREFIX
         )),
         "the ledger reports the carried address: {module}"
@@ -333,26 +330,16 @@ fn the_matched_element_s_address_travels_between_the_parts() {
     assert!(
         !dispatch
             .lines()
-            .any(|line| line.contains("= getelementptr inbounds {")
-                && !line.contains("%wf.frame")
-                && !line.contains("%wf.cursor.first")),
+            .any(|line| line.contains("= getelementptr inbounds {") && !line.contains("%wf.frame")),
         "the dispatch function receives the element's address instead of forming it: {dispatch}"
     );
-    for arm in 0..2 {
+    for arm in 0..3 {
         let arm = definition(&module, &format!("wf_run.arm.{arm}"));
         assert!(
-            arm.contains(" = getelementptr %")
-                && arm.contains(" = icmp ult ptr ")
-                && arm.contains(", %wf.cursor.end"),
-            "a sequential arm moves the address it received and tests it against the end: {arm}"
+            arm.contains(" = sub i64 ") && arm.contains(" = getelementptr %"),
+            "a looping arm moves the address it received: {arm}"
         );
     }
-    let branch = definition(&module, "wf_run.arm.2");
-    assert!(
-        branch.matches(" = getelementptr inbounds {").count() >= 2
-            && branch.contains("%wf.cursor.end"),
-        "the branching arm forms its next address from the run and passes the end on: {branch}"
-    );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
