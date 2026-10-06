@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The code-placement experiment of research/investigations/code-placement/DESIGN.md,
-# dispatched by .github/workflows/code-placement.yml. Explicit research only:
-# no gate runs it.
+# dispatched by .github/workflows/compute-bench.yml with `experiment:
+# placement`. Explicit research only: no gate runs it.
 #
 # usage: placement.sh UNALIGNED_TREE UNALIGNED_WFC ALIGNED_TREE ALIGNED_WFC WORK ROUNDS [CPUS]
 #

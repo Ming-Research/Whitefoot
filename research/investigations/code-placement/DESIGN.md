@@ -169,8 +169,9 @@ the regression runner's one warmup and five recorded calls, in an order that
 rotates and alternates direction from round to round. Every process is
 pinned to vCPUs 0–3. [`summarize.py`](summarize.py) reduces the rounds.
 
-The runs use [`code-placement.yml`](../../../.github/workflows/code-placement.yml)
-on the owner's i9-14900K, a Hyper-V machine with 32 vCPUs whose mapping onto
+The runs use the `placement` experiment of
+[`compute-bench.yml`](../../../.github/workflows/compute-bench.yml) on the
+owner's i9-14900K, a Hyper-V machine with 32 vCPUs whose mapping onto
 performance and efficiency cores the guest cannot see, and on a hosted
 `ubuntu-24.04` runner. A first run of three rounds on each host sizes the
 decisive run; the decisive run's number of rounds is chosen from its spread and
