@@ -2385,6 +2385,22 @@ rarely insert at the same place.
   for a concrete privacy consumer that cannot use one module's private
   implementation files.
 
+- **A compiler release carries no documents for its downstream writers.**
+  `compiler-release.yml` publishes `whitefootc`, a manifest and checksums
+  only, so an agent writing a downstream project reads the specification,
+  the maintained programs and the standard library's interfaces in this
+  repository at the release's commit
+  ([downstream releases](../design/compiler/downstream-releases.md)). That
+  ties every downstream writer to this repository's layout and to network
+  access at the moment it writes code, and gives no single list of what a
+  writer needs. The change: choose what a release carries for writers, such
+  as the specification, `lib/std`'s `module.wfm` interfaces, `docs/patterns.md`
+  and selected programs, in what form and under what stable names, and add it
+  to each release. The owner deferred the choice as larger than the release
+  mechanism; future releases are to carry it. Reopen when the downstream
+  projects' first upgrades show which documents their writers read, or when a
+  writer has to work without access to this repository.
+
 ## Interpreter dispatch lowering
 
 - **Halo's `AddRR` arm copies its `Value` operands to the stack before
