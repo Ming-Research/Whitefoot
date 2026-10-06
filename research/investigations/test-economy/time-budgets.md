@@ -460,9 +460,9 @@ and the baseline 90.7 s. Two dispatched runs on an EPYC 7763 of main's
 source separate the build order from the compiler built: in run 37395372973,
 in the workflow's order, the first build took 101.6 s and the second 93.2 s;
 in run 37395370468, with the two build steps swapped, the first took 107.2 s
-and the second 93.2 s. The owner set the budget to 130 s on 2026-10-05,
-about 10 s over that slowest run, under the fixed raise below; `performance-baseline-compiler`
-keeps 105 s, over its slowest run of 97.3 s. Why the first cold build is
+and the second 93.2 s. The owner set the budget directly to 130 s on
+2026-10-05, about 10 s over that slowest run, in the same ruling that fixed
+every later raise at 10 s; `performance-baseline-compiler` keeps 105 s, over its slowest run of 97.3 s. Why the first cold build is
 slower was not measured; an untimed warm-up before both builds would remove
 the difference instead of covering it.
 
@@ -471,7 +471,7 @@ step, and the author then reads the change against the stage: added cases,
 fixtures or work on the stage's path, and the job's ranking of slowest cases
 and its host. A cause found is fixed, or its raise goes to the owner; an
 approved raise adds 10 s to the stage and to the group stage that contains
-it, so an overrun of more than 10 s still needs its cause found. When
+it, if any, so an overrun of more than 10 s still needs its cause found. When
 the reading is unclear, the job runs once more; and when the change plainly
 cannot slow the stage, as a prose-only change cannot slow a build, the
 overrun is reported as runner variance in the validation handed back and

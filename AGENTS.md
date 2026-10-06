@@ -432,9 +432,10 @@ it needs to the owner; re-run the job once when you cannot tell; and when the
 change plainly cannot slow the stage, report the overrun as runner variance in
 the validation you hand back, where it does not hold the revision back.
 Raising a budget is a decision for the owner, and a raise adds 10 s to the
-stage and to the group stage that contains it; lower one in the change that
-makes its stage much faster, and give a new labeled CI stage its budget. Inspect an existing owner's PID instead of starting
-another heavy command, and after an
+stage and to the group stage that contains it, if any; lower a budget in the
+change that makes its stage much faster, and give a new labeled CI stage its
+budget. Inspect an existing owner's PID instead of starting another heavy
+command, and after an
 uncatchable stop inspect the recorded PID and command before removing a stale
 lock. The `gate` Cargo profile builds the Rust compiler with optimization,
 debug assertions and overflow checks; it does not change how WF source is
