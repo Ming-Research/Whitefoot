@@ -311,7 +311,9 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
 /// An interpreter whose path tells a carried element address from a wrong
 /// one: it enters at `pc` 1, past an `Add 1000` no correct path reaches,
 /// jumps forward to 3, repeats `Rep 5` three times in place, then jumps back
-/// to 2 and halts with 15.
+/// to 2 and halts with 15. `Halt` adds 100 times its `pc`, so an address
+/// that reaches it while `pc` names another operation also changes the
+/// result, 215.
 const CURSOR_INTERPRETER: &str = r#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -355,7 +357,9 @@ fn run(code: &Box<Slots<Op>>, pc: u64, acc: u64, count: u64) -> r: u64 reads(cod
       return 0_u64;
     }
     Halt() => {
-      return acc;
+      let at = pc *wrap 100_u64;
+      let r = acc +wrap at;
+      return r;
     }
   }
 }
@@ -382,7 +386,7 @@ fn main() -> status: ExitStatus pure {
   let p4 = push(code: &code, op: c4);
   if code.inner.len > 1_u64 {
     let r = run(code: &code, pc: 1_u64, acc: 0_u64, count: 3_u64);
-    if r == 15_u64 {
+    if r == 215_u64 {
       return exit_status(code: 0_u8);
     }
     return exit_status(code: 1_u8);

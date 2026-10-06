@@ -788,9 +788,9 @@ The hosted rows come from the same run's other jobs and from
 | host | base | A | B | A / base | B / A |
 |---|---:|---:|---:|---|---|
 | 14900K, 22.1.8, `preserve_none` | 4705.9 (1.2%) | 5319.1 (2.1%) | 5235.6 (0.8%) | 1.130; 7 of 7 pairs above, 1.105-1.142 | 0.984; 0 of 7 above, 0.979-1.000 |
-| hosted EPYC 7763, 22.1.8 | 1906.6 (11.2%) | 1939.9 (7.5%) | 1988.1 (12.0%) | 1.018; 5 of 7 | 1.025; 5 of 7 |
+| hosted EPYC 7763, 22.1.8 | 1906.6 (11.2%) | 1939.9 (7.5%) | 1988.1 (12.0%) | 1.017; 5 of 7 | 1.025; 5 of 7 |
 | hosted EPYC 9V45, 22.1.8 | 3418.8 (2.4%) | 3552.4 (3.6%) | 3571.4 (6.5%) | 1.039; 7 of 7 | 1.005; 3 of 7 |
-| macos-15, M1 (virtual) | 2702.7 (14.9%) | 2747.3 (20.3%) | 2617.8 (30.7%) | 1.017; 5 of 7 | 0.953; 1 of 7 |
+| macos-15, M1 (virtual) | 2702.7 (14.9%) | 2747.3 (20.3%) | 2617.8 (30.7%) | 1.016; 5 of 7 | 0.953; 1 of 7 |
 | macos-15, M1 (virtual) | 1901.1 (18.3%) | 1982.2 (11.5%) | 1846.7 (21.7%) | 1.043; 6 of 7 | 0.932; 0 of 7 |
 
 Medians, with each side's spread across its launches. The first EPYC row
@@ -807,7 +807,7 @@ A's compiler at `82cba945e`, equal to `7f86697b1`'s):
 | host | base | twin | A | twin / base | A / base |
 |---|---:|---:|---:|---|---|
 | 14900K, 22.1.8, `preserve_none` | 4683.8 (1.4%) | 4728.1 (0.7%) | 5305.0 (1.3%) | 1.009; 4 of 7, 0.998-1.014 | 1.133; 7 of 7, 1.122-1.135 |
-| hosted EPYC 7763, 22.1.8 | 1906.6 (6.2%) | 1902.9 (7.4%) | 1970.4 (2.7%) | 0.998; 4 of 7 | 1.034; 7 of 7 |
+| hosted EPYC 7763, 22.1.8 | 1906.6 (6.2%) | 1902.9 (7.4%) | 1970.4 (2.7%) | 0.998; 4 of 7 | 1.033; 7 of 7 |
 
 The twin sits within 1% of the base and A 13.3% above it. The macos-15
 job of the same run spread by 30-51% and is not shown.
