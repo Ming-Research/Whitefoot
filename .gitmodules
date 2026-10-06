@@ -1,0 +1,3 @@
+[submodule "design/skill"]
+	path = design/skill
+	url = https://github.com/Ming-Research/Design-skill.git

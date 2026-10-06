@@ -3412,15 +3412,6 @@ condition under which it is taken up.
   bypasses the owned process, or when the tests' process calls are next
   reorganized.
 
-- **The design-tree skill's tests also test this project's CI script.**
-  `design/skill/test_lint.py` runs `.github/design-review-base.sh` in nine
-  of its cases, so a project that copies `design/skill/` gets failing tests,
-  although the skill is meant to move to another project unchanged. Move
-  those cases to a `--self-test` of `design-review-base.sh` wired into
-  `make static`, as the other `.github` scripts do, and keep only the lint's
-  own cases in the skill. Validate that each moved case still fails once for
-  its intended reason. Reopen when the skill is extracted or the CI base
-  selection changes.
 - **Static verification uses inconsistent, mutable comparison refs.** The
   root `spec-archives` target hard-codes local `main`; after a branch integrates
   current upstream, an older local ref can report multiple new archives even
