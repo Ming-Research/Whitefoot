@@ -89,7 +89,11 @@ rarely insert at the same place.
     ) {
       let t = t0;
       if c == 1_u64 {
-        if t <= room { set j = t; } else { return j; }
+        if t <= room {
+          set j = t;
+        } else {
+          return j;
+        }
       } else if c == 2_u64 {
         return j;
       }
@@ -99,15 +103,19 @@ rarely insert at the same place.
   ```
 
   is refused with `INV-1 UndischargedLoopInvariant`, obligation `Backedge`,
-  on `jb`. Two paths reach the back edge, and each alone re-proves
-  `j <= room`: the update from `t <= room` with `j == t`, the fallthrough
-  from the assumed invariant. The join keeps only facts identical on both
-  inputs, so neither survives. The program is sound; a checker could accept
-  it by proving the header batch on each input of the final join, or by
-  closing each input's facts under its value images before joining. Impact:
-  an interpreter written as `loop { match }` whose arms update different
-  loop variables needs a run-time re-check of the invariant per dispatch;
-  Halo's interpreter (PR #220) is written as a self-tail call instead.
+  on `jb` (compiler at 648338c31). Two paths reach the back edge, and each
+  alone re-proves `j <= room`: the update from `t <= room` with `j == t`,
+  the fallthrough from the assumed invariant. Each path alone is accepted:
+  making the fallthrough return, so that only the update reaches the back
+  edge, passes, and so does removing the update. The loss is therefore at
+  the join of the two paths, where neither path's own fact survives. The
+  program is sound; a
+  checker could accept it by proving the header batch on each input of the
+  final join, or by closing each input's facts under its value images before
+  joining. Impact: an interpreter written as `loop { match }` whose arms
+  update different loop variables needs a run-time re-check of the invariant
+  per dispatch; Halo's interpreter (Ming-Research/Halo-wf#2) is written as a
+  self-tail call instead.
   Reopen when a loop-shaped program cannot be rewritten that way, or with
   the INV-1 join rules.
 
