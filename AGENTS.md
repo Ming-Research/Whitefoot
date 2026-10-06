@@ -214,9 +214,6 @@ clean as the root.
 
 ### Document roles
 
-Each document holds what serves its reader, without another document's
-changing inventory or the editing conversation.
-
 - `README.md`: introduction, getting started and navigation.
 - `AGENTS.md`: Whitefoot's goal, authority, process additions, approval and
   merge rules, integrity rules, checks and review.
@@ -249,9 +246,8 @@ changing inventory or the editing conversation.
 
 ### Citation boundaries
 
-- Definitions point to their current owner; technical claims point to the
-  specification, source and cases, a relevant design, or reproducible
-  evidence, and the linked passage supports the claim.
+- Technical claims point to the specification, source and cases, a relevant
+  design, or reproducible evidence.
 - The constitution, specification, writer patterns and essays stand without
   the design trees: they do not link to `design/` or use it as authority.
 - Maintainer navigation (README, this file, the research index) may point to
@@ -267,7 +263,8 @@ The compiler's implementation rules are its design decisions in
 `design/compiler`. Before changing the compiler, read the subtree you are
 changing and its ancestors; a decision the tree does not cover is added to
 the tree for the owner's approval, never left only in code. Exploratory
-timing runs only when requested.
+timing runs only when requested; measure build time apart from test and
+program execution.
 
 ## Checks
 
@@ -281,8 +278,8 @@ timing runs only when requested.
   build, tests, the conformance adapter and the runtime; `make check-groups`
   lists the groups. `gate.yml` runs those groups on Linux and macOS on every
   push, and its green run on the exact revision to be merged, a head current
-  with `main`, is that revision's `make check`; run it locally to reproduce a
-  failure or when CI is unavailable. It needs `python3`, LLD on Linux
+  with `main`, is that revision's `make check`; reproduce a failure on CI as
+  well, and run it locally only when CI is unavailable. It needs `python3`, LLD on Linux
   (`ld.lld`) and the `time` utility.
 - `make design-ready`, before marking ready and in `design-readiness.yml` on
   ready PRs and main: approved tree and specification changes.
@@ -311,20 +308,25 @@ perl .github/run-check.pl <label> cargo test --manifest-path compiler/Cargo.toml
 
 Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
 as the `make` targets do, from any worktree. It holds one host-wide lock,
-prints wall, user and system time every 30 seconds, stops a command after 30
-minutes unless `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds, and
-compares each labeled stage with its budget in `.github/time-budgets.txt`; CI
-fails a job whose stage exceeded its budget or has none. Inspect an existing
-lock owner's PID instead of starting another heavy command.
+leaves Cargo and the test harness at every available processor unless
+`CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` names fewer, prints wall, user and
+system time every 30 seconds, and stops a command after 30 minutes unless
+`WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
+labeled stage with its budget in `.github/time-budgets.txt` without changing
+the command's status: CI fails the job in a final verdict step, a local run
+only prints the comparison. Inspect an existing lock owner's PID instead of
+starting another heavy command, and after an uncatchable stop inspect the
+recorded PID and command before removing a stale lock.
 
 When a stage exceeds its budget, look at what the change adds to it and at the
 job's slowest cases and host; fix a cause you find or bring the raise to the
 owner, re-run once when you cannot tell, and report an overrun the change
-plainly cannot cause as runner variance. A raise is the owner's decision and
-adds 10 s to the stage and its group stage; lower a budget when a change makes
+plainly cannot cause as runner variance, which does not hold the revision
+back. A raise is the owner's decision and adds 10 s to the stage and to its
+group stage, if any; lower a budget when a change makes
 its stage much faster, and give a new labeled stage a budget. The `gate`
 Cargo profile builds the Rust compiler with optimization, debug assertions
-and overflow checks. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>` records the
+and overflow checks; it does not change how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>` records the
 phases of the shared test helpers for a slow compiler test.
 
 ## Review
@@ -353,8 +355,3 @@ contradiction), or "none within scope".
 Merging main without conflicts in reviewed content needs no new review; a
 resolved conflict is reviewed as changed content, those hunks only. Fill the
 PR's review section.
-
-## Communication
-
-Avoid security or attack-oriented framing when the task is ordinary
-correctness checking.

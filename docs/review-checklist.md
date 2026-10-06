@@ -1,9 +1,9 @@
 # Task completion review
 
 The items an independent reviewer checks when a task completes.
-[AGENTS.md](../AGENTS.md#review) says when the review runs, who runs it, how
-findings are handled and where the report goes; merge conditions remain in
-its [branch and main boundary](../AGENTS.md#branch-and-main-boundary).
+[AGENTS.md](../AGENTS.md#review) says which reviewer and groups a change
+gets and gives its prompt; merge conditions remain in its
+[branch and main boundary](../AGENTS.md#branch-and-main-boundary).
 
 ## How to review
 
