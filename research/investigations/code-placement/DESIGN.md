@@ -158,9 +158,8 @@ placement of several functions rather than the chunk function's start alone:
 `un m32` puts the chunk function at 0 modulo 64, as alignment does, and is the
 slowest unaligned image at widths 2 and 4. Six rounds of the other four
 kernels showed spreads of a few percent under either build and no cost of
-alignment beyond that noise. Alignment adds 48 bytes of never-executed padding
-per kernel module, 576 to 1,280 bytes, 46 to 56 bytes for each function the
-module defines.
+alignment beyond that noise. Alignment adds never-executed padding to each
+kernel module: 576 to 1,280 bytes of `.text` across the five modules.
 
 ## Method
 
@@ -365,9 +364,10 @@ percent longer than `U` at widths 1, 2 and 4. Three rounds select nothing.
 
 `compute-regression` on this change compares the aligned candidate with
 `main`'s unaligned images on whichever processor the hosted pool assigns,
-which its log did not name until this change added it. It passed at
-`d4f67df6` and `8097c03a` and failed on `records` at three commits that change
-no compiler source, five of five or four of five pairs lower each time:
+which its log did not name until this change added it. The five runs below
+had byte-identical compiler and `tests/performance` inputs. Two passed, at
+`d4f67df6` and `8097c03a`, and three failed on `records`, five of five or four
+of five pairs lower each time:
 
 | run | commit | width 2 | width 4 |
 |---|---|---|---|
@@ -375,9 +375,16 @@ no compiler source, five of five or four of five pairs lower each time:
 | 37439315247 | `3ce59221` | 0.879152 | 0.862255 |
 | 37441911232 | `210e06ae` | 0.914782 | 0.926627 |
 
+The run at `d1a13082` (37445053860), the first whose log names its processor,
+ran on an EPYC 7763 and passed, `records` at width 4 a single-width suspect at
+0.917337; its 96-byte placement control moved each kernel's module by 128
+bytes and passed.
+
 These are of the size the 9V74 sizing run reads for `main`'s placement, `U`
 at `p0` over `FR` at `p0`: 0.884 at width 2 and 0.917 at width 4. Every one of
-those runs passed its placement control.
+those runs passed its placement control; the one at `210e06ae` reported a
+single-width suspect there, `records` at width 1, 0.962886 with four of five
+pairs lower.
 
 ## Conclusion
 

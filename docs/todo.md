@@ -1747,8 +1747,8 @@ rarely insert at the same place.
   percent longer than its median unaligned placement in a three-round run,
   and three of five `compute-regression` runs of the change failed on
   `records` against `main`, 8 to 18 percent longer; on the 14900K and the
-  EPYC 7763 the aligned layout costs nothing, and on a 9V45 and a Xeon 8370C
-  it costs 3 to 5 percent at one worker and gains at others
+  EPYC 7763 the aligned layout costs at most about 3 percent, and on a 9V45
+  and a Xeon 8370C 3 to 5 percent at one worker while gaining at others
   ([code placement](../research/investigations/code-placement/DESIGN.md#results)).
   A hypothesis, not yet tested: the kernel's UTF-8 validation loop is dense in
   branches, and which of them share a 64-byte line follows the layout. On the
