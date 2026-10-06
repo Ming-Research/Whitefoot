@@ -3560,3 +3560,20 @@ fn a_symbolic_link_at_a_bound_package_root_is_an_envelope_failure() {
     assert!(crate::form_module_program_graph(&graph, CompilerLimits::default()).is_ok());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Concurrent work returns each item's result at the item's position, not in
+/// the order the threads finish, so the first rejection in module order is
+/// the one a composition reports.
+#[test]
+fn concurrent_work_returns_results_in_item_order() {
+    let items = (0..16_u64).collect::<Vec<_>>();
+    let results = crate::in_parallel(&items, |item| {
+        // Later items finish first.
+        std::thread::sleep(std::time::Duration::from_millis(32 - 2 * item));
+        item * 3
+    });
+    assert_eq!(
+        results,
+        items.iter().map(|item| item * 3).collect::<Vec<_>>()
+    );
+}

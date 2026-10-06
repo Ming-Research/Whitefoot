@@ -110,6 +110,11 @@ the work-branch and merge boundary.
   scatter, cascade and Snowghost witnesses, a `proof` declaration rule
   compared with five alternatives and refused, what a compiler pass would
   need instead, and a timing of Snowghost's style stage without the data.
+- [Cold compile speed](investigations/compile-speed/DESIGN.md): where a
+  fresh-cache check of Snowghost's largest entries spends its time, the
+  concurrent module verdicts, closure seeds and implicit-only snapshots that
+  removed most of it with unchanged verdicts and LLVM, and the costs that
+  remain.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are in [todo](../docs/todo.md).

@@ -130,9 +130,7 @@ impl<'unit> TypeContext<'unit> {
             let record = self
                 .declarations
                 .resolved
-                .declarations()
-                .iter()
-                .find(|record| record.id() == declaration)
+                .declaration(declaration)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             let target = by_declaration
                 .get(&declaration)
