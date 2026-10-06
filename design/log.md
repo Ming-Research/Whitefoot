@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-06 The probe, the join and delivery over the closure universe
+
+Nodes: compiler/incremental-closure, compiler/checker-facts
+
+Owner-approved: In the session of 2026-10-05, written in Chinese, after the handoff that presented decisions Q20, Q22 and Q23 on PRs #232 and #235: "Leave decision 2; it is not something we should do, I will clean locally myself. Agree to all the others" (translated). Then on 2026-10-06, after PR #254's report presented, as Q120, the port of those decisions onto main's closure with the amended text of both nodes: "Q120 approved" (translated).
+
+Summary: The proof-free contradiction probe of a state with no recorded closure closes the closure universe instead of every registered term, because over every term it kept the check of a function with many `match` arms or `give` edges cubic after the closures themselves were not. The stage-3 wasm interpreter's check falls from 73.71 to 3.89 s, and its inline-handler form from 431.57 to 3.31 s, with identical LLVM. A join keeps a disequality between a row term and a term outside its rows where the inputs bound the row term strictly above the other term's range on one path and strictly below it on another, and it retakes the full join over the rows the ordinary join adds. Value-initializer delivery evaluates candidate disequalities through each edge image's zero bound on the receiver (Q22). These two restore completeness that main lost against the compiler before the narrower closures. The materialization gap of Q23 stays deferred in `docs/todo.md`. Measurements and tests are in [the incremental-closure record](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#the-probe-the-join-and-delivery-over-the-closure-universe).
+
 ## 2026-10-05 The derived-address refusal states only its measured ground
 
 Nodes: compiler/match-dispatch-lowering
