@@ -701,25 +701,25 @@ rarely insert at the same place.
   on wfgrep and fixed_run_library. Reopen when a program's postcondition
   reasoning is refused after a write that its ordinary facts should survive.
 
-- **A remembered closure is discarded by every term registration.** `close`
-  in `compiler/src/semantic/entailment/state.rs` keys a state's remembered
-  closed view on the term table's revision and term count, so each `let`
-  that registers a term discards the view, although a term without a fact
-  changes no answer. It also takes the state by shared reference, so a
-  complete closure of a state whose record is `Unknown` never marks the
-  record closed, and an arm's entry state is closed from scratch at each of
-  its first judgments. On the active-term closure of PR 232, the synthetic
-  N-arm interpreter of
+- **A term registration discards an unchanged state's remembered closure.**
+  `close` in `compiler/src/semantic/entailment/state.rs` keys a state's
+  remembered closed view on the term table's revision and term count, so a
+  `let` that registers a term discards the view of a state that has not
+  changed, although a term without a fact changes no answer. A state with a
+  recorded closure core continues from it (`close_by_edge_insertion`), and a
+  state that gained facts since its view continues from that view
+  (`close_from_view_seed`); a state with neither, an `Unknown` record that
+  gained nothing since its view, is closed completely again. On the
+  active-term closure of PR 232, about half of the roughly fourteen closures
+  per arm of the synthetic N-arm interpreter of
   [the probe measurement](../research/investigations/proof-certificate-architecture/INCREMENTAL-CLOSURE.md#the-probe-the-join-and-delivery-over-the-closure-universe)
-  ran about fourteen computed closures per arm, about half of them on
-  states that had not changed. Main's closure was not counted. With the
-  closure universe narrowed each closure is small, so the saving is a
-  constant factor. The change: key the remembered view on the closure
-  universe's terms and the measure bounds rather than on every
-  registration, and let a complete closure of an `Unknown` record mark it
-  closed. Validate with the seeded-closure verification and the synthetic
-  series. Reopen when a profile of a real program attributes a substantial
-  share to repeated closures of unchanged states.
+  recomputed states that had not changed. Main's closure routes were not
+  counted, so this path's share there is unknown. The change: key the
+  remembered view on the closure universe's terms and the measure bounds, or
+  keep a view that only term registrations invalidated as the state's seed.
+  Validate by counting closure routes with the test route recorder on the
+  synthetic series before and after. Reopen when a profile of a real program
+  attributes a substantial share to complete closures of unchanged states.
 
 ## Containers and storage lowering
 
