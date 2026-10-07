@@ -2285,8 +2285,8 @@ pub fn compile_module_program_with_permission_ledger(
 
 /// Compiles one entry's composition to textual LLVM [MOD-9, PROG-3], reusing
 /// the module a cache recorded for exactly the same composition, lowering
-/// options and compiler, and reporting whether it did. Only a successful
-/// build is recorded.
+/// options, host toolchain forms and compiler, and reporting whether it did.
+/// Only a successful build is recorded.
 ///
 /// # Errors
 ///
@@ -2322,14 +2322,14 @@ pub fn build_module_entry_for_emission(
     let mut selection = entry_selection(graph, entry)?;
     selection.fragments = fragments;
     let (modules, selected) = composition_inputs(graph, inputs, selection.module);
-    let mut material = composition_material(
-        ENTRY_MODULES,
+    let mut material = entry_module_material(
         graph,
         &selection,
         (&modules, &selected),
-        RecordOrder::Read,
+        overlap,
+        crate::toolchain::facts(),
     );
-    material.extend_from_slice(format!("overlap {overlap:?}\nfragments {fragments}\n").as_bytes());
+    material.extend_from_slice(format!("fragments {fragments}\n").as_bytes());
     // Only a build that composed is recorded, so a recorded module implies
     // that every module verdict of its closure held for these inputs.
     if let Some(module) = cache
@@ -2352,6 +2352,29 @@ pub fn build_module_entry_for_emission(
         let _ = cache.store(ENTRY_MODULES, &material, &reported.module.encode());
     }
     Ok((reported.module, reported.ledger, false))
+}
+
+/// Emitted modules depend on the runtime host's LLVM forms as well as the
+/// composition. A compiler moved to another host, or run after a clang
+/// upgrade, must not reuse text containing forms only the previous host took.
+/// Source verdicts and proof receipts do not depend on these emission facts.
+fn entry_module_material(
+    graph: &crate::ModuleGraph,
+    selection: &Selection<'_>,
+    inputs: (&[crate::ModuleId], &[SourceInput<'_>]),
+    overlap: crate::OverlapLowering,
+    toolchain: &crate::toolchain::ToolchainFacts,
+) -> Vec<u8> {
+    let mut material =
+        composition_material(ENTRY_MODULES, graph, selection, inputs, RecordOrder::Read);
+    material.extend_from_slice(
+        format!(
+            "overlap {overlap:?}\npreserve-none {}\nno-capture {}\ncoro-end {}\n",
+            toolchain.preserve_none, toolchain.no_capture_attribute, toolchain.coro_end_result,
+        )
+        .as_bytes(),
+    );
+    material
 }
 
 /// One compilation's module and the developer-channel text it produced.

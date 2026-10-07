@@ -2142,17 +2142,20 @@ rarely insert at the same place.
   ships with its boundary specified and tested, or the owner records why one
   route suffices.
 - **A formal release must carry its own clang.** `clang_executable()` in
-  `compiler/src/bin/whitefootc.rs` hard-codes `/usr/bin/clang` on Linux and
-  macOS (`clang` on PATH on Windows), and `build.rs` probes that same clang
-  for `preserve_none`, the no-capture spelling and `llvm.coro.end`'s result
-  type. The probed answers are fixed into the executable. A release built
-  against one LLVM can therefore emit IR the host's clang refuses: clang
-  22.1.8 rejects the `i1` `llvm.coro.end` that compilers built against
-  clang 18 emit. A host whose clang lives elsewhere (a versioned `clang-22`,
-  Nix, Homebrew) also cannot run the driver.
+  `compiler/src/toolchain.rs` hard-codes `/usr/bin/clang` on Linux and
+  macOS (`clang` on PATH on Windows), and `toolchain::facts()` probes that
+  same clang, when `whitefootc` runs, for `preserve_none`, the no-capture
+  spelling and `llvm.coro.end`'s result type. Since those forms are probed
+  at run time, a
+  release no longer emits a form the host's clang refuses (it did: the
+  macOS release `wf-0b7f5c5b9854`, built where clang takes the `void`
+  `llvm.coro.end`, emitted it to Apple clang 21, which refuses it). A host
+  without clang, or whose clang lives elsewhere (a versioned `clang-22`,
+  Nix, Homebrew), still cannot run the driver, and code generation still
+  differs with the host's LLVM.
 
-  Until then, releases and their consumers use the gate's pinned LLVM major
-  (compiler/verification, compiler/downstream-releases). Bundling clang
+  Until then, Linux releases and their consumers use the gate's pinned LLVM
+  major (compiler/verification, compiler/downstream-releases). Bundling clang
   into every release waits: at about 100 to 200 MB per release, not
   measured, it costs too much at the current release rate. A formal release
   still needs it.
@@ -2160,12 +2163,13 @@ rarely insert at the same place.
   The change, for the first formal release:
   - each release ships the pinned LLVM's clang, lld and the files they need;
   - `whitefootc` runs that clang, next to itself, instead of `/usr/bin/clang`;
-  - the build-time probes ask the bundled clang;
+  - the run-time probes ask the bundled clang;
   - on macOS, the bundled clang uses the system SDK and linker.
 
   Validate with a release that builds and links a waiting program on a host
   with no clang installed, and on one whose system clang is another major.
-  Reopen with the first formal release, or when the release rate drops.
+  Reopen with the first formal release, when the release rate drops, or
+  when a downstream builds waiting programs with a macOS release.
 - **One rejection per compilation.** The pipeline stops at its first
   violation, so an agent with several independent defects — two unproved
   subscripts in different functions, say — meets them one compile at a time.
@@ -3289,7 +3293,7 @@ condition under which it is taken up.
   remove the per-probe bounds compare in hash tables.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,
-  `captures(none)` or `nocapture` by a build-time probe, `inbounds`, and
+  `captures(none)` or `nocapture` by a run-time probe, `inbounds`, and
   `nuw`/`nsw` on the exact family. A `&[T]` range parameter crosses calls as
   its element pointer and count, and the pointer carries the same facts
   except `dereferenceable` (`compiler/backend-facts`; the

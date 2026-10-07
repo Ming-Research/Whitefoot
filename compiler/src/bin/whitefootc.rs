@@ -16,7 +16,7 @@ use whitefoot::{
     OverlapLowering, RecursionBudget, SCHED_CORE_HEADER, SCHED_CORE_SOURCE, SCHED_ENTRY_HEADER,
     SCHED_ENTRY_SOURCE, SCHED_PRIM_HEADER, SourceInput, WINDOWS_RUNTIME_HEADER,
     build_module_entry_for_emission, check, check_module_program, check_with_cache,
-    compile_for_emission, content_digest, discover_module_sources, entry_verdict,
+    clang_executable, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
     form_module_program_graph, module_verdict, render_driver_failure, render_module_interface,
     running_compiler_identity, split_module, stack_ledger,
 };
@@ -46,14 +46,6 @@ const USAGE: &str = "usage: whitefootc [--emit-llvm] [--par] [--par-call-grain a
 // same source compiles on the other hosts. Own the driver thread's stack so a
 // source program's acceptance does not depend on the host executable format.
 const COMPILER_DRIVER_STACK_BYTES: usize = 8 * 1024 * 1024;
-
-fn clang_executable() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "clang"
-    } else {
-        "/usr/bin/clang"
-    }
-}
 
 /// One compiler-owned runtime file and the path its quoted includes expect it
 /// to have below the driver's private staging root.

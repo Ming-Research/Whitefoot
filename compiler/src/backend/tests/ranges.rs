@@ -1216,7 +1216,7 @@ fn range_reference_parameters_state_the_call_site_disjointness_fact() {
     let llvm = compile(RANGE_ALIAS_FACTS.as_bytes());
     let add_into = emitted_function(&llvm, "add_into");
     let header = add_into.lines().next().expect("add_into signature");
-    let no_capture = env!("WHITEFOOT_NO_CAPTURE_ATTRIBUTE");
+    let no_capture = crate::toolchain::facts().no_capture_attribute;
     // The written and the read-only range alike: `noalias` constrains only
     // memory the call modifies. A range's extent is its runtime `len`, which
     // may be zero, so no `dereferenceable` extent is stated.

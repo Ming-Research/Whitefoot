@@ -126,11 +126,11 @@ fn definition<'module>(module: &'module str, symbol: &str) -> &'module str {
     &module[start..end]
 }
 
-/// The calling convention the build's assembler admits and the integer
-/// argument registers it has on this host, as compiler/match-dispatch-lowering
-/// records them.
+/// The calling convention the host's assembler admits at run time and its
+/// integer argument registers, as compiler/match-dispatch-lowering records
+/// them.
 fn host_convention() -> (&'static str, usize) {
-    let preserve_none = env!("WHITEFOOT_PRESERVE_NONE") == "1";
+    let preserve_none = crate::toolchain::facts().preserve_none;
     match (preserve_none, cfg!(target_arch = "aarch64"), cfg!(windows)) {
         (true, true, _) => ("preserve_nonecc ", 24),
         (true, false, true) => ("preserve_nonecc ", 12),

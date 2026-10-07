@@ -162,9 +162,9 @@ fn foreign_nominals(
 }
 
 /// The calling convention of every part, with its argument registers on the
-/// target: the convention without callee-saved registers where the build's
-/// assembler accepts it, so the values the parts pass stay in registers
-/// across the chain, and the C convention otherwise. The register counts
+/// target: the convention without callee-saved registers where the host's
+/// assembler accepts it at run time, so the values the parts pass stay in
+/// registers across the chain, and the C convention otherwise. The register counts
 /// are those measured for each convention and target with the parts' own
 /// transfer, a guaranteed tail call through a table-loaded address
 /// (compiler/match-dispatch-lowering): on x86-64 outside Windows that
@@ -173,7 +173,7 @@ fn foreign_nominals(
 fn convention(triple: &str) -> (&'static str, ArgumentRegisters) {
     let aarch64 = triple.starts_with("aarch64");
     let windows = triple.contains("windows");
-    if env!("WHITEFOOT_PRESERVE_NONE") == "1" {
+    if crate::toolchain::facts().preserve_none {
         let integer = if aarch64 {
             24
         } else if windows {
