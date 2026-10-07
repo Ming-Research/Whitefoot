@@ -36,9 +36,10 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        # stage3-x86-ir is temporary, for the x86-64 register-pressure
-        # attribution, and is removed before claude/stage3-cursor is ready.
-        options: [scoreboard, placement, stage3-x86-ir]
+        # stage3-x86-ir and halo-dispatch are temporary, for the x86-64
+        # register-pressure step, and are removed before
+        # claude/stage3-x86-regs is ready.
+        options: [scoreboard, placement, stage3-x86-ir, halo-dispatch]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -399,3 +400,107 @@ jobs:
             ${{ runner.temp }}/stage3-ir/interp.wf
             ${{ runner.temp }}/stage3-ir/interp.ll
             ${{ runner.temp }}/stage3-ir/interp.s
+
+  # Temporary: research/investigations/match-dispatch/DESIGN.md, "Stage 3:
+  # x86-64 register pressure": Halo's Lua interpreter, built from Halo-wf
+  # at a commit pinned to a release of this branch's merge base, with the
+  # merge base's compiler, an earlier step that placement_unaligned names,
+  # and the branch's compiler; fib and loop timed interleaved with a twin of
+  # the base.
+  halo-dispatch:
+    if: inputs.experiment == 'halo-dispatch'
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted","14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    env:
+      HALO_COMMIT: acb39ad7fc9dce692137dc9753f30c8008e4a2d3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            version=$(tr -d '[:space:]' < .github/llvm-major)
+            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+            rustup default stable
+          elif [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          /usr/bin/clang --version | head -1
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+
+      - name: Build the compilers
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/halo-dispatch"
+          mkdir -p "$out"
+          base=$(git merge-base origin/main HEAD)
+          step="${{ inputs.placement_unaligned }}"
+          sides="base"
+          git worktree prune
+          git worktree add --detach "$RUNNER_TEMP/wf-base" "$base"
+          if [ -n "$step" ]; then
+            git worktree add --detach "$RUNNER_TEMP/wf-step" "$step"
+            sides="$sides step"
+          fi
+          echo "base $base, step ${step:-none}, head $(git rev-parse HEAD)"
+          echo "$sides head" > "$out/sides"
+          for side in $sides head; do
+            if [ "$side" = head ]; then dir=.; else dir="$RUNNER_TEMP/wf-$side"; fi
+            cargo fetch --locked --manifest-path "$dir/compiler/Cargo.toml"
+            make -C "$dir/compiler" build
+            cp "$dir/compiler/target/gate/whitefootc" "$out/whitefootc-$side"
+          done
+
+      - name: Build Halo with each compiler
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/halo-dispatch"
+          rm -rf "$RUNNER_TEMP/halo"
+          git clone --quiet https://github.com/Ming-Research/Halo-wf "$RUNNER_TEMP/halo"
+          git -C "$RUNNER_TEMP/halo" checkout --quiet "$HALO_COMMIT"
+          git -C "$RUNNER_TEMP/halo" log --oneline -1
+          cat "$RUNNER_TEMP/halo/whitefoot.pin"
+          for side in $(cat "$out/sides"); do
+            echo "== $side"
+            ( cd "$RUNNER_TEMP/halo" && /usr/bin/time -p "$out/whitefootc-$side" --dispatch-ledger \
+                --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto \
+                -o "$out/halo-$side" > "$out/ledger-$side.txt" )
+            grep -E 'split|keeps|carries' "$out/ledger-$side.txt" || echo "(no split dispatch loop)"
+          done
+          cp "$out/halo-base" "$out/halo-twin"
+
+      - name: Time fib and loop
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/halo-dispatch"
+          python3 - "$out" "$RUNNER_TEMP/halo/research/experiments/halo-bench/kernels" <<'PY'
+          import statistics, subprocess, sys, time
+          out, kernels = sys.argv[1], sys.argv[2]
+          sides = open(f"{out}/sides").read().split()
+          engines = [s for s in sides if s != "base"][::-1] + ["twin", "base"]
+          expected = {"fib": "832040", "loop": "5000000050000000"}
+          for kernel in ["fib", "loop"]:
+              source = open(f"{kernels}/{kernel}.lua", "rb").read()
+              times = {e: [] for e in engines}
+              for launch in range(7):
+                  order = engines if launch % 2 == 0 else engines[::-1]
+                  for e in order:
+                      start = time.perf_counter()
+                      p = subprocess.run([f"{out}/halo-{e}"], input=source, capture_output=True, timeout=600)
+                      elapsed = time.perf_counter() - start
+                      text = p.stdout.decode().strip()
+                      if p.returncode != 0 or text != expected[kernel]:
+                          sys.exit(f"{kernel} {e}: exit {p.returncode}, output {text!r}")
+                      times[e].append(elapsed)
+                      print(f"{kernel}\t{launch}\t{e}\t{elapsed:.4f}", flush=True)
+              base = statistics.median(times["base"])
+              for e in engines:
+                  m = statistics.median(times[e])
+                  spread = (max(times[e]) - min(times[e])) / m
+                  print(f"{kernel} {e}: median {m:.4f} s, spread {spread:.3f}, time ratio to base {m / base:.4f}")
+          PY
