@@ -308,6 +308,129 @@ fn a_result_returned_through_its_destination_threads_the_destination_through_eve
     assert!(output.status.success(), "{output:?}");
 }
 
+/// An interpreter whose path tells a carried element address from a wrong
+/// one: it enters at `pc` 1, past an `Add 1000` no correct path reaches,
+/// jumps forward to 3, repeats `Rep 5` three times in place, then jumps back
+/// to 2 and halts with 15. `Halt` adds 100 times its `pc`, so an address
+/// that reaches it while `pc` names another operation also changes the
+/// result, 215.
+const CURSOR_INTERPRETER: &str = r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Add(k: u64);
+  Jump(t: u64);
+  Rep(k: u64);
+  Halt();
+}
+
+fn run(code: &Box<Slots<Op>>, pc: u64, acc: u64, count: u64) -> r: u64 reads(code) contract {
+  requires pc < code^.inner.len;
+} {
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Add(k: kv) => {
+      let next = pc + 1_u64;
+      let sum = acc +wrap kv^;
+      if next < n {
+        return musttail run(code: code, pc: next, acc: sum, count: count);
+      }
+      return 0_u64;
+    }
+    Jump(t: tv) => {
+      let target = tv^;
+      if target < n {
+        return musttail run(code: code, pc: target, acc: acc, count: count);
+      }
+      return 0_u64;
+    }
+    Rep(k: kv) => {
+      if count != 0_u64 {
+        let sum = acc +wrap kv^;
+        let left = count -wrap 1_u64;
+        return musttail run(code: code, pc: pc, acc: sum, count: left);
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, pc: next, acc: acc, count: count);
+      }
+      return 0_u64;
+    }
+    Halt() => {
+      let at = pc *wrap 100_u64;
+      let r = acc +wrap at;
+      return r;
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 5_u64);
+  let c0 = Op::Add(k: 1000_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Jump(t: 3_u64);
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Halt();
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Rep(k: 5_u64);
+  let p3 = push(code: &code, op: c3);
+  let c4 = Op::Jump(t: 2_u64);
+  let p4 = push(code: &code, op: c4);
+  if code.inner.len > 1_u64 {
+    let r = run(code: &code, pc: 1_u64, acc: 0_u64, count: 3_u64);
+    if r == 215_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn the_matched_element_s_address_travels_between_the_parts() {
+    // The header matches `code^.inner[pc]` and the arms read the operation
+    // through its address, so the parts carry that address: the dispatch
+    // function no longer forms it from `pc`, and an arm moves the address it
+    // received by the change of `pc`. The run's result checks the entering
+    // address and every kind of move: by one, forward, backward and none.
+    let module = emit(CURSOR_INTERPRETER.as_bytes());
+    if verdict(&module, "wf_run").starts_with("split") {
+        assert!(
+            module.contains(&format!(
+                "{}wf_run: carries the matched Op's address between the parts",
+                crate::DISPATCH_LEDGER_PREFIX
+            )),
+            "the ledger reports the carried address: {module}"
+        );
+        let dispatch = definition(&module, "wf_run.dispatch");
+        assert!(
+            !dispatch
+                .lines()
+                .any(|line| line.contains("= getelementptr inbounds {")
+                    && !line.contains("%wf.frame")),
+            "the dispatch function receives the element's address instead of forming it: {dispatch}"
+        );
+        for arm in [0, 1, 2] {
+            let arm = definition(&module, &format!("wf_run.arm.{arm}"));
+            assert!(
+                arm.contains(" = sub i64 ") && arm.contains(" = getelementptr %"),
+                "an arm moving `pc` moves the address it received: {arm}"
+            );
+        }
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
 #[test]
 fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
     // A tag-only enum of two variants has a one-bit tag, which must index

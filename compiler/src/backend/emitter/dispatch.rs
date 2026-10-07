@@ -409,6 +409,32 @@ enum Role {
     /// A header value the enclosing function computes once, because the
     /// loop cannot change it.
     Hoisted,
+    /// The matched element's address, which every edge into the header
+    /// passes for the index it gives the header (see [`Cursor`]).
+    Cursor,
+}
+
+/// The header's `match` reads the element a header parameter indexes in a
+/// run of slots at an address the loop cannot change, and the arms read
+/// that element through its address. The parts then carry the address as
+/// well as the index: an edge into the header passes the address of the
+/// element its index selects, formed from the address the part received,
+/// and the header uses the address it receives instead of forming it from
+/// the index.
+#[derive(Clone, Copy)]
+struct Cursor {
+    /// The header value addressing the matched element.
+    place: IrValueId,
+    /// The header parameter that indexes it.
+    index: IrValueId,
+    /// The run's address.
+    run: IrValueId,
+    /// The header instruction that defines `place`.
+    instruction: usize,
+    /// The element's type.
+    element: IrType,
+    /// The header projection's target-domain obligation.
+    target_domain: crate::IrTargetDomainObligation,
 }
 
 /// The emission state of one split function.
@@ -434,6 +460,8 @@ pub(super) struct DispatchEmission {
     pin_arguments: HashMap<IrValueId, IrValueId>,
     /// Whether the parts receive the handler table's address.
     table_base: bool,
+    /// The matched element's address the parts carry, if any.
+    cursor: Option<Cursor>,
     /// Values the loop cannot change that the parts read from the frame,
     /// stored there by the enclosing function before the loop.
     spilled: Vec<(IrValueId, IrType)>,
@@ -582,6 +610,14 @@ impl FunctionEmitter<'_, '_> {
                 }
             }
         }
+        let cursor = self.element_cursor(&header, &parameters)?;
+        if let Some(cursor) = cursor {
+            for (value, _, role) in &mut parameters {
+                if *value == cursor.place {
+                    *role = Role::Cursor;
+                }
+            }
+        }
         let (convention, registers) = convention(self.target.triple());
         let mut scratch = References::default();
         let mut typed: Vec<(IrValueId, String)> = Vec::new();
@@ -693,6 +729,12 @@ impl FunctionEmitter<'_, '_> {
             .program
             .nominal(plan.matched)
             .map_or("an enum", |nominal| nominal.name.as_str());
+        if cursor.is_some() {
+            ledger.insert(
+                0,
+                format!("{body_symbol}: carries the matched {matched}'s address between the parts"),
+            );
+        }
         if !spills.is_empty() {
             ledger.insert(
                 0,
@@ -741,6 +783,7 @@ impl FunctionEmitter<'_, '_> {
             pin_arguments: invariant.pin_arguments,
             spilled: spills,
             table_base,
+            cursor,
             dropped: header
                 .parameters()
                 .iter()
@@ -774,6 +817,7 @@ impl FunctionEmitter<'_, '_> {
         &mut self,
         carried: &[(IrValueId, IrValueId)],
         into_arm: bool,
+        cursor: Option<&str>,
     ) -> Result<String, BackendFailure> {
         let dispatch = self.dispatch.as_ref().ok_or(BackendFailure::InvalidIr)?;
         let parameters = dispatch.parameters.clone();
@@ -804,8 +848,11 @@ impl FunctionEmitter<'_, '_> {
                         .ok_or(BackendFailure::InvalidIr)?;
                     self.value_name(argument)
                 }
+                Role::Cursor if !into_arm => cursor.ok_or(BackendFailure::InvalidIr)?.to_owned(),
                 Role::HeaderValue if !into_arm => "poison".to_owned(),
-                Role::HeaderValue | Role::Invariant | Role::Hoisted => self.value_name(value),
+                Role::HeaderValue | Role::Cursor | Role::Invariant | Role::Hoisted => {
+                    self.value_name(value)
+                }
             };
             arguments.push(format!("{ty_name} {operand}"));
         }
@@ -836,6 +883,7 @@ impl FunctionEmitter<'_, '_> {
         let symbol = dispatch.symbol.clone();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
+        let cursor = dispatch.cursor;
         let header = self.block(target)?;
         if header.parameters().len() != arguments.len()
             || arguments
@@ -951,7 +999,11 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         self.emit_place_edge(target, arguments, drops)?;
-        let list = self.dispatch_arguments(&carried, false)?;
+        let cursor = match cursor {
+            Some(cursor) => Some(self.edge_cursor(cursor, &carried, tail)?),
+            None => None,
+        };
+        let list = self.dispatch_arguments(&carried, false, cursor.as_deref())?;
         self.output.symbol(symbol.clone());
         let call = if tail { "musttail call" } else { "call" };
         let text = if result == "void" {
@@ -998,7 +1050,7 @@ impl FunctionEmitter<'_, '_> {
             .iter()
             .map(|(parameter, _)| (*parameter, *parameter))
             .collect();
-        let list = self.dispatch_arguments(&carried, true)?;
+        let list = self.dispatch_arguments(&carried, true, None)?;
         let slot = self.next_temporary()?;
         let handler = self.next_temporary()?;
         self.output.symbol(table_symbol);
@@ -1105,8 +1157,15 @@ impl FunctionEmitter<'_, '_> {
             .as_ref()
             .map(|dispatch| dispatch.hoisted.clone())
             .unwrap_or_default();
+        // The header receives the matched element's address it would
+        // otherwise form from the index.
+        let carried_place = self
+            .dispatch
+            .as_ref()
+            .and_then(|dispatch| dispatch.cursor)
+            .map(|cursor| cursor.instruction);
         for (index, instruction) in block.instructions().iter().enumerate() {
-            if !hoisted.contains(&index) {
+            if !hoisted.contains(&index) && Some(index) != carried_place {
                 self.emit_part_instruction(header, index, instruction)?;
             }
         }
@@ -1668,6 +1727,118 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         self.emit_instruction(block, index, instruction)
+    }
+
+    /// The header instruction that addresses the matched element, which the
+    /// arms read through that address, by a carried index into a run of
+    /// slots at an address the loop cannot change (see [`Cursor`]).
+    fn element_cursor(
+        &self,
+        header: &IrBlock,
+        parameters: &[(IrValueId, IrType, Role)],
+    ) -> Result<Option<Cursor>, BackendFailure> {
+        let role = |value: IrValueId| {
+            parameters
+                .iter()
+                .find(|(parameter, _, _)| *parameter == value)
+                .map(|(_, _, role)| *role)
+        };
+        let IrTerminator::Match { scrutinee, .. } = header.terminator() else {
+            return Ok(None);
+        };
+        // The matched element: the scrutinee's place, or the scrutinee
+        // itself where it is an address.
+        let matched = header
+            .instructions()
+            .iter()
+            .find_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation: crate::IrOperation::Load { address, .. },
+                    ..
+                } if result == scrutinee => Some(*address),
+                _ => None,
+            })
+            .unwrap_or(*scrutinee);
+        for (instruction, defined) in header.instructions().iter().enumerate() {
+            let IrInstruction::Define {
+                result,
+                ty: IrType::Address(referent),
+                operation:
+                    crate::IrOperation::ProjectAddress {
+                        address,
+                        projection:
+                            crate::IrPlaceStep::RunElement {
+                                offset,
+                                target_domain,
+                            },
+                    },
+            } = defined
+            else {
+                continue;
+            };
+            if *result == matched
+                && role(*result) == Some(Role::HeaderValue)
+                && role(*offset) == Some(Role::Carried)
+                && matches!(role(*address), Some(Role::Hoisted | Role::Invariant))
+                && self.run_slots_follow_address(*address)?
+            {
+                return Ok(Some(Cursor {
+                    place: *result,
+                    index: *offset,
+                    run: *address,
+                    instruction,
+                    element: referent.ty(),
+                    target_domain: *target_domain,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The matched element's address for the index an edge into the header
+    /// gives it. Entering the loop, it is the run's element at that index.
+    /// On an edge back to the header, it is the address this part received
+    /// moved by the index's change, which the edge's own index bound keeps
+    /// inside the run and which the host folds to one addition when the
+    /// index changes by a constant.
+    fn edge_cursor(
+        &mut self,
+        cursor: Cursor,
+        carried: &[(IrValueId, IrValueId)],
+        tail: bool,
+    ) -> Result<String, BackendFailure> {
+        let argument = carried
+            .iter()
+            .find(|(parameter, _)| *parameter == cursor.index)
+            .map(|(_, argument)| *argument)
+            .ok_or(BackendFailure::InvalidIr)?;
+        if !tail {
+            return self.run_element_place(
+                cursor.run,
+                argument,
+                cursor.element,
+                cursor.target_domain,
+            );
+        }
+        if argument == cursor.index {
+            return Ok(self.value_name(cursor.place));
+        }
+        let step = self.next_temporary()?;
+        let moved = self.next_temporary()?;
+        let element = self.output.type_name(self.program, cursor.element)?;
+        let scaled = self
+            .element_address_index(cursor.element, &format!("%{step}"))?
+            .to_owned();
+        writeln!(
+            self.output,
+            "  %{step} = sub i64 {}, {}\n  %{moved} = getelementptr {element}, ptr {}, i64 {scaled}",
+            self.value_name(argument),
+            self.value_name(cursor.index),
+            self.value_name(cursor.place)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        Ok(format!("%{moved}"))
     }
 
     /// How many arms read a value: every arm when the header reads it.

@@ -725,6 +725,93 @@ the operation's fields through (`%r9` on x86-64, `x4` on AArch64). The
 dispatch forms the next element's address from the next index, not from
 it.
 
+### A, the address beside the index
+
+The construction and the adoption rule are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-the-code-cursor).
+The branch `claude/stage3-cursor` at `a8afbbe88`, whose compiler change is
+`7f86697b1`, was measured against its merge base `e1708490c` by the
+temporary `stage3-cursor` job: CoreMark 2K, 7 alternating launches, every
+launch with correct CRCs
+([run 37542365068](https://github.com/Ming-Research/Whitefoot/actions/runs/37542365068)).
+Both compilers split the loop the same way. The branch's ledger adds
+"carries the matched Op's address between the parts".
+
+`I32Add`'s path from entry to its transfer:
+- **x86-64:** 18 instructions, down from 21. The move, the shift and the
+  two additions became one addition (`add $0x10, %r9`), and the tag is
+  loaded through the received address (`mov 0x10(%r9), %r10d`).
+- **AArch64:** 18 instructions, down from 19. The shifted addition went,
+  and the pre-indexed tag load (`ldr w9, [x4, #0x10]!`) now advances the
+  received address.
+
+Both match the prediction. A branch arm forms its target's address from
+the received one: `sub`, `shl` and `lea` on x86-64.
+
+| host | clang, convention | base | A | ratio | A above base, in pairs |
+|---|---|---:|---:|---:|---|
+| hosted EPYC 7763 | 22.1.8, `preserve_none` | 1892.1 (8.1%) | 1974.3 (4.3%) | 1.043 | 6 of 7, 0.995-1.090 |
+| macos-15, M1 (virtual) | Apple 17.0.0, `preserve_none` | 2074.7 (15.5%) | 2252.3 (12.3%) | 1.086 | 7 of 7, 1.039-1.158 |
+
+Medians, with each side's spread across its launches. Under the rule these
+hosts are indications only: neither processor is chosen, and the
+virtualized M1 spreads by more than the effect. The decision waits for the
+14900K with the pinned LLVM.
+
+### B, the address in place of the index
+
+B is the branch at `c96bc1701`. Its compiler change, `7d2a5e7a8`, is kept on
+the branch `claude/stage3-cursor-instead`. The ledger adds "carries the
+matched Op's address between the parts in place of its index", and the
+loop takes the same 11 integer registers, the run's end address in place
+of the index. On x86-64:
+- **`I32Add`** runs 17 instructions, one fewer than A, where two were
+  predicted. `lea 0x10(%r8), %rax`, `cmp %r9, %rax` and `jae` test the
+  moved address against the end, and the index's move is gone. The moved
+  address still passes through a move into its carried register
+  (`mov %rax, %r8`).
+- **`BrIf`** recovers `pc` on entry, in four instructions (`lea`, `mov`,
+  `sub`, `shr $0x4`), and saves and restores `%rbp`.
+- **The handler table's address** is still formed in every arm: the end
+  address took the index's register.
+
+### A and B on the 14900K
+
+The job compared the merge base `e1708490c`, A (`a8afbbe88`) and B
+(`c96bc1701`) in one run: CoreMark 2K, 7 launches of each, interleaved,
+every launch with correct CRCs. The 14900K's `/usr/bin/clang` had been
+moved to 22.1.8 before the run
+([run 37544282861](https://github.com/Ming-Research/Whitefoot/actions/runs/37544282861)).
+The hosted rows come from the same run's other jobs and from
+[run 37543903255](https://github.com/Ming-Research/Whitefoot/actions/runs/37543903255).
+
+| host | base | A | B | A / base | B / A |
+|---|---:|---:|---:|---|---|
+| 14900K, 22.1.8, `preserve_none` | 4705.9 (1.2%) | 5319.1 (2.1%) | 5235.6 (0.8%) | 1.130; 7 of 7 pairs above, 1.105-1.142 | 0.984; 0 of 7 above, 0.979-1.000 |
+| hosted EPYC 7763, 22.1.8 | 1906.6 (11.2%) | 1939.9 (7.5%) | 1988.1 (12.0%) | 1.017; 5 of 7 | 1.025; 5 of 7 |
+| hosted EPYC 9V45, 22.1.8 | 3418.8 (2.4%) | 3552.4 (3.6%) | 3571.4 (6.5%) | 1.039; 7 of 7 | 1.005; 3 of 7 |
+| macos-15, M1 (virtual) | 2702.7 (14.9%) | 2747.3 (20.3%) | 2617.8 (30.7%) | 1.016; 5 of 7 | 0.953; 1 of 7 |
+| macos-15, M1 (virtual) | 1901.1 (18.3%) | 1982.2 (11.5%) | 1846.7 (21.7%) | 1.043; 6 of 7 | 0.932; 0 of 7 |
+
+Medians, with each side's spread across its launches. The first EPYC row
+and the first M1 row are from run 37544282861, the others from run
+37543903255. The 14900K's spreads are below 2.2% for every side. A is 13.0%
+above the base, B 1.6% below A, each in every pair. The hosted runners
+agree that A gains and disagree on B, within their spreads.
+
+A second run on the 14900K repeated A against the base with a copy of the
+base's interpreter, the twin, as the noise control
+([run 37545234428](https://github.com/Ming-Research/Whitefoot/actions/runs/37545234428);
+A's compiler at `82cba945e`, equal to `7f86697b1`'s):
+
+| host | base | twin | A | twin / base | A / base |
+|---|---:|---:|---:|---|---|
+| 14900K, 22.1.8, `preserve_none` | 4683.8 (1.4%) | 4728.1 (0.7%) | 5305.0 (1.3%) | 1.009; 4 of 7, 0.998-1.014 | 1.133; 7 of 7, 1.122-1.135 |
+| hosted EPYC 7763, 22.1.8 | 1906.6 (6.2%) | 1902.9 (7.4%) | 1970.4 (2.7%) | 0.998; 4 of 7 | 1.033; 7 of 7 |
+
+The twin sits within 1% of the base and A 13.3% above it. The macos-15
+job of the same run spread by 30-51% and is not shown.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic
