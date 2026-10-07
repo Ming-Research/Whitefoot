@@ -362,19 +362,25 @@ rarely insert at the same place.
   a current workload attributes a substantial share to this path. Kill-time
   edge insertion and derivation interning for recreated cells also remain.
 
-- **Acyclic generic instantiation has no established practical bound.**
-  D7's unchanged-argument cycle rule establishes termination while acyclic
-  fan-out may still require exponentially many instances relative to written
-  source. The owner deferred this question in D7, whereas the current language
-  design rules out exponential checking work. The
+- **Finite generic instantiation has no established practical bound.**
+  FN-6 establishes finiteness while acyclic fan-out may still require
+  exponentially many instances relative to written source. The owner deferred
+  this question in D7, whereas the current language design rules out
+  exponential checking work. The
   [behavior investigation](../research/investigations/containers-and-resources/BEHAVIOR.md#shared-semantic-boundary-and-exact-deltas)
   records the accepted 1343-byte / 2047-instance witness, same-instance controls,
   stage measurements and unresolved correspondence finding. No budget, timeout, new
   source refusal, or measured asymptotic guarantee has been selected.
+  Closed-term cycles add a structural family: a function with n type
+  parameters and one recursive call per position, each replacing only that
+  position by `u64` and forwarding the rest, reaches all 2^n combinations of
+  `u8` and `u64` from an all-`u8` entry. This is a count of the admitted keys,
+  not a timing result; visiting each key once does not bound the number of keys.
   Reopen when generic container/behavior composition makes instance count or
   checking cost material. Recheck the distinct-instance and repeated-instance
-  controls on that composition, separating semantic checking, lowering and
-  emitted-code size; faster duplicate lookup alone cannot close the bound.
+  controls on that composition and the closed-term cycle family, separating
+  semantic checking, lowering and emitted-code size; faster duplicate lookup
+  alone cannot close the bound.
   The broader admission or sharing question remains deferred to an explicit
   choice supported by those controls and a complexity argument.
 
@@ -2392,21 +2398,15 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files can only be appended or set to a length.** `std::fs` opens a file
-  for appending, appends, sets its length, syncs and closes it [PRE-2], and
-  has no positioned write, rename, removal, directory creation, directory
-  sync, create rule other than create-if-missing, or way to descend into a
-  subdirectory for writing. A program cannot rewrite a log compactly, as
-  Redis's `BGREWRITEAOF` writes a new file, syncs it, renames it over the old
-  one and syncs the directory, nor clean up a file it made; the surface was
-  chosen as the one the persistent programs in view needed
-  (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
-  directories and append-only files"), and `truncate_file` was added for
-  cutting a log whose end did not load. Each addition is a specification
-  change to `std::fs` taking the write half. Validate with a program that
-  rewrites its log through a new file and a rename, and survives being
-  stopped between the two steps with one of the two files whole. Reopen when
-  a program must rewrite or remove what it wrote.
+- **Files have no positioned writes or directory creation.** `std::fs` still
+  lacks writing at an offset, creating a directory, descending into a
+  subdirectory for writing, and create rules other than create-if-missing
+  [PRE-2]. A program needing a writable directory hierarchy or exclusive
+  creation cannot express it. Add the needed operations through the write
+  half when a program supplies that witness; compare their authority and
+  failure rules with the existing component operations, and validate with
+  that program plus conformance cases for the selected rules. Positioned
+  writes reopen when a program needs in-place updates rather than replacement.
 
 - **A clock's readings cannot be replaced for a test.** `now` and the
   deadline heap read the host's monotonic clock, so a program's behavior at
@@ -2468,23 +2468,6 @@ rarely insert at the same place.
   saturation where a program wants it. Validate with the corpus programs and
   conformance cases that instantiate these containers. Reopen when a writer
   next changes one of these libraries.
-
-- **A container operation that takes a callback cannot be called again
-  inside its own callback with another callback.** Minimal witness: a
-  generic `apply<F, fn visit>` called as `apply::<u64, fn outer>`, where
-  `outer` calls `apply::<u64, fn inner>`. The instances end after two, but
-  the cycle `apply` to `outer` to `apply` changes the function argument, and
-  [FN-6] deliberately refuses every such cycle. firn met it as a
-  `hash_map_lookup` on the keyspace whose callback looks a field up with
-  `hash_map_lookup` in the hash the key holds; it alternates `hash_map_edit`
-  and `hash_map_lookup` instead, which works only while two distinct
-  operations fit, and a third level of nesting, or two edits, has no such
-  way out. Two repairs are open: a library entry that reaches a stored value
-  without a callback, such as a probe that returns the bucket's index for a
-  second, bounds-checked access, or an FN-6 that admits a cycle whose
-  changed arguments come from a finite set written in the program. Reopen
-  when a program needs a third level or two edits nested, or when the
-  library's container interfaces are next revised.
 
 - **The standard library has no decimal conversion of integers.** Two
   programs now write their own: firn reads its options' numbers with
@@ -2743,7 +2726,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,216 lines: the file
+  `compiler/src/backend/completion/bridge.c` has 4,254 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
@@ -3806,7 +3789,7 @@ condition under which it is taken up.
     the Lua work below can compose without separately committing each call.
   - Make AOF persistence usable through write/sync error handling, rewrite,
     interrupted-write recovery and orderly `SHUTDOWN`/signal handling; verify
-    a practical data migration path. File replacement and signal delivery
+    a practical data migration path. `std::fs` supplies file replacement; signal delivery
     may require Whitefoot library/runtime work; AOF presence alone is not
     durable-recovery evidence. RDB compatibility is not assumed by this item.
   - Add memory accounting, `maxmemory` and the eviction behavior the selected

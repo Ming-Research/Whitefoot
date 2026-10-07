@@ -177,7 +177,7 @@ pub enum SemanticRule {
     Fn4,
     /// Explicit static member selection from a formal parameter group.
     Fn5,
-    /// Polymorphic recursion in a call cycle among generic functions.
+    /// Structural finiteness of function and nominal instantiation cycles.
     Fn6,
     /// Finite atomic function requirement goal.
     Fn8,
@@ -1190,13 +1190,16 @@ pub enum SemanticIssueKind {
         /// The offending argument or still-live owner, when applicable.
         subject: Option<String>,
     },
-    /// A call on a cycle among generic functions instantiates its callee at
-    /// something other than exactly the caller's own type parameters [FN-6].
+    /// A dependency on a function or nominal cycle supplies an argument
+    /// that is neither a same-position, same-kind parameter nor closed [FN-6].
     PolymorphicRecursion {
-        /// The cycle FN-6 requires the diagnostic to name: the function
-        /// spellings along the shortest cycle through this call, in call
-        /// order, joined by ` -> ` and closed on the caller.
+        /// The function or nominal spellings along the shortest cycle
+        /// through this dependency, in edge order, joined by ` -> ` and
+        /// closed on the caller.
         cycle: String,
+        /// The written argument that contains a caller parameter without
+        /// forwarding it unchanged at the same position and kind.
+        changed_argument: String,
         /// Required FN-6 restructuring.
         mechanical_fix: &'static str,
     },

@@ -43,6 +43,15 @@
 #ifndef FILE_OPEN
 #define FILE_OPEN 0x00000001UL
 #endif
+#ifndef FILE_DIRECTORY_FILE
+#define FILE_DIRECTORY_FILE 0x00000001UL
+#endif
+#ifndef FILE_OPEN_FOR_BACKUP_INTENT
+#define FILE_OPEN_FOR_BACKUP_INTENT 0x00004000UL
+#endif
+#ifndef FILE_WRITE_THROUGH
+#define FILE_WRITE_THROUGH 0x00000002UL
+#endif
 #ifndef FILE_SYNCHRONOUS_IO_NONALERT
 #define FILE_SYNCHRONOUS_IO_NONALERT 0x00000020UL
 #endif
@@ -76,7 +85,6 @@
 
 #define WF_WINDOWS_DIRECTORY_NATIVE_HEADER 64u
 #define WF_WINDOWS_DIRECTORY_RAW_HEADER 5u
-#define WF_WINDOWS_COMPONENT_MAX_BYTES 510u
 #define WF_WINDOWS_DIRECTORY_SCRATCH_BYTES 8192u
 #define WF_WINDOWS_FILE_DIRECTORY_INFORMATION_CLASS \
     ((FILE_INFORMATION_CLASS)1)
@@ -1009,6 +1017,89 @@ static void wf_windows_open_return_provisional_handle(HANDLE *handle) {
             "an open could not return its provisional handle"
         );
     }
+}
+
+static HANDLE wf_windows_open_namespace_handle(
+    HANDLE root, const char *path, ACCESS_MASK access, ULONG options, int *error_code
+) {
+    const uint16_t *units = (const uint16_t *)(const void *)path;
+    wf_windows_nt_api api;
+    HANDLE opened = INVALID_HANDLE_VALUE;
+    size_t unit_count;
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES attributes;
+    IO_STATUS_BLOCK io_status;
+    NTSTATUS status;
+    *error_code = 0;
+    if (!wf_windows_handle_valid(root)) {
+        *error_code = ERROR_INVALID_HANDLE;
+        return opened;
+    }
+    if (!wf_windows_bounded_wcslen(units, &unit_count)
+        || !wf__windows_relative_path_valid(units, (uint64_t)unit_count)) {
+        *error_code = ERROR_INVALID_NAME;
+        return opened;
+    }
+    if (!wf_windows_resolve_nt_api(&api)) {
+        *error_code = (int)GetLastError();
+        if (*error_code == 0) *error_code = ERROR_PROC_NOT_FOUND;
+        return opened;
+    }
+    memset(&name, 0, sizeof(name));
+    name.Length = (USHORT)(unit_count * sizeof(uint16_t));
+    name.MaximumLength = name.Length;
+    name.Buffer = (PWSTR)(void *)units;
+    memset(&attributes, 0, sizeof(attributes));
+    attributes.Length = (ULONG)sizeof(attributes);
+    attributes.RootDirectory = root;
+    attributes.ObjectName = &name;
+    attributes.Attributes = OBJ_CASE_INSENSITIVE;
+    memset(&io_status, 0, sizeof(io_status));
+    /* FILE_OPEN never creates a missing entry. */
+    status = api.create_file(
+        &opened, access, &attributes, &io_status, NULL, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+        FILE_SYNCHRONOUS_IO_NONALERT | options,
+        NULL, 0
+    );
+    if (status == WF_WINDOWS_STATUS_PENDING) {
+        DWORD waited = WaitForSingleObject(opened, INFINITE);
+        if (waited != WAIT_OBJECT_0) {
+            *error_code = (int)(waited == WAIT_FAILED ? GetLastError() : ERROR_GEN_FAILURE);
+            wf_windows_open_return_provisional_handle(&opened);
+            return INVALID_HANDLE_VALUE;
+        }
+        status = io_status.Status;
+    }
+    if (status == WF_WINDOWS_STATUS_PENDING || !wf_windows_nt_success(status)) {
+        *error_code = (int)wf_windows_nt_error(&api, status);
+        wf_windows_open_return_provisional_handle(&opened);
+        return INVALID_HANDLE_VALUE;
+    }
+    return opened;
+}
+
+HANDLE wf__windows_open_delete(HANDLE root, const char *path, int *error_code) {
+    /* Open the entry itself without following a reparse point. Keep rename
+     * metadata write-through; POSIX removal takes effect on handle close. */
+    return wf_windows_open_namespace_handle(
+        root, path, DELETE | SYNCHRONIZE,
+        FILE_OPEN_REPARSE_POINT | FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH,
+        error_code
+    );
+}
+
+HANDLE wf__windows_open_directory_for_sync(HANDLE root, int *error_code) {
+    /* An empty name reopens root itself. The write half's original handle
+     * has only list/traverse/read-attributes/synchronize access. FlushFileBuffers
+     * requires write access, supplied here by the GENERIC_WRITE mapping:
+     * https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers
+     * NtCreateFile's directory and backup-intent options match a directory
+     * opened with CreateFileW's FILE_FLAG_BACKUP_SEMANTICS. */
+    return wf_windows_open_namespace_handle(
+        root, (const char *)(const void *)L"", FILE_GENERIC_WRITE,
+        FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT, error_code
+    );
 }
 
 int wf__windows_completion_file_open_at_worker(

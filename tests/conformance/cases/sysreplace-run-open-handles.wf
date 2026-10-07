@@ -1,0 +1,200 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias HandleFactory = std::io::HandleFactory;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectoryWrite = std::fs::DirectoryWrite;
+
+fn copy_name(args: &std::text::Args, position: u64, destination: &[u8]) -> next: u64 reads(args), writes(destination) contract {
+  ensures next <= destination^.len;
+} {
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      let length = destination^.len;
+      match std::text::host_copy_bytes(value: &text, destination: destination, start: 0_u64, end: length) {
+        Ok(value: end) => {
+          return end;
+        }
+        Err(error: problem) => {
+          return 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn make_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], byte: u8) -> result: u8 reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_append(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let outcome = 0_u8;
+      match std::fs::truncate_file(factory: factory, file: &file, length: 0_u64) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set outcome = 2_u8;
+        }
+      }
+      let bytes = array_filled::<u8, 1>(value: byte);
+      match std::fs::append_once(factory: factory, file: &file, source: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64) {
+        Ok(value: next) => {
+          if next != 1_u64 {
+            set outcome = 3_u8;
+          }
+        }
+        Err(error: problem) => {
+          set outcome = 4_u8;
+        }
+      }
+      match std::fs::close_write(factory: factory, file: move file) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set outcome = 5_u8;
+        }
+      }
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 1_u8;
+    }
+  }
+}
+
+fn check_bytes(factory: &HandleFactory, file: &std::fs::ReadFile, byte: u8, appended: Bool) -> result: u8 writes(factory), writes(file) waits {
+  let bytes = array_filled::<u8, 3>(value: 255_u8);
+  let length = 1_u64;
+  if appended {
+    set length = 2_u64;
+  }
+  match std::fs::read_at(factory: factory, file: file, destination: &bytes[0_u64..3_u64], file_offset: 0_u64, start: 0_u64, end: 3_u64) {
+    Ok(value: next) => {
+      if next != length {
+        return 6_u8;
+      }
+    }
+    Err(error: problem) => {
+      return 7_u8;
+    }
+  }
+  if bytes[0_u64] != byte {
+    return 8_u8;
+  }
+  if appended {
+    if bytes[1_u64] != 120_u8 {
+      return 9_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn check_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], byte: u8) -> result: u8 reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let appended = False();
+      let outcome = check_bytes(factory: factory, file: &file, byte: byte, appended: appended);
+      std::fs::close_read(factory: factory, file: move file);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 10_u8;
+    }
+  }
+}
+
+fn keep_open(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, first: &[u8], second: &[u8], replace: Bool) -> result: u8 reads(reader), reads(first), reads(second), writes(factory), writes(writer) waits {
+  let outcome = make_file(factory: factory, root: writer, name: first, byte: 97_u8);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  set outcome = make_file(factory: factory, root: writer, name: second, byte: 98_u8);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  match std::fs::open_append(factory: factory, root: writer, name: first, start: 0_u64, end: first^.len) {
+    Ok(value: file) => {
+      match std::fs::open_file(factory: factory, root: reader, name: first, start: 0_u64, end: first^.len) {
+        Ok(value: opened_reader) => {
+          if replace {
+            match std::fs::rename_file(factory: factory, root: writer, from: second, from_start: 0_u64, from_end: second^.len, to: first, to_start: 0_u64, to_end: first^.len) {
+              Ok(value: done) => {
+              }
+              Err(error: problem) => {
+                set outcome = 11_u8;
+              }
+            }
+          } else {
+            match std::fs::remove_file(factory: factory, root: writer, name: first, start: 0_u64, end: first^.len) {
+              Ok(value: done) => {
+              }
+              Err(error: problem) => {
+                set outcome = 12_u8;
+              }
+            }
+          }
+          let suffix = array_filled::<u8, 1>(value: 120_u8);
+          match std::fs::append_once(factory: factory, file: &file, source: &suffix[0_u64..1_u64], start: 0_u64, end: 1_u64) {
+            Ok(value: next) => {
+              if next != 1_u64 {
+                set outcome = 13_u8;
+              }
+            }
+            Err(error: problem) => {
+              set outcome = 14_u8;
+            }
+          }
+          if outcome == 0_u8 {
+            let appended = True();
+            set outcome = check_bytes(factory: factory, file: &opened_reader, byte: 97_u8, appended: appended);
+          }
+          std::fs::close_read(factory: factory, file: move opened_reader);
+        }
+        Err(error: problem) => {
+          set outcome = 15_u8;
+        }
+      }
+      std::fs::close_write(factory: factory, file: move file);
+    }
+    Err(error: problem) => {
+      set outcome = 16_u8;
+    }
+  }
+  let succeeded = outcome == 0_u8;
+  if band(succeeded, replace) {
+    set outcome = check_file(factory: factory, root: reader, name: first, byte: 98_u8);
+  }
+  return outcome;
+}
+
+fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, first: &[u8], second: &[u8]) -> result: u8 reads(reader), reads(first), reads(second), writes(factory), writes(writer) waits {
+  let replace = True();
+  let outcome = keep_open(factory: factory, reader: reader, writer: writer, first: first, second: second, replace: replace);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  let remove = False();
+  return keep_open(factory: factory, reader: reader, writer: writer, first: first, second: second, replace: remove);
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  let first = array_filled::<u8, 64>(value: 0_u8);
+  let second = array_filled::<u8, 64>(value: 0_u8);
+  let first_end = copy_name(args: &args, position: 1_u64, destination: &first[0_u64..64_u64]);
+  let second_end = copy_name(args: &args, position: 2_u64, destination: &second[0_u64..64_u64]);
+  let outcome = 99_u8;
+  let first_present = first_end > 0_u64;
+  let second_present = second_end > 0_u64;
+  if band(first_present, second_present) {
+    if first_end <= 64_u64 {
+      if second_end <= 64_u64 {
+        set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
+      }
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  return std::process::exit_status(code: outcome);
+}

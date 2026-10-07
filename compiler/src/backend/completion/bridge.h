@@ -77,6 +77,12 @@ void wf__completion_file_sync_submit(
     void *record
 );
 
+/* Namespace changes use component bytes owned by the pending call. */
+void wf__completion_file_rename_submit(int directory, const void *from,
+                                       const void *to, void *record);
+void wf__completion_file_remove_submit(int directory, const void *path, void *record);
+void wf__completion_directory_sync_submit(int directory, void *record);
+
 /* Sets the file's byte length [PRE-2], leaving appends at its new end. */
 void wf__completion_file_truncate_submit(
     int descriptor,
