@@ -1,4 +1,4 @@
-# Kernel Specification v0.95
+# Kernel Specification v0.94
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -1344,9 +1344,9 @@ Bodies retain FN-2's symbolic spelling check and FN-2/FN-9's concrete-instance r
 
 [FN-6] Recursion is permitted. Instantiation is finite by a structural rule over the finite written dependency graph, not by executing compile-time code or by a work, depth, or time budget.
 The graph contains source function and source nominal templates; its edges include calls, instantiated nominal uses in signatures and fields, function arguments, and calls through function-kind parameters after their finite explicit bindings are resolved. Group abbreviations are expanded before the graph is checked. All edges and their complete type, const, and function argument vectors are retained.
-Within every recursive component, each argument an edge supplies at position i is either (a) the calling declaration's own parameter at position i and of the same kind, forwarded unchanged, or (b) a closed term: a type, const, or function argument in which no type, const, or function parameter of the calling declaration occurs at any depth. Closed terms include `u64`, `Box<u64>`, `fn helper::<u64>`, and `fn inner`. Every other argument on a cycle rejects under FN-6 at that dependency: a term built from a caller parameter, such as `Box<T>`, `fn helper::<T>`, or `fn nested::<fn work>`, a caller parameter forwarded at a different position, or a caller parameter of a different kind.
+Within every recursive component, each edge must forward the caller's complete parameter vector unchanged in position and kind. Constructing, specializing, dropping, adding, or permuting an argument on a cycle rejects under FN-6 at that dependency. This includes a growing nominal such as `Grow<T>` containing `Box<Grow<Box<T>>>`, and a call that wraps a function argument in a new specialized function on each traversal.
 The diagnostic names the function/nominal cycle and the changed argument, with a repair [DIAG-1].
-This criterion deliberately rejects some finite permutation cycles. Every component of an instance key reached through a cycle comes either from the entry key's component at the same position or from the finite set of closed terms written in the program, so the instance set is finite. Acyclic expansion is finite; deterministic checking visits each admitted instance once. It assumes no behavior laws and introduces no search, depth, fuel, or work budget.
+This criterion deliberately rejects some finite permutation cycles. Acyclic expansion is finite and a cycle creates no new instance key; deterministic checking visits each admitted instance. It assumes no behavior laws and uses no fuel.
 
 [FN-7] Program start selects an ordinary function and supplies ordinary arguments [PROG-3]. Its name, signature, result types, written contracts, and source callers obey FN-1 through FN-10 without an entry-specific restriction.
 A module program names its entries in its graph [MOD-9]; a source bundle's build selects its function `main`, and the language reserves no entry name. Selection, argument construction and binding, and interpretation of a normal result belong to the build invocation and do not select source acceptance.

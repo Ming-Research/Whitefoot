@@ -637,12 +637,7 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// The positive control for the three [FN-6] rejections below: a cycle whose
-/// every call does instantiate the callee at exactly the caller's own
-/// parameters is *permitted* by FN-6, and it is also finite — the call mints
-/// no instance the caller is not already at — so it monomorphizes to the one
-/// instance the program reaches rather than stopping as an unimplemented
-/// capability.
+/// Same-position forwarding preserves the instance key on a recursive edge.
 #[test]
 fn a_generic_call_cycle_at_the_callers_own_parameters_monomorphizes() {
     let source = br#"fn recursive<T: Int>(value: T) -> result: T pure {
@@ -662,11 +657,34 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// D7's complete-vector FN-6 rule refuses const growth before enumerating
-/// instances. The previous type-only rule left this as a compiler capability
-/// gap; the changed verdict follows the explicit specification amendment.
+fn assert_fn6_argument(source: &[u8], cycle: &str, argument: &str, dependency: &str) {
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue } = outcome else {
+            panic!("expected FN-6 at {dependency}: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Fn6);
+        let SemanticIssueKind::PolymorphicRecursion {
+            cycle: found_cycle,
+            changed_argument,
+            mechanical_fix,
+        } = issue.kind()
+        else {
+            panic!("expected the cycle and changed argument: {issue:?}");
+        };
+        assert_eq!(found_cycle, cycle);
+        assert_eq!(changed_argument, argument);
+        assert!(mechanical_fix.contains("same position and kind"));
+        assert!(mechanical_fix.contains("containing none of the caller's parameters"));
+        let crate::SemanticLocation::SourceNode(_, coordinate) = issue.location();
+        let start = usize::try_from(coordinate.start().value()).unwrap();
+        let end = usize::try_from(coordinate.end().value()).unwrap();
+        assert_eq!(&source[start..end], dependency.as_bytes());
+    });
+}
+
+/// A parameter inside a const expression is still open; a fixed const is closed.
 #[test]
-fn a_generic_cycle_varying_a_const_argument_stops_before_instance_enumeration() {
+fn a_generic_cycle_distinguishes_const_growth_from_a_closed_const() {
     let source = br#"fn expand_count<const n: u64>(at: u64) -> total: u64 pure {
   let done = at == 0_u64;
   if done {
@@ -682,80 +700,129 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    // D7 extends FN-6 from type-only forwarding to the complete parameter
-    // vector, so changing n is now a specified source rejection.
-    assert_rule(
+    assert_fn6_argument(
         source,
-        SemanticRule::Fn6,
-        SemanticIssueKind::PolymorphicRecursion {
-            cycle: "expand_count -> expand_count".to_owned(),
-            mechanical_fix: "forward the complete type, const and function argument vector unchanged on the cycle, or move the changing instantiation off the cycle",
+        "expand_count -> expand_count",
+        "n + 1",
+        "expand_count::<n + 1>(at: next)",
+    );
+    let closed = std::str::from_utf8(source)
+        .unwrap()
+        .replace("expand_count::<n + 1>", "expand_count::<2>");
+    with_semantics(closed.as_bytes(), |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("a closed const must yield a finite instance graph: {outcome:?}");
+        };
+        assert_eq!(checked.function_count(), 3);
+    });
+}
+
+#[test]
+fn a_closed_type_on_a_recursive_call_monomorphizes() {
+    with_semantics(
+        include_bytes!("../../../../tests/conformance/cases/fn6-pos-closed-type-recursion.wf"),
+        |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("the fixed i32 argument must check: {outcome:?}");
+            };
+            assert_eq!(checked.function_count(), 3);
         },
     );
 }
 
-/// FN-6 refuses changed, constructed and permuted arguments with the cycle
-/// named. The separate same-vector control executes ordinary finite discovery.
 #[test]
-fn polymorphic_recursion_is_rejected_at_the_call_that_leaves_the_caller_parameters() {
-    let fixed_type = SemanticIssueKind::PolymorphicRecursion {
-        cycle: "poly -> poly".to_owned(),
-        mechanical_fix: "forward the complete type, const and function argument vector unchanged on the cycle, or move the changing instantiation off the cycle",
-    };
-    // The conformance corpus's own case bytes: the recursive call instantiates
-    // the callee at a fixed `i32` instead of the caller's `T`.
-    assert_rule(
-        include_bytes!("../../../../tests/conformance/cases/fn6-neg-polymorphic-recursion.wf"),
-        SemanticRule::Fn6,
-        fixed_type.clone(),
+fn closed_callbacks_nested_through_one_helper_monomorphize_once_per_instance() {
+    let source = include_str!(
+        "../../../../tests/conformance/cases/fn6-pos-closed-term-callback-cycle.wf"
     );
-    // A growing argument is the shape that would actually diverge: each
-    // instance would demand a strictly larger one.
-    assert_rule(
-        br#"fn poly<T: drop>(x: T) -> result: T pure {
-  let y = poly::<Slots<T, 2>>(x: x);
-  return x;
+    let specialized = source
+        .replace("fn outer(value:", "fn outer<T: drop>(value:")
+        .replace("fn outer>", "fn outer::<Box<u64>>>");
+    for program in [source, specialized.as_str()] {
+        with_semantics(program.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("closed callbacks must check: {outcome:?}");
+            };
+            // main, outer, inner, and the two apply instances.
+            assert_eq!(checked.function_count(), 5);
+            lower_checked(*checked, OverlapLowering::Off)
+                .expect("each bound callback lowers to its finite direct-call instance");
+        });
+    }
+}
+
+#[test]
+fn a_closed_term_on_a_nominal_cycle_is_admitted() {
+    with_semantics(
+        include_bytes!("../../../../tests/conformance/cases/fn6-pos-closed-term-nominal-cycle.wf"),
+        |outcome| {
+            assert!(matches!(outcome, SemanticOutcome::Complete(_)), "{outcome:?}");
+        },
+    );
+}
+
+#[test]
+fn a_caller_parameter_inside_a_constructed_type_on_a_cycle_is_rejected() {
+    assert_fn6_argument(
+        include_bytes!("../../../../tests/conformance/cases/fn6-neg-caller-parameter-in-cycle.wf"),
+        "Grow -> Grow",
+        "Box<T>",
+        "Grow<Box<T>>",
+    );
+}
+
+#[test]
+fn a_finite_permutation_cycle_is_rejected_at_the_moved_parameter() {
+    assert_fn6_argument(
+        include_bytes!("../../../../tests/conformance/cases/fn6-neg-permuted-cycle.wf"),
+        "permute -> permute",
+        "B",
+        "permute::<B, A>()",
+    );
+}
+
+#[test]
+fn a_wrapped_function_parameter_on_a_cycle_is_rejected() {
+    assert_fn6_argument(
+        include_bytes!("../../../../tests/conformance/cases/fn6-neg-growing-function-argument.wf"),
+        "nested -> nested",
+        "fn nested::<fn work>",
+        "nested::<fn nested::<fn work>>()",
+    );
+}
+
+#[test]
+fn a_wrapped_group_member_on_a_cycle_is_not_a_closed_function() {
+    let source = br#"interface Work {
+  fn run() -> result: unit pure;
+}
+
+fn nested<fn work() -> result: unit pure>() -> result: unit pure {
+  return work();
+}
+
+fn repeat<interface Work>() -> result: unit pure {
+  return repeat::<fn nested::<fn Work::run>>();
 }
 
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
-"#,
-        SemanticRule::Fn6,
-        fixed_type,
-    );
-    // A permutation cycle terminates, and FN-6 is deliberately stronger than
-    // finiteness requires, so it is rejected all the same.
-    assert_rule(
-        br#"fn left<A: drop, B: drop>(first: A, second: B) -> result: A pure {
-  let swapped = right::<B, A>(first: second, second: first);
-  return first;
-}
-
-fn right<A: drop, B: drop>(first: A, second: B) -> result: A pure {
-  let back = left::<A, B>(first: first, second: second);
-  return first;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        SemanticRule::Fn6,
-        SemanticIssueKind::PolymorphicRecursion {
-            cycle: "left -> right -> left".to_owned(),
-            mechanical_fix: "forward the complete type, const and function argument vector unchanged on the cycle, or move the changing instantiation off the cycle",
-        },
+"#;
+    assert_fn6_argument(
+        source,
+        "repeat -> repeat",
+        "fn nested::<fn Work::run>",
+        "repeat::<fn nested::<fn Work::run>>()",
     );
 }
 
-/// This finite cycle drops its parameter vector at a nongeneric participant.
-/// D7 deliberately refuses it under FN-6's stronger unchanged-vector rule.
+/// The empty argument vector and the return edge's closed i32 are both admitted.
 #[test]
-fn a_cycle_cannot_drop_the_generic_vector_at_a_nongeneric_trampoline() {
+fn a_cycle_through_a_nongeneric_trampoline_is_admitted() {
     let source = br#"fn poly<T: drop>(x: T) -> result: T pure {
   let back = trampoline();
-  return x;
+  return move x;
 }
 
 fn trampoline() -> result: i32 pure {
@@ -764,19 +831,16 @@ fn trampoline() -> result: i32 pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
+  let result = poly::<u8>(x: 7_u8);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    // D7's whole-component rule includes the edge that drops T. No instance
-    // enumeration or capability refusal substitutes for this FN-6 judgment.
-    assert_rule(
-        source,
-        SemanticRule::Fn6,
-        SemanticIssueKind::PolymorphicRecursion {
-            cycle: "poly -> trampoline -> poly".to_owned(),
-            mechanical_fix: "forward the complete type, const and function argument vector unchanged on the cycle, or move the changing instantiation off the cycle",
-        },
-    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the trampoline creates only the closed i32 instance: {outcome:?}");
+        };
+        assert_eq!(checked.function_count(), 4);
+    });
 }
 
 #[test]
