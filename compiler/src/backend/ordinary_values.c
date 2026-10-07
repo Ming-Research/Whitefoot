@@ -761,6 +761,46 @@ void wf__body_open_directory(wf_open_result *result, wf_value *factory,
         wf__body_open_directory_finish(result, factory, root, name, start, end, &operation);
 }
 
+int wf__body_open_directory_write_start(wf_open_result *result, wf_value *factory,
+                                        wf_value *root, const wf_view *name,
+                                        uint64_t start, uint64_t end,
+                                        wf_host_operation *operation) {
+    wf_transition(root);
+    memset(result, 0, sizeof(*result));
+    if (!wf_component(operation->component, name, start, end)) {
+        wf_transition(factory);
+        result->tag = 1;
+        wf_error_class(&result->err.error, WF_IO_INVALID_PATH, 0, 0);
+        return 0;
+    }
+    if (!wf_factory_take(factory, &result->err.error)) {
+        result->tag = 1;
+        return 0;
+    }
+    wf__completion_directory_write_open_submit(
+        wf_descriptor(root), operation->component, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_open_directory_write_finish(wf_open_result *result, wf_value *factory,
+                                         wf_value *root, const wf_view *name,
+                                         uint64_t start, uint64_t end,
+                                         wf_host_operation *operation) {
+    (void)root;
+    (void)name;
+    (void)start;
+    (void)end;
+    wf_open_finish(result, factory, operation);
+}
+
+void wf__body_open_directory_write(wf_open_result *result, wf_value *factory,
+                                   wf_value *root, const wf_view *name,
+                                   uint64_t start, uint64_t end) {
+    wf_host_operation operation;
+    if (wf__body_open_directory_write_start(result, factory, root, name, start, end, &operation))
+        wf__body_open_directory_write_finish(result, factory, root, name, start, end, &operation);
+}
+
 int wf__body_open_file_start(wf_open_result *result, wf_value *factory,
                              const wf_value *root, const wf_view *name,
                              uint64_t start, uint64_t end,

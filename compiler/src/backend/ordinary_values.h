@@ -130,6 +130,7 @@ void wf__body_read_at(wf_read_result *result, wf_value *factory, wf_value *file,
 void wf__body_write_once(wf_write_result *result, wf_value *factory, wf_value *output, const wf_view *source, uint64_t start, uint64_t end, const wf_deadline *deadline);
 void wf__body_exit_status(wf_value *result, uint8_t code);
 void wf__body_open_directory(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
+void wf__body_open_directory_write(wf_open_result *result, wf_value *factory, wf_value *root, const wf_view *name, uint64_t start, uint64_t end);
 void wf__body_open_directory_source(wf_open_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_directory_next(wf_list_result *result, wf_value *source, wf_view *destination, uint64_t start, uint64_t end);
 void wf__body_open_file(wf_open_result *result, wf_value *factory, const wf_value *root, const wf_view *name, uint64_t start, uint64_t end);

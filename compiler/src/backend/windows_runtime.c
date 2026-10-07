@@ -1102,7 +1102,7 @@ HANDLE wf__windows_open_directory_for_sync(HANDLE root, int *error_code) {
     );
 }
 
-int wf__windows_completion_file_open_at_worker(
+static int wf_windows_open_at_worker(
     HANDLE root,
     const char *path,
     int flags,
@@ -1110,6 +1110,7 @@ int wf__windows_completion_file_open_at_worker(
     unsigned has_mode,
     unsigned expected_kind,
     unsigned descriptor_class,
+    unsigned create_directory,
     int *error_code,
     unsigned *open_outcome
 ) {
@@ -1166,6 +1167,15 @@ int wf__windows_completion_file_open_at_worker(
         *error_code = ERROR_INVALID_NAME;
         return -1;
     }
+    if (create_directory) {
+        for (size_t index = 0; index < unit_count; ++index) {
+            if (units[index] == ':' || units[index] == '/' || units[index] == '\\') {
+                wf_windows_record_error(ERROR_INVALID_NAME);
+                *error_code = ERROR_INVALID_NAME;
+                return -1;
+            }
+        }
+    }
     if (!wf_windows_resolve_nt_api(&api)) {
         DWORD error = GetLastError();
         error = error == ERROR_SUCCESS ? ERROR_PROC_NOT_FOUND : error;
@@ -1197,6 +1207,9 @@ int wf__windows_completion_file_open_at_worker(
         desired_access |= FILE_LIST_DIRECTORY | FILE_TRAVERSE;
         create_options |= FILE_SYNCHRONOUS_IO_NONALERT;
     }
+    if (create_directory) {
+        create_options |= FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT;
+    }
     if (flags == WF_WINDOWS_NO_FOLLOW) {
         create_options |= FILE_OPEN_REPARSE_POINT;
     }
@@ -1208,7 +1221,8 @@ int wf__windows_completion_file_open_at_worker(
         NULL,
         0,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE ? FILE_OPEN_IF : FILE_OPEN,
+        (create_directory || descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE)
+            ? FILE_OPEN_IF : FILE_OPEN,
         create_options,
         NULL,
         0
@@ -1306,6 +1320,23 @@ int wf__windows_completion_file_open_at_worker(
     }
     *open_outcome = WF_WINDOWS_OPEN_SUCCEEDED;
     return descriptor;
+}
+
+int wf__windows_completion_file_open_at_worker(
+    HANDLE root, const char *path, int flags, unsigned mode, unsigned has_mode,
+    unsigned expected_kind, unsigned descriptor_class,
+    int *error_code, unsigned *open_outcome
+) {
+    return wf_windows_open_at_worker(root, path, flags, mode, has_mode,
+        expected_kind, descriptor_class, 0, error_code, open_outcome);
+}
+
+int wf__windows_completion_directory_write_open_worker(
+    HANDLE root, const char *path, int *error_code, unsigned *open_outcome
+) {
+    return wf_windows_open_at_worker(root, path, WF_WINDOWS_NO_FOLLOW, 0, 0,
+        WF_WINDOWS_EXPECT_DIRECTORY, WF_WINDOWS_DESCRIPTOR_CLASS_DIRECTORY_ROOT,
+        1, error_code, open_outcome);
 }
 
 int64_t wf__windows_completion_file_write_worker(

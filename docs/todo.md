@@ -2376,12 +2376,11 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files have no positioned writes or directory creation.** `std::fs` still
-  lacks writing at an offset, creating a directory, descending into a
-  subdirectory for writing, and create rules other than create-if-missing
-  [PRE-2]. A program needing a writable directory hierarchy or exclusive
-  creation cannot express it. Add the needed operations through the write
-  half when a program supplies that witness; compare their authority and
+- **Files have no positioned writes or exclusive creation.** `std::fs` still
+  lacks writing at an offset and create rules other than create-if-missing,
+  such as exclusive creation [PRE-2]. A program needing in-place updates or
+  exclusive creation cannot express it. Add the needed operations through the
+  write half when a program supplies that witness; compare their authority and
   failure rules with the existing component operations, and validate with
   that program plus conformance cases for the selected rules. Positioned
   writes reopen when a program needs in-place updates rather than replacement.
@@ -2721,7 +2720,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,254 lines: the file
+  `compiler/src/backend/completion/bridge.c` has 4,263 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,

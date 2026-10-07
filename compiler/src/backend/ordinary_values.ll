@@ -118,6 +118,30 @@ entry:
   ret void
 }
 
+declare i32 @wf__body_open_directory_write_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.open_directory_write.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  %state = call i32 @wf__body_open_directory_write_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_directory_write_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.open_directory_write.finish(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  call void @wf__body_open_directory_write_finish(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret void
+}
+
 declare i32 @wf__body_directory_next_start(ptr, ptr, ptr, i64, i64, ptr)
 
 define i32 @wf_std.fs.directory_next.start(ptr %result, ptr %source, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) align 64 {

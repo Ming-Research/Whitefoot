@@ -94,6 +94,8 @@ enum wf_file_operation_kind {
     WF_FILE_REMOVE = 20,
     /* Directory durability, using the close arm's descriptor. */
     WF_FILE_SYNC_DIRECTORY = 21,
+    /* Create-if-missing directory write half, using the open_at arm. */
+    WF_FILE_OPEN_DIRECTORY_WRITE = 22,
 };
 
 /* Which direction of one connection a half-close releases (ordinary native library). */

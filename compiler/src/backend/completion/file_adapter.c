@@ -26,6 +26,9 @@ int wf_file_request_valid(const wf_file_request *request) {
         return 0;
     }
     switch (request->kind) {
+    case WF_FILE_OPEN_DIRECTORY_WRITE:
+        return request->operation.open_at.directory >= 0
+            && request->operation.open_at.path != NULL;
     case WF_FILE_OPEN_AT:
         return request->operation.open_at.path != NULL
             && request->operation.open_at.expected_kind

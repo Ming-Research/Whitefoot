@@ -202,10 +202,31 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
         break;
     }
 
-    /* Each pass is one qualified host attempt. No-progress interruption and
-     * readiness refusal are absorbed by wf_file_execute_direct below and
-     * never become writer-visible outcomes. */
+    /* Each case makes its host operation. Directory creation and opening
+     * absorb interruption at each step; transfer readiness and namespace
+     * interruption are handled by wf_file_execute_direct below. */
     switch (request->kind) {
+    case WF_FILE_OPEN_DIRECTORY_WRITE: {
+        int created;
+        do {
+            created = mkdirat(request->operation.open_at.directory,
+                              request->operation.open_at.path, 0777);
+        } while (created < 0 && errno == EINTR);
+        if (created < 0 && errno != EEXIST) {
+            result.head.error_code = errno;
+            result.head.open_outcome = WF_FILE_OPEN_FAILED;
+            return result;
+        }
+        do {
+            result.head.value = WF_FILE_OPENAT(
+                request->operation.open_at.directory, request->operation.open_at.path,
+                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+            );
+        } while (result.head.value < 0 && errno == EINTR);
+        result.head.open_outcome = result.head.value < 0
+            ? WF_FILE_OPEN_FAILED : WF_FILE_OPEN_SUCCEEDED;
+        break;
+    }
     case WF_FILE_OPEN_AT:
         if (request->operation.open_at.expected_kind
             > WF_FILE_EXPECT_DIRECTORY) {

@@ -3446,7 +3446,8 @@ void wf__completion_file_open_join(
         );
     }
     wf_bridge_join(held);
-    if (held->result.kind != WF_FILE_OPEN_AT) {
+    if (held->result.kind != WF_FILE_OPEN_AT
+        && held->result.kind != WF_FILE_OPEN_DIRECTORY_WRITE) {
         wf_bridge_fail(
             "an open join was given a record that is not an open"
         );
@@ -3903,6 +3904,14 @@ void wf__completion_file_sync_submit(
     wf_completion_record *held = wf_bridge_begin(record);
     held->request.kind = WF_FILE_SYNC;
     held->request.operation.close.descriptor = descriptor;
+    wf_bridge_dispatch(held);
+}
+
+void wf__completion_directory_write_open_submit(int directory, const void *path, void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_OPEN_DIRECTORY_WRITE;
+    held->request.operation.open_at.directory = directory;
+    held->request.operation.open_at.path = path;
     wf_bridge_dispatch(held);
 }
 

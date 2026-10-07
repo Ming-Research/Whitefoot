@@ -253,17 +253,22 @@ static wf_file_result wf_file_windows_open_at(const wf_file_request *request) {
         result.head.open_outcome = WF_FILE_OPEN_FAILED;
         return result;
     }
-    descriptor = wf__windows_completion_file_open_at_worker(
-        root,
-        request->operation.open_at.path,
-        request->operation.open_at.flags,
-        request->operation.open_at.mode,
-        request->operation.open_at.has_mode,
-        (unsigned)request->operation.open_at.expected_kind,
-        request->operation.open_at.descriptor_class,
-        &error_code,
-        &open_outcome
-    );
+    if (request->kind == WF_FILE_OPEN_DIRECTORY_WRITE) {
+        descriptor = wf__windows_completion_directory_write_open_worker(
+            root, request->operation.open_at.path, &error_code, &open_outcome);
+    } else {
+        descriptor = wf__windows_completion_file_open_at_worker(
+            root,
+            request->operation.open_at.path,
+            request->operation.open_at.flags,
+            request->operation.open_at.mode,
+            request->operation.open_at.has_mode,
+            (unsigned)request->operation.open_at.expected_kind,
+            request->operation.open_at.descriptor_class,
+            &error_code,
+            &open_outcome
+        );
+    }
     result.head.error_code = error_code;
     result.head.open_outcome = (enum wf_file_open_outcome)open_outcome;
     result.head.value = descriptor;
@@ -861,6 +866,7 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
         return result;
     }
     switch (request->kind) {
+    case WF_FILE_OPEN_DIRECTORY_WRITE:
     case WF_FILE_OPEN_AT:
         return wf_file_windows_open_at(request);
     case WF_FILE_PREAD:

@@ -1,4 +1,4 @@
-# Kernel Specification v0.96
+# Kernel Specification v0.95
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2682,11 +2682,6 @@ public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the directory that the bytes of name from start to end name below root.";
-
-public fn open_directory_write(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryWrite, IoError> reads(name), writes(factory), writes(root) waits contract {
-  requires start <= end;
-  requires end <= name^.len;
-} doc "Opens the write half of the directory that the bytes of name from start to end name below root, as open_append names a file [PRE-2], creating it empty when no entry has that name. An existing directory is opened with its entries kept. A host refusal, including a name that names a file or other non-directory entry, is an IoError.";
 
 public fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) waits doc "Opens the listing of the entries of directory.";
 

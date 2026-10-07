@@ -191,6 +191,9 @@ int wf__windows_completion_file_open_at_worker(
     int *error_code,
     unsigned *open_outcome
 );
+int wf__windows_completion_directory_write_open_worker(
+    HANDLE root, const char *path, int *error_code, unsigned *open_outcome
+);
 int64_t wf__windows_completion_file_write_worker(
     HANDLE handle,
     const void *buffer,
