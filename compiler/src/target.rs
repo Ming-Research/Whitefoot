@@ -413,8 +413,10 @@ pub(super) fn element_has_zero_stride(
     Ok(layouts.layout(element)?.size == 0)
 }
 
-/// Compile-time page geometry. A zero-size element uses B = 4096;
-/// its address displacement remains zero while logical indices are retained.
+/// Compile-time page geometry: B from the element type's [OP-9] stride
+/// ceiling [OP-13], and the actual stride that addresses elements. A zero
+/// actual stride keeps zero displacement whatever B is, while logical indices
+/// are retained.
 pub(super) fn paged_geometry(
     target: TargetLayout,
     program: &IrProgram,
