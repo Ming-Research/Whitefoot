@@ -91,6 +91,11 @@ the work-branch and merge boundary.
   keyed concurrent index in the trusted runtime under atomic statements on one
   key, its standalone measurement against other languages' concurrent maps,
   and the criteria fixed before measuring.
+- [Enumerating and clearing a concurrent hash map](investigations/map-enumeration/DESIGN.md):
+  a scan in steps from a cursor in a position order every map shares, its
+  exactly-once guarantee across moves and other contexts' writes, a clear
+  whose entries are released after the hold, copying a key set's key out,
+  and the review that preceded the implementation.
 - [Shared state locked by parts](investigations/shared-state/DESIGN.md): one
   sharing primitive whose atomic statement owns the whole state at one point,
   a keyed table as a field whose entries are named in the statement's header,

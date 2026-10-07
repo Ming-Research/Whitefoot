@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-06 v0.94: scanning and clearing a concurrent hash map
+
+Rules: changed SHARE-1, PRE-1, WAIT-2, MSR-1
+
+Owner-approved: In the session of 2026-10-06, written in Chinese, after the decision cards on the scan cursor, the clear and copying a key set's key out: "The default options of these proposals look OK, but I suggest you run Astra max to review them" (translated); after that review and the implementation: "OK. Start" (translated); and, on the downstream trial: "when CI is done you can just continue, notify Firn, and once it has tested, merge" (translated). Firn-wf confirmed the trial of wf-exp-a48910f673fe the same day.
+
+Summary: SHARE-1 gives every byte sequence a position, a `u64` the same in every map and an input of the execution, and adds `map_scan`, one step from a cursor that inserts into a key set exactly the keys whose entries are `Some` and whose positions lie from the cursor to an extent the execution chooses, in order of position and then bytes, and returns the extent modulo 2^64; `map_clear`, which makes every entry of a map `None` through any `&ConcurrentHashMap<V>`; and `key_set_read_key`, which copies a set's key out and returns its length. PRE-1 declares the three records, WAIT-2 lists positions and scan extents among the execution's inputs, and MSR-1's note on bounded cells adds `map_scan`'s lower bound on a key set's `len`. Before them no program could learn a map's keys, a statement holding a map through a reference could not empty it, and a key set's keys could not be read back. The cursor's meaning was selected so that every `u64` is a safe cursor and a key `Some` for a whole scan is inserted exactly once across growth, shrinking and other contexts' writes, which Redis's `SCAN`, `KEYS` and `RANDOMKEY` need ([design](../research/investigations/map-enumeration/DESIGN.md)).
+
 ## 2026-10-05 v0.93: setting a file's length
 
 Rules: changed PRE-2

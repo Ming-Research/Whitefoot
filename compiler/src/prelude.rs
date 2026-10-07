@@ -327,6 +327,20 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
+        "prelude/map_scan.wf",
+        PreludeSource::Function,
+        r#"fn map_scan<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, keys: &KeySet) -> next: u64 reads(map), writes(keys) contract {
+  ensures keys^.len >= entry(keys)^.len;
+};
+"#,
+    ),
+    (
+        "prelude/map_clear.wf",
+        PreludeSource::Function,
+        r#"fn map_clear<V: drop>(map: &ConcurrentHashMap<V>) -> result: unit writes(map);
+"#,
+    ),
+    (
         "prelude/key_set_new.wf",
         PreludeSource::Function,
         r#"fn key_set_new(capacity: u64) -> result: KeySet pure contract {
@@ -341,6 +355,14 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
   ensures keys^.len >= entry(keys)^.len;
   ensures keys^.len <= entry(keys)^.len + 1_u64;
   ensures index < keys^.len;
+};
+"#,
+    ),
+    (
+        "prelude/key_set_read_key.wf",
+        PreludeSource::Function,
+        r#"fn key_set_read_key(keys: &KeySet, index: u64, out: &[u8]) -> length: u64 reads(keys), writes(out) contract {
+  requires index < keys^.len;
 };
 "#,
     ),
@@ -411,12 +433,12 @@ mod tests {
         signatures.sort_unstable();
         // [PRE-1] keeps no host record: the host signatures are the standard
         // library's [PRE-2], which this unit names none of. Of the
-        // compiler-owned rows only the key set's four functions [SHARE-1]
+        // compiler-owned rows only the key set's three functions [SHARE-1]
         // take no type parameter, so each is one ordinary checked function;
         // every other row is generic, and [FN-2] gives it a checked function
         // only per concrete instance, of which this unit, calling none of
         // them, has none.
-        let ungeneric = ["key_set_insert", "key_set_new"];
+        let ungeneric = ["key_set_insert", "key_set_new", "key_set_read_key"];
         assert_eq!(signatures, ungeneric);
         for row in crate::lowering::COMPILER_OWNED_PRELUDE_ROWS {
             assert_eq!(

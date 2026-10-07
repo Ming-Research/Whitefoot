@@ -1,4 +1,4 @@
-# Kernel Specification v0.94
+# Kernel Specification v0.93
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2195,7 +2195,7 @@ A program that needs two host operations ordered passes both through one owner w
 Each context executes its own constructs one at a time, in the order they define, and a call that is not spawned executes in its caller's context in that order.
 A call of a waiting host-module function [PRE-2] completes once the host has produced the operation's outcome, and that outcome is an input of the execution, as the bytes an operation delivers are.
 A context waits at a waiting host call until the host has produced its outcome, at an atomic statement until the statement takes effect [SHARE-3], and at a join until the joined context has completed [WAIT-3].
-Which of several outstanding operations completes first, how the host effects of different contexts interleave, the order in which atomic statements of different contexts take effect [SHARE-3], and the positions of byte sequences and the extents of map scans [SHARE-1] are inputs of the execution: two executions that receive the same inputs in the same order execute every context identically.
+Which of several outstanding operations completes first, how the host effects of different contexts interleave, and the order in which atomic statements of different contexts take effect [SHARE-3] are inputs of the execution: two executions that receive the same outcomes in the same order execute every context identically.
 Where a context executes, and whether two contexts execute at the same time, are not observable.
 While every context, from every point of its execution, reaches in finitely many steps its completion or a wait, each context that does not wait, or waits for a host outcome that has been produced or for a context that has completed, eventually takes its next step, and each atomic statement that has begun, and that has no guard or whose guard is true in its targets' states at every point from some point on, eventually takes effect.
 An execution in which every context that has not completed waits for an atomic statement whose guard is false or for another context, and no host operation is outstanding, takes no further step and does not complete; an implementation may stop it with a report, which is not a program outcome [SCOPE-3].
@@ -2219,14 +2219,10 @@ Releasing a handle [OWN-1, STOR-3] releases that handle. An object's state is re
 The state of a shared object is storage of no binding and belongs to no context [WAIT-2]. Paths into it start at it [REF-1], and the targets of an atomic statement [SHARE-2] are the only forms that form one.
 A value of the prelude type `ConcurrentHashMap<V>` is a concurrent hash map, which holds for each sequence of bytes, its key, an entry of type `Option<V>`: `Some` with the value the map holds under that key, or `None`. A map is only ever the state of a shared object [TYPE-9]. Releasing a map releases every value its entries hold.
 `map_count` returns how many entries of the map its argument names are `Some`.
-Each execution gives every sequence of bytes a position, a `u64`, the same in every map; which position each sequence has is an input of the execution [WAIT-2].
-`map_scan` with cursor `c` takes an extent `e`, an integer greater than `c` and at most two to the 64th, which is an input of the execution and which an implementation may choose by `count`; `count` states nothing else. It inserts into its key set, as `key_set_insert` does, each key whose entry in the map is `Some` and whose position `p` satisfies `c <= p < e`, in increasing order of position and, among keys of one position, in lexicographic order of their bytes as unsigned values with a proper prefix first; it returns `e` modulo two to the 64th, so `0` exactly when `e` is two to the 64th.
-`map_clear` makes every entry of the map its argument names `None`, releasing every value they held.
 A map's entries are the places its subscripts select [OP-4] and the places the targets on its handles name [SHARE-2].
 A value of the prelude type `KeySet` is a key set: its `len` distinct keys, the key at each index from zero being the one whose first insertion was that many insertions of a new key after the set was made.
 `key_set_new` returns an empty set with room for its argument's number of keys.
 `key_set_insert` returns the index of its key: the key's own index when the set holds it, and otherwise `len`, after adding the key there.
-`key_set_read_key` returns the length of the set's key at `index` and writes the key's first bytes, as many as both that length and `out`'s `len` allow, to `out`'s elements from index zero, leaving the rest of `out` as it was.
 
 [SHARE-2] Atomic statements.
 An `atomic_stmt` [GRAM-4] has targets, each an `IDENT`, its binding, with the `place` after its `&`, in written order; a block; and optionally a guard, the `expr` after `when`.
@@ -2434,10 +2430,6 @@ fn shared_new<T: drop>(value: T) -> result: Shared<T> pure;
 fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
 fn shared_share<T: drop>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
 fn map_count<V: drop>(map: &ConcurrentHashMap<V>) -> count: u64 reads(map);
-fn map_scan<V: drop>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64, keys: &KeySet) -> next: u64 reads(map), writes(keys) contract {
-  ensures keys^.len >= entry(keys)^.len;
-};
-fn map_clear<V: drop>(map: &ConcurrentHashMap<V>) -> result: unit writes(map);
 fn key_set_new(capacity: u64) -> result: KeySet pure contract {
   ensures result.len == 0_u64;
 };
@@ -2446,9 +2438,6 @@ fn key_set_insert(keys: &KeySet, key: &[u8]) -> index: u64 reads(key), writes(ke
   ensures keys^.len <= entry(keys)^.len + 1_u64;
   ensures index < keys^.len;
 };
-fn key_set_read_key(keys: &KeySet, index: u64, out: &[u8]) -> length: u64 reads(keys), writes(out) contract {
-  requires index < keys^.len;
-};
 fn free_empty<W>(window: W) -> result: unit pure contract {
   requires window.len == 0_u64;
 };
@@ -2456,7 +2445,7 @@ fn free_empty<W>(window: W) -> result: unit pure contract {
 
 Each record is an ordinary callable boundary usable by a direct call or a function-kind binding under FN-2 through FN-5. Its definition is supplied by the build and must satisfy the declared boundary [SCOPE-3]; calls neither inspect nor classify that definition. There is one ordinary callable ABI for definitions written in Whitefoot and definitions supplied by linking. A reference passed to either lasts through that call's return and is not retained beyond it [REF-3]. A missing definition or incompatible physical representation is a build/link failure, not a source-language rejection.
 PRE-1 requirement templates are discharged by FN-8, declared postconditions are instantiated only by CALL-6 and FN-9's ordinary selected-result rules, and range postconditions are taken after a call by [RANGE-2]. The supplied definition is responsible for those propositions under SCOPE-3; its declaration has no Whitefoot body for FN-9 to verify. No compiler-owned operation fact or alternative acceptance judgment exists.
-The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `map_count`, `map_scan`, `map_clear`, `key_set_new`, `key_set_insert`, `key_set_read_key` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
+The declaration preorder is each opaque struct above in written order with its refused constructor and its fields in declaration order, then each enum above in written order with its variants and their fields in declaration order, then `Int`, `Float`, then each construction function above in written order, then each window operation above in written order, then `swap`, `shared_new`, `shared_map_new`, `shared_share`, `map_count`, `key_set_new`, `key_set_insert` and `free_empty`, each with its type, const and value parameters in declared order and then each name and bound variable its range postconditions declare, in written order [RANGE-1]. Owner-local fields and parameters do not enter compilation-root name lookup. This preorder fixes each PRE-1 diagnostic ordinal [DIAG-1].
 
 [PRE-2] The host modules are the six standard library modules [MOD-10] `std::time`, `std::io`, `std::text`, `std::fs`, `std::net` and `std::process`, registered by these rows of the standard library's graph:
 
@@ -2932,7 +2921,7 @@ The table in this version is:
 | &[T]            | range elements, exact    | absent             | absent                  |
 ```
 
-Two cell classes are *bounded*. A `Ring`'s `head` is the one cell the two `Ring` rows share: the two front-moving operations `place_front` and `take_front` [OP-10] publish it two-sidedly and no operation re-establishes it exactly, so no derivation may treat a `Ring`'s window origin as a known constant after a front operation. A `KeySet`'s `len` is the other: `key_set_insert` publishes it two-sidedly and `map_scan` from below [SHARE-1], since a key the set already holds adds none.
+Two cell classes are *bounded*. A `Ring`'s `head` is the one cell the two `Ring` rows share: the two front-moving operations `place_front` and `take_front` [OP-10] publish it two-sidedly and no operation re-establishes it exactly, so no derivation may treat a `Ring`'s window origin as a known constant after a front operation. A `KeySet`'s `len` is the other: `key_set_insert` [SHARE-1] publishes it two-sidedly, since a key the set already holds adds none.
 
 A measure is a logical quantity, and a measured value's window origin is `P.head` where the table gives that cell and slot zero where it does not.
 A measured value's initialized set is the `P.len` slots beginning at that origin taken modulo `P.cap`, and a **logical offset** `i` names the slot at physical offset `(origin + i) mod P.cap`.

@@ -31,7 +31,10 @@
  *   several entries kept in a statement's frame: positions with repeats,
  *   the order they lock in, the release at each tag width, holds of two
  *   maps at once, holds of the whole map, a hold waiting out a move under
- *   way, swaps of two maps' entries, and the keyed tables' functions
+ *   way, swaps of two maps' entries, clears whose entries are released
+ *   after the hold, scans in steps across moves that write nothing of the
+ *   map, a hold that keeps finding its keys after their bytes change, and
+ *   the keyed tables' functions
  *   (keyed_table.c), which the test compiles in with the map, standing in
  *   for the completion runtime they take a driver's number and guards'
  *   watches from.
@@ -3137,6 +3140,305 @@ static void shared_map_groups(void) {
     wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object);
 }
 
+/* The k a counted key's bytes name. */
+static uint64_t counted_of(const unsigned char *bytes) {
+    uint64_t k = 0;
+    for (int i = 0; i < 8; i++)
+        k |= (uint64_t)(bytes[4 + i] - '0') << (3 * i);
+    return k;
+}
+
+/* Whether a scan's key x comes before y [SHARE-1]: by position, then by
+ * bytes, a proper prefix first. */
+static int scan_before(const unsigned char *x, uint64_t lx, const unsigned char *y, uint64_t ly) {
+    uint64_t px = position_of(tag_of(x, lx)), py = position_of(tag_of(y, ly));
+    if (px != py)
+        return px < py;
+    uint64_t shorter = lx < ly ? lx : ly;
+    int order = shorter == 0 ? 0 : memcmp(x, y, (size_t)shorter);
+    return order != 0 ? order < 0 : lx < ly;
+}
+
+/* A scan in steps, each under a whole hold of its own, against a plain
+ * reference, while the keys change between steps so that the table grows,
+ * shrinks and leaves removed cells: every step's cursor advances or ends
+ * the scan, its keys are present, in its position range and in the scan's
+ * order, no key comes twice, and every key present for the whole scan
+ * comes once. A build that narrows the hashes gives many keys one position
+ * and long runs of cells, which wrap at the table's end. */
+static void scans_resume(void) {
+    enum { KEYS = 700, ROUNDS = 24 };
+    static uint8_t present[KEYS], throughout[KEYS], seen[KEYS];
+    for (unsigned round = 0; round < ROUNDS; round++) {
+        uint64_t state = 101 + round;
+        wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+        memset(present, 0, sizeof present);
+        memset(seen, 0, sizeof seen);
+        for (uint64_t k = 0; k < KEYS; k++)
+            if (next(&state) % 3 != 0) {
+                put_counted(map, 0, k, k + 1);
+                present[k] = 1;
+            }
+        memcpy(throughout, present, sizeof present);
+        /* Rounds alternate between growing and shrinking the map. */
+        unsigned grow = round % 2 == 0;
+        uint64_t count = 1 + round % 7, cursor = 0, steps = 0;
+        for (;;) {
+            wf_key_set set;
+            wf__key_set_new(&set, 4);
+            wf_cmap_holding hold;
+            wf__table_hold_begin(&hold, map);
+            wf__table_hold_whole(&hold);
+            wf__table_hold_take(&hold);
+            uint64_t step = wf__keyed_table_scan(map, cursor, count, &set, VALUE_TAG);
+            wf__table_hold_release(&hold, VALUE_TAG);
+            if (step != 0 && step <= cursor)
+                fail("a scan step did not advance (cursor, next)", cursor, step);
+            const unsigned char *last = NULL;
+            uint64_t last_length = 0;
+            for (uint64_t i = 0; i < set.len; i++) {
+                uint64_t length;
+                const unsigned char *key = wf_cmap_key_set_key(&set, i, &length);
+                uint64_t k = counted_of(key), position = position_of(tag_of(key, length));
+                if (length != 12 || k >= KEYS || !present[k])
+                    fail("a scan step inserted a key the map lacks (key, step)", k, steps);
+                if (position < cursor || (step != 0 && position >= step))
+                    fail("a scan step inserted a key outside its positions (key, step)", k, steps);
+                if (last != NULL && !scan_before(last, last_length, key, length))
+                    fail("a scan step's keys are out of order (key, step)", k, steps);
+                if (++seen[k] > 1)
+                    fail("a scan inserted a key twice (key, round)", k, round);
+                last = key;
+                last_length = length;
+            }
+            wf__key_set_free(set.store);
+            for (unsigned j = 0; j < 24; j++) {
+                uint64_t k = next(&state) % KEYS;
+                if (present[k] && (grow ? next(&state) % 4 == 0 : next(&state) % 4 != 0)) {
+                    put_counted(map, 0, k, 0);
+                    present[k] = 0;
+                    throughout[k] = 0;
+                } else if (!present[k] && (grow || next(&state) % 4 == 0)) {
+                    put_counted(map, 0, k, k + 1);
+                    present[k] = 1;
+                }
+            }
+            if (++steps > 1000000)
+                fail("a scan did not end (round)", round, 0);
+            if (step == 0)
+                break;
+            cursor = step;
+        }
+        for (uint64_t k = 0; k < KEYS; k++)
+            if (throughout[k] && seen[k] != 1)
+                fail("a scan missed a key present throughout it (key, round)", k, round);
+        wf_cmap_destroy(map);
+    }
+    wf_cmap_key_set_drop_spare();
+}
+
+/* A scan reads the map and writes none of it: under a hold whose own
+ * entries are locked, some of them None, the map, its cells and the hold
+ * are as they were, and the scan inserts exactly the entries a count under
+ * the hold counts. */
+static void scans_write_nothing(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    unsigned char bytes[16];
+    for (uint64_t k = 0; k < 50; k++)
+        put_counted(map, 0, k, k + 1);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    for (uint64_t k = 40; k < 60; k++) {
+        uint64_t *slot = wf__table_held_entry(map, bytes, counted_key(k, bytes), 1);
+        slot[0] = k % 2 == 0 ? 0 : k + 1;
+    }
+    unsigned char map_before[sizeof *map];
+    memcpy(map_before, map, sizeof *map);
+    table *index = atomic_load(&map->current);
+    size_t cells = (size_t)index->capacity * sizeof(cell);
+    void *cells_before = malloc(cells);
+    if (cells_before == NULL)
+        abort();
+    memcpy(cells_before, index->cells, cells);
+    unsigned char hold_before[sizeof hold];
+    memcpy(hold_before, &hold, sizeof hold);
+    wf_key_set set;
+    wf__key_set_new(&set, 4);
+    uint64_t cursor = 0;
+    do
+        cursor = wf__keyed_table_scan(map, cursor, 3, &set, VALUE_TAG);
+    while (cursor != 0);
+    if (memcmp(map_before, map, sizeof *map) != 0 || memcmp(cells_before, index->cells, cells) != 0 ||
+        memcmp(hold_before, &hold, sizeof hold) != 0)
+        fail("a scan changed the map, its cells or the hold", 0, 0);
+    if (set.len != wf__keyed_table_count(map, VALUE_TAG) || set.len != 40 + 10)
+        fail("a scan under a hold did not insert the entries it counts (inserted, counted)", set.len,
+             wf__keyed_table_count(map, VALUE_TAG));
+    free(cells_before);
+    wf__key_set_free(set.store);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    wf_cmap_key_set_drop_spare();
+}
+
+/* What clears handed to their release: how many runs, entries and the sum
+ * of their values. */
+static unsigned cleared_runs;
+static uint64_t cleared_entries, cleared_sum;
+static wf_cmap *clear_source;
+
+static void release_cleared(void *table) {
+    if (atomic_load(&clear_source->gate) != 0 || clear_source->whole_hold != NULL)
+        fail("a clear released entries before giving up the source hold", 0, 0);
+    uint64_t drained;
+    cleared_sum += drain_sum(table, &drained);
+    cleared_entries += drained;
+    cleared_runs++;
+    wf__keyed_table_free(table);
+}
+
+/* A clear under a whole hold empties the map at once, its own entries
+ * included, keeps what the statement writes after it, and hands the old
+ * entries to their release only once the hold is given up, leaking no
+ * block. */
+static void maps_clear(void) {
+    wf_cmap_key_set_drop_spare();
+    int64_t before = atomic_load(&blocks_out);
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    unsigned char bytes[16];
+    for (uint64_t k = 0; k < 100; k++)
+        put_counted(map, 0, k, k + 1);
+    cleared_runs = 0;
+    cleared_entries = 0;
+    cleared_sum = 0;
+    clear_source = map;
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    *(uint64_t *)wf__table_held_entry(map, bytes, counted_key(200, bytes), 1) = 7;
+    *(uint64_t *)wf__table_held_entry(map, bytes, counted_key(5, bytes), 1) = 0;
+    wf__keyed_table_clear(map, VALUE_TAG, release_cleared);
+    if (wf__keyed_table_count(map, VALUE_TAG) != 0 || wf__table_held_entry(map, bytes, counted_key(3, bytes), 0) != NULL ||
+        wf__table_held_entry(map, bytes, counted_key(200, bytes), 0) != NULL)
+        fail("a clear left entries in the map (count)", wf__keyed_table_count(map, VALUE_TAG), 0);
+    *(uint64_t *)wf__table_held_entry(map, bytes, counted_key(300, bytes), 1) = 9;
+    wf__keyed_table_clear(map, VALUE_TAG, release_cleared);
+    *(uint64_t *)wf__table_held_entry(map, bytes, counted_key(400, bytes), 1) = 11;
+    if (cleared_runs != 0)
+        fail("a clear released entries under the hold (runs)", cleared_runs, 0);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    if (cleared_runs != 2 || cleared_entries != 101 || cleared_sum != 5050 - 6 + 7 + 9)
+        fail("the clears' entries were not released once each (entries, sum)", cleared_entries, cleared_sum);
+    if (wf_cmap_count(map) != 1 || counted_value(map, 400) != 11 || counted_value(map, 3) != 0)
+        fail("a write after a clear was not kept (count, value)", wf_cmap_count(map), counted_value(map, 400));
+    wf_cmap_destroy(map);
+    wf_cmap_key_set_drop_spare();
+    if (atomic_load(&blocks_out) != before)
+        fail("clears leaked blocks (out, before)", atomic_load(&blocks_out), before);
+}
+
+/* Empty maps finish at once, and a sparse map fits in a step of its count.
+ * Distinct homes in the upper half, before the last cell, keep the old cell
+ * budget from reaching any key in either hash build and leave homes after
+ * the last key, while a small step still stops at a key. */
+static void scans_sparse(void) {
+    enum { KEYS = 5 };
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1u << 17);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf_key_set set;
+    wf__key_set_new(&set, 4);
+    uint64_t step = wf__keyed_table_scan(map, 0, 10, &set, VALUE_TAG);
+    if (step != 0 || set.len != 0)
+        fail("an empty sparse map did not finish its scan (next, keys)", step, set.len);
+    wf__key_set_free(set.store);
+    wf__table_hold_release(&hold, VALUE_TAG);
+
+    table *index = atomic_load(&map->current);
+    uint64_t chosen[KEYS], homes[KEYS], added = 0;
+    unsigned char bytes[16];
+    for (uint64_t k = 0; added < KEYS; k++) {
+        uint64_t length = counted_key(k, bytes);
+        uint64_t home = start_of(index, tag_of(bytes, length));
+        if (home < index->capacity / 2 || home == index->capacity - 1)
+            continue;
+        uint64_t i = 0;
+        while (i < added && homes[i] != home)
+            i++;
+        if (i != added)
+            continue;
+        chosen[added] = k;
+        homes[added++] = home;
+        put_counted(map, 0, k, k + 1);
+    }
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf__key_set_new(&set, 4);
+    step = wf__keyed_table_scan(map, 0, KEYS, &set, VALUE_TAG);
+    uint64_t seen = 0;
+    for (uint64_t i = 0; i < set.len; i++) {
+        uint64_t length;
+        const unsigned char *key = wf_cmap_key_set_key(&set, i, &length);
+        if (length == 12)
+            for (uint64_t j = 0; j < KEYS; j++)
+                if (counted_of(key) == chosen[j])
+                    seen |= 1ull << j;
+    }
+    if (step != 0 || set.len != KEYS || seen != (1ull << KEYS) - 1)
+        fail("a sparse scan did not finish with every key (next, keys)", step, set.len);
+    wf__key_set_free(set.store);
+
+    wf__key_set_new(&set, 4);
+    step = wf__keyed_table_scan(map, 0, 1, &set, VALUE_TAG);
+    if (step == 0 || set.len != 1)
+        fail("a sparse scan did not stop at its first key (next, keys)", step, set.len);
+    wf__key_set_free(set.store);
+
+    clear_source = map;
+    cleared_runs = 0;
+    cleared_entries = 0;
+    cleared_sum = 0;
+    wf__keyed_table_clear(map, VALUE_TAG, release_cleared);
+    wf__key_set_new(&set, 4);
+    step = wf__keyed_table_scan(map, 0, 10, &set, VALUE_TAG);
+    if (step != 0 || set.len != 0)
+        fail("a cleared map did not finish its scan (next, keys)", step, set.len);
+    wf__key_set_free(set.store);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    wf_cmap_key_set_drop_spare();
+}
+
+/* A hold's keys are the node's bytes from its take on: the statement may
+ * change the bytes it named a key by, and a move under the whole hold
+ * finds the entry again by the node's. */
+static void holds_keep_their_bytes(void) {
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1);
+    unsigned char name[16], bytes[16];
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_key(&hold, name, counted_key(1, name));
+    wf__table_hold_take(&hold);
+    *(uint64_t *)wf__table_hold_slot(&hold, 0) = 5;
+    counted_key(2, name);
+    for (uint64_t k = 10; k < 400; k++)
+        *(uint64_t *)wf__table_held_entry(map, bytes, counted_key(k, bytes), 1) = k;
+    if (*(uint64_t *)wf__table_hold_slot(&hold, 0) != 5)
+        fail("a held entry lost its value across a move", *(uint64_t *)wf__table_hold_slot(&hold, 0), 5);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    if (counted_value(map, 1) != 5 || counted_value(map, 2) != 0 || wf_cmap_count(map) != 391)
+        fail("a held entry is not under its own key after a move (value, count)", counted_value(map, 1),
+             wf_cmap_count(map));
+    wf_cmap_destroy(map);
+}
+
 int main(int argc, char **argv) {
     /* Writers that wait on each other in a cycle fail the test here rather
      * than at the gate's limit. */
@@ -3185,6 +3487,11 @@ int main(int argc, char **argv) {
         holds_whole();
         holds_wait_out_moves();
         maps_swap();
+        maps_clear();
+        scans_resume();
+        scans_sparse();
+        scans_write_nothing();
+        holds_keep_their_bytes();
         tables_wake_writers();
         tables_held_selection();
         tables_read_selection();

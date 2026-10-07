@@ -77,6 +77,17 @@ uint64_t wf__key_set_insert(wf_key_set *set, const unsigned char *key, uint64_t 
 
 void wf__key_set_free(void *store) { wf_cmap_key_set_free_store(store); }
 
+/* [SHARE-1] the key at index, below the set's count: copies as many of its
+ * first bytes as out has room for and answers its length. */
+uint64_t wf__key_set_read_key(const wf_key_set *set, uint64_t index, unsigned char *out, uint64_t room) {
+    uint64_t length;
+    const unsigned char *key = wf_cmap_key_set_key(set, index, &length);
+    uint64_t copied = length < room ? length : room;
+    if (copied != 0)
+        memcpy(out, key, (size_t)copied);
+    return length;
+}
+
 void *wf__shared_map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
     void *object = wf__shared_new(sizeof(void *));
     *(wf_cmap **)((unsigned char *)object + WF_SHARED_STATE_OFFSET) = wf_cmap_create_entries(slot_size, slot_align, capacity);
@@ -116,6 +127,19 @@ uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_wi
 }
 
 uint64_t *wf__keyed_table_drain(void *table) { return (uint64_t *)wf_cmap_drain((wf_cmap *)table); }
+
+uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, wf_key_set *set, uint64_t tag_offset,
+                              uint32_t tag_width, uint64_t none_tag) {
+    return wf_cmap_scan((wf_cmap *)table, cursor, count, set, tag_offset, tag_width, none_tag);
+}
+
+/* The cleared entries go to a map of their own, which release, the table's
+ * drop helper, drains and frees once the statement's hold is given up
+ * (wf__table_hold_release). */
+void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
+                           void (*release)(void *)) {
+    wf_cmap_clear((wf_cmap *)table, tag_offset, tag_width, none_tag, release);
+}
 
 /* No statement reaches a table that is freed, so no guard's watch is
  * registered on it; one still registered would be left on a freed list. */
@@ -208,8 +232,12 @@ void *wf__table_hold_slot(void *hold, uint64_t position) {
 void wf__table_hold_release(void *hold, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag) {
     wf_cmap_holding *h = (wf_cmap_holding *)hold;
     wf_cmap *map = h->map;
+    /* Taken while the hold still keeps every other clear out. */
+    wf_cmap *cleared = h->user != NULL && h->whole && !h->read && map->whole_hold == h
+                           ? wf_cmap_take_cleared(map) : NULL;
     if (wf_cmap_hold_release(h, tag_offset, tag_width, none_tag))
         table_written(map);
+    wf_cmap_release_cleared(cleared);
 }
 
 void wf__watch_table(void *watch, void *table) { wf__watch_unit(watch, &((wf_cmap *)table)->watch); }

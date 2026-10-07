@@ -332,6 +332,58 @@ impl FunctionEmitter<'_, '_> {
         self.emit_unit_call(result, "wf__keyed_table_swap", &arguments)
     }
 
+    /// One step of a scan: the runtime reads each entry's tag, an `i32` at
+    /// offset 0 whose `None` is 0, so the step sees the statement's own
+    /// writes, as a count does.
+    pub(super) fn emit_keyed_table_scan(
+        &mut self,
+        result: IrValueId,
+        table: IrValueId,
+        cursor: IrValueId,
+        count: IrValueId,
+        set: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        let Some(IrType::Nominal(nominal)) = self.value_type(table) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        self.checked_entry(nominal)?;
+        if self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet)) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        self.names(&["wf__keyed_table_scan"]);
+        writeln!(
+            self.output,
+            "  {} = call i64 @wf__keyed_table_scan(ptr {}, i64 {}, i64 {}, ptr {}, i64 0, i32 4, i64 0)",
+            self.value_name(result),
+            self.value_name(table),
+            self.value_name(cursor),
+            self.value_name(count),
+            self.value_name(set),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Empties a table: the runtime settles the statement's own entries,
+    /// reading each tag as a hold's release does, and hands the old entries
+    /// to the table's drop helper once the hold is given up.
+    pub(super) fn emit_keyed_table_clear(
+        &mut self,
+        result: IrValueId,
+        table: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        let Some(IrType::Nominal(nominal)) = self.value_type(table) else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        self.checked_entry(nominal)?;
+        let release = super::cleanup::drop_helper_symbol(self.nominal(nominal)?);
+        self.names(&[release.as_str()]);
+        let arguments = format!(
+            "ptr {}, i64 0, i32 4, i64 0, ptr @{release}",
+            self.value_name(table)
+        );
+        self.emit_unit_call(result, "wf__keyed_table_clear", &arguments)
+    }
+
     pub(super) fn emit_table_held_entry(
         &mut self,
         result: IrValueId,
@@ -670,6 +722,30 @@ impl FunctionEmitter<'_, '_> {
             "  {} = call i64 @wf__key_set_insert(ptr {}, ptr %{bare}.key, i64 %{bare}.length)",
             self.value_name(result),
             self.value_name(set),
+        )
+        .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Copies a key's first bytes into a range, defining the key's length.
+    pub(super) fn emit_key_set_read_key(
+        &mut self,
+        result: IrValueId,
+        set: IrValueId,
+        index: IrValueId,
+        out: IrValueId,
+    ) -> Result<(), BackendFailure> {
+        if self.value_type(set) != Some(IrType::Address(IrAddressed::KeySet)) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let bare = self.bare(result);
+        self.key_parts(&bare, out)?;
+        self.names(&["wf__key_set_read_key"]);
+        writeln!(
+            self.output,
+            "  {} = call i64 @wf__key_set_read_key(ptr {}, i64 {}, ptr %{bare}.key, i64 %{bare}.length)",
+            self.value_name(result),
+            self.value_name(set),
+            self.value_name(index),
         )
         .map_err(|_| BackendFailure::TextEmission)
     }

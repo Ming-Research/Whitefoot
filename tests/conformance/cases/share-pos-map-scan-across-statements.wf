@@ -1,0 +1,104 @@
+fn put(map: &ConcurrentHashMap<u8>, a: u64, b: u64) -> result: unit writes(map) {
+  let key = array_filled::<u8, 2>(value: 0_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(a);
+  set key[1_u64] = cvt.wrap::<u64, u8>(b);
+  let name = &key[0_u64..2_u64];
+  set map^[name] = Some<u8>(value: 1_u8);
+  return unit;
+}
+
+fn remove(map: &ConcurrentHashMap<u8>, a: u64, b: u64) -> result: unit writes(map) {
+  let key = array_filled::<u8, 2>(value: 0_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(a);
+  set key[1_u64] = cvt.wrap::<u64, u8>(b);
+  let name = &key[0_u64..2_u64];
+  set map^[name] = None<u8>();
+  return unit;
+}
+
+fn note(keys: &KeySet, a: u64, b: u64) -> result: unit writes(keys) {
+  let key = array_filled::<u8, 2>(value: 0_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(a);
+  set key[1_u64] = cvt.wrap::<u64, u8>(b);
+  let name = &key[0_u64..2_u64];
+  key_set_insert(keys: keys, key: name);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let code = 42_u8;
+  atomic t = &store {
+    for @fill (a in 0_u64..6_u64) {
+      for @row (b in 0_u64..8_u64) {
+        put(map: t, a: a, b: b);
+      }
+    }
+  }
+  let seen = key_set_new(capacity: 64_u64);
+  let cursor = 0_u64;
+  let steps = 0_u64;
+  loop {
+    let step = key_set_new(capacity: 4_u64);
+    let next = 0_u64;
+    atomic t = &store {
+      set next = map_scan::<u8>(map: t, cursor: cursor, count: 2_u64, keys: &step);
+    }
+    if next != 0_u64 {
+      if next <= cursor {
+        set code = 1_u8;
+      }
+    }
+    for @merge (i in 0_u64..step.len) {
+      let buffer = array_filled::<u8, 2>(value: 0_u8);
+      let length = key_set_read_key(keys: &step, index: i, out: &buffer[0_u64..2_u64]);
+      if length != 2_u64 {
+        set code = 2_u8;
+      }
+      let before = seen.len;
+      key_set_insert(keys: &seen, key: &buffer[0_u64..2_u64]);
+      if seen.len == before {
+        set code = 3_u8;
+      }
+    }
+    if steps < 12_u64 {
+      let a = steps +wrap 8_u64;
+      atomic t = &store {
+        for @grow (b in 0_u64..8_u64) {
+          put(map: t, a: a, b: b);
+        }
+      }
+    }
+    if steps == 1_u64 {
+      atomic t = &store {
+        for @shrink (b in 0_u64..8_u64) {
+          remove(map: t, a: 4_u64, b: b);
+        }
+      }
+    }
+    if steps == 3_u64 {
+      atomic t = &store {
+        for @churn (b in 0_u64..8_u64) {
+          remove(map: t, a: 5_u64, b: b);
+          put(map: t, a: 5_u64, b: b);
+          remove(map: t, a: 5_u64, b: b);
+        }
+      }
+    }
+    set steps = steps +wrap 1_u64;
+    if next == 0_u64 {
+      break;
+    }
+    set cursor = next;
+  }
+  let found = seen.len;
+  for @throughout (a in 0_u64..4_u64) {
+    for @column (b in 0_u64..8_u64) {
+      note(keys: &seen, a: a, b: b);
+    }
+  }
+  if seen.len != found {
+    set code = 4_u8;
+  }
+  return std::process::exit_status(code: code);
+}

@@ -1,0 +1,62 @@
+const bytes: Array<u8, 4> =[97_u8, 98_u8, 99_u8, 122_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let code = 42_u8;
+  let keys = key_set_new(capacity: 4_u64);
+  key_set_insert(keys: &keys, key: &bytes[0_u64..3_u64]);
+  key_set_insert(keys: &keys, key: &bytes[0_u64..0_u64]);
+  key_set_insert(keys: &keys, key: &bytes[3_u64..4_u64]);
+  if keys.len != 3_u64 {
+    set code = 1_u8;
+  }
+  if keys.len < 3_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let whole = array_filled::<u8, 5>(value: 7_u8);
+  let length = key_set_read_key(keys: &keys, index: 0_u64, out: &whole[0_u64..5_u64]);
+  if length != 3_u64 {
+    set code = 2_u8;
+  }
+  if whole[0_u64] != 97_u8 {
+    set code = 3_u8;
+  }
+  if whole[2_u64] != 99_u8 {
+    set code = 3_u8;
+  }
+  if whole[3_u64] != 7_u8 {
+    set code = 4_u8;
+  }
+  let short = array_filled::<u8, 4>(value: 7_u8);
+  let cut = key_set_read_key(keys: &keys, index: 0_u64, out: &short[1_u64..3_u64]);
+  if cut != 3_u64 {
+    set code = 5_u8;
+  }
+  if short[0_u64] != 7_u8 {
+    set code = 6_u8;
+  }
+  if short[1_u64] != 97_u8 {
+    set code = 6_u8;
+  }
+  if short[2_u64] != 98_u8 {
+    set code = 6_u8;
+  }
+  if short[3_u64] != 7_u8 {
+    set code = 6_u8;
+  }
+  let none = array_filled::<u8, 1>(value: 7_u8);
+  let empty = key_set_read_key(keys: &keys, index: 1_u64, out: &none[0_u64..1_u64]);
+  if empty != 0_u64 {
+    set code = 7_u8;
+  }
+  if none[0_u64] != 7_u8 {
+    set code = 8_u8;
+  }
+  let last = key_set_read_key(keys: &keys, index: 2_u64, out: &none[0_u64..0_u64]);
+  if last != 1_u64 {
+    set code = 9_u8;
+  }
+  if none[0_u64] != 7_u8 {
+    set code = 10_u8;
+  }
+  return std::process::exit_status(code: code);
+}
