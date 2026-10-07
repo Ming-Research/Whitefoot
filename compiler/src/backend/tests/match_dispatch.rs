@@ -998,10 +998,12 @@ fn a_reference_handed_to_a_content_writer_keeps_its_box() {
 #[test]
 fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
     // As in thirty_values, thirty invariant values exceed every host's
-    // argument registers. Here they are box projections read only by Halt;
-    // regs is read by Add, Jnz and Halt through their own projections and
-    // by Dec through its call's pin. Its first projection has the lower ID,
-    // so counting only that projection's one arm would spill it first.
+    // argument registers. Here they are box projections that Add, Jnz and
+    // Halt read (Add and Jnz add zero with them); regs is read by the same
+    // three arms through their own projections and by Dec only through its
+    // call's pin. Its first projection has the lower ID, so without the pin
+    // read regs ties with them at three arms and spills first; counting the
+    // pin gives it four, and the frame keeps the rare projections.
     let names: Vec<String> = (0..30).map(|index| format!("rare{index}")).collect();
     let parameters = names
         .iter()
@@ -1027,6 +1029,16 @@ fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
         .iter()
         .map(|name| format!("      set a = a +wrap {name}^.inner.len;\n"))
         .collect::<String>();
+    let zero_reads = |arm: &str, sum: &str| {
+        names
+            .iter()
+            .map(|name| {
+                format!(
+                    "      let {name}_{arm} = {name}^.inner.len -wrap 1_u64;\n      set {sum} = {sum} +wrap {name}_{arm};\n"
+                )
+            })
+            .collect::<String>()
+    };
     let source = REGISTER_FILE
         .replace("NAME", "pressure")
         .replace("DECREMENT", "let ignored = touch_content(regs: regs);")
@@ -1039,6 +1051,17 @@ fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
         .replace("regs: regs, pc: next)", &format!("regs: regs, pc: next, {forwarded})"))
         .replace("regs: &regs, pc: 0_u64)", &format!("regs: &regs, pc: 0_u64, {initial})"))
         .replace("      return a;", &format!("{reads}      return a;"))
+        .replace(
+            "      let b = a +wrap 3_u64;\n",
+            &format!("      let b = a +wrap 3_u64;\n{}", zero_reads("add", "b")),
+        )
+        .replace(
+            "      let c = regs^.inner[1_u64];\n      let next = pc + 1_u64;\n",
+            &format!(
+                "      let c = regs^.inner[1_u64];\n{}      let next = pc + 1_u64;\n",
+                zero_reads("jnz", "c")
+            ),
+        )
         .replace("r == 3000_u64", "r == 3030_u64")
         .replace(
             "  if code.inner.len > 0_u64 {",

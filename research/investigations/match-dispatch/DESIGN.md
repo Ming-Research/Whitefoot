@@ -651,9 +651,9 @@ that this lowering serves Lua and other interpreters, not this one:
 - **The candidate is not adopted under the rule.** CoreMark rose 1.3% on
   the 14900K, short of 2%. No Halo kernel moved.
 - **The code cursor slows Halo.** Halo's `loop` is 5.7% slower with the
-  cursor and its `fib` about 1% slower, in every pair, against a twin
-  within 0.2%. The cursor, adopted on the wasm interpreter alone, does not
-  serve Halo as built.
+  cursor, in every pair, and its `fib` about 1% slower, in 6 of 7 pairs,
+  against a twin within 0.2%. The cursor, adopted on the wasm interpreter
+  alone, does not serve Halo as built.
 
 **Edges by their step.** An edge back to the header moves the received
 address only where its index is the received index moved by a constant,
