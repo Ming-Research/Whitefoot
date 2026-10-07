@@ -90,3 +90,25 @@ The proposal would be rejected if one of the three hosts cannot create or
 open a directory relative to a directory handle without following a link
 at the name; the operation would then need B's separate creation or a rule
 for links.
+
+## Moving a file between directories
+
+Redis 7.0.15 upgrades an old single append-only file by moving it from the
+working directory into `appendonlydir` (`aofUpgradePrepare`, a `rename`
+between two directories). `rename_file` acts within one directory's write
+half.
+
+- **D. `rename_file` with two roots.** One operation for both cases, but a
+  rename within one directory would pass one handle as both roots, and
+  `writes(from_root)` with `writes(to_root)` on one handle overlap [EFF-5],
+  so the common case could not be written.
+- **E. A second operation, `move_file`,** taking the source's and the
+  destination's write halves, with `rename_file`'s atomic replacement and
+  its open-handle rule. A move between file systems is a host refusal. POSIX
+  gives it as `renameat` with two directory descriptors; Windows as
+  `FileRenameInfoEx` whose `RootDirectory` names the destination directory,
+  on one volume.
+
+Proposal: E, beside A. Its conformance cases move a file from the working
+directory into a subdirectory, over an existing file, and from a missing
+name, and keep a handle open across the move.
