@@ -1192,6 +1192,22 @@ rarely insert at the same place.
   material waste in small owners
   ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
 
+- **An `apart` certificate cannot use range facts over a window reached
+  through a reference parameter.** The left-inverse scatter of
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
+  certifies with `&[u64]` parameters, but the same function written over
+  `&Slots<u64>` parameters (`requires forall inverse(k in 0_u64..order^.len)
+  when order^[k] < out^.len: pos^[order^[k]] == k`, body
+  `set out^[order^[k]] = k`) is refused with RANGE-5 `UndischargedApart` in
+  the gate run of the paged-storage branch, and so is the `&Paged<u64>` form;
+  the `&Run<u64>` form is the conformance case. The range walker seeds a
+  container for range and run parameters and a place view for reference
+  parameters, so a fact or measure over `order^` likely lands on a different
+  container identity or generation than the body's reads. Find the
+  mismatch, then accept the reference-parameter forms without changing the
+  range-parameter one. Reopen when a certified scatter must take its
+  storage by reference rather than as a range.
+
 - **A segment borrowed below a range element does not emit.** In
   `fn segments(rows: &[Box<Segments<u64>>], i: u64)`, the borrow
   `&rows^[i].inner[0_u64]` checks and lowers (slice address, Box referent

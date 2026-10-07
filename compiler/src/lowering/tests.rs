@@ -2102,10 +2102,9 @@ fn page_borrows_below_range_elements_keep_the_outer_projection() {
                 "{name}: address the enclosing range element: {operations:?}"
             );
             assert!(
-                operations.iter().any(|operation| match operation {
-                    IrOperation::PagedPage { .. } => true,
-                    _ => false,
-                }),
+                operations
+                    .iter()
+                    .any(|operation| matches!(operation, IrOperation::PagedPage { .. })),
                 "{name}: borrow the selected page"
             );
             if let Err(failure) = crate::emit_llvm(program) {

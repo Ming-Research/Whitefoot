@@ -1,4 +1,4 @@
-fn scatter(order: &Paged<u64>, pos: &Paged<u64>, out: &Paged<u64>) -> result: unit reads(order), writes(out) contract {
+fn scatter(order: &Run<u64>, pos: &Run<u64>, out: &Run<u64>) -> result: unit reads(order), writes(out) contract {
   requires pos^.len == out^.len;
   requires forall inverse(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
 } {
@@ -17,7 +17,7 @@ fn scatter(order: &Paged<u64>, pos: &Paged<u64>, out: &Paged<u64>) -> result: un
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "Paged integer elements are RANGE-1 terms and the left inverse certifies the scatter for PAR-2.";
+  doc "Integer elements of Paged runs are RANGE-1 terms and the left inverse certifies the scatter for PAR-2.";
   let order = box_paged_new::<u64>(capacity: 5_u64);
   let pos = box_paged_new::<u64>(capacity: 5_u64);
   let out = box_paged_new::<u64>(capacity: 5_u64);
@@ -40,7 +40,7 @@ fn main() -> status: std::process::ExitStatus pure {
     set order.inner[k] = at;
     set pos.inner[at] = k;
   }
-  scatter(order: &order.inner, pos: &pos.inner, out: &out.inner);
+  scatter(order: &order.inner[0_u64..5_u64], pos: &pos.inner[0_u64..5_u64], out: &out.inner[0_u64..5_u64]);
   if out.inner.len == 5_u64 {
     for (k in 0_u64..5_u64) {
       let expected = 4_u64 - k;
