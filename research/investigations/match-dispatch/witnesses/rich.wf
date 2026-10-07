@@ -1,0 +1,149 @@
+enum Op {
+  Enter(f: u16);
+  Ret(f: u16);
+  Load(a: u32);
+  Store(a: u32);
+  Jump(t: u64);
+  Branch(t: u64);
+  Cache(a: u16);
+  Add();
+  Touch();
+  Halt();
+}
+
+fn touch(stack: &Box<Array<u64>>, fp: u64) -> r: unit writes(stack.inner) contract {
+  requires fp + 65536_u64 <= stack^.inner.len;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  set stack^.inner[fp] = 1_u64;
+  return unit;
+}
+
+fn run(code: &Box<Slots<Op>>, stack: &Box<Array<u64>>, memory: &Box<Array<u64>>, pc0: u64, fp0: u64) -> r: u64 reads(code), writes(stack.inner), writes(memory.inner) contract {
+  requires pc0 < code^.inner.len;
+  requires fp0 + 65536_u64 <= stack^.inner.len;
+} {
+  let n = code^.inner.len;
+  let pc = pc0;
+  let fp = fp0;
+  let acc = 0_u64;
+  let cache0 = 0_u64;
+  let cache1 = 0_u64;
+  loop (
+    invariant pcb: pc < n,
+    invariant fpb: fp + 65536_u64 <= stack^.inner.len
+  ) {
+    match code^.inner[pc] {
+      Enter(f: fv) => {
+        let nf = cvt::<u16, u64>(fv^);
+        let end = nf + 65536_u64;
+        if end <= stack^.inner.len {
+          set fp = nf;
+        } else {
+          return acc;
+        }
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+        } else {
+          return acc;
+        }
+      }
+      Ret(f: fv) => {
+        let nf = cvt::<u16, u64>(fv^);
+        let end = nf + 65536_u64;
+        if end <= stack^.inner.len {
+          set fp = nf;
+        } else {
+          return acc;
+        }
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+        } else {
+          return acc;
+        }
+      }
+      Load(a: av) => {
+        let addr = cvt::<u32, u64>(av^);
+        if addr < memory^.inner.len {
+          set acc = memory^.inner[addr];
+        } else {
+          return acc;
+        }
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+        } else {
+          return acc;
+        }
+      }
+      Store(a: av) => {
+        let addr = cvt::<u32, u64>(av^);
+        if addr < memory^.inner.len {
+          set memory^.inner[addr] = acc;
+        } else {
+          return acc;
+        }
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+        } else {
+          return acc;
+        }
+      }
+      Jump(t: tv) => {
+        if tv^ < n {
+          set pc = tv^;
+        } else {
+          return acc;
+        }
+      }
+      Branch(t: tv) => {
+        let next = pc + 1_u64;
+        if acc != 0_u64 {
+          set next = tv^;
+        }
+        if next < n {
+          set pc = next;
+        } else {
+          return acc;
+        }
+      }
+      Cache(a: av) => {
+        let off = cvt::<u16, u64>(av^);
+        let slot = fp + off;
+        set cache0 = stack^.inner[slot];
+        set cache1 = acc;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+        } else {
+          return acc;
+        }
+      }
+      Add() => {
+        set acc = cache0 +wrap cache1;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+        } else {
+          return acc;
+        }
+      }
+      Touch() => {
+        touch(stack: stack, fp: fp);
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+        } else {
+          return acc;
+        }
+      }
+      Halt() => {
+        return acc;
+      }
+    }
+  }
+  return 0_u64;
+}

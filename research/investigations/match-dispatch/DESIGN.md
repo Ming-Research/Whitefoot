@@ -955,13 +955,15 @@ The findings, in the order they block:
    checks, splits into 4 arm functions and runs correctly. The arms fall
    off the `match` to one back edge, and each still ends in its own
    guaranteed tail call.
-2. **A loop invariant's fact does not survive a call that writes the same
-   box.** This holds even when the callee's `ensures` preserves the
-   measure. In v2h the frame contract `fp + 65536 <= stack^.inner.len`,
-   stated as a loop invariant, is lost after a helper writes a frame slot,
-   so `stack^.inner.len - 65536` is refused [OP-2]. The `musttail`
-   spelling stated the same fact as a `requires`, and a `requires` fact
-   survives. Minimal witness, compiler `8a93bbb90`:
+2. **In a loop, a call that writes a box blocks a bound derived from the
+   box's length.** After such a call, even one whose `ensures` preserves
+   the length, `fp + 4 <= stack^.inner.len` still holds. It re-proves the
+   invariant at the back edge and admits `stack^.inner[fp]`. But
+   `4 <= stack^.inner.len`, which drops the non-negative `fp`, is no longer
+   derived. In v2h the frame contract is the loop invariant
+   `fp + 65536 <= stack^.inner.len`, so after a helper writes a frame slot
+   `stack^.inner.len - 65536` is refused [OP-2]. Minimal witness, compiler
+   `8a93bbb90`:
 
    ```wf
    fn touch(stack: &Box<Array<u64>>) -> r: unit writes(stack.inner) contract {
@@ -998,20 +1000,274 @@ The findings, in the order they block:
    | no call | accepted |
    | the same fact as a `requires` of a loop-free function, then the call | accepted |
    | the fact `4 <= stack^.inner.len` from an `if` guard, then the call | accepted |
+   | the fact `fp + 4 <= stack^.inner.len` from an `if` guard without a loop, then the call | accepted |
+   | the invariant `4 <= stack^.inner.len`, then the call | accepted |
+   | the call, then only the back edge and `stack^.inner[fp]`, no `room` | accepted |
+   | `fp` an immutable parameter instead of a loop variable | refused [OP-2] on `room` |
 
-   Every arm of v2h that writes a frame slot through a helper meets this.
-   The INV-1 join of `docs/todo.md` is not reached first.
-3. **Check time.** The `musttail` spelling of v2h checks in 2.6 s. The loop
-   spelling ran for 32 s before reporting finding 2, its first error.
-4. **No `continue`.** An arm that leaves early for the next operation must
+   The refusal needs a loop, a call writing the box, and a bound that drops
+   a term of the invariant. Every arm of v2h that writes a frame slot
+   through a helper meets it.
+
+   **Cause: the checker falls short of the specification.** After the
+   call, closed L0 holds `L = D`, where `D` is the call's datum for the
+   length. The loop header's affine theorem gives `fp - D <= -4` through
+   `D`'s image. [MSR-4]'s step 6, the affine-left / L0-right bridge,
+   combines the two into `4 <= L`.
+
+   The checker never takes that step for this bound. It builds the lower
+   target of a subtraction's integer domain without its right-hand term
+   (`right: None`, `compiler/src/semantic/entailment/flow/prover.rs`, in
+   the subtraction's normalization), and `numeric_affine_proof` returns
+   before the bridge when that term is absent.
+
+   The fix is in the checker: submit each finite component with its
+   right-hand term through the complete numeric disposition. No rule
+   changes.
+3. **[INV-1] at a join.** An arm that updates a loop variable under a guard
+   (`set fp = nf` after `nf + 4 <= len`), beside arms that leave it alone,
+   fails the invariant `fp + 4 <= len` at the back edge, even when the other
+   arms do nothing else. Without the update it is accepted. This is the
+   join of `docs/todo.md`'s INV-1 entry, and every interpreter whose calls
+   and returns change a frame base meets it.
+4. **Check time grows with the cube of a join's width.**
+
+   | arms | `loop { match }` | `musttail` spelling | no loop, one join after the `match` | the same, one `set` per arm |
+   |---:|---:|---:|---:|---:|
+   | 40 | 0.11 s | 0.04 s | 0.05 s | — |
+   | 80 | 0.51 s | 0.07 s | 0.26 s | 0.03 s |
+   | 160 | 3.59 s | 0.14 s | 1.84 s | 0.20 s |
+   | 320 | 35.0 s | 0.33 s | 18.7 s | 1.53 s |
+   | 640 | — | — | — | 15.3 s |
+
+   - **The source:** the join of the `match`'s arms, in loops or not. A
+     `match` whose every arm returns has no such join.
+   - **Even the barest arms grow so:** an arm that only sets one variable
+     to a constant still grows about tenfold per doubling.
+   - **Where the time goes in v2h's loop spelling:** the entailment state's
+     `DerivationLedger::intern` and `join_at_once`.
+5. **No `continue`.** An arm that leaves early for the next operation must
    nest everything after that point in an `else`. The `musttail` spelling
    used `return musttail` as a `continue` carrying new values.
-5. **The cursor's step through the join after the `match`.** Each arm's new
+6. **The cursor's step through the join after the `match`.** Each arm's new
    `pc` reaches the back edge through one join after the `match`. The step
    analysis sees that join's value, not the arm's own `pc + 1`, so each arm
    forms the cursor from the run (`madd` on AArch64) instead of stepping
    it. The fix is in the back end: read each arm's own incoming value at
    that join.
 
-Findings 2 to 4 concern the checker and the language, and go to the owner
-as designs. Finding 5 is a lowering fix.
+A floating loop variable travels in a floating register of the split: the
+four-instruction interpreter with an `f64` accumulator reports "9 integer
+and 1 floating" registers and runs correctly.
+
+Findings 2 to 5 concern the checker and the language; finding 6 is a
+lowering fix. Each one's design and the plan follow from the analyses of
+the checker, the language and the back end.
+
+## Stage 4: the gaps and the plan
+
+The goal is that an interpreter written as `loop { match }` compiles to the
+shape wasmi's and Silverfir-nano's handlers have and runs about as fast,
+with every gap closed in the language or the compiler and none routed
+around.
+
+The inventory comes from three analyses run on the owner's instruction,
+of the checker, the language and the back end. They used the compiler
+built from `8a93bbb90`, wasmi 2.0.0's source and AArch64 code, and
+Silverfir-nano's generated AArch64 handlers (`5f248e44`). Each witness in
+[`witnesses/`](witnesses/) was rechecked with that compiler and has the
+verdict listed below. Each is promoted into a compiler or conformance test
+by the change that fixes it.
+
+### The checker
+
+**C1. A bound the specification derives, after a box-writing call in a
+loop.** A checker defect: [MSR-4]'s step 6 is skipped for a subtraction's
+lower bound, as finding 2 above details. The fix routes every finite
+integer-domain component, with its right-hand term, through the complete
+numeric disposition, across all operations rather than a subtraction
+special case. No rule changes.
+- `bound-after-call.wf`: refused [OP-2].
+- `bound-no-call.wf`, `bound-requires.wf`: accepted.
+
+**C2. A join loses a relation the writer stated as a loop invariant.**
+Every input of the join proves the relation, but the joined state does
+not hold it. Under [ENT-5]'s join, which takes the arms' exits, and
+[ENT-6], which gives differing values a fresh image, this is what the
+specification prescribes. It takes four forms:
+
+| form | refused | accepted control |
+|---|---|---|
+| a scalar updated under a guard in one arm, untouched in another | `join-min.wf`, [INV-1] | `join-only-set.wf`, `join-only-keep.wf` |
+| a box length after a call made in only one arm | `helper-min.wf`, [INV-1] | `helper-all.wf` |
+| the relation needed after the join, before the back edge | `helper-post-use.wf`, [OP-4] | — |
+| two variables updated together | `correlated-cache.wf`, [INV-1] | `correlated-one.wf` |
+
+A ten-operation interpreter with calls, returns, memory and a frame
+contract meets it (`rich.wf`; `rich-no-helper.wf` passes). So does v2h.
+
+Proving the invariant on each edge into the back edge's join covers only
+the first and second forms. The proposed rule (Q137) keeps the ordinary
+join and transports the loop header's written relations across it:
+- for each active header relation whose operands are live there, check it
+  on every input with the existing disposition;
+- where every input proves it, publish it over the joined values;
+- at the back edge, prove the next header batch on each incoming edge.
+
+This adds automatic facts, so [ENT-5], [ENT-6] and [INV-1] change. Its
+cost is a fixed number of existing queries per relation and per input, not
+an enumeration of paths.
+
+**C3. Check time grows with the cube of a join's width** (finding 4).
+- **Cause:** the checker joins every continuing exit at once, and the join
+  builds every pair of the union of the inputs' rows, with a parent list
+  over all inputs (`entailment/state.rs`): O(arms × rows²).
+- **The specification:** it fixes the join's result, not this
+  construction.
+- **Fix, investigated first (Q140):** after C2's per-edge back-edge proof,
+  build a join only where something reads it, and make the join exact but
+  demanded, memoizing pairs.
+- **Target, fixed before measuring:** linear growth in arms at fixed arm
+  size, no more than 2.5 times per doubling. The 320-arm synthetic loop
+  takes 35 s today.
+
+### The language
+
+**L1. No `continue`** (`continue.wf`, [FORM-1]; [GRAM-6] excludes it).
+The proposal (Q138) is `continue;` and `continue @label;` with the current
+values of the loop variables:
+- it adds a back edge carrying [INV-1]'s and [RANGE-3]'s obligations;
+- releases follow [STOR-3]'s edge rule;
+- a counted loop takes its increment;
+- [GIVE-1] counts it only as an escape from an enclosing initializer.
+
+A value-carrying transfer is refused: plain assignment already lowers to
+the edge's values.
+
+**L2. Code validated once cannot be used.**
+- **What exists:** a translator can prove `forall j: targets[j] < n`
+  (`validate-targets.wf` accepted).
+- **What is missing:** the executor cannot instantiate that fact where it
+  reads a target ([RANGE-4], `range-use.wf`), and a range fact cannot name
+  an enum payload's field ([RANGE-1], `range-payload.wf`).
+- **The proposal (Q139):**
+  - an explicit `use R(i)` of an active range clause inside a local
+    invariant;
+  - read provenance tying the value read to the version of the run it was
+    read from;
+  - range facts over a guarded variant's integer fields;
+  - a source-order proof-event model, so that range and affine proofs
+    compose without cycles.
+- **Prior decision:** `design/language/checks-and-proofs/range-facts.md`
+  refused exactly these, preferring guards. The proposal reopens it on a
+  new consumer, immutable translated code.
+- **Measured value:** none in time (the bounds counterfactual). The value
+  is that a validated program needs no per-dispatch test and that a
+  translator error is caught.
+
+**L3. A validator returning `unit` cannot state its guarantee.**
+`validate-targets-unit.wf` is refused [FN-9], while the same validator
+returning a count is accepted. The proposal, part of Q139: a success route
+selects a range postcondition whatever the payload's type, the payload
+supplying only the terms it has.
+
+**L4. Operations a complete wasm interpreter needs.** These go on demand,
+not in this plan: a saturating float-to-integer conversion, and a 128-bit
+vector type.
+
+**What needs no language change:**
+- The interpreter's state in registers is its loop variables, `f32` and
+  `f64` included.
+- Register, slot and immediate operand forms and superinstructions are
+  ordinary variants.
+- Dispatch through handler addresses stays a lowering.
+
+### The back end
+
+**B1. The cursor's step through the join after the `match`** (finding 6).
+While emitting each arm, read the header's argument through the
+predecessors that arm reaches:
+- an equal step through a join keeps the step;
+- mixed steps take a pointer phi of each predecessor's cursor;
+- arbitrary targets form the cursor from the run.
+
+**B2. Parameters that only travel.** `natural-loop.wf` passes its
+`count0` and the enclosing frame through every arm unread. The fix is
+liveness over real observations, applied to the dispatcher, the arms and
+the entering call before the registers are counted.
+
+**B3. The handler word's representation (Q135).**
+- **Placement:** a compiler-private pointer word in every value of a
+  selected enum, aligned at most to the enum's ceiling.
+- **Several loops:** one word per dispatch family that fits the ceiling;
+  an enum with more families than fit keeps the tag and the table.
+- **Fragments:** a composition-wide layout plan, with hidden cross-fragment
+  symbols.
+- **Writers:** constructors write it, copies keep it, and replacing a whole
+  value rewrites it.
+- **Measured alternatives:** a 32-bit offset.
+
+**B4. Interpreter state and register pressure (Q141).**
+- **What fails today:** a loop whose changing values exceed the registers
+  is not split at all (`loop-pressure.wf`: 37 integer registers needed,
+  24 available). The spill order counts reading arms, not frequency, and
+  only unchanging values spill.
+- **The plan:** B2's liveness first. Then memory base and length carried
+  as values that effects refresh. Then cold changing values kept in the
+  enclosing frame, with spill choice weighted by frequency.
+
+**B5. Frame-relative addressing has to rewrite uses.** On AArch64 the
+frame-cursor prototype's `Copy` rebuilds the stack base
+(`sub x8, x1, x23, lsl #3`) and adds the index back. Candidate 2 is not
+adopted; reopen it only with a changed mechanism.
+
+**B6. Load the next handler early**, within each arm, where its address
+is valid and the code cannot change before the transfer.
+
+**B7. Calls and returns.** Separate the interpreter's choices (copying
+constants into every frame, the metadata's width) from lowering:
+- carry the callee frame's address from the caller's;
+- keep dead state out of helper calls;
+- weigh an inline zero fill against the call to the C library.
+
+Matching wasmi's call cost is worth about 2% of cycles.
+
+**B8. Tag width and payload packing (Q142).**
+- **Tag:** sized by the variant count, with fields packed under the
+  ceilings.
+- **Gain:** Halo's `Cell` shrinks from 12 bytes to 8.
+- **Measurement:** alone, then with B3.
+
+**B9. Bounds tests.** Guest memory tests stay. Code-validity tests go
+only with L2's proof.
+
+**B10. Split eligibility.**
+- **Current scope:** only a function's first dispatch loop splits, and
+  waiting functions, overlap groups and synthesized functions are emitted
+  whole.
+- **Plan:** widen this as natural witnesses require.
+
+### The interpreter's own design (Q143)
+
+wasmi's handlers keep values in registers and use immediates where v2h
+reads frame slots, and its calls copy no constants. On the M5 those are
+where v2h's remaining cycles go. They are expressible in WF today, so the
+parity program changes v2h's translator to make the same choices. Any
+form WF then refuses or compiles poorly becomes a gap above. Compiler and
+interpreter changes are measured separately.
+
+### Plan
+
+| phase | work | decisions | exit |
+|---|---|---|---|
+| 1. The natural form checks | C1; C2's rule and per-edge back-edge proof; C3's demanded joins; L1 | Q137, Q138, Q140 | v2h written by `gen.py` as `loop { match }` checks in seconds, splits and runs CoreMark correctly. The `musttail` spelling leaves `gen.py` and the dispatch tests. |
+| 2. Lowering on the natural form | B1, B2, B3, B4 | Q135, Q141 | The natural form reproduces the handler word's 1.10 on the 14900K, and Halo is not slower. |
+| 3. The interpreter's design | v2h takes wasmi's register, immediate and call choices | Q143 | Each refusal it meets is a gap above. |
+| 4. Layout and scheduling | B8, B6, B7 | Q142 | Each step under the measurement rule. |
+| 5. Validated code | L2, L3 | Q139 | The executor carries no per-dispatch code test. |
+| 6. The residual | attribute what remains against wasmi, then nano, per handler | — | Parity or an explained limit. |
+
+The measurement rule throughout: CoreMark on the 14900K gains at least
+2% per step, and Halo's `fib` and `loop` are not more than 2% slower.
+Halo's interpreter, in Halo-wf, also uses the `musttail` spelling; its
+move to `loop { match }` follows phase 1.
