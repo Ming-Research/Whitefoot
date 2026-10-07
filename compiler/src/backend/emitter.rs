@@ -809,11 +809,6 @@ const GRAIN_SPENT_LABEL: &str = "par.grain.spent";
 /// was handed, which a call outside every group passes on unchanged.
 const BUDGET_PARAMETER: &str = "%wf.budget";
 
-/// The spelling of the no-capture parameter attribute this build's assembler
-/// accepts, probed at build time (compiler/backend-facts). LLVM 21 renamed
-/// `nocapture` to `captures(none)` and no version is pinned here.
-const NO_CAPTURE_ATTRIBUTE: &str = env!("WHITEFOOT_NO_CAPTURE_ATTRIBUTE");
-
 /// The one [PRE-1] record whose two reference arguments may name the same
 /// place [OP-11], so its parameters carry every proved fact but `noalias`.
 fn aliasing_admitted_row(name: &str) -> bool {
@@ -1663,7 +1658,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             facts.push_str(" readonly");
         }
         facts.push_str(" nonnull ");
-        facts.push_str(NO_CAPTURE_ATTRIBUTE);
+        facts.push_str(crate::toolchain::facts().no_capture_attribute);
         // The referent's own selected-target extent. A shape whose block
         // extends past its statically typed header states only the header it
         // is sure of, which is the direction `dereferenceable` needs.

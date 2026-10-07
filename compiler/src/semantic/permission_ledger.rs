@@ -305,7 +305,7 @@ pub(crate) fn loop_denied_detail<Source: LedgerSource>(
             source.spelling(statement)?
         ),
         LoopDenial::SharedWrite { argument } => format!(
-            "the body writes storage that is neither introduced by the iteration nor the accumulator, at {}",
+            "the body writes shared storage without an admitted element or range family, or reads that storage outside the family's permitted accesses, at {}",
             source.spelling(argument)?
         ),
         LoopDenial::UnresolvedWrite { argument } => format!(

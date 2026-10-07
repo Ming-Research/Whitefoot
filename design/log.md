@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-07 Clang's forms are probed when whitefootc runs
+
+Nodes: compiler/backend-facts, compiler/match-dispatch-lowering, compiler/downstream-releases, compiler/verification
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the report that presented probing at run time as Q134 option A, recommended: "133 and 134 agreed" (translated), and later "if Q134 is green, merge it" (translated).
+
+Summary: `preserve_none` support, the no-capture spelling and `llvm.coro.end`'s result type are probed once per process, when `whitefootc` runs, against the clang it hands its modules to, instead of when the compiler is built. A compiler built against one clang runs on hosts whose clang accepts other forms: the macOS release `wf-0b7f5c5b9854`, built where clang takes the `void` `llvm.coro.end` call, emitted it to Apple clang 21, which refuses it. The split dispatch's convention follows the same run-time probe. The Linux LLVM pin for releases, their consumers and the gate stays, now because the forms probed and the code generated are then those of the one LLVM the gate tested and measured.
+
 ## 2026-10-07 Cursor edges by their step; the spill order counts every read
 
 Nodes: compiler/match-dispatch-lowering

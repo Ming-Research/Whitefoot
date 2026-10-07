@@ -54,19 +54,11 @@ pub(super) const ENTRY: &str = "wf.coro.entry";
 /// The block the body continues in after the ramp's first suspension.
 const START: &str = "wf.coro.start";
 
-/// `llvm.coro.end`'s result type in the build's toolchain, which LLVM
-/// changed from `i1` to `void` (`build.rs`), and the call that names it.
-const CORO_END_RESULT: &str = env!("WHITEFOOT_CORO_END_RESULT");
-const CORO_END_CALL: &str = if matches!(CORO_END_RESULT.as_bytes(), b"void") {
-    "call void"
-} else {
-    "%wf.coro.end = call i1"
-};
-
 /// The coroutine intrinsics and the context entries a module with a waiting
 /// definition names, including the two a launcher of a waiting entry calls
 /// and the no-op coroutine it gives the entry's frame as its parent.
 pub(super) fn frame_runtime_declarations() -> Module {
+    let coro_end_result = crate::toolchain::facts().coro_end_result;
     let mut module = Module::default();
     let declarations: [(&str, &str, &[&str]); 21] = [
         ("llvm.coro.id", "token", &["i32", "ptr", "ptr", "ptr"]),
@@ -76,7 +68,7 @@ pub(super) fn frame_runtime_declarations() -> Module {
         ("llvm.coro.save", "token", &["ptr"]),
         ("llvm.coro.suspend", "i8", &["token", "i1"]),
         ("llvm.coro.free", "ptr", &["token", "ptr"]),
-        ("llvm.coro.end", CORO_END_RESULT, &["ptr", "i1", "token"]),
+        ("llvm.coro.end", coro_end_result, &["ptr", "i1", "token"]),
         ("llvm.coro.resume", "void", &["ptr"]),
         ("llvm.coro.destroy", "void", &["ptr"]),
         ("llvm.coro.noop", "ptr", &[]),
@@ -193,6 +185,7 @@ impl FunctionEmitter<'_, '_> {
     /// The return every exit of the body branches to, the release of the
     /// frame, and the one block every suspension returns to the resumer from.
     pub(super) fn emit_frame_exit(&mut self) -> Result<(), BackendFailure> {
+        let coro_end_call = crate::toolchain::facts().coro_end_call();
         self.names(&[
             "llvm.coro.save",
             "llvm.coro.resume",
@@ -216,7 +209,7 @@ impl FunctionEmitter<'_, '_> {
              call void @wf__context_frame_release(ptr %wf.coro.freed)\n  \
              br label %{SUSPENDED}\n\
              {SUSPENDED}:\n  \
-             {CORO_END_CALL} @llvm.coro.end(ptr null, i1 false, token none)\n  \
+             {coro_end_call} @llvm.coro.end(ptr null, i1 false, token none)\n  \
              ret ptr {HANDLE}"
         )
         .map_err(|_| BackendFailure::TextEmission)

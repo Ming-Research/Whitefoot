@@ -36,10 +36,7 @@ use whitefoot::{
     SCHED_PRIM_WINDOWS_SOURCE as PRIM_SOURCE, WINDOWS_RUNTIME_SOURCE,
 };
 
-#[cfg(unix)]
-pub(crate) const CLANG: &str = "/usr/bin/clang";
-#[cfg(windows)]
-pub(crate) const CLANG: &str = "clang";
+pub(crate) const CLANG: &str = whitefoot::clang_executable();
 #[cfg(unix)]
 pub(crate) const COMPILE_ARGUMENTS: &[&str] = &["-pthread"];
 #[cfg(windows)]

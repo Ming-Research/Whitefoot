@@ -194,9 +194,10 @@ impl crate::semantic::ProofReceipts for BuildCache {
 
 /// The identity of the running compiler: the SHA-256 of its executable.
 ///
-/// Every source judgment, lowering and runtime supply is a function of these
-/// bytes, so a record another build of the compiler wrote is never read as
-/// this one's.
+/// A record another build of the compiler wrote is never read as this one's.
+/// Inputs discovered at run time belong in their consumers' keys as well:
+/// emitted LLVM modules include the host toolchain's probed forms, and native
+/// objects include the host compiler's identity.
 ///
 /// # Errors
 ///
