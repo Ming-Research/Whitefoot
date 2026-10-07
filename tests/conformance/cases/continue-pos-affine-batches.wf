@@ -4,7 +4,7 @@ fn main() -> status: std::process::ExitStatus pure {
   loop @again (
     invariant bounded: cursor <= 4_u64
   ) {
-    if cursor == 4_u64 {
+    if 4_u64 <= cursor {
       break;
     }
     set cursor = cursor + 1_u64;

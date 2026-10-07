@@ -6,7 +6,7 @@ struct Counter {
 fn main() -> status: std::process::ExitStatus pure waits {
   doc "Checks atomic normal exit on continue and reacquires the state.";
   let initial = Counter(value: 0_u64);
-  let shared = shared_new::<Counter>(value: move initial);
+  let shared = shared_new::<Counter>(value: initial);
   let observed = 0_u64;
   for (i in 0_u64..2_u64) {
     atomic held = &shared {

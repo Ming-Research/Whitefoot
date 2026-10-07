@@ -860,7 +860,9 @@ mod tests {
         // [GRAM-5] after the comparison atoms, with `spawn` [WAIT-3] beside
         // it. v0.77's `waits` [WAIT-1] follows the declaration's `->`. v0.84's
         // `apart` [RANGE-5] first occurs in the counted header after the match
-        // atoms, and `forall` [RANGE-1] after the element read's `^`.
+        // atoms, and `forall` [RANGE-1] after the element read's `^`. v0.98's
+        // `continue` [GRAM-4] first occurs right after `break`, moving every
+        // later terminal one slot.
         assert_eq!(FixedTerminal::Alias as u8, 1);
         assert_eq!(FixedTerminal::Equal as u8, 2);
         assert_eq!(FixedTerminal::Pkg as u8, 3);
@@ -887,15 +889,15 @@ mod tests {
         assert_eq!(FixedTerminal::Invariant as u8, 65);
         assert_eq!(FixedTerminal::Use as u8, 66);
         assert_eq!(FixedTerminal::Times as u8, 67);
-        assert_eq!(FixedTerminal::Musttail as u8, 99);
-        assert_eq!(FixedTerminal::PercentChecked as u8, 94);
-        assert_eq!(FixedTerminal::Writes as u8, 106);
+        assert_eq!(FixedTerminal::Musttail as u8, 100);
+        assert_eq!(FixedTerminal::PercentChecked as u8, 95);
+        assert_eq!(FixedTerminal::Writes as u8, 107);
         assert_eq!(FixedTerminal::Waits as u8, 23);
-        assert_eq!(FixedTerminal::Spawn as u8, 100);
-        assert_eq!(FixedTerminal::Apart as u8, 76);
-        assert_eq!(FixedTerminal::Forall as u8, 103);
-        assert_eq!(TerminalPredicate::Identifier.index(), 107);
-        assert_eq!(TerminalPredicate::Digits.index(), 113);
+        assert_eq!(FixedTerminal::Spawn as u8, 101);
+        assert_eq!(FixedTerminal::Apart as u8, 77);
+        assert_eq!(FixedTerminal::Forall as u8, 104);
+        assert_eq!(TerminalPredicate::Identifier.index(), 108);
+        assert_eq!(TerminalPredicate::Digits.index(), 114);
     }
 
     /// The inventory holds every predicate, once.

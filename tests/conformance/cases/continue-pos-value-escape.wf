@@ -6,7 +6,7 @@ fn main() -> status: std::process::ExitStatus pure {
       continue @outer;
     } else {
       give i;
-    };
+    }
     set value = value +wrap chosen;
   }
   if value != 5_u64 {
