@@ -9,7 +9,8 @@ fn copy_name(args: &std::text::Args, position: u64, destination: &[u8]) -> next:
 } {
   match std::text::arg_get(args: args, position: position) {
     Ok(value: text) => {
-      match std::text::host_copy_bytes(value: &text, destination: destination, start: 0_u64, end: destination^.len) {
+      let length = destination^.len;
+      match std::text::host_copy_bytes(value: &text, destination: destination, start: 0_u64, end: length) {
         Ok(value: end) => {
           return end;
         }
