@@ -586,10 +586,12 @@ impl ResolvedPlace {
     pub(crate) fn term_identity(mut self) -> Self {
         for step in &mut self.path {
             match step {
-                PlaceStep::Index(offset) | PlaceStep::Page(offset) => {
-                    *offset = offset.goal_identity()
-                }
-                PlaceStep::Range(_) => {}
+                PlaceStep::Index(offset) => *offset = offset.goal_identity(),
+                // [REF-4] a page captures its extent at formation, and an
+                // append between two formations of one page index gives them
+                // different lengths, so a page keeps its formation captures
+                // exactly as a range does.
+                PlaceStep::Range(_) | PlaceStep::Page(_) => {}
                 PlaceStep::Field(_)
                 | PlaceStep::Descendant(_)
                 | PlaceStep::Deref

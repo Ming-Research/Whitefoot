@@ -2,7 +2,7 @@ fn ignore(page: &[u64]) -> result: unit pure {
   return unit;
 }
 
-fn touch_page(p: &Paged<u64>, k: u64) -> result: unit pure contract {
+fn touch_page(p: &Paged<u64>, k: u64) -> result: unit reads(p.len) contract {
   requires k < p^.pages.len;
 } {
   ignore(page: &p^.pages[k]);

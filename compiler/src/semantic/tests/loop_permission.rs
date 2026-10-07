@@ -3024,6 +3024,27 @@ fn run(part: &Run<u64>) -> result: unit writes(part) {
   return unit;
 }
 
+fn partition(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.len >= 4_u64;
+} {
+  for (i in 0_u64..2_u64) {
+    let lo = i * 2_u64;
+    let hi = lo + 2_u64;
+    run(part: &p^[lo..hi]);
+  }
+  return unit;
+}
+
+fn overlapping(p: &Paged<u64>) -> result: unit writes(p) contract {
+  requires p^.len >= 4_u64;
+} {
+  for (i in 0_u64..2_u64) {
+    let hi = i + 2_u64;
+    run(part: &p^[i..hi]);
+  }
+  return unit;
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
@@ -3047,5 +3068,20 @@ fn a_page_index_and_a_logical_index_are_different_parallel_maps() {
     assert!(
         matches!(refused, LoopDenial::SharedWrite { .. }),
         "{refused:?}"
+    );
+}
+
+#[test]
+fn disjoint_paged_runs_are_proved_range_partitions() {
+    let judged = permitted(PAGED_SOURCE.as_bytes(), "partition");
+    assert_eq!(
+        judged.actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+    let table = permission_of(PAGED_SOURCE.as_bytes());
+    let overlapping = only_loop(&table, "overlapping");
+    assert!(
+        matches!(overlapping.verdict, LoopVerdict::Denied(_)),
+        "runs [i, i + 2) of two iterations overlap: {overlapping:?}"
     );
 }

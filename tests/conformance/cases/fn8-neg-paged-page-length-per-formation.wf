@@ -1,0 +1,32 @@
+fn width(page: &[u64]) -> result: u64 reads(page) contract {
+  ensures result == page^.len;
+} {
+  return page^.len;
+}
+
+fn at(page: &[u64], i: u64) -> value: u64 reads(page) contract {
+  requires i < page^.len;
+} {
+  return page^[i];
+}
+
+fn probe(p: &Paged<u64>, k: u64) -> result: u64 writes(p) contract {
+  requires k < p^.pages.len;
+  requires p^.len >= 2_u64;
+} {
+  doc "The first page formation's length w does not bound a later formation of the same page: take_back shortens the page between them, so index w - 1 can be past the second page's extent.";
+  let w = width(page: &p^.pages[k]);
+  if w > 0_u64 {
+    let last = take_back(window: p);
+    if k < p^.pages.len {
+      let i = w - 1_u64;
+      let value = at(page: &p^.pages[k], i: i);
+      return value +wrap last;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

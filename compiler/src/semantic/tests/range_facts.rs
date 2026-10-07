@@ -39,6 +39,20 @@ fn main() -> status: std::process::ExitStatus pure {{
     .into_bytes()
 }
 
+/// The same scatter over run references into `Paged` storage [REF-4]: the
+/// elements of a run are integer storage terms exactly as a range's are
+/// [RANGE-1], so the certificate places its writes alike [PAR-2].
+fn run_scatter(header: &str) -> Vec<u8> {
+    String::from_utf8(scatter(header, ""))
+        .expect("scatter source is UTF-8")
+        .replacen(
+            "fn scatter(order: &[u64], pos: &[u64], out: &[u64])",
+            "fn scatter(order: &Run<u64>, pos: &Run<u64>, out: &Run<u64>)",
+            1,
+        )
+        .into_bytes()
+}
+
 const PLAIN: &str = "k in 0_u64..count";
 
 const APART: &str = "\n    k in 0_u64..count,\n    apart(i, j) {\n    }\n  ";
@@ -882,4 +896,45 @@ fn paged_page_count_remains_its_own_range_atom() {
         assert_eq!(&clause.guards[0].right, expected);
         assert_eq!(&clause.conclusions[0].right, expected);
     });
+}
+
+#[test]
+fn a_certificate_admits_a_scatter_through_paged_runs() {
+    for (header, certified) in [(APART, true), (PLAIN, false)] {
+        let source = run_scatter(header);
+        with_semantics(&source, |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("the run scatter must check: {outcome:?}");
+            };
+            let function = program
+                .data
+                .executable_functions()
+                .find(|function| function.name == "scatter")
+                .expect("scatter is checked");
+            assert_eq!(
+                function.range_facts.certified.len(),
+                usize::from(certified),
+                "{:?}",
+                function.range_facts.certified
+            );
+            let table = program
+                .data
+                .permission
+                .named("scatter")
+                .expect("scatter's permissions");
+            assert_eq!(table.loops.len(), 1);
+            if certified {
+                assert_eq!(table.loops[0].verdict, LoopVerdict::PermittedEligible);
+            } else {
+                assert!(
+                    matches!(
+                        &table.loops[0].verdict,
+                        LoopVerdict::Denied(LoopDenial::SharedWrite { .. })
+                    ),
+                    "{:?}",
+                    table.loops[0]
+                );
+            }
+        });
+    }
 }
