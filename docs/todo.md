@@ -2151,8 +2151,14 @@ rarely insert at the same place.
   clang 18 emit. A host whose clang lives elsewhere (a versioned `clang-22`,
   Nix, Homebrew) also cannot run the driver.
 
-  Until then, releases and their consumers use the gate's pinned LLVM major
-  (compiler/verification, compiler/downstream-releases). Bundling clang
+  macOS has no such pin. The macOS release `wf-0b7f5c5b9854`, built on
+  macos-15 with Apple clang 17, emits the `void` form. Apple clang 21
+  (Xcode on macOS 27) refuses that call and takes the `i1` form, so no
+  waiting program compiled by that release links on such a Mac. A compiler
+  built on the Mac itself works.
+
+  Until then, Linux releases and their consumers use the gate's pinned LLVM
+  major (compiler/verification, compiler/downstream-releases). Bundling clang
   into every release waits: at about 100 to 200 MB per release, not
   measured, it costs too much at the current release rate. A formal release
   still needs it.
@@ -2165,7 +2171,8 @@ rarely insert at the same place.
 
   Validate with a release that builds and links a waiting program on a host
   with no clang installed, and on one whose system clang is another major.
-  Reopen with the first formal release, or when the release rate drops.
+  Reopen with the first formal release, when the release rate drops, or
+  when a downstream builds waiting programs with a macOS release.
 - **One rejection per compilation.** The pipeline stops at its first
   violation, so an agent with several independent defects — two unproved
   subscripts in different functions, say — meets them one compile at a time.
