@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-07 Files are renamed, removed and synced below a writable directory
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the card that presented renaming, removing and syncing within one writable directory as Q212 option A: "212 agreed" (translated); and after the completion report that showed the PRE-2 text and the writable-directory decision as Q214 and the merge as Q215: "approve 214 215" (translated).
+
+Summary: The node's second decision extends appending, cutting and syncing a file with renaming a file over an existing name, removing a name and syncing the directory, all through the directory's write half, with open files keeping their bytes after their name is replaced or removed. An append-only log rewrite needs a synced temporary file atomically renamed over the log, then a directory sync and the removal of obsolete parts; positioned writes would leave a partly rewritten log after an interruption, and one combined replacement operation could not remove the obsolete parts ([design](../research/investigations/file-replacement/README.md#proposal)).
+
 ## 2026-10-07 Clang's forms are probed when whitefootc runs
 
 Nodes: compiler/backend-facts, compiler/match-dispatch-lowering, compiler/downstream-releases, compiler/verification

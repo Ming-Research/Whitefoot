@@ -124,4 +124,4 @@ promise, or C.
 
 ## Status
 
-Proposed; not adopted.
+Adopted: the proposal is PRE-2 of specification v0.95.
