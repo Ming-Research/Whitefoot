@@ -236,13 +236,13 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     let (convention, _) = host_convention();
     let verdict = verdict(&module, "wf_run");
     if !convention.is_empty() {
-        // Seven parameters: pc, acc, count, the code length hoisted out of
-        // the header, the cell's address, the handler table and the frame.
-        // The box's referent, also hoisted, forms only the entering cell
-        // address, so the enclosing function keeps it.
+        // Eight parameters, in order: pc, acc, count, the hoisted code
+        // length and box referent (the run), the cell's address, the handler
+        // table and the frame. Jnz's joined next index is not a known step,
+        // so its edge needs the run to form the next cell's address.
         assert!(
             verdict.starts_with(
-                "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
+                "split: the loop over Op into 4 arms, taking 8 integer and 0 floating"
             ),
             "{verdict}"
         );
@@ -400,9 +400,9 @@ fn main() -> status: ExitStatus pure {
 fn the_matched_element_s_address_travels_between_the_parts() {
     // The header matches `code^.inner[pc]` and the arms read the operation
     // through its address, so the parts carry that address: the dispatch
-    // function no longer forms it from `pc`, and an arm moves the address it
-    // received by the change of `pc`. The run's result checks the entering
-    // address and every kind of move: by one, forward, backward and none.
+    // function no longer forms it from `pc`. A known step moves the received
+    // address; a jump forms its address from the run. The result checks the
+    // entering address, forward and backward jumps, and an in-place edge.
     let module = emit(CURSOR_INTERPRETER.as_bytes());
     if verdict(&module, "wf_run").starts_with("split") {
         assert!(
@@ -420,23 +420,54 @@ fn the_matched_element_s_address_travels_between_the_parts() {
                     && !line.contains("%wf.frame")),
             "the dispatch function receives the element's address instead of forming it: {dispatch}"
         );
-        for arm in [0, 1, 2] {
-            let arm = definition(&module, &format!("wf_run.arm.{arm}"));
-            assert!(
-                arm.contains(" = sub i64 ") && arm.contains(" = getelementptr %"),
-                "an arm moving `pc` moves the address it received: {arm}"
-            );
-        }
+        let add = definition(&module, "wf_run.arm.0");
+        let step = add
+            .lines()
+            .find(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1"))
+            .expect("Add moves the received address by one element");
+        let (_, operands) = step.split_once(", ptr ").expect("the cursor GEP's pointer");
+        let (place, _) = operands.split_once(',').expect("the cursor GEP's index");
+        assert!(
+            !add.contains("sub i64")
+                && add
+                    .lines()
+                    .next()
+                    .expect("the part's signature")
+                    .contains(&format!("ptr {place}")),
+            "Add moves a received address without subtracting indices: {add}"
+        );
+        let jump = definition(&module, "wf_run.arm.1");
+        let (_, jump_body) = jump
+            .split_once("  br label ")
+            .expect("the part's prelude ends");
+        let run = cursor_run(&module);
+        assert!(
+            !jump.contains("sub i64")
+                && jump_body.lines().any(|line| {
+                    line.contains(" = getelementptr inbounds {")
+                        && line.contains(&format!(", ptr {run},"))
+                }),
+            "Jump forms the target address from the run after the prelude: {jump}"
+        );
+        let rep = definition(&module, "wf_run.arm.2");
+        assert!(
+            rep.lines().any(|line| {
+                line.contains(" = getelementptr %")
+                    && line.ends_with(&format!(", ptr {place}, i64 1"))
+            }) && rep.lines().any(|line| {
+                line.contains("musttail call ") && line.contains(&format!(", ptr {place},"))
+            }),
+            "Rep advances by one element on exit and passes the received address unchanged in place: {rep}"
+        );
     }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
 
 #[test]
-fn the_cursor_s_run_address_stays_in_the_enclosing_function() {
-    // The run is needed to form the entering cursor, but no emitted header
-    // instruction or arm uses it. The cursor execution test above covers
-    // the resulting program; here inspect its part parameters and bodies.
+fn the_cursor_s_run_address_is_passed_when_a_jump_needs_it() {
+    // Jump's target is read from the operation, so its edge forms an address
+    // from the run. The cursor execution test above covers this program.
     let module = emit(CURSOR_INTERPRETER.as_bytes());
     let (convention, _) = host_convention();
     let verdict = verdict(&module, "wf_run");
@@ -445,40 +476,105 @@ fn the_cursor_s_run_address_stays_in_the_enclosing_function() {
         "{verdict}"
     );
     if verdict.starts_with("split") {
-        let enclosing = definition(&module, "wf_run");
-        // The final element GEP forms the entering cursor. The length may
-        // use another projection, so identify the run by this GEP's operand.
-        let run = enclosing
-            .lines()
-            .rev()
-            .find(|line| {
-                line.contains(" = getelementptr inbounds ")
-                    && line.contains(", i32 ")
-                    && line
-                        .rsplit(", ")
-                        .next()
-                        .is_some_and(|index| index.starts_with("i64 "))
-            })
-            .and_then(|line| line.split_once(", ptr "))
-            .and_then(|(_, operands)| operands.split_once(','))
-            .map(|(value, _)| value)
-            .expect("the enclosing function forms the entering cursor from the run");
-        assert!(
-            enclosing.contains(&format!("\n  {run} = ")),
-            "the enclosing function still computes the run the entering cursor needs: {enclosing}"
-        );
+        let run = cursor_run(&module);
         let mut symbols = vec!["wf_run.dispatch".to_owned()];
         symbols.extend((0..4).map(|arm| format!("wf_run.arm.{arm}")));
         for symbol in symbols {
             let part = definition(&module, &symbol);
+            // A smaller C convention may spill the run; preserve_none has
+            // room for this fixture's common parameter list.
             assert!(
-                !part
+                part.lines()
+                    .next()
+                    .expect("the part's signature")
                     .split(|c: char| c.is_whitespace() || c == ',' || c == ')')
-                    .any(|word| word == run),
-                "the run is absent from the part's parameter list and body: {part}"
+                    .any(|word| word == run)
+                    || (convention.is_empty() && part.contains(&format!("  {run} = load ptr,"))),
+                "each part receives the run for Jump, in a parameter or a C-convention spill: {part}"
             );
         }
     }
+}
+
+/// The final element GEP forms the entering cursor. The length may use
+/// another projection, so identify the run by this GEP's operand.
+fn cursor_run(module: &str) -> &str {
+    let enclosing = definition(module, "wf_run");
+    let run = enclosing
+        .lines()
+        .rev()
+        .find(|line| {
+            line.contains(" = getelementptr inbounds ")
+                && line.contains(", i32 ")
+                && line
+                    .rsplit(", ")
+                    .next()
+                    .is_some_and(|index| index.starts_with("i64 "))
+        })
+        .and_then(|line| line.split_once(", ptr "))
+        .and_then(|(_, operands)| operands.split_once(','))
+        .map(|(value, _)| value)
+        .expect("the enclosing function forms the entering cursor from the run");
+    assert!(
+        enclosing.contains(&format!("\n  {run} = ")),
+        "the enclosing function still computes the run the entering cursor needs: {enclosing}"
+    );
+    run
+}
+
+#[test]
+fn known_steps_leave_the_cursor_s_run_in_the_enclosing_function() {
+    // Enter at 1, skip Add 1000, add 7 and 3, repeat Rep 5 three times,
+    // then halt at 4: 7 + 3 + 3 * 5 + 4 * 100 = 425. Every edge is pc or
+    // pc + 1, so no part needs the run, and advancing edges use a literal
+    // step rather than subtracting indices. Only this distinct program gets
+    // an additional execution; the Jump program still runs once above.
+    let source = CURSOR_INTERPRETER
+        .replace("  Jump(t: u64);\n", "")
+        .replace(
+            r#"    Jump(t: tv) => {
+      let target = tv^;
+      if target < n {
+        return musttail run(code: code, pc: target, acc: acc, count: count);
+      }
+      return 0_u64;
+    }
+"#,
+            "",
+        )
+        .replace("Op::Jump(t: 3_u64)", "Op::Add(k: 7_u64)")
+        .replace("let c2 = Op::Halt();", "let c2 = Op::Add(k: 3_u64);")
+        .replace("Op::Jump(t: 2_u64)", "Op::Halt()")
+        .replace("r == 215_u64", "r == 425_u64");
+    let module = emit(source.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_run").starts_with("split");
+    let mut known_steps_without_run = convention.is_empty();
+    if split {
+        let run = cursor_run(&module);
+        let parts = [
+            "wf_run.dispatch",
+            "wf_run.arm.0",
+            "wf_run.arm.1",
+            "wf_run.arm.2",
+        ];
+        let run_absent = parts.iter().all(|symbol| {
+            !definition(&module, symbol)
+                .split(|c: char| c.is_whitespace() || c == ',' || c == ')')
+                .any(|word| word == run)
+        });
+        let add = definition(&module, "wf_run.arm.0");
+        known_steps_without_run = run_absent
+            && !add.contains("sub i64")
+            && add
+                .lines()
+                .any(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1"));
+    }
+    let output = compile_and_run(&module);
+    assert!(
+        known_steps_without_run && output.status.success(),
+        "known steps need no run parameter and execute to 425: {module}\n{output:?}"
+    );
 }
 
 #[test]
