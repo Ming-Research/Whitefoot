@@ -752,16 +752,6 @@ fn closed_callbacks_nested_through_one_helper_monomorphize_once_per_instance() {
 }
 
 #[test]
-fn a_closed_term_on_a_nominal_cycle_is_admitted() {
-    with_semantics(
-        include_bytes!("../../../../tests/conformance/cases/fn6-pos-closed-term-nominal-cycle.wf"),
-        |outcome| {
-            assert!(matches!(outcome, SemanticOutcome::Complete(_)), "{outcome:?}");
-        },
-    );
-}
-
-#[test]
 fn a_caller_parameter_inside_a_constructed_type_on_a_cycle_is_rejected() {
     assert_fn6_argument(
         include_bytes!("../../../../tests/conformance/cases/fn6-neg-caller-parameter-in-cycle.wf"),
