@@ -1002,6 +1002,33 @@ scores and the dispatch counts:
 At wasmi's cost per dispatch, v2h's fewer dispatches would put it at about
 0.97 of Silverfir-nano on the 14900K.
 
+**Where v2h's instructions go.** The comparison pairs v2h's `I32Add` on
+x86-64 (main, 17 instructions; see "Edges by their step") with wasmi's
+`i32_add_rss` on AArch64. That handler adds two stack slots into wasmi's
+integer register, and its listing is from the M5 binary.
+
+| role | v2h `I32Add`, x86-64 | wasmi `i32_add_rss`, AArch64 |
+|---|---:|---:|
+| operand fields | 3 (`movzwl` each) | 1 (`ldp` of two byte offsets) |
+| frame base | 1 (`lea (%rcx,%r15,8)`) | 0 (the frame is a pointer) |
+| operation and slots | 3 | 3 (two loads, one add into the register) |
+| next index and bounds test | 3 (`lea`, `cmp`, `jae`) | 0 |
+| next operation and its handler | 4 (tag load, cursor add, table address, handler load) | 1 (`ldr x7, [x1, #0x10]!`: the next cell holds its handler's address) |
+| moves | 2 | 0 |
+| transfer | 1 | 1 |
+| total | 17 | 6 |
+
+Most of the difference is in the dispatch: 9 instructions against 1.
+- **Bounds test:** wasmi tests no bound, since its validated code cannot
+  fall off its end.
+- **Handler address:** its cells hold their handler's address, so the next
+  handler is one load that also advances the pointer.
+- **Operands:** its operand fields are byte offsets read in pairs.
+
+Silverfir-nano's cells likewise hold their handler's address. Its x86-64
+handlers keep two locals and the accumulator in registers and preload the
+next handler word.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic
