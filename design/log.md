@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-06 Dispatch parts carry the matched element's address beside the index
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: In the session of 2026-10-06, written in Chinese, after the report on PR #258 that presented carrying the matched element's address beside the index, with carrying it in place of the index refused, as Q129 with option A recommended: "Q129 as recommended" (translated).
+
+Summary: When the header's `match` reads the element that a register-carried header parameter indexes in a `Slots` run at an address the loop cannot change, and the arms read the element through its address, the split parts carry that address beside the index, in the parameter that already held it. An edge back to the header moves the received address by the index's change, so the header no longer forms it from the index. On the stage-3 wasm interpreter this raised the CoreMark score 13.0% on the 14900K with LLVM 22, and 13.3% in a repeat against a twin of the base. Carrying the address in place of the index is refused: it scored 1.6% below the address beside the index, below it in every pair, and its code is kept on `claude/stage3-cursor-instead`. Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md#a-and-b-on-the-14900k).
+
 ## 2026-10-06 Releases built with the gate's pinned LLVM, which Whitefoot-kit gives each downstream
 
 Nodes: compiler/downstream-releases, compiler/verification
