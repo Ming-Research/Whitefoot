@@ -1208,6 +1208,24 @@ rarely insert at the same place.
   range-parameter one. Reopen when a certified scatter must take its
   storage by reference rather than as a range.
 
+- **Range facts over a window filled by place_back do not reach a call's
+  range requirement.** A caller that fills `Box<Slots<u64>>` (or
+  `Box<Paged<u64>>`) windows with `place_back`, proves
+  `invariant forall inverse(q in 0_u64..k): pos.inner[order.inner[q]] == q`
+  in a later counted loop, and then calls a function requiring
+  `forall inverse(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k`
+  over `&order.inner[0_u64..5_u64]` and `&pos.inner[0_u64..5_u64]` is refused
+  with RANGE-3 `UndischargedRangeFact` at the call, for Slots and Paged alike
+  (gate run of the paged-storage branch); the same program over
+  `box_array_filled` arrays,
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`, is
+  accepted. Every existing range-fact case uses arrays, so window storage has
+  no positive witness. Find where the facts over the window die or fail to
+  map onto the range actual (container generation after a boundary
+  operation, or the range formation's length read), fix it, and restore the
+  calling `main` of `tests/conformance/cases/range5-pos-paged-certified-scatter.wf`.
+  Reopen when Snowghost's certified scatter runs over Paged payload pools.
+
 - **A segment borrowed below a range element does not emit.** In
   `fn segments(rows: &[Box<Segments<u64>>], i: u64)`, the borrow
   `&rows^[i].inner[0_u64]` checks and lowers (slice address, Box referent
