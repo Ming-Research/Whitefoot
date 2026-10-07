@@ -1256,15 +1256,43 @@ parity program changes v2h's translator to make the same choices. Any
 form WF then refuses or compiles poorly becomes a gap above. Compiler and
 interpreter changes are measured separately.
 
+### Decided so far
+
+The owner decided on 2026-10-07:
+- **Approved:** Q137 (option B), Q138 (A), Q139 (A, all three parts), Q140,
+  Q143 and Q145 (A).
+- **Open:** Q135, the representation of the handler word, and Q144, the
+  fork grain.
+- **Deferred:** Q141 until the others are decided; Q142 follows from Q135.
+- **Within Q145:** whether a read instantiates range facts automatically
+  (A2) is open.
+
+**R1. A run-time test the checker can decide is a redundant source form
+(Q145).** An `if` whose condition the automatic derivation proves, or
+refutes, at that point is rejected with a repair, as a redundant proof
+block already is. It sweeps from programs the tests their proofs make dead,
+and its yield grows with C2's and L2's facts. `docs/todo.md` holds the
+entry.
+
+**Closure evaluation.** Beyond C3's join, the owner proposed computing the
+closure backward from each obligation within the closure space, instead
+of closing every program point forward:
+- a bound is a shortest path in a point's difference-bound graph;
+- at a join it is the weakest of the predecessors' answers, memoized.
+
+The results stay those [ENT-4] and [ENT-5] fix, with no SMT. Q140's
+counters decide between demanded joins and this broader evaluation;
+`docs/todo.md`'s check-time entry holds the criteria.
+
 ### Plan
 
 | phase | work | decisions | exit |
 |---|---|---|---|
-| 1. The natural form checks | C1; C2's rule and per-edge back-edge proof; C3's demanded joins; L1 | Q137, Q138, Q140 | v2h written by `gen.py` as `loop { match }` checks in seconds, splits and runs CoreMark correctly. The `musttail` spelling leaves `gen.py` and the dispatch tests. |
+| 1. The natural form checks | C1; C2's rule and per-edge back-edge proof; C3's demanded joins and the closure evaluation below; L1; R1 | Q137, Q138, Q140, Q145 | v2h written by `gen.py` as `loop { match }` checks in seconds, splits and runs CoreMark correctly. The `musttail` spelling leaves `gen.py` and the dispatch tests. |
 | 2. Lowering on the natural form | B1, B2, B3, B4 | Q135, Q141 | The natural form reproduces the handler word's 1.10 on the 14900K, and Halo is not slower. |
 | 3. The interpreter's design | v2h takes wasmi's register, immediate and call choices | Q143 | Each refusal it meets is a gap above. |
 | 4. Layout and scheduling | B8, B6, B7 | Q142 | Each step under the measurement rule. |
-| 5. Validated code | L2, L3 | Q139 | The executor carries no per-dispatch code test. |
+| 5. Validated code | L2, L3, and R1's reading of range facts at a read if chosen | Q139, Q145 A2 | The executor carries no per-dispatch code test. |
 | 6. The residual | attribute what remains against wasmi, then nano, per handler | — | Parity or an explained limit. |
 
 The measurement rule throughout: CoreMark on the 14900K gains at least

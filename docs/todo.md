@@ -90,14 +90,81 @@ rarely insert at the same place.
   interpreter (8,500 lines, one 178-arm function) still takes about 100 s.
   These measurements predate the narrower closures of
   compiler/incremental-closure and were not repeated with them.
-  Impact: a writer of a large dispatch function, the shape an interpreter
-  has, must split it to check it at all, and each change costs minutes.
-  Change: find what the closure's cost scales with (the function's term
-  count against the facts live on the path being checked) and bound it by
-  the latter. Validate with the 10/20/40-arm series growing linearly and the
-  interpreter's verdicts unchanged. Reopen when the next stage-3 step needs
-  repeated checks of the interpreter, or another program meets the same
-  growth.
+
+  **Later measurement, compiler `8a93bbb90` on the M5.** The join of a
+  `match`'s arms grows with the cube of its width, in loops or not. With an
+  arm that only sets one variable to a constant, 160, 320 and 640 arms
+  check in 0.20 s, 1.53 s and 15.3 s. The wasm interpreter written as
+  `loop { match }` runs 32 s before its first error.
+
+  The join builds every pair of the union of the arms' rows, with a parent
+  list over all arms (`entailment/state.rs`). Each assignment adds its own
+  immutable term, so the row count U grows with the arm count A, and the
+  work is O(A × U²). The specification fixes the join's result, not this
+  construction
+  (`research/investigations/match-dispatch/DESIGN.md`, "Stage 4: the gaps
+  and the plan", C3).
+
+  The owner approved an investigation (Q140): first, counters per join
+  (inputs, U, pairs built, parent volume); then a choice between building
+  only the joins something reads and an exact join computed on demand.
+
+  The owner also proposed weighing a broader change to how the closure is
+  computed: answer each obligation by searching backward from it within
+  the closure space, instead of closing every program point forward. A
+  bound `x - y <= c` at a point is one shortest path in that point's
+  difference-bound graph, and at a join it is the weakest of its
+  predecessors' answers. The results are the same derivable bounds [ENT-4,
+  ENT-5]: no SMT, deterministic and terminating. The design must:
+  - give the affine domain and its [MSR-4] steps a demand-driven form too;
+  - memoize per program point and edge, so repeated queries do not walk the
+    same paths again;
+  - keep kills, snapshots and retained derivations [DIAG-2] intact.
+
+  Impact: a large dispatch function or translator checks slowly, and a
+  natural `loop { match }` interpreter takes minutes per edit.
+  Validate:
+  - the 40-to-640-arm series grows linearly, at no more than 2.5 times per
+    doubling;
+  - every verdict in the corpus and conformance suite is unchanged;
+  - the existing eager closure serves as a differential oracle in tests.
+  Reopen: Q140 is approved and opens this.
+
+- **A run-time test whose outcome the checker can prove is accepted
+  silently.** An `if` whose condition the checker's automatic derivation
+  proves, or refutes, at that point is dead code with a run-time cost. One
+  branch can never run, the test still executes, and a reader is told a
+  failure is possible. Proofs are erased before lowering, so LLVM rarely
+  removes such a test. As the proofs grow (Q137's joins, Q139's range
+  facts), more of the tests programs already contain become such tests,
+  and nothing finds them.
+
+  The owner approved (Q145, option A) treating such a test as the
+  specification already treats a redundant proof block: a redundant source
+  form, rejected with a repair [DIAG-1]. A redundant proof block is
+  rejected as "a source-language judgment, not an implementation-dependent
+  warning", because [ENT-1] fixes `AUTO` exactly.
+  - **The check:** at each condition, query the condition and its negation
+    with the existing automatic derivation, and reject under a new rule
+    when either is proved.
+  - **Open:** whether a read of `run[i]` instantiates the run's active range
+    facts at `i` automatically, so that a test like `if t < n` after
+    `let t = targets[i]` is found without a written `use` (Q145 A2,
+    leaning yes), or only after an explicit `use` (B2).
+
+  Impact: a whole class of redundant code is swept from WF programs, so that
+  what a program executes is what it needs. The owner wants the capability
+  shown in the project's documentation, with the compiler revision that
+  implements it.
+
+  Validate with:
+  - tests always true and always false at a point;
+  - controls that depend on a fact the derivation lacks;
+  - the per-condition check-time cost;
+  - the count of tests it removes from the corpus, Halo, Firn and
+    Snowghost.
+
+  Reopen after Q137 and Q139, which make it pay.
 
 - **A loop invariant is lost where a guarded update joins an untouched path.**
   Minimal witness:
