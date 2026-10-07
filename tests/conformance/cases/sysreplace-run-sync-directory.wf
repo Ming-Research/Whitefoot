@@ -62,7 +62,7 @@ fn make_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], byte: 
   }
 }
 
-fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, first: &[u8], second: &[u8]) -> result: u8 reads(reader), reads(first), reads(second), writes(factory), writes(writer) waits {
+fn exercise(factory: &HandleFactory, writer: &DirectoryWrite, first: &[u8], second: &[u8]) -> result: u8 reads(first), reads(second), writes(factory), writes(writer) waits {
   let outcome = make_file(factory: factory, root: writer, name: first, byte: 97_u8);
   if outcome != 0_u8 {
     return outcome;
@@ -106,7 +106,11 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let first_present = first_end > 0_u64;
   let second_present = second_end > 0_u64;
   if band(first_present, second_present) {
-    set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
+    if first_end <= 64_u64 {
+      if second_end <= 64_u64 {
+        set outcome = exercise(factory: &factory, writer: &writer, first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
+      }
+    }
   }
   std::fs::close_directory(factory: &factory, directory: move reader);
   std::fs::close_directory_write(factory: &factory, directory: move writer);

@@ -103,10 +103,11 @@ fn write_temporary(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8]) 
       }
       let sent = 0_u64;
       loop @append {
-        let remaining = sent < 4_u64;
-        let succeeded = outcome == 0_u8;
-        if band(remaining, succeeded) {
+        if sent < 4_u64 {
         } else {
+          break @append;
+        }
+        if outcome != 0_u8 {
           break @append;
         }
         match std::fs::append_once(factory: factory, file: &file, source: &replacement[0_u64..4_u64], start: sent, end: 4_u64) {
@@ -208,13 +209,17 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let log_present = log_end > 0_u64;
   let temporary_present = temporary_end > 0_u64;
   if band(log_present, temporary_present) {
-    let log_name = &log[0_u64..log_end];
-    let temporary_name = &temporary[0_u64..temporary_end];
-    set outcome = check_log(factory: &factory, root: &reader, name: log_name);
-    let succeeded = outcome == 0_u8;
-    let rewriting = stop != 48_u8;
-    if band(succeeded, rewriting) {
-      set outcome = rewrite(factory: &factory, root: &writer, log: log_name, temporary: temporary_name, stop: stop, out: &out, input: &input);
+    if log_end <= 64_u64 {
+      if temporary_end <= 64_u64 {
+        let log_name = &log[0_u64..log_end];
+        let temporary_name = &temporary[0_u64..temporary_end];
+        set outcome = check_log(factory: &factory, root: &reader, name: log_name);
+        let succeeded = outcome == 0_u8;
+        let rewriting = stop != 48_u8;
+        if band(succeeded, rewriting) {
+          set outcome = rewrite(factory: &factory, root: &writer, log: log_name, temporary: temporary_name, stop: stop, out: &out, input: &input);
+        }
+      }
     }
   }
   std::fs::close_directory(factory: &factory, directory: move reader);

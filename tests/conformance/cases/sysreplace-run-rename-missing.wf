@@ -225,7 +225,11 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let first_present = first_end > 0_u64;
   let second_present = second_end > 0_u64;
   if band(first_present, second_present) {
-    set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
+    if first_end <= 64_u64 {
+      if second_end <= 64_u64 {
+        set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, first: &first[0_u64..first_end], second: &second[0_u64..second_end]);
+      }
+    }
   }
   std::fs::close_directory(factory: &factory, directory: move reader);
   std::fs::close_directory_write(factory: &factory, directory: move writer);
