@@ -2989,7 +2989,11 @@ impl CheckedFunction {
                 else {
                     return None;
                 };
-                if projections.as_slice() != [GoalProjection::Deref] {
+                // The clause retains both `^` on the reference holder and
+                // `.inner` on its Box. The first step keeps the Box type;
+                // the second reaches the measured content. Accepting only
+                // one step misses ordinary `reference^.inner.len` clauses.
+                if projections.as_slice() != [GoalProjection::Deref, GoalProjection::Deref] {
                     return None;
                 }
                 let reference = *ordinal as usize;

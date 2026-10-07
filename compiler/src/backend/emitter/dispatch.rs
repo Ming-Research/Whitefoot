@@ -13,7 +13,7 @@
 //! enclosing function's activation, which calls the dispatch function once
 //! and returns its result.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::{
@@ -592,6 +592,14 @@ struct FrameCursor {
     steps: HashMap<IrValueId, u64>,
 }
 
+/// One outcome per (carried index, canonical run), in deterministic order.
+/// Rejections describe lowering eligibility, never source acceptance.
+#[derive(Default)]
+struct FrameCursorPlan {
+    selected: Vec<FrameCursor>,
+    rejected: Vec<(IrValueId, IrValueId, &'static str)>,
+}
+
 /// The emission state of one split function.
 pub(super) struct DispatchEmission {
     pub(super) plan: DispatchLoop,
@@ -787,7 +795,10 @@ impl FunctionEmitter<'_, '_> {
                 }
             }
         }
-        let frame_cursors = self.frame_cursors(&plan, &invariant, &parameters, cursor.as_ref())?;
+        let FrameCursorPlan {
+            selected: frame_cursors,
+            rejected: frame_rejections,
+        } = self.frame_cursors(&plan, &invariant, &parameters, cursor.as_ref())?;
         for frame in &frame_cursors {
             for (value, _, role) in &mut parameters {
                 if *value == frame.run {
@@ -936,6 +947,12 @@ impl FunctionEmitter<'_, '_> {
             ledger.insert(0, format!(
                 "{body_symbol}: carries a run element's address for carried index v{} between the parts (run v{})",
                 frame.index.ordinal(), frame.run.ordinal()
+            ));
+        }
+        for (index, run, reason) in frame_rejections {
+            ledger.push(format!(
+                "{body_symbol}: carries no element address for carried index v{} into run v{}: {reason}",
+                index.ordinal(), run.ordinal()
             ));
         }
         if !spills.is_empty() {
@@ -1985,8 +2002,8 @@ impl FunctionEmitter<'_, '_> {
         invariant: &LoopInvariants,
         parameters: &[(IrValueId, IrType, Role)],
         cursor: Option<&Cursor>,
-    ) -> Result<Vec<FrameCursor>, BackendFailure> {
-        let mut frames = Vec::new();
+    ) -> Result<FrameCursorPlan, BackendFailure> {
+        let mut frames = FrameCursorPlan::default();
         for (index, ty, role) in parameters {
             if *role != Role::Carried
                 || *ty
@@ -1994,11 +2011,14 @@ impl FunctionEmitter<'_, '_> {
                         width: 64,
                         signed: false,
                     })
-                || cursor.is_some_and(|cursor| cursor.index == *index)
             {
                 continue;
             }
             let steps = self.index_steps(*index);
+            // A direct arithmetic use also gets a candidate, even if the
+            // offset is not a checked sum. Multiple accesses to the same
+            // run produce one outcome; any supported access is a witness.
+            let mut candidates = BTreeMap::<IrValueId, bool>::new();
             for (block_index, block) in self.function.blocks().iter().enumerate() {
                 if !plan.region[block_index] && block_index != plan.header.index() {
                     continue;
@@ -2019,13 +2039,26 @@ impl FunctionEmitter<'_, '_> {
                         crate::IrOperation::RunIndex { run, offset, .. } => (run, *offset),
                         _ => continue,
                     };
-                    if steps.get(&offset) != Some(&0)
-                        && self.frame_relative_index(&steps, offset).is_none()
-                    {
+                    let supported = steps.get(&offset) == Some(&0)
+                        || self.frame_relative_index(&steps, offset).is_some();
+                    let uses_index = supported || self.function.blocks().iter().any(|block| {
+                        block.instructions().iter().any(|instruction| matches!(instruction,
+                            IrInstruction::Define { result, operation: crate::IrOperation::Integer { arguments, .. }, .. }
+                                if *result == offset && arguments.iter().any(|argument| steps.get(argument) == Some(&0))
+                        ))
+                    });
+                    if !uses_index {
                         continue;
                     }
                     let run = invariant.replaced.get(address).copied().unwrap_or(*address);
-                    let bounded = self.function.bounded_box_indices.iter().any(|(header, bounded_index, reference)| {
+                    if cursor.is_some_and(|cursor| cursor.index == *index && cursor.run == run) {
+                        continue;
+                    }
+                    *candidates.entry(run).or_default() |= supported;
+                }
+            }
+            for (run, supported) in candidates {
+                let bounded = self.function.bounded_box_indices.iter().any(|(header, bounded_index, reference)| {
                         *header == plan.header && *bounded_index == *index
                             && (invariant.pins.contains(&(*reference, run))
                                 || invariant.pinned.iter().any(|(parameter, block, position)| {
@@ -2037,26 +2070,34 @@ impl FunctionEmitter<'_, '_> {
                                         address, projection: crate::IrPlaceStep::BoxReferent { .. }
                                     }, .. } if *result == run && *address == *reference)
                                 }))
+                });
+                let layout = self.frame_run_layout(run)?;
+                let reason = if !supported {
+                    Some("offset is not the index or a checked sum with it")
+                } else if cursor.is_some_and(|cursor| cursor.run == run) {
+                    Some("run already carries the matched element's address")
+                } else if !parameters.iter().any(|(value, _, role)| {
+                    *value == run && matches!(role, Role::Hoisted | Role::Invariant)
+                }) {
+                    Some("run address is not a loop-invariant part parameter")
+                } else if layout.is_none() {
+                    Some("run has no supported contiguous element layout")
+                } else if !bounded {
+                    Some("no checked requirement bounds the index by that run's length")
+                } else if frames.selected.iter().any(|frame| frame.run == run) {
+                    Some("run already carries an element address for another index")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    frames.rejected.push((*index, run, reason));
+                } else if let Some((_, element, _)) = layout {
+                    frames.selected.push(FrameCursor {
+                        run,
+                        index: *index,
+                        element,
+                        steps: steps.clone(),
                     });
-                    if !bounded {
-                        continue;
-                    }
-                    if frames.iter().any(|frame: &FrameCursor| frame.run == run)
-                        || cursor.is_some_and(|cursor| cursor.run == run)
-                        || !parameters.iter().any(|(value, _, role)| {
-                            *value == run && matches!(role, Role::Hoisted | Role::Invariant)
-                        })
-                    {
-                        continue;
-                    }
-                    if let Some((_, element, _)) = self.frame_run_layout(run)? {
-                        frames.push(FrameCursor {
-                            run,
-                            index: *index,
-                            element,
-                            steps: steps.clone(),
-                        });
-                    }
                 }
             }
         }

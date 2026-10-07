@@ -245,6 +245,23 @@ fn a_bounded_frame_address_travels_through_direct_accesses_helpers_and_new_indic
         )),
         "{module}"
     );
+    if verdict(&module, "wf_unbounded").starts_with("split") {
+        // Previously a rejected frame candidate left no explanation. There
+        // is one index/run pair here, despite its appearances through joins.
+        let prefix = format!(
+            "{}wf_unbounded: carries no element address for carried index ",
+            crate::DISPATCH_LEDGER_PREFIX
+        );
+        let reasons: Vec<_> = module
+            .lines()
+            .filter(|line| line.starts_with(&prefix))
+            .collect();
+        assert!(
+            matches!(reasons.as_slice(), [line] if line.contains(" into run v")
+                && line.ends_with(": no checked requirement bounds the index by that run's length")),
+            "the unbounded candidate is reported once with its missing bound: {module}"
+        );
+    }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
