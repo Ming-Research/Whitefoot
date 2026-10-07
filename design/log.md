@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-07 Recursion cycles admit closed-term arguments
+
+Nodes: language/generics
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the explanation of FN-6 closed terms presented as Q137: "open a PR for FN-6 and do it" (translated); after the completion report that presented PR #266's specification and design-tree text as Q139, approval recommended: "approve them all" (translated).
+
+Summary: An instantiation cycle may now supply, at each argument position, either the caller's own parameter at that position forwarded unchanged or a closed term naming no caller parameter, instead of forwarding the whole vector unchanged. Every component of an instance key reached through a cycle then comes from the entry key or from the program's finite set of closed terms, so instantiation stays finite by a syntactic check with no search or budget, while a callback may call its own generic helper again with another written callback, which the forward-only rule refused with two instances in reach (Snowghost's `c5-changing-callback-negative` probe; firn's nested `hash_map_lookup`). Arguments built from a caller parameter, permuted forwards and kind changes still reject. The forward-only rule is kept as a rejected alternative; the deferred question of exponentially many finite instances (D7) gains one more family, recorded in `docs/todo.md`.
+
 ## 2026-10-07 Files are renamed, removed and synced below a writable directory
 
 Nodes: language/system-interface/writable-directory

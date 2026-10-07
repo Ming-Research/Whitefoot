@@ -191,6 +191,62 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     // -------------------------------------------------------------------
+    // [FN-6] same-position forwarding, a closed replacement, or a changing
+    // instantiation moved to a caller outside the recursive component.
+    // -------------------------------------------------------------------
+    RepairPair {
+        name: "caller-parameter-constructed-on-cycle.wf",
+        rejected: br#"fn repeat<T: drop>() -> result: unit pure {
+  return repeat::<Box<T>>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  repeat::<u8>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-6",
+        sentences: &[
+            "]: PolymorphicRecursion\n",
+            "\n  cycle: repeat -> repeat\n",
+            "\n  changed_argument: Box<T>\n",
+            "\n  mechanical_fix: use the caller's parameter at the same position and kind, or a term containing none of the caller's parameters, with the callee's required kind and bounds; otherwise move the changing instantiation off the cycle\n",
+        ],
+        repaired: &[
+            br#"fn repeat<T: drop>() -> result: unit pure {
+  return repeat::<T>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  repeat::<u8>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn repeat<T: drop>() -> result: unit pure {
+  return repeat::<Box<u64>>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  repeat::<u8>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn repeat<T: drop>() -> result: unit pure {
+  return repeat::<T>();
+}
+
+fn start<T: drop>() -> result: unit pure {
+  return repeat::<Box<T>>();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  start::<u8>();
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        ],
+    },
+    // -------------------------------------------------------------------
     // [FN-8] an ordinary call's requirement.
     // -------------------------------------------------------------------
     RepairPair {

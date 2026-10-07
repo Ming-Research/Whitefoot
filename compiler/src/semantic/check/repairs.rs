@@ -44,6 +44,12 @@ use super::super::model::{
 use super::super::permission::visit_read_bindings;
 use crate::NodePath;
 
+/// [FN-6] repair the changed argument under the callee's ordinary kind and
+/// bound requirements, or move its construction outside the cycle.
+pub(super) const fn instantiation_cycle_repair() -> &'static str {
+    "use the caller's parameter at the same position and kind, or a term containing none of the caller's parameters, with the callee's required kind and bounds; otherwise move the changing instantiation off the cycle"
+}
+
 /// [FN-9] an unsupported selector cannot state this postcondition. Removing
 /// its last clause also removes a now-empty or define-only contract [FN-8].
 pub(crate) const fn postcondition_selector_repair() -> &'static str {
