@@ -2709,7 +2709,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,263 lines: the file
+  `compiler/src/backend/completion/bridge.c` has 4,276 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
