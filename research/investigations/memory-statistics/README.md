@@ -7,7 +7,8 @@ command that may grow the dataset, it compares the memory it uses with the
 limit, and evicts keys or refuses the write while it is over. Its `INFO`
 reports that memory as `used_memory`. Redis 7.0.15 reads the number from
 its allocator wrapper, `zmalloc_used_memory`: every allocation and free adds
-or subtracts the block's size from per-thread counters, which a read sums.
+or subtracts the block's usable size (`zmalloc_size`) to one atomic counter
+(`src/zmalloc.c`, `update_zmalloc_stat_alloc` and `_free`).
 It does not read it from the operating system's resident set, because pages
 a free returns to the allocator stay resident, so an eviction loop driven
 by the resident set would overshoot and oscillate.
@@ -48,13 +49,15 @@ emitted code and Paged reach libc's heap.
     `wf__heap_give(block, bytes)`, which call `malloc` and `free` and add
     the size to a counter of the calling driver; the pool adds its granted
     sizes under its existing lock.
-  - A read sums the drivers' counters, as Redis's zmalloc sums its threads'.
+  - A read sums the drivers' counters. Redis 7.0.15 keeps one atomic
+    counter instead; per-driver counters avoid a shared write on every
+    allocation, at the cost of a sum over drivers on each read.
   - Cost: one call layer and one add to a driver-local counter per
     allocation and free, with no shared write.
   - The count is exact in requested bytes, and includes every source above.
 - **B. Count usable sizes at release.** Wrap `free` and ask the allocator
   for the block's size (`malloc_usable_size`, `malloc_size`, `_msize`),
-  as Redis does where its allocator offers it. This needs no size at the
+  as Redis 7.0.15's `zmalloc_size` does where its allocator offers it. This needs no size at the
   release site, but each platform's allocator answers differently, and
   every free pays the lookup.
 - **C. Ask the allocator when read:** glibc's `mallinfo2`, macOS's zone
