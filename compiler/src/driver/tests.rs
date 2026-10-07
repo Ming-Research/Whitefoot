@@ -865,7 +865,8 @@ fn a_proof_receipt_is_reused_exactly_while_its_analysis_inputs_are_unchanged() {
 
 /// [MOD-9] an entry build is reused for an unchanged composition and
 /// emits the same module a build without a cache emits; an edit outside
-/// its composition does not rebuild it.
+/// its composition does not rebuild it. A cached module made with any one
+/// different host toolchain fact is not reused, even by the same compiler.
 #[test]
 fn an_entry_build_is_reused_for_an_unchanged_composition() {
     let directory = CacheDirectory::new("build");
@@ -875,7 +876,7 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
         CompilerLimits::default(),
     )
     .expect("the graph forms");
-    let build = |tool_body: &'static [u8]| {
+    let build = |tool_body: &'static [u8], seed_foreign_forms: bool| {
         let records: Vec<(&str, &[u8])> = vec![
             ("base/module.wfm", BASE_INTERFACE),
             ("base/half.wf", BASE_BODY),
@@ -887,6 +888,58 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
             ("main.wf", ROOT_BODY),
         ];
         let inputs = module_inputs(&graph, &records);
+        let cold = super::compile_module_program(
+            &graph,
+            &inputs,
+            super::ModuleEntry::Named("app"),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+        )
+        .expect("the entry builds");
+        if seed_foreign_forms {
+            let all_inputs = super::with_library_records(&graph, &inputs);
+            let selection = super::entry_selection(&graph, super::ModuleEntry::Named("app"))
+                .expect("the entry is selected");
+            let (modules, selected) =
+                super::composition_inputs(&graph, &all_inputs, selection.module);
+            let facts = *crate::toolchain::facts();
+            // Seed all three alternatives before the first ordinary lookup.
+            // Omitting any fact from the production key makes that alternative
+            // collide and incorrectly reports a cache hit on the first build.
+            for foreign in [
+                crate::toolchain::ToolchainFacts {
+                    preserve_none: !facts.preserve_none,
+                    ..facts
+                },
+                crate::toolchain::ToolchainFacts {
+                    no_capture_attribute: if facts.no_capture_attribute == "nocapture" {
+                        "captures(none)"
+                    } else {
+                        "nocapture"
+                    },
+                    ..facts
+                },
+                crate::toolchain::ToolchainFacts {
+                    coro_end_result: if facts.coro_end_result == "i1" {
+                        "void"
+                    } else {
+                        "i1"
+                    },
+                    ..facts
+                },
+            ] {
+                let material = super::entry_module_material(
+                    &graph,
+                    &selection,
+                    (&modules, &selected),
+                    OverlapLowering::Off,
+                    &foreign,
+                );
+                cache
+                    .store(super::ENTRY_MODULES, &material, &cold.encode())
+                    .expect("seed an entry module under foreign toolchain forms");
+            }
+        }
         let cached = super::build_module_entry(
             &graph,
             &inputs,
@@ -896,21 +949,14 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
             Some(&cache),
         )
         .expect("the entry builds");
-        let cold = super::compile_module_program(
-            &graph,
-            &inputs,
-            super::ModuleEntry::Named("app"),
-            CompilerLimits::default(),
-            OverlapLowering::Off,
-        )
-        .expect("the entry builds");
         assert_eq!(cached.0, cold);
         cached.1
     };
-    assert!(!build(TOOL_BODY));
-    assert!(build(TOOL_BODY));
+    assert!(!build(TOOL_BODY, true));
+    assert!(build(TOOL_BODY, false));
     assert!(build(
-        b"fn spare() -> result: u8 pure {\n  return 3_u8;\n}\n"
+        b"fn spare() -> result: u8 pure {\n  return 3_u8;\n}\n",
+        false
     ));
 }
 

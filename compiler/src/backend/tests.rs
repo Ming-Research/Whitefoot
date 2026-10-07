@@ -443,7 +443,7 @@ fn append_runtime_units_with_library_defines(
     if !library_defines.is_empty() {
         // A scripted linked body interposes this library translation unit's
         // private dependencies. The WF module and native engine stay unchanged.
-        let mut library = Command::new("/usr/bin/clang");
+        let mut library = Command::new(crate::clang_executable());
         library
             .arg("-std=c11")
             .arg("-c")
@@ -514,7 +514,7 @@ fn build_linked_executable_inner(
     let module = directory.join("program.ll");
     let executable = directory.join("program");
     std::fs::write(&module, llvm).expect("write backend test module");
-    let mut command = Command::new("/usr/bin/clang");
+    let mut command = Command::new(crate::clang_executable());
     // The dialect the driver names, for the same reason: a test link must not
     // compile the compiler-owned C units in a dialect the shipped one does not.
     command.arg("-std=c11");
@@ -653,7 +653,7 @@ fn compile_link_and_run_with(
 
 /// Returns the module as the host optimizer leaves it at the shipped level.
 fn host_optimized_module(llvm: &str) -> String {
-    let mut child = Command::new("/usr/bin/clang")
+    let mut child = Command::new(crate::clang_executable())
         .arg("-x")
         .arg("ir")
         .arg("-")
