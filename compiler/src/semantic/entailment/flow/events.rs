@@ -148,7 +148,9 @@ impl Input<'_, '_> {
             return false;
         }
         let mut descriptor = support.clone();
-        descriptor.path.push(PlaceStep::Measure(measure));
+        descriptor
+            .path
+            .push(PlaceStep::Measure(measure.support_word()));
         // The fact's own place goes first: [WIN-2]'s liveness is a question
         // about the window above its index [`Reasoning::event_live_bounds`].
         self.resolved_places_overlap(separations, &descriptor, written)
@@ -160,9 +162,12 @@ impl Input<'_, '_> {
     pub(super) fn is_range_descriptor_support(&self, support: &ResolvedPlace) -> bool {
         let resolved = self.places.resolve(support.root, &support.path);
         !resolved.is_empty()
-            && resolved
-                .iter()
-                .all(|place| matches!(place.path.last(), Some(PlaceStep::Range(_))))
+            && resolved.iter().all(|place| {
+                matches!(
+                    place.path.last(),
+                    Some(PlaceStep::Range(_) | PlaceStep::Page(_))
+                )
+            })
     }
 
     /// Whether every resolved write reaches one named part or descriptor

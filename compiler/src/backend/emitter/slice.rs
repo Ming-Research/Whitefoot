@@ -50,6 +50,18 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         start: IrValueId,
         end: IrValueId,
     ) -> Result<(), BackendFailure> {
+        if matches!(ty, IrType::Run { .. }) {
+            if self.value_type(slice) != Some(ty) {
+                return Err(BackendFailure::InvalidIr);
+            }
+            let lo = self.next_temporary()?;
+            let adjusted = self.next_temporary()?;
+            let length = self.next_temporary()?;
+            let partial = self.next_temporary()?;
+            let slice = self.value_name(slice);
+            writeln!(self.output, "  %{lo} = extractvalue {{ ptr, i64, i64 }} {slice}, 1\n  %{adjusted} = add nuw i64 %{lo}, {}\n  %{length} = sub nuw i64 {}, {}\n  %{partial} = insertvalue {{ ptr, i64, i64 }} {slice}, i64 %{adjusted}, 1\n  {} = insertvalue {{ ptr, i64, i64 }} %{partial}, i64 %{length}, 2", self.value_name(start), self.value_name(end), self.value_name(start), self.value_name(result)).map_err(|_| BackendFailure::TextEmission)?;
+            return Ok(());
+        }
         let IrType::Range { element } = ty else {
             return Err(BackendFailure::InvalidIr);
         };
@@ -106,7 +118,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 width: 64,
                 signed: false,
             })
-            || !matches!(self.value_type(slice), Some(IrType::Range { .. }))
+            || !matches!(
+                self.value_type(slice),
+                Some(IrType::Range { .. } | IrType::Run { .. })
+            )
         {
             return Err(BackendFailure::InvalidIr);
         }
@@ -119,10 +134,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             )?;
             writeln!(
                 self.output,
-                "  {} = extractvalue {} {}, 1",
+                "  {} = extractvalue {} {}, {}",
                 self.value_name(result),
                 emitted_type_1,
-                self.value_name(slice)
+                self.value_name(slice),
+                if matches!(self.value_type(slice), Some(IrType::Run { .. })) {
+                    2
+                } else {
+                    1
+                }
             )
         }
         .map_err(|_| BackendFailure::TextEmission)
@@ -141,6 +161,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<(), BackendFailure> {
         if target_domain != IrTargetDomainObligation::ElementAddress {
             return Err(BackendFailure::InvalidIr);
+        }
+        if let Some(IrType::Run { element }) = self.value_type(slice) {
+            if self.program.element(element) != Some(ty) {
+                return Err(BackendFailure::InvalidIr);
+            }
+            let address = self.run_reference_pointer(slice, offset, ty)?;
+            if self.is_memory_only(ty)? {
+                return self.copy_into_result(result, ty, &format!("%{address}"));
+            }
+            let llvm = self.output.type_name(self.program, ty)?;
+            return writeln!(
+                self.output,
+                "  {} = load {llvm}, ptr %{address}",
+                self.value_name(result)
+            )
+            .map_err(|_| BackendFailure::TextEmission);
         }
         let Some(slice_type @ IrType::Range { element }) = self.value_type(slice) else {
             return Err(BackendFailure::InvalidIr);
@@ -190,6 +226,14 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         index: IrValueId,
         value: IrValueId,
     ) -> Result<(), BackendFailure> {
+        if let Some(IrType::Run { element }) = self.value_type(slice) {
+            let element = self
+                .program
+                .element(element)
+                .ok_or(BackendFailure::InvalidIr)?;
+            let address = self.run_reference_pointer(slice, index, element)?;
+            return self.store_value_at(value, &format!("%{address}"));
+        }
         let Some(slice_type @ IrType::Range { element }) = self.value_type(slice) else {
             return Err(BackendFailure::InvalidIr);
         };
@@ -254,6 +298,22 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<(), BackendFailure> {
         if target_domain != IrTargetDomainObligation::ElementAddress {
             return Err(BackendFailure::InvalidIr);
+        }
+        if let Some(IrType::Run { element }) = self.value_type(slice) {
+            let element = self
+                .program
+                .element(element)
+                .ok_or(BackendFailure::InvalidIr)?;
+            if ty != IrType::Address(IrAddressed::of(element).ok_or(BackendFailure::InvalidIr)?) {
+                return Err(BackendFailure::InvalidIr);
+            }
+            let address = self.run_reference_pointer(slice, offset, element)?;
+            return writeln!(
+                self.output,
+                "  {} = getelementptr i8, ptr %{address}, i64 0",
+                self.value_name(result)
+            )
+            .map_err(|_| BackendFailure::TextEmission);
         }
         let Some(slice_type @ IrType::Range { element }) = self.value_type(slice) else {
             return Err(BackendFailure::InvalidIr);

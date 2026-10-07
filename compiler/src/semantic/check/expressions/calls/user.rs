@@ -349,7 +349,9 @@ impl<'unit> Checker<'_, 'unit> {
             // is [TYPE-5]'s ordinary argument mismatch.
             {
                 use super::super::super::super::model::CheckedMode;
-                if (argument.mode == CheckedMode::Range) != (parameter.mode == CheckedMode::Range) {
+                if (argument.mode.is_range() || parameter.mode.is_range())
+                    && argument.mode != parameter.mode
+                {
                     return self.types.declarations.issue_node(
                         SemanticRule::Type5,
                         atom,
@@ -646,6 +648,7 @@ impl<'unit> Checker<'_, 'unit> {
                     field: *field,
                 },
                 CheckedEffectStep::Index(parameter) => PlaceStep::Index(captured(*parameter)),
+                CheckedEffectStep::Page(parameter) => PlaceStep::Page(captured(*parameter)),
                 CheckedEffectStep::Range { start, end } => {
                     PlaceStep::Range(super::super::super::super::places::CapturedRange {
                         start: captured(*start),
@@ -870,6 +873,7 @@ impl<'unit> Checker<'_, 'unit> {
         for (depth, steps) in left.path.iter().zip(&right.path).enumerate() {
             match steps {
                 (PlaceStep::Index(first), PlaceStep::Index(second))
+                | (PlaceStep::Page(first), PlaceStep::Page(second))
                     if first.provably_same(*second) =>
                 {
                     continue;
@@ -882,6 +886,10 @@ impl<'unit> Checker<'_, 'unit> {
                 }
                 (PlaceStep::Index(first), PlaceStep::Index(second)) => {
                     candidates.push(CheckedCallSeparationPositions::Indices(*first, *second));
+                }
+                (PlaceStep::Page(first), PlaceStep::Page(second)) => {
+                    candidates.push(CheckedCallSeparationPositions::Indices(*first, *second));
+                    break;
                 }
                 (PlaceStep::Range(first), PlaceStep::Range(second)) => {
                     candidates.push(CheckedCallSeparationPositions::Ranges(*first, *second));
@@ -1150,7 +1158,7 @@ impl<'unit> TypeContext<'unit> {
         passed_place: Option<&ResolvedPlace>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
     ) -> Result<GoalExpression, CheckStop> {
-        if expected_mode == CheckedMode::Range {
+        if expected_mode.is_range() {
             // [REF-4, MSR-1] a range reference's one measure is `len`, equal
             // to `hi - lo`, and that is no measure of the storage the range
             // was formed over: `&a[2..4]` names two elements whatever `a.len`
@@ -1555,6 +1563,7 @@ impl<'unit> DeclarationInventory<'unit> {
             "place_front",
             "take_front",
             "grow",
+            "grow_paged",
         ];
         let prelude = self.tree.is_prelude_node(signature.node)?;
         let window_operation = prelude && BOUND_ENDING_ROWS.contains(&signature.name.as_str());

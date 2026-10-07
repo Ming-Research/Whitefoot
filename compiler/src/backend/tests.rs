@@ -62,6 +62,7 @@ mod ranges;
 // by `owned_places` and by the `references` semantic suite; the `replace`
 // exchange they used is [SET-1] with [WIN-3]'s disposition, or [OP-11]'s
 // `swap`.
+mod paged;
 mod reinterpret;
 mod requires;
 mod resource_enums;

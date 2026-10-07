@@ -222,8 +222,16 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         // through the pointer its owner's slot holds, as a runtime-capacity
         // `Array`'s is.
         CheckedExpression::BorrowSegment { root, segment, .. } => {
-            bindings.extend(root.binding());
-            collect_place(root, bindings);
+            match root {
+                crate::semantic::CheckedSegmentSource::Storage(root) => {
+                    bindings.extend(root.binding());
+                    collect_place(root, bindings);
+                }
+                crate::semantic::CheckedSegmentSource::Element(place) => {
+                    collect_expression(&place.offset, bindings);
+                    collect_steps(&place.path, None, bindings);
+                }
+            }
             if let Some(offset) = segment.offset() {
                 collect_expression(offset, bindings);
             }

@@ -413,6 +413,25 @@ pub(super) fn element_has_zero_stride(
     Ok(layouts.layout(element)?.size == 0)
 }
 
+/// Compile-time page geometry. A zero-size element uses B = 4096;
+/// its address displacement remains zero while logical indices are retained.
+pub(super) fn paged_geometry(
+    target: TargetLayout,
+    program: &IrProgram,
+    element: IrType,
+) -> Result<(u64, u64), TargetLayoutFailure> {
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    let layout = layouts.layout(element)?;
+    let stride = align_up(
+        target,
+        layout.size,
+        layout.align,
+        TargetObject::Representation,
+    )?;
+    let limit = (4096 / stride.max(1)).max(1);
+    Ok((1_u64 << (63 - limit.leading_zeros()), stride))
+}
+
 /// The selected-target layout of one union-laid-out enum
 /// (compiler/payload-enum-layout): the value's size and alignment, and each
 /// variant's view, the `i32` tag followed by that variant's fields.
@@ -595,6 +614,7 @@ fn holds_union_enum(
         | IrType::Buffer { .. }
         | IrType::Segments { .. }
         | IrType::Window { capacity: None, .. }
+        | IrType::Run { .. }
         | IrType::Range { .. }
         | IrType::RuntimeBoxPayload { .. }
         | IrType::KeySet
@@ -690,6 +710,7 @@ impl<'types> ReturnLeaves<'types> {
             // `{ ptr, i64 }`, and the runtime-capacity blocks' headers, whose
             // zero-length element tails have no leaf.
             IrType::Range { .. } => self.integer(copies, 2),
+            IrType::Run { .. } => self.integer(copies, 3),
             IrType::Buffer { .. } | IrType::Segments { .. } => self.integer(copies, 1),
             // `{ i64, ptr }`, and the `{ ptr, i64, i64 }` record an entry
             // binding names, which is only ever reached by its address.
@@ -704,6 +725,7 @@ impl<'types> ReturnLeaves<'types> {
                     (IrWindowShape::Slots, Some(_)) => 1,
                     (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
                     (IrWindowShape::Ring, None) => 3,
+                    (IrWindowShape::Paged, _) => 4,
                 };
                 self.integer(copies, header);
                 if let Some(length @ 1..) = capacity {
@@ -1036,6 +1058,7 @@ fn runtime_capacity_layout(
             match shape {
                 IrWindowShape::Slots => 2,
                 IrWindowShape::Ring => 3,
+                IrWindowShape::Paged => 4,
             },
         ),
         _ => return Err(TargetLayoutFailure::InvalidIr),
@@ -1398,6 +1421,23 @@ impl<'types> LayoutComputer<'types> {
                 self.element(element)?;
                 Ok(Layout { size: 8, align: 8 })
             }
+            IrType::Run { element } => {
+                self.element(element)?;
+                Ok(Layout { size: 24, align: 8 })
+            }
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                element,
+                capacity: None,
+            } => {
+                self.element(element)?;
+                Ok(Layout { size: 32, align: 8 })
+            }
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                capacity: Some(_),
+                ..
+            } => Err(TargetLayoutFailure::InvalidIr),
             IrType::Range { element } => {
                 self.element(element)?;
                 Ok(Layout { size: 16, align: 8 })

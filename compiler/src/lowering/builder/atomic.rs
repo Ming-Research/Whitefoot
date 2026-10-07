@@ -900,7 +900,14 @@ fn expression_bindings(expression: &CheckedExpression, roots: &mut Vec<Root>) {
         | CheckedExpression::ReadStorage { root, .. }
         | CheckedExpression::BorrowAddressed { root, .. } => container_roots(root, roots),
         CheckedExpression::BorrowSegment { root, segment, .. } => {
-            container_roots(root, roots);
+            match root {
+                crate::semantic::CheckedSegmentSource::Storage(root) => {
+                    container_roots(root, roots)
+                }
+                crate::semantic::CheckedSegmentSource::Element(place) => {
+                    element_roots(place, roots)
+                }
+            }
             if let Some(offset) = segment.offset() {
                 expression_bindings(offset, roots);
             }

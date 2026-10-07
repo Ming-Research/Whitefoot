@@ -2980,3 +2980,72 @@ fn a_segment_loop_denies_the_whole_run_another_map_and_an_unmapped_offset() {
         );
     }
 }
+
+const PAGED_SOURCE: &str = r#"fn fill(page: &[u64]) -> result: unit writes(page) {
+  let count = page^.len;
+  for (j in 0_u64..count) {
+    set page^[j] = 9_u64;
+  }
+  return unit;
+}
+
+fn elements(p: &Paged<u64>) -> result: unit writes(p) {
+  let count = p^.len;
+  for (i in 0_u64..count) {
+    set p^[i] = i;
+  }
+  return unit;
+}
+
+fn pages(p: &Paged<u64>) -> result: unit writes(p) {
+  let count = p^.pages.len;
+  for (i in 0_u64..count) {
+    fill(page: &p^.pages[i]);
+  }
+  return unit;
+}
+
+fn mixed(p: &Paged<u64>, n: u64) -> result: unit writes(p) contract {
+  requires n <= p^.pages.len;
+  requires n <= p^.len;
+} {
+  for (i in 0_u64..n) {
+    fill(page: &p^.pages[i]);
+    set p^[i] = i;
+  }
+  return unit;
+}
+
+fn run(part: &Run<u64>) -> result: unit writes(part) {
+  let count = part^.len;
+  for (i in 0_u64..count) {
+    set part^[i] = i;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn paged_elements_pages_and_run_elements_are_independent_maps() {
+    for function in ["elements", "pages", "run"] {
+        let judged = permitted(PAGED_SOURCE.as_bytes(), function);
+        assert_eq!(
+            judged.actualization,
+            Some(LoopActualization::IndependentMap),
+            "{function}"
+        );
+    }
+}
+
+#[test]
+fn a_page_index_and_a_logical_index_are_different_parallel_maps() {
+    let refused = denied(PAGED_SOURCE.as_bytes(), "mixed", 2);
+    assert!(
+        matches!(refused, LoopDenial::SharedWrite { .. }),
+        "{refused:?}"
+    );
+}

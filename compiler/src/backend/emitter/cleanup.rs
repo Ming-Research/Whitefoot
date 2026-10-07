@@ -288,6 +288,14 @@ fn emit_run_drop_helper(
     module: &mut Module,
     ty: IrType,
 ) -> Result<(), BackendFailure> {
+    if let IrType::Window {
+        shape: IrWindowShape::Paged,
+        element,
+        capacity: None,
+    } = ty
+    {
+        return emit_paged_drop_helper(program, target, module, ty, element);
+    }
     let mut output = FunctionBody::default();
     let run_llvm = output.type_name(program, ty)?;
     let symbol = run_drop_helper_symbol(program, ty)?;
@@ -461,7 +469,14 @@ fn cleanup_run_types(program: &IrProgram) -> Result<Vec<IrType>, BackendFailure>
             continue;
         };
         let element = program.element(element).ok_or(BackendFailure::InvalidIr)?;
-        if type_requires_cleanup(program, element)? {
+        if matches!(
+            ty,
+            IrType::Window {
+                shape: IrWindowShape::Paged,
+                ..
+            }
+        ) || type_requires_cleanup(program, element)?
+        {
             needed.push(ty);
         }
     }
@@ -511,6 +526,7 @@ fn stable_type_spelling(program: &IrProgram, ty: IrType) -> Result<String, Backe
         } => format!("array<{};{length}>", element(held)?),
         IrType::Buffer { element: held } => format!("buffer<{}>", element(held)?),
         IrType::Segments { element: held } => format!("segments<{}>", element(held)?),
+        IrType::Run { element: held } => format!("run<{}>", element(held)?),
         IrType::Range { element: held } => format!("range<{}>", element(held)?),
         IrType::KeySet => "keyset".to_owned(),
         IrType::Entries { element: held } => format!("entries<{}>", element(held)?),
@@ -531,7 +547,10 @@ fn stable_type_spelling(program: &IrProgram, ty: IrType) -> Result<String, Backe
 
 /// The helper one run type's release walk is emitted as, when its window holds
 /// values that derive a release action.
-fn run_drop_helper(program: &IrProgram, ty: IrType) -> Result<Option<String>, BackendFailure> {
+pub(super) fn run_drop_helper(
+    program: &IrProgram,
+    ty: IrType,
+) -> Result<Option<String>, BackendFailure> {
     if cleanup_run_types(program)?.contains(&ty) {
         run_drop_helper_symbol(program, ty).map(Some)
     } else {
@@ -586,7 +605,7 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
             IrType::Buffer { element } | IrType::Segments { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?)
             }
-            IrType::Range { element } | IrType::Entries { element } => {
+            IrType::Range { element } | IrType::Run { element } | IrType::Entries { element } => {
                 pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
             }
             IrType::RuntimeBoxPayload { .. } | IrType::KeySet => {}
@@ -952,7 +971,14 @@ fn emit_cleanup_jobs(
                                         let element = program
                                             .element(*element)
                                             .ok_or(BackendFailure::InvalidIr)?;
-                                        if type_requires_cleanup(program, element)? {
+                                        if matches!(
+                                            referent,
+                                            IrType::Window {
+                                                shape: IrWindowShape::Paged,
+                                                ..
+                                            }
+                                        ) || type_requires_cleanup(program, element)?
+                                        {
                                             let symbol = run_drop_helper(program, *referent)?
                                                 .ok_or(BackendFailure::InvalidIr)?;
                                             output.symbol(&symbol);
@@ -1030,6 +1056,7 @@ fn emit_cleanup_jobs(
                 | IrType::Bool
                 | IrType::Integer { .. }
                 | IrType::Float { .. }
+                | IrType::Run { .. }
                 | IrType::Range { .. }
                 | IrType::RuntimeBoxPayload { .. }
                 | IrType::Address(_) => {}
@@ -1118,5 +1145,66 @@ fn emit_enum_cleanup_body(
     output.push_str("  unreachable\n");
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
+    Ok(())
+}
+
+/// Drop initialized Paged elements in logical order, then free all allocated
+/// pages and the directory. The Box caller subsequently frees the descriptor.
+fn emit_paged_drop_helper(
+    program: &IrProgram,
+    target: TargetLayout,
+    module: &mut Module,
+    ty: IrType,
+    element: crate::IrElement,
+) -> Result<(), BackendFailure> {
+    let mut output = FunctionBody::default();
+    let element = program.element(element).ok_or(BackendFailure::InvalidIr)?;
+    let (b, stride) = crate::target::paged_geometry(target, program, element)
+        .map_err(BackendFailure::TargetLayout)?;
+    let shift = b.trailing_zeros();
+    let mask = b - 1;
+    let llvm = output.type_name(program, element)?;
+    let mut signature = Signature::new(
+        run_drop_helper_symbol(program, ty)?,
+        "void",
+        vec![Parameter::named("ptr", "%value")],
+    );
+    signature.linkage = Linkage::Private;
+    output.open_block("entry".to_owned());
+    output.push_str("  %len = load i64, ptr %value\n  %cap.ptr = getelementptr inbounds { i64, i64, ptr, i64 }, ptr %value, i32 0, i32 1\n  %cap = load i64, ptr %cap.ptr\n  %dir.ptr = getelementptr inbounds { i64, i64, ptr, i64 }, ptr %value, i32 0, i32 2\n  %dir = load ptr, ptr %dir.ptr\n");
+    if type_requires_cleanup(program, element)? {
+        output.push_str("  br label %elements\n");
+        output.open_block("elements".to_owned());
+        output.push_str("  %i = phi i64 [ 0, %entry ], [ %next, %element.done ]\n  %live = icmp ult i64 %i, %len\n  br i1 %live, label %element, label %pages.start\n");
+        output.open_block("element".to_owned());
+        let index = if stride == 0 { "0" } else { "%offset" };
+        writeln!(output, "  %page.index = lshr i64 %i, {shift}\n  %offset = and i64 %i, {mask}\n  %page.slot = getelementptr inbounds ptr, ptr %dir, i64 %page.index\n  %page = load ptr, ptr %page.slot\n  %element.ptr = getelementptr inbounds {llvm}, ptr %page, i64 {index}").map_err(|_| BackendFailure::TextEmission)?;
+        let mut temporary = 0;
+        emit_cleanup_jobs(
+            program,
+            &mut output,
+            &mut temporary,
+            vec![CleanupJob::Place {
+                address: "%element.ptr".to_owned(),
+                ty: element,
+            }],
+        )?;
+        output.push_str("  br label %element.done\n");
+        output.open_block("element.done".to_owned());
+        output.push_str("  %next = add nuw i64 %i, 1\n  br label %elements\n");
+    } else {
+        output.push_str("  br label %pages.start\n");
+    }
+    output.open_block("pages.start".to_owned());
+    writeln!(output, "  %quotient = lshr i64 %cap, {shift}\n  %remainder = and i64 %cap, {mask}\n  %partial = icmp ne i64 %remainder, 0\n  %carry = zext i1 %partial to i64\n  %count = add nuw i64 %quotient, %carry\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
+    output.open_block("pages".to_owned());
+    output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.free ]\n  %allocated = icmp ult i64 %p, %count\n  br i1 %allocated, label %page.free, label %directory.free\n");
+    output.open_block("page.free".to_owned());
+    output.instructions("  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  call void @free(ptr %allocation)\n  %p.next = add nuw i64 %p, 1\n  br label %pages\n", &["free"]);
+    output.open_block("directory.free".to_owned());
+    output.instructions("  call void @free(ptr %dir)\n  ret void\n", &["free"]);
+    signature.references = output.references.clone();
+    module.define(signature.define(output, "")?);
+    module.text("\n");
     Ok(())
 }

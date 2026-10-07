@@ -1895,3 +1895,209 @@ fn main() -> status: std::process::ExitStatus pure waits {
         Some("SET-1")
     );
 }
+
+#[test]
+fn paged_runs_keep_the_directory_origin_and_pages_lower_as_slices() {
+    let source = br#"fn fill(part: &Run<u64>) -> result: unit writes(part) {
+  let count = part^.len;
+  for (i in 0_u64..count) {
+    set part^[i] = i;
+  }
+  return unit;
+}
+
+fn page_count(page: &[u64]) -> result: u64 reads(page) {
+  return page^.len;
+}
+
+fn form(p: &Paged<u64>) -> result: u64 writes(p) {
+  let count = p^.len;
+  fill(part: &p^[0_u64..count]);
+  if p^.pages.len > 0_u64 {
+    return page_count(page: &p^.pages[0_u64]);
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 1_u64);
+  place_back(window: &p.inner, value: 0_u64);
+  let n = form(p: &p.inner);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let fill = function(program, "fill");
+        assert!(matches!(fill.parameters()[0].1, IrType::Run { .. }));
+        assert!(matches!(
+            function(program, "page_count").parameters()[0].1,
+            IrType::Range { .. }
+        ));
+        let form = function(program, "form");
+        let instructions = form
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .collect::<Vec<_>>();
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction,
+            IrInstruction::Define {
+                ty: IrType::Run { .. },
+                operation: IrOperation::SliceFromRun { .. },
+                ..
+            }
+        )));
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction,
+            IrInstruction::Define {
+                ty: IrType::Range { .. },
+                operation: IrOperation::PagedPage { .. },
+                ..
+            }
+        )));
+        assert!(
+            fill.blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .any(|instruction| matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::LoopSplit { .. },
+                        ..
+                    }
+                ))
+        );
+        crate::emit_llvm(program).expect("run capture and its split thunk must emit");
+    });
+}
+
+#[test]
+fn paged_address_formation_joins_before_directory_growth_can_race_it() {
+    for actual in ["&p.inner[0_u64..0_u64]", "&p.inner[0_u64]"] {
+        let kind = if actual.contains("..") {
+            "Run<u64>"
+        } else {
+            "u64"
+        };
+        let source = format!(
+            "fn ignore(part: &{kind}) -> result: unit pure {{\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let p = box_paged_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n  grow_paged(cell: &p, capacity: 1025_u64);\n  ignore(part: {actual});\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_checked(source.as_bytes(), |checked| {
+            let permissions = checked
+                .data
+                .permission
+                .named("main")
+                .expect("main permissions");
+            let pair = permissions
+                .pairs
+                .iter()
+                .find(|pair| {
+                    pair.first.callee_name == "grow_paged" && pair.second.callee_name == "ignore"
+                })
+                .expect("growth/formation adjacency");
+            assert!(
+                pair.verdict.is_eligible(),
+                "source permission stays intact: {pair:?}"
+            );
+        });
+        with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
+            let main = function(program, "main");
+            let calls = main
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| {
+                    let IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Call { function, .. },
+                        ..
+                    } = instruction
+                    else {
+                        return None;
+                    };
+                    let callee = program
+                        .functions()
+                        .get(*function as usize)
+                        .expect("call target");
+                    (callee.name() == "grow_paged" || callee.name() == "ignore").then_some(*result)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(calls.len(), 2);
+            assert!(
+                !main
+                    .overlaps()
+                    .iter()
+                    .any(|group| calls.iter().all(|call| group.members.contains(call))),
+                "directory formation must precede any handed-out growth completion: {:?}",
+                main.overlaps()
+            );
+        });
+    }
+}
+
+#[test]
+fn page_and_segment_borrows_below_range_elements_keep_the_outer_projection() {
+    let source =
+        br#"fn pages(rows: &[Box<Paged<u64>>], i: u64) -> result: u64 reads(rows) contract {
+  requires i < rows^.len;
+} {
+  if rows^[i].inner.pages.len > 0_u64 {
+    let page = &rows^[i].inner.pages[0_u64];
+    return page^.len;
+  }
+  return 0_u64;
+}
+
+fn run_pages(rows: &Run<Box<Paged<u64>>>, i: u64) -> result: u64 reads(rows) contract {
+  requires i < rows^.len;
+} {
+  if rows^[i].inner.pages.len > 0_u64 {
+    let page = &rows^[i].inner.pages[0_u64];
+    return page^.len;
+  }
+  return 0_u64;
+}
+
+fn segments(rows: &[Box<Segments<u64>>], i: u64) -> result: u64 reads(rows) contract {
+  requires i < rows^.len;
+} {
+  if rows^[i].inner.len > 0_u64 {
+    let part = &rows^[i].inner[0_u64];
+    return part^.len;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        for name in ["pages", "run_pages", "segments"] {
+            let operations = function(program, name)
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define { operation, .. } => Some(operation),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                operations
+                    .iter()
+                    .any(|operation| matches!(operation, IrOperation::SliceAddress { .. })),
+                "{name}: address the enclosing range element"
+            );
+            assert!(
+                operations.iter().any(|operation| match operation {
+                    IrOperation::PagedPage { .. } => name != "segments",
+                    IrOperation::SegmentSlice { .. } => name == "segments",
+                    _ => false,
+                }),
+                "{name}: borrow the selected page or segment"
+            );
+        }
+        crate::emit_llvm(program).expect("nested range-element projections must emit");
+    });
+}

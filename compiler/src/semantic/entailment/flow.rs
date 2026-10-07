@@ -1909,6 +1909,7 @@ mod indexed_goal_kill_tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
             module: crate::ModuleId::BUNDLE_ROOT,
@@ -2139,6 +2140,7 @@ mod range_argument_kill_tests {
         };
         let function = CheckedFunction {
             formal_hypothesis: false,
+            prelude_element: None,
             id: crate::semantic::model::FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
             module: crate::ModuleId::BUNDLE_ROOT,

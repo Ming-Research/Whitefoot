@@ -123,6 +123,7 @@ mod tests {
     fn function(obligations: Vec<ObligationRecord>, body: bool) -> CheckedFunction {
         CheckedFunction {
             formal_hypothesis: false,
+            prelude_element: None,
             id: FunctionId(0),
             declaration: crate::DeclarationId::from_index(0).unwrap(),
             module: crate::ModuleId::BUNDLE_ROOT,

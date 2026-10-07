@@ -21,6 +21,7 @@ use crate::{
 
 use super::super::model::{
     CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedType, CheckedValue, IntegerType,
+    WindowShape,
 };
 use super::super::postcondition::CheckedPostconditionSelector;
 use super::super::range_facts::{
@@ -976,7 +977,7 @@ impl Checker<'_, '_> {
                         );
                     };
                     path.push(CheckedRangeStep::Referent);
-                    selected = if mode == CheckedMode::Range {
+                    selected = if mode.is_range() {
                         Selected::Run(ty)
                     } else {
                         Selected::Value(ty)
@@ -1089,6 +1090,30 @@ impl Checker<'_, '_> {
                 }
                 PlaceSuffix::Member(_) => {
                     let name = self.member_name(suffix)?;
+                    if name == "pages"
+                        && index + 2 == last
+                        && matches!(
+                            selected,
+                            Selected::Value(CheckedType::Window {
+                                shape: WindowShape::Paged,
+                                ..
+                            })
+                        )
+                        && matches!(
+                            self.types
+                                .declarations
+                                .tree
+                                .place_suffix(suffixes[index + 1])?,
+                            PlaceSuffix::Member(_)
+                        )
+                        && self.member_name(suffixes[index + 1])? == "len"
+                    {
+                        return Ok(CheckedRangeTerm::Measure {
+                            place: CheckedRangePlace { root, path },
+                            measure: CheckedMeasure::Pages,
+                            shape: CheckedRangeShape::Run,
+                        });
+                    }
                     if at_end && (name == "len" || name == "cap") {
                         let measure = if name == "len" {
                             CheckedMeasure::Length

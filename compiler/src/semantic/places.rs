@@ -326,6 +326,8 @@ pub(crate) enum PlaceStep {
     /// `(r.head + i) mod r.cap`, which is [WIN-1]'s business and no rule of
     /// the overlap relation mentions.
     Index(CapturedValue),
+    /// One initialized page of Paged; never separated from a logical element or range.
+    Page(CapturedValue),
     /// One range step [REF-4] with both endpoints captured at formation.
     Range(CapturedRange),
     /// One of [WIN-2]'s four named window parts.
@@ -487,7 +489,7 @@ impl ResolvedPlace {
         };
         for step in &mut carried.path {
             match step {
-                PlaceStep::Index(index) => *index = next()?,
+                PlaceStep::Index(index) | PlaceStep::Page(index) => *index = next()?,
                 PlaceStep::Range(range) => {
                     range.start = next()?;
                     range.end = next()?;
@@ -515,7 +517,7 @@ impl ResolvedPlace {
     /// already its formation capture.
     pub(crate) fn supersede_binding(&mut self, binding: BindingId) {
         for step in &mut self.path {
-            if let PlaceStep::Index(index) = step
+            if let PlaceStep::Index(index) | PlaceStep::Page(index) = step
                 && index.term == CapturedTerm::Binding(binding)
             {
                 *index = CapturedValue::new(index.capture, CapturedTerm::Superseded(binding));
@@ -529,7 +531,7 @@ impl ResolvedPlace {
     /// [`Self::supersede_binding`].
     pub(crate) fn supersede_capture(&mut self, capture: CaptureId, binding: BindingId) {
         for step in &mut self.path {
-            if let PlaceStep::Index(index) = step
+            if let PlaceStep::Index(index) | PlaceStep::Page(index) = step
                 && index.capture == capture
                 && index.term == CapturedTerm::Binding(binding)
             {
@@ -546,6 +548,10 @@ impl ResolvedPlace {
             PlaceStep::Index(CapturedValue {
                 capture,
                 term: CapturedTerm::Binding(binding),
+            })
+            | PlaceStep::Page(CapturedValue {
+                capture,
+                term: CapturedTerm::Binding(binding),
             }) => Some((*capture, *binding)),
             _ => None,
         })
@@ -556,6 +562,10 @@ impl ResolvedPlace {
     pub(crate) fn superseded_indices(&self) -> impl Iterator<Item = (CaptureId, BindingId)> + '_ {
         self.path.iter().filter_map(|step| match step {
             PlaceStep::Index(CapturedValue {
+                capture,
+                term: CapturedTerm::Superseded(binding),
+            })
+            | PlaceStep::Page(CapturedValue {
                 capture,
                 term: CapturedTerm::Superseded(binding),
             }) => Some((*capture, *binding)),
@@ -576,7 +586,9 @@ impl ResolvedPlace {
     pub(crate) fn term_identity(mut self) -> Self {
         for step in &mut self.path {
             match step {
-                PlaceStep::Index(offset) => *offset = offset.goal_identity(),
+                PlaceStep::Index(offset) | PlaceStep::Page(offset) => {
+                    *offset = offset.goal_identity()
+                }
                 PlaceStep::Range(_) => {}
                 PlaceStep::Field(_)
                 | PlaceStep::Descendant(_)
@@ -717,7 +729,7 @@ impl ResolvedPlace {
             .iter()
             .enumerate()
             .map(|(position, step)| match step {
-                PlaceStep::Range(_) => usize::from(position == last),
+                PlaceStep::Range(_) | PlaceStep::Page(_) => usize::from(position == last),
                 _ => 2,
             })
             .sum()
@@ -770,7 +782,8 @@ fn steps_provably_same(left: PlaceStep, right: PlaceStep) -> bool {
                 field: right_field,
             },
         ) => left_variant == right_variant && left_field == right_field,
-        (PlaceStep::Index(left), PlaceStep::Index(right)) => left.provably_same(right),
+        (PlaceStep::Index(left), PlaceStep::Index(right))
+        | (PlaceStep::Page(left), PlaceStep::Page(right)) => left.provably_same(right),
         (PlaceStep::Range(left), PlaceStep::Range(right)) => {
             left.start.provably_same(right.start) && left.end.provably_same(right.end)
         }
@@ -846,6 +859,15 @@ fn separation(
         // Two index steps of one base. Unproved distinctness is not overlap:
         // both bases are the same storage, so a later step still separates
         // the two places under either answer, which is why the walk goes on.
+        (PlaceStep::Page(left), PlaceStep::Page(right)) => {
+            if left.provably_same(right) {
+                StepSeparation::Same
+            } else if left.literals_distinct(right) || oracle.indices_distinct(left, right) {
+                StepSeparation::Separate
+            } else {
+                StepSeparation::Overlapping
+            }
+        }
         (PlaceStep::Index(left), PlaceStep::Index(right)) => {
             if left.literals_distinct(right) || oracle.indices_distinct(left, right) {
                 StepSeparation::Separate
@@ -901,6 +923,16 @@ fn separation(
                 StepSeparation::Overlapping
             }
         }
+        (PlaceStep::Page(_), PlaceStep::Part(part))
+        | (PlaceStep::Part(part), PlaceStep::Page(_)) => {
+            if matches!(part, WindowPart::Next | WindowPart::Free)
+                && oracle.window_length_is_shared(window)
+            {
+                StepSeparation::Separate
+            } else {
+                StepSeparation::Overlapping
+            }
+        }
         // An index and a range of one base: separated when the index is
         // proved before the range or at or after its end, or the range
         // empty [OWN-7]. Unproved, the index may lie inside the range.
@@ -937,16 +969,20 @@ fn separation(
         // Each measure is a distinct descriptor word and overlaps no slot
         // [WIN-2, MSR-2]. A write of len does not write cap or head.
         (PlaceStep::Measure(left), PlaceStep::Measure(right)) => {
-            if left == right {
+            if left.support_word() == right.support_word() {
                 StepSeparation::Same
             } else {
                 StepSeparation::Separate
             }
         }
-        (PlaceStep::Measure(_), PlaceStep::Index(_) | PlaceStep::Range(_) | PlaceStep::Part(_))
-        | (PlaceStep::Index(_) | PlaceStep::Range(_) | PlaceStep::Part(_), PlaceStep::Measure(_)) => {
-            StepSeparation::Separate
-        }
+        (
+            PlaceStep::Measure(_),
+            PlaceStep::Index(_) | PlaceStep::Page(_) | PlaceStep::Range(_) | PlaceStep::Part(_),
+        )
+        | (
+            PlaceStep::Index(_) | PlaceStep::Page(_) | PlaceStep::Range(_) | PlaceStep::Part(_),
+            PlaceStep::Measure(_),
+        ) => StepSeparation::Separate,
         // Everything left is a pair no admitted family discharges, so the
         // pair is overlapping [OWN-7].
         _ => StepSeparation::Overlapping,
@@ -1264,12 +1300,10 @@ pub(crate) fn named_place(expression: &CheckedExpression) -> Option<NamedPlace> 
         }
         // [REF-4] a segment borrow names the `Segments` place extended by
         // the segment's index, or by a range over every element.
-        CheckedExpression::BorrowSegment { root, segment, .. } => named(
-            root.root,
-            root.place_path(),
-            vec![segment.place_step()],
-            NamingForm::Range,
-        ),
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            let (root, steps) = root.place();
+            named(root, steps, vec![segment.place_step()], NamingForm::Range)
+        }
         CheckedExpression::BorrowRangeIndex { place, .. } => named(
             PlaceRoot::Binding(place.root.binding),
             Vec::new(),
@@ -2067,5 +2101,66 @@ mod tests {
             path.spelled_indices().collect::<Vec<_>>(),
             [(CaptureId::source(1), BindingId(2))]
         );
+    }
+    #[test]
+    fn pages_separate_by_page_offset_and_overlap_logical_views() {
+        let map = PlaceMap::default();
+        let oracle = UnprovedSeparations;
+        let first = place(0, &[PlaceStep::Page(literal(0, 0))]);
+        let second = place(0, &[PlaceStep::Page(literal(1, 1))]);
+        assert!(!map.overlaps(&oracle, &first, &second));
+        assert!(map.overlaps(
+            &oracle,
+            &first,
+            &place(0, &[PlaceStep::Index(literal(2, 9999))])
+        ));
+        assert!(map.overlaps(
+            &oracle,
+            &first,
+            &place(
+                0,
+                &[PlaceStep::Range(CapturedRange {
+                    start: opaque(3),
+                    end: opaque(4)
+                })]
+            )
+        ));
+        assert!(!map.overlaps(
+            &oracle,
+            &first,
+            &place(0, &[PlaceStep::Part(WindowPart::Next)])
+        ));
+        assert!(map.overlaps(
+            &oracle,
+            &first,
+            &place(0, &[PlaceStep::Part(WindowPart::Filled)])
+        ));
+        assert_eq!(first.storage_depth(), 1);
+        let child = place(
+            0,
+            &[
+                PlaceStep::Page(literal(0, 0)),
+                PlaceStep::Index(literal(1, 0)),
+            ],
+        );
+        assert_eq!(child.storage_depth(), 2);
+    }
+    #[test]
+    fn unrelated_page_frames_do_not_separate_by_descendant_offsets() {
+        let map = PlaceMap::default();
+        let left = place(
+            0,
+            &[PlaceStep::Page(opaque(0)), PlaceStep::Index(literal(2, 0))],
+        );
+        let right = place(
+            0,
+            &[PlaceStep::Page(opaque(1)), PlaceStep::Index(literal(3, 1))],
+        );
+        assert!(map.overlaps(&UnprovedSeparations, &left, &right));
+        let same = place(
+            0,
+            &[PlaceStep::Page(opaque(0)), PlaceStep::Index(literal(3, 1))],
+        );
+        assert!(!map.overlaps(&UnprovedSeparations, &left, &same));
     }
 }

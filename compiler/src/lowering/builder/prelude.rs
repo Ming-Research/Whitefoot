@@ -39,7 +39,11 @@ impl IrBuilder<'_> {
     ///
     /// The parameters are already declared; this adds the instructions and
     /// the return.
-    pub(super) fn lower_prelude_row(&mut self, name: &str) -> Result<(), LoweringFailure> {
+    pub(super) fn lower_prelude_row(
+        &mut self,
+        name: &str,
+        element: Option<crate::semantic::CheckedElement>,
+    ) -> Result<(), LoweringFailure> {
         match name {
             "box_new" => self.row_box_new(),
             "array_filled" => self.row_array_filled(),
@@ -47,8 +51,11 @@ impl IrBuilder<'_> {
             "slots_from_array" | "slots_into_array" => self.row_full_array_conversion(),
             "box_array_filled" => self.row_box_array_filled(),
             "box_segments_filled" => self.row_box_segments_filled(),
-            "box_slots_new" | "box_ring_new" => self.row_box_window_new(),
-            "grow" => self.row_grow(),
+            "box_slots_new" | "box_ring_new" | "box_paged_new" => self.row_box_window_new(),
+            "grow" | "grow_paged" => self.row_grow(),
+            "paged_page_len" => {
+                self.row_paged_page_len(element.ok_or(LoweringFailure::InvalidCheckedProgram)?)
+            }
             "place_back" => self.row_place(IrBoundary::PlaceBack),
             "place_front" => self.row_place(IrBoundary::PlaceFront),
             "take_back" => self.row_take(IrBoundary::TakeBack),
@@ -80,6 +87,15 @@ impl IrBuilder<'_> {
 
     /// The row's parameters, refused when the count does not match what the
     /// [PRE-1] record declares.
+    fn row_paged_page_len(
+        &mut self,
+        element: crate::semantic::CheckedElement,
+    ) -> Result<(), LoweringFailure> {
+        let element = lower_element(self.erasure, element)?;
+        let value = self.define(U64, IrOperation::PagedPageLen { element })?;
+        self.return_value(value)
+    }
+
     fn row_parameters<const N: usize>(&self) -> Result<[IrValueId; N], LoweringFailure> {
         let mut values = [IrValueId(0); N];
         if self.parameters.len() != N {
@@ -760,6 +776,7 @@ fn ceiling_pair(
         IrType::Integer { .. } | IrType::Float { .. } => return None,
         // A range reference is not a stored type [TYPE-8]; a runtime-capacity
         // `Array<T>` is a pointer and a length.
+        IrType::Run { .. } => (Finite(24), 8),
         IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } => (Finite(16), 8),
         // A key set is its count and its store's pointer; the entries an
         // entry binding names are the statement's record [SHARE-1, SHARE-2].
@@ -789,7 +806,10 @@ fn ceiling_pair(
             element,
             capacity,
         } => {
-            let words = u64::from(shape == IrWindowShape::Ring) + 1;
+            let words = match shape {
+                IrWindowShape::Slots => 1,
+                IrWindowShape::Ring | IrWindowShape::Paged => 2,
+            };
             match capacity {
                 // A runtime-capacity `Slots<T>` is a pointer, a capacity and
                 // a length; a `Ring<T>` adds a window origin.

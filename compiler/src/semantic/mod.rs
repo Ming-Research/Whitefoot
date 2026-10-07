@@ -53,8 +53,8 @@ pub(crate) use model::{
     CheckedMode, CheckedNominalKind, CheckedNumericType, CheckedOwnedTakeCleanup, CheckedParameter,
     CheckedPlaceStep, CheckedProgramData, CheckedProjectedDrop, CheckedRangeElementPlace,
     CheckedRangeRoot, CheckedRangeSource, CheckedReleaseClass, CheckedSegmentIndex,
-    CheckedSegmentSelect, CheckedSetTarget, CheckedShared, CheckedStatement, CheckedTarget,
-    CheckedTargetDomainObligation, CheckedTargetKind, CheckedType, CheckedValue,
+    CheckedSegmentSelect, CheckedSegmentSource, CheckedSetTarget, CheckedShared, CheckedStatement,
+    CheckedTarget, CheckedTargetDomainObligation, CheckedTargetKind, CheckedType, CheckedValue,
     CheckedWritablePlace, FunctionId, FunctionMentions, MeasureCell, MeasuredKind, NominalId,
     PropagationContext, WindowShape,
 };

@@ -1302,7 +1302,7 @@ fn frame_bytes(ty: IrType) -> u64 {
         IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } | IrType::KeySet => {
             2 * FRAME_FIELD_ALIGN
         }
-        IrType::Entries { .. } => 3 * FRAME_FIELD_ALIGN,
+        IrType::Entries { .. } | IrType::Run { .. } => 3 * FRAME_FIELD_ALIGN,
         IrType::Address(_) | IrType::RuntimeBoxPayload { .. } => FRAME_FIELD_ALIGN,
         // Aggregates trigger capture selection and the final exact-layout
         // query; a conservative fit retains its established capture interface.

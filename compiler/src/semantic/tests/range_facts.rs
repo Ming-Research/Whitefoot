@@ -854,3 +854,32 @@ fn an_unproved_postcondition_names_the_exit_that_owes_it() {
         });
     }
 }
+
+#[test]
+fn paged_page_count_remains_its_own_range_atom() {
+    let source = b"fn bounded(p: &Paged<u64>) -> result: unit pure contract {\n  requires forall page(k in 0_u64..p^.pages.len) when k < p^.pages.len: k < p^.pages.len;\n} {\n  return unit;\n}\n\nfn main() -> status: std::process::ExitStatus pure {\n  return std::process::exit_status(code: 0_u8);\n}\n";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("Paged page-count range terms must check: {outcome:?}");
+        };
+        let function = program
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "bounded")
+            .expect("bounded function");
+        let [clause] = function.range_facts.requirements.as_slice() else {
+            panic!("one retained range clause");
+        };
+        let expected = &clause.binders[0].end;
+        assert!(matches!(
+            expected,
+            super::super::range_facts::CheckedRangeTerm::Measure {
+                measure: super::super::CheckedMeasure::Pages,
+                ..
+            }
+        ));
+        assert_eq!(&clause.guards[0].right, expected);
+        assert_eq!(&clause.conclusions[0].right, expected);
+    });
+}

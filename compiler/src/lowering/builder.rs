@@ -525,7 +525,7 @@ fn lower_function<'program>(
             builder.lower_statements(body, None)?;
         }
     } else if compiler_owned {
-        builder.lower_prelude_row(&function.name)?;
+        builder.lower_prelude_row(&function.name, function.prelude_element)?;
     } else {
         builder.blocks.clear();
         builder.current = None;
@@ -568,7 +568,7 @@ const fn lower_source_mode(mode: CheckedMode) -> IrSourceMode {
     match mode {
         CheckedMode::Own => IrSourceMode::Own,
         CheckedMode::Reference => IrSourceMode::Reference,
-        CheckedMode::Range => IrSourceMode::Range,
+        CheckedMode::Range | CheckedMode::Run => IrSourceMode::Range,
     }
 }
 
@@ -601,6 +601,16 @@ fn lower_parameter_type(
     // [REF-4, TYPE-8] a `&[T]` parameter's written type is the element type
     // and its kind is its mode, so the descriptor type is formed here and
     // never from the type alone.
+    if parameter.mode == CheckedMode::Run {
+        return Ok(IrType::Run {
+            element: lower_element(
+                erasure,
+                parameter
+                    .range_element
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+            )?,
+        });
+    }
     if parameter.mode == CheckedMode::Range {
         return Ok(IrType::Range {
             element: lower_element(
@@ -624,7 +634,12 @@ fn lower_borrow_mode_type(
     ty: IrType,
     nominals: &[IrNominal],
 ) -> Result<IrType, LoweringFailure> {
-    if mode == CheckedMode::Own || matches!(ty, IrType::Buffer { .. } | IrType::Range { .. }) {
+    if mode == CheckedMode::Own
+        || matches!(
+            ty,
+            IrType::Buffer { .. } | IrType::Range { .. } | IrType::Run { .. }
+        )
+    {
         return Ok(ty);
     }
     let Some(referent) = IrAddressed::of(ty) else {
@@ -948,7 +963,11 @@ impl<'program> IrBuilder<'program> {
     ///   and its join sit on one straight-line edge; and
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
-    ///   and the join, where the value does not exist yet.
+    ///   and the join, where the value does not exist yet; and
+    /// - later arguments do not form an address through a Paged directory
+    ///   while an earlier member is running. Source permission does not count
+    ///   a borrow as a content read, but this representation loads directory
+    ///   words that growth can replace even when the callee ignores its borrow.
     ///
     /// Each contiguous part retains the chain's every-ordered-pair proof.
     /// Finally, already-proved adjacent pairs recover opportunities across a
@@ -1008,6 +1027,12 @@ impl<'program> IrBuilder<'program> {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 home = Some(block);
+                if members
+                    .last()
+                    .is_some_and(|previous| self.paged_formation_between(block, *previous, value))
+                {
+                    finish(&mut members, &mut claimed, &mut overlaps);
+                }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
@@ -1021,6 +1046,61 @@ impl<'program> IrBuilder<'program> {
             finish(&mut members, &mut claimed, &mut overlaps);
         }
         overlaps
+    }
+
+    /// Narrow actualization, leaving the source permission judgment intact.
+    /// Each projection in a nested path is explicit IR, so this also covers
+    /// a Paged reached through an element, field or Box, and a run element.
+    fn paged_formation_between(
+        &self,
+        block: IrBlockId,
+        previous: IrValueId,
+        next: IrValueId,
+    ) -> bool {
+        let is_paged = |value: IrValueId| {
+            matches!(
+                self.values.get(value.index()),
+                Some(IrType::Address(IrAddressed::Window {
+                    shape: IrWindowShape::Paged,
+                    ..
+                }))
+            )
+        };
+        let mut after_previous = false;
+        for instruction in &self.blocks[block.index()].instructions {
+            let IrInstruction::Define {
+                result, operation, ..
+            } = instruction
+            else {
+                continue;
+            };
+            if *result == next {
+                break;
+            }
+            if *result == previous {
+                after_previous = true;
+                continue;
+            }
+            if !after_previous {
+                continue;
+            }
+            let reads_directory = match operation {
+                IrOperation::PagedPage { .. } => true,
+                IrOperation::SliceFromRun { run } => is_paged(*run),
+                IrOperation::ProjectAddress {
+                    address,
+                    projection: IrPlaceStep::RunElement { .. },
+                } => is_paged(*address),
+                IrOperation::SliceAddress { slice, .. } => {
+                    matches!(self.values.get(slice.index()), Some(IrType::Run { .. }))
+                }
+                _ => false,
+            };
+            if reads_directory {
+                return true;
+            }
+        }
+        false
     }
 
     /// Records where a named-function call in call position landed, whatever
@@ -1356,7 +1436,15 @@ impl<'program> IrBuilder<'program> {
                     // carries the selected address; a range join carries the
                     // selected pointer and count. Neither has the by-value
                     // representation of its written referent type.
-                    let result = if *result_mode == CheckedMode::Range {
+                    let result = if *result_mode == CheckedMode::Run {
+                        IrType::Run {
+                            element: lower_element(
+                                self.erasure,
+                                result_range_element
+                                    .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+                            )?,
+                        }
+                    } else if *result_mode == CheckedMode::Range {
                         IrType::Range {
                             element: lower_element(
                                 self.erasure,
@@ -1642,7 +1730,7 @@ impl<'program> IrBuilder<'program> {
                         (actual, expected),
                         (IrType::Address(referent), _) if referent.ty() == expected
                     )
-                    && !matches!(actual, IrType::Range { element } if self.element_type(element)? == expected)
+                    && !matches!(actual, IrType::Range { element } | IrType::Run { element } if self.element_type(element)? == expected)
                 {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 }

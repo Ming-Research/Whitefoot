@@ -55,6 +55,8 @@ struct OperandParameter {
 enum AdmittedShapes {
     /// `Slots<T, n>`, `Slots<T>`, `Ring<T, n>` and `Ring<T>` [OP-10].
     Window,
+    BackWindow,
+    BoxedPaged,
     /// `Ring<T, n>` and `Ring<T>` alone: `place_front` and `take_front`
     /// "admit `Ring<T, n>` and `Ring<T>` alone" [OP-10].
     Ring,
@@ -98,13 +100,13 @@ const OPERAND_ROWS: &[OperandRow] = &[
     OperandRow {
         name: "place_back",
         rule: SemanticRule::Op10,
-        admitted: AdmittedShapes::Window,
+        admitted: AdmittedShapes::BackWindow,
         parameters: WINDOW_AND_ELEMENT,
     },
     OperandRow {
         name: "take_back",
         rule: SemanticRule::Op10,
-        admitted: AdmittedShapes::Window,
+        admitted: AdmittedShapes::BackWindow,
         parameters: WINDOW_AND_ELEMENT,
     },
     OperandRow {
@@ -153,6 +155,15 @@ const OPERAND_ROWS: &[OperandRow] = &[
     },
     // `grow<T>(cell: &Box<Slots<T>>, capacity: u64)`: the one parameter is
     // the boxed window's element type.
+    OperandRow {
+        name: "grow_paged",
+        rule: SemanticRule::Op10,
+        admitted: AdmittedShapes::BoxedPaged,
+        parameters: &[OperandParameter {
+            ordinal: 0,
+            projection: OperandProjection::Element,
+        }],
+    },
     OperandRow {
         name: "grow",
         rule: SemanticRule::Op10,
@@ -224,6 +235,8 @@ impl<'unit> DeclarationInventory<'unit> {
             call,
             SemanticIssueKind::UnadmittedOperandShape {
                 expected: match row.admitted {
+                    AdmittedShapes::BackWindow => "a Slots, Ring or Paged window",
+                    AdmittedShapes::BoxedPaged => "a Box<Paged<T>> operand",
                     AdmittedShapes::Window => "a `Slots` or `Ring` operand [OP-10]",
                     AdmittedShapes::Ring => "a `Ring` operand, which is what this row admits",
                     AdmittedShapes::BoxedRuntimeSlots => "a `Box<Slots<T>>` operand",
@@ -246,7 +259,22 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<bool, CheckStop> {
         Ok(match admitted {
             AdmittedShapes::AnyValue => true,
-            AdmittedShapes::Window => matches!(operand, CheckedType::Window { .. }),
+            AdmittedShapes::BackWindow => matches!(operand, CheckedType::Window { .. }),
+            AdmittedShapes::Window => matches!(
+                operand,
+                CheckedType::Window {
+                    shape: WindowShape::Slots | WindowShape::Ring,
+                    ..
+                }
+            ),
+            AdmittedShapes::BoxedPaged => matches!(
+                self.box_content(operand)?,
+                Some(CheckedType::Window {
+                    shape: WindowShape::Paged,
+                    capacity: None,
+                    ..
+                })
+            ),
             AdmittedShapes::Ring => matches!(
                 operand,
                 CheckedType::Window {
@@ -263,11 +291,16 @@ impl<'unit> TypeContext<'unit> {
                 })
             ),
             AdmittedShapes::WindowOrBoxedWindow => {
-                matches!(operand, CheckedType::Window { .. })
-                    || matches!(
-                        self.box_content(operand)?,
-                        Some(CheckedType::Window { capacity: None, .. })
-                    )
+                matches!(
+                    operand,
+                    CheckedType::Window {
+                        shape: WindowShape::Slots | WindowShape::Ring,
+                        ..
+                    }
+                ) || matches!(
+                    self.box_content(operand)?,
+                    Some(CheckedType::Window { capacity: None, .. })
+                )
             }
         })
     }
@@ -522,9 +555,7 @@ impl<'unit> TypeContext<'unit> {
                     declaration,
                     class: DeclarationClass::Value,
                 } => match bindings.get(&declaration) {
-                    Some(local) if local.mode == CheckedMode::Range => {
-                        SelectedPlaceType::Range(local.ty)
-                    }
+                    Some(local) if local.mode.is_range() => SelectedPlaceType::Range(local.ty),
                     Some(local) => SelectedPlaceType::Value(local.ty),
                     None => return Ok(None),
                 },

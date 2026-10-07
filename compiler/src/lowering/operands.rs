@@ -183,6 +183,8 @@ macro_rules! operation_operands {
             IrOperation::SegmentsMeasure { segments } | IrOperation::SegmentsAll { segments } => {
                 vec![$value(segments)]
             }
+            IrOperation::PagedPageLen { .. } => vec![],
+            IrOperation::PagedPage { paged, index } => vec![$value(paged), $value(index)],
             IrOperation::SegmentSlice { segments, index } => vec![$value(segments), $value(index)],
             IrOperation::BufferMeasure { buffer } | IrOperation::SliceFromBuffer { buffer } => {
                 vec![$value(buffer)]
