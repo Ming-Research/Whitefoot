@@ -1277,7 +1277,7 @@ impl<'unit> Checker<'_, 'unit> {
                 effects.add_write(path);
             }
         }
-        let (binding, path) = self
+        let (binding, path, proof_base) = self
             .types
             .declarations
             .explicit_container_path(&place.expression, node)?;
@@ -1290,6 +1290,7 @@ impl<'unit> Checker<'_, 'unit> {
                 root: crate::semantic::places::PlaceRoot::Binding(binding),
                 path,
                 ty: place.ty,
+                proof_base,
             }),
             effects,
             unsupported: None,

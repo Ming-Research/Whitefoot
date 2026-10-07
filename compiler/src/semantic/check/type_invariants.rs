@@ -520,6 +520,7 @@ impl<'unit> Checker<'_, 'unit> {
                 value,
                 None,
                 bindings,
+                &self.body.rebound_parameters,
             )?);
         }
         let invariants = templates

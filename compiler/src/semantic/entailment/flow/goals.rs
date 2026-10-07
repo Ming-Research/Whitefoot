@@ -306,6 +306,7 @@ impl Input<'_, '_> {
                     root: root.root,
                     path: prefix.to_vec(),
                     ty: index.base_type,
+                    proof_base: root.proof_base.clone(),
                 };
                 let row = match base.ty {
                     CheckedType::Array { element, length } => {
@@ -482,17 +483,29 @@ impl Input<'_, '_> {
         }
     }
 
+    /// The Goal datum of one storage place, identified by its [ENT-2] proof
+    /// path: through the exact description its reference variable has
+    /// there, as an L0 term over the same place is.
     pub(super) fn goal_container_place(
         &self,
         root: &CheckedContainerRoot,
     ) -> Option<GoalExpression> {
-        Some(match root.root {
-            PlaceRoot::Binding(binding) => {
-                goal_binding_place(binding, root.goal_projections(), root.ty)
-            }
+        let (base, mut projections) = match &root.proof_base {
+            Some(base) => (
+                base.root,
+                base.path
+                    .iter()
+                    .map(goal_projection_of_step)
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            None => (root.root, Vec::new()),
+        };
+        projections.extend(root.goal_projections());
+        Some(match base {
+            PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, root.ty),
             PlaceRoot::Constant(id) => GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration: self.context.constant_declaration(id)?,
-                projections: root.goal_projections(),
+                projections,
                 ty: root.ty,
             }),
         })

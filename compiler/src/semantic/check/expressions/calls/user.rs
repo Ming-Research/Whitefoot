@@ -447,6 +447,7 @@ impl<'unit> Checker<'_, 'unit> {
                     _ => None,
                 },
                 bindings,
+                &self.body.rebound_parameters,
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
             argument_atoms.push(atom);
@@ -1149,7 +1150,14 @@ impl<'unit> TypeContext<'unit> {
         argument: &super::super::super::TypedExpression,
         passed_place: Option<&ResolvedPlace>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
+        rebound_parameters: &std::collections::HashSet<BindingId>,
     ) -> Result<GoalExpression, CheckStop> {
+        // [ENT-2] a resolved referent identifies the actual only where it is
+        // an exact description; otherwise the actual keeps the identity of
+        // the reference variable that names it.
+        let passed_place = passed_place.filter(|place| {
+            super::super::super::references::is_exact_description(place, rebound_parameters)
+        });
         if expected_mode == CheckedMode::Range {
             // [REF-4, MSR-1] a range reference's one measure is `len`, equal
             // to `hi - lo`, and that is no measure of the storage the range
@@ -1176,7 +1184,7 @@ impl<'unit> TypeContext<'unit> {
                         ty: expected_type,
                     })
                 }
-                _ => match passed_place.filter(|place| !place.has_descendant()) {
+                _ => match passed_place {
                     Some(place) => self.goal_referent_image(place, expected_type, atom)?,
                     None => GoalExpression::Datum(GoalDatum::EvaluatedValue {
                         function: caller,
@@ -1192,7 +1200,7 @@ impl<'unit> TypeContext<'unit> {
             });
         }
         if expected_mode != CheckedMode::Own {
-            if let Some(place) = passed_place.filter(|place| !place.has_descendant()) {
+            if let Some(place) = passed_place {
                 return self.goal_referent_image(place, expected_type, atom);
             }
             // FN-1's candidate protects every mutable origin a returned
@@ -1224,7 +1232,8 @@ impl<'unit> TypeContext<'unit> {
                     ty: expected_type,
                 }));
             }
-            let (image, _) = self.call_goal_place_inner(check_context, place, bindings)?;
+            let (image, _) =
+                self.call_goal_place_inner(check_context, place, bindings, rebound_parameters)?;
             if image.ty() != expected_type {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
@@ -1273,15 +1282,7 @@ impl<'unit> TypeContext<'unit> {
                     element: root.element(),
                     constant: root.type_constant(),
                 },
-                self.goal_referent_image(
-                    &ResolvedPlace {
-                        atomic_aliases: Vec::new(),
-                        root: root.root,
-                        path: root.place_path(),
-                    },
-                    root.ty,
-                    atom,
-                )?,
+                self.goal_referent_image(&root.proof_place(), root.ty, atom)?,
             )),
             CheckedExpression::RangeMeasure { measure, root } => Some((
                 GoalOperation::ContainerMeasure {
@@ -1322,7 +1323,8 @@ impl<'unit> TypeContext<'unit> {
                 arguments: vec![measured],
             });
         }
-        let (image, holder_pending) = self.call_goal_place_inner(check_context, place, bindings)?;
+        let (image, holder_pending) =
+            self.call_goal_place_inner(check_context, place, bindings, rebound_parameters)?;
         if holder_pending || image.ty() != expected_type {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1400,6 +1402,7 @@ impl<'unit> TypeContext<'unit> {
         check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
+        rebound_parameters: &std::collections::HashSet<BindingId>,
     ) -> Result<(GoalExpression, bool), CheckStop> {
         let pbase = self
             .declarations
@@ -1421,14 +1424,21 @@ impl<'unit> TypeContext<'unit> {
                     if let Some(reference) = &local.reference {
                         (
                             match reference.paths.as_slice() {
-                                [path] if !path.has_descendant() => {
+                                [path]
+                                    if super::super::super::references::is_exact_description(
+                                        path,
+                                        rebound_parameters,
+                                    ) =>
+                                {
                                     self.goal_referent_image(path, local.ty, place)?
                                 }
-                                // [REF-1] a joined reference still denotes
-                                // one selected referent, but no member of its
-                                // possible-target set is its unconditional
-                                // value. Keep the reference's identity so
-                                // proof kills can resolve every candidate.
+                                // [REF-1, ENT-2] a joined reference still
+                                // denotes one selected referent, but no member
+                                // of its possible-target set is its
+                                // unconditional value, and a description that
+                                // is not exact identifies no one place. Keep
+                                // the reference's identity so proof kills can
+                                // resolve every candidate.
                                 _ => GoalExpression::Datum(GoalDatum::Place {
                                     root: local.binding,
                                     projections: Vec::new(),

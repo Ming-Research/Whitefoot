@@ -1094,6 +1094,11 @@ impl<'unit> Checker<'_, 'unit> {
         };
         let (mut path, ty, mut carried) =
             self.resolve_storage_path(context, prefix, root_type, bindings, loop_depth, true)?;
+        // [ENT-2] a place written through a reference variable whose
+        // description is exact here is identified by that description.
+        let proof_base = root_binding
+            .as_ref()
+            .and_then(|local| self.body.exact_description(local));
         let ty = match (last, ty) {
             (Some(last), CheckedType::Segments { element })
                 if self.segment_selection(last)?.is_some() =>
@@ -1102,7 +1107,12 @@ impl<'unit> Checker<'_, 'unit> {
                     context,
                     carrier,
                     last,
-                    CheckedContainerRoot { root, path, ty },
+                    CheckedContainerRoot {
+                        root,
+                        path,
+                        ty,
+                        proof_base,
+                    },
                     element,
                     carried,
                     root_binding.as_ref(),
@@ -1174,7 +1184,12 @@ impl<'unit> Checker<'_, 'unit> {
         })?;
         let expression = CheckedExpression::BorrowAddressed {
             carrier: self.types.declarations.tree.path(carrier)?.clone(),
-            root: CheckedContainerRoot { root, path, ty },
+            root: CheckedContainerRoot {
+                root,
+                path,
+                ty,
+                proof_base,
+            },
             writable,
             write_places: places.clone(),
         };
@@ -1566,7 +1581,12 @@ impl<'unit> Checker<'_, 'unit> {
                     vec![base]
                 };
             (
-                CheckedRangeSource::Storage(CheckedContainerRoot { root, path, ty }),
+                CheckedRangeSource::Storage(CheckedContainerRoot {
+                    root,
+                    path,
+                    ty,
+                    proof_base: root_binding.and_then(|local| self.body.exact_description(local)),
+                }),
                 bases,
                 element,
             )
@@ -1836,7 +1856,50 @@ impl<'unit> Checker<'_, 'unit> {
     }
 }
 
+/// [ENT-2] whether one resolved path may stand as the proof path of every
+/// place written through a reference variable that names it: an exact path
+/// [`ResolvedPlace::is_exact_path`] starting at a local variable, a named
+/// const, an atomic statement's state, or a reference parameter no `set` of
+/// the function rebinds.
+///
+/// A rebound parameter's own binding stands both for the storage it received
+/// and for whatever it names after a rebinding, and its spelling `p^` is
+/// identified by that binding; a description rooted at it would give the
+/// received storage the term a later `p^` forms for another one.
+pub(super) fn is_exact_description(
+    path: &ResolvedPlace,
+    rebound_parameters: &std::collections::HashSet<BindingId>,
+) -> bool {
+    path.is_exact_path()
+        && match path.root {
+            PlaceRoot::Constant(_) => true,
+            PlaceRoot::Binding(root) => !rebound_parameters.contains(&root),
+        }
+}
+
 impl BodyChecker {
+    /// The exact description `local` has at this point [REF-1, ENT-2], the
+    /// proof base of every place written through it: the one path of a `&T`
+    /// reference variable, when that path is exact. A reference parameter
+    /// that names itself needs none, its spelling being that path already.
+    pub(super) fn exact_description(&self, local: &LocalBinding) -> Option<ResolvedPlace> {
+        let reference = local.reference.as_ref()?;
+        let [path] = reference.paths.as_slice() else {
+            return None;
+        };
+        let itself = path.root == PlaceRoot::Binding(local.binding) && path.path.is_empty();
+        (reference.kind == ReferenceKind::Single
+            && !itself
+            && is_exact_description(path, &self.rebound_parameters))
+        .then(|| ResolvedPlace {
+            // A spelled place carries no SHARE-2 aliases either; the
+            // aliases only widen kills, which resolve the root again.
+            atomic_aliases: Vec::new(),
+            root: path.root,
+            path: path.path.clone(),
+        })
+    }
+
     /// Retains the structural walk's already-resolved [REF-1] paths without
     /// interpreting their roots again. Recording at formation and rebinding
     /// sites also retains origins of invalidated and out-of-scope holders;
@@ -1877,6 +1940,37 @@ impl BodyChecker {
 }
 
 impl<'unit> DeclarationInventory<'unit> {
+    /// [ENT-2, REF-1] the reference parameters some `set` of this function
+    /// rebinds, reachable or not: a syntactic scan of every `set` whose
+    /// target is the bare parameter name.
+    pub(super) fn rebound_reference_parameters(
+        &self,
+        check_context: &CheckContext<'_>,
+        function: NodeId,
+        parameters: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<std::collections::HashSet<BindingId>, CheckStop> {
+        let mut rebound = std::collections::HashSet::new();
+        for set in self.tree.descendants_with(function, Production::SetStmt)? {
+            let [target] = self.tree.children_with(set, Production::Place)?[..] else {
+                return Err(SemanticCompilerFailure::InvalidCanonicalTree.into());
+            };
+            if !self
+                .tree
+                .children_with(target, Production::Psuffix)?
+                .is_empty()
+            {
+                continue;
+            }
+            if let Some(declaration) = self.complete_binding_target(check_context, target)?
+                && let Some(local) = parameters.get(&declaration)
+                && local.reference.is_some()
+            {
+                rebound.insert(local.binding);
+            }
+        }
+        Ok(rebound)
+    }
+
     /// [GRAM-3] the parameter kind follows its written prefix, independently
     /// of type substitution: `T`, `&T`, or `&[T]`.
     pub(super) fn parse_parameter_mode(&self, node: NodeId) -> Result<CheckedMode, CheckStop> {

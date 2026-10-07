@@ -1,0 +1,29 @@
+fn need(x: &u64) -> result: u64 reads(x) contract {
+  requires x^ != 0_u64;
+} {
+  doc "Divides ten by the value x names.";
+  let v = 10_u64 / x^;
+  return v;
+}
+
+fn pick(a: &u64, b: &u64) -> result: u64 reads(b) {
+  doc "After set q = &b^, q's description is exactly b's cell, so the guard read through q names the place need's requirement is instantiated at.";
+  let q = &a^;
+  set q = &b^;
+  if q^ != 0_u64 {
+    let r = need(x: b);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "b holds five, so the guarded call returns two.";
+  let a = 0_u64;
+  let b = 5_u64;
+  let r = pick(a: &a, b: &b);
+  if r == 2_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

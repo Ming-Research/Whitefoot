@@ -1607,6 +1607,10 @@ pub(crate) struct CheckedBufferRoot {
     pub(crate) path: Vec<CheckedPlaceStep>,
     pub(crate) element: CheckedElement,
     pub(crate) element_type: CheckedType,
+    /// The [ENT-2] proof base where `binding` is a reference variable whose
+    /// description is exact at this occurrence; see
+    /// [`CheckedContainerRoot::proof_base`].
+    pub(crate) proof_base: Option<super::places::ResolvedPlace>,
 }
 
 impl CheckedBufferRoot {
@@ -1614,6 +1618,37 @@ impl CheckedBufferRoot {
     pub(crate) fn place_path(&self) -> Vec<super::places::PlaceStep> {
         self.path.iter().map(CheckedPlaceStep::place_step).collect()
     }
+
+    /// The [ENT-2] proof path of this run: the exact description its
+    /// reference variable has here followed by the written steps, or the
+    /// written place.
+    pub(crate) fn proof_place(&self) -> super::places::ResolvedPlace {
+        proof_place_below(
+            self.proof_base.as_ref(),
+            super::places::PlaceRoot::Binding(self.binding),
+            self.place_path(),
+        )
+    }
+}
+
+/// [ENT-2] a place written below `root` with `steps`, identified through the
+/// exact description `base` its reference variable has at that occurrence,
+/// or by its written root when there is none.
+fn proof_place_below(
+    base: Option<&super::places::ResolvedPlace>,
+    root: super::places::PlaceRoot,
+    steps: Vec<super::places::PlaceStep>,
+) -> super::places::ResolvedPlace {
+    let mut place = match base {
+        Some(base) => base.clone(),
+        None => super::places::ResolvedPlace {
+            atomic_aliases: Vec::new(),
+            root,
+            path: Vec::new(),
+        },
+    };
+    place.path.extend(steps);
+    place
 }
 
 /// One range reference's own root [REF-4].
@@ -1836,6 +1871,12 @@ pub(crate) struct CheckedContainerRoot {
     pub(crate) path: Vec<CheckedPlaceStep>,
     /// The type selected by the complete path.
     pub(crate) ty: CheckedType,
+    /// [ENT-2] where `root` is a reference variable whose description is
+    /// exact at this occurrence [REF-1], that description: the place's proof
+    /// path is it followed by `path`, so the term is the one every other
+    /// spelling of that storage forms. `None` keeps the written root. Only
+    /// proof identity reads it; addressing and effects read `root`.
+    pub(crate) proof_base: Option<super::places::ResolvedPlace>,
 }
 
 /// One step below a storage place's root [REF-1]: a field selection, one
@@ -1881,6 +1922,11 @@ impl CheckedContainerRoot {
     /// The exact storage projection consumed by [OWN-7] and [ENT-5].
     pub(crate) fn place_path(&self) -> Vec<super::places::PlaceStep> {
         self.path.iter().map(CheckedPlaceStep::place_step).collect()
+    }
+
+    /// The [ENT-2] proof path of this place [`Self::proof_base`].
+    pub(crate) fn proof_place(&self) -> super::places::ResolvedPlace {
+        proof_place_below(self.proof_base.as_ref(), self.root, self.place_path())
     }
 
     /// Offset evaluations are children of the place, including when its
@@ -2377,6 +2423,10 @@ pub(crate) enum CheckedExpression {
         carrier: NodePath,
         binding: BindingId,
         ty: CheckedType,
+        /// [ENT-2] the holder's exact description at this occurrence, which
+        /// is the referent's proof path; `None` keeps the spelling through
+        /// `binding` [`CheckedContainerRoot::proof_base`].
+        proof: Option<super::places::ResolvedPlace>,
     },
     ConstructStruct {
         carrier: NodePath,

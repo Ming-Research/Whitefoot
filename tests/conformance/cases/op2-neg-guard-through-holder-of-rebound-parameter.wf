@@ -1,0 +1,21 @@
+fn probe(p: &u64) -> result: u64 reads(p) {
+  doc "saved names the caller's cell and p is rebound to zero. A description rooted at a rebound parameter is not exact, so saved^ and p^ stay distinct terms and the guard on saved^ does not prove p^ nonzero.";
+  let saved = &p^;
+  let zero = 0_u64;
+  set p = &zero;
+  if saved^ != 0_u64 {
+    let r = 10_u64 / p^;
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The caller's cell is nonzero and the divisor is the local zero.";
+  let five = 5_u64;
+  let r = probe(p: &five);
+  if r == 2_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
