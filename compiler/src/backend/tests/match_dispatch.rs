@@ -103,7 +103,10 @@ fn push_frame(code: &Box<Slots<FrameOp>>, op: FrameOp) -> r: unit writes(code) {
   return unit;
 }
 
-enum Probe { Access(); Halt(); }
+enum Probe {
+  Access();
+  Halt();
+}
 
 fn unbounded(op: &Probe, stack: &Box<Array<u64>>, fp: u64, n: u64) -> r: u64 reads(op), writes(stack.inner) {
   match op^ {
@@ -120,7 +123,9 @@ fn unbounded(op: &Probe, stack: &Box<Array<u64>>, fp: u64, n: u64) -> r: u64 rea
       }
       return 0_u64;
     }
-    Halt() => { return 0_u64; }
+    Halt() => {
+      return 0_u64;
+    }
   }
 }
 
