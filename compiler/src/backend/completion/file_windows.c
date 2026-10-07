@@ -779,7 +779,10 @@ static wf_file_result wf_file_windows_namespace(const wf_file_request *request) 
         FILE_RENAME_INFO *info = (FILE_RENAME_INFO *)(void *)storage.bytes;
         memset(&storage, 0, sizeof(storage));
         info->Flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
-        info->RootDirectory = root;
+        /* A bare name with no root renames within the file's own directory,
+         * which is root: FILE_RENAME_INFO takes RootDirectory only for a
+         * move to another directory. */
+        info->RootDirectory = NULL;
         info->FileNameLength = (DWORD)bytes;
         memcpy(info->FileName, target, bytes);
         if (SetFileInformationByHandle(file, FileRenameInfoEx, info, (DWORD)(sizeof(*info) + bytes)))

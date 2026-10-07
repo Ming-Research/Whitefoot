@@ -708,6 +708,13 @@ static void append_probe(wf_inputs *inputs) {
     }
 }
 
+/* A namespace operation's result, its error kind printed before the check
+ * fails so that a host's refusal names itself. */
+static void check_namespace(wf_close_result *result, const char *what) {
+    if (result->tag != 0) fprintf(stderr, "%s: error kind %d\n", what, (int)result->err.error.tag);
+    assert(result->tag == 0);
+}
+
 /* Names change independently of the lifetime of already-open files. */
 static void replacement_probe(wf_inputs *inputs) {
 #if defined(_WIN32)
@@ -746,7 +753,7 @@ static void replacement_probe(wf_inputs *inputs) {
     assert(result.tag == 1 && result.err.error.tag == WF_IO_INVALID_PATH);
     wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
                          &fresh, 0, fresh.length, &old, 0, old.length);
-    check_close(&result);
+    check_namespace(&result, "rename_file");
     wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
                          &fresh, 0, fresh.length, &old, 0, old.length);
     assert(result.tag == 1 && result.err.error.tag == WF_IO_NOT_FOUND);
@@ -762,7 +769,7 @@ static void replacement_probe(wf_inputs *inputs) {
     wf__body_remove_file(&result, &inputs->handles, &inputs->cwd_write, &old, 0, 0);
     assert(result.tag == 1 && result.err.error.tag == WF_IO_INVALID_PATH);
     wf__body_remove_file(&result, &inputs->handles, &inputs->cwd_write, &old, 0, old.length);
-    check_close(&result);
+    check_namespace(&result, "remove_file");
     wf__body_remove_file(&result, &inputs->handles, &inputs->cwd_write, &old, 0, old.length);
     assert(result.tag == 1 && result.err.error.tag == WF_IO_NOT_FOUND);
     source.data = (void *)"y";
@@ -771,7 +778,7 @@ static void replacement_probe(wf_inputs *inputs) {
     wf__body_read_at(&read, &inputs->handles, &current.ok.value, &destination, 0, 0, sizeof bytes);
     assert(read.tag == 0 && read.ok.value == 2 && memcmp(bytes, "by", 2) == 0);
     wf__body_sync_directory(&result, &inputs->handles, &inputs->cwd_write);
-    check_close(&result);
+    check_namespace(&result, "sync_directory");
     wf__body_close_read(&result, &inputs->handles, &current.ok.value); check_close(&result);
     wf__body_close_read(&result, &inputs->handles, &reader.ok.value); check_close(&result);
     wf__body_close_write(&result, &inputs->handles, &writer.ok.value); check_close(&result);
