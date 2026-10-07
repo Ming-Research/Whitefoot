@@ -580,3 +580,113 @@ for three reasons:
 The hosted runners agree that A gains and disagree on B, within their
 spreads. B's implementation stays on the branch
 `claude/stage3-cursor-instead`.
+
+## Stage 3: x86-64 register pressure
+
+With the code cursor, x86-64's `I32Add` runs 18 instructions. Two kinds of
+them exist because the parts have more values than registers. Every arm
+that reads a frame slot first reloads a value kept in the enclosing frame
+(`addq 0xc8(%r11)`). Every arm also forms the handler table's address
+(`leaq table(%rip)`), since no register is left to pass it. The split keeps
+4 values in the frame, choosing first those that the fewest arms read,
+regardless of how often those arms run (compiler/match-dispatch-lowering).
+
+**Question.** Which values are kept in the frame? Which of them do the hot
+arms read on every dispatch? Would keeping a different set in registers
+remove those reloads, or leave a register for the table's address?
+
+**First step: attribution, no compiler change.** Emit v2h's module on
+x86-64 with the gate's pinned LLVM at this branch. From it:
+- list the parts' parameters and the values kept in the frame, with the
+  number of arms that read each;
+- identify the value the hot arms reload;
+- count the hot arms' instructions spent on reloads and on forming the
+  table's address.
+
+**Rule for the next step, fixed now.**
+- **The hot arms reload a kept value on every dispatch:** build a
+  candidate that changes which values the frame keeps. Judge it by CoreMark
+  on the 14900K against its base, with a twin of the base as the noise
+  control, and adopt it if the median rises at least 2%.
+- **Otherwise:** record the attribution and close this step.
+
+**Attribution**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-x86-64-register-pressure)).
+The hot arms reload a kept value on every dispatch: the stack's element
+address, which 129 of the 318 arms read. Meanwhile three values that at
+most two arms read hold registers. So the rule's first branch applies.
+Both causes are defects of the general lowering, not of this program:
+- **Reads through replaced projections are not counted.** The spill order
+  counts the arms that name a value, while an arm reaches a box the loop
+  keeps through its own projection, which emission replaces by the hoisted
+  one.
+- **An unread address stays a parameter.** With the code cursor, the run's
+  address remains a part parameter although no part reads it.
+
+**The candidate.** Count an arm as reading a value when it reads any
+projection that emission replaces by that value, or hands such a value to
+a callee through a part's pin slot. Leave out of the parts' parameters a
+hoisted value that no instruction emitted in a part reads.
+
+**Prediction:** on x86-64 the stack's element address moves to a
+register, removing the reload from every arm that reads a frame slot. The
+register freed by the code's element address keeps one more value out of
+the frame, or passes the handler table's address.
+
+**Criterion, fixed before measuring**, extended by the owner's direction
+that this lowering serves Lua and other interpreters, not this one:
+- **Measurement on two interpreters, the 14900K deciding:**
+  - the stage-3 wasm interpreter on CoreMark 2K;
+  - Halo's Lua interpreter on its `fib` and `loop` kernels, built from
+    Halo-wf at a commit pinned to a release built with LLVM 22.
+- **Each comparison:** the branch's compiler against its base, with a
+  twin of the base, 7 interleaved launches, medians.
+- **Adoption:** if CoreMark's median rises at least 2% and no Halo kernel
+  falls more than 2%.
+- **The code cursor itself** is measured on the same Halo kernels against
+  its own base, as a check that it serves another interpreter.
+
+**Outcome**
+([results](../../experiments/match-dispatch/RESULTS.md#the-register-pressure-candidate-and-the-code-cursor-on-halo)).
+- **The candidate is not adopted under the rule.** CoreMark rose 1.3% on
+  the 14900K, short of 2%. No Halo kernel moved.
+- **The code cursor slows Halo.** Halo's `loop` is 5.7% slower with the
+  cursor, in every pair, and its `fib` about 1% slower, in 6 of 7 pairs,
+  against a twin within 0.2%. The cursor, adopted on the wasm interpreter
+  alone, does not serve Halo as built.
+
+**Edges by their step.** An edge back to the header moves the received
+address only where its index is the received index moved by a constant,
+`pc + k`, which the host folds to one addition. Every other edge forms the
+element's address from the run, as the header did before the cursor. The
+parts then keep the run's address wherever an arm has such an edge.
+
+**Prediction:**
+- **Halo:** its edges take their index from helpers, so they form the
+  address from the run as before the cursor, and its times return to the
+  pre-cursor ones.
+- **The wasm interpreter:** its sequential arms keep the moved address,
+  and its branch arms form theirs from the run, one subtraction fewer
+  than with the cursor. CoreMark stays at the cursor's score.
+
+**Criterion, fixed before measuring**, on the 14900K against a twin, 7
+interleaved launches:
+- **Adopted** if neither Halo kernel is more than 1% slower than before
+  the cursor (`e1708490c`), and CoreMark is no more than 2% below the
+  cursor's score (`3a260446c`).
+- **Otherwise** the cursor's adoption is reopened.
+
+**Outcome**
+([results](../../experiments/match-dispatch/RESULTS.md#edges-by-their-step)).
+Edges by their step meet the criterion:
+- **Halo:** `loop` matches its time before the cursor (1.000) and `fib`
+  is within 0.5% (1.005, slower in every pair, within the 1% allowed).
+- **CoreMark:** 2.4% above the cursor, above it in every pair, against a
+  twin at 1.000.
+
+So the cursor stays, with this rule for its edges. The measured branch
+also carries the register-pressure candidate. Alone, that candidate gave
+1.3% against its 2% rule; in this branch the two together give the 2.4%.
+It is kept as a correction rather than adopted as a gain: the recorded
+spill order spills the values the fewest arms read first, and the
+implementation had missed reads through projections and pins.

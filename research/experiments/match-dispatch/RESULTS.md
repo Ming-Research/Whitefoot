@@ -812,6 +812,126 @@ A's compiler at `82cba945e`, equal to `7f86697b1`'s):
 The twin sits within 1% of the base and A 13.3% above it. The macos-15
 job of the same run spread by 30-51% and is not shown.
 
+## Stage 3: x86-64 register pressure
+
+The question and the rule are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-x86-64-register-pressure).
+The branch `claude/stage3-x86-regs` at `2eccb0f94`, whose compiler equals
+the code cursor's `f1db34716`, emitted v2h's x86-64 module with clang
+22.1.8
+([run 37548771908](https://github.com/Ming-Research/Whitefoot/actions/runs/37548771908),
+artifact `stage3-x86-ir`). The loop splits into 318 arms and takes all 11
+integer registers. The arms counted below use the value in an emitted
+instruction other than loading it from the frame, storing it into a
+part's pin slot, passing it on unchanged, or joining it.
+
+| part parameter | the `run` parameter it comes from | arms using it | where the parts keep it |
+|---|---|---:|---|
+| `fp`, the frame base | `fp` | 304 | register |
+| the code's length | `code` | 254 | register |
+| the stack's elements | `stack` | 129 | **frame** |
+| `acc` | `acc` | 102 | register |
+| the memory's elements | `mem` | 40 | register |
+| the constants' reference | `consts` | 2 | register |
+| the globals' elements | `globals` | 2 | register |
+| the function table's elements | `funcs` | 2 | frame |
+| the branch table's elements | `brtab` | 2 | frame |
+| the indirect-call table's elements | `table` | 1 | frame |
+| the code's elements | `code` | 0 | register |
+
+The parts also take `pc`, the matched element's address, the result's
+destination and the frame. Every arm that reads a frame slot reloads the
+stack's element address (`add 0xc8(%r11), %r10`). The split keeps that
+value in the frame although 129 arms read it, while three values that at
+most two arms read hold registers, one of them read by none. Two causes:
+- **The spill order misses reads through replaced projections.** It counts
+  the arms whose instructions name a value. An arm reads the stack's box
+  through its own projection, which emission replaces by the one computed
+  before the loop, so the count misses those reads.
+- **The cursor leaves the code's element address a parameter.** Since the
+  code cursor, the header receives the element's address instead of
+  forming it, so no part reads the run's address. It still counts as read
+  by every arm, because the header's indexing instruction names it.
+
+### The register-pressure candidate, and the code cursor on Halo
+
+The register-pressure candidate counts reads through replaced projections
+and pins, and drops parameters no part reads. Two runs measured it on the
+14900K with clang 22.1.8, at the branch's `5c1436474`, whose compiler
+equals `89dfccb01`'s. Each compared three compilers, with a twin of the
+base and 7 interleaved launches:
+- **step:** main before the code cursor, `e1708490c`;
+- **base:** main with the code cursor, `3a260446c`;
+- **head:** the candidate.
+
+On the wasm interpreter the candidate's split keeps 3 values in the frame,
+not 4: the code's element address is no longer a parameter.
+CoreMark 2K scores, higher is better
+([run 37551028726](https://github.com/Ming-Research/Whitefoot/actions/runs/37551028726)):
+
+| host | before the cursor | cursor | twin | candidate | candidate / cursor | cursor / before |
+|---|---:|---:|---:|---:|---|---|
+| 14900K | 4705.9 (0.5%) | 5305.0 (0.8%) | 5291.0 (1.8%) | 5376.3 (4.2%) | 1.013; 5 of 7, 0.977-1.022 | 1.127; 7 of 7 |
+| hosted EPYC 7763 | 1888.6 (8.2%) | 1938.0 (3.9%) | 1924.9 (6.3%) | 2036.7 (6.7%) | 1.051; 7 of 7, 1.020-1.101 | 1.026; 6 of 7 |
+
+Halo's Lua interpreter, Halo-wf at `acb39ad7f`, built with full LTO.
+`halo.vm.run` splits into 73 arms on 11 integer registers under all three
+compilers, keeps no value in the frame, and with the cursor its ledger
+adds "carries the matched Cell's address between the parts". Wall time
+per launch in seconds, lower is better; `fib` at N = 35 instead of the
+kernel's 30
+([run 37551026003](https://github.com/Ming-Research/Whitefoot/actions/runs/37551026003)):
+
+| kernel | before the cursor | cursor | twin | candidate | candidate / cursor | cursor / before |
+|---|---:|---:|---:|---:|---|---|
+| `fib` | 1.1108 (1.1%) | 1.1206 (2.7%) | 1.1228 (0.8%) | 1.1224 (2.2%) | 1.002 | 1.009; slower in 6 of 7 |
+| `loop` | 0.4373 (0.5%) | 0.4620 (0.5%) | 0.4626 (0.7%) | 0.4622 (1.2%) | 1.000 | **1.057; slower in 7 of 7, 1.054-1.061** |
+
+The twin sits within 0.2% of the cursor's times. The code cursor makes
+Halo's `loop` 5.7% slower, and its `fib` about 1% slower. Halo's arms take
+the next index from a helper's result, which the lowering cannot see as
+`pc` plus a constant. Every such edge therefore moves the received address
+by `next - pc` elements: a subtraction more than forming the address from
+the run, as the header did before, with nothing saved.
+
+### Edges by their step
+
+The branch at `b7db6b95f` moves the received address only where an edge's
+index is the received one plus a constant, seen through joins whose every
+incoming value is the index. Every other edge forms the address from the
+run, and the parts keep the run's address where an arm has such an edge.
+It also carries the register-pressure candidate above. The same three
+compilers were compared, with a twin of the cursor's
+([runs 37555992672](https://github.com/Ming-Research/Whitefoot/actions/runs/37555992672)
+for CoreMark and
+[37555989802](https://github.com/Ming-Research/Whitefoot/actions/runs/37555989802)
+for Halo). The wasm interpreter keeps 4 values in the frame again: its
+branch arms read the run's address.
+
+CoreMark 2K scores, higher is better:
+
+| host | before the cursor | cursor | twin | branch | branch / cursor | branch / before |
+|---|---:|---:|---:|---:|---|---|
+| 14900K | 4683.8 (1.2%) | 5263.2 (1.3%) | 5263.2 (1.6%) | 5390.8 (1.1%) | 1.024; 7 of 7, 1.016-1.035 | 1.151; 7 of 7 |
+| hosted EPYC 7763 | 1879.7 (6.1%) | 1930.5 (3.6%) | 1926.8 (5.9%) | 2059.7 (6.2%) | 1.067; 7 of 7 | 1.096; 7 of 7 |
+
+Halo, wall time per launch in seconds, lower is better:
+
+| kernel | before the cursor | cursor | twin | branch | branch / before | branch / cursor |
+|---|---:|---:|---:|---:|---|---|
+| `fib` | 1.1084 (0.5%) | 1.1223 (2.6%) | 1.1199 (0.4%) | 1.1137 (1.0%) | 1.005; slower in 7 of 7, 1.000-1.014 | 0.992 |
+| `loop` | 0.4367 (0.6%) | 0.4617 (1.2%) | 0.4614 (0.4%) | 0.4367 (0.5%) | 1.000; 0.994-1.004 | 0.946; faster in 7 of 7 |
+
+On the 14900K, `I32Add` runs 17 instructions. The reload of the stack's
+element address from the frame is gone: `lea (%rcx,%r15,8), %rbx` takes it
+from a register. A branch arm forms its target's address from the run
+(`shl`, `lea`, `add`), without the subtraction.
+
+An intermediate build without the joins (`885a0af31`; runs 37555134002
+and 37555131716) measured CoreMark 1.019 against the cursor and Halo's
+`loop` 1.000 and `fib` 1.000 against before the cursor. Its unit tests
+failed where an arm's `pc + 1` follows the join of an `if`.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

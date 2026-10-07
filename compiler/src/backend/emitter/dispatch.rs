@@ -343,7 +343,8 @@ struct LoopInvariants {
     /// Header instructions, by index, the enclosing function computes once.
     hoisted: Vec<usize>,
     hoisted_values: HashSet<IrValueId>,
-    /// The hoisted values the loop still reads, which the parts receive.
+    /// Hoisted candidates for the parts, before cursor selection removes
+    /// reads that only the enclosing function needs.
     passed: Vec<IrValueId>,
     /// Header parameters passed through unchanged that nothing in the loop
     /// reads once the hoisted work has left it.
@@ -418,15 +419,17 @@ enum Role {
 /// run of slots at an address the loop cannot change, and the arms read
 /// that element through its address. The parts then carry the address as
 /// well as the index: an edge into the header passes the address of the
-/// element its index selects, formed from the address the part received,
-/// and the header uses the address it receives instead of forming it from
-/// the index.
-#[derive(Clone, Copy)]
+/// element its index selects. A known constant step moves the received
+/// address; any other index forms an address from the run. The header uses
+/// the address it receives instead of forming it from the index.
+#[derive(Clone)]
 struct Cursor {
     /// The header value addressing the matched element.
     place: IrValueId,
     /// The header parameter that indexes it.
     index: IrValueId,
+    /// Values that are `index` plus a small constant number of elements.
+    steps: HashMap<IrValueId, u64>,
     /// The run's address.
     run: IrValueId,
     /// The header instruction that defines `place`.
@@ -611,13 +614,24 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         let cursor = self.element_cursor(&header, &parameters)?;
-        if let Some(cursor) = cursor {
+        if let Some(cursor) = &cursor {
             for (value, _, role) in &mut parameters {
                 if *value == cursor.place {
                     *role = Role::Cursor;
                 }
             }
         }
+        let readers = self.arms_reading(&plan, &invariant, cursor.as_ref());
+        // This includes the run address in each arm whose cursor edge
+        // forms an address from the run rather than taking a known step.
+        let mut part_reads: HashSet<IrValueId> = readers.keys().copied().collect();
+        // Every part's prelude stores these values, even when that part
+        // hands no pin to a callee. Keep them live without treating those
+        // unconditional stores as readers for the spill order.
+        part_reads.extend(invariant.pins.iter().map(|(_, canonical)| *canonical));
+        parameters.retain(|(value, _, role)| {
+            !matches!(role, Role::Hoisted | Role::Invariant) || part_reads.contains(value)
+        });
         let (convention, registers) = convention(self.target.triple());
         let mut scratch = References::default();
         let mut typed: Vec<(IrValueId, String)> = Vec::new();
@@ -645,8 +659,8 @@ impl FunctionEmitter<'_, '_> {
             types
         };
         // Past the registers, the values the loop cannot change go to the
-        // frame, the one the fewest arms read first; carried values and header
-        // values, which change on every dispatch, never do.
+        // frame, the one the fewest arms read first; changing carried values
+        // and header values never do.
         let mut spilled: HashSet<IrValueId> = HashSet::new();
         if ArgumentRegisters::demand(&types_without(&spilled))
             .is_ok_and(|demand| !registers.fits(demand))
@@ -657,7 +671,7 @@ impl FunctionEmitter<'_, '_> {
                     matches!(role, Role::Invariant | Role::Hoisted)
                         || (*role == Role::Carried && invariant.passed_through.contains(value))
                 })
-                .map(|(value, _, _)| (self.arms_reading(&plan, &header, *value), *value))
+                .map(|(value, _, _)| (readers.get(value).copied().unwrap_or(0), *value))
                 .collect();
             candidates.sort();
             for (_, value) in candidates {
@@ -883,7 +897,7 @@ impl FunctionEmitter<'_, '_> {
         let symbol = dispatch.symbol.clone();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
-        let cursor = dispatch.cursor;
+        let cursor = dispatch.cursor.clone();
         let header = self.block(target)?;
         if header.parameters().len() != arguments.len()
             || arguments
@@ -900,8 +914,8 @@ impl FunctionEmitter<'_, '_> {
             .zip(arguments.iter().copied())
             .collect();
         if !tail {
-            // The hoisted header values, computed once from the arguments
-            // this edge gives the header's parameters.
+            // All hoisted header values, including those only the entering
+            // cursor needs, computed once from this edge's arguments.
             let hoisted = self
                 .dispatch
                 .as_ref()
@@ -1000,7 +1014,7 @@ impl FunctionEmitter<'_, '_> {
         }
         self.emit_place_edge(target, arguments, drops)?;
         let cursor = match cursor {
-            Some(cursor) => Some(self.edge_cursor(cursor, &carried, tail)?),
+            Some(cursor) => Some(self.edge_cursor(&cursor, &carried, tail)?),
             None => None,
         };
         let list = self.dispatch_arguments(&carried, false, cursor.as_deref())?;
@@ -1162,7 +1176,7 @@ impl FunctionEmitter<'_, '_> {
         let carried_place = self
             .dispatch
             .as_ref()
-            .and_then(|dispatch| dispatch.cursor)
+            .and_then(|dispatch| dispatch.cursor.as_ref())
             .map(|cursor| cursor.instruction);
         for (index, instruction) in block.instructions().iter().enumerate() {
             if !hoisted.contains(&index) && Some(index) != carried_place {
@@ -1786,6 +1800,7 @@ impl FunctionEmitter<'_, '_> {
                 return Ok(Some(Cursor {
                     place: *result,
                     index: *offset,
+                    steps: self.index_steps(*offset),
                     run: *address,
                     instruction,
                     element: referent.ty(),
@@ -1798,13 +1813,12 @@ impl FunctionEmitter<'_, '_> {
 
     /// The matched element's address for the index an edge into the header
     /// gives it. Entering the loop, it is the run's element at that index.
-    /// On an edge back to the header, it is the address this part received
-    /// moved by the index's change, which the edge's own index bound keeps
-    /// inside the run and which the host folds to one addition when the
-    /// index changes by a constant.
+    /// An edge back to the header reuses the received address for the same
+    /// index, moves it for a known constant step, and otherwise forms the
+    /// address from the run just as the entering edge does.
     fn edge_cursor(
         &mut self,
-        cursor: Cursor,
+        cursor: &Cursor,
         carried: &[(IrValueId, IrValueId)],
         tail: bool,
     ) -> Result<String, BackendFailure> {
@@ -1813,56 +1827,197 @@ impl FunctionEmitter<'_, '_> {
             .find(|(parameter, _)| *parameter == cursor.index)
             .map(|(_, argument)| *argument)
             .ok_or(BackendFailure::InvalidIr)?;
-        if !tail {
-            return self.run_element_place(
-                cursor.run,
-                argument,
-                cursor.element,
-                cursor.target_domain,
-            );
+        if tail && let Some(step) = cursor.steps.get(&argument) {
+            if *step == 0 {
+                return Ok(self.value_name(cursor.place));
+            }
+            let moved = self.next_temporary()?;
+            let element = self.output.type_name(self.program, cursor.element)?;
+            let step = step.to_string();
+            let scaled = self.element_address_index(cursor.element, &step)?;
+            writeln!(
+                self.output,
+                "  %{moved} = getelementptr {element}, ptr {}, i64 {scaled}",
+                self.value_name(cursor.place)
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            return Ok(format!("%{moved}"));
         }
-        if argument == cursor.index {
-            return Ok(self.value_name(cursor.place));
-        }
-        let step = self.next_temporary()?;
-        let moved = self.next_temporary()?;
-        let element = self.output.type_name(self.program, cursor.element)?;
-        let scaled = self
-            .element_address_index(cursor.element, &format!("%{step}"))?
-            .to_owned();
-        writeln!(
-            self.output,
-            "  %{step} = sub i64 {}, {}\n  %{moved} = getelementptr {element}, ptr {}, i64 {scaled}",
-            self.value_name(argument),
-            self.value_name(cursor.index),
-            self.value_name(cursor.place)
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        Ok(format!("%{moved}"))
+        self.run_element_place(cursor.run, argument, cursor.element, cursor.target_domain)
     }
 
-    /// How many arms read a value: every arm when the header reads it.
-    fn arms_reading(&self, plan: &DispatchLoop, header: &IrBlock, value: IrValueId) -> usize {
-        let reads = |block: &IrBlock| {
-            block
-                .instructions()
-                .iter()
-                .any(|instruction| instruction.operands().contains(&value))
-                || block.terminator().operands().contains(&value)
-        };
-        if reads(header) {
-            return plan.arms.len();
-        }
-        plan.arms
+    /// Finds direct additions of a nonnegative integer constant at most
+    /// `u32::MAX` to the cursor index, in either operand order, including the
+    /// index itself at step zero and the joins whose every incoming value is
+    /// the index. With nonzero stride, the valid index is
+    /// below the signed address limit, so these additions cannot wrap u64;
+    /// zero stride uses address index zero. Larger constants keep the
+    /// run-based addressing path.
+    fn index_steps(&self, index: IrValueId) -> HashMap<IrValueId, u64> {
+        let definitions: HashMap<IrValueId, &crate::IrOperation> = self
+            .function
+            .blocks()
             .iter()
-            .filter(|(_, blocks)| {
-                self.function
-                    .blocks()
-                    .iter()
-                    .enumerate()
-                    .any(|(index, block)| blocks[index] && reads(block))
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result, operation, ..
+                } => Some((*result, operation)),
+                _ => None,
             })
-            .count()
+            .collect();
+        let constant = |value: &IrValueId| match definitions.get(value) {
+            Some(crate::IrOperation::Constant(crate::IrConstant::Integer { bits, .. }))
+                if *bits <= u64::from(u32::MAX) =>
+            {
+                Some(*bits)
+            }
+            _ => None,
+        };
+        // A block parameter whose every incoming value is the index, as at
+        // the join after an `if` in an arm, is the index; only a jump passes
+        // block arguments.
+        let blocks = self.function.blocks();
+        let mut incoming: HashMap<IrValueId, Vec<IrValueId>> = HashMap::new();
+        for block in blocks {
+            if let IrTerminator::Jump {
+                target, arguments, ..
+            } = block.terminator()
+                && let Some(target) = blocks.get(target.index())
+            {
+                for ((parameter, _), argument) in target.parameters().iter().zip(arguments) {
+                    incoming.entry(*parameter).or_default().push(*argument);
+                }
+            }
+        }
+        let mut same: HashSet<IrValueId> = HashSet::from([index]);
+        loop {
+            let joined: Vec<IrValueId> = incoming
+                .iter()
+                .filter(|(parameter, arguments)| {
+                    !same.contains(*parameter)
+                        && arguments.iter().all(|argument| same.contains(argument))
+                })
+                .map(|(parameter, _)| *parameter)
+                .collect();
+            if joined.is_empty() {
+                break;
+            }
+            same.extend(joined);
+        }
+        let mut steps: HashMap<IrValueId, u64> = same.iter().map(|value| (*value, 0)).collect();
+        for (result, operation) in &definitions {
+            let crate::IrOperation::Integer {
+                operation:
+                    crate::IrIntegerOperation::AddExact
+                    | crate::IrIntegerOperation::AddChecked
+                    | crate::IrIntegerOperation::AddDefined
+                    | crate::IrIntegerOperation::AddWrap,
+                arguments,
+                ..
+            } = operation
+            else {
+                continue;
+            };
+            let step = match arguments.as_slice() {
+                [left, right] if same.contains(left) => constant(right),
+                [left, right] if same.contains(right) => constant(left),
+                _ => None,
+            };
+            if let Some(step) = step {
+                steps.insert(*result, step);
+            }
+        }
+        steps
+    }
+
+    /// Counts each value's reading arms after projection and call-argument
+    /// replacement; a read in the emitted header counts as every arm.
+    /// Includes terminator operands (and thus carried edge arguments), but
+    /// excludes hoisted header work and the cursor's skipped instruction.
+    /// An unknown-step cursor edge reads the run to form the next address.
+    /// Pin prelude stores keep their canonical values live separately: only
+    /// an arm that hands the pin to a callee counts as a reader here.
+    fn arms_reading(
+        &self,
+        plan: &DispatchLoop,
+        invariant: &LoopInvariants,
+        cursor: Option<&Cursor>,
+    ) -> HashMap<IrValueId, usize> {
+        let canonical = |value: IrValueId| invariant.replaced.get(&value).copied().unwrap_or(value);
+        let pins: HashMap<IrValueId, IrValueId> = invariant.pins.iter().copied().collect();
+        let mut blocks_reading = vec![HashSet::new(); self.function.blocks().len()];
+        for (index, block) in self.function.blocks().iter().enumerate() {
+            let header = index == plan.header.index();
+            if !header && !plan.region[index] {
+                continue;
+            }
+            let reads = &mut blocks_reading[index];
+            for (position, instruction) in block.instructions().iter().enumerate() {
+                if header
+                    && (invariant.hoisted.contains(&position)
+                        || cursor.is_some_and(|cursor| cursor.instruction == position))
+                {
+                    continue;
+                }
+                if let IrInstruction::Define { result, .. } = instruction
+                    && let Some(replacement) = invariant.replaced.get(result)
+                {
+                    // emit_part_instruction emits only an alias of the
+                    // canonical projection, or nothing for its definition.
+                    if replacement != result {
+                        reads.insert(*replacement);
+                    }
+                    continue;
+                }
+                reads.extend(instruction.operands().into_iter().map(canonical));
+                if let IrInstruction::Define {
+                    operation: crate::IrOperation::Call { arguments, .. },
+                    ..
+                } = instruction
+                {
+                    reads.extend(arguments.iter().filter_map(|argument| {
+                        invariant
+                            .pin_arguments
+                            .get(argument)
+                            .and_then(|parameter| pins.get(parameter))
+                            .copied()
+                    }));
+                }
+            }
+            reads.extend(block.terminator().operands().into_iter().map(canonical));
+            if let Some(cursor) = cursor
+                && let IrTerminator::Jump {
+                    target, arguments, ..
+                } = block.terminator()
+                && *target == plan.header
+                && self.function.blocks()[plan.header.index()]
+                    .parameters()
+                    .iter()
+                    .zip(arguments)
+                    .any(|((parameter, _), argument)| {
+                        *parameter == cursor.index && !cursor.steps.contains_key(argument)
+                    })
+            {
+                reads.insert(canonical(cursor.run));
+            }
+        }
+        let mut readers = HashMap::new();
+        for (_, blocks) in &plan.arms {
+            let reads: HashSet<IrValueId> = blocks_reading
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| blocks[*index])
+                .flat_map(|(_, reads)| reads.iter().copied())
+                .collect();
+            for value in reads {
+                *readers.entry(value).or_default() += 1;
+            }
+        }
+        for value in &blocks_reading[plan.header.index()] {
+            readers.insert(*value, plan.arms.len());
+        }
+        readers
     }
 
     fn set_part(&mut self, part: Part) {

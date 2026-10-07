@@ -236,9 +236,10 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     let (convention, _) = host_convention();
     let verdict = verdict(&module, "wf_run");
     if !convention.is_empty() {
-        // Eight parameters: pc, acc, count, the code length and the box's
-        // referent hoisted out of the header, the cell's address, the
-        // handler table and the frame.
+        // Eight parameters, in order: pc, acc, count, the hoisted code
+        // length and box referent (the run), the cell's address, the handler
+        // table and the frame. Jnz's joined next index is not a known step,
+        // so its edge needs the run to form the next cell's address.
         assert!(
             verdict.starts_with(
                 "split: the loop over Op into 4 arms, taking 8 integer and 0 floating"
@@ -399,9 +400,9 @@ fn main() -> status: ExitStatus pure {
 fn the_matched_element_s_address_travels_between_the_parts() {
     // The header matches `code^.inner[pc]` and the arms read the operation
     // through its address, so the parts carry that address: the dispatch
-    // function no longer forms it from `pc`, and an arm moves the address it
-    // received by the change of `pc`. The run's result checks the entering
-    // address and every kind of move: by one, forward, backward and none.
+    // function no longer forms it from `pc`. A known step moves the received
+    // address; a jump forms its address from the run. The result checks the
+    // entering address, forward and backward jumps, and an in-place edge.
     let module = emit(CURSOR_INTERPRETER.as_bytes());
     if verdict(&module, "wf_run").starts_with("split") {
         assert!(
@@ -419,16 +420,161 @@ fn the_matched_element_s_address_travels_between_the_parts() {
                     && !line.contains("%wf.frame")),
             "the dispatch function receives the element's address instead of forming it: {dispatch}"
         );
-        for arm in [0, 1, 2] {
-            let arm = definition(&module, &format!("wf_run.arm.{arm}"));
-            assert!(
-                arm.contains(" = sub i64 ") && arm.contains(" = getelementptr %"),
-                "an arm moving `pc` moves the address it received: {arm}"
-            );
-        }
+        let add = definition(&module, "wf_run.arm.0");
+        let step = add
+            .lines()
+            .find(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1"))
+            .expect("Add moves the received address by one element");
+        let (_, operands) = step.split_once(", ptr ").expect("the cursor GEP's pointer");
+        let (place, _) = operands.split_once(',').expect("the cursor GEP's index");
+        assert!(
+            !add.contains("sub i64")
+                && add
+                    .lines()
+                    .next()
+                    .expect("the part's signature")
+                    .contains(&format!("ptr {place}")),
+            "Add moves a received address without subtracting indices: {add}"
+        );
+        let jump = definition(&module, "wf_run.arm.1");
+        let (_, jump_body) = jump
+            .split_once("  br label ")
+            .expect("the part's prelude ends");
+        let run = cursor_run(&module);
+        assert!(
+            !jump.contains("sub i64")
+                && jump_body.lines().any(|line| {
+                    line.contains(" = getelementptr inbounds {")
+                        && line.contains(&format!(", ptr {run},"))
+                }),
+            "Jump forms the target address from the run after the prelude: {jump}"
+        );
+        let rep = definition(&module, "wf_run.arm.2");
+        assert!(
+            rep.lines().any(|line| {
+                line.contains(" = getelementptr %")
+                    && line.ends_with(&format!(", ptr {place}, i64 1"))
+            }) && rep.lines().any(|line| {
+                line.contains("musttail call ") && line.contains(&format!(", ptr {place},"))
+            }),
+            "Rep advances by one element on exit and passes the received address unchanged in place: {rep}"
+        );
     }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn the_cursor_s_run_address_is_passed_when_a_jump_needs_it() {
+    // Jump's target is read from the operation, so its edge forms an address
+    // from the run. The cursor execution test above covers this program.
+    let module = emit(CURSOR_INTERPRETER.as_bytes());
+    let (convention, _) = host_convention();
+    let verdict = verdict(&module, "wf_run");
+    assert!(
+        convention.is_empty() || verdict.starts_with("split"),
+        "{verdict}"
+    );
+    if verdict.starts_with("split") {
+        let run = cursor_run(&module);
+        let mut symbols = vec!["wf_run.dispatch".to_owned()];
+        symbols.extend((0..4).map(|arm| format!("wf_run.arm.{arm}")));
+        for symbol in symbols {
+            let part = definition(&module, &symbol);
+            // A smaller C convention may spill the run; preserve_none has
+            // room for this fixture's common parameter list.
+            assert!(
+                part.lines()
+                    .next()
+                    .expect("the part's signature")
+                    .split(|c: char| c.is_whitespace() || c == ',' || c == ')')
+                    .any(|word| word == run)
+                    || (convention.is_empty() && part.contains(&format!("  {run} = load ptr,"))),
+                "each part receives the run for Jump, in a parameter or a C-convention spill: {part}"
+            );
+        }
+    }
+}
+
+/// The final element GEP forms the entering cursor. The length may use
+/// another projection, so identify the run by this GEP's operand.
+fn cursor_run(module: &str) -> &str {
+    let enclosing = definition(module, "wf_run");
+    let run = enclosing
+        .lines()
+        .rev()
+        .find(|line| {
+            line.contains(" = getelementptr inbounds ")
+                && line.contains(", i32 ")
+                && line
+                    .rsplit(", ")
+                    .next()
+                    .is_some_and(|index| index.starts_with("i64 "))
+        })
+        .and_then(|line| line.split_once(", ptr "))
+        .and_then(|(_, operands)| operands.split_once(','))
+        .map(|(value, _)| value)
+        .expect("the enclosing function forms the entering cursor from the run");
+    assert!(
+        enclosing.contains(&format!("\n  {run} = ")),
+        "the enclosing function still computes the run the entering cursor needs: {enclosing}"
+    );
+    run
+}
+
+#[test]
+fn known_steps_leave_the_cursor_s_run_in_the_enclosing_function() {
+    // Enter at 1, skip Add 1000, add 7 and 3, repeat Rep 5 three times,
+    // then halt at 4: 7 + 3 + 3 * 5 + 4 * 100 = 425. Every edge is pc or
+    // pc + 1, so no part needs the run, and advancing edges use a literal
+    // step rather than subtracting indices. Only this distinct program gets
+    // an additional execution; the Jump program still runs once above.
+    let source = CURSOR_INTERPRETER
+        .replace("  Jump(t: u64);\n", "")
+        .replace(
+            r#"    Jump(t: tv) => {
+      let target = tv^;
+      if target < n {
+        return musttail run(code: code, pc: target, acc: acc, count: count);
+      }
+      return 0_u64;
+    }
+"#,
+            "",
+        )
+        .replace("Op::Jump(t: 3_u64)", "Op::Add(k: 7_u64)")
+        .replace("let c2 = Op::Halt();", "let c2 = Op::Add(k: 3_u64);")
+        .replace("Op::Jump(t: 2_u64)", "Op::Halt()")
+        .replace("r == 215_u64", "r == 425_u64");
+    let module = emit(source.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_run").starts_with("split");
+    let mut known_steps_without_run = convention.is_empty();
+    if split {
+        let run = cursor_run(&module);
+        let parts = [
+            "wf_run.dispatch",
+            "wf_run.arm.0",
+            "wf_run.arm.1",
+            "wf_run.arm.2",
+        ];
+        let run_absent = parts.iter().all(|symbol| {
+            !definition(&module, symbol)
+                .split(|c: char| c.is_whitespace() || c == ',' || c == ')')
+                .any(|word| word == run)
+        });
+        let add = definition(&module, "wf_run.arm.0");
+        known_steps_without_run = run_absent
+            && !add.contains("sub i64")
+            && add
+                .lines()
+                .any(|line| line.contains(" = getelementptr %") && line.ends_with(", i64 1"));
+    }
+    let output = compile_and_run(&module);
+    assert!(
+        known_steps_without_run && output.status.success(),
+        "known steps need no run parameter and execute to 425: {module}\n{output:?}"
+    );
 }
 
 #[test]
@@ -845,6 +991,113 @@ fn a_reference_handed_to_a_content_writer_keeps_its_box() {
                 .any(|line| line.contains("@wf_touch_content(ptr %wf.pin."))
     });
     assert!(handed, "a part hands the callee its pin slot: {module}");
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
+    // As in thirty_values, thirty invariant values exceed every host's
+    // argument registers. Here they are box projections that Add, Jnz and
+    // Halt read (Add and Jnz add zero with them); regs is read by the same
+    // three arms through their own projections and by Dec only through its
+    // call's pin. Its first projection has the lower ID, so without the pin
+    // read regs ties with them at three arms and spills first; counting the
+    // pin gives it four, and the frame keeps the rare projections.
+    let names: Vec<String> = (0..30).map(|index| format!("rare{index}")).collect();
+    let parameters = names
+        .iter()
+        .map(|name| format!("{name}: &Box<Slots<u64>>"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let forwarded = names
+        .iter()
+        .map(|name| format!("{name}: {name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let initial = names
+        .iter()
+        .map(|name| format!("{name}: &rare"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let effects = names
+        .iter()
+        .map(|name| format!("reads({name})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let reads = names
+        .iter()
+        .map(|name| format!("      set a = a +wrap {name}^.inner.len;\n"))
+        .collect::<String>();
+    let zero_reads = |arm: &str, sum: &str| {
+        names
+            .iter()
+            .map(|name| {
+                format!(
+                    "      let {name}_{arm} = {name}^.inner.len -wrap 1_u64;\n      set {sum} = {sum} +wrap {name}_{arm};\n"
+                )
+            })
+            .collect::<String>()
+    };
+    let source = REGISTER_FILE
+        .replace("NAME", "pressure")
+        .replace("DECREMENT", "let ignored = touch_content(regs: regs);")
+        .replace(
+            "fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {",
+            "fn touch_content(regs: &Box<Slots<u64>>) -> r: u64 writes(regs.inner) contract {",
+        )
+        .replace("pc: u64) ->", &format!("pc: u64, {parameters}) ->"))
+        .replace("reads(code), writes(regs)", &format!("reads(code), {effects}, writes(regs)"))
+        .replace("regs: regs, pc: next)", &format!("regs: regs, pc: next, {forwarded})"))
+        .replace("regs: &regs, pc: 0_u64)", &format!("regs: &regs, pc: 0_u64, {initial})"))
+        .replace("      return a;", &format!("{reads}      return a;"))
+        .replace(
+            "      let b = a +wrap 3_u64;\n",
+            &format!("      let b = a +wrap 3_u64;\n{}", zero_reads("add", "b")),
+        )
+        .replace(
+            "      let c = regs^.inner[1_u64];\n      let next = pc + 1_u64;\n",
+            &format!(
+                "      let c = regs^.inner[1_u64];\n{}      let next = pc + 1_u64;\n",
+                zero_reads("jnz", "c")
+            ),
+        )
+        .replace("r == 3000_u64", "r == 3030_u64")
+        .replace(
+            "  if code.inner.len > 0_u64 {",
+            "  let rare = box_slots_new::<u64>(capacity: 1_u64);\n  if rare.inner.len < rare.inner.cap {\n    place_back(window: &rare.inner, value: 0_u64);\n  }\n  if code.inner.len > 0_u64 {",
+        );
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_pressure", 4);
+    let dispatch = definition(&module, "wf_pressure.dispatch");
+    let pinned = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("store ptr ")
+                .and_then(|line| line.split_once(", ptr %wf.pin."))
+                .map(|(value, _)| value)
+        })
+        .expect("each part's pin holds the regs projection");
+    let enclosing = definition(&module, "wf_pressure");
+    let spills: Vec<&str> = enclosing
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("store ptr ")
+                .and_then(|line| line.split_once(", ptr %wf.slot."))
+                .map(|(value, _)| value)
+        })
+        .collect();
+    let (_, registers) = host_convention();
+    assert!(
+        spills.len() >= names.len() - registers,
+        "the rarely read projections exceed the registers and wait in the frame: {enclosing}"
+    );
+    assert!(
+        !spills.contains(&pinned),
+        "the box read by all four arms keeps a register ahead of the rare projections: {enclosing}"
+    );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }

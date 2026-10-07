@@ -2637,19 +2637,18 @@ rarely insert at the same place.
   `preserve_none` on arm64 the split loop takes 24-36% fewer cycles than
   the same loop emitted whole
   (`research/experiments/match-dispatch/RESULTS.md`, "Values kept in the
-  frame past the registers"); more spilled values, the C convention and
-  x86-64 are unmeasured. On x86-64 the stage-3 wasm interpreter keeps 4
-  values in the frame, and every arm that reads a frame slot reloads one of
-  them from the enclosing frame (`addq 0xc8(%r11)`) before addressing the
-  slot (`research/experiments/match-dispatch/RESULTS.md`, "Stage 3: the
-  code cursor"). The value read on almost every dispatch may be among those
-  kept in the frame, since the spill order counts the arms that read a
-  value, not how often they run. Validate with the same S/W pair under the
-  C convention on arm64 (8 registers) and on the 14900K, and on x86-64
-  identify the reloaded value in the emitted module and measure keeping it
-  in a register instead. Reopen with the first consumer whose loop spills
-  several values, a host without `preserve_none`, or the x86-64 register
-  allocation step of the match-dispatch investigation.
+  frame past the registers"); more spilled values and the C convention are
+  unmeasured. On x86-64 the stage-3 wasm interpreter keeps 4 values in the
+  frame. Since the spill order counts reads through replaced projections
+  and pins, the value that almost every dispatch reads stays in a register
+  and the frame keeps values that at most two arms read
+  (`research/experiments/match-dispatch/RESULTS.md`, "Stage 3: x86-64
+  register pressure" and "Edges by their step"). The order still counts
+  the arms that read a value, not how often they run, so a hot value that
+  few arms read could still go to the frame. Validate with the same S/W
+  pair under the C convention on arm64 (8 registers) and on the 14900K.
+  Reopen with the first consumer whose loop spills a value its hot arms
+  read, or a host without `preserve_none`.
 
 - **Firn GET retains an Entry copy because its existing byte slot makes the
   frame aggregate.** Amendment S removes atomic `i1` hold flags, and LLVM
