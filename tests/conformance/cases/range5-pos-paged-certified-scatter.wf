@@ -33,7 +33,7 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   for (
     k in 0_u64..5_u64,
-    invariant forall values(q in 0_u64..k): order.inner[q] == 4 - q,
+    invariant forall values(q in 0_u64..k): order.inner[q] == 4_u64 - q,
     invariant forall inverse(q in 0_u64..k): pos.inner[order.inner[q]] == q
   ) {
     let at = 4_u64 - k;

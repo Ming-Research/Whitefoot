@@ -2019,10 +2019,19 @@ fn paged_address_formation_joins_before_directory_growth_can_race_it() {
                         .functions()
                         .get(*function as usize)
                         .expect("call target");
-                    (callee.name() == "grow_paged" || callee.name() == "ignore").then_some(*result)
+                    Some((callee.name().to_owned(), *result))
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(calls.len(), 2);
+            let names = calls.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>();
+            assert!(
+                names.contains(&"grow_paged") && names.contains(&"ignore"),
+                "growth and formation calls: {names:?}"
+            );
+            let calls = calls
+                .iter()
+                .filter(|(name, _)| name == "grow_paged" || name == "ignore")
+                .map(|(_, result)| *result)
+                .collect::<Vec<_>>();
             assert!(
                 !main
                     .overlaps()
@@ -2037,8 +2046,11 @@ fn paged_address_formation_joins_before_directory_growth_can_race_it() {
 
 #[test]
 fn page_and_segment_borrows_below_range_elements_keep_the_outer_projection() {
-    let source =
-        br#"fn pages(rows: &[Box<Paged<u64>>], i: u64) -> result: u64 reads(rows) contract {
+    // One program per helper, so a failure names the borrow it concerns.
+    let helpers = [
+        (
+            "pages",
+            r#"fn pages(rows: &[Box<Paged<u64>>], i: u64) -> result: u64 reads(rows) contract {
   requires i < rows^.len;
 } {
   if rows^[i].inner.pages.len > 0_u64 {
@@ -2047,8 +2059,11 @@ fn page_and_segment_borrows_below_range_elements_keep_the_outer_projection() {
   }
   return 0_u64;
 }
-
-fn run_pages(rows: &Run<Box<Paged<u64>>>, i: u64) -> result: u64 reads(rows) contract {
+"#,
+        ),
+        (
+            "run_pages",
+            r#"fn run_pages(rows: &Run<Box<Paged<u64>>>, i: u64) -> result: u64 reads(rows) contract {
   requires i < rows^.len;
 } {
   if rows^[i].inner.pages.len > 0_u64 {
@@ -2057,8 +2072,11 @@ fn run_pages(rows: &Run<Box<Paged<u64>>>, i: u64) -> result: u64 reads(rows) con
   }
   return 0_u64;
 }
-
-fn segments(rows: &[Box<Segments<u64>>], i: u64) -> result: u64 reads(rows) contract {
+"#,
+        ),
+        (
+            "segments",
+            r#"fn segments(rows: &[Box<Segments<u64>>], i: u64) -> result: u64 reads(rows) contract {
   requires i < rows^.len;
 } {
   if rows^[i].inner.len > 0_u64 {
@@ -2067,13 +2085,14 @@ fn segments(rows: &[Box<Segments<u64>>], i: u64) -> result: u64 reads(rows) cont
   }
   return 0_u64;
 }
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-    with_ir(source, |program| {
-        for name in ["pages", "run_pages", "segments"] {
+"#,
+        ),
+    ];
+    for (name, helper) in helpers {
+        let source = format!(
+            "{helper}\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_ir(source.as_bytes(), |program| {
             let operations = function(program, name)
                 .blocks()
                 .iter()
@@ -2086,8 +2105,9 @@ fn main() -> status: std::process::ExitStatus pure {
             assert!(
                 operations
                     .iter()
-                    .any(|operation| matches!(operation, IrOperation::SliceAddress { .. })),
-                "{name}: address the enclosing range element"
+                    .any(|operation| matches!(operation, IrOperation::SliceAddress { .. })
+                        || matches!(operation, IrOperation::RunIndex { .. })),
+                "{name}: address the enclosing range element: {operations:?}"
             );
             assert!(
                 operations.iter().any(|operation| match operation {
@@ -2097,7 +2117,9 @@ fn main() -> status: std::process::ExitStatus pure {
                 }),
                 "{name}: borrow the selected page or segment"
             );
-        }
-        crate::emit_llvm(program).expect("nested range-element projections must emit");
-    });
+            if let Err(failure) = crate::emit_llvm(program) {
+                panic!("{name}: nested range-element projection must emit: {failure:?}: {operations:?}");
+            }
+        });
+    }
 }

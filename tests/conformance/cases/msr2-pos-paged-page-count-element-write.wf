@@ -8,7 +8,7 @@ fn count(p: &Paged<u64>) -> result: u64 reads(p.len) {
   return p^.pages.len;
 }
 
-fn page_width(p: &Paged<u64>, k: u64) -> result: u64 reads(p.len) contract {
+fn page_width(p: &Paged<u64>, k: u64) -> result: u64 reads(p.pages[k].len), reads(p.len) contract {
   requires k < p^.pages.len;
 } {
   let page = &p^.pages[k];

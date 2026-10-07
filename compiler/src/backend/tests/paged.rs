@@ -7,7 +7,10 @@ const GROWTH: &[u8] = br#"fn main() -> status: std::process::ExitStatus pure {
   place_back(window: &p.inner, value: 73_u64);
   grow_paged(cell: &p, capacity: 513_u64);
   grow_paged(cell: &p, capacity: 1025_u64);
-  for (i in 1_u64..1025_u64, invariant length: p.inner.len == i) {
+  for (
+    i in 1_u64..1025_u64,
+    invariant length: p.inner.len == i
+  ) {
     place_back(window: &p.inner, value: i);
   }
   grow_paged(cell: &p, capacity: 8193_u64);
@@ -114,7 +117,10 @@ fn main() -> status: std::process::ExitStatus pure {
   fill(part: &p.inner[0_u64..0_u64]);
   grow_paged(cell: &p, capacity: 0_u64);
   grow_paged(cell: &p, capacity: 1025_u64);
-  for (i in 0_u64..1025_u64, invariant length: p.inner.len == i) {
+  for (
+    i in 0_u64..1025_u64,
+    invariant length: p.inner.len == i
+  ) {
     place_back(window: &p.inner, value: 1_u64);
   }
   reslice(part: &p.inner[510_u64..515_u64]);
@@ -183,7 +189,10 @@ fn paged_page_geometry_covers_zero_stride_and_elements_larger_than_a_page() {
     return std::process::exit_status(code: 4_u8);
   }
   let p = box_paged_new::<Array<u8, 0>>(capacity: 4097_u64);
-  for (i in 0_u64..4097_u64, invariant length: p.inner.len == i) {
+  for (
+    i in 0_u64..4097_u64,
+    invariant length: p.inner.len == i
+  ) {
     let value = array_filled::<u8, 0>(value: 0_u8);
     place_back(window: &p.inner, value: value);
   }
@@ -217,7 +226,10 @@ fn paged_run_loops_use_the_same_split_and_thunk_path_as_slices() {
 fn paged_release_drops_only_initialized_owners_in_logical_order() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
   let p = box_paged_new::<Box<u64>>(capacity: 513_u64);
-  for (i in 0_u64..513_u64, invariant length: p.inner.len == i) {
+  for (
+    i in 0_u64..513_u64,
+    invariant length: p.inner.len == i
+  ) {
     let value = box_new::<u64>(value: i);
     place_back(window: &p.inner, value: move value);
   }

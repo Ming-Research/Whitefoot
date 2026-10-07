@@ -2328,8 +2328,6 @@ opaque nocopy struct Entries<V: drop> {
 }
 ```
 
-The prelude also contributes the reference-kind name `Run` [TYPE-8].
-
 The complete enum declarations are:
 
 ```
@@ -2363,6 +2361,7 @@ enum NarrowError {
 ```
 
 The two built-in numeric bounds `Int` and `Float` admit exactly OP-1's integer and floating-point domains and imply `copy` under PROV-6. They are not source declarations, interface groups, implicit behaviors or logical-law bundles; a source actual cannot bind or extend either bound.
+The prelude also contributes the reference-kind name `Run` [TYPE-8]; it denotes no type and has no constructor.
 
 The complete function declarations are the following records, each written as the head of a GRAM-2 `fn_decl` — `"fn" IDENT generics? "(" param_list? ")"` and the rest of `fn_sig` from `->` on — so a record carries `fn_decl`'s `generics?` where a function-kind parameter's `fn_sig` [FN-3] carries none. A record's final semicolon is table punctuation, not a new top-level source production. Each signature uses ordinary parameter paths under EFF-1 and the same requirement and postcondition templates as any FN-8/FN-9 contract. The type parameters `W` and `X` of the window operations are the compiler-owned window type parameter OP-10 fixes, and the `W` of `free_empty` is the wider shape parameter OP-14 fixes. No proposition is available merely from a function's name, implementation, result constructor, or prelude origin.
 

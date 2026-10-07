@@ -1,4 +1,4 @@
-fn page_and_append(source: &Paged<u64>, destination: &Paged<u64>, k: u64) -> result: u64 reads(source.len), writes(destination.next), writes(destination.len) contract {
+fn page_and_append(source: &Paged<u64>, destination: &Paged<u64>, k: u64) -> result: u64 reads(source.pages[k].len), reads(source.len), writes(destination.next), writes(destination.len) contract {
   requires k < source^.pages.len;
   requires destination^.len < destination^.cap;
 } {

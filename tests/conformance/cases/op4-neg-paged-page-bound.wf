@@ -1,4 +1,4 @@
-fn page_length(p: &Paged<u64>, k: u64) -> result: u64 reads(p.len) {
+fn page_length(p: &Paged<u64>, k: u64) -> result: u64 reads(p.pages[k].len), reads(p.len) {
   let page = &p^.pages[k];
   return page^.len;
 }
