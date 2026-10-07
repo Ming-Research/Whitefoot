@@ -645,6 +645,11 @@ impl<'check> Survey<'check, '_> {
                 }
             }
             CheckedStatement::PropagateLet { .. } => self.leaves("a propagate"),
+            CheckedStatement::Continue { target, .. } => {
+                if *target != self.outer_loop && !self.inner_loops.contains(&target.0) {
+                    self.leaves("a continue to an enclosing loop");
+                }
+            }
             CheckedStatement::Break { target, .. } => {
                 if !self.inner_loops.contains(&target.0) || target.0 == self.outer_loop.0 {
                     self.leaves("a break");
@@ -1667,7 +1672,8 @@ const fn statement_node(statement: &CheckedStatement) -> Option<&NodePath> {
         CheckedStatement::Proof(proof) => Some(&proof.node_path),
         CheckedStatement::Match { .. }
         | CheckedStatement::Loop { .. }
-        | CheckedStatement::Break { .. } => None,
+        | CheckedStatement::Break { .. }
+        | CheckedStatement::Continue { .. } => None,
     }
 }
 

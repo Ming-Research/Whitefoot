@@ -95,7 +95,8 @@ impl<'unit> TypeContext<'unit> {
                     self.validate_release_graphs(body)?;
                     self.validate_drop_release_graphs(backedge_drops)?;
                 }
-                CheckedStatement::Break { drops, .. } => {
+                CheckedStatement::Break { drops, .. }
+                | CheckedStatement::Continue { drops, .. } => {
                     self.validate_drop_release_graphs(drops)?;
                 }
                 // [SHARE-1] the statement's end may release the state, as the

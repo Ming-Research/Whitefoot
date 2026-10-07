@@ -2738,6 +2738,12 @@ pub(crate) enum CheckedStatement {
         target: CheckedLoopId,
         drops: Vec<CheckedDrop>,
     },
+    /// An early backedge carrying current loop bindings after checked cleanup.
+    Continue {
+        node_path: NodePath,
+        target: CheckedLoopId,
+        drops: Vec<CheckedDrop>,
+    },
     /// [SHARE-2] `atomic IDENT = &place (, IDENT = &place)* (when expr)?
     /// { stmt* }`: the guard and block run with exclusive access to the
     /// state of the shared object the target names, at a point where the
@@ -3335,7 +3341,8 @@ impl FunctionMentions {
                     self.types.extend(backedge_drops.iter().map(|drop| drop.ty));
                     self.statements(body);
                 }
-                CheckedStatement::Break { drops, .. } => {
+                CheckedStatement::Break { drops, .. }
+                | CheckedStatement::Continue { drops, .. } => {
                     self.types.extend(drops.iter().map(|drop| drop.ty));
                 }
                 CheckedStatement::Atomic {

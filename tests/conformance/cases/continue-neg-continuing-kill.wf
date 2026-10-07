@@ -1,0 +1,10 @@
+fn probe() -> result: unit pure {
+  doc "The continuing write invalidates the entry value at the arbitrary header.";
+  let value = 0_u64;
+  loop {
+    let next = value + 1_u64;
+    set value = 18446744073709551615_u64;
+    continue;
+  }
+  return unit;
+}

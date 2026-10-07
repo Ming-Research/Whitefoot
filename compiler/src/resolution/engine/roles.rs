@@ -787,7 +787,7 @@ fn classify_node(
             roles,
             complete_counts,
         )?,
-        Production::BreakStmt => match names.as_slice() {
+        Production::BreakStmt | Production::ContinueStmt => match names.as_slice() {
             [] => {}
             [label] if name_predicate(classified, *label) == Some(TerminalPredicate::Label) => {
                 add_complete(

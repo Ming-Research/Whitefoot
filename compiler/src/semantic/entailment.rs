@@ -1690,7 +1690,7 @@ pub(super) fn collect_statement_calls(
                 }
                 collect_statement_calls(caller, body, calls);
             }
-            CheckedStatement::Break { .. } => {}
+            CheckedStatement::Break { .. } | CheckedStatement::Continue { .. } => {}
         }
     }
 }

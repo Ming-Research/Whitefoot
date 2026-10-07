@@ -1297,10 +1297,12 @@ impl Analyzer<'_, '_> {
                 continues
             }
             CheckedStatement::Break {
-                node_path,
-                target,
-                drops: _,
+                node_path, target, ..
+            }
+            | CheckedStatement::Continue {
+                node_path, target, ..
             } => {
+                let is_continue = matches!(statement, CheckedStatement::Continue { .. });
                 if let Some(position) = self
                     .frames
                     .loops
@@ -1319,9 +1321,21 @@ impl Analyzer<'_, '_> {
                     }
                     let depth = self.frames.loops[position].scope_depth;
                     let mut exit = state.clone();
+                    // Keep the target's counted binder and captures on a
+                    // backedge; only intervening loop scopes are exited.
+                    let depth =
+                        if is_continue && self.frames.loops[position].counted_binder.is_some() {
+                            depth + 1
+                        } else {
+                            depth
+                        };
                     self.exit_scopes_to(&mut exit, depth);
-                    self.exit_counted_loops_from(&mut exit, position);
-                    self.frames.loops[position].breaks.push(exit);
+                    self.exit_counted_loops_from(&mut exit, position + usize::from(is_continue));
+                    if is_continue {
+                        self.frames.loops[position].continues.push(exit);
+                    } else {
+                        self.frames.loops[position].breaks.push(exit);
+                    }
                 }
                 false
             }
@@ -1449,7 +1463,7 @@ impl Analyzer<'_, '_> {
                 self.input.collect_continuing_loop_kills(
                     body,
                     true,
-                    &mut LoopReachability::default(),
+                    &mut LoopReachability::for_loop(*id),
                     &mut kills,
                 );
                 self.reasoning().apply_loop_kills(state, &kills, None);
@@ -1471,6 +1485,7 @@ impl Analyzer<'_, '_> {
                     invariant_atoms: HashSet::new(),
                     capture_path: None,
                     breaks: Vec::new(),
+                    continues: Vec::new(),
                 });
                 let mut body_state = state.clone();
                 let outer_continuing = std::mem::take(&mut body_state.continuing);
@@ -1479,13 +1494,24 @@ impl Analyzer<'_, '_> {
                     debug_assert_summarized(&body_state, &kills);
                 }
 
-                let mut step = vec![None; invariants.len()];
+                let mut backedges = std::mem::take(
+                    &mut self.frames.loops.last_mut().expect("active loop").continues,
+                );
                 if body_falls_through {
+                    backedges.push(body_state);
+                }
+                let mut step = vec![None; invariants.len()];
+                for mut edge in backedges {
+                    debug_assert_summarized(&edge, &kills);
                     for (index, invariant) in invariants.iter().enumerate() {
-                        step[index] = Some(
-                            self.reasoning()
-                                .prove_affine_relation_batch(&invariant.relation, &mut body_state),
-                        );
+                        let disposition = self
+                            .reasoning()
+                            .prove_affine_relation_batch(&invariant.relation, &mut edge);
+                        // Retain the first failing incoming edge; a later
+                        // successful edge cannot discharge an earlier failure.
+                        if step[index].is_none_or(|old| old == TargetDisposition::Proved) {
+                            step[index] = Some(disposition);
+                        }
                     }
                 }
                 self.judging()
@@ -1607,7 +1633,7 @@ impl Analyzer<'_, '_> {
                 let body_reaches_head = self.input.collect_continuing_loop_kills(
                     body,
                     true,
-                    &mut LoopReachability::default(),
+                    &mut LoopReachability::for_loop(*id),
                     &mut kills,
                 );
                 if body_reaches_head {
@@ -1666,6 +1692,7 @@ impl Analyzer<'_, '_> {
                     invariant_atoms,
                     capture_path: Some(range_path.clone()),
                     breaks: Vec::new(),
+                    continues: Vec::new(),
                 });
                 let mut body_state = head.clone();
                 let outer_continuing = std::mem::take(&mut body_state.continuing);
@@ -1685,95 +1712,118 @@ impl Analyzer<'_, '_> {
                     debug_assert_summarized(&body_state, &kills);
                 }
 
-                let mut step = vec![None; invariants.len()];
-                let mut hidden_update = !body_falls_through;
-                // A body reaching the backedge normally should still carry the
-                // header binder's affine image. Where this walk has lost it,
-                // the hidden `binder + 1` update is unproved and every
-                // next-header target with it: [OWN-8]'s conservative reading,
-                // which withholds the exhaustion rule and the step batch and
-                // never widens acceptance.
-                let current_binder = body_state.affine.values.get(binder).cloned();
-                if body_falls_through && current_binder.is_none() {
-                    step = vec![Some(TargetDisposition::Unproved); invariants.len()];
+                let mut backedges = std::mem::take(
+                    &mut self
+                        .frames
+                        .loops
+                        .last_mut()
+                        .expect("active counted loop")
+                        .continues,
+                );
+                if body_falls_through {
+                    backedges.push(body_state);
                 }
-                if let (true, Some(current_binder)) = (body_falls_through, current_binder) {
-                    let next_binder = current_binder
-                        .add(&AffineForm::constant(1), &mut AffineCheckState::new())
-                        .ok();
-                    let hidden_target = next_binder.as_ref().and_then(|next| {
-                        AffineInequality::from_forms(
-                            next,
-                            &AffineForm::constant(u64::MAX as i128),
-                            &mut AffineCheckState::new(),
-                        )
-                        .ok()
-                    });
-                    let counter_limit = self
-                        .vocabulary
-                        .terms
-                        .intern(TermKind::Constant(u64::MAX as i128));
-                    hidden_update = hidden_target.as_ref().is_some_and(|target| {
-                        self.reasoning()
-                            .prove(
-                                ProofContext::new(&body_state.facts, &body_state.affine),
-                                ProofGoal::Affine {
-                                    inequality: target,
-                                    right: Some(counter_limit),
-                                },
-                            )
-                            .disposition
-                            == ProofDisposition::Proved
-                    });
-                    // Normalize the next-header target with `binder :=
-                    // binder_head + 1`, but retain the old header binding in
-                    // the proof state.  The true-header S11 relation constrains
-                    // `binder_head`; replacing the live binding first would
-                    // make that exact old value unreachable while proving the
-                    // backedge target.
-                    let mut next_affine = body_state.affine.clone();
-                    if let Some(next_binder) = next_binder {
-                        next_affine.values.insert(*binder, next_binder);
+                let mut step = vec![None; invariants.len()];
+                let mut hidden_update = true;
+                for body_state in backedges {
+                    debug_assert_summarized(&body_state, &kills);
+                    let mut edge_step = vec![None; invariants.len()];
+                    let mut edge_hidden_update = false;
+                    // A body reaching the backedge normally should still carry the
+                    // header binder's affine image. Where this walk has lost it,
+                    // the hidden `binder + 1` update is unproved and every
+                    // next-header target with it: [OWN-8]'s conservative reading,
+                    // which withholds the exhaustion rule and the step batch and
+                    // never widens acceptance.
+                    let current_binder = body_state.affine.values.get(binder).cloned();
+                    if current_binder.is_none() {
+                        edge_step = vec![Some(TargetDisposition::Unproved); invariants.len()];
                     }
-
-                    for (index, invariant) in invariants.iter().enumerate() {
-                        let next_target = self.reasoning().checked_loop_invariant_inequality(
-                            invariant,
-                            &mut next_affine,
-                            &mut AffineCheckState::new(),
-                        );
-                        // [INV-1] both bounds of an `==` next-header target
-                        // are proved, in the same substituted state.
-                        let next_partner = self
-                            .reasoning()
-                            .checked_affine_relation_partner(
-                                &invariant.relation,
-                                &mut next_affine,
+                    if let Some(current_binder) = current_binder {
+                        let next_binder = current_binder
+                            .add(&AffineForm::constant(1), &mut AffineCheckState::new())
+                            .ok();
+                        let hidden_target = next_binder.as_ref().and_then(|next| {
+                            AffineInequality::from_forms(
+                                next,
+                                &AffineForm::constant(u64::MAX as i128),
                                 &mut AffineCheckState::new(),
                             )
-                            .map(|partner| partner.ok());
-                        let right = self
-                            .reasoning()
-                            .checked_affine_right_term(&invariant.relation.right);
-                        let left = self
-                            .reasoning()
-                            .checked_affine_right_term(&invariant.relation.left);
-                        let mut members = vec![(next_target, right, left)];
-                        if let Some(partner) = next_partner {
-                            members.push((partner, left, right));
-                        }
-                        let disposition = self.reasoning().affine_target_disposition(
-                            &members,
-                            &body_state.facts,
-                            &body_state.affine,
-                        );
-                        // An unrepresentable hidden update fails the step
-                        // without refuting the target it would reach.
-                        step[index] = Some(if hidden_update {
-                            disposition
-                        } else {
-                            TargetDisposition::Unproved
+                            .ok()
                         });
+                        let counter_limit = self
+                            .vocabulary
+                            .terms
+                            .intern(TermKind::Constant(u64::MAX as i128));
+                        edge_hidden_update = hidden_target.as_ref().is_some_and(|target| {
+                            self.reasoning()
+                                .prove(
+                                    ProofContext::new(&body_state.facts, &body_state.affine),
+                                    ProofGoal::Affine {
+                                        inequality: target,
+                                        right: Some(counter_limit),
+                                    },
+                                )
+                                .disposition
+                                == ProofDisposition::Proved
+                        });
+                        // Normalize the next-header target with `binder :=
+                        // binder_head + 1`, but retain the old header binding in
+                        // the proof state.  The true-header S11 relation constrains
+                        // `binder_head`; replacing the live binding first would
+                        // make that exact old value unreachable while proving the
+                        // backedge target.
+                        let mut next_affine = body_state.affine.clone();
+                        if let Some(next_binder) = next_binder {
+                            next_affine.values.insert(*binder, next_binder);
+                        }
+
+                        for (index, invariant) in invariants.iter().enumerate() {
+                            let next_target = self.reasoning().checked_loop_invariant_inequality(
+                                invariant,
+                                &mut next_affine,
+                                &mut AffineCheckState::new(),
+                            );
+                            // [INV-1] both bounds of an `==` next-header target
+                            // are proved, in the same substituted state.
+                            let next_partner = self
+                                .reasoning()
+                                .checked_affine_relation_partner(
+                                    &invariant.relation,
+                                    &mut next_affine,
+                                    &mut AffineCheckState::new(),
+                                )
+                                .map(|partner| partner.ok());
+                            let right = self
+                                .reasoning()
+                                .checked_affine_right_term(&invariant.relation.right);
+                            let left = self
+                                .reasoning()
+                                .checked_affine_right_term(&invariant.relation.left);
+                            let mut members = vec![(next_target, right, left)];
+                            if let Some(partner) = next_partner {
+                                members.push((partner, left, right));
+                            }
+                            let disposition = self.reasoning().affine_target_disposition(
+                                &members,
+                                &body_state.facts,
+                                &body_state.affine,
+                            );
+                            // An unrepresentable hidden update fails the step
+                            // without refuting the target it would reach.
+                            edge_step[index] = Some(if edge_hidden_update {
+                                disposition
+                            } else {
+                                TargetDisposition::Unproved
+                            });
+                        }
+                    }
+
+                    hidden_update &= edge_hidden_update;
+                    for (accumulated, incoming) in step.iter_mut().zip(edge_step) {
+                        if accumulated.is_none_or(|old| old == TargetDisposition::Proved) {
+                            *accumulated = incoming;
+                        }
                     }
                 }
 

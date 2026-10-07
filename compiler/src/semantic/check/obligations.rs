@@ -270,6 +270,9 @@ impl Records<'_> {
             // [TYPE-11] a break of a loop around an atomic block leaves it.
             CheckedStatement::Break {
                 node_path, target, ..
+            }
+            | CheckedStatement::Continue {
+                node_path, target, ..
             } => {
                 if let Some((_, loops, _)) = &self.atomic
                     && self

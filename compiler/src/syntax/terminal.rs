@@ -166,6 +166,8 @@ pub enum FixedTerminal {
     Minus,
     /// `break`.
     Break,
+    /// `continue`.
+    Continue,
     /// `give`.
     Give,
     /// `atomic`.
@@ -239,7 +241,7 @@ pub enum FixedTerminal {
 }
 
 /// Every fixed raw-token predicate in the active specification, in first occurrence order.
-pub const ALL_FIXED_TERMINALS: [FixedTerminal; 107] = [
+pub const ALL_FIXED_TERMINALS: [FixedTerminal; 108] = [
     FixedTerminal::Public,
     FixedTerminal::Alias,
     FixedTerminal::Equal,
@@ -312,6 +314,7 @@ pub const ALL_FIXED_TERMINALS: [FixedTerminal; 107] = [
     FixedTerminal::Plus,
     FixedTerminal::Minus,
     FixedTerminal::Break,
+    FixedTerminal::Continue,
     FixedTerminal::Give,
     FixedTerminal::Atomic,
     FixedTerminal::Match,
@@ -427,6 +430,7 @@ impl FixedTerminal {
             Self::Plus => "+",
             Self::Minus => "-",
             Self::Break => "break",
+            Self::Continue => "continue",
             Self::Give => "give",
             Self::Atomic => "atomic",
             Self::Match => "match",

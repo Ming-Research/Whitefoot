@@ -2980,3 +2980,35 @@ fn a_segment_loop_denies_the_whole_run_another_map_and_an_unmapped_offset() {
         );
     }
 }
+
+#[test]
+fn continue_keeps_the_counted_update_but_an_outer_continue_leaves_the_range() {
+    let local = br#"fn main() -> status: std::process::ExitStatus pure {
+  doc "A self continue still executes each counted iteration.";
+  let total = 0_u64;
+  for @sum (i in 0_u64..16_u64) {
+    set total = total +wrap i;
+    continue @sum;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    permitted(local, "main");
+    let outward = br#"fn main() -> status: std::process::ExitStatus pure {
+  doc "An outer continue skips the remaining counted iterations.";
+  let total = 0_u64;
+  loop @outer {
+    for (i in 0_u64..16_u64) {
+      set total = total +wrap i;
+      continue @outer;
+    }
+    break;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let LoopDenial::Exit { edge } = denied(outward, "main", 4) else {
+        panic!("expected the counted-loop exit denial");
+    };
+    assert_eq!(edge, "a continue to an enclosing loop");
+}
