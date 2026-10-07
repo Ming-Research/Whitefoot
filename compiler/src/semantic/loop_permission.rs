@@ -1077,7 +1077,8 @@ impl<'check> Survey<'check, '_> {
                             places: Vec::new(),
                             carrier: None,
                             measure: false,
-                        page_descriptor: false,
+                            page_descriptor: false,
+                            element_measure: false,
                         });
                     }
                     None
