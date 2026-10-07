@@ -1137,6 +1137,22 @@ rarely insert at the same place.
 
 ## Parallel lowering and runtime
 
+- **PAR-1 operand footprints treat a copied reference as its referent.**
+  `collect_operand_reads` in `compiler/src/semantic/permission.rs` resolves
+  every `CheckedExpression::Binding` to the storage it names, including a
+  bare reference argument. The expression checker records that copy with no
+  referent access under REF-1 and TYPE-7. A helper declaring only
+  `reads(a.len)` can therefore acquire a whole-origin operand read when
+  called with `a: r`, losing adjacency permission beside element writes.
+  This is established by source inspection; the affected adjacency verdict
+  has not been run. Keep the existing reference-holder read for rebinding
+  conflicts, but derive referent reads only from the projected callee row.
+  Validate a measure-reading helper beside an element-writing helper using
+  the same reference, with whole-root reads and holder rebinding as denial
+  controls. The corresponding PAR-2 survey is corrected with the measure-read
+  admission; defer this separate adjacency path until the next PAR-1
+  footprint change or a program encounters the lost permission.
+
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
   (`compiler/src/backend/concurrent_map.c`, `wait_for_cell`), about 0.2 to

@@ -23,9 +23,9 @@
 //!    for the accumulator across the whole of B.
 //! 2. **Every written place is admitted.** "Every place a footprint of B
 //!    writes is iteration-own storage, the accumulator's whole place, a place
-//!    in one proved single-binder affine element, or a place in one proved
-//!    range reference." Nothing else is admitted, and no injectivity argument
-//!    is searched for.
+//!    in one proved single-binder affine element, a place in one proved
+//!    range reference, or a place in one certified element." Nothing else is
+//!    admitted, and no injectivity argument is searched for.
 //! 3. **Resolved footprints.** "A footprint element whose caller place the
 //!    implementation does not resolve overlaps every place, so an unresolved
 //!    element denies permission rather than granting it."
@@ -34,7 +34,7 @@
 //!    `return_stmt`, a `give_stmt`, a `break_stmt` resolved to L or a loop
 //!    enclosing L, or a `let_stmt` selecting `propagate_let_rhs`."
 //!
-//! # The two element families
+//! # Element and range families
 //!
 //! A **proved single-binder affine element** is one subscript of an `Array`,
 //! a `Slots`, the run a range names or a `Segments`, rooted in an own binding
@@ -60,10 +60,12 @@
 //!
 //! One affine map is admitted per resolved root. Every write to that root
 //! must be in an element carrying the same `a` and `b`, and every read
-//! through the same root must be in an element whose own discharged bounds
-//! result retains the same `a` and `b`; a whole-root read, a different map,
-//! or an unavailable one denies. That admits a same-index read-modify-write and
-//! refuses a stencil, without any pairwise range search.
+//! through the same root must read a measure of that root [MSR-1] or be in an
+//! element whose own discharged bounds result retains the same `a` and `b`;
+//! a whole-root read, a different map, or an unavailable one denies. The
+//! descriptor is disjoint from element storage [MSR-2], and the write
+//! condition leaves it unchanged. That admits a same-index read-modify-write
+//! and refuses a stencil, without any pairwise range search.
 //!
 //! A **proved range reference** is `&r[s*i+b..s*i+b+s]` [REF-4] passed as an
 //! ordinary argument, whose discharged endpoint domain retains the exact
@@ -77,8 +79,10 @@
 //! ranges do not overlap under [OWN-7]. Proved range references reached by
 //! writes and whose origins overlap must name the same origin and carry
 //! identical images. Every element access overlapping a written origin must
-//! descend from a range with that partition. Read-only input origins may
-//! overlap across iterations; they require no write partition.
+//! descend from a range with that partition; measure reads of that origin are
+//! also admitted because the partition's element writes leave its disjoint
+//! descriptor unchanged [MSR-2]. Read-only input origins may overlap across
+//! iterations; they require no write partition.
 //!
 //! Forming a range reference reads its endpoints, reads no element content,
 //! and authorizes no change to the origin's storage. There is no loan
@@ -113,7 +117,7 @@
 //!
 //! **Invariant.** This judgment consults typing, declared effect rows,
 //! resolved places [REF-1, OWN-7], and the statement graph's exit edges. For
-//! the two element families it additionally consumes the successful [OP-4] and
+//! affine elements and proved range references it also consumes the [OP-4] and
 //! [REF-4] dispositions and the exact value images already retained on the
 //! checked function; it never repeats a bounds proof or reconstructs a value
 //! from parser shape. Every form it has not classified refuses, and the
@@ -255,7 +259,7 @@ pub(crate) enum LoopDenial {
     /// Condition 1: the accumulator is read outside its own combine, so what
     /// a later iteration sees is the running total.
     AccumulatorRead { statement: NodePath, reads: usize },
-    /// Condition 2: a written or read place that is none of the four the rule
+    /// Condition 2: a written or read place outside the families the rule
     /// admits.
     SharedWrite { argument: NodePath },
     /// Condition 3, fail closed: a place this judgment cannot resolve. An
@@ -484,9 +488,25 @@ struct ReadOccurrence {
     places: Vec<ResolvedPlace>,
     /// The expression or call that reads, where it reads elements.
     carrier: Option<NodePath>,
-    /// Whether the occurrence reads only a measure, which element writes
-    /// leave unchanged [MSR-1].
+    /// A measure expression without a certificate element-read carrier.
+    /// Affine and range coverage also check its exact measured root [MSR-2].
     measure: bool,
+    /// A measure selected through a range element retains its carrier for
+    /// the certified family, but can measure an affine map's own nested root.
+    element_measure: bool,
+}
+
+impl ReadOccurrence {
+    /// A measure of this exact mapped root or written range origin [PAR-2].
+    /// Direct expressions retain the measured place; a projected helper row
+    /// retains its final measure step. A measure below an element is still
+    /// an access to that element and must satisfy its map or range coverage.
+    fn is_root_measure(&self, place: &ResolvedPlace, root: &ResolvedPlace) -> bool {
+        ((self.measure || self.element_measure) && same_element_root(place, root))
+            || (matches!(place.path.last(), Some(PlaceStep::Measure(_)))
+                && place.path.len() == root.path.len() + 1
+                && root.contains(place))
+    }
 }
 
 /// One accepted accumulate statement: `set a = a (+) e` with `(+)` admitted.
@@ -1041,6 +1061,7 @@ impl<'check> Survey<'check, '_> {
                         places: Vec::new(),
                         carrier: None,
                         measure: false,
+                        element_measure: false,
                     });
                 }
                 None
@@ -1051,6 +1072,7 @@ impl<'check> Survey<'check, '_> {
                     places: Vec::new(),
                     carrier: None,
                     measure: false,
+                    element_measure: false,
                 });
                 None
             }
@@ -1064,6 +1086,10 @@ impl<'check> Survey<'check, '_> {
                 self.record_element_reads(path_subscripts(&root.path), &places);
                 root.binding().map(|binding| (binding, places))
             }
+            // Copying a reference reads its name, not the storage it names
+            // [REF-1, TYPE-7]. A call's projected row records any referent
+            // read; reference rebinding is separately refused by statement.
+            CheckedExpression::Binding { binding, .. } if self.places.is_reference(*binding) => None,
             CheckedExpression::Binding { binding, .. }
             | CheckedExpression::DerefAddressed { binding, .. } => Some((
                 *binding,
@@ -1198,6 +1224,10 @@ impl<'check> Survey<'check, '_> {
                     places,
                     carrier,
                     measure,
+                    element_measure: matches!(
+                        expression,
+                        CheckedExpression::RangeElementMeasure { .. }
+                    ),
                 });
             }
         }
@@ -1341,6 +1371,7 @@ impl<'check> Survey<'check, '_> {
                 places: vec![read.place.clone()],
                 carrier: call.cloned(),
                 measure: false,
+                element_measure: false,
             });
         }
         for write in &footprint.writes {
@@ -1500,9 +1531,10 @@ impl<'check> Survey<'check, '_> {
         self.exit.map(|edge| LoopDenial::Exit { edge })
     }
 
-    /// Written origins must have one map, and every access to one of those
-    /// origins must stay in that map's current-iteration extent. Read-only
-    /// origins carry no cross-iteration write conflict.
+    /// Written origins must have one map. Reads of an origin's measures
+    /// reach its unchanged descriptor; every element access must stay in
+    /// that map's current-iteration extent. Read-only origins carry no
+    /// cross-iteration write conflict.
     fn range_reference_coverage(&self) -> Option<LoopDenial> {
         let oracle = UnprovedSeparations;
         for reference in self.range_references.iter().filter(|range| range.written) {
@@ -1525,7 +1557,9 @@ impl<'check> Survey<'check, '_> {
             };
             let uncovered_read = self.reads.iter().any(|read| {
                 read.places.iter().any(|place| {
-                    self.places.overlaps(&oracle, &reference.origin, place) && !covered(place)
+                    self.places.overlaps(&oracle, &reference.origin, place)
+                        && !read.is_root_measure(place, &reference.origin)
+                        && !covered(place)
                 })
             });
             let mixed_element_map = self.element_writes.iter().any(|written| {
@@ -1541,11 +1575,11 @@ impl<'check> Survey<'check, '_> {
         None
     }
 
-    /// "Every operand read through that same root binding must be a direct
-    /// `Array` or `Slots` subscript whose own discharged [OP-4] result
-    /// retains exactly the same a and b." A matching read and write image
-    /// select the same element in each iteration; any whole-root read,
-    /// different image, or unproved subscript leaves the counts unequal.
+    /// Every read through a mapped root is a measure of that root or a place
+    /// in an element carrying the write's same a and b [PAR-2]. Measure reads
+    /// reach descriptor storage that the admitted writes leave unchanged
+    /// [MSR-2]. Every other read must match the element map; a whole-root
+    /// read, different image, or unproved subscript leaves the counts unequal.
     fn element_map_coverage(&self) -> Option<LoopDenial> {
         let oracle = UnprovedSeparations;
         self.element_writes
@@ -1554,7 +1588,11 @@ impl<'check> Survey<'check, '_> {
                 let reads = self
                     .reads
                     .iter()
-                    .flat_map(|read| &read.places)
+                    .flat_map(|read| {
+                        read.places
+                            .iter()
+                            .filter(move |place| !read.is_root_measure(place, &written.root))
+                    })
                     .filter(|place| self.places.overlaps(&oracle, place, &written.root))
                     .count();
                 let matching = self
