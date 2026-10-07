@@ -1172,7 +1172,7 @@ fn emit_paged_drop_helper(
     );
     signature.linkage = Linkage::Private;
     output.open_block("entry".to_owned());
-    writeln!(output, "  %len = load i64, ptr %value\n  %cap.ptr = getelementptr inbounds {cell}, ptr %value, i32 0, i32 1\n  %cap = load i64, ptr %cap.ptr\n  %dir = getelementptr inbounds {cell}, ptr %value, i32 0, i32 3, i64 0", cell = paged::CELL).map_err(|_| BackendFailure::TextEmission)?;
+    writeln!(output, "  %len = load i64, ptr %value\n  %cap.ptr = getelementptr inbounds {cell}, ptr %value, i32 0, i32 1\n  %cap = load i64, ptr %cap.ptr\n  %dir = getelementptr inbounds {cell}, ptr %value, i32 0, i32 3, i64 0", cell = super::paged::CELL).map_err(|_| BackendFailure::TextEmission)?;
     if type_requires_cleanup(program, element)? {
         output.push_str("  br label %elements\n");
         output.open_block("elements".to_owned());
