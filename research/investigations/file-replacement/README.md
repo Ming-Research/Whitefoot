@@ -54,18 +54,27 @@ with a failure at any point leaving one of the two files whole.
     `FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS`
     replaces atomically.
   - `FileDispositionInfoEx` with `FILE_DISPOSITION_FLAG_DELETE |
-    FILE_DISPOSITION_FLAG_POSIX_SEMANTICS` removes a name while handles stay
-    open, as on POSIX.
+    FILE_DISPOSITION_FLAG_POSIX_SEMANTICS` removes a name when the deleting
+    handle closes; other open handles keep access to the file's data
+    ([Microsoft's disposition semantics](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_file_disposition_information_ex)).
   - Both need the file's open handles to share deletion
     (`FILE_SHARE_DELETE`).
   - `wf__windows_open_delete` opens both rename and removal handles with
-    `FILE_WRITE_THROUGH`; `SetFileInformationByHandle` writes its namespace
-    changes through before returning. Microsoft's documented
+    `FILE_WRITE_THROUGH`. Microsoft's documented
     [write-through behavior](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#caching-behavior)
-    includes flushing NTFS metadata changes such as renames. Windows
-    `sync_directory` therefore has nothing further to hand over to the host.
-    A host that refuses the open or the requested namespace operation returns
-    its error through the existing `IoError` mapping.
+    includes flushing NTFS metadata changes such as renames.
+  - `sync_directory` reopens the write half's directory with
+    [NtCreateFile](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile),
+    an empty name relative to its handle, `FILE_GENERIC_WRITE` access and
+    `FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT |
+    FILE_SYNCHRONOUS_IO_NONALERT`, then calls
+    [FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)
+    and closes the new handle. The original handle has no write access;
+    the new access mask supplies the documented `GENERIC_WRITE` rights.
+    This makes a real durability handoff for directory entries, including
+    those created by `open_append` without write-through. A host refusal
+    from opening, flushing or closing returns through the existing `IoError`
+    mapping; the Windows probe still requires `Ok`.
 
 ## Candidates
 

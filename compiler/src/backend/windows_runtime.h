@@ -177,6 +177,9 @@ int64_t wf__windows_diagnostic_write(const void *bytes, uint64_t length);
  * mutation; no writer-visible descriptor or factory credit is created. */
 HANDLE wf__windows_open_delete(HANDLE root, const char *path, int *error_code);
 
+/* Reopens root with write access for flushing; the caller closes the handle. */
+HANDLE wf__windows_open_directory_for_sync(HANDLE root, int *error_code);
+
 int wf__windows_completion_file_open_at_worker(
     HANDLE root,
     const char *path,

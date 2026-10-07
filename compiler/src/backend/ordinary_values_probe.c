@@ -755,7 +755,11 @@ static void replacement_probe(wf_inputs *inputs) {
     /* Both destination stream-renaming syntax and source stream-opening
      * syntax must refuse before changing either file's name or contents. */
     static const uint16_t stream_target[] = { ':', 's', 'a', 'v', 'e', 'd' };
-    static const uint16_t stream_source[] = { 'a', ':', 'b' };
+    /* A colon after more than one letter reaches the stream check rather
+     * than the earlier drive-qualified-path refusal. */
+    static const uint16_t stream_source[] = {
+        'n', 'e', 'w', ':', 's', 't', 'r', 'e', 'a', 'm'
+    };
     wf_view target_stream = { (void *)stream_target, sizeof stream_target };
     wf_view source_stream = { (void *)stream_source, sizeof stream_source };
     for (unsigned attempt = 0; attempt < 2; ++attempt) {

@@ -808,14 +808,24 @@ static wf_file_result wf_file_windows_namespace(const wf_file_request *request) 
 
 static wf_file_result wf_file_windows_sync_directory(const wf_file_request *request) {
     wf_file_result result;
+    HANDLE root;
+    HANDLE directory;
     memset(&result, 0, sizeof(result));
     result.head.kind = request->kind;
-    /* wf__windows_open_delete opens rename/removal handles with
-     * FILE_WRITE_THROUGH, so SetFileInformationByHandle writes its namespace
-     * changes through before returning. Microsoft documents write-through's
-     * NTFS metadata flush, including rename, under CreateFileW's Caching Behavior:
-     * https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#caching-behavior
-     * sync_directory therefore has nothing further to hand over to the host. */
+    result.head.value = -1;
+    root = wf__windows_completion_descriptor_handle(request->operation.close.descriptor);
+    directory = wf__windows_open_directory_for_sync(root, &result.head.error_code);
+    if (directory == INVALID_HANDLE_VALUE) return result;
+    /* Flush entries created by open_append as well as renamed/removed entries.
+     * A host refusal is returned through the ordinary IoError mapping. */
+    if (FlushFileBuffers(directory))
+        result.head.value = 0;
+    else
+        result.head.error_code = (int)GetLastError();
+    if (!CloseHandle(directory) && result.head.value == 0) {
+        result.head.value = -1;
+        result.head.error_code = (int)GetLastError();
+    }
     return result;
 }
 
