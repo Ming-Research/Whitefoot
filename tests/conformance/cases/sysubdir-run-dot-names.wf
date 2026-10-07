@@ -290,7 +290,7 @@ fn refuse_move(factory: &HandleFactory, from_root: &DirectoryWrite, from: &[u8],
   }
 }
 
-fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, dot: &[u8], dots: &[u8], plain: &[u8], folder: &[u8]) -> result: u8 reads(reader), reads(dot), reads(dots), reads(plain), reads(folder), writes(factory), writes(writer) waits {
+fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, dot: &[u8], dots: &[u8], plain: &[u8], folder: &[u8], leading_dot: &[u8], double_dot: &[u8]) -> result: u8 reads(reader), reads(dot), reads(dots), reads(plain), reads(folder), reads(leading_dot), reads(double_dot), writes(factory), writes(writer) waits {
   let outcome = make_file(factory: factory, root: writer, name: plain, byte: 97_u8);
   if outcome != 0_u8 {
     return outcome;
@@ -339,6 +339,22 @@ fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryW
       return 30_u8;
     }
   }
+  let made = make_file(factory: factory, root: writer, name: leading_dot, byte: 98_u8);
+  if made != 0_u8 {
+    return 40_u8 +sat made;
+  }
+  set made = make_file(factory: factory, root: writer, name: double_dot, byte: 99_u8);
+  if made != 0_u8 {
+    return 50_u8 +sat made;
+  }
+  let found = check_file(factory: factory, root: reader, name: leading_dot, byte: 98_u8);
+  if found != 0_u8 {
+    return 60_u8 +sat found;
+  }
+  set found = check_file(factory: factory, root: reader, name: double_dot, byte: 99_u8);
+  if found != 0_u8 {
+    return 70_u8 +sat found;
+  }
   return check_file(factory: factory, root: reader, name: plain, byte: 97_u8);
 }
 
@@ -353,6 +369,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let plain_end = copy_name(args: &args, position: 3_u64, destination: &plain[0_u64..64_u64]);
   let folder = array_filled::<u8, 64>(value: 0_u8);
   let folder_end = copy_name(args: &args, position: 4_u64, destination: &folder[0_u64..64_u64]);
+  let leading_dot = array_filled::<u8, 64>(value: 0_u8);
+  let leading_end = copy_name(args: &args, position: 5_u64, destination: &leading_dot[0_u64..64_u64]);
+  let double_dot = array_filled::<u8, 64>(value: 0_u8);
+  let double_end = copy_name(args: &args, position: 6_u64, destination: &double_dot[0_u64..64_u64]);
   let outcome = 99_u8;
   if dot_end > 0_u64 {
     if dot_end <= 64_u64 {
@@ -362,7 +382,15 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
             if plain_end <= 64_u64 {
               if folder_end > 0_u64 {
                 if folder_end <= 64_u64 {
-                  set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, dot: &dot[0_u64..dot_end], dots: &dots[0_u64..dots_end], plain: &plain[0_u64..plain_end], folder: &folder[0_u64..folder_end]);
+                  if leading_end > 0_u64 {
+                    if leading_end <= 64_u64 {
+                      if double_end > 0_u64 {
+                        if double_end <= 64_u64 {
+                          set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, dot: &dot[0_u64..dot_end], dots: &dots[0_u64..dots_end], plain: &plain[0_u64..plain_end], folder: &folder[0_u64..folder_end], leading_dot: &leading_dot[0_u64..leading_end], double_dot: &double_dot[0_u64..double_end]);
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }

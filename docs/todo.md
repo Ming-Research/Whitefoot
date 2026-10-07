@@ -2407,6 +2407,19 @@ rarely insert at the same place.
   that program plus conformance cases for the selected rules. Positioned
   writes reopen when a program needs in-place updates rather than replacement.
 
+- **A path given to `open_read` can leave its root.** A name given with a
+  root denotes only an entry directly below it, so `.` and `..` are refused
+  [PRE-2], but `relative_path` keeps every component, and `open_read`
+  follows `..` as the host does (`run-syspath-dotdot-preserved`). A function
+  given only a directory's read half can therefore read files above it,
+  while one given a write half cannot write there. Uncertain: whether any
+  program relies on reading through `..`. The change would be either to
+  refuse `..` components in `open_read`'s paths, as the name operations
+  refuse it, or to state that a read half grants reading of everything the
+  host reaches from it; validate with a conformance case for the selected
+  rule on every host. Reopen when a program is given a read half that must
+  not reach its parent, or with the next change to the path library.
+
 - **A clock's readings cannot be replaced for a test.** `now` and the
   deadline heap read the host's monotonic clock, so a program's behavior at
   a deadline is tested by waiting for it: the deadline programs and cases

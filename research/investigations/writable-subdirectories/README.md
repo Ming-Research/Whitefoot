@@ -63,10 +63,12 @@ directory below its own, and with which create rule.
   pair of halves.
 - **B. Two operations.** `create_directory`, which fails with
   `AlreadyExists` when the name is present, and an `open_directory_write`
-  that never creates. A program needing exclusive creation would need this
-  split; none does yet, and with B a create-if-missing is a create whose
-  `AlreadyExists` is ignored followed by an open, which on Windows is two
-  host calls where A is one.
+  that never creates. Exclusive creation needs this split. Without it, B
+  spells create-if-missing as a create whose `AlreadyExists` is ignored
+  followed by an open, two host calls on Windows where A's `FILE_OPEN_IF`
+  is one, and a name replaced between the two calls is opened without
+  having been created. A is reopened when a program needs exclusive
+  creation, beside the other create rules `docs/todo.md` records.
 - **C. No change to Whitefoot.** firn keeps its base, incremental files and
   manifest flat in its working directory. The gap stays: firn could not
   replay a directory Redis wrote without moving its files, and any other
@@ -125,10 +127,16 @@ directory relative to a handle.
 
 A rename, a removal and a move write the directories they change, so the
 host orders them against every other change of those directories [HOST-1].
-`open_append` reads its root: creating a missing entry commutes with other
-creations, and a later rename or removal of the entry, which writes, stays
-ordered after it. `open_directory_write` creates under the same rule and
-reads its root likewise.
+`open_append` reads its root, so two opens that may create entries are
+ordered only through other state both reach, such as one factory, and
+otherwise in whatever order the host takes them, their outcomes being
+inputs of the execution [WAIT-2]: an `open_append` of a name and an
+`open_directory_write` of the same name, unordered, leave a file or a
+directory there depending on which the host took first. A later rename or
+removal of the entry, which writes the root, stays ordered after either.
+`open_directory_write` asks no more of its root than `open_append` and
+reads it likewise; giving both writes instead would order every creation
+through one root at the cost of overlapped creations through it.
 
 ## Names
 
@@ -141,7 +149,9 @@ subdirectory's write half would thereby obtain the write half of the
 directory above it. The component check refuses `.` and `..` for every
 operation that takes a name with a root, as it refuses an empty name or one
 holding a separator. The path library, `relative_path` with `open_read`,
-keeps its components as given and is outside this rule.
+keeps its components as given and is outside this rule, so a read half can
+still reach the directory above it through a path; `docs/todo.md` records
+that asymmetry.
 
 ## Windows renames resolve against the file's directory
 

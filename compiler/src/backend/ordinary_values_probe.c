@@ -166,8 +166,8 @@ static void text_probe(void) {
 typedef void (*wf_probe_open)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
 typedef void (*wf_probe_read)(wf_read_result *, wf_value *, wf_value *, wf_view *, uint64_t, uint64_t, uint64_t);
 extern void wf_test_public_open(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
-typedef void (*wf_probe_open_directory_write)(wf_open_result *, wf_value *, wf_value *, const wf_view *, uint64_t, uint64_t);
-extern void wf_test_public_open_directory_write(wf_open_result *, wf_value *, wf_value *, const wf_view *, uint64_t, uint64_t);
+typedef void (*wf_probe_open_directory_write)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
+extern void wf_test_public_open_directory_write(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
 extern void wf_test_public_read(wf_read_result *, wf_value *, wf_value *, wf_view *, uint64_t, uint64_t, uint64_t);
 
 static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read read_at) {

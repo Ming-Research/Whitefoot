@@ -780,10 +780,11 @@ void wf__body_open_directory(wf_open_result *result, wf_value *factory,
 }
 
 int wf__body_open_directory_write_start(wf_open_result *result, wf_value *factory,
-                                        wf_value *root, const wf_view *name,
+                                        const wf_value *root, const wf_view *name,
                                         uint64_t start, uint64_t end,
                                         wf_host_operation *operation) {
-    wf_transition(root);
+    /* The row reads root, as open_append's does [PRE-2]: nothing here may
+     * write it, since overlapped readers can share it. */
     memset(result, 0, sizeof(*result));
     if (!wf_component(operation->component, name, start, end)) {
         wf_transition(factory);
@@ -801,7 +802,7 @@ int wf__body_open_directory_write_start(wf_open_result *result, wf_value *factor
 }
 
 void wf__body_open_directory_write_finish(wf_open_result *result, wf_value *factory,
-                                         wf_value *root, const wf_view *name,
+                                         const wf_value *root, const wf_view *name,
                                          uint64_t start, uint64_t end,
                                          wf_host_operation *operation) {
     (void)root;
@@ -812,7 +813,7 @@ void wf__body_open_directory_write_finish(wf_open_result *result, wf_value *fact
 }
 
 void wf__body_open_directory_write(wf_open_result *result, wf_value *factory,
-                                   wf_value *root, const wf_view *name,
+                                   const wf_value *root, const wf_view *name,
                                    uint64_t start, uint64_t end) {
     wf_host_operation operation;
     if (wf__body_open_directory_write_start(result, factory, root, name, start, end, &operation))
