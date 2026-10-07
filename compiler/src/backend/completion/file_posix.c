@@ -315,10 +315,13 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
             request->operation.write.count
         );
         break;
+    case WF_FILE_MOVE:
     case WF_FILE_RENAME:
         result.head.value = renameat(
             request->operation.rename.directory, request->operation.rename.from,
-            request->operation.rename.directory, request->operation.rename.to
+            request->kind == WF_FILE_MOVE ? request->operation.rename.to_directory
+                                          : request->operation.rename.directory,
+            request->operation.rename.to
         );
         break;
     case WF_FILE_REMOVE:
@@ -594,6 +597,7 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
         case WF_FILE_APPEND:
         case WF_FILE_SYNC:
         case WF_FILE_TRUNCATE:
+        case WF_FILE_MOVE:
         case WF_FILE_RENAME:
         case WF_FILE_REMOVE:
         case WF_FILE_SYNC_DIRECTORY:

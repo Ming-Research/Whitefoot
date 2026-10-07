@@ -93,6 +93,13 @@ public fn rename_file(factory: &HandleFactory, root: &DirectoryWrite, from: &[u8
   requires to_end <= to^.len;
 } doc "Renames the file selected by from[from_start..from_end] to to[to_start..to_end], both names below root as open_append names a file [PRE-2], replacing any entry at the destination atomically: an observer sees the whole old file or the whole renamed file at the destination, with no absent or partial intermediate state. Ok reports that the host renamed the file; a host refusal, including a missing source name, is an IoError.";
 
+public fn move_file(factory: &HandleFactory, from_root: &DirectoryWrite, from: &[u8], from_start: u64, from_end: u64, to_root: &DirectoryWrite, to: &[u8], to_start: u64, to_end: u64) -> result: Result<unit, IoError> reads(from), reads(to), writes(factory), writes(from_root), writes(to_root) waits contract {
+  requires from_start <= from_end;
+  requires from_end <= from^.len;
+  requires to_start <= to_end;
+  requires to_end <= to^.len;
+} doc "Renames the file selected by from[from_start..from_end] below from_root to to[to_start..to_end] below to_root, with the component names, atomic replacement and outcome of rename_file [PRE-2]. The two directories must be on one host file system; a move between file systems is a host refusal.";
+
 public fn remove_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<unit, IoError> reads(name), writes(factory), writes(root) waits contract {
   requires start <= end;
   requires end <= name^.len;

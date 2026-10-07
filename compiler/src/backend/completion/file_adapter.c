@@ -40,6 +40,10 @@ int wf_file_request_valid(const wf_file_request *request) {
     case WF_FILE_APPEND:
         return request->operation.write.buffer != NULL
             || request->operation.write.count == 0;
+    case WF_FILE_MOVE:
+        if (request->operation.rename.to_directory < 0) return 0;
+        /* Both forms borrow two validated component names. */
+        /* fall through */
     case WF_FILE_RENAME:
         return request->operation.rename.directory >= 0
             && request->operation.rename.from != NULL

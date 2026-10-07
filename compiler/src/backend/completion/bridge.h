@@ -80,6 +80,8 @@ void wf__completion_file_sync_submit(
 /* Namespace changes use component bytes owned by the pending call. */
 void wf__completion_file_rename_submit(int directory, const void *from,
                                        const void *to, void *record);
+void wf__completion_file_move_submit(int from_directory, const void *from,
+                                     int to_directory, const void *to, void *record);
 void wf__completion_file_remove_submit(int directory, const void *path, void *record);
 void wf__completion_directory_sync_submit(int directory, void *record);
 void wf__completion_directory_write_open_submit(int directory, const void *path, void *record);

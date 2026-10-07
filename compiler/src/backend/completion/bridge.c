@@ -3921,6 +3921,19 @@ void wf__completion_file_rename_submit(
     wf_completion_record *held = wf_bridge_begin(record);
     held->request.kind = WF_FILE_RENAME;
     held->request.operation.rename.directory = directory;
+    held->request.operation.rename.to_directory = directory;
+    held->request.operation.rename.from = from;
+    held->request.operation.rename.to = to;
+    wf_bridge_dispatch(held);
+}
+
+void wf__completion_file_move_submit(
+    int from_directory, const void *from, int to_directory, const void *to, void *record
+) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_MOVE;
+    held->request.operation.rename.directory = from_directory;
+    held->request.operation.rename.to_directory = to_directory;
     held->request.operation.rename.from = from;
     held->request.operation.rename.to = to;
     wf_bridge_dispatch(held);

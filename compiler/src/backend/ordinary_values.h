@@ -155,6 +155,9 @@ void wf__body_sync_file(wf_close_result *result, wf_value *factory, wf_value *fi
 void wf__body_rename_file(wf_close_result *result, wf_value *factory, wf_value *root,
                           const wf_view *from, uint64_t from_start, uint64_t from_end,
                           const wf_view *to, uint64_t to_start, uint64_t to_end);
+void wf__body_move_file(wf_close_result *result, wf_value *factory, wf_value *from_root,
+                          const wf_view *from, uint64_t from_start, uint64_t from_end,
+                          wf_value *to_root, const wf_view *to, uint64_t to_start, uint64_t to_end);
 void wf__body_remove_file(wf_close_result *result, wf_value *factory, wf_value *root,
                           const wf_view *name, uint64_t start, uint64_t end);
 void wf__body_sync_directory(wf_close_result *result, wf_value *factory, wf_value *root);

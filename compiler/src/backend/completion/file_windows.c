@@ -754,14 +754,15 @@ static wf_file_result wf_file_windows_truncate(const wf_file_request *request) {
     return result;
 }
 
-/* SetFileInformationByHandle's Ex classes preserve open handles while
+/* The NT rename and Win32 disposition Ex classes preserve open handles while
  * changing a name. A host without those semantics returns its own refusal;
  * there is no delete-then-rename replacement path. */
 static wf_file_result wf_file_windows_namespace(const wf_file_request *request) {
     wf_file_result result;
     HANDLE root;
     HANDLE file;
-    int renaming = request->kind == WF_FILE_RENAME;
+    int moving = request->kind == WF_FILE_MOVE;
+    int renaming = request->kind == WF_FILE_RENAME || moving;
     int directory = renaming ? request->operation.rename.directory
                              : request->operation.remove.directory;
     const char *path = renaming ? request->operation.rename.from
@@ -773,27 +774,18 @@ static wf_file_result wf_file_windows_namespace(const wf_file_request *request) 
     file = wf__windows_open_delete(root, path, &result.head.error_code);
     if (file == INVALID_HANDLE_VALUE) return result;
     if (renaming) {
-        const WCHAR *target = (const WCHAR *)(const void *)request->operation.rename.to;
-        size_t bytes = wcslen(target) * sizeof(WCHAR);
-        /* The call's component bound supplies a fixed, aligned request buffer;
-         * the runtime does not allocate through the program's heap [STOR-8]. */
-        union {
-            FILE_RENAME_INFO alignment;
-            unsigned char bytes[sizeof(FILE_RENAME_INFO) + WF_WINDOWS_COMPONENT_MAX_BYTES];
-        } storage;
-        FILE_RENAME_INFO *info = (FILE_RENAME_INFO *)(void *)storage.bytes;
-        memset(&storage, 0, sizeof(storage));
-        info->Flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
-        /* A bare name with no root renames within the file's own directory,
-         * which is root: FILE_RENAME_INFO takes RootDirectory only for a
-         * move to another directory. */
-        info->RootDirectory = NULL;
-        info->FileNameLength = (DWORD)bytes;
-        memcpy(info->FileName, target, bytes);
-        if (SetFileInformationByHandle(file, FileRenameInfoEx, info, (DWORD)(sizeof(*info) + bytes)))
-            result.head.value = 0;
-        else
-            result.head.error_code = (int)GetLastError();
+        /* NtSetInformationFile's simple-rename case keeps a bare FileName
+         * with NULL RootDirectory in the file's own directory. Do not use
+         * kernel32's SetFileInformationByHandle: it resolves that name against
+         * the process cwd. A non-NULL RootDirectory selects the destination
+         * directory for move_file; a cross-volume move is a host refusal.
+         * https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information */
+        HANDLE destination = moving
+            ? wf__windows_completion_descriptor_handle(request->operation.rename.to_directory)
+            : NULL;
+        result.head.value = wf__windows_rename_file(
+            file, destination, request->operation.rename.to, &result.head.error_code
+        );
     } else {
         FILE_DISPOSITION_INFO_EX info;
         info.Flags = FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
@@ -876,6 +868,7 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
         return wf_file_windows_write(request);
     case WF_FILE_SYNC:
         return wf_file_windows_sync(request);
+    case WF_FILE_MOVE:
     case WF_FILE_RENAME:
     case WF_FILE_REMOVE:
         return wf_file_windows_namespace(request);
