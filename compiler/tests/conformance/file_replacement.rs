@@ -26,6 +26,7 @@ fn namespace_cases_on_both_host_routes() {
         "sysubdir-run-existing",
         "sysubdir-run-file-error",
         "sysubdir-run-namespace",
+        "sysubdir-run-dot-names",
         "sysubdir-run-move-into-directory",
         "sysubdir-run-move-replaces",
         "sysubdir-run-move-missing",

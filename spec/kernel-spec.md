@@ -2477,6 +2477,7 @@ The host has one monotonic clock, whose reading never decreases, and every `Inst
 A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
+A name that a `std::fs` operation takes with a root selects an entry directly below that root; `.` and `..` select no such entry, and an operation given either returns an `IoError`.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 `TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 
@@ -2683,7 +2684,7 @@ public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[
   requires end <= name^.len;
 } doc "Opens the directory that the bytes of name from start to end name below root.";
 
-public fn open_directory_write(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryWrite, IoError> reads(name), writes(factory), writes(root) waits contract {
+public fn open_directory_write(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryWrite, IoError> reads(root), reads(name), writes(factory) waits contract {
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the write half of the directory that the bytes of name from start to end name below root, as open_append names a file [PRE-2], creating it empty when no entry has that name. An existing directory is opened with its entries kept. A host refusal, including a name that names a file or other non-directory entry, is an IoError.";
@@ -2730,7 +2731,7 @@ public fn move_file(factory: &HandleFactory, from_root: &DirectoryWrite, from: &
   requires from_end <= from^.len;
   requires to_start <= to_end;
   requires to_end <= to^.len;
-} doc "Renames the file selected by from[from_start..from_end] below from_root to to[to_start..to_end] below to_root, with the component names, atomic replacement and outcome of rename_file [PRE-2]. The two directories must be on one host file system; a move between file systems is a host refusal.";
+} doc "Renames the file selected by from[from_start..from_end] below from_root to to[to_start..to_end] below to_root, each name below its root as open_append names a file, with the atomic replacement and outcome of rename_file [PRE-2]. The two directories must be on one host file system; a move between file systems is a host refusal.";
 
 public fn remove_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<unit, IoError> reads(name), writes(factory), writes(root) waits contract {
   requires start <= end;

@@ -1130,7 +1130,8 @@ int wf__windows_rename_file(
     IO_STATUS_BLOCK io_status;
     NTSTATUS status;
     const uint16_t *target = (const uint16_t *)(const void *)path;
-    size_t bytes = (size_t)wf__windows_wcslen(target) * sizeof(WCHAR);
+    size_t units = 0;
+    size_t bytes;
     /* The call's component bound supplies a fixed, aligned request buffer;
      * the runtime does not allocate through the program's heap [STOR-8]. */
     union {
@@ -1141,6 +1142,14 @@ int wf__windows_rename_file(
     wf_windows_file_rename_information_ex *info =
         (wf_windows_file_rename_information_ex *)(void *)storage.bytes;
     *error_code = 0;
+    /* The component check bounds the name; the copy below checks it again
+     * against the buffer it fills. */
+    if (!wf_windows_bounded_wcslen(target, &units)
+        || units * sizeof(WCHAR) > WF_WINDOWS_COMPONENT_MAX_BYTES) {
+        *error_code = ERROR_INVALID_NAME;
+        return -1;
+    }
+    bytes = units * sizeof(WCHAR);
     if (!wf_windows_resolve_nt_api(&api)) {
         *error_code = (int)GetLastError();
         if (*error_code == 0) *error_code = ERROR_PROC_NOT_FOUND;
@@ -1242,15 +1251,6 @@ static int wf_windows_open_at_worker(
         wf_windows_record_error(ERROR_INVALID_NAME);
         *error_code = ERROR_INVALID_NAME;
         return -1;
-    }
-    if (create_directory) {
-        for (size_t index = 0; index < unit_count; ++index) {
-            if (units[index] == ':' || units[index] == '/' || units[index] == '\\') {
-                wf_windows_record_error(ERROR_INVALID_NAME);
-                *error_code = ERROR_INVALID_NAME;
-                return -1;
-            }
-        }
     }
     if (!wf_windows_resolve_nt_api(&api)) {
         DWORD error = GetLastError();

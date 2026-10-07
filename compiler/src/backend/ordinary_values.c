@@ -691,6 +691,22 @@ void wf__body_open_read(wf_open_result *result, wf_value *factory,
         wf__body_open_read_finish(result, factory, root, path, &operation);
 }
 
+/* `.` and `..` name the directory itself and its parent, never an entry
+ * directly below the root, so a component operation refuses them [PRE-2]:
+ * a write half must not reach the directory above it. unit_bytes is 1 for
+ * POSIX bytes and 2 for Windows UTF-16 code units. */
+static int wf_component_is_dots(const unsigned char *text, uint64_t length,
+                                uint64_t unit_bytes) {
+    uint64_t units = length / unit_bytes;
+    uint64_t index;
+    if (units == 0 || units > 2) return 0;
+    for (index = 0; index < length; index++) {
+        unsigned char expected = (index % unit_bytes) == 0 ? '.' : 0;
+        if (text[index] != expected) return 0;
+    }
+    return 1;
+}
+
 static int wf_component(unsigned char *component, const wf_view *name,
                          uint64_t start, uint64_t end) {
     uint64_t length = end - start;
@@ -705,11 +721,13 @@ static int wf_component(unsigned char *component, const wf_view *name,
         /* A colon selects a data stream rather than a file component. */
         if (unit == 0 || unit == '/' || unit == '\\' || unit == ':') return 0;
     }
+    if (wf_component_is_dots(text, length, 2)) return 0;
     component[length] = 0;
     component[length + 1] = 0;
 #else
     for (index = 0; index < length; index++)
         if (text[index] == 0 || text[index] == '/') return 0;
+    if (wf_component_is_dots(text, length, 1)) return 0;
     component[length] = 0;
 #endif
     memcpy(component, text, (size_t)length);

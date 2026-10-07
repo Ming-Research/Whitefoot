@@ -102,7 +102,7 @@ fn read_below(factory: &HandleFactory, reader: &DirectoryRead, folder: &[u8], fi
   }
 }
 
-fn create_below(factory: &HandleFactory, writer: &DirectoryWrite, folder: &[u8], first: &[u8]) -> result: u8 reads(folder), reads(first), writes(factory), writes(writer) waits {
+fn create_below(factory: &HandleFactory, writer: &DirectoryWrite, folder: &[u8], first: &[u8]) -> result: u8 reads(writer), reads(folder), reads(first), writes(factory) waits {
   match std::fs::open_directory_write(factory: factory, root: writer, name: folder, start: 0_u64, end: folder^.len) {
     Ok(value: opened) => {
       let outcome = make_file(factory: factory, root: &opened, name: first, byte: 97_u8);
@@ -115,7 +115,7 @@ fn create_below(factory: &HandleFactory, writer: &DirectoryWrite, folder: &[u8],
   }
 }
 
-fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, folder: &[u8], first: &[u8]) -> result: u8 reads(reader), reads(folder), reads(first), writes(factory), writes(writer) waits {
+fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, folder: &[u8], first: &[u8]) -> result: u8 reads(reader), reads(writer), reads(folder), reads(first), writes(factory) waits {
   let outcome = create_below(factory: factory, writer: writer, folder: folder, first: first);
   if outcome != 0_u8 {
     return outcome;

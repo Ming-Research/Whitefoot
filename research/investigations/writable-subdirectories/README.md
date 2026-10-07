@@ -101,14 +101,57 @@ half.
 - **D. `rename_file` with two roots.** One operation for both cases, but a
   rename within one directory would pass one handle as both roots, and
   `writes(from_root)` with `writes(to_root)` on one handle overlap [EFF-5],
-  so the common case could not be written.
+  so the common case could not be written. Declaring the roots read instead
+  would not help: host operations are ordered only where their footprints
+  overlap with a write [HOST-1], so a rename that only read its directory
+  could be reordered against another rename or a removal in it, which
+  changes what the directory holds.
 - **E. A second operation, `move_file`,** taking the source's and the
   destination's write halves, with `rename_file`'s atomic replacement and
   its open-handle rule. A move between file systems is a host refusal. POSIX
   gives it as `renameat` with two directory descriptors; Windows as
-  `FileRenameInfoEx` whose `RootDirectory` names the destination directory,
-  on one volume.
+  `NtSetInformationFile` with `FileRenameInformationEx` whose
+  `RootDirectory` names the destination directory, on one volume.
 
 Proposal: E, beside A. Its conformance cases move a file from the working
 directory into a subdirectory, over an existing file, and from a missing
-name, and keep a handle open across the move.
+name, keep a handle open across the move, and show that one handle passed
+as both roots is refused [EFF-5]. The proposal would be rejected if a host
+cannot replace the destination atomically across two directories of one
+file system, as A would be by a host that cannot create or open a
+directory relative to a handle.
+
+## Effects of the operations on their root
+
+A rename, a removal and a move write the directories they change, so the
+host orders them against every other change of those directories [HOST-1].
+`open_append` reads its root: creating a missing entry commutes with other
+creations, and a later rename or removal of the entry, which writes, stays
+ordered after it. `open_directory_write` creates under the same rule and
+reads its root likewise.
+
+## Names
+
+A name given with a root is meant to select an entry directly below it.
+The hosts resolve `.` to the directory itself and `..` to its parent:
+POSIX `mkdirat(dir, "..")` fails with `EEXIST`, which create-if-missing
+accepts, and `openat(dir, "..", O_DIRECTORY | O_NOFOLLOW)` then opens the
+parent, since `O_NOFOLLOW` concerns only symbolic links. A function given a
+subdirectory's write half would thereby obtain the write half of the
+directory above it. The component check refuses `.` and `..` for every
+operation that takes a name with a root, as it refuses an empty name or one
+holding a separator. The path library, `relative_path` with `open_read`,
+keeps its components as given and is outside this rule.
+
+## Windows renames resolve against the file's directory
+
+kernel32's `SetFileInformationByHandle` with `FileRenameInfoEx`, given a
+bare target name and no `RootDirectory`, resolves the name against the
+process's current directory, not the renamed file's directory. In the
+working directory the two coincide; inside a subdirectory the renamed file
+left it (`sysubdir-run-namespace` exited 21, its check that the parent
+stays unchanged, in io-hosts run 37694724459). Both renames therefore call
+ntdll's `NtSetInformationFile` with `FileRenameInformationEx`: a bare name
+with no root renames within the file's own directory, and `move_file`
+names the destination through `RootDirectory` (passing in io-hosts run
+37696388709).

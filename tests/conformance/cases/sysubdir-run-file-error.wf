@@ -89,7 +89,7 @@ fn check_file(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], byte: 
   }
 }
 
-fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, folder: &[u8]) -> result: u8 reads(reader), reads(folder), writes(factory), writes(writer) waits {
+fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, folder: &[u8]) -> result: u8 reads(reader), reads(writer), reads(folder), writes(factory) waits {
   let outcome = make_file(factory: factory, root: writer, name: folder, byte: 97_u8);
   if outcome != 0_u8 {
     return outcome;

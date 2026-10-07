@@ -258,7 +258,7 @@ fn parent_has(factory: &HandleFactory, reader: &DirectoryRead, first: &[u8], sec
   }
 }
 
-fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, folder: &[u8], first: &[u8], second: &[u8]) -> result: u8 reads(reader), reads(folder), reads(first), reads(second), writes(factory), writes(writer) waits {
+fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, folder: &[u8], first: &[u8], second: &[u8]) -> result: u8 reads(reader), reads(writer), reads(folder), reads(first), reads(second), writes(factory) waits {
   match std::fs::open_directory_write(factory: factory, root: writer, name: folder, start: 0_u64, end: folder^.len) {
     Ok(value: opened) => {
       let outcome = change_entries(factory: factory, writer: &opened, first: first, second: second);

@@ -51,7 +51,7 @@ public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[
   requires end <= name^.len;
 } doc "Opens the directory that the bytes of name from start to end name below root.";
 
-public fn open_directory_write(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryWrite, IoError> reads(name), writes(factory), writes(root) waits contract {
+public fn open_directory_write(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryWrite, IoError> reads(root), reads(name), writes(factory) waits contract {
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the write half of the directory that the bytes of name from start to end name below root, as open_append names a file [PRE-2], creating it empty when no entry has that name. An existing directory is opened with its entries kept. A host refusal, including a name that names a file or other non-directory entry, is an IoError.";
@@ -98,7 +98,7 @@ public fn move_file(factory: &HandleFactory, from_root: &DirectoryWrite, from: &
   requires from_end <= from^.len;
   requires to_start <= to_end;
   requires to_end <= to^.len;
-} doc "Renames the file selected by from[from_start..from_end] below from_root to to[to_start..to_end] below to_root, with the component names, atomic replacement and outcome of rename_file [PRE-2]. The two directories must be on one host file system; a move between file systems is a host refusal.";
+} doc "Renames the file selected by from[from_start..from_end] below from_root to to[to_start..to_end] below to_root, each name below its root as open_append names a file, with the atomic replacement and outcome of rename_file [PRE-2]. The two directories must be on one host file system; a move between file systems is a host refusal.";
 
 public fn remove_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<unit, IoError> reads(name), writes(factory), writes(root) waits contract {
   requires start <= end;
