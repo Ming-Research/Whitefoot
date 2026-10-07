@@ -1,0 +1,19 @@
+fn reset(p: &u64) -> result: unit writes(p) contract {
+  ensures p^ == 1_u64;
+} {
+  doc "The body writes 0 to the caller's cell, then rebinds p to a local holding 1. The postcondition concerns the caller's storage, so it must not be proved from the local.";
+  let one = 1_u64;
+  set p^ = 0_u64;
+  set p = &one;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let x = 5_u64;
+  reset(p: &x);
+  let quotient = 10_u64 / x;
+  if quotient == 10_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
