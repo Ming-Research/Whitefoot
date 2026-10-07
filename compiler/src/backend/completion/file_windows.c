@@ -810,9 +810,12 @@ static wf_file_result wf_file_windows_sync_directory(const wf_file_request *requ
     wf_file_result result;
     memset(&result, 0, sizeof(result));
     result.head.kind = request->kind;
-    /* NTFS journals namespace changes and offers no directory fsync. There
-     * is no additional host call to make: success promises only the handoff
-     * in [PRE-2], never survival of a host failure. */
+    /* wf__windows_open_delete opens rename/removal handles with
+     * FILE_WRITE_THROUGH, so SetFileInformationByHandle writes its namespace
+     * changes through before returning. Microsoft documents write-through's
+     * NTFS metadata flush, including rename, under CreateFileW's Caching Behavior:
+     * https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#caching-behavior
+     * sync_directory therefore has nothing further to hand over to the host. */
     return result;
 }
 

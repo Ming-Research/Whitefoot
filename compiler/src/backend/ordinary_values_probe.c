@@ -751,6 +751,32 @@ static void replacement_probe(wf_inputs *inputs) {
     wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
                          &fresh, 0, fresh.length, &old, 0, 0);
     assert(result.tag == 1 && result.err.error.tag == WF_IO_INVALID_PATH);
+#if defined(_WIN32)
+    /* Both destination stream-renaming syntax and source stream-opening
+     * syntax must refuse before changing either file's name or contents. */
+    static const uint16_t stream_target[] = { ':', 's', 'a', 'v', 'e', 'd' };
+    static const uint16_t stream_source[] = { 'a', ':', 'b' };
+    wf_view target_stream = { (void *)stream_target, sizeof stream_target };
+    wf_view source_stream = { (void *)stream_source, sizeof stream_source };
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        const wf_view *from = attempt == 0 ? &fresh : &source_stream;
+        const wf_view *to = attempt == 0 ? &target_stream : &old;
+        wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
+                             from, 0, from->length, to, 0, to->length);
+        assert(result.tag == 1 && result.err.error.tag == WF_IO_INVALID_PATH);
+        const wf_view *names[] = { &old, &fresh };
+        for (unsigned index = 0; index < 2; ++index) {
+            wf__body_open_file(&current, &inputs->handles, &inputs->cwd_read,
+                               names[index], 0, names[index]->length);
+            assert(current.tag == 0);
+            wf__body_read_at(&read, &inputs->handles, &current.ok.value,
+                             &destination, 0, 0, sizeof bytes);
+            assert(read.tag == 0 && read.ok.value == 1 && bytes[0] == "ab"[index]);
+            wf__body_close_read(&result, &inputs->handles, &current.ok.value);
+            check_close(&result);
+        }
+    }
+#endif
     wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
                          &fresh, 0, fresh.length, &old, 0, old.length);
     check_namespace(&result, "rename_file");

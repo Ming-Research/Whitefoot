@@ -43,6 +43,9 @@
 #ifndef FILE_OPEN
 #define FILE_OPEN 0x00000001UL
 #endif
+#ifndef FILE_WRITE_THROUGH
+#define FILE_WRITE_THROUGH 0x00000002UL
+#endif
 #ifndef FILE_SYNCHRONOUS_IO_NONALERT
 #define FILE_SYNCHRONOUS_IO_NONALERT 0x00000020UL
 #endif
@@ -1049,7 +1052,8 @@ HANDLE wf__windows_open_delete(HANDLE root, const char *path, int *error_code) {
     status = api.create_file(
         &opened, DELETE | SYNCHRONIZE, &attributes, &io_status, NULL, 0,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-        FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT | FILE_NON_DIRECTORY_FILE,
+        FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT | FILE_NON_DIRECTORY_FILE
+            | FILE_WRITE_THROUGH,
         NULL, 0
     );
     if (status == WF_WINDOWS_STATUS_PENDING) {

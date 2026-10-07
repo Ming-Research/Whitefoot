@@ -58,8 +58,14 @@ with a failure at any point leaving one of the two files whole.
     open, as on POSIX.
   - Both need the file's open handles to share deletion
     (`FILE_SHARE_DELETE`).
-  - NTFS has no directory sync. A rename made with write-through is
-    journaled, so syncing a directory has nothing more to ask of the host.
+  - `wf__windows_open_delete` opens both rename and removal handles with
+    `FILE_WRITE_THROUGH`; `SetFileInformationByHandle` writes its namespace
+    changes through before returning. Microsoft's documented
+    [write-through behavior](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#caching-behavior)
+    includes flushing NTFS metadata changes such as renames. Windows
+    `sync_directory` therefore has nothing further to hand over to the host.
+    A host that refuses the open or the requested namespace operation returns
+    its error through the existing `IoError` mapping.
 
 ## Candidates
 

@@ -1,7 +1,11 @@
-//! The file-replacement conformance witnesses on both host routes, including
-//! Windows, whose ordinary corpus adapter does not yet run the full corpus.
+//! The file-replacement conformance witnesses on both Windows host routes.
+//! The Unix corpus adapter already builds and runs every manifest case;
+//! programs::file_replacement covers its native-disabled route as well.
+//! Windows's ordinary corpus adapter does not yet run the full corpus.
 //! Default engine selection and native-disabled execution both carry these
 //! namespace requests through the shared file adapter.
+
+#![cfg(windows)]
 
 use std::process::Command;
 

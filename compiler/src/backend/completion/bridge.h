@@ -267,11 +267,11 @@ void wf__context_frame_release(void *frame);
  * record first, then whatever the operation's linked body keeps until its
  * finish reads the record.  The linked bodies check that their layout fits. */
 #if defined(_WIN32)
-#define WF_CONTEXT_OPERATION_BYTES 1216u
-#elif defined(__APPLE__)
-#define WF_CONTEXT_OPERATION_BYTES 2240u
-#else
 #define WF_CONTEXT_OPERATION_BYTES 704u
+#elif defined(__APPLE__)
+#define WF_CONTEXT_OPERATION_BYTES 1216u
+#else
+#define WF_CONTEXT_OPERATION_BYTES 448u
 #endif
 #define WF_CONTEXT_OPERATION_ALIGN 16u
 void *wf__context_operation(void);

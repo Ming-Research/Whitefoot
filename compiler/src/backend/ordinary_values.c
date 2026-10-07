@@ -379,7 +379,8 @@ typedef struct wf_host_operation {
     int64_t position;
     /* Path components stay live until an open or namespace change completes. */
     alignas(2) unsigned char component[WF_COMPONENT_BYTES + 2];
-    alignas(2) unsigned char destination[WF_COMPONENT_BYTES + 2];
+    /* Only rename needs a second name, borrowed from the runtime pool. */
+    unsigned char *destination;
 } wf_host_operation;
 _Static_assert(offsetof(wf_host_operation, record) == 0,
                "a context's operation block begins with its record");
@@ -701,7 +702,8 @@ static int wf_component(unsigned char *component, const wf_view *name,
     for (index = 0; index < length; index += 2) {
         uint16_t unit;
         memcpy(&unit, text + index, 2);
-        if (unit == 0 || unit == '/' || unit == '\\') return 0;
+        /* A colon selects a data stream rather than a file component. */
+        if (unit == 0 || unit == '/' || unit == '\\' || unit == ':') return 0;
     }
     component[length] = 0;
     component[length + 1] = 0;
@@ -935,9 +937,14 @@ int wf__body_rename_file_start(wf_close_result *result, wf_value *factory, wf_va
                                wf_host_operation *operation) {
     wf_transition(factory);
     wf_transition(root);
-    if (!wf_component(operation->component, from, from_start, from_end)
-        || !wf_component(operation->destination, to, to_start, to_end))
+    if (!wf_component(operation->component, from, from_start, from_end))
         return wf_namespace_invalid(result);
+    operation->destination = wf__runtime_take(WF_COMPONENT_BYTES + 2);
+    if (!wf_component(operation->destination, to, to_start, to_end)) {
+        wf__runtime_give(operation->destination, WF_COMPONENT_BYTES + 2);
+        operation->destination = NULL;
+        return wf_namespace_invalid(result);
+    }
     wf__completion_file_rename_submit(wf_descriptor(root), operation->component,
                                       operation->destination, &operation->record);
     return wf__completion_pending(&operation->record) ? 2 : 1;
@@ -950,6 +957,10 @@ void wf__body_rename_file_finish(wf_close_result *result, wf_value *factory, wf_
     (void)factory; (void)root; (void)from; (void)from_start; (void)from_end;
     (void)to; (void)to_start; (void)to_end;
     wf_namespace_finish(result, operation);
+    /* Join has ended host access on success, refusal or cancellation. A
+     * submitted operation completed in start still comes through finish. */
+    wf__runtime_give(operation->destination, WF_COMPONENT_BYTES + 2);
+    operation->destination = NULL;
 }
 
 void wf__body_rename_file(wf_close_result *result, wf_value *factory, wf_value *root,
