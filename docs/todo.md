@@ -1511,8 +1511,9 @@ rarely insert at the same place.
   from merely higher worker participation. No lower threshold or new
   cancellation mechanism is selected by the expression result.
   **A fork has no grain below which it runs inline, though a call offer
-  does.** Snowghost-wf reports an incremental layout update, on branch
-  `research/m2-edit-cost`, that forks one small independent cursor query
+  does.** Snowghost-wf reports an incremental layout update (reproducer
+  `45fc4bddb` on its branch `research/m2-edit-cost`) that forks one small
+  independent cursor query
   per call and joins it before continuing. With identical work counters,
   it takes 608 µs sequentially and 5,533 µs under `--par` at four workers,
   and perf shows worker wake-up and join dominating. The figures are
