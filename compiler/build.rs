@@ -84,8 +84,12 @@ pub const SPEC_SHA256_HEX: &str = "{hex}";
 
 /// The result type of `llvm.coro.end` in the toolchain this build hands its
 /// modules to (compiler/backend-facts): `i1` until LLVM changed it to
-/// `void`, and the verifier refuses a declaration of the other one. A module
-/// declaring the newer form is handed to the assembler `whitefootc` runs.
+/// `void`. A module that calls the newer form is verified by the assembler
+/// `whitefootc` runs, without generating code: the verifier checks the
+/// intrinsic's type at a call, while some versions accept a bare declaration
+/// of either form (Apple clang 21), and a call outside a coroutine can crash
+/// code generation. Verification is requested explicitly, since release
+/// builds of clang 18 to 20 skip it on IR input by default.
 fn coro_end_result() -> &'static str {
     const OLD: &str = "i1";
     const NEW: &str = "void";
@@ -93,12 +97,26 @@ fn coro_end_result() -> &'static str {
         return OLD;
     };
     let probe = Path::new(&directory).join("coro_end_probe.ll");
-    if fs::write(&probe, "declare void @llvm.coro.end(ptr, i1, token)\n").is_err() {
+    if fs::write(
+        &probe,
+        "declare void @llvm.coro.end(ptr, i1, token)\n\n\
+         define void @probe() {\n  \
+         call void @llvm.coro.end(ptr null, i1 false, token none)\n  ret void\n}\n",
+    )
+    .is_err()
+    {
         return OLD;
     }
     let accepted = Command::new(assembler())
-        .args(["-x", "ir", "-c", "-o"])
-        .arg(Path::new(&directory).join("coro_end_probe.o"))
+        .args([
+            "-x",
+            "ir",
+            "-S",
+            "-emit-llvm",
+            "-fverify-intermediate-code",
+            "-o",
+        ])
+        .arg(Path::new(&directory).join("coro_end_probe.verified.ll"))
         .arg(&probe)
         .output()
         .is_ok_and(|output| output.status.success());
