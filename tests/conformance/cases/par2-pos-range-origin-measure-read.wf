@@ -1,0 +1,41 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn fill(row: &[u64], value: u64) -> result: unit writes(row) {
+  let count = row^.len;
+  for (j in 0_u64..count) {
+    set row^[j] = value;
+  }
+  return unit;
+}
+
+fn length(a: &[u64]) -> result: u64 reads(a.len) {
+  return a^.len;
+}
+
+fn partition(a: &[u64]) -> result: unit writes(a) {
+  doc "Each iteration writes its adjacent pair and reads the written origin's length directly and through a helper row.";
+  for (i in 0_u64..4_u64) {
+    let start = i * 2_u64;
+    let end = start + 2_u64;
+    let size = length(a: a);
+    if end <= a^.len {
+      fill(row: &a^[start..end], value: size);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Check every written pair and a zero-length origin; compiler tests check range-family permission.";
+  let values = array_filled::<u64, 8>(value: 0_u64);
+  let count = values.len;
+  partition(a: &values[0_u64..count]);
+  partition(a: &values[0_u64..0_u64]);
+  for (i in 0_u64..count) {
+    if values[i] != 8_u64 {
+      return exit_status(code: 1_u8);
+    }
+  }
+  return exit_status(code: 0_u8);
+}

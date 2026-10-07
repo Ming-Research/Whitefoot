@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-07 Element loops may read the written storage's measures
+
+Nodes: language/parallelism/loop-permission
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the proposal to admit measure reads in PAR-2 element loops as the next work once FN-6 was done: "OK, continue with it once FN-6 is fine" (translated), recorded as Q138; after the completion report that presented PR #268's specification and design-tree text as Q140, approval recommended: "approve them all" (translated).
+
+Summary: A counted loop that writes proved affine elements of a root, or writes through proved range references of an origin, may also read that root's or origin's measure words, `len`, `cap` and `head`, as the certified-element family already admitted. A measure read touches descriptor storage, which MSR-2 makes disjoint from element storage, and the unchanged write rule confines every write of the body to elements, so no iteration writes a measure; a body that appends, grows or takes back still denies. Refusing those reads is kept as a rejected alternative: Snowghost's Paged port found an in-body guard such as `if s < values.len` the dominant barrier to its parallel layout loops (0 of 415 corresponding loops newly permitted; five controls all permitted once the read was hoisted).
+
 ## 2026-10-07 Recursion cycles admit closed-term arguments
 
 Nodes: language/generics

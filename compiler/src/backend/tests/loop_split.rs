@@ -1204,14 +1204,14 @@ fn assert_map_payload_capture(module: &str, chunk: &str, seed_type: &str, elemen
 fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_paths() {
     let unsplit = emit(ALIGNED_PAYLOAD_MAP);
     assert!(!module_requires_parallel_runtime(&unsplit));
-    let denied = emit_with_overlap(ALIGNED_PAYLOAD_MAP);
+    let measured = emit_with_overlap(ALIGNED_PAYLOAD_MAP);
     assert!(
-        synthesized_symbols(&denied, "@wf__par_chunk_").is_empty(),
-        "PAR-2 must still deny a whole-root measure read beside a mapped write"
+        module_requires_parallel_runtime(&measured)
+            && !synthesized_symbols(&measured, "@wf__par_chunk_").is_empty(),
+        "PAR-2 admits a measure read of the mapped root beside its mapped writes, so the in-body length read still splits"
     );
-    // The specification forbids the whole-root read inside an element map;
-    // the preheader already captures the same immutable length. Preserve the
-    // entire write fixture, its exact output oracle, and the negative control.
+    // The same map with the length read replaced by the preheader's captured
+    // extent must split identically; the assertions below inspect that form.
     let source = std::str::from_utf8(ALIGNED_PAYLOAD_MAP)
         .expect("UTF-8 fixture")
         .replacen(
@@ -1286,6 +1286,30 @@ fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_pa
     assert!(
         granted > 0,
         "the nominal-element map must execute a real worker callback"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, reference.stdout);
+
+    // [PAR-2] the original map reads `output.inner.len` inside each chunk;
+    // its split must compute the same result as the unsplit program and the
+    // preheader form, with real workers.
+    let measured_executable = build_executable(&measured, &directory);
+    for workers in ["0", "1", "4"] {
+        let output = Command::new(&measured_executable)
+            .env("WF_WORKERS", workers)
+            .bounded_output()
+            .expect("run the split map that reads its length in the body");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "WF_WORKERS={workers}: {output:?}"
+        );
+        assert_eq!(output.stdout, reference.stdout, "WF_WORKERS={workers}");
+    }
+    let (granted, output) = CountedProgram::link(&measured, &directory).run(Some("4"));
+    assert!(
+        granted > 0,
+        "the map reading its length in the body must execute a real worker callback"
     );
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(output.stdout, reference.stdout);
