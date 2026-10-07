@@ -812,7 +812,9 @@ fn ceiling_pair(
             };
             match capacity {
                 // A runtime-capacity `Slots<T>` is a pointer, a capacity and
-                // a length; a `Ring<T>` adds a window origin.
+                // a length; a `Ring<T>` adds a window origin. Paged keeps
+                // its (32, 8) language ceiling even though its cell's fixed
+                // header uses three words followed by a runtime pointer tail.
                 None => (Finite(8 * (words + 2)), 8),
                 Some(0) => (Finite(8 * words), 8),
                 Some(length) => {

@@ -2237,6 +2237,26 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
+- **Ignored reference arguments can outlive relocated storage in an overlap
+  group outside Paged.** Inspection of `IrBuilder::overlaps` and
+  `FunctionEmitter::emit_overlap_joins` finds no general lifetime cut for
+  a pure `ignore(part: &Slots<u64>)` followed by `grow(cell: &p, ...)`,
+  with `ignore(part: &p.inner)` formed first. The row of `ignore` has no
+  content read, while the refused offer executes at the final join, after
+  the later call can free the referenced block. Ordinary reference
+  parameters still carry `dereferenceable`, whose
+  [LLVM contract](https://llvm.org/docs/LangRef.html#parameter-attributes)
+  applies at callee entry. The Paged lowering now ends a group at a call
+  taking `&Paged<T>`; the general relocating-owner case needs a separate
+  repair rather than a Paged-only callee-name test. The witness has not
+  been compiled or run. Check the retained effects and
+  `box_keeping_reference_parameters` as evidence for a general lifetime
+  cut, including forwarding wrappers and by-value consumption. Validate
+  source permission unchanged, both call orders, refused and granted offers,
+  and ordinary reference attributes with facts on and off. Reopen at the
+  next parallel-lowering correctness change, before relying on overlap of
+  an ignored borrow with owner replacement or consumption.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe

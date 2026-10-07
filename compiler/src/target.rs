@@ -737,8 +737,7 @@ impl<'types> ReturnLeaves<'types> {
                 let header = match (shape, capacity) {
                     (IrWindowShape::Slots, Some(_)) => 1,
                     (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
-                    (IrWindowShape::Ring, None) => 3,
-                    (IrWindowShape::Paged, _) => 4,
+                    (IrWindowShape::Ring, None) | (IrWindowShape::Paged, _) => 3,
                 };
                 self.integer(copies, header);
                 if let Some(length @ 1..) = capacity {
@@ -1071,6 +1070,8 @@ fn runtime_capacity_layout(
             match shape {
                 IrWindowShape::Slots => 2,
                 IrWindowShape::Ring => 3,
+                // Three header words and the minimum one directory entry.
+                // The entry count beyond that is checked at run time.
                 IrWindowShape::Paged => 4,
             },
         ),
@@ -1093,10 +1094,23 @@ fn runtime_capacity_layout(
         .ok_or(TargetLayoutFailure::Unrepresentable(
             TargetObject::RuntimeSizedAllocation,
         ))?;
+    // Paged elements occupy separate allocations, so their alignment does not
+    // pad the cell's pointer tail. Page alignment is still checked above.
+    let header_align = if matches!(
+        content,
+        IrType::Window {
+            shape: IrWindowShape::Paged,
+            ..
+        }
+    ) {
+        8
+    } else {
+        actual.align
+    };
     let header = align_up(
         layouts.target,
         fixed,
-        actual.align,
+        header_align,
         TargetObject::RuntimeSizedAllocation,
     )?;
     if header > layouts.target.runtime_allocation_max() {
@@ -1444,7 +1458,8 @@ impl<'types> LayoutComputer<'types> {
                 capacity: None,
             } => {
                 self.element(element)?;
-                Ok(Layout { size: 32, align: 8 })
+                // The directory's runtime pointer tail follows this header.
+                Ok(Layout { size: 24, align: 8 })
             }
             IrType::Window {
                 shape: IrWindowShape::Paged,

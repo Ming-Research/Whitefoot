@@ -965,10 +965,15 @@ impl<'program> IrBuilder<'program> {
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
     ///   and the join, where the value does not exist yet; and
-    /// - later arguments do not form an address through a Paged directory
+    /// - later arguments do not form an address through a Paged cell or directory
     ///   while an earlier member is running. Source permission does not count
-    ///   a borrow as a content read, but this representation loads directory
-    ///   words that growth can replace even when the callee ignores its borrow.
+    ///   a borrow as a content read, but this representation loads the owner
+    ///   pointer or directory words that growth can replace even when the callee
+    ///   ignores its borrow; and
+    /// - a call taking a Paged cell reference is the last member, so it enters
+    ///   and finishes before a later call can replace that cell. An ignored
+    ///   reference still promises dereferenceability at the callee's entry,
+    ///   including when a refused hand-out runs at the join.
     ///
     /// Each contiguous part retains the chain's every-ordered-pair proof.
     /// Finally, already-proved adjacent pairs recover opportunities across a
@@ -1038,7 +1043,7 @@ impl<'program> IrBuilder<'program> {
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
                 members.push(value);
-                if addressed {
+                if addressed || self.call_borrows_paged_cell(block, value) {
                     // This member must be the group's last, so it ends it.
                     finish(&mut members, &mut claimed, &mut overlaps);
                     home = None;
@@ -1047,6 +1052,36 @@ impl<'program> IrBuilder<'program> {
             finish(&mut members, &mut claimed, &mut overlaps);
         }
         overlaps
+    }
+
+    /// A later call, including an ordinary wrapper around growth, can replace
+    /// the cell an otherwise pure member ignores. Ending at this member keeps
+    /// its reference valid at entry without changing source permission or
+    /// guessing which later callee reallocates storage.
+    fn call_borrows_paged_cell(&self, block: IrBlockId, call: IrValueId) -> bool {
+        self.blocks[block.index()]
+            .instructions
+            .iter()
+            .any(|instruction| {
+                let IrInstruction::Define {
+                    result,
+                    operation: IrOperation::Call { arguments, .. },
+                    ..
+                } = instruction
+                else {
+                    return false;
+                };
+                *result == call
+                    && arguments.iter().any(|argument| {
+                        matches!(
+                            self.values.get(argument.index()),
+                            Some(IrType::Address(IrAddressed::Window {
+                                shape: IrWindowShape::Paged,
+                                ..
+                            }))
+                        )
+                    })
+            })
     }
 
     /// Narrow actualization, leaving the source permission judgment intact.
@@ -1085,7 +1120,10 @@ impl<'program> IrBuilder<'program> {
             if !after_previous {
                 continue;
             }
-            let reads_directory = match operation {
+            let reads_paged_storage = match operation {
+                // Even `&p.inner` loads the owner slot. Growth can replace
+                // that cell before a later projection or run formation.
+                IrOperation::ProjectAddress { .. } if is_paged(*result) => true,
                 IrOperation::PagedPage { .. } => true,
                 IrOperation::SliceFromRun { run } => is_paged(*run),
                 IrOperation::ProjectAddress {
@@ -1097,7 +1135,7 @@ impl<'program> IrBuilder<'program> {
                 }
                 _ => false,
             };
-            if reads_directory {
+            if reads_paged_storage {
                 return true;
             }
         }

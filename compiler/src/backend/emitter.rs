@@ -1621,9 +1621,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ///
     /// A Run carries a directory pointer, origin and count. Disjoint logical
     /// runs may share that directory, so it receives no `noalias` promise.
-    /// The directory is nonnull even at zero capacity and cannot be modified
-    /// through a Run; `readonly` describes these pointer words, while element
-    /// stores use the page pointers loaded from them. REF-3 supplies the same
+    /// The directory is an interior pointer past the cell's three-word header,
+    /// nonnull even at zero capacity, and cannot be modified through a Run.
+    /// `readonly` describes accesses based on this pointer, not an independent
+    /// allocation: element stores use the page pointers loaded from it. Growth
+    /// invalidates the Run before replacing the cell. REF-3 supplies the same
     /// no-capture boundary as for ordinary references.
     fn reference_parameter_facts(
         &self,
@@ -3191,7 +3193,7 @@ pub(super) fn llvm_type_with_references(
                 references,
             )?;
             Ok(match shape {
-                IrWindowShape::Paged => "{ i64, i64, ptr, i64 }".to_owned(),
+                IrWindowShape::Paged => paged::CELL.to_owned(),
                 IrWindowShape::Slots => format!("{{ i64, i64, [0 x {element}] }}"),
                 IrWindowShape::Ring => format!("{{ i64, i64, i64, [0 x {element}] }}"),
             })

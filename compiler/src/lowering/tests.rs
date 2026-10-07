@@ -1972,15 +1972,36 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn paged_address_formation_joins_before_directory_growth_can_race_it() {
-    for actual in ["&p.inner[0_u64..0_u64]", "&p.inner[0_u64]"] {
-        let kind = if actual.contains("..") {
-            "Run<u64>"
+fn paged_cell_growth_preserves_formation_and_borrow_entry_order() {
+    for (actual, kind, reverse, wrapper) in [
+        ("&p.inner[0_u64..0_u64]", "Run<u64>", false, false),
+        ("&p.inner[0_u64]", "u64", false, false),
+        ("&p.inner", "Paged<u64>", false, false),
+        ("&p.inner", "Paged<u64>", true, false),
+        ("&p.inner", "Paged<u64>", true, true),
+    ] {
+        let resize = if wrapper {
+            r#"fn resize(cell: &Box<Paged<u64>>, capacity: u64) -> result: unit writes(cell) contract {
+  requires capacity >= cell^.inner.cap;
+} {
+  grow_paged(cell: cell, capacity: capacity);
+  return unit;
+}
+
+"#
         } else {
-            "u64"
+            ""
+        };
+        let growth_name = if wrapper { "resize" } else { "grow_paged" };
+        let growth = format!("  {growth_name}(cell: &p, capacity: 1025_u64);\n");
+        let ignore = format!("  ignore(part: {actual});\n");
+        let calls = if reverse {
+            format!("{ignore}{growth}")
+        } else {
+            format!("{growth}{ignore}")
         };
         let source = format!(
-            "fn ignore(part: &{kind}) -> result: unit pure {{\n  return unit;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let p = box_paged_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n  grow_paged(cell: &p, capacity: 1025_u64);\n  ignore(part: {actual});\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "fn ignore(part: &{kind}) -> result: unit pure {{\n  return unit;\n}}\n\n{resize}fn main() -> status: std::process::ExitStatus pure {{\n  let p = box_paged_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n{calls}  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_checked(source.as_bytes(), |checked| {
             let permissions = checked
@@ -1992,7 +2013,12 @@ fn paged_address_formation_joins_before_directory_growth_can_race_it() {
                 .pairs
                 .iter()
                 .find(|pair| {
-                    pair.first.callee_name == "grow_paged" && pair.second.callee_name == "ignore"
+                    let (first, second) = if reverse {
+                        ("ignore", growth_name)
+                    } else {
+                        (growth_name, "ignore")
+                    };
+                    pair.first.callee_name == first && pair.second.callee_name == second
                 })
                 .expect("growth/formation adjacency");
             assert!(
@@ -2022,10 +2048,19 @@ fn paged_address_formation_joins_before_directory_growth_can_race_it() {
                     Some((callee.name().to_owned(), *result))
                 })
                 .collect::<Vec<_>>();
-            let names = calls.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>();
+            let names = calls
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>();
             // A generic prelude row's instance carries its instance key after
             // `$instance$`.
-            let is_growth = |name: &str| name.starts_with("grow_paged$");
+            let is_growth = |name: &str| {
+                if wrapper {
+                    name == "resize"
+                } else {
+                    name.starts_with("grow_paged$")
+                }
+            };
             assert!(
                 names.iter().any(|name| is_growth(name)) && names.contains(&"ignore"),
                 "growth and formation calls: {names:?}"
@@ -2040,7 +2075,7 @@ fn paged_address_formation_joins_before_directory_growth_can_race_it() {
                     .overlaps()
                     .iter()
                     .any(|group| calls.iter().all(|call| group.members.contains(call))),
-                "directory formation must precede any handed-out growth completion: {:?}",
+                "cell growth must preserve formation and borrowed-call entry order: {:?}",
                 main.overlaps()
             );
         });
@@ -2095,10 +2130,13 @@ fn page_borrows_below_range_elements_keep_the_outer_projection() {
                 })
                 .collect::<Vec<_>>();
             assert!(
-                operations
-                    .iter()
-                    .any(|operation| matches!(operation, IrOperation::SliceAddress { .. })
-                        || matches!(operation, IrOperation::RunIndex { .. })),
+                operations.iter().any(|operation| matches!(
+                    operation,
+                    IrOperation::SliceAddress { .. }
+                ) || matches!(
+                    operation,
+                    IrOperation::RunIndex { .. }
+                )),
                 "{name}: address the enclosing range element: {operations:?}"
             );
             assert!(
@@ -2108,7 +2146,9 @@ fn page_borrows_below_range_elements_keep_the_outer_projection() {
                 "{name}: borrow the selected page"
             );
             if let Err(failure) = crate::emit_llvm(program) {
-                panic!("{name}: nested range-element projection must emit: {failure:?}: {operations:?}");
+                panic!(
+                    "{name}: nested range-element projection must emit: {failure:?}: {operations:?}"
+                );
             }
         });
     }
