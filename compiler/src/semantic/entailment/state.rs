@@ -1185,6 +1185,7 @@ impl DerivationLedger {
     }
 
     pub(crate) fn intern(&mut self, node: DerivationNode) -> DerivationId {
+        super::work::intern(&node);
         let key = match self.probe_intern(&node) {
             Ok(id) => return id,
             Err(key) => key,
@@ -4684,6 +4685,7 @@ pub(crate) fn close(
                 &view.closed,
             );
         }
+        super::work::closure_cache_hit();
         return Rc::clone(&view.closed);
     }
     let closed = Rc::new(close_with_excluded_term(state, terms, goals, ledger, None));
@@ -4838,6 +4840,7 @@ pub(crate) fn contradiction_without_proofs(
     goals: &GoalTable,
 ) -> bool {
     if state.all_derivable {
+        super::work::probe(0, 0);
         return true;
     }
     let universe = closure_universe(state, terms, goals, None);
@@ -4847,6 +4850,7 @@ pub(crate) fn contradiction_without_proofs(
     {
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::InsertionWithoutProofs);
+        super::work::probe(dense.dimension, dense.bounds.len());
         let contradictory = terms
             .ids()
             .any(|id| dense.get(id, id).is_some_and(|(bound, _)| bound < 0))
@@ -4897,6 +4901,7 @@ fn complete_contradiction_probe(
         .filter(|id| universe.contains(*id))
         .collect::<Vec<_>>();
     let dimension = ids.len();
+    super::work::probe(dimension, dimension.saturating_mul(dimension));
     let mut slots = vec![NO_SLOT; term_count];
     for (slot, id) in ids.iter().enumerate() {
         slots[id.0 as usize] = u32::try_from(slot).expect("slot fits the u32 identity");
@@ -5043,7 +5048,9 @@ fn close_with_excluded_term(
     ledger: &mut DerivationLedger,
     excluded: Option<TermId>,
 ) -> ClosedState {
-    close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded)
+    let closed = close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded);
+    super::work::closure(closed.matrix.dimension, closed.matrix.live);
+    closed
 }
 
 /// One closure implementation; tests instantiate the unpruned traversal and
@@ -6837,6 +6844,7 @@ fn materialize_closure(
     wrap_implicit: bool,
 ) -> FactState {
     let closed = close(state, terms, goals, ledger);
+    super::work::snapshot(closed.matrix.dimension, closed.matrix.live);
     if closed.all_derivable {
         let parent = closed.contradiction.expect("contradictory closure proof");
         let proof = ledger.intern(DerivationNode::MaterializedContradiction { event, parent });
@@ -6996,6 +7004,7 @@ pub(crate) fn join_at(
     ledger: &mut DerivationLedger,
     event: FlowEventId,
 ) -> FactState {
+    super::work::join();
     let mut joined = join_at_once(states, terms, goals, ledger, event, &[]);
     if joined.all_derivable {
         return joined;
@@ -7083,6 +7092,7 @@ fn join_at_once(
     event: FlowEventId,
     also: &[TermId],
 ) -> FactState {
+    let _work = super::work::join_pass(states.len());
     // Close before filtering: a contradiction established immediately before
     // an edge is already the absorbing all-derivable state even when no kill
     // had occasion to materialize its flag.
@@ -7135,6 +7145,7 @@ fn join_at_once(
         .iter()
         .flat_map(|left| rows.iter().map(move |right| (*left, *right)))
         .collect::<Vec<_>>();
+    let pairs_evaluated = pairs.len();
     for (left, right) in pairs {
         let pair = (left, right);
         let Some(bound) = first.value(left, right) else {
@@ -7204,6 +7215,7 @@ fn join_at_once(
             bounds.store_single(pair.0, pair.1, weakest, proof);
         }
     }
+    super::work::join_pairs(rows.len(), pairs_evaluated, bounds.live);
     // Every disequality some predecessor holds and each one holds or
     // derives from a strict bound.
     let mut distinct_keys = contributing
@@ -7255,12 +7267,8 @@ fn join_at_once(
             .map(|(_, to)| *to)
             .collect::<Option<Vec<_>>>()
             .and_then(|all| all.into_iter().max());
-        let outside = outside.get_or_insert_with(|| {
-            terms
-                .ids()
-                .filter(|id| !row_flags[id.0 as usize])
-                .collect()
-        });
+        let outside = outside
+            .get_or_insert_with(|| terms.ids().filter(|id| !row_flags[id.0 as usize]).collect());
         for &other in outside.iter() {
             let to_zero = implicit_bound_between(terms, (other, ZERO)).map(|(bound, _)| bound);
             let from_zero = implicit_bound_between(terms, (ZERO, other)).map(|(bound, _)| bound);
