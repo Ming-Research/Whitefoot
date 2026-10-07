@@ -348,7 +348,6 @@ impl<'unit> Checker<'_, 'unit> {
             // about the range kind itself is therefore judged first, and it
             // is [TYPE-5]'s ordinary argument mismatch.
             {
-                use super::super::super::super::model::CheckedMode;
                 if (argument.mode.is_range() || parameter.mode.is_range())
                     && argument.mode != parameter.mode
                 {
@@ -1371,6 +1370,11 @@ impl<'unit> TypeContext<'unit> {
                 PlaceStep::Range(range) => {
                     projections.push(GoalProjection::Range(*range));
                 }
+                // [REF-4] the page a `&[T]` actual formed from `&p.pages[k]`
+                // names; kept for the same reason as a range step.
+                PlaceStep::Page(page) => {
+                    projections.push(GoalProjection::Page(*page));
+                }
                 // A window-part effect is not a value projection. Failing
                 // to represent a value must not substitute its parent.
                 PlaceStep::Part(_) | PlaceStep::Measure(_) | PlaceStep::Descendant(_) => {
@@ -1555,7 +1559,7 @@ impl<'unit> DeclarationInventory<'unit> {
         entries: &[SubstitutedEntry],
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
     ) -> Result<(), CheckStop> {
-        const BOUND_ENDING_ROWS: [&str; 7] = [
+        const BOUND_ENDING_ROWS: [&str; 8] = [
             "take_back",
             "remove_at",
             "append",

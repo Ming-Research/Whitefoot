@@ -1538,7 +1538,7 @@ impl PlaceMap {
 mod tests {
     use super::{
         CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceMap, PlaceRoot, PlaceStep,
-        ResolvedPlace, SeparationOracle, WindowPart,
+        ResolvedPlace, SeparationOracle, UnprovedSeparations, WindowPart,
     };
     use crate::semantic::model::{BindingId, CheckedLoopId, CheckedMeasure};
 

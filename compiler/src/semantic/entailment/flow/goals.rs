@@ -1836,6 +1836,7 @@ pub(super) fn substituted_steps(
                 field: *field,
             },
             Step::Index(declaration) => PlaceStep::Index(offset(declaration)),
+            Step::Page(declaration) => PlaceStep::Page(offset(declaration)),
             Step::Range { start, end } => PlaceStep::Range(CapturedRange {
                 start: offset(start),
                 end: offset(end),

@@ -3,6 +3,8 @@
 //! Only directory pointers move during growth. All size checks precede their
 //! allocation and use the selected target's element stride [STOR-6].
 
+use crate::IrElement;
+
 use super::*;
 
 const DESCRIPTOR: &str = "{ i64, i64, ptr, i64 }";

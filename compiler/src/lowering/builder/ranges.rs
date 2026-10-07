@@ -39,10 +39,10 @@ impl IrBuilder<'_> {
                     ..
                 }
             ),
-            CheckedRangeSource::Range(root) => matches!(
-                self.value_type(self.binding_value(root.binding)?)?,
-                IrType::Run { .. }
-            ),
+            CheckedRangeSource::Range(root) => {
+                let value = self.binding_value(root.binding)?;
+                matches!(self.value_type(value)?, IrType::Run { .. })
+            }
         };
         let ty = if paged {
             IrType::Run { element }

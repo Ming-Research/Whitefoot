@@ -25,7 +25,7 @@ use crate::{
     SemanticCompilerFailure, SemanticIssueKind, SemanticRule, UnsupportedSemanticFeature,
 };
 
-use super::super::super::model::{CheckedMode, CheckedNominalKind, CheckedType, WindowShape};
+use super::super::super::model::{CheckedNominalKind, CheckedType, WindowShape};
 use super::super::types::SelectedPlaceType;
 use super::super::{CheckStop, FunctionTemplate, LocalBinding};
 use super::{GenericArgument, GenericSubstitution};
