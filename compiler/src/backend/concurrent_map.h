@@ -214,9 +214,13 @@ uint64_t wf_cmap_count_held(wf_cmap *map, uint64_t tag_offset, uint32_t tag_widt
  * then of bytes, every key whose slot is present, read by its tag as
  * wf_cmap_hold_release reads it, and whose position, its tag times the
  * golden ratio, lies in [cursor, the answer), the answer being 0 when the
- * step reaches the last position. The step's homes run from cursor's up to
- * about count keys later. It writes nothing of the map or any hold, so
- * statements reading the map whole may scan it at once. */
+ * step reaches the last position. An empty map ends the scan at once. The
+ * step's homes run from cursor's to the table's end when count is at least
+ * live, without a key bound, and otherwise up to about count keys later or
+ * about count * 10 * capacity / live cells later, capped at the capacity, so
+ * sparse tables get a proportionally larger cell budget; zero count means
+ * ten. It writes nothing of the map or any hold, so statements reading the
+ * map whole may scan it at once. */
 uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set *set, uint64_t tag_offset,
                       uint32_t tag_width, uint64_t none_tag);
 /* Empties a map its caller's hold holds whole, as wf_cmap_swap with a new

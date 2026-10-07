@@ -2516,16 +2516,25 @@ uint64_t wf_cmap_scan(wf_cmap *map, uint64_t cursor, uint64_t count, wf_key_set 
      * map, and the caller holds the map, so no move is under way. */
     if (atomic_load_explicit(&t->next, memory_order_acquire) != NULL)
         abort();
+    uint64_t live = wf_cmap_count_held(map, tag_offset, tag_width, none_tag);
+    if (live == 0)
+        return 0;
     uint64_t first = cursor >> t->shift;
     /* The step's homes are [first, end): a cell is read for each until
-     * about `count` keys, or ten times as many cells, have been passed. */
+     * about `count` keys, or count * 10 * capacity / live cells, have been
+     * passed, so sparse tables get a proportionally larger cell budget.
+     * When want >= live, the cell budget is the capacity and the homes run
+     * to the table's end without the key bound ending the walk.
+     * A zero count means ten; rounding cells per key up and capping before
+     * multiplying keeps the budget within the capacity without overflow. */
     uint64_t want = count != 0 ? count : 10;
-    uint64_t cells = want > UINT64_MAX / 10 ? UINT64_MAX : want * 10;
+    uint64_t cells = t->capacity / live + (t->capacity % live != 0);
+    cells = want >= live || want > t->capacity / 10 / cells ? t->capacity : want * 10 * cells;
     uint64_t end = first, passed = 0;
     while (end < t->capacity) {
         uint64_t k = atomic_load_explicit(&t->cells[end].key, memory_order_relaxed) & KEY_MASK;
         end++;
-        if (k != EMPTY && k != REMOVED && ++passed >= want)
+        if (want < live && k != EMPTY && k != REMOVED && ++passed >= want)
             break;
         if (end - first >= cells)
             break;

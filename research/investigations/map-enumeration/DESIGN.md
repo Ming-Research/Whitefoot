@@ -117,14 +117,27 @@ or a measured step cost dominated by the position sort.
 
 ### Bounded work and `count`
 
-The specification states no cost. The runtime chooses the step's homes
-first: from `cursor`'s home upward, until about `count` keys, or ten times
-as many cells, have been passed, as Redis bounds empty buckets; `count` of
-zero means ten. The extent is the first position of the first home not
-chosen. It then reads every probe run of the chosen homes to its end, past
-that budget, since a key displaced beyond the budget would otherwise be
-skipped when the next step starts past its home; the worst case reads the
-table's capacity.
+The specification states no cost. A step first reads the map's exact count
+of `Some` entries as the statement sees it (`wf_cmap_count_held`), which
+writes nothing, and ends the scan at once when it is zero. When `count`
+reaches that count, the step's homes run to the table's end, so a map of at
+most `count` keys is covered in one step. Otherwise the runtime chooses the
+homes from `cursor`'s upward until about `count` keys have been passed, or
+`count` times ten times the table's cells per live entry, at most the
+table's capacity, as Redis bounds a step by ten empty buckets per requested
+key in a table it keeps sized for its keys; `count` of zero means ten. The
+extent is the first position of the first home not chosen. The step then
+reads every probe run of the chosen homes to its end, past that budget,
+since a key displaced beyond the budget would otherwise be skipped when the
+next step starts past its home; the worst case reads the table's capacity.
+
+The first budget, ten cells per requested key whatever the table's size,
+was refuted by Firn-wf's trial of the first experiment release on
+2026-10-06: Firn-wf presizes its keyspace for 262,144 keys, a 2^19-cell
+table, and a step over five keys at count 1,000 returned a nonzero cursor
+and no key, while an empty map took capacity / (10 * count) steps, 5,243
+at Redis's default count of 10, where Redis answers cursor 0 at once.
+`scans_sparse` in the runtime test reproduces both.
 
 ### Clearing
 

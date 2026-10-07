@@ -3340,6 +3340,81 @@ static void maps_clear(void) {
         fail("clears leaked blocks (out, before)", atomic_load(&blocks_out), before);
 }
 
+/* Empty maps finish at once, and a sparse map fits in a step of its count.
+ * Distinct homes in the upper half, before the last cell, keep the old cell
+ * budget from reaching any key in either hash build and leave homes after
+ * the last key, while a small step still stops at a key. */
+static void scans_sparse(void) {
+    enum { KEYS = 5 };
+    wf_cmap *map = wf_cmap_create_entries(8, 8, 1u << 17);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf_key_set set;
+    wf__key_set_new(&set, 4);
+    uint64_t step = wf__keyed_table_scan(map, 0, 10, &set, VALUE_TAG);
+    if (step != 0 || set.len != 0)
+        fail("an empty sparse map did not finish its scan (next, keys)", step, set.len);
+    wf__key_set_free(set.store);
+    wf__table_hold_release(&hold, VALUE_TAG);
+
+    table *index = atomic_load(&map->current);
+    uint64_t chosen[KEYS], homes[KEYS], added = 0;
+    unsigned char bytes[16];
+    for (uint64_t k = 0; added < KEYS; k++) {
+        uint64_t length = counted_key(k, bytes);
+        uint64_t home = start_of(index, tag_of(bytes, length));
+        if (home < index->capacity / 2 || home == index->capacity - 1)
+            continue;
+        uint64_t i = 0;
+        while (i < added && homes[i] != home)
+            i++;
+        if (i != added)
+            continue;
+        chosen[added] = k;
+        homes[added++] = home;
+        put_counted(map, 0, k, k + 1);
+    }
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    wf__key_set_new(&set, 4);
+    step = wf__keyed_table_scan(map, 0, KEYS, &set, VALUE_TAG);
+    uint64_t seen = 0;
+    for (uint64_t i = 0; i < set.len; i++) {
+        uint64_t length;
+        const unsigned char *key = wf_cmap_key_set_key(&set, i, &length);
+        if (length == 12)
+            for (uint64_t j = 0; j < KEYS; j++)
+                if (counted_of(key) == chosen[j])
+                    seen |= 1ull << j;
+    }
+    if (step != 0 || set.len != KEYS || seen != (1ull << KEYS) - 1)
+        fail("a sparse scan did not finish with every key (next, keys)", step, set.len);
+    wf__key_set_free(set.store);
+
+    wf__key_set_new(&set, 4);
+    step = wf__keyed_table_scan(map, 0, 1, &set, VALUE_TAG);
+    if (step == 0 || set.len != 1)
+        fail("a sparse scan did not stop at its first key (next, keys)", step, set.len);
+    wf__key_set_free(set.store);
+
+    clear_source = map;
+    cleared_runs = 0;
+    cleared_entries = 0;
+    cleared_sum = 0;
+    wf__keyed_table_clear(map, VALUE_TAG, release_cleared);
+    wf__key_set_new(&set, 4);
+    step = wf__keyed_table_scan(map, 0, 10, &set, VALUE_TAG);
+    if (step != 0 || set.len != 0)
+        fail("a cleared map did not finish its scan (next, keys)", step, set.len);
+    wf__key_set_free(set.store);
+    wf__table_hold_release(&hold, VALUE_TAG);
+    wf_cmap_destroy(map);
+    wf_cmap_key_set_drop_spare();
+}
+
 /* A hold's keys are the node's bytes from its take on: the statement may
  * change the bytes it named a key by, and a move under the whole hold
  * finds the entry again by the node's. */
@@ -3414,6 +3489,7 @@ int main(int argc, char **argv) {
         maps_swap();
         maps_clear();
         scans_resume();
+        scans_sparse();
         scans_write_nothing();
         holds_keep_their_bytes();
         tables_wake_writers();
