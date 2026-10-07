@@ -76,13 +76,19 @@ pub(super) fn emit_union_declarations(
         .ok_or(BackendFailure::InvalidIr)?;
     let aligning = view_name(nominal, layout.aligning_variant());
     let body = if let Some(offset) = layout.handler_offset() {
-        // A typed pointer supplies its own alignment. The view still supplies
-        // any greater alignment, and the explicit tail preserves target size.
+        // A typed pointer would realign a word stored below pointer alignment.
+        // Bytes preserve that offset; the view supplies the value alignment.
+        // Keep the original pointer field for pointer-aligned values.
+        let word = if layout.handler_alignment() == Some(8) {
+            "ptr"
+        } else {
+            "[8 x i8]"
+        };
         let tail = layout
             .size()
             .checked_sub(offset + 8)
             .ok_or(BackendFailure::InvalidIr)?;
-        format!("{{ i32, [{payload} x i8], ptr, [{tail} x i8], [0 x %{aligning}] }}")
+        format!("{{ i32, [{payload} x i8], {word}, [{tail} x i8], [0 x %{aligning}] }}")
     } else {
         format!("{{ i32, [{payload} x i8], [0 x %{aligning}] }}")
     };
@@ -132,6 +138,17 @@ pub(super) fn variant_field_gep(
 }
 
 impl FunctionEmitter<'_, '_> {
+    /// Alignment of the hidden word, shared by its constructor and dispatch.
+    pub(super) fn handler_word_alignment(
+        &self,
+        nominal: IrNominalId,
+    ) -> Result<u64, BackendFailure> {
+        crate::target::union_enum_layout(self.target, self.program, nominal)
+            .map_err(BackendFailure::TargetLayout)?
+            .handler_alignment()
+            .ok_or(BackendFailure::InvalidIr)
+    }
+
     /// The address of payload field `field` of variant `variant` in the enum
     /// value at `address`.
     pub(super) fn variant_field_pointer(

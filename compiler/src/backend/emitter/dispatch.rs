@@ -1319,7 +1319,12 @@ impl FunctionEmitter<'_, '_> {
             .collect();
         let list = self.dispatch_arguments(&carried, true, None, &[])?;
         let handler = self.next_temporary()?;
-        let mut text = format!("  %{handler} = load ptr, ptr {slot}\n");
+        let alignment = if threaded {
+            format!(", align {}", self.handler_word_alignment(matched)?)
+        } else {
+            String::new()
+        };
+        let mut text = format!("  %{handler} = load ptr, ptr {slot}{alignment}\n");
         if result == "void" {
             text.push_str(&format!(
                 "  musttail call {convention}void %{handler}({list})\n  ret void\n"

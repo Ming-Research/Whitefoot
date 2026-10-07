@@ -429,6 +429,7 @@ struct UnionLayout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct UnionEnumLayout {
     size: u64,
+    align: u64,
     aligning_variant: u32,
     handler_offset: Option<u64>,
 }
@@ -444,6 +445,11 @@ impl UnionEnumLayout {
 
     pub(crate) const fn handler_offset(self) -> Option<u64> {
         self.handler_offset
+    }
+
+    pub(crate) fn handler_alignment(self) -> Option<u64> {
+        self.handler_offset
+            .map(|_| self.align.min(POINTER_LAYOUT.align))
     }
 }
 
@@ -479,6 +485,7 @@ pub(crate) fn union_enum_layout(
         .ok_or(TargetLayoutFailure::InvalidIr)?;
     Ok(UnionEnumLayout {
         size: union.value.size,
+        align: union.value.align,
         aligning_variant,
         handler_offset: union.handler_offset,
     })
@@ -512,6 +519,9 @@ pub(crate) fn threaded_enum_fits(
             .map(|field| field.ty()),
     );
     let product = layouts.struct_layout(fields)?;
+    // The word can still exceed the product's size (for example three u8
+    // payloads). Keep the independent alignment bound as well: allocation
+    // qualification enforces it, even though word placement now preserves it.
     Ok(threaded.size <= product.size && threaded.align <= product.align)
 }
 
@@ -1620,19 +1630,19 @@ impl<'types> LayoutComputer<'types> {
             views.push((variant.tag(), view));
         }
         let handler_offset = if threaded {
-            let offset = align_up(
-                self.target,
-                size,
-                POINTER_LAYOUT.align,
-                TargetObject::Representation,
-            )?;
+            // The maximum view alignment equals the product alignment: both
+            // take the maximum over the tag and the same selected field
+            // layouts. Cap the word alignment there, including when it is
+            // below pointer alignment, so the word cannot raise the ceiling.
+            let word_align = POINTER_LAYOUT.align.min(align);
+            let offset = align_up(self.target, size, word_align, TargetObject::Representation)?;
             size = checked_add(
                 offset,
                 POINTER_LAYOUT.size,
                 self.target,
                 TargetObject::Representation,
             )?;
-            align = align.max(POINTER_LAYOUT.align);
+            align = align.max(word_align);
             Some(offset)
         } else {
             None

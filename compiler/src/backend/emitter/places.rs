@@ -362,8 +362,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 "null".to_owned()
             };
             let word = self.aggregate_field_pointer(IrType::Nominal(nominal), &destination, 2)?;
-            writeln!(self.output, "  store ptr {operand}, ptr {word}")
-                .map_err(|_| BackendFailure::TextEmission)?;
+            let align = self.handler_word_alignment(nominal)?;
+            writeln!(
+                self.output,
+                "  store ptr {operand}, ptr {word}, align {align}"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
         }
         for (index, value) in fields.iter().enumerate() {
             let field = u32::try_from(index).map_err(|_| BackendFailure::CounterOverflow)?;

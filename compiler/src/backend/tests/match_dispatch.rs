@@ -717,6 +717,7 @@ fn main()"#,
                         && lines[2]
                             .trim_start()
                             .starts_with(&format!("store ptr @wf_run.arm.{arm}, ptr "))
+                        && lines[2].ends_with(", align 8")
                 })
                 .count();
             assert_eq!(
@@ -808,7 +809,7 @@ fn assert_element_handlers(module: &str, base: &str) {
         .lines()
         .find_map(|line| {
             line.trim()
-                .strip_suffix(&format!(" = load ptr, ptr {slot}"))
+                .strip_suffix(&format!(" = load ptr, ptr {slot}, align 8"))
         })
         .expect("the dispatch target is loaded from the hidden word");
     let (convention, _) = host_convention();
@@ -838,6 +839,164 @@ fn assert_element_handlers(module: &str, base: &str) {
                 && line.contains(&format!("getelementptr ({ty}, ptr null, i32 1)"))),
         "the 16-byte variant gains an aligned pointer and memmove copies its complete type: {module}"
     );
+}
+
+#[test]
+fn four_aligned_cells_carry_handler_words_within_the_product_ceiling() {
+    // Each view is i32 tag, u32 value, u8 extra: round_up(4 + 4 + 1, 4)
+    // = 12 bytes. The word makes round_up(12 + 8, 4) = 20, within the
+    // product's 28 bytes. Before this change selection refuses the word,
+    // so every mechanism assertion below fails; the combined LLVM layout
+    // and execution assertion also requires the new 20-byte representation.
+    let source = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Cell {
+  Add(value: u32, extra: u8);
+  Sub(value: u32, extra: u8);
+  Halt(value: u32, extra: u8);
+}
+
+fn run(code: &Box<Slots<Cell>>, pc: u64, acc: u32) -> result: u32 reads(code) contract {
+  requires pc < code^.inner.len;
+} {
+  doc "Interprets three four-aligned cells through one dispatch loop.";
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Add(value: v, extra: e) => {
+      let widened = cvt::<u8, u32>(e^);
+      let amount = v^ +wrap widened;
+      let sum = acc +wrap amount;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, pc: next, acc: sum);
+      }
+      return 0_u32;
+    }
+    Sub(value: v, extra: e) => {
+      let widened = cvt::<u8, u32>(e^);
+      let amount = v^ +wrap widened;
+      let difference = acc -wrap amount;
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail run(code: code, pc: next, acc: difference);
+      }
+      return 0_u32;
+    }
+    Halt(value: v, extra: e) => {
+      let widened = cvt::<u8, u32>(e^);
+      let amount = v^ +wrap widened;
+      let sum = acc +wrap amount;
+      return sum;
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Cell>>, cell: Cell) -> result: unit writes(code) {
+  doc "Copies a complete cell, including its handler, into the run.";
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: cell);
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Checks that the cells compute nine minus four plus thirteen.";
+  let code = box_slots_new::<Cell>(capacity: 3_u64);
+  let first = Cell::Add(value: 7_u32, extra: 2_u8);
+  push(code: &code, cell: first);
+  let second = Cell::Sub(value: 3_u32, extra: 1_u8);
+  push(code: &code, cell: second);
+  let third = Cell::Halt(value: 10_u32, extra: 3_u8);
+  push(code: &code, cell: third);
+  if code.inner.len == 3_u64 {
+    let result = run(code: &code, pc: 0_u64, acc: 0_u32);
+    if result == 18_u32 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+    let (ty, mut probes) = super::system::with_ir(source, |program| {
+        let target = crate::target::TargetLayout::host().expect("test target");
+        let selected = crate::backend::emitter::prepare_dispatch_layout(program, target, false)
+            .expect("whole-program selection");
+        let cell = selected
+            .nominals()
+            .iter()
+            .find(|nominal| nominal.name() == "Cell")
+            .expect("Cell declaration");
+        let layout = crate::target::union_enum_layout(target, &selected, cell.id())
+            .expect("Cell union layout");
+        assert!(
+            layout.size() == 20
+                && layout.handler_offset() == Some(12)
+                && layout.handler_alignment() == Some(4),
+            "Cell gets a word at offset 12 within its 4-aligned ceiling: {layout:?}"
+        );
+        (
+            format!("wf.t.{}", cell.link_name()),
+            super::payload_enums::enum_layout_probes(&selected),
+        )
+    });
+    let module = emit(source);
+    assert!(
+        verdict(&module, "wf_run").starts_with("split")
+            && module.contains(&format!(
+                "{}wf_run: dispatches through the handler word in each Cell",
+                crate::DISPATCH_LEDGER_PREFIX
+            )),
+        "the sole Cell loop uses the word: {module}"
+    );
+    let dispatch = definition(&module, "wf_run.dispatch");
+    let slot = dispatch
+        .lines()
+        .find(|line| {
+            line.contains(&format!("getelementptr inbounds %{ty},"))
+                && line.ends_with(", i32 0, i32 2")
+        })
+        .and_then(|line| line.trim().split_once(" = "))
+        .map(|(slot, _)| slot)
+        .expect("dispatch addresses the hidden word");
+    let handler = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_suffix(&format!(" = load ptr, ptr {slot}, align 4"))
+        })
+        .expect("the word load states its true alignment");
+    assert!(
+        dispatch.contains(&format!("i32 {handler}(")),
+        "dispatch calls the loaded handler: {dispatch}"
+    );
+    for arm in 0..3 {
+        let stores: Vec<_> = module
+            .lines()
+            .filter(|line| line.contains(&format!("store ptr @wf_run.arm.{arm},")))
+            .collect();
+        assert!(
+            stores.len() == 1 && stores[0].ends_with(", align 4"),
+            "each constructor stores its handler with alignment 4: {stores:?}"
+        );
+    }
+    assert!(
+        module.contains(&format!(
+            "%{ty} = type {{ i32, [8 x i8], [8 x i8], [0 x i8], [0 x %{ty}.v0] }}"
+        )) && module.lines().any(|line| {
+            line.contains("call void @llvm.memmove.")
+                && line.contains(&format!("getelementptr (%{ty}, ptr null, i32 1)"))
+        }),
+        "byte storage preserves offset 12, and copies include the full 20-byte value: {module}"
+    );
+    // Independent expected constants prevent a matching target/LLVM layout
+    // error from passing. Observe all other emitted enum/view types too.
+    probes.insert(ty.clone(), (20, 4));
+    for tag in 0..3 {
+        probes.insert(format!("{ty}.v{tag}"), (12, 4));
+    }
+    super::payload_enums::assert_llvm_layouts(&module, probes);
 }
 
 #[test]
@@ -987,6 +1146,7 @@ fn small(op: &Small, count: u64) -> r: u64 reads(op) {
                 pair[0].contains(&format!("getelementptr inbounds {ty},"))
                     && pair[0].ends_with(", i32 0, i32 2")
                     && pair[1].trim_start().starts_with("store ptr null, ptr ")
+                    && pair[1].ends_with(", align 8")
             })
             .count();
         assert!(
