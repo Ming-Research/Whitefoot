@@ -1,0 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Grow<T: drop> {
+  End();
+  Next(next: Box<Grow<Box<T>>>);
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The argument Box<T> on Grow's recursive edge contains the caller's T, so FN-6 rejects it before materializing instances.";
+  return exit_status(code: 0_u8);
+}

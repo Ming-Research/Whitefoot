@@ -1,0 +1,32 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn apply<F: copy, fn visit(value: &F) -> result: unit writes(value)>(value: &F) -> result: unit writes(value) {
+  visit(value: value);
+  return unit;
+}
+
+fn outer(value: &u64) -> result: unit writes(value) {
+  set value^ = 17_u64;
+  apply::<u64, fn inner>(value: value);
+  let observed = value^;
+  set value^ = observed +wrap 1_u64;
+  return unit;
+}
+
+fn inner(value: &u64) -> result: unit writes(value) {
+  let observed = value^;
+  set value^ = observed +wrap 5_u64;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "FN-6 admits the two apply instances selected by closed callbacks. The inner callback reads the outer write, and the outer callback reads the inner write.";
+  let value = 0_u64;
+  apply::<u64, fn outer>(value: &value);
+  if value == 23_u64 {
+    return exit_status(code: 0_u8);
+  } else {
+    return exit_status(code: 1_u8);
+  }
+}

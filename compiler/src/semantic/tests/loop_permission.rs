@@ -269,7 +269,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
 
 /// An element write reached through `^` of a reference parameter whose row
-/// declares the write is one of the four places [PAR-2] admits.
+/// declares the write is one of the places [PAR-2] admits.
 ///
 /// v0.59 refused this: a view element store had no map family of its own and
 /// needed the caller to hand down a range assignment. v0.60 names the shape
@@ -1544,15 +1544,143 @@ fn a_same_index_read_modify_write_is_permitted() {
     );
 }
 
+/// [PAR-2, MSR-2] the mapped root's descriptor is disjoint from every
+/// admitted element write, including when a helper's row reads it.
+#[test]
+fn mapped_root_measure_reads_are_permitted() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/par2-pos-affine-element-measure-read.wf"
+    );
+    let table = permission_of(source);
+    for function in ["guarded_slots", "guarded_array", "helper_slots"] {
+        let judged = only_loop(&table, function);
+        assert_eq!(judged.verdict, LoopVerdict::PermittedEligible, "{function}");
+        assert_eq!(
+            judged.actualization,
+            Some(LoopActualization::IndependentMap),
+            "{function}"
+        );
+    }
+}
+
+/// A row naming the whole root still reads its elements even when the
+/// helper's implementation happens to read only len.
+#[test]
+fn a_whole_root_helper_row_still_denies_a_mapped_write() {
+    let source = include_str!(
+        "../../../../tests/conformance/cases/par2-pos-affine-element-measure-read.wf"
+    )
+    .replace("reads(a.len)", "reads(a)");
+    assert!(matches!(
+        denied(source.as_bytes(), "helper_slots", 2),
+        LoopDenial::SharedWrite { .. }
+    ));
+}
+
+#[test]
+fn a_written_range_origin_may_be_measured_inside_the_body() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/par2-pos-range-origin-measure-read.wf"
+    );
+    let judged = permitted(source, "partition");
+    assert_eq!(
+        judged.actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+}
+
+/// The new read admission does not admit place_back's descriptor write.
+#[test]
+fn appending_beside_an_affine_element_write_still_denies() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-neg-affine-element-append.wf");
+    assert!(matches!(
+        denied(source, "append_while_mapping", 2),
+        LoopDenial::SharedWrite { .. }
+    ));
+}
+
+/// A measure read does not cover an element read with a different map.
+#[test]
+fn a_measure_read_beside_a_shifted_element_read_still_denies() {
+    let source = br#"fn update(a: &Array<u64, 4>) -> result: unit writes(a) {
+  for (i in 0_u64..3_u64) {
+    let next = i + 1_u64;
+    if next < a^.len {
+      let value = a^[next];
+      set a^[i] = value;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert!(matches!(
+        denied(source, "update", 2),
+        LoopDenial::SharedWrite { .. }
+    ));
+}
+
+/// A measure inside an element belongs to that element's storage, rather
+/// than to the mapped root's unchanged descriptor [MSR-2].
+#[test]
+fn nested_measures_still_require_the_same_element_map() {
+    let source = r#"fn update(a: &Array<Array<u64, 2>, 4>) -> result: unit writes(a) {
+  for (i in 0_u64..3_u64) {
+    let next = i + 1_u64;
+    let size = a^[i].len;
+    let fresh = array_filled::<u64, 2>(value: size);
+    set a^[i] = fresh;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_eq!(
+        permitted(source.as_bytes(), "update").actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+    let shifted = source.replace("let size = a^[i].len;", "let size = a^[next].len;");
+    assert!(matches!(
+        denied(shifted.as_bytes(), "update", 2),
+        LoopDenial::SharedWrite { .. }
+    ));
+}
+
+/// The direct owned-Array measure form is admitted beside a same-map read.
+#[test]
+fn an_owned_array_measure_read_is_permitted_with_a_same_map_update() {
+    let source = b"fn main() -> status: std::process::ExitStatus pure {
+  let out = array_filled::<u8, 64>(value: 0_u8);
+  for @update (i in 0_u64..64_u64) {
+    let spare = out.len;
+    let old = out[i];
+    set out[i] = old +wrap 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    assert_eq!(
+        permitted(source, "main").actualization,
+        Some(LoopActualization::IndependentMap)
+    );
+}
+
 /// A proved element read does not hide another occurrence that reaches the
-/// whole mapped collection. The latter has no single-element range and keeps
-/// condition 2 fail-closed.
+/// whole mapped collection. Copying the Array reads its elements, whereas
+/// the former out.len fixture now correctly has permission under PAR-2.
 #[test]
 fn a_whole_collection_read_still_denies_a_same_map_update() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {
   let out = array_filled::<u8, 64>(value: 0_u8);
   for @update (i in 0_u64..64_u64) {
-    let spare = out.len;
+    let spare = out;
     let old = out[i];
     set out[i] = old +wrap 1_u8;
   }
@@ -1597,8 +1725,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 /// A range-selected composite element keeps the affine map of its innermost
-/// subscript. Reading and writing the same nested element is an independent
-/// per-iteration update; shifting only the read by one cell creates a real
+/// subscript. Measuring that nested root and reading and writing its same
+/// element is an independent update; shifting only the read creates a real
 /// cross-iteration dependence and must lose that permission.
 #[test]
 fn a_nested_range_element_map_requires_matching_read_and_write_indices() {
@@ -1606,6 +1734,7 @@ fn a_nested_range_element_map_requires_matching_read_and_write_indices() {
   requires 0_u64 < rows^.len;
 } {
   for @update (i in 0_u64..3_u64) {
+    let size = rows^[0_u64].len;
     let old = rows^[0_u64][i];
     set rows^[0_u64][i] = old +wrap 1_u64;
   }
@@ -1623,8 +1752,8 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 
     let shifted = source.replace(
-        "for @update (i in 0_u64..3_u64) {\n    let old = rows^[0_u64][i];",
-        "for @update (i in 1_u64..3_u64) {\n    let prior = i -wrap 1_u64;\n    let old = rows^[0_u64][prior];",
+        "for @update (i in 0_u64..3_u64) {\n    let size = rows^[0_u64].len;\n    let old = rows^[0_u64][i];",
+        "for @update (i in 1_u64..3_u64) {\n    let size = rows^[0_u64].len;\n    let prior = i -wrap 1_u64;\n    let old = rows^[0_u64][prior];",
     );
     let table = permission_of(shifted.as_bytes());
     let judged = only_loop(&table, "update");

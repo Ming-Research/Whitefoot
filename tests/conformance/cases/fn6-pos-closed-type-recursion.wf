@@ -2,12 +2,12 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn poly<T: drop>(x: T) -> result: T pure {
-  doc "Polymorphic recursion: the call instantiates the callee at a different type parameter [FN-6 violated].";
+  doc "FN-6 admits i32 as a closed type argument on the recursive edge, including when the entry instance supplies u8.";
   let y = poly::<i32>(x: 0_i32);
-  return x;
+  return move x;
 }
 
 fn main() -> status: ExitStatus pure {
-  let z = poly::<i32>(x: 0_i32);
+  let z = poly::<u8>(x: 0_u8);
   return exit_status(code: 0_u8);
 }

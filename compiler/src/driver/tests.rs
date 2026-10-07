@@ -2119,8 +2119,8 @@ fn main() -> status: std::process::ExitStatus pure {
                  2 members through line 9"
                 .to_owned(),
             "PAR loop        carrying.wf:10  loop  denied      condition 2: the body \
-                 writes storage that is neither introduced by the iteration nor the \
-                 accumulator, at &total"
+                 writes shared storage without an admitted element or range family, or \
+                 reads that storage outside the family's permitted accesses, at &total"
                 .to_owned(),
             "PAR denied      carrying.wf:11  pair(accum, a set statement)  condition 1: \
                  the write of s1 overlaps the operand read of s2 at \
