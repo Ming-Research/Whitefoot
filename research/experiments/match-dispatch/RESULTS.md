@@ -894,6 +894,44 @@ the next index from a helper's result, which the lowering cannot see as
 by `next - pc` elements: a subtraction more than forming the address from
 the run, as the header did before, with nothing saved.
 
+### Edges by their step
+
+The branch at `b7db6b95f` moves the received address only where an edge's
+index is the received one plus a constant, seen through joins whose every
+incoming value is the index. Every other edge forms the address from the
+run, and the parts keep the run's address where an arm has such an edge.
+It also carries the register-pressure candidate above. The same three
+compilers were compared, with a twin of the cursor's
+([runs 37555992672](https://github.com/Ming-Research/Whitefoot/actions/runs/37555992672)
+for CoreMark and
+[37555989802](https://github.com/Ming-Research/Whitefoot/actions/runs/37555989802)
+for Halo). The wasm interpreter keeps 4 values in the frame again: its
+branch arms read the run's address.
+
+CoreMark 2K scores, higher is better:
+
+| host | before the cursor | cursor | twin | branch | branch / cursor | branch / before |
+|---|---:|---:|---:|---:|---|---|
+| 14900K | 4683.8 (1.2%) | 5263.2 (1.3%) | 5263.2 (1.6%) | 5390.8 (1.1%) | 1.024; 7 of 7, 1.016-1.035 | 1.151; 7 of 7 |
+| hosted EPYC 7763 | 1879.7 (6.1%) | 1930.5 (3.6%) | 1926.8 (5.9%) | 2059.7 (6.2%) | 1.067; 7 of 7 | 1.096; 7 of 7 |
+
+Halo, wall time per launch in seconds, lower is better:
+
+| kernel | before the cursor | cursor | twin | branch | branch / before | branch / cursor |
+|---|---:|---:|---:|---:|---|---|
+| `fib` | 1.1084 (0.5%) | 1.1223 (2.6%) | 1.1199 (0.4%) | 1.1137 (1.0%) | 1.005; slower in 7 of 7, 1.000-1.014 | 0.992 |
+| `loop` | 0.4367 (0.6%) | 0.4617 (1.2%) | 0.4614 (0.4%) | 0.4367 (0.5%) | 1.000; 0.994-1.004 | 0.946; faster in 7 of 7 |
+
+On the 14900K, `I32Add` runs 17 instructions. The reload of the stack's
+element address from the frame is gone: `lea (%rcx,%r15,8), %rbx` takes it
+from a register. A branch arm forms its target's address from the run
+(`shl`, `lea`, `add`), without the subtraction.
+
+An intermediate build without the joins (`885a0af31`; runs 37555134002
+and 37555131716) measured CoreMark 1.019 against the cursor and Halo's
+`loop` 1.000 and `fib` 1.000 against before the cursor. Its unit tests
+failed where an arm's `pc + 1` follows the join of an `if`.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

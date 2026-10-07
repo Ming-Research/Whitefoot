@@ -675,3 +675,15 @@ interleaved launches:
   the cursor (`e1708490c`), and CoreMark is no more than 2% below the
   cursor's score (`3a260446c`).
 - **Otherwise** the cursor's adoption is reopened.
+
+**Outcome**
+([results](../../experiments/match-dispatch/RESULTS.md#edges-by-their-step)).
+Edges by their step meet the criterion:
+- **Halo:** `loop` matches its time before the cursor (1.000) and `fib`
+  is within 0.5% (1.005, slower in every pair, within the 1% allowed).
+- **CoreMark:** 2.4% above the cursor, above it in every pair, against a
+  twin at 1.000.
+
+So the cursor stays, with this rule for its edges. The measured branch
+also carries the register-pressure candidate. Alone, that candidate gave
+1.3% against its 2% rule; in this branch the two together give the 2.4%.
