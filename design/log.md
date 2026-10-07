@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-07 Cursor edges by their step; the spill order counts every read
+
+Nodes: compiler/match-dispatch-lowering
+
+Owner-approved: In the session of 2026-10-06 to 2026-10-07, written in Chinese, after the report on PR #261 that presented edges by their step for the code cursor as Q130 and keeping the spill-order correction as Q131, option A recommended for each: "Agree to both" (translated). Earlier the owner had directed: "we are still optimizing general match compilation into tail calls, not the particular wasm interpreter; in the end this capability must serve Lua and other interpreters" (translated).
+
+Summary: An edge back to the header moves the received element address only where its index is the received index plus a constant, seen through joins whose every incoming value is the index. Every other edge forms the address from the run, and the parts receive the run's address only where an arm has such an edge. Moving the address by the index's change on every edge is refused: on Halo's Lua interpreter, whose arms take the next index from helpers, it made the `loop` kernel 5.7% slower. With edges by their step Halo returns to its times before the cursor, and CoreMark is 2.4% above the cursor on the 14900K. The spill order now counts an arm as reading a value through a projection that emission replaces by it or through a pin slot, and a value no part reads is no part parameter. That brings the implementation in line with the recorded rule of spilling the values the fewest arms read first. Alone it measured +1.3% against the 2% rule set for it, and the owner kept it as that correction. Measurements are in [the match-dispatch results](../research/experiments/match-dispatch/RESULTS.md#edges-by-their-step).
+
 ## 2026-10-06 Dispatch parts carry the matched element's address beside the index
 
 Nodes: compiler/match-dispatch-lowering

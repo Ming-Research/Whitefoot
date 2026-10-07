@@ -687,3 +687,6 @@ Edges by their step meet the criterion:
 So the cursor stays, with this rule for its edges. The measured branch
 also carries the register-pressure candidate. Alone, that candidate gave
 1.3% against its 2% rule; in this branch the two together give the 2.4%.
+It is kept as a correction rather than adopted as a gain: the recorded
+spill order spills the values the fewest arms read first, and the
+implementation had missed reads through projections and pins.
