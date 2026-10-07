@@ -498,8 +498,9 @@ pub fn build_program_from_fragments(
 }
 
 impl CompiledProgram {
-    #[cfg(windows)]
-    pub(super) fn executable(&self) -> &Path {
+    /// The built program, for a case that starts it with a command of its
+    /// own, such as one that stops it at a checkpoint.
+    pub(crate) fn executable(&self) -> &Path {
         &self.executable
     }
 

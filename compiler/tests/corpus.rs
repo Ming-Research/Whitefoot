@@ -10,6 +10,7 @@ mod conformance {
     #[cfg(unix)]
     mod adapter;
     pub(super) mod corpus;
+    mod file_replacement;
     mod json;
 }
 
@@ -19,6 +20,7 @@ mod programs {
     mod containers;
     #[cfg(unix)]
     mod contexts;
+    mod file_replacement;
     #[cfg(unix)]
     mod hashing;
     #[cfg(unix)]

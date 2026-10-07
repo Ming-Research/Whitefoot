@@ -1,0 +1,228 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias HandleFactory = std::io::HandleFactory;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectoryWrite = std::fs::DirectoryWrite;
+
+fn copy_name(args: &std::text::Args, position: u64, destination: &[u8]) -> next: u64 reads(args), writes(destination) contract {
+  ensures next <= destination^.len;
+} {
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      let length = destination^.len;
+      match std::text::host_copy_bytes(value: &text, destination: destination, start: 0_u64, end: length) {
+        Ok(value: end) => {
+          return end;
+        }
+        Err(error: problem) => {
+          return 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 0_u64;
+    }
+  }
+}
+
+const replacement: Array<u8, 4> =[110_u8, 101_u8, 119_u8, 10_u8];
+
+fn stage(args: &std::text::Args) -> result: u8 reads(args) {
+  let bytes = array_filled::<u8, 1>(value: 0_u8);
+  match std::text::arg_get(args: args, position: 3_u64) {
+    Ok(value: text) => {
+      match std::text::host_copy_utf8(value: &text, destination: &bytes[0_u64..1_u64], start: 0_u64, end: 1_u64) {
+        Ok(value: next) => {
+          if next == 1_u64 {
+            return bytes[0_u64];
+          }
+        }
+        Err(error: problem) => {
+        }
+      }
+    }
+    Err(error: problem) => {
+    }
+  }
+  return 0_u8;
+}
+
+fn check_log(factory: &HandleFactory, root: &DirectoryRead, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let bytes = array_filled::<u8, 5>(value: 0_u8);
+      let outcome = 0_u8;
+      match std::fs::read_at(factory: factory, file: &file, destination: &bytes[0_u64..5_u64], file_offset: 0_u64, start: 0_u64, end: 5_u64) {
+        Ok(value: next) => {
+          if next != 4_u64 {
+            set outcome = 2_u8;
+          }
+        }
+        Err(error: problem) => {
+          set outcome = 3_u8;
+        }
+      }
+      std::fs::close_read(factory: factory, file: move file);
+      if outcome != 0_u8 {
+        return outcome;
+      }
+      if bytes[3_u64] != 10_u8 {
+        return 4_u8;
+      }
+      let old_first = bytes[0_u64] == 111_u8;
+      let old_second = bytes[1_u64] == 108_u8;
+      let old_third = bytes[2_u64] == 100_u8;
+      let old_prefix = band(old_first, old_second);
+      let old = band(old_prefix, old_third);
+      let new_first = bytes[0_u64] == 110_u8;
+      let new_second = bytes[1_u64] == 101_u8;
+      let new_third = bytes[2_u64] == 119_u8;
+      let new_prefix = band(new_first, new_second);
+      let new = band(new_prefix, new_third);
+      if bor(old, new) {
+        return 0_u8;
+      }
+      return 5_u8;
+    }
+    Err(error: problem) => {
+      return 1_u8;
+    }
+  }
+}
+
+fn write_temporary(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8]) -> result: u8 reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_append(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: file) => {
+      let outcome = 0_u8;
+      match std::fs::truncate_file(factory: factory, file: &file, length: 0_u64) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set outcome = 7_u8;
+        }
+      }
+      let sent = 0_u64;
+      loop @append {
+        if sent < 4_u64 {
+        } else {
+          break @append;
+        }
+        if outcome != 0_u8 {
+          break @append;
+        }
+        match std::fs::append_once(factory: factory, file: &file, source: &replacement[0_u64..4_u64], start: sent, end: 4_u64) {
+          Ok(value: next) => {
+            if next == sent {
+              set outcome = 8_u8;
+            }
+            set sent = next;
+          }
+          Err(error: problem) => {
+            set outcome = 9_u8;
+          }
+        }
+      }
+      if outcome == 0_u8 {
+        match std::fs::sync_file(factory: factory, file: &file) {
+          Ok(value: done) => {
+          }
+          Err(error: problem) => {
+            set outcome = 10_u8;
+          }
+        }
+      }
+      match std::fs::close_write(factory: factory, file: move file) {
+        Ok(value: done) => {
+        }
+        Err(error: problem) => {
+          set outcome = 11_u8;
+        }
+      }
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 6_u8;
+    }
+  }
+}
+
+fn checkpoint(factory: &HandleFactory, out: &std::io::OutputStream, input: &std::io::InputStream) -> result: u8 writes(factory), writes(out), writes(input) waits {
+  doc "Announces the selected rewrite boundary and waits for input while the harness kills this process. A completed read means the harness did not stop it there.";
+  let marker = array_filled::<u8, 1>(value: 46_u8);
+  let unbounded = None<std::time::Instant>();
+  match std::io::write_once(factory: factory, output: out, source: &marker[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unbounded) {
+    Ok(value: next) => {
+      if next != 1_u64 {
+        return 12_u8;
+      }
+    }
+    Err(error: problem) => {
+      return 13_u8;
+    }
+  }
+  let byte = array_filled::<u8, 1>(value: 0_u8);
+  std::io::read_next(factory: factory, input: input, destination: &byte[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unbounded);
+  return 14_u8;
+}
+
+fn rewrite(factory: &HandleFactory, root: &DirectoryWrite, log: &[u8], temporary: &[u8], stop: u8, out: &std::io::OutputStream, input: &std::io::InputStream) -> result: u8 reads(log), reads(temporary), writes(factory), writes(root), writes(out), writes(input) waits {
+  let outcome = write_temporary(factory: factory, root: root, name: temporary);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  if stop == 49_u8 {
+    return checkpoint(factory: factory, out: out, input: input);
+  }
+  match std::fs::rename_file(factory: factory, root: root, from: temporary, from_start: 0_u64, from_end: temporary^.len, to: log, to_start: 0_u64, to_end: log^.len) {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return 15_u8;
+    }
+  }
+  if stop == 50_u8 {
+    return checkpoint(factory: factory, out: out, input: input);
+  }
+  match std::fs::sync_directory(factory: factory, root: root) {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return 16_u8;
+    }
+  }
+  if stop == 51_u8 {
+    return checkpoint(factory: factory, out: out, input: input);
+  }
+  return 17_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Checks the existing log on every start. Argument 3 selects check-only (0) or a stop before rename (1), after rename (2), or after directory sync (3). Names arrive as native host bytes.";
+  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  let log = array_filled::<u8, 64>(value: 0_u8);
+  let temporary = array_filled::<u8, 64>(value: 0_u8);
+  let log_end = copy_name(args: &args, position: 1_u64, destination: &log[0_u64..64_u64]);
+  let temporary_end = copy_name(args: &args, position: 2_u64, destination: &temporary[0_u64..64_u64]);
+  let stop = stage(args: &args);
+  let outcome = 99_u8;
+  let log_present = log_end > 0_u64;
+  let temporary_present = temporary_end > 0_u64;
+  if band(log_present, temporary_present) {
+    if log_end <= 64_u64 {
+      if temporary_end <= 64_u64 {
+        let log_name = &log[0_u64..log_end];
+        let temporary_name = &temporary[0_u64..temporary_end];
+        set outcome = check_log(factory: &factory, root: &reader, name: log_name);
+        let succeeded = outcome == 0_u8;
+        let rewriting = stop != 48_u8;
+        if band(succeeded, rewriting) {
+          set outcome = rewrite(factory: &factory, root: &writer, log: log_name, temporary: temporary_name, stop: stop, out: &out, input: &input);
+        }
+      }
+    }
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  return std::process::exit_status(code: outcome);
+}
