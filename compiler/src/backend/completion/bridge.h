@@ -351,6 +351,9 @@ uint64_t wf__key_set_insert(struct wf_key_set *set, const unsigned char *key, ui
 /* Gives a set's memory back, taking the set's `store` alone, NULL for none,
  * as the emitted code holds a set in two registers. */
 void wf__key_set_free(void *store);
+/* The length of the set's key at `index`, below its count, after copying as
+ * many of its first bytes as `room` allows to `out`. */
+uint64_t wf__key_set_read_key(const struct wf_key_set *set, uint64_t index, unsigned char *out, uint64_t room);
 
 /* A table of `Option<V>` slots of `slot_size` bytes aligned to `slot_align`,
  * at most 16, sized for `capacity` entries; its count of `Some` entries,
@@ -363,12 +366,23 @@ void wf__key_set_free(void *store);
  * using: no other statement may be inside either table, so the caller holds
  * `a` whole or shares neither, and the entries of a hold of `a` taken whole
  * before the swap are settled first, each slot's tag read as
- * `wf__table_hold_release` reads it, and go with the other table. */
+ * `wf__table_hold_release` reads it, and go with the other table.
+ * `wf__keyed_table_scan` is one step of a scan [SHARE-1] by a statement
+ * holding or reading the table whole: it inserts into `set` the present
+ * keys whose positions lie from `cursor` to its answer, 0 for the last
+ * position, and writes nothing of the table.  `wf__keyed_table_clear`
+ * empties a table its caller's hold holds whole; the entries go to a table
+ * of their own, which `release`, the table's drop helper, drains and frees
+ * when that hold is given up (`wf__table_hold_release`). */
 void *wf__shared_map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
 uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 uint64_t *wf__keyed_table_drain(void *table);
 void wf__keyed_table_free(void *table);
 void wf__keyed_table_swap(void *a, void *b, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
+uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, struct wf_key_set *set,
+                              uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
+void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
+                           void (*release)(void *));
 
 /* One key: locks the entry, or reads it beside other readers when `read`
  * is nonzero, and returns its `Option<V>` slot, filled with zeros, `None`,

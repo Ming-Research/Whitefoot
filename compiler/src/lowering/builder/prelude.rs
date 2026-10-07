@@ -2,9 +2,9 @@
 //!
 //! Ten construction functions [OP-13], nine window operations [OP-10],
 //! `swap` [OP-11], `free_empty` [OP-14], the two shared-object functions and
-//! the keyed table's and key set's six [SHARE-1] are declared body-less
-//! exactly as
-//! a host function is [PRE-2], but no trusted-base object defines them: the compiler emits
+//! the map's four and key set's three [SHARE-1] are declared body-less
+//! exactly as a host function is [PRE-2], but no trusted-base object defines
+//! them: the compiler emits
 //! their bodies. Each body is built here, at the row's own physical function
 //! instance, so one monomorphized instance serves every call of that row with
 //! those type arguments and the ordinary call ABI carries the operands.
@@ -63,8 +63,11 @@ impl IrBuilder<'_> {
             "shared_share" => self.row_shared_share(),
             "shared_map_new" => self.row_shared_map_new(),
             "map_count" => self.row_map_count(),
+            "map_scan" => self.row_map_scan(),
+            "map_clear" => self.row_map_clear(),
             "key_set_new" => self.row_key_set_new(),
             "key_set_insert" => self.row_key_set_insert(),
+            "key_set_read_key" => self.row_key_set_read_key(),
             _ => Err(LoweringFailure::UnimplementedPreludeRow(
                 crate::lowering::COMPILER_OWNED_PRELUDE_ROWS
                     .iter()
@@ -173,19 +176,69 @@ impl IrBuilder<'_> {
     /// `map_count<V>(map: &ConcurrentHashMap<V>) -> u64`: how many entries
     /// of the table the argument names hold `Some` [SHARE-1].
     fn row_map_count(&mut self) -> Result<(), LoweringFailure> {
-        let [table] = self.row_parameters()?;
-        let IrType::Address(referent @ IrAddressed::Nominal(_)) = self.value_type(table)? else {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        };
-        let table = self.define(
-            referent.ty(),
-            IrOperation::Load {
-                address: table,
-                referent,
-            },
-        )?;
+        let [map] = self.row_parameters()?;
+        let table = self.row_table(map)?;
         let count = self.define(self.result, IrOperation::ConcurrentHashMapCount { table })?;
         self.return_value(count)
+    }
+
+    /// The table a `&ConcurrentHashMap<V>` parameter names.
+    fn row_table(&mut self, map: IrValueId) -> Result<IrValueId, LoweringFailure> {
+        let IrType::Address(referent @ IrAddressed::Nominal(_)) = self.value_type(map)? else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        self.define(
+            referent.ty(),
+            IrOperation::Load {
+                address: map,
+                referent,
+            },
+        )
+    }
+
+    /// `map_scan<V>(map: &ConcurrentHashMap<V>, cursor: u64, count: u64,
+    /// keys: &KeySet) -> u64`: one step of a scan, inserting the keys whose
+    /// positions lie from `cursor` to the answer [SHARE-1].
+    fn row_map_scan(&mut self) -> Result<(), LoweringFailure> {
+        let [map, cursor, count, set] = self.row_parameters()?;
+        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet) || self.result != U64 {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let table = self.row_table(map)?;
+        let next = self.define(
+            U64,
+            IrOperation::ConcurrentHashMapScan {
+                table,
+                cursor,
+                count,
+                set,
+            },
+        )?;
+        self.return_value(next)
+    }
+
+    /// `map_clear<V>(map: &ConcurrentHashMap<V>)`: every entry `None`, the
+    /// values released [SHARE-1].
+    fn row_map_clear(&mut self) -> Result<(), LoweringFailure> {
+        let [map] = self.row_parameters()?;
+        let table = self.row_table(map)?;
+        self.define(IrType::Unit, IrOperation::ConcurrentHashMapClear { table })?;
+        self.return_unit()
+    }
+
+    /// `key_set_read_key(keys: &KeySet, index: u64, out: &[u8]) -> u64`: the
+    /// length of the key at `index`, after copying its first bytes into
+    /// `out` [SHARE-1].
+    fn row_key_set_read_key(&mut self) -> Result<(), LoweringFailure> {
+        let [set, index, out] = self.row_parameters()?;
+        if self.value_type(set)? != IrType::Address(IrAddressed::KeySet)
+            || !matches!(self.value_type(out)?, IrType::Range { .. })
+            || self.result != U64
+        {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        }
+        let length = self.define(U64, IrOperation::KeySetReadKey { set, index, out })?;
+        self.return_value(length)
     }
 
     /// `key_set_new(capacity: u64) -> KeySet`: a set holding no key, with

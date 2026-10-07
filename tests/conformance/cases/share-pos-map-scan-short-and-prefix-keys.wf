@@ -1,0 +1,53 @@
+const bytes: Array<u8, 4> =[97_u8, 98_u8, 0_u8, 255_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let code = 42_u8;
+  let empty = &bytes[0_u64..0_u64];
+  let a = &bytes[0_u64..1_u64];
+  let ab = &bytes[0_u64..2_u64];
+  let zero = &bytes[2_u64..3_u64];
+  let zero_full = &bytes[2_u64..4_u64];
+  let full = &bytes[3_u64..4_u64];
+  atomic t = &store {
+    set t^[empty] = Some<u8>(value: 1_u8);
+    set t^[a] = Some<u8>(value: 2_u8);
+    set t^[ab] = Some<u8>(value: 3_u8);
+    set t^[zero] = Some<u8>(value: 4_u8);
+    set t^[zero_full] = Some<u8>(value: 5_u8);
+    set t^[full] = Some<u8>(value: 6_u8);
+  }
+  let keys = key_set_new(capacity: 8_u64);
+  atomic t = &store {
+    let next = map_scan::<u8>(map: t, cursor: 0_u64, count: 1_u64, keys: &keys);
+    loop {
+      if next == 0_u64 {
+        break;
+      }
+      set next = map_scan::<u8>(map: t, cursor: next, count: 1_u64, keys: &keys);
+    }
+  }
+  if keys.len != 6_u64 {
+    set code = 1_u8;
+  }
+  let total = 0_u64;
+  for @lengths (i in 0_u64..keys.len) {
+    let buffer = array_filled::<u8, 4>(value: 7_u8);
+    let length = key_set_read_key(keys: &keys, index: i, out: &buffer[0_u64..4_u64]);
+    set total = total +wrap length;
+  }
+  if total != 7_u64 {
+    set code = 2_u8;
+  }
+  let found = keys.len;
+  key_set_insert(keys: &keys, key: empty);
+  key_set_insert(keys: &keys, key: a);
+  key_set_insert(keys: &keys, key: ab);
+  key_set_insert(keys: &keys, key: zero);
+  key_set_insert(keys: &keys, key: zero_full);
+  key_set_insert(keys: &keys, key: full);
+  if keys.len != found {
+    set code = 3_u8;
+  }
+  return std::process::exit_status(code: code);
+}

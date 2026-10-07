@@ -1235,9 +1235,24 @@ rarely insert at the same place.
   `compiler/src/backend/emitter/shared.rs`) and refuses a tag-only enum,
   which `Option<unit>` may lower to, so a byte-keyed set fails with
   `InvalidIr` instead of compiling. The runtime reads a tag of 1, 2, 4 or 8
-  bytes at any offset. The change: pass the tag's offset, width and `None`
-  value from the enum's layout. Reopen when a program needs a set of byte
-  strings shared between contexts.
+  bytes at any offset, and every map operation, `map_scan` and `map_clear`
+  among them, already passes it the three. The change: pass the tag's
+  offset, width and `None` value from the enum's layout. Reopen when a
+  program needs a set of byte strings shared between contexts.
+
+- **The concurrent map's byte hash is unseeded.** `hash_bytes` in
+  `compiler/src/backend/concurrent_map.c` mixes a key's bytes with fixed
+  constants, so an input that knows the runtime can choose keys of one tag,
+  which share a cell run and make every probe of those keys long, and since
+  v0.94 a program can recover a key's position, the tag times the golden
+  ratio, by scanning [SHARE-1]. The specification makes positions an input
+  of the execution, so seeding is the implementation's choice. Uncertainty:
+  no measurement shows a cost, and the project is not an untrusted-input
+  service. The change: mix a per-process random seed into `hash_bytes`,
+  keeping one seed for every map of the process, which the specification's
+  shared positions require. Validate by the runtime test's narrowed-hash
+  build still passing and a probe-length measurement under chosen keys.
+  Reopen when a server built on the map faces untrusted clients.
 
 - **Entry nodes over 512 bytes, and large key sets, come from the pool under
   its one lock.** `new_node` takes a large key's node from the context pool,

@@ -1211,6 +1211,21 @@ pub enum IrOperation {
         first: IrValueId,
         second: IrValueId,
     },
+    /// [SHARE-1] one step of a scan of the table `table` from the position
+    /// `cursor`, sized by `count`, inserting the step's keys into the key set
+    /// `set` addresses. Defines `u64`, the next cursor.
+    ConcurrentHashMapScan {
+        table: IrValueId,
+        cursor: IrValueId,
+        count: IrValueId,
+        set: IrValueId,
+    },
+    /// [SHARE-1] makes every entry of the table `table` `None`; the values
+    /// they held are released once the statement holding the table gives
+    /// its hold up. Defines `Unit`.
+    ConcurrentHashMapClear {
+        table: IrValueId,
+    },
     /// [SHARE-3] locks the entry under the bytes the range `key` names in the
     /// table `table`, creating it holding `None` when absent, and keeps the
     /// lock in `record`; with `read`, beside the other statements that only
@@ -1320,6 +1335,14 @@ pub enum IrOperation {
     KeySetInsert {
         set: IrValueId,
         key: IrValueId,
+    },
+    /// [SHARE-1] copies the first bytes of the key at `index` of the set
+    /// `set` addresses into the range `out`, as many as both lengths allow.
+    /// Defines `u64`, the key's length.
+    KeySetReadKey {
+        set: IrValueId,
+        index: IrValueId,
+        out: IrValueId,
     },
     /// [SHARE-3] a guard read false: begins the watch `record`, before the
     /// statement gives up anything it holds. Defines `Unit`.

@@ -1,0 +1,124 @@
+fn put(map: &ConcurrentHashMap<u8>, a: u64, b: u64) -> result: unit writes(map) {
+  let key = array_filled::<u8, 2>(value: 0_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(a);
+  set key[1_u64] = cvt.wrap::<u64, u8>(b);
+  let name = &key[0_u64..2_u64];
+  set map^[name] = Some<u8>(value: 1_u8);
+  return unit;
+}
+
+fn remove(map: &ConcurrentHashMap<u8>, a: u64, b: u64) -> result: unit writes(map) {
+  let key = array_filled::<u8, 2>(value: 0_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(a);
+  set key[1_u64] = cvt.wrap::<u64, u8>(b);
+  let name = &key[0_u64..2_u64];
+  set map^[name] = None<u8>();
+  return unit;
+}
+
+fn note(keys: &KeySet, a: u64, b: u64) -> result: unit writes(keys) {
+  let key = array_filled::<u8, 2>(value: 0_u8);
+  set key[0_u64] = cvt.wrap::<u64, u8>(a);
+  set key[1_u64] = cvt.wrap::<u64, u8>(b);
+  let name = &key[0_u64..2_u64];
+  key_set_insert(keys: keys, key: name);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let first = shared_map_new::<u8>(capacity: 1_u64);
+  let second = shared_map_new::<u8>(capacity: 64_u64);
+  let code = 42_u8;
+  atomic t = &first {
+    for @fill (a in 0_u64..4_u64) {
+      for @row (b in 0_u64..8_u64) {
+        put(map: t, a: a, b: b);
+      }
+    }
+  }
+  atomic t = &second {
+    for @extra (a in 10_u64..14_u64) {
+      for @column (b in 0_u64..8_u64) {
+        put(map: t, a: a, b: b);
+      }
+    }
+    for @fill (x in 0_u64..4_u64) {
+      for @row (y in 0_u64..8_u64) {
+        let a = 3_u64 -wrap x;
+        let b = 7_u64 -wrap y;
+        put(map: t, a: a, b: b);
+      }
+    }
+    for @thin (a in 10_u64..14_u64) {
+      for @column (b in 0_u64..8_u64) {
+        remove(map: t, a: a, b: b);
+      }
+    }
+  }
+  let slow = key_set_new(capacity: 32_u64);
+  let cursor = 0_u64;
+  loop {
+    let next = 0_u64;
+    atomic t = &first {
+      set next = map_scan::<u8>(map: t, cursor: cursor, count: 1_u64, keys: &slow);
+    }
+    if next == 0_u64 {
+      break;
+    }
+    set cursor = next;
+  }
+  let fast = key_set_new(capacity: 32_u64);
+  atomic t = &second {
+    let next = map_scan::<u8>(map: t, cursor: 0_u64, count: 1000_u64, keys: &fast);
+    loop {
+      if next == 0_u64 {
+        break;
+      }
+      set next = map_scan::<u8>(map: t, cursor: next, count: 1000_u64, keys: &fast);
+    }
+  }
+  if slow.len != 32_u64 {
+    set code = 1_u8;
+  }
+  if fast.len != 32_u64 {
+    set code = 2_u8;
+  }
+  for @compare (i in 0_u64..slow.len) {
+    let left = array_filled::<u8, 2>(value: 0_u8);
+    let right = array_filled::<u8, 2>(value: 1_u8);
+    key_set_read_key(keys: &slow, index: i, out: &left[0_u64..2_u64]);
+    if i < fast.len {
+      key_set_read_key(keys: &fast, index: i, out: &right[0_u64..2_u64]);
+    }
+    if left[0_u64] != right[0_u64] {
+      set code = 3_u8;
+    }
+    if left[1_u64] != right[1_u64] {
+      set code = 3_u8;
+    }
+  }
+  let high = key_set_new(capacity: 32_u64);
+  let top = 0_u64;
+  atomic t = &first {
+    set top = map_scan::<u8>(map: t, cursor: 18446744073709551615_u64, count: 1_u64, keys: &high);
+    let middle = map_scan::<u8>(map: t, cursor: 9223372036854775808_u64, count: 1_u64, keys: &high);
+    if middle != 0_u64 {
+      if middle <= 9223372036854775808_u64 {
+        set code = 4_u8;
+      }
+    }
+  }
+  if top != 0_u64 {
+    set code = 5_u8;
+  }
+  let known = slow.len;
+  for @forged (i in 0_u64..high.len) {
+    let buffer = array_filled::<u8, 2>(value: 0_u8);
+    key_set_read_key(keys: &high, index: i, out: &buffer[0_u64..2_u64]);
+    key_set_insert(keys: &slow, key: &buffer[0_u64..2_u64]);
+  }
+  if slow.len != known {
+    set code = 6_u8;
+  }
+  return std::process::exit_status(code: code);
+}
