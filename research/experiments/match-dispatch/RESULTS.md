@@ -853,6 +853,47 @@ most two arms read hold registers, one of them read by none. Two causes:
   forming it, so no part reads the run's address. It still counts as read
   by every arm, because the header's indexing instruction names it.
 
+### The register-pressure candidate, and the code cursor on Halo
+
+The register-pressure candidate counts reads through replaced projections
+and pins, and drops parameters no part reads. Two runs measured it on the
+14900K with clang 22.1.8, at the branch's `5c1436474`, whose compiler
+equals `89dfccb01`'s. Each compared three compilers, with a twin of the
+base and 7 interleaved launches:
+- **step:** main before the code cursor, `e1708490c`;
+- **base:** main with the code cursor, `3a260446c`;
+- **head:** the candidate.
+
+On the wasm interpreter the candidate's split keeps 3 values in the frame,
+not 4: the code's element address is no longer a parameter.
+CoreMark 2K scores, higher is better
+([run 37551028726](https://github.com/Ming-Research/Whitefoot/actions/runs/37551028726)):
+
+| host | before the cursor | cursor | twin | candidate | candidate / cursor | cursor / before |
+|---|---:|---:|---:|---:|---|---|
+| 14900K | 4705.9 (0.5%) | 5305.0 (0.8%) | 5291.0 (1.8%) | 5376.3 (4.2%) | 1.013; 5 of 7, 0.977-1.022 | 1.127; 7 of 7 |
+| hosted EPYC 7763 | 1888.6 (8.2%) | 1938.0 (3.9%) | 1924.9 (6.3%) | 2036.7 (6.7%) | 1.051; 7 of 7, 1.020-1.101 | 1.026; 6 of 7 |
+
+Halo's Lua interpreter, Halo-wf at `acb39ad7f`, built with full LTO.
+`halo.vm.run` splits into 73 arms on 11 integer registers under all three
+compilers, keeps no value in the frame, and with the cursor its ledger
+adds "carries the matched Cell's address between the parts". Wall time
+per launch in seconds, lower is better; `fib` at N = 35 instead of the
+kernel's 30
+([run 37551026003](https://github.com/Ming-Research/Whitefoot/actions/runs/37551026003)):
+
+| kernel | before the cursor | cursor | twin | candidate | candidate / cursor | cursor / before |
+|---|---:|---:|---:|---:|---|---|
+| `fib` | 1.1108 (1.1%) | 1.1206 (2.7%) | 1.1228 (0.8%) | 1.1224 (2.2%) | 1.002 | 1.009; slower in 6 of 7 |
+| `loop` | 0.4373 (0.5%) | 0.4620 (0.5%) | 0.4626 (0.7%) | 0.4622 (1.2%) | 1.000 | **1.057; slower in 7 of 7, 1.054-1.061** |
+
+The twin sits within 0.2% of the cursor's times. The code cursor makes
+Halo's `loop` 5.7% slower, and its `fib` about 1% slower. Halo's arms take
+the next index from a helper's result, which the lowering cannot see as
+`pc` plus a constant. Every such edge therefore moves the received address
+by `next - pc` elements: a subtraction more than forming the address from
+the run, as the header did before, with nothing saved.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

@@ -645,3 +645,33 @@ that this lowering serves Lua and other interpreters, not this one:
   falls more than 2%.
 - **The code cursor itself** is measured on the same Halo kernels against
   its own base, as a check that it serves another interpreter.
+
+**Outcome**
+([results](../../experiments/match-dispatch/RESULTS.md#the-register-pressure-candidate-and-the-code-cursor-on-halo)).
+- **The candidate is not adopted under the rule.** CoreMark rose 1.3% on
+  the 14900K, short of 2%. No Halo kernel moved.
+- **The code cursor slows Halo.** Halo's `loop` is 5.7% slower with the
+  cursor and its `fib` about 1% slower, in every pair, against a twin
+  within 0.2%. The cursor, adopted on the wasm interpreter alone, does not
+  serve Halo as built.
+
+**Edges by their step.** An edge back to the header moves the received
+address only where its index is the received index moved by a constant,
+`pc + k`, which the host folds to one addition. Every other edge forms the
+element's address from the run, as the header did before the cursor. The
+parts then keep the run's address wherever an arm has such an edge.
+
+**Prediction:**
+- **Halo:** its edges take their index from helpers, so they form the
+  address from the run as before the cursor, and its times return to the
+  pre-cursor ones.
+- **The wasm interpreter:** its sequential arms keep the moved address,
+  and its branch arms form theirs from the run, one subtraction fewer
+  than with the cursor. CoreMark stays at the cursor's score.
+
+**Criterion, fixed before measuring**, on the 14900K against a twin, 7
+interleaved launches:
+- **Adopted** if neither Halo kernel is more than 1% slower than before
+  the cursor (`e1708490c`), and CoreMark is no more than 2% below the
+  cursor's score (`3a260446c`).
+- **Otherwise** the cursor's adoption is reopened.
