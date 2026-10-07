@@ -84,6 +84,18 @@ public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter)
 `Inputs` would gain the meter, and `meter_share` would give one to another
 context, as `clock_share` does.
 
+A reading depends on how other contexts' allocations interleave, so it is
+an input of the execution [WAIT-2], as a clock reading is: a program may
+branch on it, as firn's eviction must, without making its acceptance depend
+on the host.
+
+A counts the bytes the program requested, where Redis counts the
+allocator's usable sizes, which round each request up to a size class. For
+the same dataset firn's reading is therefore lower than an allocator-exact
+one by the rounding, and `maxmemory` bounds the data rather than the
+allocator's footprint; the resident set reported beside it shows the
+difference.
+
 ## Proposal
 
 A, with D's resident set as a second reading for `INFO`.
@@ -98,4 +110,4 @@ The validation is stated before implementing:
 
 ## Status
 
-Draft; not proposed to the owner yet.
+Proposed to the owner as Firn ledger Q218.
