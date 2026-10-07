@@ -1,0 +1,55 @@
+fn scatter(order: &Slots<u64>, pos: &Slots<u64>, out: &Slots<u64>) -> result: unit reads(order), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires forall inverse(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+} {
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let at = order^[k];
+    if at < out^.len {
+      set out^[at] = k;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Slots integer elements reached through reference parameters are RANGE-1 terms and the left inverse certifies the scatter for PAR-2.";
+  let order = box_slots_new::<u64>(capacity: 5_u64);
+  let pos = box_slots_new::<u64>(capacity: 5_u64);
+  let out = box_slots_new::<u64>(capacity: 5_u64);
+  for (
+    k in 0_u64..5_u64,
+    invariant order_length: order.inner.len == k,
+    invariant pos_length: pos.inner.len == k,
+    invariant out_length: out.inner.len == k
+  ) {
+    place_back(window: &order.inner, value: 0_u64);
+    place_back(window: &pos.inner, value: 0_u64);
+    place_back(window: &out.inner, value: 0_u64);
+  }
+  for (
+    k in 0_u64..5_u64,
+    invariant forall values(q in 0_u64..k): order.inner[q] == 4_u64 - q,
+    invariant forall inverse(q in 0_u64..k): pos.inner[order.inner[q]] == q
+  ) {
+    let at = 4_u64 - k;
+    set order.inner[k] = at;
+    set pos.inner[at] = k;
+  }
+  scatter(order: &order.inner, pos: &pos.inner, out: &out.inner);
+  if out.inner.len == 5_u64 {
+    for (k in 0_u64..5_u64) {
+      let expected = 4_u64 - k;
+      if out.inner[k] != expected {
+        return std::process::exit_status(code: 1_u8);
+      }
+    }
+  } else {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

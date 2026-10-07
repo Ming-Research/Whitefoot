@@ -1192,6 +1192,19 @@ rarely insert at the same place.
   material waste in small owners
   ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
 
+- **A segment borrowed below a range element does not emit.** In
+  `fn segments(rows: &[Box<Segments<u64>>], i: u64)`, the borrow
+  `&rows^[i].inner[0_u64]` checks and lowers (slice address, Box referent
+  projection, `SegmentSlice`), but LLVM emission returns `InvalidIr`; the same
+  borrow through a `Box<Paged<u64>>` element emits. The lowering test
+  `page_borrows_below_range_elements_keep_the_outer_projection` in
+  `compiler/src/lowering/tests.rs` covers the Paged form only; the Segments
+  form failed in the gate run of the paged-storage branch. Find which
+  operand type `emit_segment_slice` or the surrounding measure emission
+  refuses and give that projection the address type the emitter expects;
+  validate with the Segments helper restored to that test. Reopen when a
+  program stores segmented runs in a range of cells.
+
 - **Growth kills facts about Paged elements it does not change.**
   grow_paged writes the whole cell, so every fact about a filled element dies
   although no element moves or changes. Snowghost's splice publication would
