@@ -88,7 +88,8 @@ pub const SPEC_SHA256_HEX: &str = "{hex}";
 /// `whitefootc` runs, without generating code: the verifier checks the
 /// intrinsic's type at a call, while some versions accept a bare declaration
 /// of either form (Apple clang 21), and a call outside a coroutine can crash
-/// code generation.
+/// code generation. Verification is requested explicitly, since release
+/// builds of clang 18 to 20 skip it on IR input by default.
 fn coro_end_result() -> &'static str {
     const OLD: &str = "i1";
     const NEW: &str = "void";
@@ -107,7 +108,14 @@ fn coro_end_result() -> &'static str {
         return OLD;
     }
     let accepted = Command::new(assembler())
-        .args(["-x", "ir", "-S", "-emit-llvm", "-o"])
+        .args([
+            "-x",
+            "ir",
+            "-S",
+            "-emit-llvm",
+            "-fverify-intermediate-code",
+            "-o",
+        ])
         .arg(Path::new(&directory).join("coro_end_probe.verified.ll"))
         .arg(&probe)
         .output()

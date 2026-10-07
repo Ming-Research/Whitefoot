@@ -36,7 +36,9 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        options: [scoreboard, placement]
+        # coro-end-probe is temporary, for PR #264, and is removed before
+        # it is ready.
+        options: [scoreboard, placement, coro-end-probe]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -107,7 +109,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -356,3 +358,28 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  # Temporary: which llvm.coro.end form each clang accepts in a call, with the
+  # verification compiler/build.rs requests (PR #264).
+  coro-end-probe:
+    if: inputs.experiment == 'coro-end-probe'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Probe clang 18 and 22
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          sudo bash "$RUNNER_TEMP/llvm.sh" 22 > /dev/null
+          for form in void i1; do
+            if [ "$form" = void ]; then call='call void'; else call='%r = call i1'; fi
+            printf 'declare %s @llvm.coro.end(ptr, i1, token)\n\ndefine void @probe() {\n  %s @llvm.coro.end(ptr null, i1 false, token none)\n  ret void\n}\n' "$form" "$call" > "$RUNNER_TEMP/$form.ll"
+            for clang in clang-18 clang-22; do
+              for verify in "" -fverify-intermediate-code; do
+                if "/usr/bin/$clang" -x ir -S -emit-llvm $verify -o /dev/null "$RUNNER_TEMP/$form.ll" 2> "$RUNNER_TEMP/err.txt"; then
+                  verdict=accepted
+                else
+                  verdict="refused: $(head -1 "$RUNNER_TEMP/err.txt")"
+                fi
+                echo "$clang ${verify:-(no flag)} $form call: $verdict"
+              done
+            done
+          done
