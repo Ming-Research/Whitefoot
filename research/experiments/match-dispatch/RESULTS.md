@@ -1090,6 +1090,121 @@ product layout is 4-byte aligned, and an 8-byte word would raise that.
 v2h's `Op` has a `u64` field, so its product layout is already 8-byte
 aligned.
 
+## Stage 3: the frame as an address
+
+Candidate 2, prototyped at `32c71df5a` on top of candidate 1 (`e840fb423`).
+A carried index that bases accesses `run[index + k]` into a stable run
+travels as the address of the run's element at that index. Recognition
+needs a checked requirement bounding the index by the run's length, which
+keeps the address arithmetic within [STOR-6]. In v2h the frame index `fp`
+qualifies, and the ledger reports "carries a run element's address for
+carried index v20".
+
+**CoreMark on the 14900K**
+([run 37578509308](https://github.com/Ming-Research/Whitefoot/actions/runs/37578509308)),
+base main `8b647edbb`:
+
+| engine | median score | against base |
+|---|---:|---:|
+| head, candidates 1 and 2 | 5970.1 | 1.099 |
+| step, candidate 1 | 6006.0 | 1.105 |
+| twin of the base | 5434.8 | 1.000 |
+| base | 5434.8 | 1.000 |
+
+The mechanism removes the frame base from every slot access:
+- `I32Add`'s path drops from 15 instructions to 14, `Copy`'s from 13 to 12;
+- `lea (%rcx,%r15,8),%rbx` is gone, and `%rcx` holds the frame.
+
+Head against step is 0.994, so the candidate misses the 2% rule.
+
+Halo's interpreter does not receive the mechanism, because it reaches
+frame slots only inside helpers that are not inlined
+([run 37578511955](https://github.com/Ming-Research/Whitefoot/actions/runs/37578511955)).
+Time against base:
+
+| kernel | head | twin |
+|---|---:|---:|
+| `fib` | 0.993 | 0.996 |
+| `loop` | 1.000 | 1.001 |
+
+## Stage 3: where v2h's time goes against wasmi
+
+The question and its method are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-where-the-time-goes).
+
+**Sources.**
+- **Machines:**
+  - the owner's MacBook Air M5, with Apple clang 21 and local builds the
+    owner authorized;
+  - the 14900K for the bounds counterfactual.
+- **Compilers built on the M5:**
+  - `b60436d33`, main's code generation (the base);
+  - `e840fb423`, candidate 1;
+  - `8a93bbb90`, candidates 1 and 2.
+- **Interpreters:** wasmi 2.0.0 and Silverfir-nano `5f248e44`. All run
+  CoreMark 2K.
+
+**Measurement.**
+- **Cycles and instructions:** `/usr/bin/time -l`, median of 3.
+- **Time per handler:** `sample` at the top of the stack, with v2h's arms
+  mapped to operations by match order.
+- **Counts per handler:**
+  - v2h's from `gen.py --profile`;
+  - wasmi's from a copy whose dispatch macro also counts by handler
+    address, with the same total of 576,865,919 dispatches.
+- **Stability:** absolute M5 scores varied by a factor of 2 between
+  sessions, while cycle counts matched across sessions within 2%. Cycles
+  are therefore the measure here.
+
+**Cycles per dispatch on the M5**, one session:
+
+| engine | instructions per dispatch | cycles per dispatch |
+|---|---:|---:|
+| v2h, main | 18.46 | 3.70 |
+| v2h, candidate 1 | 18.71 | 3.69 |
+| v2h, candidates 1 and 2 | 17.72 | 3.63 |
+| v2h, candidates 1 and 2, bounds tests removed | 15.54 | 3.61 |
+| wasmi 2.0.0 | 7.80 | 2.32 |
+| Silverfir-nano | 7.77 | 1.80 |
+
+**The bounds counterfactual.** Each run arm's 254 tests of the next index
+against the code's length were rewritten to true in the emitted LLVM. The
+result was linked with the runtime objects of a cached build. That
+interpreter is unsound and only measures the tests.
+
+| machine | variant | effect of removing the bounds tests |
+|---|---|---:|
+| M5 | main | cycles 1.038, instructions 0.883 |
+| 14900K | main | CoreMark 1.037 |
+| 14900K | candidates 1 and 2 | CoreMark 0.991 |
+
+On the 14900K
+([run 37579981158](https://github.com/Ming-Research/Whitefoot/actions/runs/37579981158)),
+main linked the same way scores 1.000, matching its twin.
+
+**Separate dispatch per branch outcome.** wasmi dispatches separately on
+each outcome of a conditional branch. v2h's arms join both outcomes into
+one dispatch: in the source, and again through LLVM's tail merging when
+the source keeps them apart. The experiment:
+- rewrite the 32 conditional-branch arms with a tail call per outcome;
+- compile with `-mllvm -enable-tail-merge=false`, so each outcome keeps its
+  own indirect jump.
+
+The result is 1.016 of the base's cycles on the M5.
+
+**Cycles per execution of comparable handlers on the M5**, from time
+shares, counts and total cycles. Sampling skid makes single values
+approximate.
+
+| kind | v2h, main | wasmi |
+|---|---|---|
+| register arithmetic | `I32AddAD` 1.85, `I32MulA` 1.5 | `i32_add_rrs` 1.3, `i32_mul_rrs` 1.2 |
+| arithmetic reading frame slots | `I32Add` 2.6, `I32AddD` 4.7 | `i32_add_rs_si` 1.3, `i32_add_rs_rs` 1.35 |
+| copy | `Copy` 2.8 | `u64_copy_ss` 1.9 |
+| conditional branch | `BrIf` 6.2, `BrI32Ne` 6.1 | `branch_i32_not_eq_ri` 5.0, `branch_i32_eq_ri` 3.3 |
+| memory load | `I32Load` 4.9 | `u32_load_mem0_offset16_rs` 2.6 |
+| call | `Call` 28 | `call_internal` 15.6 |
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

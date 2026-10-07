@@ -819,3 +819,78 @@ alignment. Base, prototype, twin, and Halo's `fib` and `loop` on the
   card says so.
 - **CoreMark:** must stay within its twin's spread, since `Op` is already
   8-byte aligned.
+
+**Outcome of candidate 2**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-frame-as-an-address)).
+- **The mechanism works:** the frame base leaves every slot access.
+- **The time does not move:** CoreMark scores 0.994 of candidate 1 alone on
+  the 14900K, below the rule.
+- **Halo is not covered:** its interpreter reaches frame slots only inside
+  helpers, so it does not receive the mechanism.
+
+The candidate is not adopted.
+
+## Stage 3: where the time goes
+
+Candidate 1 removed one dependent load from the dispatch chain and gained
+10%. Candidate 2 removed a cheap instruction from every slot access and
+gained nothing. So counting instructions does not rank the remaining
+candidates. The owner asked for an attribution of the whole gap before more
+candidates. wasmi is the reference, because it is compiled by LLVM from
+Rust: whatever wasmi's code achieves, a Whitefoot interpreter's code should
+reach.
+
+**Question.** Of the cycles v2h spends beyond wasmi, which part is due to
+each of the following?
+- the lowering of `match` to tail calls;
+- the language's proof obligations, such as the test of the next index
+  against the code's length;
+- the interpreter's own design: which values live in frame slots and which
+  in registers, and how calls build frames.
+
+**Method.**
+- **Counterfactual time, not instruction counts.** Remove one cost and
+  measure cycles or score: the bounds tests by rewriting them to true in
+  the emitted LLVM, separate dispatch per branch outcome, and each
+  candidate.
+- **Cycles per comparable handler.** For v2h and wasmi, from sampled time
+  shares, per-handler counts and total cycles on the M5.
+- **Machines.** The M5 has hardware counters; the 14900K remains the
+  yardstick.
+
+**Outcome**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-where-v2hs-time-goes-against-wasmi)).
+- **Dispatch is no longer v2h's bottleneck.**
+  - On the M5, candidates 1 and 2 with the bounds tests removed save 2.4%
+    of cycles. v2h still spends 3.61 cycles per dispatch, against wasmi's
+    2.32.
+  - Separate dispatch per branch outcome saves nothing.
+- **The bounds tests no longer cost time.**
+  - On the 14900K they cost 3.7% on main but nothing once candidate 1
+    shortens the dispatch chain.
+  - On the M5 they never cost anything.
+  - A language mechanism that removes them would not be justified by
+    performance on this interpreter.
+- **The remaining cycles go to v2h's design.**
+  - A value read from a frame slot that the operation before it has just
+    written: `I32AddD` takes 4.7 cycles where `I32AddAD`, reading the
+    accumulator, takes 1.85.
+  - Calls take 28 cycles against wasmi's 15.6.
+  - wasmi's translator keeps more values in its integer register (`ireg`).
+    v2h's accumulator holds a value only when the next operation is its
+    one consumer.
+
+**Next step, awaiting the owner.** Adopt wasmi's choices in v2h's
+translator: keep the values wasmi keeps in registers in loop parameters,
+and build call frames as wasmi does. Then compare with wasmi again. That
+changes the interpreter, not the compiler.
+- **If v2h then comes within a few percent of wasmi:** the lowering is at
+  its best for this interpreter shape.
+- **If it does not:** the remaining difference is again attributed by
+  counterfactuals.
+
+Two constraints carry into the design:
+- on x86-64, v2h's split loop already takes all 11 integer argument
+  registers of `preserve_none`;
+- on x86-64, wasmi's handlers take 7 integer arguments under `sysv64`, of
+  which only 6 can travel in registers.
