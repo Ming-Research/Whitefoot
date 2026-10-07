@@ -251,6 +251,8 @@ jobs:
       # opt-in runtime assertion aborts at process exit unless at least one
       # IOCP submission was also reaped, so a silent direct fallback cannot
       # satisfy this step.
+      # conformance::file_replacement includes writable-subdirectory cases
+      # on default and native-disabled routes through the shared file adapter.
       - name: Construct and run shared Windows program cases
         timeout-minutes: 8
         env:
