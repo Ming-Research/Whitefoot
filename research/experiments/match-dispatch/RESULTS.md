@@ -1029,6 +1029,67 @@ Silverfir-nano's cells likewise hold their handler's address. Its x86-64
 handlers keep two locals and the accumulator in registers and preload the
 next handler word.
 
+## Stage 3: the handler's address in the element
+
+Candidate 1 of
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-binding-what-wasmi-and-silverfir-nano-bind),
+measured as an upper bound with the prototype at `e840fb423`. The base is
+main at `8b647edbb`. In the prototype, a union-laid-out enum that exactly
+one split loop matches gains a pointer word after its largest variant.
+Every construction writes the address of the arm its tag selects, and the
+dispatch loads the next arm from the element it moves to. The ledger
+confirms that v2h's loop dispatches this way: "dispatches through the
+handler word in each Op".
+
+**CoreMark on the 14900K**, clang 22.1.8, 7 interleaved launches
+([run 37572316181](https://github.com/Ming-Research/Whitefoot/actions/runs/37572316181)):
+
+| engine | median score | spread | against base |
+|---|---:|---:|---:|
+| head | 5970.1 | 4.6% | 1.101 |
+| twin of the base | 5376.3 | 6.5% | 0.992 |
+| base | 5420.1 | 3.2% | 1.000 |
+
+- **Head against base, launch by launch:** ahead in all 7 pairs, at
+  1.055 to 1.114, median 1.093.
+- **Twin against base:** 0.967 to 1.011.
+- **Against Silverfir-nano:** that run's 7812.5 is not in this one. Taking
+  it anyway, head would be about 0.76 of nano and base 0.69.
+
+The hosted runners agree in direction. Ubuntu 24.04 measures 1.090, with
+the twin at 0.992. macOS 15 measures 1.008, but its spreads of 10% to 25%
+cannot separate the sides.
+
+**`I32Add` on x86-64** shrinks from 17 to 15 instructions on its path to
+the next arm:
+- **Removed:** the handler table's address (`lea`) and the load from the
+  table.
+- **Changed:** the tag load becomes a load of the next element's handler
+  word (`mov 0x28(%r9),%r10`).
+- **Element size:** 16 to 24 bytes, so the cursor step becomes
+  `add $0x18`.
+- **Unchanged:** the frame base, the bounds test and the two moves.
+
+**Halo on the 14900K**
+([run 37572318684](https://github.com/Ming-Research/Whitefoot/actions/runs/37572318684)),
+time ratio to base:
+
+| kernel | head | twin |
+|---|---:|---:|
+| `fib` | 1.0000 | 1.0040 |
+| `loop` | 1.0045 | 0.9988 |
+
+Neither kernel is more than 2% slower, but Halo's interpreter does not
+receive the mechanism, so this shows only that nothing else changed. Its
+loop over `Cell` has no handler-word line in the ledger.
+
+The prototype keeps an enum only where the word leaves its size and
+alignment within its product layout's. `Cell` (Halo-wf `acb39ad7f`,
+`lib/halo/value/module.wfm`) has 187 `u8` and 23 `u32` fields, so its
+product layout is 4-byte aligned, and an 8-byte word would raise that.
+v2h's `Op` has a `u64` field, so its product layout is already 8-byte
+aligned.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic

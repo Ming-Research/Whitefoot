@@ -772,3 +772,50 @@ on the 14900K with the pinned LLVM, against its base with a twin, 7
 interleaved launches. Adopted if the median rises at least 2%, and neither
 of Halo's `fib` and `loop` kernels is more than 2% slower. The goal is
 wasmi's 0.848 of Silverfir-nano, then Silverfir-nano itself.
+
+**Outcome of candidate 1**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-handlers-address-in-the-element)).
+The prototype scores 1.101 of its base on the 14900K, ahead in all 7
+launch pairs, and its `I32Add` runs 15 instructions instead of 17. The
+bound clears the rule, so the representation is designed next.
+
+Halo's `fib` and `loop` stay within 0.5% of the base. Halo's interpreter
+did not receive the word, though, so that result checks nothing about the
+mechanism itself. The language's layout ceilings
+([OP-9](../../../spec/kernel-spec.md)) bound each stored enum by its
+product layout, alignment included. Halo's `Cell` has only `u8` and `u32`
+fields, so its alignment ceiling is 4, and an 8-byte-aligned word cannot
+enter it.
+
+**The representation's open choices.**
+- **Where the word lives:**
+  - in every value of the enum, as in the prototype;
+  - or only in the enum's run storage, where the stride grows and values
+    elsewhere keep their size.
+- **Who writes it:** every construction in the first case, every store
+  into a run in the second.
+- **Its width and alignment:**
+  - an address at pointer alignment, which only an enum whose ceiling is
+    8-byte aligned admits;
+  - an address at the ceiling's alignment, which Halo's `Cell` admits at
+    20 bytes instead of 12;
+  - a 32-bit offset from a base, 16 bytes for `Cell`, at the cost of
+    adding the base at each dispatch.
+- **An enum matched by several split loops:** which loop's arms the word
+  names.
+- **Fragment builds:** a construction in one fragment names an arm in
+  another, so arms cannot stay internal to their module.
+
+**Next experiment: the word in a 4-byte-aligned `Cell`.** The question is
+whether the word helps an interpreter like Halo's, whose cells are small
+and 4-byte aligned. The prototype places the 8-byte address at the enum's
+ceiling alignment where that is below 8, loading and storing it with that
+alignment. Base, prototype, twin, and Halo's `fib` and `loop` on the
+14900K, 7 interleaved launches.
+- **For the representation:** if either kernel gains at least 2% and
+  neither loses more than 2%, the representation must cover such enums,
+  and the address and offset forms are compared next.
+- **Otherwise:** this form gives a Lua-like interpreter nothing, and the
+  card says so.
+- **CoreMark:** must stay within its twin's spread, since `Op` is already
+  8-byte aligned.
