@@ -236,12 +236,13 @@ fn a_header_match_loop_is_split_into_one_function_per_arm() {
     let (convention, _) = host_convention();
     let verdict = verdict(&module, "wf_run");
     if !convention.is_empty() {
-        // Eight parameters: pc, acc, count, the code length and the box's
-        // referent hoisted out of the header, the cell's address, the
-        // handler table and the frame.
+        // Seven parameters: pc, acc, count, the code length hoisted out of
+        // the header, the cell's address, the handler table and the frame.
+        // The box's referent, also hoisted, forms only the entering cell
+        // address, so the enclosing function keeps it.
         assert!(
             verdict.starts_with(
-                "split: the loop over Op into 4 arms, taking 8 integer and 0 floating"
+                "split: the loop over Op into 4 arms, taking 7 integer and 0 floating"
             ),
             "{verdict}"
         );
