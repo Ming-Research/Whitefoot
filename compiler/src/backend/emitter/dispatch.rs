@@ -1848,7 +1848,8 @@ impl FunctionEmitter<'_, '_> {
 
     /// Finds direct additions of a nonnegative integer constant at most
     /// `u32::MAX` to the cursor index, in either operand order, including the
-    /// index itself at step zero. With nonzero stride, the valid index is
+    /// index itself at step zero and the joins whose every incoming value is
+    /// the index. With nonzero stride, the valid index is
     /// below the signed address limit, so these additions cannot wrap u64;
     /// zero stride uses address index zero. Larger constants keep the
     /// run-based addressing path.
@@ -1873,7 +1874,38 @@ impl FunctionEmitter<'_, '_> {
             }
             _ => None,
         };
-        let mut steps = HashMap::from([(index, 0)]);
+        // A block parameter whose every incoming value is the index, as at
+        // the join after an `if` in an arm, is the index; only a jump passes
+        // block arguments.
+        let blocks = self.function.blocks();
+        let mut incoming: HashMap<IrValueId, Vec<IrValueId>> = HashMap::new();
+        for block in blocks {
+            if let IrTerminator::Jump {
+                target, arguments, ..
+            } = block.terminator()
+                && let Some(target) = blocks.get(target.index())
+            {
+                for ((parameter, _), argument) in target.parameters().iter().zip(arguments) {
+                    incoming.entry(*parameter).or_default().push(*argument);
+                }
+            }
+        }
+        let mut same: HashSet<IrValueId> = HashSet::from([index]);
+        loop {
+            let joined: Vec<IrValueId> = incoming
+                .iter()
+                .filter(|(parameter, arguments)| {
+                    !same.contains(*parameter)
+                        && arguments.iter().all(|argument| same.contains(argument))
+                })
+                .map(|(parameter, _)| *parameter)
+                .collect();
+            if joined.is_empty() {
+                break;
+            }
+            same.extend(joined);
+        }
+        let mut steps: HashMap<IrValueId, u64> = same.iter().map(|value| (*value, 0)).collect();
         for (result, operation) in &definitions {
             let crate::IrOperation::Integer {
                 operation:
@@ -1888,8 +1920,8 @@ impl FunctionEmitter<'_, '_> {
                 continue;
             };
             let step = match arguments.as_slice() {
-                [left, right] if *left == index => constant(right),
-                [left, right] if *right == index => constant(left),
+                [left, right] if same.contains(left) => constant(right),
+                [left, right] if same.contains(right) => constant(left),
                 _ => None,
             };
             if let Some(step) = step {
