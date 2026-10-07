@@ -1,0 +1,10 @@
+fn page_width(p: &Paged<u64>, k: u64) -> result: u64 pure contract {
+  requires k < p^.pages.len;
+} {
+  let page = &p^.pages[k];
+  return page^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

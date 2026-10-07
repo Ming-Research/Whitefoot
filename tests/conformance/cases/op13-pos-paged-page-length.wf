@@ -1,0 +1,15 @@
+fn positive(size: u64) -> result: unit pure contract {
+  requires size >= 1_u64;
+} {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let bytes = paged_page_len::<u8>();
+  let words = paged_page_len::<u64>();
+  let empty = paged_page_len::<unit>();
+  positive(size: bytes);
+  positive(size: words);
+  positive(size: empty);
+  return std::process::exit_status(code: 0_u8);
+}

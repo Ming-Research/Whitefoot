@@ -185,6 +185,41 @@ opaque nocopy struct Paged<T> {
   the directory, then the cell. Allocation sizes are checked as [STOR-6]
   states and exhaustion is a resource failure ([STOR-8]).
 
+## Boundary choices for specification and lowering
+
+The Slots-equivalence direction also fixes the boundary cases: zero capacity
+constructs an empty owner, growth to the same capacity is admitted, the public
+capacity is exactly the requested value rather than the rounded page storage,
+and a decrease fails the growth requirement. Growth's whole-cell write still
+invalidates references at equal capacity. Back removal keeps allocated pages
+for later placement and follows Slots' conservative invalidation of selected
+window references.
+
+A page reference captures only the initialized part of its page at formation.
+Appending preserves that extent without extending its captured length, as for
+a Slots range. The page count is supported by the owner's length word; a
+read through a parameter therefore needs `reads(p.len)`, as does page
+formation when it captures the initialized extent, and a length write
+kills a fact about that count. This does not introduce facts relating page
+indices to element indices. The page loop's mapped storage is its pages;
+page formation's read of the separate length word remains an ordinary read,
+which conflicts with an append but not with writes of page elements.
+
+The lowering formula needs a finite choice when the actual element stride is
+zero: use B = 4096, equivalent to using one byte as the page-sizing divisor,
+while retaining the actual zero displacement for addresses. For positive
+strides above 4096 bytes use B = 1. Directory growth starts at one entry and
+doubles when full; a zero-capacity owner needs no element page. These choices
+preserve logical indices, element counts and the general resource-failure
+rules independently of target padding.
+
+`Run` shares the nominal-type collision domain but admits only the direct
+`&Run<T>` parameter kind, including a function-kind signature. This uses the
+existing TYPEID application grammar and prevents a source nominal from
+claiming the same spelling. Its ordinary derived local reference kind has no
+stored value or generic-argument form. A page selector has no such declaration
+entry.
+
 ## Not in this change
 
 Each is recorded in `docs/todo.md` with its reopening condition:

@@ -1,0 +1,8 @@
+fn range(p: &Paged<u64>, lo: u64, hi: u64) -> result: u64 reads(p) {
+  let run = &p^[lo..hi];
+  return run^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

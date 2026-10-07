@@ -78,7 +78,7 @@ signatures without an interior-mutability mechanism.
 
 ## P2. Choose the storage shape from its occupancy rule
 
-The four storage shapes have different invariants [TYPE-9, WIN-1]:
+The five storage shapes have different invariants [TYPE-9, WIN-1]:
 
 - `Array<T, n>` is a full fixed run. Every element exists.
 - `Slots<T, n>` is an inline prefix window with `len` and `cap`.
@@ -88,6 +88,29 @@ The four storage shapes have different invariants [TYPE-9, WIN-1]:
 - `Segments<T>` is a run of `len` segments whose lengths are fixed when it is
   built, stored as one contiguous run of elements. It has only the `Box`
   content form.
+
+`Paged<T>` is a prefix window whose elements stay in their pages when capacity
+grows; its home is `Box<Paged<T>>`. Choose `Slots<T>` when consumers need one
+contiguous `&[T]`, and `Paged<T>` when appending and growing must copy no
+earlier payload. Both use ordinary logical subscripts, length proofs and
+element separation [OP-4, OWN-7]. A paged access reaches an element through
+the page directory; this is a representation cost, not a different index
+proof.
+
+Use `box_paged_new` and `grow_paged` with `place_back` and `take_back`. Middle
+insertion, removal and window transfers use the other shapes [OP-10]. Keep
+slot numbers across growth and form references again afterward [REF-2]. A
+range over Paged is `&Run<T>`; a contiguous consumer instead takes
+`&p.pages[k]` as `&[T]`, after proving `k < p.pages.len` [REF-4]. The page
+count covers initialized elements only.
+
+```whitefoot
+let paged = box_paged_new::<u64>(capacity: 1_u64);
+place_back(window: &paged.inner, value: 7_u64);
+grow_paged(cell: &paged, capacity: 8_u64);
+let run = &paged.inner[0_u64..1_u64];
+let first = run^[0_u64];
+```
 
 Use the construction and window operations instead of manufacturing a layout:
 
@@ -293,7 +316,7 @@ use `musttail` when failure to make the transfer must be a compile-time error.
 The [consuming linked sequence](../tests/programs/tail_list.wf) demonstrates
 moving the next heap cell into a self transfer while releasing the old one.
 
-Use a range reference for one contiguous run [REF-4]:
+Use a contiguous range reference for one contiguous run [REF-4]:
 
 ```whitefoot
 let part = &bytes[first..end];

@@ -1,0 +1,17 @@
+fn page_and_append(source: &Paged<u64>, destination: &Paged<u64>, k: u64) -> result: u64 reads(source.len), writes(destination.next), writes(destination.len) contract {
+  requires k < source^.pages.len;
+  requires destination^.len < destination^.cap;
+} {
+  let page = &source^.pages[k];
+  place_back(window: destination, value: 7_u64);
+  return page^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_paged_new::<u64>(capacity: 2_u64);
+  place_back(window: &p.inner, value: 3_u64);
+  if p.inner.pages.len > 0_u64 {
+    let got = page_and_append(source: &p.inner, destination: &p.inner, k: 0_u64);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

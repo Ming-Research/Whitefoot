@@ -1,0 +1,9 @@
+fn count(part: &Run<u64>) -> result: u64 reads(part.len) {
+  return part^.len;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = slots_new::<u64, 0>();
+  let got = count(part: &p[0_u64..0_u64]);
+  return std::process::exit_status(code: 0_u8);
+}

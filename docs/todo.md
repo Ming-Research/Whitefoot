@@ -721,6 +721,38 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
+- **Range facts cannot read a field below an element.** RANGE-1 admits
+  integer elements but refuses a field such as items[k].position, so a proof
+  about records needs a separate integer array. Snowghost's c4 probe is the
+  minimal witness in the [paged-storage investigation](../research/investigations/paged-storage/DESIGN.md#evidence-from-snowghosts-probes).
+  Specify field projections and their versioned support in the range
+  judgment; validate field-based inverses and scatter, sibling writes,
+  replacement of the containing element and stale facts. Reopen when a
+  downstream proof needs a record field rather than an integer side array.
+
+- **Structural uniqueness does not cross a callable boundary as a fact.**
+  A builder's locally known unique layout cannot yet publish that structural
+  property for a consumer's certified scatter. The precise required fact is
+  still to be isolated from Snowghost's probes
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+  Reduce it to a builder and consumer with a minimal uniqueness contract,
+  then compare expressing it through existing range postconditions with a
+  new exported relation. Validate a duplicate witness that fails and a
+  distinct witness that passes, including mutation between builder and
+  consumer. Reopen when the port needs to hand structural uniqueness on.
+
+- **An unwritten scalar may block a certified loop.** Snowghost's strided
+  window probes (Snowghost-wf `research/storage-mocks` at 44f616b,
+  `research/investigations/storage-layout/probes/c2-fixed-stride.wf` and
+  `c2-fixed-stride-hoisted.wf`) show the outer loop permitted when a range's
+  length is read before the loop and denied when the same unwritten
+  `ids^.len` is read inside it; the rule that denies it is not yet isolated. Compare a literal operand with an
+  otherwise identical read of an immutable scalar, then adjust only the
+  access classification the specification supports. Validate the read-only
+  case and a scalar written by another iteration, with the latter still
+  denied. Reopen when this read prevents a downstream scatter's permission
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**
@@ -1134,6 +1166,61 @@ rarely insert at the same place.
   short-lived windows. Not checked on a later revision. Reopen with the
   next change to `Slots` lowering or when a profile shows the clearing
   again.
+
+- **Paged page adoption for splices is deferred (R7).** Private paged output
+  cannot yet transfer complete pages into retained storage, so a splice must
+  keep separate owners or move its elements. The [paged-storage design](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)
+  records Snowghost's P9 requirement. Specify an ownership transfer with
+  explicit length, capacity, partial-page and reference-invalidating effects
+  before adding an adoption operation. Validate empty, aligned and partial
+  splices, linear element consumption and absence of payload copies. Reopen
+  when Snowghost's retained-layout experiment needs P9.
+
+- **A Paged owner with few elements still takes a full first page.** The fixed
+  page size can leave most of its first allocation unused. Snowghost's html5
+  layout has about 117,000 entry-sequence owners, most holding one to five
+  entries, so a 4 KB first page per owner would cost hundreds of megabytes and
+  as many allocations; Snowghost currently plans one context-wide Paged pool
+  of entry nodes instead, which avoids the waste if its experiment confirms
+  it. One candidate is `box_paged_new(capacity: c)` with `c` below the page
+  size allocating its first page at `c` elements and later pages at full size.
+  Compare a smaller first page with the
+  fixed-size representation, including the extra address branch and growth
+  transition, before selecting a change. Validate contents, stable earlier
+  payloads, page ranges and allocation sizes, and measure memory and access
+  cost on the same owner population. Reopen when the Paged port measures
+  material waste in small owners
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **Growth kills facts about Paged elements it does not change.**
+  grow_paged writes the whole cell, so every fact about a filled element dies
+  although no element moves or changes. Snowghost's splice publication would
+  then re-establish its back-link range facts after each growth instead of
+  once. Give growth a row that invalidates references and address formation
+  but preserves element-content support, or a postcondition carrying element
+  facts across it. Validate that a fact over a filled element's field
+  survives growth while a reference formed before growth is still refused.
+  Reopen when a Snowghost proof must be re-established after growth.
+
+- **Paged references do not survive growth.** Stable element storage does
+  not keep the directory pointer stable; grow_paged writes the whole cell
+  and requires callers to form their references again. A surviving-reference
+  design needs an effect part read by every address formation and written
+  by directory replacement, including Run references. Compare that refinement
+  with a stable directory before changing REF-2. Validate every reference
+  kind, fact invalidation and overlapping growth/address formation. Reopen
+  when re-forming references blocks a concrete downstream operation
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+
+- **A page cannot be proved separate from an element outside it.** OWN-7
+  conservatively overlaps a Paged page step with every element or range at
+  that origin: there is no source fact relating their coordinates. Add only
+  a target-independent, finite relation that has a demonstrated caller,
+  rather than inferring page arithmetic from lowering. Validate calls and
+  parallel loops with inside, outside, empty and boundary ranges and retain
+  overlap for unknown coordinates. Reopen when a consumer needs mixed page
+  and element access in one call
+  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
 
 ## Parallel lowering and runtime
 
@@ -2462,8 +2549,12 @@ rarely insert at the same place.
   way out. Two repairs are open: a library entry that reaches a stored value
   without a callback, such as a probe that returns the bucket's index for a
   second, bounds-checked access, or an FN-6 that admits a cycle whose
-  changed arguments come from a finite set written in the program. Reopen
-  when a program needs a third level or two edits nested, or when the
+  changed arguments come from a finite set written in the program. The
+  [paged-storage design](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)
+  also defers this FN-6 closed-term-cycle question after Snowghost's c5
+  witness. Validate a finite two-callback cycle and genuinely expanding
+  instantiations, retaining deterministic termination and rejecting expansion.
+  Reopen when a program needs a third level or two edits nested, or when the
   library's container interfaces are next revised.
 
 - **The standard library has no decimal conversion of integers.** Two
