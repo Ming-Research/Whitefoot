@@ -400,11 +400,13 @@ jobs:
           git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
           git -C "$RUNNER_TEMP/sf" log --oneline -1
           cargo build --release --quiet --manifest-path "$RUNNER_TEMP/sf/Cargo.toml" -p sf-nano-cli
-          if cargo install --quiet --locked --root "$RUNNER_TEMP/wasmi" wasmi_cli; then
-            "$RUNNER_TEMP/wasmi/bin/wasmi_cli" --version || true
-          else
-            echo "wasmi_cli did not install; measured without it"
-          fi
+          # nano's own dispatch counter, in a separate binary: it costs time.
+          cargo build --release --quiet --manifest-path "$RUNNER_TEMP/sf/Cargo.toml" -p sf-nano-cli \
+            --features sf-nano-core/interp-count --target-dir "$RUNNER_TEMP/sf-count"
+          # wasmi_cli 2.0.0 installs the binary `wasmi`; built optimized for
+          # x86-64, it dispatches by tail calls.
+          cargo install --quiet --locked --version 2.0.0 --root "$RUNNER_TEMP/wasmi" wasmi_cli
+          "$RUNNER_TEMP/wasmi/bin/wasmi" --version || true
 
       - name: Run CoreMark
         run: |
@@ -413,15 +415,9 @@ jobs:
           probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
           # The interpreters open the module relative to the working directory.
           cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
-          engines=(wf="$out/wasm-wf" twin="$out/wasm-twin")
-          wasmi="$RUNNER_TEMP/wasmi/bin/wasmi_cli"
-          if [ -x "$wasmi" ]; then
-            if python3 "$probe" --module coremark.wasm --iterations 200 --launches 1 wasmi="$wasmi"; then
-              engines+=(wasmi="$wasmi")
-            else
-              echo "wasmi_cli does not run the module as invoked; measured without it"
-            fi
-          fi
+          "$RUNNER_TEMP/sf-count/release/sf-nano-cli" --interp-stats coremark.wasm 0x0 0x0 0x66 2000 2>&1 \
+            | grep -E 'native dispatches|crcfinal'
+          engines=(wf="$out/wasm-wf" twin="$out/wasm-twin" wasmi="$RUNNER_TEMP/wasmi/bin/wasmi")
           engines+=(nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp")
           python3 "$probe" --module coremark.wasm --iterations 2000 --launches 7 \
             --tsv "$out/run.tsv" "${engines[@]}"
