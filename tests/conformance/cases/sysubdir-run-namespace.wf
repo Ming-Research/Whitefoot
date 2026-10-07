@@ -238,6 +238,26 @@ fn check_entries(factory: &HandleFactory, reader: &DirectoryRead, first: &[u8], 
   }
 }
 
+fn parent_has(factory: &HandleFactory, reader: &DirectoryRead, first: &[u8], second: &[u8]) -> result: u8 reads(reader), reads(first), reads(second), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: reader, name: first, start: 0_u64, end: first^.len) {
+    Ok(value: opened) => {
+      std::fs::close_read(factory: factory, file: move opened);
+      return 21_u8;
+    }
+    Err(error: problem) => {
+    }
+  }
+  match std::fs::open_file(factory: factory, root: reader, name: second, start: 0_u64, end: second^.len) {
+    Ok(value: opened) => {
+      std::fs::close_read(factory: factory, file: move opened);
+      return 22_u8;
+    }
+    Err(error: problem) => {
+      return 0_u8;
+    }
+  }
+}
+
 fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, folder: &[u8], first: &[u8], second: &[u8]) -> result: u8 reads(reader), reads(folder), reads(first), reads(second), writes(factory), writes(writer) waits {
   match std::fs::open_directory_write(factory: factory, root: writer, name: folder, start: 0_u64, end: folder^.len) {
     Ok(value: opened) => {
@@ -250,6 +270,10 @@ fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryW
     Err(error: problem) => {
       return 19_u8;
     }
+  }
+  let leaked = parent_has(factory: factory, reader: reader, first: first, second: second);
+  if leaked != 0_u8 {
+    return leaked;
   }
   match std::fs::open_directory(factory: factory, root: reader, name: folder, start: 0_u64, end: folder^.len) {
     Ok(value: opened) => {
