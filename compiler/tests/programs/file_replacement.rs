@@ -15,9 +15,11 @@ fn a_log_rewrite_restarts_at_each_namespace_boundary_on_both_routes() {
     for native in [true, false] {
         for (stage, expected) in [("1", b"old\n"), ("2", b"new\n"), ("3", b"new\n")] {
             let directory = fixture_directory();
-            let log = directory.write(b"log", b"old\n");
+            let log = directory.path().join("log");
+            std::fs::write(&log, b"old\n").expect("write the log");
             // A leftover temporary file must be truncated before the rewrite.
-            let temporary = directory.write(b"tmp", b"a stale, longer rewrite\n");
+            let temporary = directory.path().join("tmp");
+            std::fs::write(&temporary, b"a stale, longer rewrite\n").expect("write the leftover");
             let command = || {
                 let mut command = Command::new(program.executable());
                 command
