@@ -1510,6 +1510,21 @@ rarely insert at the same place.
   reopen with that workload and a criterion that distinguishes useful overlap
   from merely higher worker participation. No lower threshold or new
   cancellation mechanism is selected by the expression result.
+  **A fork has no grain below which it runs inline, though a call offer
+  does.** Snowghost-wf reports an incremental layout update, on branch
+  `research/m2-edit-cost`, that forks one small independent cursor query
+  per call and joins it before continuing. With identical work counters,
+  it takes 608 µs sequentially and 5,533 µs under `--par` at four workers,
+  and perf shows worker wake-up and join dominating. The figures are
+  Snowghost-wf's and not reproduced here; their reproducer and perf report
+  are in
+  [Snowghost-wf run 37636318467](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37636318467).
+  - **Change:** run a fork inline when its static or estimated work is below
+    a threshold, as the call-offer grain already does for calls, with the
+    source left independent.
+  - **Validate:** that reproducer runs no slower than sequential within
+    noise, and the compute-model workloads do not regress.
+  - **Reopen:** when the owner schedules parallel-grain work.
 
 - **Array-helper pricing beyond original read-only references remains conservative.**
   The accepted [typed Box-array extent extension](../research/investigations/compute-model/DESIGN.md#read-only-box-array-helper-work-pricing)
