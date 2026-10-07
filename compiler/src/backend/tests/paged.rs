@@ -303,12 +303,15 @@ int main(int argc, char **argv) {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
 
+/// One row of `paged_page_and_cell_size_failures_precede_their_allocator`.
+type LimitCase = (u64, &'static str, Option<u64>, u64, bool, &'static [u8]);
+
 #[test]
 fn paged_page_and_cell_size_failures_precede_their_allocator() {
     // The page limit, directory doubling limit, and the exact 24 + 8*2
     // cell boundary, both at construction and at replacement. Zero-stride
     // pages isolate the cell limit from the ordinary 4096-byte page limit.
-    let cases: &[(u64, &str, Option<u64>, u64, bool, &[u8])] = &[
+    let cases: &[LimitCase] = &[
         (2048, "u64", None, 0, true, b"A1;F1;"),
         (2048, "u64", None, 1, false, b"A1;"),
         (2048, "u64", None, u64::MAX, false, b""),
