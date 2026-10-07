@@ -17,9 +17,12 @@ fn run(vm: &mut Vm, code: &Array<Cell>, frame: &mut Array<u64>) -> u64 {
 }
 ```
 
-The writer may equally make each arm end in `return musttail run(vm, ...)`;
-the guaranteed self-tail transfer [FN-10] already lowers to a jump back to the
-function entry, so both spellings reach the compiler as the same loop.
+The writer writes this loop and no tail calls; the compiler produces the
+tail calls. Stages 2 and 3 below measured interpreters whose arms each end
+in a `musttail` self call instead. That spelling was taken to reach the
+compiler as the same loop without a check, and the work no longer uses it:
+[Stage 4](#stage-4-loop--match-) makes `loop { match }` itself compile to
+tail calls.
 
 The question is how the compiler lowers such a loop, and whether a Whitefoot
 interpreter compiled that way can match or exceed Silverfir-nano's
@@ -906,3 +909,35 @@ Two constraints carry into the design:
   registers of `preserve_none`;
 - on x86-64, wasmi's handlers take 7 integer arguments under `sysv64`, of
   which only 6 can travel in registers.
+
+## Stage 4: `loop { match }`
+
+An interpreter is written as a loop around a `match`, with no tail calls in
+its source. The compiler's back end turns that loop into one function per
+arm with guaranteed tail calls between them. Every measurement so far used
+interpreters written with a `musttail` self call ending each arm, so
+whether `loop { match }` reaches the split lowering at all is untested.
+
+**Known obstacles, each to be fixed rather than avoided:**
+- **[INV-1] at a join.** An invariant over loop variables that different
+  arms update is lost where their paths join before the back edge
+  (`docs/todo.md`, "A loop invariant is lost where a guarded update joins
+  an untouched path").
+- **Check time.** Checking one large function grows faster than its size
+  (`docs/todo.md`, "Checking one function grows faster than its size").
+  This applies to any interpreter written as one function.
+- **One back edge.** A `match` inside a loop reaches the back edge through
+  one join after the `match`. Each arm needs its own transfer, so the
+  lowering must give each arm the dispatch that follows that join.
+
+**First step: what the compiler does today.** Rewrite two interpreters as
+`loop { match }`: the four-instruction interpreter of the dispatch tests,
+and v2h, with `gen.py` writing the loop form. Record, for each:
+- the checker's verdict, and every refusal's rule and witness;
+- the dispatch ledger's verdict for the loop, and its reason if it is not
+  split;
+- for a split loop, the emitted parts against the `musttail` spelling's.
+
+This changes no compiler. Each obstacle found then gets its own design,
+and a change to a language rule goes to the owner first. After that,
+v2h's gap to Silverfir-nano and wasmi is measured again in the loop form.

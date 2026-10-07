@@ -86,7 +86,7 @@ rarely insert at the same place.
   entailment closure (`close_with_row_pruning` and `DerivationLedger::intern`
   in `compiler/src/semantic/entailment/state.rs`). Moving each handler's
   body into its own function, the arm keeping only the stack-depth test and
-  the tail call, checks 20 arms in 3.7 s and 40 in 7.2 s, but the full
+  its transfer, checks 20 arms in 3.7 s and 40 in 7.2 s, but the full
   interpreter (8,500 lines, one 178-arm function) still takes about 100 s.
   These measurements predate the narrower closures of
   compiler/incremental-closure and were not repeated with them.
@@ -133,12 +133,14 @@ rarely insert at the same place.
   program is sound; a
   checker could accept it by proving the header batch on each input of the
   final join, or by closing each input's facts under its value images before
-  joining. Impact: an interpreter written as `loop { match }` whose arms
-  update different loop variables needs a run-time re-check of the invariant
-  per dispatch; Halo's interpreter (Ming-Research/Halo-wf#2) is written as a
-  self-tail call instead.
-  Reopen when a loop-shaped program cannot be rewritten that way, or with
-  the INV-1 join rules.
+  joining. Impact: an interpreter written as `loop { match }`, the form
+  the dispatch lowering (compiler/match-dispatch-lowering) serves, cannot
+  state an invariant over loop variables that different arms update without
+  a run-time re-check per dispatch. This blocks the `loop { match }`
+  interpreters of the match-dispatch work
+  (`research/investigations/match-dispatch/DESIGN.md`, "Stage 4: `loop { match }`"),
+  and is fixed as part of it: first settle whether [INV-1]'s join rules or
+  the checker lose the facts.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
