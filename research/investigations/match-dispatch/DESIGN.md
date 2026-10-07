@@ -718,3 +718,57 @@ attribution orders the next lowering candidates by the instructions they
 would remove from the hot arms. Each candidate keeps its own rule, written
 before it is measured: the wasm interpreter on the 14900K decides, and
 Halo must not regress.
+
+**Outcome of the measurement**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-gap-to-silverfir-nano)).
+On the 14900K, v2h scores 0.692 of Silverfir-nano and wasmi 0.848. v2h
+makes the fewest dispatches of the three. The whole gap is in each
+dispatch: v2h's `I32Add` runs 17 instructions on x86-64 where wasmi's
+corresponding handler runs 6. At wasmi's cost per dispatch, v2h would
+score about 0.97 of Silverfir-nano. So the room left is about 1.4 times,
+all of it in the code each dispatch runs.
+
+## Stage 3: binding what wasmi and Silverfir-nano bind
+
+The owner set closing this gap as the evidence that the lowering is at
+its best. Even a straight copy of wasmi's design should score about like
+wasmi. The means are to bind values to registers across handlers as
+wasmi and Silverfir-nano do. Their contracts, against v2h's parts:
+
+| value | wasmi | Silverfir-nano, x86-64 | v2h on x86-64 |
+|---|---|---|---|
+| next operation | cell pointer, the cell holding its handler's address | cell pointer, handler address in the cell, next handler word preloaded | element address and index; tag, then a handler table |
+| frame | stack pointer (an address) | frame base register | frame index plus the stack's element address |
+| linear memory | base and length in registers | base and length in registers | element address in a register, length read from memory at each access |
+| accumulators | integer and two float registers | integer and float accumulators, two locals of each kind | the integer `acc` |
+| bound of the next operation | none (validated code) | none | `pc + 1 < n` at every dispatch |
+
+Each row v2h lacks is a lowering mechanism, since the language has no
+pointers or code addresses. The order follows the instructions each would
+remove from the hot arms. Each one is a candidate with its own rule:
+- **1. The handler's address in the element.** A split dispatch loop's
+  matched element carries its arm's address, so the dispatch loads the
+  next handler from the element it moves to, instead of a tag and then a
+  table entry. This saves about two instructions and a dependent load per
+  dispatch. Its first step measures the upper bound with a prototype, not
+  the final representation. The representation (where the address lives,
+  who writes it, and an enum matched by several loops) is designed only if
+  the bound clears the rule.
+- **2. The frame as an address.** The frame index used as the base of
+  slot accesses travels as the address of its first slot, as the code
+  cursor carries the matched element. This saves a base computation per
+  slot-reading arm, and one register.
+- **3. The memory's length in a register.** A run's length that the loop
+  reads on every access, and changes only in some arms, travels in a
+  register those arms update.
+- **4. The index, once registers allow.** Revisited after 1 to 3.
+
+The bound of the next operation is a language question, whether the
+proof can show the code cannot fall off its end. It is outside these
+lowering steps.
+
+**Criterion for each candidate, fixed before it is measured.** CoreMark 2K
+on the 14900K with the pinned LLVM, against its base with a twin, 7
+interleaved launches. Adopted if the median rises at least 2%, and neither
+of Halo's `fib` and `loop` kernels is more than 2% slower. The goal is
+wasmi's 0.848 of Silverfir-nano, then Silverfir-nano itself.
