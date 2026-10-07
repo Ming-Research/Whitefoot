@@ -8,6 +8,7 @@ mod call_grain;
 mod contexts;
 mod loops;
 mod prelude;
+pub(crate) use prelude::layout_ceiling;
 mod probe;
 mod ranges;
 mod results;

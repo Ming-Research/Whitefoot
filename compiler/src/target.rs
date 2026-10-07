@@ -428,7 +428,18 @@ pub(super) fn paged_geometry(
         layout.align,
         TargetObject::Representation,
     )?;
-    let limit = (4096 / stride.max(1)).max(1);
+    // [OP-13] B depends on the element type's [OP-9] language stride ceiling,
+    // not on this target's stride, so a program observes the same page
+    // length on every qualified target. The actual stride, which target
+    // qualification keeps at or below that ceiling, still addresses the page.
+    let ceiling = crate::lowering::layout_ceiling(program.nominals(), program.elements(), element)
+        .map(|ceiling| ceiling.stride);
+    let limit = match ceiling {
+        Some(crate::IrLayoutMagnitude::Finite(ceiling)) if ceiling <= 4096 => {
+            4096 / ceiling.max(1)
+        }
+        _ => 1,
+    };
     Ok((1_u64 << (63 - limit.leading_zeros()), stride))
 }
 

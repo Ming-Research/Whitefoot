@@ -154,8 +154,9 @@ opaque nocopy struct Paged<T> {
   and it overlaps every element subscript and range of `p`, because no term
   relates a slot to its page.
 - **Page size (R6).** `paged_page_len<T>() -> result: u64 pure` returns B,
-  with `ensures result >= 1_u64` as its only fact; B is fixed per element
-  type and target at compile time, so acceptance never depends on it.
+  with `ensures result >= 1_u64` as its only fact. B is fixed per element
+  type by the language (see Lowering), the same on every target, so neither
+  acceptance nor observable behavior depends on the target.
 
 ### Parallel permission and range facts
 
@@ -171,7 +172,10 @@ opaque nocopy struct Paged<T> {
 
 - The descriptor in the `Box` content holds `len`, `cap`, the directory
   pointer and the directory's capacity in pages.
-- B is the largest power of two with `B * stride <= 4096`, and at least 1.
+- B is the largest power of two with `B * stride_ceiling(T) <= 4096`, and
+  at least 1, using [OP-9]'s language stride ceiling so that B, which a
+  program can observe, is the same on every target (owner ruling Q135);
+  the actual stride, at or below the ceiling, addresses the elements.
   Pages hold `B` elements each; `grow_paged` allocates pages up to
   `ceil(cap / B)` and doubles the directory when it is full, copying page
   pointers only.
@@ -205,10 +209,10 @@ indices to element indices. The page loop's mapped storage is its pages;
 page formation's read of the separate length word remains an ordinary read,
 which conflicts with an append but not with writes of page elements.
 
-The lowering formula needs a finite choice when the actual element stride is
-zero: use B = 4096, equivalent to using one byte as the page-sizing divisor,
-while retaining the actual zero displacement for addresses. For positive
-strides above 4096 bytes use B = 1. Directory growth starts at one entry and
+B takes the language stride ceiling, which is at least one, so a zero actual
+stride needs no special case: a zero-size element has stride ceiling one and
+B = 4096, and its addresses keep zero displacement. A stride ceiling above
+4096 gives B = 1. Directory growth starts at one entry and
 doubles when full; a zero-capacity owner needs no element page. These choices
 preserve logical indices, element counts and the general resource-failure
 rules independently of target padding.

@@ -1229,7 +1229,7 @@ An `Array` built by `array_filled` or `box_array_filled` has every slot holding 
 `box_segments_filled(lengths: r, value: v)` builds a `Segments<T>` of `r^.len` segments whose segment k holds `r^[k]` elements, every element holding the supplied value, and requires a copy element type [OWN-1].
 Its element total, the sum of the lengths, is a runtime sum that no term states; the run's block holds `r^.len + 1` boundaries and that total of elements, its size is computed as [OP-9] states, and its result is the cell itself.
 `slots_from_array` consumes a full array into a full window, and `slots_into_array` consumes a window whose `len` equals its `cap`.
-`paged_page_len<T>()` is the pure [PRE-1] record returning the page length B of `Paged<T>`. B is a positive power of two fixed for the element type and selected target at compile time; its only published fact is its declared postcondition, so a target's choice of B supplies no source acceptance fact.
+`paged_page_len<T>()` is the pure [PRE-1] record returning the page length B of `Paged<T>`. B is the largest power of two whose product with `stride_ceiling(T)` [OP-9] is at most 4096, or 1 when `stride_ceiling(T)` exceeds 4096; it depends on T alone and is the same on every qualified target. Its only published fact is its declared postcondition, so B supplies no source acceptance fact.
 A pool is a `Slots` plus indices used as handles, and a bump allocator is the same storage used with `place_back` [OP-10] as allocation and a library reset.
 A stale index that is still in bounds names the current occupant of that slot, which is a logic error and not a memory error, and a program that must detect it keeps a generation number as data.
 
