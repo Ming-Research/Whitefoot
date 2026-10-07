@@ -3,7 +3,8 @@
 
 use super::{compile_and_run, emit, emitted_body};
 
-/// A four-instruction interpreter written as self-tail transfers [FN-10]:
+/// A four-instruction interpreter written as a `loop` whose body is one
+/// `match`, each looping arm ending in `continue`:
 /// `Add 3; Dec; Jnz 0; Halt` with a count of 1000 returns 3000. `RESULT`
 /// is the result type and `DONE(x)` constructs it from the accumulator.
 const INTERPRETER: &str = r#"alias ExitStatus = std::process::ExitStatus;
@@ -21,42 +22,55 @@ enum Outcome {
   Failed();
 }
 
-fn run(code: &Box<Slots<Op>>, pc: u64, acc: u64, count: u64) -> r: RESULT reads(code) contract {
-  requires pc < code^.inner.len;
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64, steps: u64) -> r: RESULT reads(code) contract {
+  requires start < code^.inner.len;
 } {
   let n = code^.inner.len;
-  match code^.inner[pc] {
-    Add(k: kv) => {
-      let next = pc + 1_u64;
-      let sum = acc +wrap kv^;
-      if next < n {
-        return musttail run(code: code, pc: next, acc: sum, count: count);
+  let pc = start;
+  let acc = seed;
+  let count = steps;
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    match code^.inner[pc] {
+      Add(k: kv) => {
+        let next = pc + 1_u64;
+        let sum = acc +wrap kv^;
+        if next < n {
+          set pc = next;
+          set acc = sum;
+          continue;
+        }
+        return FAILED;
       }
-      return FAILED;
-    }
-    Dec() => {
-      let next = pc + 1_u64;
-      let left = count -wrap 1_u64;
-      if next < n {
-        return musttail run(code: code, pc: next, acc: acc, count: left);
+      Dec() => {
+        let next = pc + 1_u64;
+        let left = count -wrap 1_u64;
+        if next < n {
+          set pc = next;
+          set count = left;
+          continue;
+        }
+        return FAILED;
       }
-      return FAILED;
-    }
-    Jnz(t: tv) => {
-      let next = pc + 1_u64;
-      if count != 0_u64 {
-        set next = tv^;
+      Jnz(t: tv) => {
+        let next = pc + 1_u64;
+        if count != 0_u64 {
+          set next = tv^;
+        }
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return FAILED;
       }
-      if next < n {
-        return musttail run(code: code, pc: next, acc: acc, count: count);
+      Halt() => {
+        let done = DONE;
+        return done;
       }
-      return FAILED;
-    }
-    Halt() => {
-      let done = DONE;
-      return done;
     }
   }
+  return FAILED;
 }
 
 fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
@@ -78,7 +92,7 @@ fn main() -> status: ExitStatus pure {
   let c3 = Op::Halt();
   let p3 = push(code: &code, op: c3);
   if code.inner.len > 0_u64 {
-    let r = run(code: &code, pc: 0_u64, acc: 0_u64, count: 1000_u64);
+    let r = run(code: &code, start: 0_u64, seed: 0_u64, steps: 1000_u64);
     CHECK
   }
   return exit_status(code: 2_u8);
@@ -325,44 +339,58 @@ enum Op {
   Halt();
 }
 
-fn run(code: &Box<Slots<Op>>, pc: u64, acc: u64, count: u64) -> r: u64 reads(code) contract {
-  requires pc < code^.inner.len;
+fn run(code: &Box<Slots<Op>>, start: u64, seed: u64, steps: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
 } {
   let n = code^.inner.len;
-  match code^.inner[pc] {
-    Add(k: kv) => {
-      let next = pc + 1_u64;
-      let sum = acc +wrap kv^;
-      if next < n {
-        return musttail run(code: code, pc: next, acc: sum, count: count);
-      }
-      return 0_u64;
-    }
-    Jump(t: tv) => {
-      let target = tv^;
-      if target < n {
-        return musttail run(code: code, pc: target, acc: acc, count: count);
-      }
-      return 0_u64;
-    }
-    Rep(k: kv) => {
-      if count != 0_u64 {
+  let pc = start;
+  let acc = seed;
+  let count = steps;
+  loop (
+    invariant code_bound: pc < n
+  ) {
+    match code^.inner[pc] {
+      Add(k: kv) => {
+        let next = pc + 1_u64;
         let sum = acc +wrap kv^;
-        let left = count -wrap 1_u64;
-        return musttail run(code: code, pc: pc, acc: sum, count: left);
+        if next < n {
+          set pc = next;
+          set acc = sum;
+          continue;
+        }
+        return 0_u64;
       }
-      let next = pc + 1_u64;
-      if next < n {
-        return musttail run(code: code, pc: next, acc: acc, count: count);
+      Jump(t: tv) => {
+        let target = tv^;
+        if target < n {
+          set pc = target;
+          continue;
+        }
+        return 0_u64;
       }
-      return 0_u64;
-    }
-    Halt() => {
-      let at = pc *wrap 100_u64;
-      let r = acc +wrap at;
-      return r;
+      Rep(k: kv) => {
+        if count != 0_u64 {
+          let sum = acc +wrap kv^;
+          let left = count -wrap 1_u64;
+          set acc = sum;
+          set count = left;
+          continue;
+        }
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
+      }
+      Halt() => {
+        let at = pc *wrap 100_u64;
+        let r = acc +wrap at;
+        return r;
+      }
     }
   }
+  return 0_u64;
 }
 
 fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
@@ -386,7 +414,7 @@ fn main() -> status: ExitStatus pure {
   let c4 = Op::Jump(t: 2_u64);
   let p4 = push(code: &code, op: c4);
   if code.inner.len > 1_u64 {
-    let r = run(code: &code, pc: 1_u64, acc: 0_u64, count: 3_u64);
+    let r = run(code: &code, start: 1_u64, seed: 0_u64, steps: 3_u64);
     if r == 215_u64 {
       return exit_status(code: 0_u8);
     }
@@ -532,13 +560,14 @@ fn known_steps_leave_the_cursor_s_run_in_the_enclosing_function() {
     let source = CURSOR_INTERPRETER
         .replace("  Jump(t: u64);\n", "")
         .replace(
-            r#"    Jump(t: tv) => {
-      let target = tv^;
-      if target < n {
-        return musttail run(code: code, pc: target, acc: acc, count: count);
+            r#"      Jump(t: tv) => {
+        let target = tv^;
+        if target < n {
+          set pc = target;
+          continue;
+        }
+        return 0_u64;
       }
-      return 0_u64;
-    }
 "#,
             "",
         )
@@ -589,32 +618,44 @@ enum Parity {
   Odd();
 }
 
-fn run(n: u64, acc: u64, step: Parity) -> r: u64 pure {
-  match step {
-    Even() => {
-      if n == 0_u64 {
-        return acc;
+fn run(steps: u64, first: Parity) -> r: u64 pure {
+  let n = steps;
+  let acc = 0_u64;
+  let step = first;
+  loop {
+    match step {
+      Even() => {
+        if n == 0_u64 {
+          return acc;
+        }
+        let left = n -wrap 1_u64;
+        let sum = acc +wrap 2_u64;
+        let next = Parity::Odd();
+        set n = left;
+        set acc = sum;
+        set step = next;
+        continue;
       }
-      let left = n -wrap 1_u64;
-      let sum = acc +wrap 2_u64;
-      let next = Parity::Odd();
-      return musttail run(n: left, acc: sum, step: next);
-    }
-    Odd() => {
-      if n == 0_u64 {
-        return acc;
+      Odd() => {
+        if n == 0_u64 {
+          return acc;
+        }
+        let left = n -wrap 1_u64;
+        let sum = acc +wrap 3_u64;
+        let next = Parity::Even();
+        set n = left;
+        set acc = sum;
+        set step = next;
+        continue;
       }
-      let left = n -wrap 1_u64;
-      let sum = acc +wrap 3_u64;
-      let next = Parity::Even();
-      return musttail run(n: left, acc: sum, step: next);
     }
   }
+  return acc;
 }
 
 fn main() -> status: ExitStatus pure {
   let first = Parity::Even();
-  let r = run(n: 10_u64, acc: 0_u64, step: first);
+  let r = run(steps: 10_u64, first: first);
   if r == 25_u64 {
     return exit_status(code: 0_u8);
   }
@@ -634,49 +675,63 @@ fn main() -> status: ExitStatus pure {
 
 /// A two-arm loop over thirty `u64` values. With `changing`, every arm adds
 /// one to each of them, so all thirty change on every dispatch; otherwise
-/// only the counter `p0` changes and the rest pass through. Starting from
-/// p0 = 7 and the others at 1, it returns p29: 8 when they change, 1 when
-/// they pass through.
+/// only the counter `p0` changes and the rest stay as they entered. Starting
+/// from p0 = 7 and the others at 1, it returns the sum of p1 to p29 once p0
+/// reaches zero: 232 when they change, 29 when they stay.
 fn thirty_values(changing: bool) -> String {
     let names: Vec<String> = (0..30).map(|index| format!("p{index}")).collect();
     let parameters = names
         .iter()
-        .map(|name| format!("{name}: u64"))
+        .map(|name| format!("s{}: u64", &name[1..]))
         .collect::<Vec<_>>()
         .join(", ");
+    let bindings = names
+        .iter()
+        .map(|name| format!("  let {name} = s{};\n", &name[1..]))
+        .collect::<String>();
     let steps = if changing {
         names[1..]
             .iter()
-            .map(|name| format!("      let n{name} = {name} +wrap 1_u64;\n"))
+            .map(|name| format!("        let n{name} = {name} +wrap 1_u64;\n"))
             .collect::<String>()
     } else {
         String::new()
     };
-    let forwarded = names
+    let sum = names[1..]
         .iter()
-        .map(|name| {
-            if name == "p0" {
-                "p0: left".to_owned()
-            } else if changing {
-                format!("{name}: n{name}")
+        .enumerate()
+        .map(|(index, name)| {
+            if index == 0 {
+                format!("          let t1 = {name};\n")
             } else {
-                format!("{name}: {name}")
+                format!("          let t{} = t{index} +wrap {name};\n", index + 1)
             }
         })
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect::<String>();
+    let updates = names
+        .iter()
+        .filter_map(|name| {
+            if name == "p0" {
+                Some("        set p0 = left;\n".to_owned())
+            } else if changing {
+                Some(format!("        set {name} = n{name};\n"))
+            } else {
+                None
+            }
+        })
+        .collect::<String>();
     let initial = names
         .iter()
         .map(|name| {
             if name == "p0" {
-                "p0: 7_u64".to_owned()
+                "s0: 7_u64".to_owned()
             } else {
-                format!("{name}: 1_u64")
+                format!("s{}: 1_u64", &name[1..])
             }
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let expected = if changing { 8 } else { 1 };
+    let expected = if changing { 232 } else { 29 };
     format!(
         r#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
@@ -686,30 +741,36 @@ enum Parity {{
   Odd();
 }}
 
-fn run({parameters}, step: Parity) -> r: u64 pure {{
-  match step {{
-    Even() => {{
-      if p0 == 0_u64 {{
-        return p29;
+fn run({parameters}, first: Parity) -> r: u64 pure {{
+{bindings}  let step = first;
+  loop {{
+    match step {{
+      Even() => {{
+        if p0 == 0_u64 {{
+{sum}          return t29;
+        }}
+        let left = p0 -wrap 1_u64;
+{steps}        let next = Parity::Odd();
+{updates}        set step = next;
+        continue;
       }}
-      let left = p0 -wrap 1_u64;
-{steps}      let next = Parity::Odd();
-      return musttail run({forwarded}, step: next);
-    }}
-    Odd() => {{
-      if p0 == 0_u64 {{
-        return p29;
+      Odd() => {{
+        if p0 == 0_u64 {{
+{sum}          return t29;
+        }}
+        let left = p0 -wrap 1_u64;
+{steps}        let next = Parity::Even();
+{updates}        set step = next;
+        continue;
       }}
-      let left = p0 -wrap 1_u64;
-{steps}      let next = Parity::Even();
-      return musttail run({forwarded}, step: next);
     }}
   }}
+  return p29;
 }}
 
 fn main() -> status: ExitStatus pure {{
   let first = Parity::Even();
-  let r = run({initial}, step: first);
+  let r = run({initial}, first: first);
   if r == {expected}_u64 {{
     return exit_status(code: 0_u8);
   }}
@@ -731,8 +792,8 @@ fn a_loop_whose_changing_values_exceed_the_argument_registers_is_emitted_whole()
 
 #[test]
 fn values_the_loop_cannot_change_go_to_the_frame_past_the_registers() {
-    // Twenty-nine of the thirty values pass through unchanged, so they can
-    // wait in the frame and the loop still splits.
+    // Twenty-nine of the thirty values stay unchanged and are read only when
+    // the loop ends, so they can wait in the frame and the loop still splits.
     let module = emit(thirty_values(false).as_bytes());
     assert_split(&module, "wf_run", 2);
     assert!(
@@ -820,46 +881,56 @@ fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {
   return 0_u64;
 }
 
-fn NAME(code: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, pc: u64) -> r: u64 reads(code), writes(regs) contract {
-  requires pc < code^.inner.len;
+fn NAME(code: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, start: u64) -> r: u64 reads(code), writes(regs) contract {
+  requires start < code^.inner.len;
   requires 2_u64 <= regs^.inner.len;
 } {
   let n = code^.inner.len;
-  match code^.inner[pc] {
-    Add() => {
-      let a = regs^.inner[0_u64];
-      let b = a +wrap 3_u64;
-      set regs^.inner[0_u64] = b;
-      let next = pc + 1_u64;
-      if next < n {
-        return musttail NAME(code: code, regs: regs, pc: next);
+  let pc = start;
+  loop (
+    invariant code_bound: pc < code^.inner.len,
+    invariant regs_bound: 2_u64 <= regs^.inner.len
+  ) {
+    match code^.inner[pc] {
+      Add() => {
+        let a = regs^.inner[0_u64];
+        let b = a +wrap 3_u64;
+        set regs^.inner[0_u64] = b;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
       }
-      return 0_u64;
-    }
-    Dec() => {
-      DECREMENT
-      let next = pc + 1_u64;
-      if next < n {
-        return musttail NAME(code: code, regs: regs, pc: next);
+      Dec() => {
+        DECREMENT
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
       }
-      return 0_u64;
-    }
-    Jnz(t: tv) => {
-      let c = regs^.inner[1_u64];
-      let next = pc + 1_u64;
-      if c != 0_u64 {
-        set next = tv^;
+      Jnz(t: tv) => {
+        let c = regs^.inner[1_u64];
+        let next = pc + 1_u64;
+        if c != 0_u64 {
+          set next = tv^;
+        }
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
       }
-      if next < n {
-        return musttail NAME(code: code, regs: regs, pc: next);
+      Halt() => {
+        let a = regs^.inner[0_u64];
+        return a;
       }
-      return 0_u64;
-    }
-    Halt() => {
-      let a = regs^.inner[0_u64];
-      return a;
     }
   }
+  return 0_u64;
 }
 
 fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
@@ -889,7 +960,7 @@ fn main() -> status: ExitStatus pure {
   }
   if code.inner.len > 0_u64 {
     if regs.inner.len >= 2_u64 {
-      let r = NAME(code: &code, regs: &regs, pc: 0_u64);
+      let r = NAME(code: &code, regs: &regs, start: 0_u64);
       if r == 3000_u64 {
         return exit_status(code: 0_u8);
       }
@@ -930,7 +1001,7 @@ fn some_part_reloads_a_box(module: &str, base: &str, arms: usize) -> bool {
 fn a_reference_whose_box_the_loop_keeps_is_projected_once() {
     let source = REGISTER_FILE.replace("NAME", "kept").replace(
         "DECREMENT",
-        "let c = regs^.inner[1_u64];\n      let d = c -wrap 1_u64;\n      set regs^.inner[1_u64] = d;",
+        "let c = regs^.inner[1_u64];\n        let d = c -wrap 1_u64;\n        set regs^.inner[1_u64] = d;",
     );
     let module = emit(source.as_bytes());
     assert_split(&module, "wf_kept", 4);
@@ -1010,11 +1081,6 @@ fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
         .map(|name| format!("{name}: &Box<Slots<u64>>"))
         .collect::<Vec<_>>()
         .join(", ");
-    let forwarded = names
-        .iter()
-        .map(|name| format!("{name}: {name}"))
-        .collect::<Vec<_>>()
-        .join(", ");
     let initial = names
         .iter()
         .map(|name| format!("{name}: &rare"))
@@ -1027,14 +1093,14 @@ fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
         .join(", ");
     let reads = names
         .iter()
-        .map(|name| format!("      set a = a +wrap {name}^.inner.len;\n"))
+        .map(|name| format!("        set a = a +wrap {name}^.inner.len;\n"))
         .collect::<String>();
     let zero_reads = |arm: &str, sum: &str| {
         names
             .iter()
             .map(|name| {
                 format!(
-                    "      let {name}_{arm} = {name}^.inner.len -wrap 1_u64;\n      set {sum} = {sum} +wrap {name}_{arm};\n"
+                    "        let {name}_{arm} = {name}^.inner.len -wrap 1_u64;\n        set {sum} = {sum} +wrap {name}_{arm};\n"
                 )
             })
             .collect::<String>()
@@ -1046,19 +1112,18 @@ fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
             "fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {",
             "fn touch_content(regs: &Box<Slots<u64>>) -> r: u64 writes(regs.inner) contract {",
         )
-        .replace("pc: u64) ->", &format!("pc: u64, {parameters}) ->"))
+        .replace("start: u64) ->", &format!("start: u64, {parameters}) ->"))
         .replace("reads(code), writes(regs)", &format!("reads(code), {effects}, writes(regs)"))
-        .replace("regs: regs, pc: next)", &format!("regs: regs, pc: next, {forwarded})"))
-        .replace("regs: &regs, pc: 0_u64)", &format!("regs: &regs, pc: 0_u64, {initial})"))
-        .replace("      return a;", &format!("{reads}      return a;"))
+        .replace("regs: &regs, start: 0_u64)", &format!("regs: &regs, start: 0_u64, {initial})"))
+        .replace("        return a;", &format!("{reads}        return a;"))
         .replace(
-            "      let b = a +wrap 3_u64;\n",
-            &format!("      let b = a +wrap 3_u64;\n{}", zero_reads("add", "b")),
+            "        let b = a +wrap 3_u64;\n",
+            &format!("        let b = a +wrap 3_u64;\n{}", zero_reads("add", "b")),
         )
         .replace(
-            "      let c = regs^.inner[1_u64];\n      let next = pc + 1_u64;\n",
+            "        let c = regs^.inner[1_u64];\n        let next = pc + 1_u64;\n",
             &format!(
-                "      let c = regs^.inner[1_u64];\n{}      let next = pc + 1_u64;\n",
+                "        let c = regs^.inner[1_u64];\n{}        let next = pc + 1_u64;\n",
                 zero_reads("jnz", "c")
             ),
         )
@@ -1111,7 +1176,7 @@ fn a_read_only_reference_handed_to_a_reader_keeps_its_box() {
         .replace("NAME", "reader")
         .replace(
             "DECREMENT",
-            "let seen = peek(code: code);\n      let c = regs^.inner[1_u64];\n      let d = c -wrap 1_u64;\n      set regs^.inner[1_u64] = d;",
+            "let seen = peek(code: code);\n        let c = regs^.inner[1_u64];\n        let d = c -wrap 1_u64;\n        set regs^.inner[1_u64] = d;",
         )
         .replace(
             "fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {",
@@ -1152,77 +1217,92 @@ enum Outcome {
   Failed();
 }
 
-fn run(code: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, pc: u64, acc: u64, count: u64, e0: u64, e1: u64, e2: u64, e3: u64, e4: u64, e5: u64, e6: u64, e7: u64, e8: u64, e9: u64, e10: u64, e11: u64, e12: u64, e13: u64, e14: u64, e15: u64, e16: u64, e17: u64, e18: u64, e19: u64, e20: u64, e21: u64, e22: u64, e23: u64) -> r: Outcome reads(code), writes(regs) contract {
-  requires pc < code^.inner.len;
+fn run(code: &Box<Slots<Op>>, regs: &Box<Slots<u64>>, start: u64, seed: u64, steps: u64, e0: u64, e1: u64, e2: u64, e3: u64, e4: u64, e5: u64, e6: u64, e7: u64, e8: u64, e9: u64, e10: u64, e11: u64, e12: u64, e13: u64, e14: u64, e15: u64, e16: u64, e17: u64, e18: u64, e19: u64, e20: u64, e21: u64, e22: u64, e23: u64) -> r: Outcome reads(code), writes(regs) contract {
+  requires start < code^.inner.len;
   requires 1_u64 <= regs^.inner.len;
 } {
   let n = code^.inner.len;
-  match code^.inner[pc] {
-    Add(k: kv) => {
-      let next = pc + 1_u64;
-      let t1 = acc +wrap kv^;
-      let a0 = t1 +wrap e0;
-      let a1 = a0 +wrap e2;
-      let a2 = a1 +wrap e4;
-      let a3 = a2 +wrap e6;
-      let a4 = a3 +wrap e8;
-      let a5 = a4 +wrap e10;
-      let a6 = a5 +wrap e12;
-      let a7 = a6 +wrap e14;
-      let a8 = a7 +wrap e16;
-      let a9 = a8 +wrap e18;
-      let a10 = a9 +wrap e20;
-      let a11 = a10 +wrap e22;
-      let cur = regs^.inner[0_u64];
-      let upd = cur +wrap 1_u64;
-      set regs^.inner[0_u64] = upd;
-      if next < n {
-        return musttail run(code: code, regs: regs, pc: next, acc: a11, count: count, e0: e0, e1: e1, e2: e2, e3: e3, e4: e4, e5: e5, e6: e6, e7: e7, e8: e8, e9: e9, e10: e10, e11: e11, e12: e12, e13: e13, e14: e14, e15: e15, e16: e16, e17: e17, e18: e18, e19: e19, e20: e20, e21: e21, e22: e22, e23: e23);
+  let pc = start;
+  let acc = seed;
+  let count = steps;
+  loop (
+    invariant code_bound: pc < n,
+    invariant regs_bound: 1_u64 <= regs^.inner.len
+  ) {
+    match code^.inner[pc] {
+      Add(k: kv) => {
+        let next = pc + 1_u64;
+        let t1 = acc +wrap kv^;
+        let a0 = t1 +wrap e0;
+        let a1 = a0 +wrap e2;
+        let a2 = a1 +wrap e4;
+        let a3 = a2 +wrap e6;
+        let a4 = a3 +wrap e8;
+        let a5 = a4 +wrap e10;
+        let a6 = a5 +wrap e12;
+        let a7 = a6 +wrap e14;
+        let a8 = a7 +wrap e16;
+        let a9 = a8 +wrap e18;
+        let a10 = a9 +wrap e20;
+        let a11 = a10 +wrap e22;
+        let cur = regs^.inner[0_u64];
+        let upd = cur +wrap 1_u64;
+        set regs^.inner[0_u64] = upd;
+        if next < n {
+          set pc = next;
+          set acc = a11;
+          continue;
+        }
+        return Outcome::Failed();
       }
-      return Outcome::Failed();
-    }
-    Dec() => {
-      let next = pc + 1_u64;
-      let left = count -wrap 1_u64;
-      let old0 = regs^.inner[0_u64];
-      let bumped = old0 +wrap 100_u64;
-      let fresh = box_slots_new::<u64>(capacity: 1_u64);
-      place_back(window: &fresh.inner, value: bumped);
-      set regs^ = move fresh;
-      let d0 = acc +wrap e1;
-      let d1 = d0 +wrap e3;
-      let d2 = d1 +wrap e5;
-      let d3 = d2 +wrap e7;
-      let d4 = d3 +wrap e9;
-      let d5 = d4 +wrap e11;
-      let d6 = d5 +wrap e13;
-      let d7 = d6 +wrap e15;
-      let d8 = d7 +wrap e17;
-      let d9 = d8 +wrap e19;
-      let d10 = d9 +wrap e21;
-      let d11 = d10 +wrap e23;
-      if next < n {
-        return musttail run(code: code, regs: regs, pc: next, acc: d11, count: left, e0: e0, e1: e1, e2: e2, e3: e3, e4: e4, e5: e5, e6: e6, e7: e7, e8: e8, e9: e9, e10: e10, e11: e11, e12: e12, e13: e13, e14: e14, e15: e15, e16: e16, e17: e17, e18: e18, e19: e19, e20: e20, e21: e21, e22: e22, e23: e23);
+      Dec() => {
+        let next = pc + 1_u64;
+        let left = count -wrap 1_u64;
+        let old0 = regs^.inner[0_u64];
+        let bumped = old0 +wrap 100_u64;
+        let fresh = box_slots_new::<u64>(capacity: 1_u64);
+        place_back(window: &fresh.inner, value: bumped);
+        set regs^ = move fresh;
+        let d0 = acc +wrap e1;
+        let d1 = d0 +wrap e3;
+        let d2 = d1 +wrap e5;
+        let d3 = d2 +wrap e7;
+        let d4 = d3 +wrap e9;
+        let d5 = d4 +wrap e11;
+        let d6 = d5 +wrap e13;
+        let d7 = d6 +wrap e15;
+        let d8 = d7 +wrap e17;
+        let d9 = d8 +wrap e19;
+        let d10 = d9 +wrap e21;
+        let d11 = d10 +wrap e23;
+        if next < n {
+          set pc = next;
+          set acc = d11;
+          set count = left;
+          continue;
+        }
+        return Outcome::Failed();
       }
-      return Outcome::Failed();
-    }
-    Jnz(t: tv) => {
-      let next = pc + 1_u64;
-      if count != 0_u64 {
-        set next = tv^;
+      Jnz(t: tv) => {
+        let next = pc + 1_u64;
+        if count != 0_u64 {
+          set next = tv^;
+        }
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return Outcome::Failed();
       }
-      if next < n {
-        return musttail run(code: code, regs: regs, pc: next, acc: acc, count: count, e0: e0, e1: e1, e2: e2, e3: e3, e4: e4, e5: e5, e6: e6, e7: e7, e8: e8, e9: e9, e10: e10, e11: e11, e12: e12, e13: e13, e14: e14, e15: e15, e16: e16, e17: e17, e18: e18, e19: e19, e20: e20, e21: e21, e22: e22, e23: e23);
+      Halt() => {
+        let r0 = regs^.inner[0_u64];
+        let tot = acc +wrap r0;
+        let done = Outcome::Done(value: tot);
+        return done;
       }
-      return Outcome::Failed();
-    }
-    Halt() => {
-      let r0 = regs^.inner[0_u64];
-      let tot = acc +wrap r0;
-      let done = Outcome::Done(value: tot);
-      return done;
     }
   }
+  return Outcome::Failed();
 }
 
 fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
@@ -1249,7 +1329,7 @@ fn main() -> status: ExitStatus pure {
   }
   if code.inner.len > 0_u64 {
     if regs.inner.len >= 1_u64 {
-      let r = run(code: &code, regs: &regs, pc: 0_u64, acc: 0_u64, count: 1000_u64, e0: 1_u64, e1: 2_u64, e2: 3_u64, e3: 4_u64, e4: 5_u64, e5: 6_u64, e6: 7_u64, e7: 8_u64, e8: 9_u64, e9: 10_u64, e10: 11_u64, e11: 12_u64, e12: 13_u64, e13: 14_u64, e14: 15_u64, e15: 16_u64, e16: 17_u64, e17: 18_u64, e18: 19_u64, e19: 20_u64, e20: 21_u64, e21: 22_u64, e22: 23_u64, e23: 24_u64);
+      let r = run(code: &code, regs: &regs, start: 0_u64, seed: 0_u64, steps: 1000_u64, e0: 1_u64, e1: 2_u64, e2: 3_u64, e3: 4_u64, e4: 5_u64, e5: 6_u64, e6: 7_u64, e7: 8_u64, e8: 9_u64, e9: 10_u64, e10: 11_u64, e11: 12_u64, e12: 13_u64, e13: 14_u64, e14: 15_u64, e15: 16_u64, e16: 17_u64, e17: 18_u64, e18: 19_u64, e19: 20_u64, e20: 21_u64, e21: 22_u64, e22: 23_u64, e23: 24_u64);
       match r {
         Done(value: v) => {
           if v == 404000_u64 {
@@ -1305,10 +1385,13 @@ fn a_hoisted_projection_an_arm_repeats_is_passed_once() {
         .replace("NAME", "kept")
         .replace(
             "DECREMENT",
-            "let c = regs^.inner[1_u64];\n      let d = c -wrap 1_u64;\n      set regs^.inner[1_u64] = d;",
+            "let c = regs^.inner[1_u64];\n        let d = c -wrap 1_u64;\n        set regs^.inner[1_u64] = d;",
         )
-        .replace("  let n = code^.inner.len;\n  match", "  match")
-        .replace("      let next = pc + 1_u64;", "      let n = code^.inner.len;\n      let next = pc + 1_u64;");
+        .replace("  let n = code^.inner.len;\n  let pc = start;", "  let pc = start;")
+        .replace(
+            "        let next = pc + 1_u64;",
+            "        let n = code^.inner.len;\n        let next = pc + 1_u64;",
+        );
     let module = emit(source.as_bytes());
     assert_split(&module, "wf_kept", 4);
     let dispatch = definition(&module, "wf_kept.dispatch");
