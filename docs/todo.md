@@ -1190,7 +1190,14 @@ rarely insert at the same place.
   entries, so a 4 KB first page per owner would cost hundreds of megabytes and
   as many allocations; Snowghost currently plans one context-wide Paged pool
   of entry nodes instead, which avoids the waste if its experiment confirms
-  it. One candidate is `box_paged_new(capacity: c)` with `c` below the page
+  it. Its per-owner like-for-like variant measured the cost on html5
+  (Snowghost-wf `research/m2-paged-nodes` at 0ac400e, census run
+  37645318944): 82,907 Paged stores (41,451 SequenceNode stores with B = 8
+  and 2,432-byte pages, 41,451 Flow stores with B = 128 and 1,024-byte
+  pages) hold 143,273,088 bytes of first pages against 63,300,960 in the
+  hand-written base, whose first page is 4 to 64 slots: 2.26 times before
+  descriptors, directories and allocator overhead, and the 38,664 smallest
+  owners alone account for 133,622,784 against 48,252,672 bytes. One candidate is `box_paged_new(capacity: c)` with `c` below the page
   size allocating its first page at `c` elements and later pages at full size.
   Compare a smaller first page with the
   fixed-size representation, including the extra address branch and growth
