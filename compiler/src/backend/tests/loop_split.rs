@@ -1289,6 +1289,30 @@ fn an_aligned_nominal_payload_capture_handles_empty_and_mixed_measure_element_pa
     );
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(output.stdout, reference.stdout);
+
+    // [PAR-2] the original map reads `output.inner.len` inside each chunk;
+    // its split must compute the same result as the unsplit program and the
+    // preheader form, with real workers.
+    let measured_executable = build_executable(&measured, &directory);
+    for workers in ["0", "1", "4"] {
+        let output = Command::new(&measured_executable)
+            .env("WF_WORKERS", workers)
+            .bounded_output()
+            .expect("run the split map that reads its length in the body");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "WF_WORKERS={workers}: {output:?}"
+        );
+        assert_eq!(output.stdout, reference.stdout, "WF_WORKERS={workers}");
+    }
+    let (granted, output) = CountedProgram::link(&measured, &directory).run(Some("4"));
+    assert!(
+        granted > 0,
+        "the map reading its length in the body must execute a real worker callback"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, reference.stdout);
     std::fs::remove_dir_all(&directory).expect("remove the test directory");
 }
 
