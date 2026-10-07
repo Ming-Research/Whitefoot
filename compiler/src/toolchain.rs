@@ -225,16 +225,14 @@ mod tests {
         let facts = facts();
         let directory = ProbeDirectory::new().expect("create verification directory");
         let chosen = coroutine_module(facts.coro_end_result, facts.no_capture_attribute);
-        let accepted = match verify(&directory.0, "chosen", &chosen) {
-            Ok(output) => output,
-            Err(error) => {
-                eprintln!(
-                    "skipping runtime_facts_match_host_clang: cannot run {}: {error}",
-                    clang_executable()
-                );
-                return;
-            }
-        };
+        // The probes' own fallback stands where clang cannot run; this test
+        // needs clang as its oracle, as every native test does.
+        let accepted = verify(&directory.0, "chosen", &chosen).unwrap_or_else(|error| {
+            panic!(
+                "cannot run {} to check the probed forms: {error}",
+                clang_executable()
+            )
+        });
         assert!(
             accepted.status.success(),
             "runtime-selected forms must verify: {chosen}\n{}",

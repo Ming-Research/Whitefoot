@@ -2142,10 +2142,11 @@ rarely insert at the same place.
   ships with its boundary specified and tested, or the owner records why one
   route suffices.
 - **A formal release must carry its own clang.** `clang_executable()` in
-  `compiler/src/bin/whitefootc.rs` hard-codes `/usr/bin/clang` on Linux and
-  macOS (`clang` on PATH on Windows), and `build.rs` probes that same clang
-  for `preserve_none`, the no-capture spelling and `llvm.coro.end`'s result
-  type. Those three forms are now probed when `whitefootc` runs, so a
+  `compiler/src/toolchain.rs` hard-codes `/usr/bin/clang` on Linux and
+  macOS (`clang` on PATH on Windows), and `toolchain::facts()` probes that
+  same clang, when `whitefootc` runs, for `preserve_none`, the no-capture
+  spelling and `llvm.coro.end`'s result type. Since those forms are probed
+  at run time, a
   release no longer emits a form the host's clang refuses (it did: the
   macOS release `wf-0b7f5c5b9854`, built where clang takes the `void`
   `llvm.coro.end`, emitted it to Apple clang 21, which refuses it). A host
@@ -2162,7 +2163,7 @@ rarely insert at the same place.
   The change, for the first formal release:
   - each release ships the pinned LLVM's clang, lld and the files they need;
   - `whitefootc` runs that clang, next to itself, instead of `/usr/bin/clang`;
-  - the build-time probes ask the bundled clang;
+  - the run-time probes ask the bundled clang;
   - on macOS, the bundled clang uses the system SDK and linker.
 
   Validate with a release that builds and links a waiting program on a host
@@ -3292,7 +3293,7 @@ condition under which it is taken up.
   remove the per-probe bounds compare in hash tables.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,
-  `captures(none)` or `nocapture` by a build-time probe, `inbounds`, and
+  `captures(none)` or `nocapture` by a run-time probe, `inbounds`, and
   `nuw`/`nsw` on the exact family. A `&[T]` range parameter crosses calls as
   its element pointer and count, and the pointer carries the same facts
   except `dereferenceable` (`compiler/backend-facts`; the
