@@ -36,10 +36,10 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        # stage3-gap, stage3-cursor and halo-dispatch are temporary, for the
-        # gap to Silverfir-nano, and are removed before claude/stage3-gap is
-        # ready.
-        options: [scoreboard, placement, stage3-gap, stage3-cursor, halo-dispatch]
+        # stage3-gap, stage3-cursor, stage3-nobound and halo-dispatch are
+        # temporary, for the gap to Silverfir-nano, and are removed before
+        # claude/stage3-gap is ready.
+        options: [scoreboard, placement, stage3-gap, stage3-cursor, stage3-nobound, halo-dispatch]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -428,8 +428,12 @@ jobs:
   # the code cursor": the branch's compiler against its merge base's on
   # the stage-3 interpreter, its hot arms' machine code and CoreMark. The
   # 14900K joins the hosted runners when placement_runner names it.
+  # stage3-nobound adds the bounds counterfactual of
+  # research/investigations/match-dispatch/DESIGN.md: each side's
+  # interpreter with its code bounds tests removed from the emitted LLVM,
+  # which is unsound and only measures what those tests cost.
   stage3-cursor:
-    if: inputs.experiment == 'stage3-cursor'
+    if: inputs.experiment == 'stage3-cursor' || inputs.experiment == 'stage3-nobound'
     strategy:
       fail-fast: false
       matrix:
@@ -524,6 +528,57 @@ jobs:
                 on {print; count++}' "$out/$side.s"
             done
           done
+
+      - name: Build the interpreters without code bounds tests
+        if: inputs.experiment == 'stage3-nobound'
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/stage3"
+          for side in $(cat "$out/sides"); do
+            w="$out/whitefootc-$side"
+            rm -rf "$out/cache-$side" "$out/rt-$side"
+            mkdir -p "$out/rt-$side"
+            # A cached build leaves the runtime's objects in the cache.
+            "$w" --cache "$out/cache-$side" -o "$out/cached-$side" "$out/interp.wf"
+            "$w" --emit-llvm -o "$out/$side.ll" "$out/interp.wf"
+            python3 - "$out" "$side" <<'PY'
+          import collections, os, re, struct, sys
+          out, side = sys.argv[1], sys.argv[2]
+          text = open(f"{out}/{side}.ll").read()
+          # n, the code's length: the value run's parts compare most often
+          # as the bound of an unsigned less-than.
+          parts = re.findall(r"^define [^\n]*@wf_run\.(?:arm\.\d+|dispatch)\(.*?^}", text, re.S | re.M)
+          bounds = collections.Counter(m for p in parts for m in re.findall(r"icmp ult i64 %[\w.]+, (%[\w.]+)$", p, re.M))
+          n, uses = bounds.most_common(1)[0]
+          patched = 0
+          def patch(m):
+              global patched
+              body, count = re.subn(rf"icmp ult i64 (%[\w.]+), {re.escape(n)}$", r"icmp ule i64 \1, -1", m.group(0), flags=re.M)
+              patched += count
+              return body
+          text = re.sub(r"^define [^\n]*@wf_run\.(?:arm\.\d+|dispatch)\(.*?^}", patch, text, flags=re.S | re.M)
+          open(f"{out}/{side}-nobound.ll", "w").write(text)
+          print(f"{side}: n is {n}; {patched} of {uses} bound tests removed; other bounds {bounds.most_common(4)[1:]}")
+          for i, name in enumerate(sorted(os.listdir(f"{out}/cache-{side}/runtime-objects"))):
+              b = open(f"{out}/cache-{side}/runtime-objects/{name}", "rb").read()
+              (ml,) = struct.unpack("<Q", b[8:16])
+              (pl,) = struct.unpack("<Q", b[16 + ml:24 + ml])
+              open(f"{out}/rt-{side}/r{i}.o", "wb").write(b[24 + ml:24 + ml + pl])
+          PY
+            for v in "$side" "$side-nobound"; do
+              /usr/bin/clang -O2 -falign-functions=64 -w -c "$out/$v.ll" -o "$out/$v.o"
+              /usr/bin/clang -pthread -O2 -falign-functions=64 "$out/$v.o" "$out/rt-$side"/*.o -lm -o "$out/wasm-$v-link"
+            done
+            mv "$out/wasm-$side-nobound-link" "$out/wasm-$side-nobound"
+          done
+          objdump -d --no-show-raw-insn "$out/wasm-base-nobound" > "$out/base-nobound.s"
+          index=$(awk '$2 == "Copy" {print $1}' "$out/arms.txt" | head -1)
+          awk -v sym="wf_run.arm.$index" '
+            $0 ~ "<_?" sym "(\\.[^>]*)?>:$" {on = 1; count = 0; print; next}
+            on && (/^$/ || /^[0-9a-f]+ <.*>:$/) {print "--- " count " instructions"; on = 0}
+            on {print; count++}' "$out/base-nobound.s"
+          # The base linked the same way is the control for that link.
+          echo "head-nobound head base-nobound base-link twin base" > "$out/engines"
 
       - name: Run CoreMark under each compiler's interpreter
         run: |
