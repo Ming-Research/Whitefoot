@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-06 Scanning and clearing a concurrent hash map
+
+Nodes: language/waiting/shared-objects/keyed-tables, compiler/waiting-contexts/concurrent-map
+
+Owner-approved: In the session of 2026-10-06, written in Chinese, after the decision cards on the scan cursor, the clear and copying a key set's key out: "The default options of these proposals look OK, but I suggest you run Astra max to review them" (translated); after that review and the implementation: "OK. Start" (translated); and, on the downstream trial: "when CI is done you can just continue, notify Firn, and once it has tested, merge" (translated).
+
+Summary: A program enumerates a map by `map_scan` steps from a cursor in a position order every map shares, a key `Some` for a whole scan being inserted exactly once; `map_clear` empties a map through any reference to it, replacing its earlier rejection because a nonwaiting callee cannot take the second map a swap needs, and its entries are released after the hold; `key_set_read_key` copies a key out. The runtime scans the current table only and writes nothing, sizes a step by how full the table is, and releases a clear's entries through the map type's drop helper after the hold is given up ([design](../research/investigations/map-enumeration/DESIGN.md)).
+
 ## 2026-10-06 Dispatch parts carry the matched element's address beside the index
 
 Nodes: compiler/match-dispatch-lowering
