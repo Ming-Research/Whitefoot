@@ -36,10 +36,10 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        # stage3-x86-ir and halo-dispatch are temporary, for the x86-64
-        # register-pressure step, and are removed before
+        # stage3-x86-ir, halo-dispatch and stage3-cursor are temporary, for
+        # the x86-64 register-pressure step, and are removed before
         # claude/stage3-x86-regs is ready.
-        options: [scoreboard, placement, stage3-x86-ir, halo-dispatch]
+        options: [scoreboard, placement, stage3-x86-ir, halo-dispatch, stage3-cursor]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -361,6 +361,122 @@ jobs:
             ${{ runner.temp }}/placement/event/
 
   # Temporary: research/investigations/match-dispatch/DESIGN.md, "Stage 3:
+  # the code cursor": the branch's compiler against its merge base's on
+  # the stage-3 interpreter, its hot arms' machine code and CoreMark. The
+  # 14900K joins the hosted runners when placement_runner names it.
+  stage3-cursor:
+    if: inputs.experiment == 'stage3-cursor'
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ${{ fromJSON(inputs.placement_runner == '14900k' && '["ubuntu-24.04","macos-15","14900k"]' || '["ubuntu-24.04","macos-15"]') }}
+    runs-on: ${{ matrix.host == '14900k' && fromJSON('["self-hosted","14900k"]') || matrix.host }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ] && [ "$RUNNER_OS" = Linux ]; then
+            version=$(tr -d '[:space:]' < .github/llvm-major)
+            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          elif [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            rustup default stable
+          fi
+          /usr/bin/clang --version | head -1
+          if [ "$RUNNER_OS" = Linux ]; then
+            lscpu | grep -E 'Model name|^CPU\(s\)'
+          else
+            sysctl -n machdep.cpu.brand_string
+          fi
+
+      - name: Build the compilers and the interpreter
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/stage3"
+          mkdir -p "$out"
+          # The merge base, an earlier step that placement_unaligned names,
+          # and the branch.
+          base=$(git merge-base origin/main HEAD)
+          step="${{ inputs.placement_unaligned }}"
+          sides="base"
+          git worktree prune
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          if [ -n "$step" ]; then
+            git worktree add --detach "$RUNNER_TEMP/step" "$step"
+            sides="$sides step"
+          fi
+          echo "base $base, step ${step:-none}, head $(git rev-parse HEAD)"
+          echo "$sides head" > "$out/sides"
+          # CoreMark's order: the base last, the engine ratios are against.
+          echo "head${step:+ step} twin base" > "$out/engines"
+          for side in $sides head; do
+            if [ "$side" = head ]; then dir=.; else dir="$RUNNER_TEMP/$side"; fi
+            cargo fetch --locked --manifest-path "$dir/compiler/Cargo.toml"
+            make -C "$dir/compiler" build
+            cp "$dir/compiler/target/gate/whitefootc" "$out/whitefootc-$side"
+          done
+          python3 research/experiments/match-dispatch/wasm/gen.py "$out/interp.wf"
+          for side in $sides head; do
+            echo "== $side"
+            "$out/whitefootc-$side" --dispatch-ledger "$out/interp.wf" -o "$out/wasm-$side" | grep wf_run
+          done
+          # A second copy of the base's interpreter: the noise control.
+          cp "$out/wasm-base" "$out/wasm-twin"
+
+      - name: Print the hot arms' machine code
+        run: |
+          out="$RUNNER_TEMP/stage3"
+          python3 - "$out/interp.wf" > "$out/arms.txt" <<'PY'
+          import re, sys
+          body = open(sys.argv[1]).read()
+          body = body[body.index("fn run("):]
+          names = []
+          for line in body[body.index("match code^.inner[pc] {"):].split("\n")[1:]:
+              m = re.match(r"^    ([A-Z][A-Za-z0-9]*)\(", line)
+              if m:
+                  names.append(m.group(1))
+              if line.startswith("  }"):
+                  break
+          for i, n in enumerate(names):
+              print(i, n)
+          PY
+          for side in $(cat "$out/sides"); do
+            objdump -d --no-show-raw-insn "$out/wasm-$side" > "$out/$side.s"
+            for name in I32Add BrIf BrI32LtS Copy I32Load; do
+              index=$(awk -v n="$name" '$2 == n {print $1}' "$out/arms.txt" | head -1)
+              echo "=== $side $name: arm $index"
+              awk -v sym="wf_run.arm.$index" '
+                $0 ~ "<_?" sym "(\\.[^>]*)?>:$" {on = 1; count = 0; print; next}
+                on && (/^$/ || /^[0-9a-f]+ <.*>:$/) {print "--- " count " instructions"; on = 0}
+                on {print; count++}' "$out/$side.s"
+            done
+          done
+
+      - name: Run CoreMark under each compiler's interpreter
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/stage3"
+          rm -rf "$RUNNER_TEMP/sf"
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
+          git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
+          probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
+          # The interpreter opens its module relative to its working directory.
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          python3 "$probe" --module coremark.wasm \
+            --iterations 2000 --launches 7 --tsv "$out/run.tsv" \
+            $(for side in $(cat "$out/engines"); do echo "$side=$out/wasm-$side"; done)
+          cat "$out/run.tsv"
+
+  # Temporary: research/investigations/match-dispatch/DESIGN.md, "Stage 3:
   # x86-64 register pressure", first step: the x86-64 module and machine
   # code of the stage-3 interpreter, kept as an artifact.
   stage3-x86-ir:
@@ -483,9 +599,16 @@ jobs:
           out, kernels = sys.argv[1], sys.argv[2]
           sides = open(f"{out}/sides").read().split()
           engines = [s for s in sides if s != "base"][::-1] + ["twin", "base"]
-          expected = {"fib": "832040", "loop": "5000000050000000"}
+          # fib at N = 35, not the kernel's 30, so a launch runs about a
+          # second instead of a tenth, mostly process start.
+          expected = {"fib": "9227465", "loop": "5.00000005e+15"}
+          scale = {"fib": (b"local N = 30\n", b"local N = 35\n")}
           for kernel in ["fib", "loop"]:
               source = open(f"{kernels}/{kernel}.lua", "rb").read()
+              if kernel in scale:
+                  old, new = scale[kernel]
+                  assert source.count(old) == 1, kernel
+                  source = source.replace(old, new)
               times = {e: [] for e in engines}
               for launch in range(7):
                   order = engines if launch % 2 == 0 else engines[::-1]
