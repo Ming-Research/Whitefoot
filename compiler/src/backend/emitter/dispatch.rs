@@ -343,7 +343,8 @@ struct LoopInvariants {
     /// Header instructions, by index, the enclosing function computes once.
     hoisted: Vec<usize>,
     hoisted_values: HashSet<IrValueId>,
-    /// The hoisted values the loop still reads, which the parts receive.
+    /// Hoisted candidates for the parts, before cursor selection removes
+    /// reads that only the enclosing function needs.
     passed: Vec<IrValueId>,
     /// Header parameters passed through unchanged that nothing in the loop
     /// reads once the hoisted work has left it.
@@ -618,6 +619,15 @@ impl FunctionEmitter<'_, '_> {
                 }
             }
         }
+        let readers = self.arms_reading(&plan, &invariant, cursor);
+        let mut part_reads: HashSet<IrValueId> = readers.keys().copied().collect();
+        // Every part's prelude stores these values, even when that part
+        // hands no pin to a callee. Keep them live without treating those
+        // unconditional stores as readers for the spill order.
+        part_reads.extend(invariant.pins.iter().map(|(_, canonical)| *canonical));
+        parameters.retain(|(value, _, role)| {
+            !matches!(role, Role::Hoisted | Role::Invariant) || part_reads.contains(value)
+        });
         let (convention, registers) = convention(self.target.triple());
         let mut scratch = References::default();
         let mut typed: Vec<(IrValueId, String)> = Vec::new();
@@ -645,8 +655,8 @@ impl FunctionEmitter<'_, '_> {
             types
         };
         // Past the registers, the values the loop cannot change go to the
-        // frame, the one the fewest arms read first; carried values and header
-        // values, which change on every dispatch, never do.
+        // frame, the one the fewest arms read first; changing carried values
+        // and header values never do.
         let mut spilled: HashSet<IrValueId> = HashSet::new();
         if ArgumentRegisters::demand(&types_without(&spilled))
             .is_ok_and(|demand| !registers.fits(demand))
@@ -657,7 +667,7 @@ impl FunctionEmitter<'_, '_> {
                     matches!(role, Role::Invariant | Role::Hoisted)
                         || (*role == Role::Carried && invariant.passed_through.contains(value))
                 })
-                .map(|(value, _, _)| (self.arms_reading(&plan, &header, *value), *value))
+                .map(|(value, _, _)| (readers.get(value).copied().unwrap_or(0), *value))
                 .collect();
             candidates.sort();
             for (_, value) in candidates {
@@ -900,8 +910,8 @@ impl FunctionEmitter<'_, '_> {
             .zip(arguments.iter().copied())
             .collect();
         if !tail {
-            // The hoisted header values, computed once from the arguments
-            // this edge gives the header's parameters.
+            // All hoisted header values, including those only the entering
+            // cursor needs, computed once from this edge's arguments.
             let hoisted = self
                 .dispatch
                 .as_ref()
@@ -1841,28 +1851,77 @@ impl FunctionEmitter<'_, '_> {
         Ok(format!("%{moved}"))
     }
 
-    /// How many arms read a value: every arm when the header reads it.
-    fn arms_reading(&self, plan: &DispatchLoop, header: &IrBlock, value: IrValueId) -> usize {
-        let reads = |block: &IrBlock| {
-            block
-                .instructions()
-                .iter()
-                .any(|instruction| instruction.operands().contains(&value))
-                || block.terminator().operands().contains(&value)
-        };
-        if reads(header) {
-            return plan.arms.len();
+    /// Counts each value's reading arms after projection and call-argument
+    /// replacement; a read in the emitted header counts as every arm.
+    /// Includes terminator operands (and thus carried edge arguments), but
+    /// excludes hoisted header work and the cursor's skipped instruction.
+    /// Pin prelude stores keep their canonical values live separately: only
+    /// an arm that hands the pin to a callee counts as a reader here.
+    fn arms_reading(
+        &self,
+        plan: &DispatchLoop,
+        invariant: &LoopInvariants,
+        cursor: Option<Cursor>,
+    ) -> HashMap<IrValueId, usize> {
+        let canonical = |value: IrValueId| invariant.replaced.get(&value).copied().unwrap_or(value);
+        let pins: HashMap<IrValueId, IrValueId> = invariant.pins.iter().copied().collect();
+        let mut blocks_reading = vec![HashSet::new(); self.function.blocks().len()];
+        for (index, block) in self.function.blocks().iter().enumerate() {
+            let header = index == plan.header.index();
+            if !header && !plan.region[index] {
+                continue;
+            }
+            let reads = &mut blocks_reading[index];
+            for (position, instruction) in block.instructions().iter().enumerate() {
+                if header
+                    && (invariant.hoisted.contains(&position)
+                        || cursor.is_some_and(|cursor| cursor.instruction == position))
+                {
+                    continue;
+                }
+                if let IrInstruction::Define { result, .. } = instruction
+                    && let Some(replacement) = invariant.replaced.get(result)
+                {
+                    // emit_part_instruction emits only an alias of the
+                    // canonical projection, or nothing for its definition.
+                    if replacement != result {
+                        reads.insert(*replacement);
+                    }
+                    continue;
+                }
+                reads.extend(instruction.operands().into_iter().map(canonical));
+                if let IrInstruction::Define {
+                    operation: crate::IrOperation::Call { arguments, .. },
+                    ..
+                } = instruction
+                {
+                    reads.extend(arguments.iter().filter_map(|argument| {
+                        invariant
+                            .pin_arguments
+                            .get(argument)
+                            .and_then(|parameter| pins.get(parameter))
+                            .copied()
+                    }));
+                }
+            }
+            reads.extend(block.terminator().operands().into_iter().map(canonical));
         }
-        plan.arms
-            .iter()
-            .filter(|(_, blocks)| {
-                self.function
-                    .blocks()
-                    .iter()
-                    .enumerate()
-                    .any(|(index, block)| blocks[index] && reads(block))
-            })
-            .count()
+        let mut readers = HashMap::new();
+        for (_, blocks) in &plan.arms {
+            let reads: HashSet<IrValueId> = blocks_reading
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| blocks[*index])
+                .flat_map(|(_, reads)| reads.iter().copied())
+                .collect();
+            for value in reads {
+                *readers.entry(value).or_default() += 1;
+            }
+        }
+        for value in &blocks_reading[plan.header.index()] {
+            readers.insert(*value, plan.arms.len());
+        }
+        readers
     }
 
     fn set_part(&mut self, part: Part) {

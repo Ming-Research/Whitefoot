@@ -432,6 +432,55 @@ fn the_matched_element_s_address_travels_between_the_parts() {
 }
 
 #[test]
+fn the_cursor_s_run_address_stays_in_the_enclosing_function() {
+    // The run is needed to form the entering cursor, but no emitted header
+    // instruction or arm uses it. The cursor execution test above covers
+    // the resulting program; here inspect its part parameters and bodies.
+    let module = emit(CURSOR_INTERPRETER.as_bytes());
+    let (convention, _) = host_convention();
+    let verdict = verdict(&module, "wf_run");
+    assert!(
+        convention.is_empty() || verdict.starts_with("split"),
+        "{verdict}"
+    );
+    if verdict.starts_with("split") {
+        let enclosing = definition(&module, "wf_run");
+        // The final element GEP forms the entering cursor. The length may
+        // use another projection, so identify the run by this GEP's operand.
+        let run = enclosing
+            .lines()
+            .rev()
+            .find(|line| {
+                line.contains(" = getelementptr inbounds ")
+                    && line.contains(", i32 ")
+                    && line
+                        .rsplit(", ")
+                        .next()
+                        .is_some_and(|index| index.starts_with("i64 "))
+            })
+            .and_then(|line| line.split_once(", ptr "))
+            .and_then(|(_, operands)| operands.split_once(','))
+            .map(|(value, _)| value)
+            .expect("the enclosing function forms the entering cursor from the run");
+        assert!(
+            enclosing.contains(&format!("\n  {run} = ")),
+            "the enclosing function still computes the run the entering cursor needs: {enclosing}"
+        );
+        let mut symbols = vec!["wf_run.dispatch".to_owned()];
+        symbols.extend((0..4).map(|arm| format!("wf_run.arm.{arm}")));
+        for symbol in symbols {
+            let part = definition(&module, &symbol);
+            assert!(
+                !part
+                    .split(|c: char| c.is_whitespace() || c == ',' || c == ')')
+                    .any(|word| word == run),
+                "the run is absent from the part's parameter list and body: {part}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_two_variant_tag_indexes_the_handler_table_unsigned() {
     // A tag-only enum of two variants has a one-bit tag, which must index
     // the table as 0 or 1, never as -1. Ten alternating steps add 25.
@@ -845,6 +894,90 @@ fn a_reference_handed_to_a_content_writer_keeps_its_box() {
                 .any(|line| line.contains("@wf_touch_content(ptr %wf.pin."))
     });
     assert!(handed, "a part hands the callee its pin slot: {module}");
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn rarely_read_values_spill_before_a_box_read_through_projections_and_a_pin() {
+    // As in thirty_values, thirty invariant values exceed every host's
+    // argument registers. Here they are box projections read only by Halt;
+    // regs is read by Add, Jnz and Halt through their own projections and
+    // by Dec through its call's pin. Its first projection has the lower ID,
+    // so counting only that projection's one arm would spill it first.
+    let names: Vec<String> = (0..30).map(|index| format!("rare{index}")).collect();
+    let parameters = names
+        .iter()
+        .map(|name| format!("{name}: &Box<Slots<u64>>"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let forwarded = names
+        .iter()
+        .map(|name| format!("{name}: {name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let initial = names
+        .iter()
+        .map(|name| format!("{name}: &rare"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let effects = names
+        .iter()
+        .map(|name| format!("reads({name})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let reads = names
+        .iter()
+        .map(|name| format!("      set a = a +wrap {name}^.inner.len;\n"))
+        .collect::<String>();
+    let source = REGISTER_FILE
+        .replace("NAME", "pressure")
+        .replace("DECREMENT", "let ignored = touch_content(regs: regs);")
+        .replace(
+            "fn touch(regs: &Box<Slots<u64>>) -> r: u64 writes(regs) contract {",
+            "fn touch_content(regs: &Box<Slots<u64>>) -> r: u64 writes(regs.inner) contract {",
+        )
+        .replace("pc: u64) ->", &format!("pc: u64, {parameters}) ->"))
+        .replace("reads(code), writes(regs)", &format!("reads(code), {effects}, writes(regs)"))
+        .replace("regs: regs, pc: next)", &format!("regs: regs, pc: next, {forwarded})"))
+        .replace("regs: &regs, pc: 0_u64)", &format!("regs: &regs, pc: 0_u64, {initial})"))
+        .replace("      return a;", &format!("{reads}      return a;"))
+        .replace("r == 3000_u64", "r == 3030_u64")
+        .replace(
+            "  if code.inner.len > 0_u64 {",
+            "  let rare = box_slots_new::<u64>(capacity: 1_u64);\n  if rare.inner.len < rare.inner.cap {\n    place_back(window: &rare.inner, value: 0_u64);\n  }\n  if code.inner.len > 0_u64 {",
+        );
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_pressure", 4);
+    let dispatch = definition(&module, "wf_pressure.dispatch");
+    let pinned = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("store ptr ")
+                .and_then(|line| line.split_once(", ptr %wf.pin."))
+                .map(|(value, _)| value)
+        })
+        .expect("each part's pin holds the regs projection");
+    let enclosing = definition(&module, "wf_pressure");
+    let spills: Vec<&str> = enclosing
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("store ptr ")
+                .and_then(|line| line.split_once(", ptr %wf.slot."))
+                .map(|(value, _)| value)
+        })
+        .collect();
+    let (_, registers) = host_convention();
+    assert!(
+        spills.len() >= names.len() - registers,
+        "the rarely read projections exceed the registers and wait in the frame: {enclosing}"
+    );
+    assert!(
+        !spills.contains(&pinned),
+        "the box read by all four arms keeps a register ahead of the rare projections: {enclosing}"
+    );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
