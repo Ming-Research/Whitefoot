@@ -4,6 +4,7 @@
 
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::TypeContext;
+use crate::semantic::check::repairs::instantiation_cycle_repair;
 use std::collections::{HashMap, VecDeque};
 
 use super::{CheckStop, GenericParameter, GenericParameterKey};
@@ -29,18 +30,30 @@ enum ParameterKind {
 
 #[derive(Clone)]
 enum Argument {
-    Forward(GenericParameterKey),
+    Forward {
+        key: GenericParameterKey,
+        node: NodeId,
+    },
     Function {
         declaration: DeclarationId,
         application: NodeId,
     },
-    Constructed,
+    Constructed(NodeId),
+}
+
+impl Argument {
+    fn node(&self) -> NodeId {
+        match self {
+            Self::Forward { node, .. } | Self::Constructed(node) => *node,
+            Self::Function { application, .. } => *application,
+        }
+    }
 }
 
 struct Dependency {
     target: usize,
     node: NodeId,
-    unchanged: bool,
+    changed_argument: Option<NodeId>,
 }
 
 fn dependency_path(start: usize, finish: usize, edges: &[Vec<Dependency>]) -> Option<Vec<usize>> {
@@ -184,16 +197,15 @@ impl<'unit> TypeContext<'unit> {
                 let arguments =
                     self.finite_arguments(check_context, application, &mut Vec::new())?;
                 if let Some(caller) = caller {
-                    let unchanged = arguments.len() == templates[caller].parameters.len()
-                        && arguments.len() == templates[target].parameters.len()
-                        && arguments.iter().zip(&templates[caller].parameters).zip(&templates[target].parameters).all(|((argument, caller), target)| {
-                            caller.1 == target.1
-                                && matches!(argument, Argument::Forward(key) if *key == caller.0)
-                        });
                     edges[caller].push(Dependency {
                         target,
                         node: application,
-                        unchanged,
+                        changed_argument: self.changed_cycle_argument(
+                            check_context,
+                            &templates[caller],
+                            &templates[target],
+                            &arguments,
+                        )?,
                     });
                 }
                 for ((key, kind), argument) in templates[target].parameters.iter().zip(&arguments) {
@@ -223,29 +235,35 @@ impl<'unit> TypeContext<'unit> {
             }
         }
 
-        // Each bit denotes one source function, so this least fixed point
-        // terminates independently of source order or machine speed.
-        let mut targets = vec![vec![false; templates.len()]; keys.len()];
+        // Retain each written binding's application as well as its target:
+        // a bound call supplies that application's expanded argument vector.
+        // The closure contains only finitely many written applications and
+        // never substitutes or constructs a new term.
+        let mut targets = vec![Vec::<(usize, NodeId)>::new(); keys.len()];
         loop {
             let mut changed = false;
             for (destination, argument) in &flows {
                 let source = match argument {
-                    Argument::Forward(key) => {
+                    Argument::Forward { key, .. } => {
                         key_indices.get(key).map(|index| targets[*index].clone())
                     }
-                    Argument::Function { declaration, .. } => {
-                        let mut source = vec![false; templates.len()];
-                        source[*by_declaration
+                    Argument::Function {
+                        declaration,
+                        application,
+                    } => Some(vec![(
+                        *by_declaration
                             .get(declaration)
-                            .ok_or(SemanticCompilerFailure::InvalidResolution)?] = true;
-                        Some(source)
-                    }
-                    Argument::Constructed => None,
+                            .ok_or(SemanticCompilerFailure::InvalidResolution)?,
+                        *application,
+                    )]),
+                    Argument::Constructed(_) => None,
                 };
                 if let Some(source) = source {
-                    for (held, incoming) in targets[*destination].iter_mut().zip(source) {
-                        changed |= incoming && !*held;
-                        *held |= incoming;
+                    for incoming in source {
+                        if !targets[*destination].contains(&incoming) {
+                            targets[*destination].push(incoming);
+                            changed = true;
+                        }
                     }
                 }
             }
@@ -263,19 +281,19 @@ impl<'unit> TypeContext<'unit> {
                     let index = *key_indices
                         .get(&key)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    for (target, reachable) in targets[index].iter().enumerate() {
-                        if *reachable {
-                            // The callee's specialization is a proper finite
-                            // subterm of one caller function argument. Equality
-                            // with the caller's complete vector would require
-                            // a self-containing bound function reference.
-                            // FN-6 allows this projection only off a cycle.
-                            edges[caller].push(Dependency {
-                                target,
-                                node: call,
-                                unchanged: false,
-                            });
-                        }
+                    for (target, application) in &targets[index] {
+                        let arguments =
+                            self.finite_arguments(check_context, *application, &mut Vec::new())?;
+                        edges[caller].push(Dependency {
+                            target: *target,
+                            node: call,
+                            changed_argument: self.changed_cycle_argument(
+                                check_context,
+                                template,
+                                &templates[*target],
+                                &arguments,
+                            )?,
+                        });
                     }
                 }
             }
@@ -283,21 +301,95 @@ impl<'unit> TypeContext<'unit> {
         }
         for (caller, outgoing) in edges.iter().enumerate() {
             for edge in outgoing {
-                if edge.unchanged {
+                let Some(argument) = edge.changed_argument else {
                     continue;
-                }
+                };
                 if let Some(back) = dependency_path(edge.target, caller, &edges) {
                     let mut cycle = vec![templates[caller].name.clone()];
                     cycle.extend(back.into_iter().map(|index| templates[index].name.clone()));
-                    return self.declarations.issue_node(SemanticRule::Fn6, edge.node, SemanticIssueKind::PolymorphicRecursion {
-                        cycle: cycle.join(" -> "),
-                        mechanical_fix: "forward the complete type, const and function argument vector unchanged on the cycle, or move the changing instantiation off the cycle",
-                    });
+                    return self.declarations.issue_node(
+                        SemanticRule::Fn6,
+                        edge.node,
+                        SemanticIssueKind::PolymorphicRecursion {
+                            cycle: cycle.join(" -> "),
+                            changed_argument: self.declarations.tree.source_spelling(argument)?,
+                            mechanical_fix: instantiation_cycle_repair(),
+                        },
+                    );
                 }
             }
         }
         Ok(())
     }
+
+    fn changed_cycle_argument(
+        &self,
+        check_context: &CheckContext<'_>,
+        caller: &Template,
+        target: &Template,
+        arguments: &[Argument],
+    ) -> Result<Option<NodeId>, CheckStop> {
+        for (position, argument) in arguments.iter().enumerate() {
+            let forwarded = caller
+                .parameters
+                .get(position)
+                .zip(target.parameters.get(position))
+                .is_some_and(|(caller, target)| {
+                    caller.1 == target.1
+                        && matches!(argument, Argument::Forward { key, .. } if *key == caller.0)
+                });
+            if !forwarded && !self.closed_cycle_argument(check_context, caller, argument)? {
+                return Ok(Some(argument.node()));
+            }
+        }
+        Ok(None)
+    }
+
+    fn closed_cycle_argument(
+        &self,
+        check_context: &CheckContext<'_>,
+        caller: &Template,
+        argument: &Argument,
+    ) -> Result<bool, CheckStop> {
+        let is_parameter = |key| caller.parameters.iter().any(|(held, _)| *held == key);
+        if let Argument::Forward { key, .. } = argument {
+            return Ok(!is_parameter(*key));
+        }
+        // Read identities at every depth, including const expressions and
+        // nested function specializations. No type or const is evaluated.
+        let path = self.declarations.tree.path(argument.node())?.components();
+        for usage in self.declarations.resolved.lexical_uses_under(path) {
+            let ResolvedTarget::Source { declaration, class } = usage.target() else {
+                continue;
+            };
+            if matches!(
+                class,
+                DeclarationClass::GenericType
+                    | DeclarationClass::ConstGeneric
+                    | DeclarationClass::FunctionParameter
+            ) && is_parameter(GenericParameterKey::Source(declaration))
+            {
+                return Ok(false);
+            }
+            if class == DeclarationClass::Interface {
+                let node = self
+                    .declarations
+                    .tree
+                    .node_with_path(usage.origin().node())
+                    .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let selected = self.enclosing_group(check_context, node, declaration)?;
+                if self
+                    .expand_formal_parameters(check_context, selected)?
+                    .iter()
+                    .any(|parameter| is_parameter(parameter.key()))
+                {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     /// Finiteness uses only written kinds and identities. Validating an
     /// unrelated const parameter's integer domain here would preempt FN-9's
     /// selector-admission ordering. Ordinary template formation still checks
@@ -402,9 +494,10 @@ impl<'unit> TypeContext<'unit> {
                                 declaration,
                                 class: DeclarationClass::GenericType,
                             } if self.declarations.tree.children(ty)?.is_empty() => {
-                                result.push(Argument::Forward(GenericParameterKey::Source(
-                                    declaration,
-                                )));
+                                result.push(Argument::Forward {
+                                    key: GenericParameterKey::Source(declaration),
+                                    node: ty,
+                                });
                                 continue;
                             }
                             ResolvedTarget::Source {
@@ -416,7 +509,10 @@ impl<'unit> TypeContext<'unit> {
                                 result.extend(
                                     self.expand_formal_parameters(check_context, selected)?
                                         .iter()
-                                        .map(|parameter| Argument::Forward(parameter.key())),
+                                        .map(|parameter| Argument::Forward {
+                                            key: parameter.key(),
+                                            node: ty,
+                                        }),
                                 );
                                 continue;
                             }
@@ -464,7 +560,7 @@ impl<'unit> TypeContext<'unit> {
                             _ => {}
                         }
                     }
-                    result.push(Argument::Constructed);
+                    result.push(Argument::Constructed(ty));
                 } else if let Some(value) = self
                     .declarations
                     .tree
@@ -480,10 +576,13 @@ impl<'unit> TypeContext<'unit> {
                             .use_at(check_context, value, LexicalUseRole::Const)?
                             .target()
                     {
-                        result.push(Argument::Forward(GenericParameterKey::Source(declaration)));
+                        result.push(Argument::Forward {
+                            key: GenericParameterKey::Source(declaration),
+                            node: value,
+                        });
                         continue;
                     }
-                    result.push(Argument::Constructed);
+                    result.push(Argument::Constructed(value));
                 } else if let Some(function) = self
                     .declarations
                     .tree
@@ -562,7 +661,7 @@ impl<'unit> TypeContext<'unit> {
                     class: DeclarationClass::Interface,
                 } = target
                 else {
-                    return Ok(Argument::Constructed);
+                    return Ok(Argument::Constructed(node));
                 };
                 let selected = self.enclosing_group(check_context, application, declaration)?;
                 let group = self
@@ -573,12 +672,15 @@ impl<'unit> TypeContext<'unit> {
                 let Some((member, _, _)) =
                     group.members.iter().find(|(_, _, member)| member == name)
                 else {
-                    return Ok(Argument::Constructed);
+                    return Ok(Argument::Constructed(node));
                 };
-                return Ok(Argument::Forward(GenericParameterKey::Member {
-                    application: selected,
-                    member: *member,
-                }));
+                return Ok(Argument::Forward {
+                    key: GenericParameterKey::Member {
+                        application: selected,
+                        member: *member,
+                    },
+                    node,
+                });
             }
             return Ok(
                 match self
@@ -597,9 +699,12 @@ impl<'unit> TypeContext<'unit> {
                         declaration,
                         class: DeclarationClass::FunctionParameter,
                     } if self.declarations.tree.argument_list(node)?.is_none() => {
-                        Argument::Forward(GenericParameterKey::Source(declaration))
+                        Argument::Forward {
+                            key: GenericParameterKey::Source(declaration),
+                            node,
+                        }
                     }
-                    _ => Argument::Constructed,
+                    _ => Argument::Constructed(node),
                 },
             );
         }

@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-07 v0.96: closed-term recursion cycles
+
+Rules: changed FN-6
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the explanation of FN-6 closed terms presented as Q137: "open a PR for FN-6 and do it" (translated); after the completion report that presented PR #266's specification and design-tree text as Q139, approval recommended: "approve them all" (translated).
+
+Summary: Within a recursive component, each argument an edge supplies at position i is either the calling declaration's own parameter at position i, of the same kind, forwarded unchanged, or a closed term in which no parameter of the caller occurs at any depth; a term built from a caller parameter, a caller parameter at another position or of another kind still rejects. FN-6 states the finiteness argument: every component of an instance key reached through a cycle comes from the entry key's component at the same position or from the finite set of closed terms written in the program. Before the change, any argument change on a cycle rejected, which refused finite nested callbacks such as `apply::<u64, fn outer>` whose `outer` calls `apply::<u64, fn inner>`. The conformance case `fn6-neg-polymorphic-recursion`, recursion at the fixed `i32`, becomes `fn6-pos-closed-type-recursion`.
+
 ## 2026-10-07 v0.95: renaming, removing and syncing below a writable directory
 
 Rules: changed PRE-2

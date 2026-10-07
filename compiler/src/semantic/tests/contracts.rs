@@ -864,14 +864,11 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// A bound call cannot form a recursive postcondition component with its
-/// selected concrete actual: returning from that actual to the generic
-/// wrapper replaces the wrapper's function argument instead of forwarding
-/// its complete template vector. FN-6 rejects that source cycle before FN-9,
-/// so this fixture cannot use formal-boundary publication to bootstrap the
-/// selected actual's same-component summary.
+/// FN-6 admits this closed callback cycle. FN-9 must still withhold the
+/// selected actual's same-component summary when checking the wrapper's
+/// postcondition; a formal boundary cannot bootstrap that summary.
 #[test]
-fn a_recursive_bound_call_stops_at_fn6_before_summary_publication() {
+fn a_closed_recursive_bound_call_cannot_bootstrap_summary_publication() {
     let source = r#"interface Identity {
   fn get(value: i32) -> result: i32 pure contract {
     ensures result == value;
@@ -906,7 +903,7 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    assert_behavior_rule(source, SemanticRule::Fn6);
+    assert_behavior_rule(source, SemanticRule::Fn9);
 }
 
 #[test]
@@ -1003,7 +1000,7 @@ fn main() -> status: std::process::ExitStatus pure {
 // `formal_range_reference_parameters_compare_by_ordinal` below.
 
 #[test]
-fn a_bound_call_cannot_drop_part_of_a_vector_on_a_written_cycle() {
+fn a_bound_call_can_select_a_closed_specialization_on_a_written_cycle() {
     let source = r#"fn stop() -> result: unit pure {
   return unit;
 }
@@ -1022,11 +1019,11 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     with_semantics(source.as_bytes(), |outcome| {
-        let SemanticOutcome::SourceIssue { issue } = outcome else {
-            panic!("expected FN-6 rejection");
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the closed fn stop specialization must check: {outcome:?}");
         };
-        assert_eq!(issue.rule(), SemanticRule::Fn6);
-        assert!(format!("{:?}", issue.kind()).contains("first -> second -> first"));
+        lower_checked(*checked, OverlapLowering::Off)
+            .expect("the closed binding cycle has finitely many direct-call instances");
     });
     let acyclic = source.replace("return first::<fn work>();", "return work();");
     with_semantics(acyclic.as_bytes(), |outcome| {
@@ -1117,7 +1114,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn actual_member_aliases_preserve_the_complete_instantiation_cycle() {
+fn actual_member_aliases_preserve_closed_instantiation_cycles() {
     let source = r#"interface Work {
   fn run() -> result: u64 pure;
 }
@@ -1151,17 +1148,11 @@ fn main() -> status: std::process::ExitStatus pure {
         source.replace("invoke::<Alias>()", "invoke::<First>()"),
     ] {
         with_semantics(program.as_bytes(), |outcome| {
-            let SemanticOutcome::SourceIssue { issue } = outcome else {
+            let SemanticOutcome::Complete(checked) = outcome else {
                 panic!("{outcome:?}");
             };
-            assert_eq!(issue.rule(), SemanticRule::Fn6);
-            let SemanticIssueKind::PolymorphicRecursion { cycle, .. } = issue.kind() else {
-                panic!("{issue:?}");
-            };
-            assert!(
-                cycle.contains("poly") && cycle.contains("trampoline"),
-                "{cycle}"
-            );
+            lower_checked(*checked, OverlapLowering::Off)
+                .expect("binding aliases retain the same finite closed specialization");
         });
     }
 }
