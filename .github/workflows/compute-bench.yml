@@ -664,7 +664,7 @@ jobs:
             ( cd "$RUNNER_TEMP/halo" && /usr/bin/time -p "$out/whitefootc-$side" --dispatch-ledger \
                 --graph research/experiments/halo-bench/modules.wfg --entry bench --full-lto \
                 -o "$out/halo-$side" > "$out/ledger-$side.txt" )
-            grep -E 'split|keeps|carries' "$out/ledger-$side.txt" || echo "(no split dispatch loop)"
+            grep -E 'split|keeps|carries|handler word' "$out/ledger-$side.txt" || echo "(no split dispatch loop)"
           done
           cp "$out/halo-base" "$out/halo-twin"
 

@@ -820,6 +820,18 @@ alignment. Base, prototype, twin, and Halo's `fib` and `loop` on the
 - **CoreMark:** must stay within its twin's spread, since `Op` is already
   8-byte aligned.
 
+**Outcome of the word in a 4-byte-aligned `Cell`**
+([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-handlers-address-in-the-element)).
+Against candidates 1 and 2 alone, Halo's `fib` takes 2.3% less time and
+`loop` 1.8%, while the twin stays within 0.2%. That clears the criterion,
+so the representation must cover enums whose ceiling is below pointer
+alignment. Comparing the address with a 32-bit offset remains open.
+
+CoreMark is unchanged, as `Op` is already 8-byte aligned. With this
+commit (`8a93bbb90`) it scores 5970.1, 1.099 of main, the same as
+candidates 1 and 2 alone
+([run 37579981158](https://github.com/Ming-Research/Whitefoot/actions/runs/37579981158)).
+
 **Outcome of candidate 2**
 ([results](../../experiments/match-dispatch/RESULTS.md#stage-3-the-frame-as-an-address)).
 - **The mechanism works:** the frame base leaves every slot access.

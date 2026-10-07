@@ -1090,6 +1090,25 @@ product layout is 4-byte aligned, and an 8-byte word would raise that.
 v2h's `Op` has a `u64` field, so its product layout is already 8-byte
 aligned.
 
+**The word at a 4-byte ceiling.** The prototype at `c3f7cfd40` places
+the 8-byte address at the enum's ceiling alignment where that is below 8.
+Halo's `Cell` then takes the word at offset 12, in 20 bytes, 4-byte
+aligned. Halo on the 14900K, with candidates 1 and 2 as the step
+([run 37580659833](https://github.com/Ming-Research/Whitefoot/actions/runs/37580659833)),
+time against base:
+
+| kernel | head, with the word | step | twin |
+|---|---:|---:|---:|
+| `fib` | 0.975 | 0.999 | 0.998 |
+| `loop` | 0.984 | 1.002 | 1.002 |
+
+Against the step, `fib` takes 2.3% less time and `loop` 1.8%.
+
+That run's ledger filter kept only lines naming `split`, `keeps` or
+`carries`, so it does not show the word's line for `Cell`. Head and step
+differ only in this commit, and the difference exceeds the twin's 0.2%.
+The filter now also keeps the word's line.
+
 ## Stage 3: the frame as an address
 
 Candidate 2, prototyped at `32c71df5a` on top of candidate 1 (`e840fb423`).
