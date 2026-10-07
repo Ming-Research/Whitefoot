@@ -932,6 +932,76 @@ and 37555131716) measured CoreMark 1.019 against the cursor and Halo's
 `loop` 1.000 and `fib` 1.000 against before the cursor. Its unit tests
 failed where an arm's `pc + 1` follows the join of an `if`.
 
+## Stage 3: the gap to Silverfir-nano
+
+The question and the use of the result are in
+[the investigation](../../investigations/match-dispatch/DESIGN.md#stage-3-the-gap-to-silverfir-nano).
+v2h was compiled by main at `0b7f5c5b9`. Silverfir-nano is `5f248e44`,
+`sf-nano-cli --interp`, whose handlers are generated assembly. wasmi is
+`wasmi_cli` 2.0.0, a Rust interpreter that dispatches by tail calls when
+built optimized for x86-64 or AArch64. All runs use CoreMark 2K with
+correct CRCs.
+
+**The ratio on the 14900K**, clang 22.1.8, 7 interleaved launches, medians
+([run 37562405938](https://github.com/Ming-Research/Whitefoot/actions/runs/37562405938)):
+
+| engine | score | against nano |
+|---|---:|---|
+| v2h | 5434.8 (1.1%) | 0.701, 0.691-0.707 |
+| twin of v2h | 5449.6 (1.6%) | 0.703 |
+| Silverfir-nano | 7751.9 (1.9%) | 1.000 |
+
+**On the owner's MacBook Air M5**, Apple clang 21. The owner authorized
+these local runs. The release compiler's `llvm.coro.end` form fails on
+Apple clang 21, so v2h was compiled by a compiler built on the Mac from
+`b60436d33`, main with its probe fixed (PR #264). Scores are from 7
+interleaved launches; the rest from 3 single launches each, whose spread
+is below 1%.
+
+| engine | score | against nano | dispatches | instructions | cycles | instructions per dispatch | cycles per dispatch | IPC |
+|---|---:|---|---:|---:|---:|---:|---:|---:|
+| v2h | 2378.1 | 0.496 | 506.1M | 9.345G | 1.896G | 18.47 | 3.75 | 4.93 |
+| wasmi 2.0.0 | 3338.9 | 0.696 | 576.9M | 4.502G | 1.354G | 7.80 | 2.35 | 3.33 |
+| Silverfir-nano | 4796.2 | 1.000 | 521.6M | 4.051G | 0.957G | 7.77 | 1.84 | 4.23 |
+
+How each count was taken:
+- **v2h:** `gen.py --count`, which counts in the interpreter function's
+  header. That build is not split, but its count does not depend on the
+  lowering.
+- **Silverfir-nano:** its `interp-count` feature, read with
+  `--interp-stats`.
+- **wasmi:** a copy of its source counting at its tail-call `dispatch!`
+  macro and at the first dispatch.
+- **Instructions and cycles:** `/usr/bin/time -l`.
+
+A second 14900K run added wasmi and Silverfir-nano's x86-64 dispatch count
+([run 37567804610](https://github.com/Ming-Research/Whitefoot/actions/runs/37567804610)):
+
+| engine | score | against nano |
+|---|---:|---|
+| v2h | 5405.4 (2.4%) | 0.692, 0.689-0.704 |
+| twin of v2h | 5420.1 (1.1%) | 0.694 |
+| wasmi 2.0.0 | 6622.5 (2.0%) | 0.848, 0.842-0.863 |
+| Silverfir-nano | 7812.5 (2.3%) | 1.000 |
+
+Silverfir-nano's x86-64 build makes 521,583,097 dispatches, 23 fewer than
+its AArch64 build, so the counts compare across the two.
+
+v2h makes the fewest dispatches of the three, 3% fewer than Silverfir-nano
+and 12% fewer than wasmi. The gap is in each dispatch: on the M5 v2h
+executes 18.5 instructions per dispatch where both others execute 7.8, and
+its higher IPC recovers part of that. Relative costs per dispatch, from the
+scores and the dispatch counts:
+
+| | 14900K | M5 |
+|---|---:|---:|
+| v2h | 1.49 | 2.08 |
+| wasmi 2.0.0 | 1.07 | 1.30 |
+| Silverfir-nano | 1.00 | 1.00 |
+
+At wasmi's cost per dispatch, v2h's fewer dispatches would put it at about
+0.97 of Silverfir-nano on the 14900K.
+
 ## Limitations
 
 - One core type. Silverfir-nano's recorded 1.09-cycle floor, on a synthetic
