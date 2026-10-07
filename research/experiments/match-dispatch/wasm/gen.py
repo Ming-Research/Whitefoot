@@ -215,8 +215,12 @@ KEEPS = "  ensures stack^.inner.len == entry(stack)^.inner.len;"
 
 
 def tail(pc, ind, acc="acc"):
+    """The transfer to the next operation: set the loop variables that
+    change and continue the interpreter loop."""
     p = " " * ind
-    return [f"{p}return musttail run({ARGS}, pc: {pc}, fp: fp, acc: {acc});"]
+    sets = [f"{p}set pc = {pc};"] if pc != "pc" else []
+    sets += [f"{p}set acc = {acc};"] if acc != "acc" else []
+    return sets + [f"{p}continue;"]
 
 
 def advance(ind, acc="acc"):
@@ -699,18 +703,18 @@ def inline_helpers(arms, helpers):
 def count_dispatches(program):
     """The --count variant: a counter cell passed to the interpreter function
     and incremented at every dispatch, printed when _start returns."""
-    sig = ("globals: &Box<Slots<u64>>, pc: u64, fp: u64, acc: u64) -> r: Outcome reads(code), reads(funcs), "
+    sig = ("globals: &Box<Slots<u64>>, pc0: u64, fp0: u64, acc0: u64) -> r: Outcome reads(code), reads(funcs), "
            "reads(brtab), reads(table), reads(consts), writes(stack), writes(mem), writes(globals) contract {")
     assert sig in program
-    program = program.replace(sig, sig.replace("pc: u64,", "counter: &Box<Array<u64>>, pc: u64,")
+    program = program.replace(sig, sig.replace("pc0: u64,", "counter: &Box<Array<u64>>, pc0: u64,")
                               .replace("writes(globals) contract", "writes(globals), writes(counter) contract"))
-    program = program.replace("globals: globals, pc:", "globals: globals, counter: counter, pc:")
-    program = program.replace("  let n = code^.inner.len;\n  match code^.inner[pc] {",
-                              "  let n = code^.inner.len;\n  if 0_u64 < counter^.inner.len {\n"
-                              "    let seen = counter^.inner[0_u64];\n"
-                              "    set counter^.inner[0_u64] = seen +wrap 1_u64;\n  }\n  match code^.inner[pc] {")
-    program = program.replace("globals: &globals, pc: pc, fp: fp, acc: 0_u64);",
-                              "globals: &globals, counter: &counter, pc: pc, fp: fp, acc: 0_u64);")
+    top = "  ) {\n    match code^.inner[pc] {"
+    assert top in program
+    program = program.replace(top, "  ) {\n    if 0_u64 < counter^.inner.len {\n"
+                              "      let seen = counter^.inner[0_u64];\n"
+                              "      set counter^.inner[0_u64] = seen +wrap 1_u64;\n    }\n    match code^.inner[pc] {")
+    program = program.replace("globals: &globals, pc0: pc, fp0: fp, acc0: 0_u64);",
+                              "globals: &globals, counter: &counter, pc0: pc, fp0: fp, acc0: 0_u64);")
     program = program.replace("  let max_pages = info.max_pages;\n  loop @drive {",
                               "  let max_pages = info.max_pages;\n"
                               "  let counter = box_array_filled::<u64>(count: 1_u64, value: 0_u64);\n  loop @drive {")
@@ -756,11 +760,11 @@ def profile_dispatches(program, variants):
     total = len(variants)
     program = program.replace("let counter = box_array_filled::<u64>(count: 1_u64, value: 0_u64);",
                               f"let counter = box_array_filled::<u64>(count: {total}_u64, value: 0_u64);")
-    old = ("  if 0_u64 < counter^.inner.len {\n    let seen = counter^.inner[0_u64];\n"
-           "    set counter^.inner[0_u64] = seen +wrap 1_u64;\n  }\n")
+    old = ("    if 0_u64 < counter^.inner.len {\n      let seen = counter^.inner[0_u64];\n"
+           "      set counter^.inner[0_u64] = seen +wrap 1_u64;\n    }\n")
     assert old in program
-    program = program.replace(old, "  let kind = op_index(op: code^.inner[pc]);\n  if kind < counter^.inner.len {\n"
-                              "    let seen = counter^.inner[kind];\n    set counter^.inner[kind] = seen +wrap 1_u64;\n  }\n")
+    program = program.replace(old, "    let kind = op_index(op: code^.inner[pc]);\n    if kind < counter^.inner.len {\n"
+                              "      let seen = counter^.inner[kind];\n      set counter^.inner[kind] = seen +wrap 1_u64;\n    }\n")
     old = "        if 0_u64 < counter.inner.len {\n          let total = counter.inner[0_u64];"
     assert old in program
     program = program.replace(old, "        let kinds = counter.inner.len;\n        for (kind in 0_u64..kinds) {\n          let total = counter.inner[kind];")
@@ -1033,7 +1037,8 @@ tail_text = open(os.path.join(here, "interp_tail.wf")).read().strip("\n")
 aliases_end = head.index("\n\n") + 2
 helper_text = "\n".join(HELPERS).strip("\n")
 program = (head[:aliases_end] + OPS + "\n\n" + (helper_text + "\n\n" if helper_text else "")
-           + head[aliases_end:].rstrip("\n") + "\n" + "\n".join(arms).strip("\n") + "\n  }\n}\n\n" + tail_text + "\n")
+           + head[aliases_end:].rstrip("\n") + "\n" + "\n".join(("  " + line) if line else line for line in "\n".join(arms).strip("\n").split("\n"))
+           + "\n    }\n  }\n  return trap(code: 1_u32, pc: pc);\n}\n\n" + tail_text + "\n")
 if "--names" in sys.argv:
     print("\n".join(name for name, _, _ in variants))
     sys.exit(0)
