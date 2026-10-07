@@ -3906,6 +3906,32 @@ void wf__completion_file_sync_submit(
     wf_bridge_dispatch(held);
 }
 
+void wf__completion_file_rename_submit(
+    int directory, const void *from, const void *to, void *record
+) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_RENAME;
+    held->request.operation.rename.directory = directory;
+    held->request.operation.rename.from = from;
+    held->request.operation.rename.to = to;
+    wf_bridge_dispatch(held);
+}
+
+void wf__completion_file_remove_submit(int directory, const void *path, void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_REMOVE;
+    held->request.operation.remove.directory = directory;
+    held->request.operation.remove.path = path;
+    wf_bridge_dispatch(held);
+}
+
+void wf__completion_directory_sync_submit(int directory, void *record) {
+    wf_completion_record *held = wf_bridge_begin(record);
+    held->request.kind = WF_FILE_SYNC_DIRECTORY;
+    held->request.operation.close.descriptor = directory;
+    wf_bridge_dispatch(held);
+}
+
 void wf__completion_file_truncate_submit(
     int descriptor,
     uint64_t length,

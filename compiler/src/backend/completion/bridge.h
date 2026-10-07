@@ -77,6 +77,12 @@ void wf__completion_file_sync_submit(
     void *record
 );
 
+/* Namespace changes use component bytes owned by the pending call. */
+void wf__completion_file_rename_submit(int directory, const void *from,
+                                       const void *to, void *record);
+void wf__completion_file_remove_submit(int directory, const void *path, void *record);
+void wf__completion_directory_sync_submit(int directory, void *record);
+
 /* Sets the file's byte length [PRE-2], leaving appends at its new end. */
 void wf__completion_file_truncate_submit(
     int descriptor,
@@ -261,11 +267,11 @@ void wf__context_frame_release(void *frame);
  * record first, then whatever the operation's linked body keeps until its
  * finish reads the record.  The linked bodies check that their layout fits. */
 #if defined(_WIN32)
-#define WF_CONTEXT_OPERATION_BYTES 704u
-#elif defined(__APPLE__)
 #define WF_CONTEXT_OPERATION_BYTES 1216u
+#elif defined(__APPLE__)
+#define WF_CONTEXT_OPERATION_BYTES 2240u
 #else
-#define WF_CONTEXT_OPERATION_BYTES 448u
+#define WF_CONTEXT_OPERATION_BYTES 704u
 #endif
 #define WF_CONTEXT_OPERATION_ALIGN 16u
 void *wf__context_operation(void);

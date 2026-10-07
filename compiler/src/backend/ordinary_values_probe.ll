@@ -11,7 +11,7 @@ declare void @wf_std.fs.read_at.finish(ptr, ptr, ptr, ptr, i64, i64, i64, i64, p
 
 define void @wf_test_public_open(ptr %result, ptr %factory, ptr %root, ptr %name, i64 %start, i64 %end) {
 entry:
-  %operation = alloca [1216 x i8], align 16
+  %operation = alloca [2240 x i8], align 16
   %view = load { ptr, i64 }, ptr %name
   %data = extractvalue { ptr, i64 } %view, 0
   %len = extractvalue { ptr, i64 } %view, 1
@@ -27,7 +27,7 @@ done:
 
 define void @wf_test_public_read(ptr %result, ptr %factory, ptr %file, ptr %destination, i64 %offset, i64 %start, i64 %end) {
 entry:
-  %operation = alloca [1216 x i8], align 16
+  %operation = alloca [2240 x i8], align 16
   %view = load { ptr, i64 }, ptr %destination
   %data = extractvalue { ptr, i64 } %view, 0
   %len = extractvalue { ptr, i64 } %view, 1

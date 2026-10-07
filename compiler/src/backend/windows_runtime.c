@@ -76,7 +76,6 @@
 
 #define WF_WINDOWS_DIRECTORY_NATIVE_HEADER 64u
 #define WF_WINDOWS_DIRECTORY_RAW_HEADER 5u
-#define WF_WINDOWS_COMPONENT_MAX_BYTES 510u
 #define WF_WINDOWS_DIRECTORY_SCRATCH_BYTES 8192u
 #define WF_WINDOWS_FILE_DIRECTORY_INFORMATION_CLASS \
     ((FILE_INFORMATION_CLASS)1)
@@ -1009,6 +1008,65 @@ static void wf_windows_open_return_provisional_handle(HANDLE *handle) {
             "an open could not return its provisional handle"
         );
     }
+}
+
+HANDLE wf__windows_open_delete(HANDLE root, const char *path, int *error_code) {
+    const uint16_t *units = (const uint16_t *)(const void *)path;
+    wf_windows_nt_api api;
+    HANDLE opened = INVALID_HANDLE_VALUE;
+    size_t unit_count;
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES attributes;
+    IO_STATUS_BLOCK io_status;
+    NTSTATUS status;
+    *error_code = 0;
+    if (!wf_windows_handle_valid(root)) {
+        *error_code = ERROR_INVALID_HANDLE;
+        return opened;
+    }
+    if (!wf_windows_bounded_wcslen(units, &unit_count)
+        || !wf__windows_relative_path_valid(units, (uint64_t)unit_count)) {
+        *error_code = ERROR_INVALID_NAME;
+        return opened;
+    }
+    if (!wf_windows_resolve_nt_api(&api)) {
+        *error_code = (int)GetLastError();
+        if (*error_code == 0) *error_code = ERROR_PROC_NOT_FOUND;
+        return opened;
+    }
+    memset(&name, 0, sizeof(name));
+    name.Length = (USHORT)(unit_count * sizeof(uint16_t));
+    name.MaximumLength = name.Length;
+    name.Buffer = (PWSTR)(void *)units;
+    memset(&attributes, 0, sizeof(attributes));
+    attributes.Length = (ULONG)sizeof(attributes);
+    attributes.RootDirectory = root;
+    attributes.ObjectName = &name;
+    attributes.Attributes = OBJ_CASE_INSENSITIVE;
+    memset(&io_status, 0, sizeof(io_status));
+    /* Open the named entry itself, including a reparse point, without
+     * following it. FILE_OPEN never creates a missing source. */
+    status = api.create_file(
+        &opened, DELETE | SYNCHRONIZE, &attributes, &io_status, NULL, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+        FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT | FILE_NON_DIRECTORY_FILE,
+        NULL, 0
+    );
+    if (status == WF_WINDOWS_STATUS_PENDING) {
+        DWORD waited = WaitForSingleObject(opened, INFINITE);
+        if (waited != WAIT_OBJECT_0) {
+            *error_code = (int)(waited == WAIT_FAILED ? GetLastError() : ERROR_GEN_FAILURE);
+            wf_windows_open_return_provisional_handle(&opened);
+            return INVALID_HANDLE_VALUE;
+        }
+        status = io_status.Status;
+    }
+    if (status == WF_WINDOWS_STATUS_PENDING || !wf_windows_nt_success(status)) {
+        *error_code = (int)wf_windows_nt_error(&api, status);
+        wf_windows_open_return_provisional_handle(&opened);
+        return INVALID_HANDLE_VALUE;
+    }
+    return opened;
 }
 
 int wf__windows_completion_file_open_at_worker(
