@@ -12,7 +12,7 @@ fn retain(value: Chain<u8>) -> result: Chain<u8> pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  let end = End<u8>();
+  let end = Chain<u8>::End();
   let held = retain(value: move end);
   return exit_status(code: 0_u8);
 }
