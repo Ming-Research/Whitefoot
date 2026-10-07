@@ -1787,6 +1787,11 @@ pub struct IrFunction {
     /// checked effects, so a call cannot replace the box the formal reaches.
     /// A formal with no declared write qualifies too.
     pub(crate) box_keeping_reference_parameters: Vec<IrValueId>,
+    /// Checked callable requirements bound an unsigned index by a direct
+    /// box content's length at this self-tail header. Each tuple is (header,
+    /// index parameter, reference parameter); FN-8/FN-10 cover all entries.
+    /// Used only with a loop-stable contiguous box projection.
+    pub(crate) bounded_box_indices: Vec<(IrBlockId, IrValueId, IrValueId)>,
     /// Checked source modes, or `None` for a compiler-synthesized function.
     /// Internal transfer contracts must not be invented from representation.
     pub(crate) source_signature: Option<IrSourceSignature>,

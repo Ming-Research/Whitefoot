@@ -540,8 +540,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
-                let pointer = self.next_temporary()?;
-                {
+                if let Some(relative) = self.frame_element_place(address, *offset, referent.ty())? {
+                    relative
+                } else {
+                    let pointer = self.next_temporary()?;
                     let emitted_type_0 = self.output.type_name(self.program, base.ty())?;
                     writeln!(
                         self.output,
@@ -550,9 +552,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                         self.value_name(address),
                         self.element_address_index(referent.ty(), &self.value_name(*offset))?
                     )
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                    format!("%{pointer}")
                 }
-                .map_err(|_| BackendFailure::TextEmission)?;
-                format!("%{pointer}")
             }
             crate::IrPlaceStep::BufferElement {
                 offset,
@@ -571,12 +573,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 {
                     return Err(BackendFailure::InvalidIr);
                 }
-                let (block, _) = self.buffer_block(address)?;
-                self.buffer_element_pointer(
-                    block,
-                    &self.value_name(address),
-                    &self.value_name(*offset),
-                )?
+                if let Some(relative) = self.frame_element_place(address, *offset, referent.ty())? {
+                    relative
+                } else {
+                    let (block, _) = self.buffer_block(address)?;
+                    self.buffer_element_pointer(
+                        block,
+                        &self.value_name(address),
+                        &self.value_name(*offset),
+                    )?
+                }
             }
             crate::IrPlaceStep::EntriesElement { offset } => {
                 let IrType::Entries { element } = base.ty() else {

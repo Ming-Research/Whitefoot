@@ -508,6 +508,15 @@ fn lower_function<'program>(
         })?;
         builder.current = Some(entry);
         builder.tail_entry = Some(entry);
+        for (index, reference) in function.bounded_box_indices() {
+            if let (Some(index), Some(reference)) =
+                (parameters.get(index), parameters.get(reference))
+            {
+                builder
+                    .bounded_box_indices
+                    .push((entry, *index, *reference));
+            }
+        }
         for (parameter, value) in function.parameters.iter().zip(parameters) {
             builder.bindings.insert(parameter.binding, value);
         }
@@ -667,6 +676,7 @@ struct IrBuilder<'program> {
     parameters: Vec<(IrValueId, IrType)>,
     readonly_reference_parameters: Vec<IrValueId>,
     box_keeping_reference_parameters: Vec<IrValueId>,
+    bounded_box_indices: Vec<(IrBlockId, IrValueId, IrValueId)>,
     source_calls: Vec<IrSourceCall>,
     values: Vec<IrType>,
     blocks: Vec<BuildingBlock>,
@@ -767,6 +777,7 @@ impl<'program> IrBuilder<'program> {
             parameters: Vec::new(),
             readonly_reference_parameters: Vec::new(),
             box_keeping_reference_parameters: Vec::new(),
+            bounded_box_indices: Vec::new(),
             source_calls: Vec::new(),
             values: Vec::new(),
             blocks: Vec::new(),
@@ -839,6 +850,7 @@ impl<'program> IrBuilder<'program> {
             parameters: self.parameters,
             readonly_reference_parameters: self.readonly_reference_parameters,
             box_keeping_reference_parameters: self.box_keeping_reference_parameters,
+            bounded_box_indices: self.bounded_box_indices,
             source_signature: None,
             source_calls: self.source_calls,
             result: self.result,

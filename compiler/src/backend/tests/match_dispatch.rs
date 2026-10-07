@@ -3,6 +3,247 @@
 
 use super::{compile_and_run, emit, emitted_body};
 
+/// Call/return choose a new frame from an operand, Touch uses a slot both
+/// directly and through a helper, and Step moves the frame by one slot.
+/// The independent result is 30: slot 2 is touched twice, slot 5 once.
+const FRAME_INTERPRETER: &str = r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum FrameOp {
+  Touch(k: u8);
+  Call(f: u8);
+  Return(f: u8);
+  Step();
+  Halt();
+}
+
+fn bump(stack: &Box<Array<u64>>, fp: u64, k: u64) -> r: unit writes(stack.inner) contract {
+  requires fp + 2_u64 <= stack^.inner.len;
+  requires k < 2_u64;
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  let at = fp + k;
+  let old = stack^.inner[at];
+  let new = old +wrap 7_u64;
+  set stack^.inner[at] = new;
+  return unit;
+}
+
+fn framed(code: &Box<Slots<FrameOp>>, stack: &Box<Array<u64>>, pc: u64, fp: u64) -> r: u64 reads(code), writes(stack.inner) contract {
+  requires pc < code^.inner.len;
+  requires fp + 2_u64 <= stack^.inner.len;
+} {
+  let n = code^.inner.len;
+  match code^.inner[pc] {
+    Touch(k: kv) => {
+      let k = cvt::<u8, u64>(kv^);
+      if k < 2_u64 {
+        let at = fp + k;
+        let old = stack^.inner[at];
+        let new = old +wrap 3_u64;
+        set stack^.inner[at] = new;
+        bump(stack: stack, fp: fp, k: k);
+      }
+      let next = pc + 1_u64;
+      if next < n {
+        return musttail framed(code: code, stack: stack, pc: next, fp: fp);
+      }
+      return 0_u64;
+    }
+    Call(f: fv) => {
+      let f = cvt::<u8, u64>(fv^);
+      let end = f + 2_u64;
+      let next = pc + 1_u64;
+      if end <= stack^.inner.len {
+        if next < n {
+          return musttail framed(code: code, stack: stack, pc: next, fp: f);
+        }
+      }
+      return 0_u64;
+    }
+    Return(f: fv) => {
+      let f = cvt::<u8, u64>(fv^);
+      let end = f + 2_u64;
+      let next = pc + 1_u64;
+      if end <= stack^.inner.len {
+        if next < n {
+          return musttail framed(code: code, stack: stack, pc: next, fp: f);
+        }
+      }
+      return 0_u64;
+    }
+    Step() => {
+      let f = fp + 1_u64;
+      let end = f + 1_u64;
+      let next = pc + 1_u64;
+      if end < stack^.inner.len {
+        if next < n {
+          return musttail framed(code: code, stack: stack, pc: next, fp: f);
+        }
+      }
+      return 0_u64;
+    }
+    Halt() => {
+      let at = fp + 0_u64;
+      let a = stack^.inner[at];
+      if 5_u64 < stack^.inner.len {
+        let b = stack^.inner[5_u64];
+        let sum = a +wrap b;
+        return sum;
+      }
+      return 0_u64;
+    }
+  }
+}
+
+fn push_frame(code: &Box<Slots<FrameOp>>, op: FrameOp) -> r: unit writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+  }
+  return unit;
+}
+
+enum Probe { Access(); Halt(); }
+
+fn unbounded(op: &Probe, stack: &Box<Array<u64>>, fp: u64, n: u64) -> r: u64 reads(op), writes(stack.inner) {
+  match op^ {
+    Access() => {
+      if fp < 6_u64 {
+        let at = fp + 1_u64;
+        if at < stack^.inner.len {
+          set stack^.inner[at] = 99_u64;
+        }
+      }
+      if n != 0_u64 {
+        let next = n - 1_u64;
+        return musttail unbounded(op: op, stack: stack, fp: fp, n: next);
+      }
+      return 0_u64;
+    }
+    Halt() => { return 0_u64; }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<FrameOp>(capacity: 7_u64);
+  let t = FrameOp::Touch(k: 1_u8);
+  push_frame(code: &code, op: t);
+  let c = FrameOp::Call(f: 4_u8);
+  push_frame(code: &code, op: c);
+  push_frame(code: &code, op: t);
+  let r = FrameOp::Return(f: 1_u8);
+  push_frame(code: &code, op: r);
+  push_frame(code: &code, op: t);
+  let s = FrameOp::Step();
+  push_frame(code: &code, op: s);
+  let h = FrameOp::Halt();
+  push_frame(code: &code, op: h);
+  let stack = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  let probe = Probe::Halt();
+  if code.inner.len > 0_u64 {
+    let result = framed(code: &code, stack: &stack, pc: 0_u64, fp: 1_u64);
+    let ignored = unbounded(op: &probe, stack: &stack, fp: 18446744073709551615_u64, n: 1_u64);
+    if result == 30_u64 {
+      return exit_status(code: 0_u8);
+    }
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+
+#[test]
+fn a_bounded_frame_address_travels_through_direct_accesses_helpers_and_new_indices() {
+    let module = emit(FRAME_INTERPRETER.as_bytes());
+    let (convention, _) = host_convention();
+    let split = verdict(&module, "wf_framed").starts_with("split");
+    assert!(convention.is_empty() || split, "{module}");
+    if split {
+        // All positive mechanism observations below fail before this change:
+        // no frame ledger, frame parameter, inverse GEP or relative slot GEP
+        // exists there. Execution and the unbounded control are preservation
+        // checks: they deliberately pass on the old lowering too.
+        assert!(
+            module.contains(&format!(
+                "{}wf_framed: carries a run element's address for carried index ",
+                crate::DISPATCH_LEDGER_PREFIX
+            )),
+            "{module}"
+        );
+        let dispatch = definition(&module, "wf_framed.dispatch");
+        let parameter = dispatch
+            .lines()
+            .next()
+            .unwrap()
+            .split(", ")
+            .find_map(|part| {
+                part.strip_prefix("ptr %wf.element.").map(|suffix| {
+                    format!("%wf.element.{}", suffix.split([')', ' ']).next().unwrap())
+                })
+            })
+            .expect("the run parameter carries the frame address");
+        let ordinal = parameter.strip_prefix("%wf.element.").unwrap();
+        let run = format!("%v{ordinal}");
+        for part in ["dispatch", "arm.0", "arm.1", "arm.2", "arm.3", "arm.4"] {
+            let body = definition(&module, &format!("wf_framed.{part}"));
+            let signature = body.lines().next().unwrap();
+            assert!(
+                signature.contains(&format!("ptr {parameter}"))
+                    && !signature.contains(&format!("ptr {run},")),
+                "the frame replaces the run parameter: {body}"
+            );
+            assert!(
+                body.contains(&format!(
+                    "= getelementptr i64, ptr {parameter}, i64 {parameter}.negative"
+                )) && body.contains(&format!(
+                    "{run} = getelementptr i8, ptr {parameter}.first, i64 sub"
+                )),
+                "the inverse recovers the complete run without inbounds: {body}"
+            );
+        }
+        let touch = definition(&module, "wf_framed.arm.0");
+        assert!(touch.lines().any(|line| line.contains(&format!("= getelementptr i64, ptr {parameter}, i64 %v"))), "direct slots use the carried frame: {touch}");
+        assert!(
+            touch.contains(&format!("store ptr {run}, ptr %wf.pin."))
+                && touch.contains("@wf_bump(ptr %wf.pin."),
+            "the helper receives the reconstructed run through its pin: {touch}"
+        );
+        for arm in [1, 2] {
+            let body = definition(&module, &format!("wf_framed.arm.{arm}"));
+            assert!(
+                body.lines()
+                    .any(|line| line.contains("= getelementptr { i64, [0 x i64] },")
+                        && line.contains(&format!("ptr {run}, i64 0, i32 1, i64 %v"))),
+                "a new index forms its frame from the recovered run: {body}"
+            );
+        }
+        let step = definition(&module, "wf_framed.arm.3");
+        assert!(
+            step.contains(&format!("= getelementptr i64, ptr {parameter}, i64 1")),
+            "a constant frame step moves the address: {step}"
+        );
+        assert!(
+            touch
+                .lines()
+                .any(|line| line.contains("musttail call")
+                    && line.contains(&format!("ptr {parameter}"))),
+            "step zero forwards the same frame: {touch}"
+        );
+    }
+    assert!(
+        !definition(&module, "wf_unbounded").contains("%wf.element."),
+        "an arm-local guard does not justify a cursor on entry: {module}"
+    );
+    assert!(
+        !module.contains(&format!(
+            "{}wf_unbounded: carries a run element's address",
+            crate::DISPATCH_LEDGER_PREFIX
+        )),
+        "{module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
 /// A four-instruction interpreter written as self-tail transfers [FN-10]:
 /// `Add 3; Dec; Jnz 0; Halt` with a count of 1000 returns 3000. `RESULT`
 /// is the result type and `DONE(x)` constructs it from the accumulator.

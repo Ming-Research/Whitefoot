@@ -343,8 +343,8 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
 
     /// Emits a discharged source subscript read [OP-4]: the checker derived
     /// the bounds obligation, so no compare, branch, or trap is emitted in
-    /// any build mode, and the element address is one `inbounds` step into
-    /// the block.
+    /// any build mode. A split frame uses its carried element address;
+    /// otherwise one `inbounds` step addresses the slot from the block.
     pub(super) fn emit_buffer_index(
         &mut self,
         result: IrValueId,
@@ -372,7 +372,10 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         }
         let address = self.value_name(buffer);
         let index = self.value_name(offset);
-        let element_pointer = self.buffer_element_pointer(block, &address, &index)?;
+        let element_pointer = match self.frame_element_place(buffer, offset, ty)? {
+            Some(pointer) => pointer,
+            None => self.buffer_element_pointer(block, &address, &index)?,
+        };
         self.load_place_result(result, ty, &element_pointer)
     }
 
