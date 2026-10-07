@@ -70,11 +70,22 @@ pub(super) fn emit_union_declarations(
         module.named_type(view_name(nominal, variant.tag()), body, references);
     }
     let payload = layout
-        .size()
+        .handler_offset()
+        .unwrap_or(layout.size())
         .checked_sub(4)
         .ok_or(BackendFailure::InvalidIr)?;
     let aligning = view_name(nominal, layout.aligning_variant());
-    let body = format!("{{ i32, [{payload} x i8], [0 x %{aligning}] }}");
+    let body = if let Some(offset) = layout.handler_offset() {
+        // A typed pointer supplies its own alignment. The view still supplies
+        // any greater alignment, and the explicit tail preserves target size.
+        let tail = layout
+            .size()
+            .checked_sub(offset + 8)
+            .ok_or(BackendFailure::InvalidIr)?;
+        format!("{{ i32, [{payload} x i8], ptr, [{tail} x i8], [0 x %{aligning}] }}")
+    } else {
+        format!("{{ i32, [{payload} x i8], [0 x %{aligning}] }}")
+    };
     let mut references = References::default();
     references.types.insert(aligning);
     module.named_type(format!("wf.t.{}", nominal.link_name()), body, references);

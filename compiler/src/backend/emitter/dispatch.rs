@@ -2,8 +2,9 @@
 //! function per arm (compiler/match-dispatch-lowering).
 //!
 //! The header becomes an always-inline dispatch function that computes the
-//! header's values and transfers, through a handler table indexed by the
-//! tag, to the function of the selected arm; every edge back to the header
+//! header's values and transfers through a handler table indexed by the
+//! tag, or a threaded enum's trailing handler word, to the selected arm;
+//! every edge back to the header
 //! becomes a guaranteed tail call of the dispatch function, so each arm ends
 //! in its own indirect transfer. All parts take one parameter list — the
 //! header's parameters, the header values the arms read, the values from
@@ -24,6 +25,141 @@ use crate::{
     IrBlock, IrBlockId, IrDrop, IrEnumType, IrFunction, IrInstruction, IrTerminator, IrType,
     IrValueId,
 };
+
+/// Reachability shared by the program-wide census and function emission.
+pub(super) fn reachable(function: &IrFunction) -> Result<Vec<bool>, BackendFailure> {
+    let mut seen = vec![false; function.blocks().len()];
+    let mut pending = if seen.is_empty() { Vec::new() } else { vec![0] };
+    while let Some(index) = pending.pop() {
+        let visited = seen.get_mut(index).ok_or(BackendFailure::InvalidIr)?;
+        if !*visited {
+            *visited = true;
+            pending.extend(successors(&function.blocks()[index]));
+        }
+    }
+    Ok(seen)
+}
+
+/// The prototype is a whole-program layout choice, made before qualification
+/// or any function is emitted. Counting `find` results includes functions
+/// that planning later leaves whole; those values still reserve the word,
+/// initialized to null when there are no emitted handlers to enter.
+pub(super) fn threaded_program(
+    program: &crate::IrProgram,
+    target: crate::target::TargetLayout,
+) -> Result<std::borrow::Cow<'_, crate::IrProgram>, BackendFailure> {
+    let mut counts = HashMap::new();
+    for function in program.functions() {
+        if let Some(plan) = find(function, &reachable(function)?).0 {
+            *counts.entry(plan.matched).or_insert(0_usize) += 1;
+        }
+    }
+    // A native body cannot initialize this compiler-private word. Keep the
+    // layout of everything it can reach through its ordinary signature.
+    let foreign = foreign_nominals(program)?;
+    let mut selected = Vec::new();
+    for nominal in program.nominals() {
+        if counts.get(&nominal.id()) == Some(&1)
+            && !foreign.contains(&nominal.id())
+            && super::union_enums::is_union_enum(program, nominal.id())?
+        {
+            selected.push(nominal.id());
+        }
+    }
+    if selected.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(program));
+    }
+    let mut threaded = program.clone();
+    for id in &selected {
+        threaded.nominals[id.index()].threaded_dispatch = true;
+    }
+    // Nested enums use the same layouts. Remove candidates until each
+    // trailing word fits its product ceiling with the selected child layouts.
+    loop {
+        let mut removed = false;
+        for id in &selected {
+            if !threaded.nominals[id.index()].threaded_dispatch {
+                continue;
+            }
+            let fits = match crate::target::threaded_enum_fits(target, &threaded, *id) {
+                Ok(fits) => fits,
+                Err(crate::target::TargetLayoutFailure::Unrepresentable(_)) => false,
+                Err(failure) => return Err(BackendFailure::TargetLayout(failure)),
+            };
+            if !fits {
+                threaded.nominals[id.index()].threaded_dispatch = false;
+                removed = true;
+            }
+        }
+        if !removed {
+            break;
+        }
+    }
+    // A larger inline array can exceed the target address domain even when
+    // its element fits OP-9. This optional lowering never turns a qualified
+    // ordinary program into a target failure.
+    match crate::target::validate_program(target, &threaded) {
+        Ok(()) => Ok(std::borrow::Cow::Owned(threaded)),
+        Err(crate::target::TargetLayoutFailure::Unrepresentable(_)) => {
+            Ok(std::borrow::Cow::Borrowed(program))
+        }
+        Err(failure) => Err(BackendFailure::TargetLayout(failure)),
+    }
+}
+
+fn foreign_nominals(
+    program: &crate::IrProgram,
+) -> Result<HashSet<crate::IrNominalId>, BackendFailure> {
+    let mut pending = Vec::new();
+    for function in program.functions().iter().filter(|f| f.blocks().is_empty()) {
+        pending.push(function.result());
+        pending.extend(function.parameters().iter().map(|(_, ty)| *ty));
+    }
+    let mut visited = HashSet::new();
+    let mut nominals = HashSet::new();
+    while let Some(ty) = pending.pop() {
+        if !visited.insert(ty) {
+            continue;
+        }
+        match ty {
+            IrType::Nominal(id) => {
+                nominals.insert(id);
+                match program.nominal(id).ok_or(BackendFailure::InvalidIr)?.kind() {
+                    crate::IrNominalKind::Struct { fields } => {
+                        pending.extend(fields.iter().map(|f| f.ty()))
+                    }
+                    crate::IrNominalKind::Enum { variants } => {
+                        pending.extend(variants.iter().flat_map(|v| v.fields()).map(|f| f.ty()))
+                    }
+                    crate::IrNominalKind::Box { referent, .. } => pending.push(*referent),
+                    crate::IrNominalKind::Shared { state, shape } => {
+                        pending.push(*state);
+                        if let crate::IrShared::Map { entry } = shape {
+                            pending.push(*entry);
+                        }
+                    }
+                    crate::IrNominalKind::Opaque => {}
+                }
+            }
+            IrType::Address(referent) => pending.push(referent.ty()),
+            IrType::Array { element, .. }
+            | IrType::Window { element, .. }
+            | IrType::Buffer { element }
+            | IrType::Segments { element }
+            | IrType::Range { element }
+            | IrType::Entries { element } => {
+                pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
+            }
+            IrType::RuntimeBoxPayload { nominal } => pending.push(IrType::Nominal(nominal)),
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Integer { .. }
+            | IrType::Float { .. }
+            | IrType::KeySet => {}
+        }
+    }
+    Ok(nominals)
+}
 
 /// The calling convention of every part, with its argument registers on the
 /// target: the convention without callee-saved registers where the build's
@@ -476,6 +612,18 @@ pub(super) struct DispatchEmission {
     destination: bool,
     result: String,
     convention: &'static str,
+    /// The enum's pointer field is the dispatch source instead of the table.
+    threaded: bool,
+}
+
+impl DispatchEmission {
+    pub(super) fn handlers_by_tag(&self) -> Vec<String> {
+        self.plan
+            .table
+            .iter()
+            .map(|arm| self.arm_symbols[*arm].clone())
+            .collect()
+    }
 }
 
 impl FunctionFramePlan {
@@ -559,6 +707,7 @@ impl FunctionEmitter<'_, '_> {
             self.dispatch_ledger.extend(ledger);
             return Ok(None);
         };
+        let threaded = self.nominal(plan.matched)?.threaded_dispatch;
         let kind = if self.function.waits() {
             Some("the function waits")
         } else if self.grain.is_some() {
@@ -688,7 +837,8 @@ impl FunctionEmitter<'_, '_> {
         // is left for it, instead of being formed again in every arm.
         let mut with_base = types.clone();
         with_base.push("ptr".to_owned());
-        let table_base = spilled.is_empty()
+        let table_base = !threaded
+            && spilled.is_empty()
             && ArgumentRegisters::demand(&with_base).is_ok_and(|demand| registers.fits(demand));
         if table_base {
             types = with_base;
@@ -743,6 +893,12 @@ impl FunctionEmitter<'_, '_> {
             .program
             .nominal(plan.matched)
             .map_or("an enum", |nominal| nominal.name.as_str());
+        if threaded {
+            ledger.insert(
+                0,
+                format!("{body_symbol}: dispatches through the handler word in each {matched}"),
+            );
+        }
         if cursor.is_some() {
             ledger.insert(
                 0,
@@ -808,6 +964,7 @@ impl FunctionEmitter<'_, '_> {
             destination,
             result: result.to_owned(),
             convention,
+            threaded,
         }))
     }
 
@@ -1032,8 +1189,8 @@ impl FunctionEmitter<'_, '_> {
         Ok(true)
     }
 
-    /// Emits the dispatch header's terminator in the dispatch function: the
-    /// handler table load and the guaranteed tail call of the selected arm.
+    /// Emits the dispatch header's terminator: the handler load and the
+    /// guaranteed tail call of the selected arm.
     /// Returns whether `block` was that header.
     pub(super) fn emit_dispatch_select(
         &mut self,
@@ -1056,8 +1213,39 @@ impl FunctionEmitter<'_, '_> {
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
-        self.materialize_operands([scrutinee])?;
-        let (tag, tag_ty) = self.match_tag(scrutinee, enum_type)?;
+        let threaded = dispatch.threaded;
+        let matched = dispatch.plan.matched;
+        let cursor = dispatch.cursor.as_ref().map(|cursor| cursor.place);
+        if threaded && self.threaded_handlers.get(&matched) != Some(&dispatch.handlers_by_tag()) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let slot = if threaded {
+            let address = if let Some(place) = cursor {
+                self.value_name(place)
+            } else if matches!(self.value_type(scrutinee), Some(IrType::Address(_))) {
+                self.value_name(scrutinee)
+            } else {
+                self.value_place(scrutinee)?
+            };
+            self.aggregate_field_pointer(IrType::Nominal(matched), &address, 2)?
+        } else {
+            self.materialize_operands([scrutinee])?;
+            let (tag, tag_ty) = self.match_tag(scrutinee, enum_type)?;
+            let slot = self.next_temporary()?;
+            let index = self.next_temporary()?;
+            self.output.symbol(table_symbol);
+            // A two-variant tag-only enum's i1 must index as +1, not -1.
+            if tag_ty == "i64" {
+                writeln!(self.output, "  %{index} = add i64 {tag}, 0")?;
+            } else {
+                writeln!(self.output, "  %{index} = zext {tag_ty} {tag} to i64")?;
+            }
+            writeln!(
+                self.output,
+                "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr {table}, i64 0, i64 %{index}"
+            )?;
+            format!("%{slot}")
+        };
         let carried: Vec<(IrValueId, IrValueId)> = self
             .block(block)?
             .parameters()
@@ -1065,22 +1253,8 @@ impl FunctionEmitter<'_, '_> {
             .map(|(parameter, _)| (*parameter, *parameter))
             .collect();
         let list = self.dispatch_arguments(&carried, true, None)?;
-        let slot = self.next_temporary()?;
         let handler = self.next_temporary()?;
-        self.output.symbol(table_symbol);
-        // A tag narrower than the index is zero-extended: a two-variant
-        // tag-only enum's `i1` tag would otherwise index as -1.
-        let index = self.next_temporary()?;
-        let mut text = if tag_ty == "i64" {
-            format!("  %{index} = add i64 {tag}, 0\n")
-        } else {
-            format!("  %{index} = zext {tag_ty} {tag} to i64\n")
-        };
-        write!(
-            text,
-            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr {table}, i64 0, i64 %{index}\n  %{handler} = load ptr, ptr %{slot}\n"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        let mut text = format!("  %{handler} = load ptr, ptr {slot}\n");
         if result == "void" {
             text.push_str(&format!(
                 "  musttail call {convention}void %{handler}({list})\n  ret void\n"
@@ -1156,6 +1330,7 @@ impl FunctionEmitter<'_, '_> {
         let dropped = dispatch.dropped.clone();
         let spilled = dispatch.spilled.clone();
         let pins = dispatch.pins.clone();
+        let threaded = dispatch.threaded;
         let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
 
         self.set_part(Part::Header);
@@ -1266,6 +1441,9 @@ impl FunctionEmitter<'_, '_> {
             module.text("\n");
         }
 
+        if threaded {
+            return Ok(());
+        }
         let mut references = References::default();
         let entries = table
             .iter()

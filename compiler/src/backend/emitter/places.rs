@@ -343,6 +343,28 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<(), BackendFailure> {
         let destination =
             self.begin_construction(result, IrType::Nominal(nominal), Some(variant))?;
+        if self.nominal(nominal)?.threaded_dispatch {
+            let handler = self
+                .threaded_handlers
+                .get(&nominal)
+                .map(|handlers| {
+                    handlers
+                        .get(variant as usize)
+                        .cloned()
+                        .ok_or(BackendFailure::InvalidIr)
+                })
+                .transpose()?;
+            let operand = if let Some(handler) = handler {
+                self.output.symbol(handler.clone());
+                format!("@{handler}")
+            } else {
+                // The sole recognized loop was emitted whole on this target.
+                "null".to_owned()
+            };
+            let word = self.aggregate_field_pointer(IrType::Nominal(nominal), &destination, 2)?;
+            writeln!(self.output, "  store ptr {operand}, ptr {word}")
+                .map_err(|_| BackendFailure::TextEmission)?;
+        }
         for (index, value) in fields.iter().enumerate() {
             let field = u32::try_from(index).map_err(|_| BackendFailure::CounterOverflow)?;
             let address = self.variant_field_pointer(nominal, variant, field, &destination)?;

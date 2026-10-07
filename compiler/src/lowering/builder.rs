@@ -415,6 +415,7 @@ fn lower_nominals(
                     u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?,
                 ),
                 kind,
+                threaded_dispatch: false,
             })
         })
         .collect()

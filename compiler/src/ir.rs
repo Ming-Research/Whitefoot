@@ -479,6 +479,9 @@ pub struct IrNominal {
     pub(crate) stable: Option<String>,
     pub(crate) id: IrNominalId,
     pub(crate) kind: IrNominalKind,
+    /// Experimental whole-program dispatch layout, selected before emission.
+    /// A union enum reserves a trailing pointer for its sole loop's handler.
+    pub(crate) threaded_dispatch: bool,
 }
 
 impl IrNominal {
@@ -1860,7 +1863,7 @@ impl IrFunction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct IrProgram {
     pub(crate) nominals: Vec<IrNominal>,
     pub(crate) elements: Vec<IrType>,

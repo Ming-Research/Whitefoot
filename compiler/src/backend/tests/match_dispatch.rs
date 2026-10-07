@@ -403,8 +403,69 @@ fn the_matched_element_s_address_travels_between_the_parts() {
     // function no longer forms it from `pc`. A known step moves the received
     // address; a jump forms its address from the run. The result checks the
     // entering address, forward and backward jumps, and an in-place edge.
-    let module = emit(CURSOR_INTERPRETER.as_bytes());
+    // Reorder the tags independently of the match arms and construct in
+    // several functions, including enum results returned through a destination.
+    // The same execution still checks the cursor and the result 215.
+    let source = CURSOR_INTERPRETER
+        .replace(
+            "  Add(k: u64);\n  Jump(t: u64);\n  Rep(k: u64);\n  Halt();",
+            "  Jump(t: u64);\n  Add(k: u64);\n  Halt();\n  Rep(k: u64);",
+        )
+        .replace(
+            "let c0 = Op::Add(k: 1000_u64);",
+            "let c0 = make_add(k: 1000_u64);",
+        )
+        .replace(
+            "let c3 = Op::Rep(k: 5_u64);",
+            "let c3 = make_rep(k: 5_u64);",
+        )
+        .replace(
+            "fn main()",
+            r#"fn make_add(k: u64) -> r: Op pure {
+  return Op::Add(k: k);
+}
+
+fn make_rep(k: u64) -> r: Op pure {
+  return Op::Rep(k: k);
+}
+
+fn main()"#,
+        );
+    let module = emit(source.as_bytes());
     if verdict(&module, "wf_run").starts_with("split") {
+        assert_element_handlers(&module, "wf_run");
+        // Before the prototype none of these stores exists. Checking each
+        // tag beside its handler store also catches using tag as arm ordinal.
+        for (function, tag, arm, sites) in [
+            ("make_add", 1, 0, 1),
+            ("make_rep", 3, 2, 1),
+            ("main", 0, 1, 2),
+            ("main", 2, 3, 1),
+        ] {
+            let body = emitted_body(&module, function);
+            let lines: Vec<_> = body.lines().collect();
+            let stores = lines
+                .windows(3)
+                .filter(|lines| {
+                    lines[0]
+                        .trim_start()
+                        .starts_with(&format!("store i32 {tag}, ptr "))
+                        && lines[1].ends_with(", i32 0, i32 2")
+                        && lines[2]
+                            .trim_start()
+                            .starts_with(&format!("store ptr @wf_run.arm.{arm}, ptr "))
+                })
+                .count();
+            assert_eq!(
+                stores, sites,
+                "every construction stores its mapped handler in {function}: {body}"
+            );
+        }
+        assert_eq!(
+            module.matches("store ptr @wf_run.arm.").count(),
+            5,
+            "all five construction sites initialize the hidden word: {module}"
+        );
         assert!(
             module.contains(&format!(
                 "{}wf_run: carries the matched Op's address between the parts",
@@ -462,6 +523,239 @@ fn the_matched_element_s_address_travels_between_the_parts() {
     }
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
+}
+
+/// Every mechanism assertion here fails on the old table-based dispatch:
+/// it has neither the ledger line, the pointer field nor its element load.
+fn assert_element_handlers(module: &str, base: &str) {
+    let dispatch = definition(module, &format!("{base}.dispatch"));
+    let word = dispatch
+        .lines()
+        .find(|line| {
+            line.contains(" = getelementptr inbounds %wf.t.") && line.ends_with(", i32 0, i32 2")
+        })
+        .expect("dispatch addresses the element's hidden pointer field");
+    let (slot, gep) = word
+        .trim()
+        .split_once(" = getelementptr inbounds ")
+        .unwrap();
+    let (ty, operands) = gep.split_once(", ptr ").unwrap();
+    let (place, _) = operands.split_once(',').unwrap();
+    let handler = dispatch
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_suffix(&format!(" = load ptr, ptr {slot}"))
+        })
+        .expect("the dispatch target is loaded from the hidden word");
+    let (convention, _) = host_convention();
+    assert!(
+        module.contains(&format!(
+            "{}{}: dispatches through the handler word in each Op",
+            crate::DISPATCH_LEDGER_PREFIX,
+            base
+        )) && dispatch
+            .lines()
+            .next()
+            .unwrap()
+            .contains(&format!("ptr {place}"))
+            && dispatch.contains(&format!("musttail call {convention}i64 {handler}("))
+            && !dispatch.contains("load i32")
+            && !dispatch.contains("x ptr]")
+            && !module.contains(&format!("@{base}.dispatch.table"))
+            && !dispatch.contains("%wf.dispatch.base"),
+        "dispatch loads and calls the element's handler without a tag, table or table parameter: {dispatch}"
+    );
+    assert!(
+        module.contains(&format!(
+            "{ty} = type {{ i32, [12 x i8], ptr, [0 x i8], [0 x {ty}.v0] }}"
+        )) && module
+            .lines()
+            .any(|line| line.contains("call void @llvm.memmove.")
+                && line.contains(&format!("getelementptr ({ty}, ptr null, i32 1)"))),
+        "the 16-byte variant gains an aligned pointer and memmove copies its complete type: {module}"
+    );
+}
+
+#[test]
+fn handler_words_follow_destination_body_names_and_fragment_selection() {
+    // A third payload makes Op memory-only while Outcome still returns in
+    // registers. The loop's handlers therefore belong to wf_run.body.
+    let source = enum_interpreter()
+        .replace("  Dec();\n", "  Dec(k: u64);\n")
+        .replace("    Dec() =>", "    Dec(k: unused) =>")
+        .replace("Op::Dec()", "Op::Dec(k: 0_u64)");
+    let inputs = [crate::SourceInput::new("threaded.wf", source.as_bytes())];
+    let whole = crate::compile_for_emission(
+        &inputs,
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::Off,
+        None,
+        false,
+    )
+    .expect("whole-program emission")
+    .0;
+    let fragments = crate::compile_for_emission(
+        &inputs,
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::Off,
+        None,
+        true,
+    )
+    .expect("fragment-compatible emission")
+    .0;
+    let split = verdict(&whole, "wf_run.body").starts_with("split");
+    let stores = whole.matches("store ptr @wf_run.body.arm.").count();
+    // Both modes had the same layout before the prototype. The positive
+    // store/layout difference makes these controls fail on that old output.
+    assert!(
+        whole.contains("[12 x i8], ptr, [0 x i8]")
+            && (if split {
+                stores == 4
+            } else {
+                stores == 0 && whole.contains("store ptr null")
+            })
+            && !fragments.contains("[12 x i8], ptr, [0 x i8]")
+            && !fragments.contains("store ptr @wf_run.body.arm."),
+        "constructors name the emitted .body arms only in whole-module emission: {whole}"
+    );
+    let pieces = crate::split_module(&fragments, crate::FragmentGranularity::Function)
+        .expect("fragment dependencies resolve without cross-module handler words");
+    assert!(
+        whole.contains("[12 x i8], ptr, [0 x i8]")
+            && pieces
+                .iter()
+                .all(|piece| !piece.contains("store ptr @wf_run.body.arm.")),
+        "fragment output never stores private handler addresses"
+    );
+    // The restriction survives a retained-module round trip; before this
+    // prototype both calls succeeded instead of enforcing fragment selection.
+    for module in [
+        &whole,
+        &crate::LlvmModule::decode(&whole.encode()).expect("retained module"),
+    ] {
+        assert!(
+            crate::split_module(module, crate::FragmentGranularity::Function)
+                .is_err_and(|failure| failure.to_string().contains("fragments=true")),
+            "a whole-program layout cannot be split after emission"
+        );
+    }
+}
+
+#[test]
+fn an_unsplit_owner_initializes_null_and_a_second_owner_disables_threading() {
+    let source = format!(
+        "{CURSOR_INTERPRETER}{}",
+        r#"
+enum Small {
+  A(a: u8);
+  B(b: u8);
+  C(c: u8);
+}
+
+fn small(op: &Small, count: u64) -> r: u64 reads(op) {
+  match op^ {
+    A(a: unused) => {
+      if count != 0_u64 {
+        let next = count -wrap 1_u64;
+        return musttail small(op: op, count: next);
+      }
+      return 0_u64;
+    }
+    B(b: unused) => {
+      return 1_u64;
+    }
+    C(c: unused) => {
+      return 2_u64;
+    }
+  }
+}
+"#
+    );
+    super::system::with_ir(source.as_bytes(), |program| {
+        let target = crate::target::TargetLayout::host().expect("test target");
+        let id = program
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Op")
+            .unwrap()
+            .id();
+        let layout = |program: &crate::IrProgram| {
+            crate::target::union_enum_layout(target, program, id).expect("Op layout")
+        };
+        let selected = crate::backend::emitter::prepare_dispatch_layout(program, target, false)
+            .expect("whole-program selection");
+        let threaded = layout(&selected);
+        assert!(
+            threaded.size() == 24
+                && threaded.handler_offset() == Some(16)
+                && layout(program).size() == 16,
+            "the hidden word follows the largest variant; previously Op stayed 16 bytes"
+        );
+        let small = selected
+            .nominals()
+            .iter()
+            .find(|n| n.name() == "Small")
+            .unwrap();
+        let small_layout = crate::target::union_enum_layout(target, &selected, small.id())
+            .expect("Small is also a memory-only union");
+        assert!(
+            threaded.handler_offset() == Some(16)
+                && small_layout.handler_offset().is_none()
+                && small_layout.size() == 8,
+            "the pointer cannot enlarge Small beyond its 8-byte, 4-aligned OP-9 ceiling"
+        );
+
+        let owner = program
+            .functions()
+            .iter()
+            .position(|f| f.name() == "run")
+            .unwrap();
+        let mut unsplit = program.clone();
+        // Synthesis is one of the ordinary planner's explicit unsplit cases.
+        unsplit.functions[owner].synthesis = Some(crate::IrSynthesis::Chunk);
+        let module = crate::backend::emitter::emit_llvm_with_layout(&unsplit, target)
+            .expect("whole-function emission");
+        let ty = format!("%wf.t.{}", program.nominal(id).unwrap().link_name());
+        let lines: Vec<_> = module.lines().collect();
+        let nulls = lines
+            .windows(2)
+            .filter(|pair| {
+                pair[0].contains(&format!("getelementptr inbounds {ty},"))
+                    && pair[0].ends_with(", i32 0, i32 2")
+                    && pair[1].trim_start().starts_with("store ptr null, ptr ")
+            })
+            .count();
+        assert!(
+            nulls == 5
+                && !module.contains("@wf_run.arm.")
+                && verdict(&module, "wf_run").contains("compiler-synthesized"),
+            "all constructors initialize an unused null word without undefined arms: {module}"
+        );
+
+        let mut two = program.clone();
+        let mut other = two.functions[owner].clone();
+        other.name = "other_run".to_owned();
+        two.functions.push(other);
+        let two = crate::backend::emitter::prepare_dispatch_layout(&two, target, false)
+            .expect("two-loop program");
+        assert!(
+            threaded.handler_offset() == Some(16) && layout(&two).handler_offset().is_none(),
+            "a second recognized loop anywhere in the program restores ordinary layout"
+        );
+
+        let mut foreign = program.clone();
+        let mut native = foreign.functions[owner].clone();
+        native.name = "native_run".to_owned();
+        native.blocks.clear();
+        foreign.functions.push(native);
+        let foreign = crate::backend::emitter::prepare_dispatch_layout(&foreign, target, false)
+            .expect("native boundary program");
+        assert!(
+            threaded.handler_offset() == Some(16) && layout(&foreign).handler_offset().is_none(),
+            "an enum reachable through a native signature keeps its native layout"
+        );
+    });
 }
 
 #[test]
