@@ -36,7 +36,9 @@ on:
       experiment:
         description: The compute scoreboard, or the code-placement experiment
         type: choice
-        options: [scoreboard, placement]
+        # stage3-gap is temporary, for the gap to Silverfir-nano, and is
+        # removed before claude/stage3-gap is ready.
+        options: [scoreboard, placement, stage3-gap]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -107,7 +109,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -356,3 +358,71 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  # Temporary: research/investigations/match-dispatch/DESIGN.md, "Stage 3:
+  # the gap to Silverfir-nano": v2h compiled by this branch, a twin of it,
+  # Silverfir-nano and, where it installs, wasmi, on CoreMark.
+  stage3-gap:
+    if: inputs.experiment == 'stage3-gap'
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted","14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            version=$(tr -d '[:space:]' < .github/llvm-major)
+            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+            rustup default stable
+          elif [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          /usr/bin/clang --version | head -1
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+          rustc --version
+
+      - name: Build the interpreters
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/stage3-gap"
+          mkdir -p "$out"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          python3 research/experiments/match-dispatch/wasm/gen.py "$out/interp.wf"
+          compiler/target/gate/whitefootc --dispatch-ledger "$out/interp.wf" -o "$out/wasm-wf" | grep wf_run
+          cp "$out/wasm-wf" "$out/wasm-twin"
+          rm -rf "$RUNNER_TEMP/sf"
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
+          git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
+          git -C "$RUNNER_TEMP/sf" log --oneline -1
+          cargo build --release --quiet --manifest-path "$RUNNER_TEMP/sf/Cargo.toml" -p sf-nano-cli
+          if cargo install --quiet --locked --root "$RUNNER_TEMP/wasmi" wasmi_cli; then
+            "$RUNNER_TEMP/wasmi/bin/wasmi_cli" --version || true
+          else
+            echo "wasmi_cli did not install; measured without it"
+          fi
+
+      - name: Run CoreMark
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/stage3-gap"
+          probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
+          # The interpreters open the module relative to the working directory.
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          engines=(wf="$out/wasm-wf" twin="$out/wasm-twin")
+          wasmi="$RUNNER_TEMP/wasmi/bin/wasmi_cli"
+          if [ -x "$wasmi" ]; then
+            if python3 "$probe" --module coremark.wasm --iterations 200 --launches 1 wasmi="$wasmi"; then
+              engines+=(wasmi="$wasmi")
+            else
+              echo "wasmi_cli does not run the module as invoked; measured without it"
+            fi
+          fi
+          engines+=(nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp")
+          python3 "$probe" --module coremark.wasm --iterations 2000 --launches 7 \
+            --tsv "$out/run.tsv" "${engines[@]}"
+          cat "$out/run.tsv"

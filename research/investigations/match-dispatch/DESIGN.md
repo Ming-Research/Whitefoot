@@ -690,3 +690,31 @@ also carries the register-pressure candidate. Alone, that candidate gave
 It is kept as a correction rather than adopted as a gain: the recorded
 spill order spills the values the fewest arms read first, and the
 implementation had missed reads through projections and pins.
+
+## Stage 3: the gap to Silverfir-nano
+
+The stage-3 wasm interpreter is the yardstick for this lowering because its
+ceiling is known. Silverfir-nano's interpreter is close to the best this
+dispatch shape reaches, and wasmi, a Rust interpreter dispatching by tail
+calls, is reported at about 80% of it. A Whitefoot interpreter compiled
+from the same design should reach that too. Halo's Lua interpreter remains
+the check that a change does not cost another interpreter. Where Halo
+cannot reach the wasm interpreter's shape, the gap points at Halo's
+implementation, as its next index taken from helpers does.
+
+**Question.** On the 14900K with the pinned LLVM, how far is v2h, compiled
+by main, from Silverfir-nano on CoreMark, and from wasmi where it runs the
+same module? Where do the remaining instructions per dispatch go?
+
+**First step: the ratio, no compiler change.** Run v2h compiled by main,
+a twin of it, Silverfir-nano `5f248e44` (`sf-nano-cli --interp`) and
+wasmi's command-line runner where it installs. Use CoreMark 2K with 7
+interleaved launches and medians. Then compare the hot arms' machine code
+with Silverfir-nano's handlers, role by role, as the code cursor's
+attribution did.
+
+**Use of the result.** The ratio sets how much room is left. The
+attribution orders the next lowering candidates by the instructions they
+would remove from the hot arms. Each candidate keeps its own rule, written
+before it is measured: the wasm interpreter on the 14900K decides, and
+Halo must not regress.
