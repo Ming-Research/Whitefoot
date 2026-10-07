@@ -133,7 +133,7 @@ fn the_c_runtime_compiles_with_64_byte_function_alignment() {
         crate::HOST_OPTIMIZATION_ARGUMENTS,
         "runtime.mk must compile the runtime with the driver's host arguments"
     );
-    let mut child = Command::new("/usr/bin/clang")
+    let mut child = Command::new(crate::clang_executable())
         .args(["-x", "c", "-", "-S", "-o", "-"])
         .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
         .stdin(std::process::Stdio::piped())

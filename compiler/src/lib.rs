@@ -30,6 +30,9 @@ pub mod spec_identity {
 }
 mod syntax;
 mod target;
+mod toolchain;
+
+pub use toolchain::clang_executable;
 
 /// The stack each worker of [`in_parallel`] runs on, as large as the
 /// compiler driver's own: a worker runs the same recursive checks.

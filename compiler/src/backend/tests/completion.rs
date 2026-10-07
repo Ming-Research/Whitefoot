@@ -69,7 +69,7 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
         if !name.ends_with(".c") || name == "concurrent_map.c" {
             continue;
         }
-        let checked = Command::new("/usr/bin/clang")
+        let checked = Command::new(crate::clang_executable())
             .arg("-fsyntax-only")
             .arg("-pthread")
             .arg("-I")

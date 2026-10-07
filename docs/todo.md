@@ -2145,17 +2145,13 @@ rarely insert at the same place.
   `compiler/src/bin/whitefootc.rs` hard-codes `/usr/bin/clang` on Linux and
   macOS (`clang` on PATH on Windows), and `build.rs` probes that same clang
   for `preserve_none`, the no-capture spelling and `llvm.coro.end`'s result
-  type. The probed answers are fixed into the executable. A release built
-  against one LLVM can therefore emit IR the host's clang refuses: clang
-  22.1.8 rejects the `i1` `llvm.coro.end` that compilers built against
-  clang 18 emit. A host whose clang lives elsewhere (a versioned `clang-22`,
-  Nix, Homebrew) also cannot run the driver.
-
-  macOS has no such pin. The macOS release `wf-0b7f5c5b9854`, built on
-  macos-15 with Apple clang 17, emits the `void` form. Apple clang 21
-  (Xcode on macOS 27) refuses that call and takes the `i1` form, so no
-  waiting program compiled by that release links on such a Mac. A compiler
-  built on the Mac itself works.
+  type. Those three forms are now probed when `whitefootc` runs, so a
+  release no longer emits a form the host's clang refuses (it did: the
+  macOS release `wf-0b7f5c5b9854`, built where clang takes the `void`
+  `llvm.coro.end`, emitted it to Apple clang 21, which refuses it). A host
+  without clang, or whose clang lives elsewhere (a versioned `clang-22`,
+  Nix, Homebrew), still cannot run the driver, and code generation still
+  differs with the host's LLVM.
 
   Until then, Linux releases and their consumers use the gate's pinned LLVM
   major (compiler/verification, compiler/downstream-releases). Bundling clang
