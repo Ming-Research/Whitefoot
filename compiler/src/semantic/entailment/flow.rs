@@ -1075,6 +1075,7 @@ pub(super) fn contract_implies(
     context: &EntailmentContext<'_>,
     goal: &GoalExpression,
 ) -> FunctionEntailment {
+    let _work = super::work::function(&function.name);
     let mut analyzer = Analyzer::new(context, function);
     analyzer.input.collect_bindings();
     let mut state = ProofFlowState::default();
@@ -1165,6 +1166,7 @@ struct AnalysisRun {
 }
 
 fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisRun {
+    let _work = super::work::function(&function.name);
     let mut analyzer = Analyzer::new(context, function);
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();

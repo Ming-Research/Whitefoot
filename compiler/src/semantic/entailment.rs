@@ -26,6 +26,7 @@ mod flow;
 mod polynomial;
 mod state;
 mod term;
+mod work;
 
 pub(crate) use state::DerivationId;
 #[cfg(test)]
