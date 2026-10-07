@@ -1226,6 +1226,15 @@ rarely insert at the same place.
   calling `main` of `tests/conformance/cases/range5-pos-paged-certified-scatter.wf`.
   Reopen when Snowghost's certified scatter runs over Paged payload pools.
 
+- **The window test module's introduction describes implemented support as
+  missing.** `compiler/src/semantic/tests/windows.rs` says OP-10's window
+  type parameter is not inferred from the operand and that runtime-capacity
+  `Slots<T>` and `Ring<T>` stop as unimplemented, but window operations are
+  called without type arguments and runtime-capacity windows check and run
+  throughout the conformance corpus. Rewrite the paragraph to state what the
+  module's assertions pin today; no test changes. Reopen with the next edit of
+  that module.
+
 - **A segment borrowed below a range element does not emit.** In
   `fn segments(rows: &[Box<Segments<u64>>], i: u64)`, the borrow
   `&rows^[i].inner[0_u64]` checks and lowers (slice address, Box referent
