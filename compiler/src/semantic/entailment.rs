@@ -40,7 +40,7 @@ use term::TermId;
 pub(crate) use state::{
     CountedRootAtom, DerivationNode, DerivationRootKind, FlowEvent, FlowEventId, FlowEventKind,
     GoalSign, ImplicitBoundKind, JoinParent, PostconditionCallDetail,
-    PostconditionDeliveryJoinDetail, RangeSeparationOrdering, Relation,
+    PostconditionDeliveryJoinDetail, RangeSeparationOrdering, Relation, TransportedHeaderRelation,
 };
 /// The mathematical value of a checked integer constant [ENT-2].
 pub(crate) use term::integer_value;
@@ -737,6 +737,46 @@ pub(crate) struct LoopInvariantOutcome {
     /// The source fact context's induction result. This is the semantic result
     /// consumed by diagnostics and later proof queries.
     pub(crate) proof: LoopInvariantProof,
+    pub(crate) base_evidence: LoopRelationEvidence,
+    /// Complete ordered input inventory, including contradictory edges.
+    pub(crate) inputs: Vec<LoopInvariantInput>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LoopInductionRoute {
+    Fallthrough,
+    Continue { statement: NodePath },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LoopInductionInput {
+    pub(crate) site: NodePath,
+    pub(crate) branch: String,
+    pub(crate) route: LoopInductionRoute,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LoopFormationFailure {
+    pub(crate) site: NodePath,
+    pub(crate) required: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LoopRelationEvidence {
+    pub(crate) instance: Option<state::AffineRelationInstance>,
+    pub(crate) components: Vec<DerivationId>,
+    pub(crate) contradiction: Option<DerivationId>,
+    pub(crate) failing_component: Option<u8>,
+    pub(crate) formation_failure: Option<LoopFormationFailure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LoopInvariantInput {
+    pub(crate) input: LoopInductionInput,
+    pub(crate) discharged: bool,
+    pub(crate) refuted: bool,
+    pub(crate) hidden_update: Option<DerivationId>,
+    pub(crate) evidence: LoopRelationEvidence,
 }
 
 /// A structural failure while following one source-written local certificate.
@@ -1266,9 +1306,16 @@ pub(crate) fn answer_records(
                 } => call_goals
                     .take(&(site, requires_clause, *subject))
                     .map(RecordAnswer::CallGoal),
-                ObligationSubject::LoopInvariant => {
-                    loop_invariants.take(&site).map(RecordAnswer::LoopInvariant)
-                }
+                ObligationSubject::LoopInvariant { inputs } => loop_invariants
+                    .take(&site)
+                    .filter(|index| {
+                        entailment.loop_invariants[*index]
+                            .inputs
+                            .iter()
+                            .map(|input| &input.input)
+                            .eq(inputs.iter())
+                    })
+                    .map(RecordAnswer::LoopInvariant),
                 ObligationSubject::SourceProof => {
                     source_proofs.take(&site).map(RecordAnswer::SourceProof)
                 }

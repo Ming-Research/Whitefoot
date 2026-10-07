@@ -99,51 +99,19 @@ rarely insert at the same place.
   repeated checks of the interpreter, or another program meets the same
   growth.
 
-- **A loop invariant is lost where a guarded update joins an untouched path.**
-  Minimal witness:
-
-  ```wf
-  fn walk(room: u64, t0: u64, c: u64) -> r: u64 pure {
-    let j = 0_u64;
-    loop (
-      invariant jb: j <= room
-    ) {
-      let t = t0;
-      if c == 1_u64 {
-        if t <= room {
-          set j = t;
-        } else {
-          return j;
-        }
-      } else if c == 2_u64 {
-        return j;
-      }
-    }
-    return j;
-  }
-  ```
-
-  is refused with `INV-1 UndischargedLoopInvariant`, obligation `Backedge`,
-  on `jb` (compiler at 648338c31). Two paths reach the back edge, and each
-  alone re-proves `j <= room`: the update from `t <= room` with `j == t`,
-  the fallthrough from the assumed invariant. Each path alone is accepted:
-  making the fallthrough return, so that only the update reaches the back
-  edge, passes, and so does removing the update. The loss is therefore at
-  the join of the two paths, where neither path's own fact survives. The
-  program is sound. Impact: a natural `loop { match }` interpreter cannot
-  carry its stated relations across these joins under the current rules.
-  The owner selected Q137 option B: transport active, base-proved written
-  header relations proved on every input, and prove terminal induction
-  batches per input. The [join-relations design](../research/investigations/join-relations/DESIGN.md)
-  gives the proposed ENT-2, ENT-5, ENT-6 and INV-1 text, canonical merge boundaries,
-  indexed-operand formation, evidence and implementation plan. It remains
-  unimplemented; the precise canonical-boundary refinement awaits Q146.
-  Reopen at phase-1 integration. Validate the four C2 witnesses, shared
-  suffixes, nested/flat agreement, failed inputs, equality batches and
-  measure invalidation without changing the source into a runtime recheck
-  or a self-tail call. The design also records the existing helper
-  diagnostic that advises adding a preservation postcondition already
-  present; repair it with the join diagnostic provenance.
+- **A rejection after a join does not name the input that failed to carry a
+  header relation.** When a join cannot carry a loop header's written
+  relation because one input does not prove it [ENT-5], a later rejection
+  that needed it (OP-4 or OP-2, for example `stack^.inner[fp]` after a
+  conditional helper call whose contract lacks the length-preserving
+  `ensures`) reports only its own residual. Impact: the writer cannot see
+  which branch lost the relation. Change: keep the failed transport's input
+  and component as explanatory data and add them to the later consumer's
+  repair, never as acceptance authority, as the
+  [join-relations design](../research/investigations/join-relations/DESIGN.md#checker-mechanisms-and-interfaces)
+  plans. Reopen when a writer trial or program stalls on such a rejection.
+  Validate with the helper witness without its `ensures`: the diagnostic
+  names the call edge.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant

@@ -58,6 +58,15 @@ pub(crate) enum TermKind {
     /// One measure term `P.len`, `P.cap` or `P.head` [MSR-1, OP-15],
     /// of fragment type u64. Its support is P's descriptor storage [MSR-2].
     Measure(CheckedMeasure, ResolvedPlace),
+    /// [ENT-2(j)] the source measure with the counted binder's offsets
+    /// replaced by this edge's single next-binder selector. The source term
+    /// fixes declaration and spelling identity, not current-slot authority.
+    TargetMeasure {
+        measure: CheckedMeasure,
+        source: TermId,
+        loop_id: super::super::model::CheckedLoopId,
+        edge: crate::NodePath,
+    },
     /// One immutable compiler-owned endpoint capture [ENT-2, S11]. The
     /// finalized `for_stmt` path plus the endpoint side is its complete
     /// function-local identity; source can neither name nor mutate it.
@@ -270,6 +279,17 @@ impl TermTable {
     pub(crate) fn sibling_measure(&self, term: TermId, measure: CheckedMeasure) -> Option<TermId> {
         let sibling = match self.kind(term) {
             TermKind::Measure(_, place) => TermKind::Measure(measure, place.clone()),
+            TermKind::TargetMeasure {
+                source,
+                loop_id,
+                edge,
+                ..
+            } => TermKind::TargetMeasure {
+                measure,
+                source: self.sibling_measure(*source, measure)?,
+                loop_id: *loop_id,
+                edge: edge.clone(),
+            },
             _ => return None,
         };
         self.interned(&sibling)

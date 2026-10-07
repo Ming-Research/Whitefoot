@@ -893,7 +893,7 @@ impl Report for SemanticIssueKind {
             InvalidTypeInvariant { reason, mechanical_fix };
             TypeInvariantWritableField { field, mechanical_fix };
             UndischargedTypeInvariant { type_invariant, instantiated_goal, disposition, mechanical_fix };
-            UndischargedLoopInvariant { name, obligation, required_relation, disposition, mechanical_fix };
+            UndischargedLoopInvariant { name, obligation, incoming_edge, required_relation, disposition, mechanical_fix };
             UndischargedLocalInvariant { name, disposition, mechanical_fix };
             InvalidSourceProof { reason, mechanical_fix };
             UndischargedSourceProof { name, obligation, mechanical_fix };

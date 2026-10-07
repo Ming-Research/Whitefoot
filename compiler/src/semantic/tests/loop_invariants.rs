@@ -2580,17 +2580,12 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
-/// [INV-1, DIAG-1] A body-end local invariant is a probe: it asks whether the
-/// entering context at that join still proves the relation the header carries.
-/// Here it does not, and the header's own backedge fails for exactly the same
-/// reason. DIAG-1 admits one rejection, and the probe is decided at the join
-/// while the backedge is decided only after the whole body has been walked, so
-/// the probe is the reported failure.
-///
-/// Reporting the header instead makes a failing probe look like a passing one,
-/// which is how a writer concludes that the join does establish the relation.
+/// [ENT-5, INV-1] A body-end local invariant reads the state the join hands
+/// it. After a guarded replacement, both inputs of the join prove the header
+/// relation `hi <= spare` over their own values, so the join carries it and
+/// the probe holds; so does the backedge.
 #[test]
-fn a_failing_body_probe_is_reported_before_the_header_backedge() {
+fn a_body_probe_after_a_guarded_replacement_reads_the_transported_header_relation() {
     let source = br#"fn narrow(spare: u64, cand: u64, flag: Bool) -> out: u64 pure {
   let hi = spare;
   loop (
@@ -2611,6 +2606,49 @@ fn a_failing_body_probe_is_reported_before_the_header_backedge() {
 fn main() -> status: std::process::ExitStatus pure {
   let t = True();
   let v = narrow(spare: 8_u64, cand: 3_u64, flag: t);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_semantics(source, |outcome| {
+        assert!(
+            matches!(outcome, SemanticOutcome::Complete(_)),
+            "the transported header relation proves the probe: {outcome:?}"
+        );
+    });
+}
+
+/// [INV-1, DIAG-1] A body-end local invariant is a probe: it asks whether the
+/// entering context at that join still proves the relation the header carries.
+/// Here it does not, because the replacing input's value may exceed the
+/// bound, and the header's own backedge fails for exactly the same reason.
+/// DIAG-1 admits one rejection, and the probe is decided at the join while
+/// the backedge is decided only after the whole body has been walked, so the
+/// probe is the reported failure.
+///
+/// Reporting the header instead makes a failing probe look like a passing one,
+/// which is how a writer concludes that the join does establish the relation.
+#[test]
+fn a_failing_body_probe_is_reported_before_the_header_backedge() {
+    let source = br#"fn narrow(spare: u64, cand: u64, flag: Bool) -> out: u64 pure {
+  let hi = spare;
+  loop (
+    invariant bounds: hi <= spare
+  ) {
+    if spare <= cand {
+    } else {
+      return 0_u64;
+    }
+    if flag {
+      set hi = cand;
+    }
+    invariant reprove: hi <= spare;
+  }
+  return hi;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let t = True();
+  let v = narrow(spare: 8_u64, cand: 9_u64, flag: t);
   return std::process::exit_status(code: 0_u8);
 }
 "#;

@@ -1086,6 +1086,8 @@ pub enum SemanticIssueKind {
         name: String,
         /// The failed induction obligation, selected in proof order.
         obligation: LoopInvariantProofObligation,
+        /// Source route and line of the failing incoming edge.
+        incoming_edge: String,
         /// The exact source-language relation the failed incoming edge had to
         /// establish. A counted-loop backedge renders the hidden next binder
         /// as `i + 1_u64`; no checker-private term identity is exposed.

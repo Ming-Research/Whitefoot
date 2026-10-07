@@ -1465,7 +1465,8 @@ impl Reasoning<'_, '_, '_> {
                 holders.extend(projected_holders);
             }
             TermKind::Zero | TermKind::Constant(_) | TermKind::ConstParameter(..) => {}
-            TermKind::CountedCapture { .. }
+            TermKind::TargetMeasure { .. }
+            | TermKind::CountedCapture { .. }
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }

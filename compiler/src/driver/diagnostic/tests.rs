@@ -245,6 +245,7 @@ fn main() -> status: std::process::ExitStatus pure {
   marker:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   name: behind
   obligation: Backedge
+  incoming_edge: fallthrough from the `else` branch at line 12
   required_relation: kept <= (at + 1_u64)
   disposition: Unproved
   mechanical_fix: `behind` is not proved preserved at the next loop header: strengthen the invariant prefix, weaken or correct it, or establish in the body the facts from which every reachable fallthrough preserves it"

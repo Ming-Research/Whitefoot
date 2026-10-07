@@ -2507,6 +2507,8 @@ pub(crate) struct CheckedMatchBinder {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedMatchArm {
+    pub(crate) node_path: NodePath,
+    pub(crate) label: String,
     pub(crate) tag: u32,
     pub(crate) binders: Vec<CheckedMatchBinder>,
     /// [GRAM-10, WIN-3, STOR-3] in an own-place match, the release of each

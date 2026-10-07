@@ -189,6 +189,7 @@ impl Vocabulary {
             if matches!(
                 self.terms.kind(id),
                 TermKind::Measure(..)
+                    | TermKind::TargetMeasure { .. }
                     | TermKind::CallDatum {
                         measure: Some(_),
                         ..
@@ -222,7 +223,15 @@ impl Vocabulary {
         state: &AffineFlowState,
     ) -> WordHashMap<AffineTermId, Vec<TermId>> {
         let mut grouped: WordHashMap<AffineTermId, Vec<TermId>> = WordHashMap::default();
-        for term in self.measure_terms() {
+        for term in self
+            .measure_terms()
+            .into_iter()
+            .filter(|term| {
+                !matches!(self.terms.kind(*term), TermKind::TargetMeasure { .. })
+                    || state.measure_atoms.borrow().contains_key(term)
+            })
+            .collect::<Vec<_>>()
+        {
             if let Some(atom) = self.measure_atom(term, state).unit_term() {
                 grouped.entry(atom).or_default().push(term);
             }
@@ -1248,7 +1257,18 @@ impl Reasoning<'_, '_, '_> {
         affine: &AffineFlowState,
     ) -> Vec<AffineL0Candidate> {
         let mut candidates = Vec::new();
-        for term in self.vocabulary.measure_terms() {
+        for term in self
+            .vocabulary
+            .measure_terms()
+            .into_iter()
+            .filter(|term| {
+                !matches!(
+                    self.vocabulary.terms.kind(*term),
+                    TermKind::TargetMeasure { .. }
+                ) || affine.measure_atoms.borrow().contains_key(term)
+            })
+            .collect::<Vec<_>>()
+        {
             let mut anchor = term;
             let mut fixed = None;
             for _ in 0..4 {
@@ -2756,7 +2776,18 @@ impl Reasoning<'_, '_, '_> {
         // [MSR-4] step 6 ranges over every live measure term as well as every
         // own integer binding with an image, so a measure participates in the
         // affine domain through its own atom.
-        for term in self.vocabulary.measure_terms() {
+        for term in self
+            .vocabulary
+            .measure_terms()
+            .into_iter()
+            .filter(|term| {
+                !matches!(
+                    self.vocabulary.terms.kind(*term),
+                    TermKind::TargetMeasure { .. }
+                ) || values.measure_atoms.borrow().contains_key(term)
+            })
+            .collect::<Vec<_>>()
+        {
             let value = self.vocabulary.measure_atom(term, values);
             // A measure whose image is a constant is Z displaced by that
             // constant, and Z is already the fixed zero candidate, so its

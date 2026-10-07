@@ -30,6 +30,7 @@ mod certificates;
 mod conversions;
 mod domain;
 mod events;
+mod frontier;
 mod goals;
 mod invariants;
 mod judge;
@@ -37,6 +38,7 @@ mod loop_summary;
 mod operation_facts;
 mod postconditions;
 mod prover;
+mod relations;
 mod render;
 mod results;
 mod sources;
@@ -45,12 +47,14 @@ mod walk;
 use certificates::*;
 use domain::*;
 use events::*;
+use frontier::*;
 use goals::*;
 use invariants::*;
 use judge::*;
 use loop_summary::*;
 use postconditions::*;
 use prover::*;
+use relations::*;
 use walk::*;
 
 use sources::{bound_place, capture_counted_preheader};
@@ -202,6 +206,9 @@ struct EntryImageRecord {
 struct LoopFrame {
     id: CheckedLoopId,
     invariant_declarations: Box<[crate::DeclarationId]>,
+    /// Templates are active after the entire base batch succeeds. Their
+    /// lifetime is independent of the immutable, named header theorems.
+    templates: Vec<CheckedLoopInvariant>,
     scope_depth: usize,
     /// The compiler-owned counted binder while this is a `for` frame. An
     /// ordinary `loop` has no binder and contributes no affine index image.
@@ -214,7 +221,16 @@ struct LoopFrame {
     /// the private endpoint-capture scope as well as source binding scopes.
     capture_path: Option<Vec<u32>>,
     breaks: Vec<ProofFlowState>,
-    continues: Vec<ProofFlowState>,
+    continues: Vec<FlowEdge>,
+}
+
+/// An incoming structural edge, after its ordered lexical cleanup. Pending
+/// edges exist only between consecutive merges; a source consumer seals them.
+struct FlowEdge {
+    site: crate::NodePath,
+    branch: String,
+    route: super::LoopInductionRoute,
+    state: ProofFlowState,
 }
 
 /// The [ENT-3] facts one `match` scrutinee admits at its arms' entries: the
@@ -1245,7 +1261,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
         analyzer.judging().initialize_postcondition_proofs();
     }
     if let Some(body) = &function.body {
-        analyzer.walk_block(body, &mut state);
+        analyzer.walk_block(body, &mut state, &mut Vec::new());
     }
     analyzer.judging().reject_unjudged_separations();
     analyzer.frames.scopes.pop();
@@ -1304,6 +1320,8 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 contract_call_roots: 0,
                 delivery_give_roots: HashSet::new(),
                 delivery_join_roots: 0,
+                header_relation_roots: 0,
+                loop_induction_roots: 0,
             },
             output: Output {
                 obligations: Vec::new(),
@@ -1328,6 +1346,7 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
                 judged_separations: HashSet::new(),
             },
             frames: Frames {
+                branches: Vec::new(),
                 scopes: Vec::new(),
                 loops: Vec::new(),
                 gives: Vec::new(),
@@ -1375,6 +1394,31 @@ pub(super) fn finish(entailment: &mut FunctionEntailment) {
                     .copied()
                     .flatten()
                     .expect("required range partition proof retained by finish");
+            }
+        }
+    }
+    for outcome in &mut entailment.loop_invariants {
+        let remap_evidence = |evidence: &mut super::LoopRelationEvidence| {
+            for proof in evidence
+                .components
+                .iter_mut()
+                .chain(evidence.contradiction.iter_mut())
+                .chain(
+                    evidence
+                        .instance
+                        .iter_mut()
+                        .flat_map(|instance| instance.formation.iter_mut()),
+                )
+            {
+                *proof =
+                    remap.nodes[proof.0 as usize].expect("induction evidence retained by root");
+            }
+        };
+        remap_evidence(&mut outcome.base_evidence);
+        for input in &mut outcome.inputs {
+            remap_evidence(&mut input.evidence);
+            if let Some(proof) = &mut input.hidden_update {
+                *proof = remap.nodes[proof.0 as usize].expect("hidden update retained by root");
             }
         }
     }
@@ -1694,6 +1738,8 @@ struct Vocabulary {
     contract_call_roots: u32,
     delivery_give_roots: HashSet<DerivationId>,
     delivery_join_roots: u32,
+    header_relation_roots: u32,
+    loop_induction_roots: u32,
 }
 
 /// What the analysis publishes: every judgment's outcome, the retained
@@ -1720,6 +1766,7 @@ struct Output {
 /// The walk's own frames: open scopes, loops and value initializers, and the
 /// measurements one judgment hands to the binding the walk reaches next.
 struct Frames {
+    branches: Vec<String>,
     /// Lexical scope stack: the bindings declared in each open block.
     scopes: Vec<Vec<BindingId>>,
     loops: Vec<LoopFrame>,

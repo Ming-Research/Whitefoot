@@ -313,6 +313,12 @@ pub(crate) struct PostconditionCallSubstitution {
 /// Parent IDs always precede their child in the arena.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum DerivationNode {
+    /// [ENT-5] introduction of one written relation over joined values.
+    /// Each contributor proves its own complete instance; this is not an
+    /// equality between mutually exclusive predecessor atoms.
+    TransportedHeaderRelation {
+        detail: Box<TransportedHeaderRelation>,
+    },
     /// The fixed affine projection of an established S4 ordering leaf.
     RequirementAffineImage {
         goal: GoalId,
@@ -608,6 +614,52 @@ pub(crate) struct SourceLoopInvariantRef {
     pub(crate) source_ordinal: u32,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct AffineRelationInstance {
+    /// Written leaves in source order, including constants and repeated uses.
+    pub(crate) operands: Vec<AffineForm>,
+    pub(crate) components: Vec<AffineInequality>,
+    pub(crate) sides: Vec<(Option<TermId>, Option<TermId>)>,
+    pub(crate) formation: Vec<DerivationId>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct HeaderRelationInput {
+    pub(crate) site: NodePath,
+    pub(crate) instance: Option<AffineRelationInstance>,
+    pub(crate) components: Vec<DerivationId>,
+    pub(crate) contradiction: Option<DerivationId>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct TransportedHeaderRelation {
+    pub(crate) template: SourceLoopInvariantRef,
+    pub(crate) inputs: Vec<HeaderRelationInput>,
+    pub(crate) output: AffineRelationInstance,
+    pub(crate) component: u8,
+}
+
+impl TransportedHeaderRelation {
+    fn parents(&self) -> impl Iterator<Item = DerivationId> + '_ {
+        self.inputs
+            .iter()
+            .flat_map(|input| {
+                input
+                    .contradiction
+                    .iter()
+                    .chain(input.components.iter())
+                    .copied()
+                    .chain(
+                        input
+                            .instance
+                            .iter()
+                            .flat_map(|instance| instance.formation.iter().copied()),
+                    )
+            })
+            .chain(self.output.formation.iter().copied())
+    }
+}
+
 /// Stable function-local identity of one already-checked affine source fact.
 /// Later proof consumers retain which admitted source statement supplied
 /// their affine premise.
@@ -708,6 +760,7 @@ pub(crate) struct IndexCaptureSubstitution {
 impl DerivationNode {
     fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
         match self {
+            Self::TransportedHeaderRelation { detail } => detail.parents().for_each(visit),
             Self::UnsignedDivisionProduct {
                 division, domain, ..
             } => {
@@ -819,6 +872,7 @@ impl DerivationNode {
 
     fn parent_count(&self) -> usize {
         match self {
+            Self::TransportedHeaderRelation { detail } => detail.parents().count(),
             Self::UnsignedDivisionProduct { .. }
             | Self::TransitiveBound { .. }
             | Self::StrengthenedBound { .. }
@@ -882,6 +936,7 @@ impl DerivationNode {
 
     fn rank(&self) -> u8 {
         match self {
+            Self::TransportedHeaderRelation { .. } => 46,
             Self::ResultTransport { .. } => 42,
             Self::ResultErr { .. } => 43,
             Self::ConversionDomain { .. } => 44,
@@ -946,6 +1001,12 @@ pub(crate) struct DerivationMetrics {
 /// Which mandatory checked-program query owns a retained root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DerivationRootKind {
+    HeaderRelation {
+        occurrence: u32,
+    },
+    LoopInduction {
+        occurrence: u32,
+    },
     BodyEntryContradiction,
     BoundsObligation(u32),
     RangePartition {
@@ -1685,6 +1746,19 @@ fn compare_node_ties(left: &DerivationNode, right: &DerivationNode) -> std::cmp:
 
 fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
     match node {
+        DerivationNode::TransportedHeaderRelation { detail } => [
+            detail.template.loop_id.0,
+            detail.template.source_ordinal,
+            u32::from(detail.component),
+        ]
+        .get(index)
+        .copied()
+        .or_else(|| {
+            detail
+                .parents()
+                .nth(index.checked_sub(3)?)
+                .map(|parent| parent.0)
+        }),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
         | DerivationNode::SourceGoal { event, .. } => (index == 0).then_some(event.0),
@@ -1996,6 +2070,25 @@ fn remap_id(id: &mut DerivationId, remap: &[Option<DerivationId>]) {
 
 fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
     match node {
+        DerivationNode::TransportedHeaderRelation { detail } => {
+            for input in &mut detail.inputs {
+                for parent in input
+                    .contradiction
+                    .iter_mut()
+                    .chain(input.components.iter_mut())
+                {
+                    remap_id(parent, remap);
+                }
+                if let Some(instance) = &mut input.instance {
+                    for parent in &mut instance.formation {
+                        remap_id(parent, remap);
+                    }
+                }
+            }
+            for parent in &mut detail.output.formation {
+                remap_id(parent, remap);
+            }
+        }
         DerivationNode::UnsignedDivisionProduct {
             division, domain, ..
         } => {
@@ -4752,7 +4845,7 @@ fn for_each_implicit_bound(
             emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
             emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
         }
-        TermKind::Measure(measure, _) => {
+        TermKind::Measure(measure, _) | TermKind::TargetMeasure { measure, .. } => {
             let (minimum, maximum) = type_range(IntegerType::U64);
             emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
             emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);

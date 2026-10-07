@@ -57,6 +57,36 @@ fn repeat(op: Op, stop: Bool) -> out: u64 pure {
 }
 "#;
 
+const SINK: &str = r#"enum Op {
+  Reset();
+  Step();
+  Halt();
+}
+
+fn repeat(op: Op, limit: u64) -> out: u64 pure {
+  doc "Every arm reaches the next loop header directly.";
+  let acc = 0_u64;
+  loop (
+    invariant bounded: acc <= limit
+  ) {
+    match op {
+      Reset() => {
+        set acc = 0_u64;
+      }
+      Step() => {
+        if acc < limit {
+          set acc = acc + 1_u64;
+        }
+      }
+      Halt() => {
+        return acc;
+      }
+    }
+  }
+  return acc;
+}
+"#;
+
 fn check(source: &Path, output: Option<&Path>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_whitefootc"));
     command
@@ -182,4 +212,62 @@ fn checker_work_is_opt_in_and_preserves_verdicts() {
     assert!(
         String::from_utf8_lossy(&unavailable.stderr).contains("checker work output unavailable")
     );
+}
+
+/// The input counts of one function's numeric joins that combine at least one
+/// state, per analysis run. A loop without a `break` still joins its empty
+/// exit set; that join has no input and is not counted.
+fn joined_inputs(text: &str, function: &str) -> BTreeMap<u64, Vec<u64>> {
+    let mut runs = BTreeMap::<u64, Vec<u64>>::new();
+    for line in text.lines() {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        if fields[2] != function {
+            continue;
+        }
+        let entry = runs.entry(fields[1].parse::<u64>().unwrap()).or_default();
+        if fields[3] == "join" && fields[5] == "inputs" {
+            let inputs = fields[6].parse::<u64>().unwrap();
+            if inputs > 0 {
+                entry.push(inputs);
+            }
+        }
+    }
+    runs
+}
+
+/// [ENT-5, INV-1] Arms that all end at the loop's next header are each proved
+/// on their own edge, so no numeric join combines them. The same loop with one
+/// shared statement after the `match` joins its three inputs once, at the
+/// canonical frontier, instead of once per nested merge. Before per-edge
+/// induction both programs were refused: the guarded update's join lost
+/// `acc <= limit`.
+#[test]
+fn an_induction_sink_joins_nothing_and_a_shared_suffix_joins_its_frontier_once() {
+    let directory = fixture_directory();
+    let suffix = SINK
+        .replace(
+            "Every arm reaches the next loop header directly.",
+            "Every arm reaches one shared statement before the next loop header.",
+        )
+        .replace(
+            "        return acc;\n      }\n    }\n  }",
+            "        return acc;\n      }\n    }\n    let seen = acc;\n  }",
+        );
+    assert_ne!(suffix, SINK);
+    for (index, (source, expected)) in [(SINK, vec![]), (suffix.as_str(), vec![3])]
+        .into_iter()
+        .enumerate()
+    {
+        let path = directory.path().join(format!("sink-{index}.wf"));
+        let counters = directory.path().join(format!("sink-{index}.tsv"));
+        std::fs::write(&path, source).unwrap();
+        let output = check(&path, Some(&counters));
+        assert!(output.status.success(), "{output:?}");
+        let text = std::fs::read_to_string(&counters).expect("counters were written");
+        let runs = joined_inputs(&text, "repeat");
+        assert!(!runs.is_empty(), "no counters for repeat: {text}");
+        for inputs in runs.values() {
+            assert_eq!(inputs, &expected, "{text}");
+        }
+    }
 }

@@ -2868,7 +2868,30 @@ No caller fact is copied into a callee: an ordinary call judges its instantiated
 A fragment type is one member of the closed integer set [OP-2]; relations are over mathematical values, so relations between terms of different fragment types are well-formed and are created only by the sources and flow transports [ENT-3, ENT-5] admit.
 A widening conversion is a bare `cvt::<S, D>(e)` with integer S and D whose pair is whole-type total [OP-6]; it denotes the mathematical value of e, so wherever an [FN-9] relation term or a comparison-origin operand [ENT-3] admits a term or constant, a widening conversion of one is that term or constant itself.
 
-A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, its result ordinal and projection [CALL-4], and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant bounds and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, whether it denotes the endpoint's value or one measure of it)`. The final alternative (i) is a term of the private success-payload root of an ENT-5 conditional context, typed by the success payload, `Ok` or `Some`, and scoped to that context: one term for each datum [CALL-4] gives that payload type, the value of a fragment-integer place and each measure of a measured place, identified by its projection and whether it denotes the place's value or one measure of it; the same root in two contexts does not identify their values.
+A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, its result ordinal and projection [CALL-4], and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant bounds and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, whether it denotes the endpoint's value or one measure of it)`. Alternative (i) is a term of the private success-payload root of an ENT-5 conditional context, typed by the success payload, `Ok` or `Some`, and scoped to that context: one term for each datum [CALL-4] gives that payload type, the value of a fragment-integer place and each measure of a measured place, identified by its projection and whether it denotes the place's value or one measure of it; the same root in two contexts does not identify their values.
+
+Alternative (j) is a compiler-owned target-instance measure term used while forming or proving an [INV-1] counted next-header relation.
+For a measure factor whose place contains the counted binder in a subscript offset, each measure of that selected measured place, and each measure prefix needed to discharge its subscripts, has a target-instance term when its own path contains that offset.
+The term is identified by the concrete function instance, the for statement, the incoming induction edge, the ordinary source root's declaration event and canonical source path with every counted-binder offset replaced by the one next-binder selector for that loop and edge, and the selected measure member.
+That selector denotes [INV-1]'s checked current-binder plus one value; all its occurrences on the edge denote that one value.
+Prefixes without a substituted offset use their ordinary terms.
+Other source offsets keep their ordinary declaration and spelling identities.
+Resolved storage paths serve validity and support checking, and establish no additional equality between different source spellings.
+
+A target-instance place is formed from base to leaf, proving each [OP-4] bound in the frozen incoming state using these substituted operands before the selected measure term becomes available.
+The term has the measure's ordinary u64 type, a current affine image belonging to this target instance, and exactly [MSR-1] and [MSR-2]'s applicable standing images and relations for that measured place.
+Measures of one target-instance place share that place's standing relations.
+These are available only in the query's formation view.
+A term in this namespace is distinct from every ordinary current-place term, including one with the same source spelling.
+Existing ordinary bounds, atoms and measure datums keep their current-place denotations.
+No equality or relation between a target-instance measure and a current-place measure is established by their spelling or by this instantiation.
+
+A formed target-instance measure is a live measure candidate for [MSR-4] in that formation view, and is the side term submitted by a normalized component naming it.
+It participates in the same numeric disposition and receives no query against the ordinary current-place term in its place.
+Target-instance terms and their private standing facts add no premise to another batch member's frozen input and leave no ordinary fact at the continuation or next header.
+Their identities and proofs remain in the retained derivation.
+They evaluate no runtime expression and introduce no writer-visible binding or offset form.
+
 The FN-9 result datum occurs only in its template: every selected-return or caller query substitutes it with an ordinary term, constant or the corresponding term of the private payload root of ENT-5's conditional context. That typed root denotes only the success payload of the value associated with its context; roots of distinct contexts have no shared value identity. Its terms are compiler-owned, unwritable, carry their fragment type's standing bounds, and are substituted away at an ordinary success delivery. Neither symbolic datum creates runtime storage.
 Two places are the same term exactly when their roots resolve to the same declaration event [TYPE-6, DIAG-1] and their canonical source spellings [FORM-2] are byte-identical; a fresh binding legally reusing an expired spelling is a distinct term, and distinct spellings are distinct terms even when they resolve to overlapping storage.
 Term identity thus under-approximates aliasing, while kills [ENT-5] use [OWN-7]'s resolved-place overlap relation and over-approximate it.
@@ -3338,7 +3361,9 @@ A requirement or verified postcondition fact has exactly the ordinary L0 or opaq
 An affine invariant conclusion is different: it is a theorem over the immutable mathematical value-image atoms captured when that invariant occurrence was proved, not a proposition that rereads the mutable source bindings whose spellings formed it.
 A write, consume, or scope exit changes or removes the current binding-to-image map but does not make an already proved theorem about the old image false; a live alias may therefore continue to use it, and a named `proof_use` source denotes exactly that immutable theorem while its invariant declaration remains in lexical scope [INV-1, PRF-1].
 Without a current value image or another retained theorem connecting an old atom to a submitted target, an unreachable old atom cannot help prove that target.
-Header invariant conclusions and local invariant conclusions alike follow [ENT-5]'s canonical control-flow intersection on every edge, each edge leaving their loop included, independently of their proof-only names; a header invariant's name still leaves lexical scope with the loop body [INV-1].
+Header and local invariant conclusions retain their immutable value-image meaning on every edge, including edges leaving their loop; their ordinary survival at a join is the canonical intersection specified below and in [ENT-6].
+The additional transport below proves fresh instances of active header relations.
+A header invariant's name leaves lexical scope with its loop body [INV-1].
 The compiler neither removes one constructor and reruns the body nor computes a masked fact state to decide whether any fact was necessary.
 
 An S12 relation, a narrow-receiver relation, and a relation transported through a value initializer have exactly the ordinary L0 support of their terms after the route's stated substitutions.
@@ -3396,7 +3421,50 @@ An all-contradictory image set is contradictory; an absent eligible relation on 
 Add exactly the joined L0 relations to the receiver's ordinary continuation state and close once.
 This transport reads no pre-existing fact on x, identifies x with no later value of d, copies no unrelated relation, and creates no runtime operation.
 
-Joins: at the continuation of a `match_stmt` or `value_match`, the fact state is the join of the states on every arm exit edge reaching that continuation on the conservative structural graph [FN-1], each taken after that edge's pre-exit closure, scope-exit kills, and surviving-state closure above; an arm every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
+A canonical join frontier is defined on the conservative structural graph [FN-1].
+Starting at a continuation that merges control inputs, replace an incoming merge-only continuation by its incoming edges, repeatedly, in source edge order.
+A merge-only continuation performs control merging and the pre-exit closure, lexical scope kills and surviving-state closure of this rule, and has one successor.
+Apply those edge events separately to every input routed through it, in their original order.
+The expansion ends at an incoming source action, control split, value transfer, required judgment, loop-header environment boundary, or cleanup action with an effect or required judgment.
+These endpoints and the region's final continuation are its cut points.
+Documentation and administrative block boundaries add no cut point.
+A maximal expanded region has one semantic join at its final continuation and has no intermediate joined fact state.
+Every new control split consumes one state at its cut point, so this expansion contains incoming structural edges, not combinations of earlier branch histories.
+Edge order is the source NodePath order specified below; each routed edge also retains its ordered cleanup sequence.
+
+At a cut point with an ordinary continuation, form the ordinary join of that frontier using the domain rules below and [ENT-6], before adding transported header relations.
+At a cut point whose continuation is solely a next-header induction judgment, apply [INV-1]'s per-input batch to the frontier.
+A loop's entry and exit each delimit the active header environment.
+A loop continuation still joins its own exit edges; the active environment there is that of its enclosing body.
+
+The transport candidates are exactly the affine header relations of loops lexically enclosing the destination whose complete base batch succeeded.
+Visit enclosing loops from outermost to innermost and their written relations in source order.
+Each candidate denotes its written relation instantiated with the current operand values at this point; a counted binder here denotes its current value.
+Local invariant declarations, requirements, postconditions and range clauses supply their ordinary facts, and supply no additional transport templates.
+Header templates remain active independently of whether the current iteration's original theorem survives ordinary intersection.
+
+A candidate is eligible when every operand is live and admitted by [INV-1], [ENT-2] and [MSR-1] on each non-contradictory input and in the ordinary joined state.
+For each such state, form the candidate in a separate view of that frozen state, visiting written operands left to right and subscript prefixes from base outward.
+Each subscript bound is submitted to [MSR-4] before the measure below it is formed.
+Formation uses current resolved places, reference validity, offset values and measure images, together with the existing standing facts for admitted terms.
+These views publish no fact into another candidate's view.
+An unavailable operand, unproved formation bound or unrepresentable affine form makes this optional candidate ineligible.
+[INV-1]'s source formation ceilings and checked integer arithmetic also apply to these forms.
+
+For each eligible relation, instantiate its [INV-1] normalized components separately with every non-contradictory input's current images and submit each component to [MSR-4].
+Each query retains the source side's L0 term when available, including the side required by the bridge.
+A relation is transported exactly when every component is proved on every such input.
+The ordered relation's one component, or the equality's complete pair, is then established over the ordinary joined current images with a derivation recording the template, each input's substitution and proof, the output substitution, and the contradictory inputs' dispositions.
+All candidates read frozen inputs and the ordinary joined state; publish successful relations together in candidate and component order, as [ENT-6] specifies.
+A failed optional candidate publishes nothing and creates no source rejection.
+A frontier with no non-contradictory input has the contradictory state and an empty transported sequence.
+
+Transport establishes a new immutable theorem about the current joined values.
+It changes neither the denotation of an existing named proof nor any input value's identity.
+A later write or scope exit follows the ordinary image and support rules above.
+Transport changes no runtime operation, evaluation, effect, reference or control edge.
+
+Joins: at the continuation of a `match_stmt` or `value_match`, the ordinary fact state is the join over its canonical frontier, initially comprising every arm exit edge reaching that continuation on the conservative structural graph [FN-1], each taken after its applicable edge events; an arm every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
 In any nonempty join with at least one non-contradictory input, a contradictory all-derivable input imposes no constraint.
 Over the non-contradictory inputs, the L0 join keeps for each ordered term pair the weakest (largest-constant) bound held by all and each disequality held by all; the opaque join keeps one signed fact exactly when that identical goal and sign are held by all.
 The join of closed states is closed.
@@ -3421,9 +3489,9 @@ A kill inside a nested ordinary or counted loop whose continuation lies inside L
 Without a parenthesized invariant header, exactly those surviving facts hold at every iteration head; establishment and kills then proceed ordinarily within the iteration, and no fact established inside an iteration survives to the next iteration's head.
 With a header, [INV-1] first proves every header invariant simultaneously in the complete state before L without assuming any invariant from that header.
 After that base batch succeeds, the complete header batch is added to the conservative head state as the assumptions for an arbitrary iteration.
-At every reachable normal body fallthrough or `continue` resolved to this loop, after ordinary statement effects, closures, and body-scope cleanup, [INV-1] proves the complete header batch again over the current value images while assuming the current-iteration header batch.
+[INV-1] proves preservation at the ordinary loop's induction frontier.
 Only the proved header batch, not an arbitrary body-established fact, is reintroduced at the next ordinary-loop head.
-If no normal fallthrough or `continue` reaches the backedge, the preservation batch is vacuous.
+[INV-1] determines vacuity from that frontier.
 A fact a non-continuing edge kills is still removed on that edge: the continuation join above takes each `break` edge after that edge's scope-exit kills, and an edge to the function-return sink reaches no queried program point, so narrowing this scan opens no path on which a dead fact is read.
 
 A counted `for_stmt` uses one compiler-owned structural binder recurrence.
@@ -3435,8 +3503,8 @@ Kills inside a nested ordinary or counted loop are classified by that same posit
 Third, its conservative head state is the closed post-capture state minus every fact having a support member that a continuing kill event may kill, and the complete proved header batch is then activated there.
 On each true header edge, S11 adds the two structural body-entry bounds to that state.
 The hidden binder update kills every fact supported by the binder before a later header, while S11 re-establishes only its two stated bounds after the next true guard.
-At every reachable normal body fallthrough or `continue` resolved to this loop, [INV-1] proves the complete next-header batch after ordinary body effects and cleanup and after substituting the compiler-owned `binder + 1` image for the binder; the complete current header batch is available as an assumption, and no target may assume its own next-header conclusion.
-This order is fixed: preheader establishment and closure, simultaneous base proof, continuing-kill subtraction, header-batch activation, S11 body-entry establishment, body flow including body-scope cleanup, formation of the compiler-owned `binder + 1` image and proof of the hidden update's representability, then simultaneous next-header proof over that image.
+[INV-1] proves the counted next-header batch on each induction input, including the hidden next-binder image and its representability judgment.
+The order is preheader establishment and closure, simultaneous base proof, continuing-kill subtraction, header-batch activation, S11 body-entry establishment, body flow, and [INV-1]'s per-input induction judgment.
 Neither endpoint is evaluated again and neither capture-to-endpoint equality is re-established after the preheader.
 Therefore a continuing write to a mutable endpoint source kills the direct capture-to-source equality, while a consequence already closed in the preheader whose support contains only immutable captures and other still-live terms may soundly survive.
 No other fact established inside one counted iteration survives to a later counted head; a body `invariant_stmt` may nevertheless serve as an ordinary proved premise for the next-header batch at the backedge where it is live.
@@ -3463,20 +3531,25 @@ An ordinary `let` installs the initializer image at its new binding after the in
 A whole-binding `set` first forms the right-hand-side image from the entering values, performs the ordinary target kill, then makes the target denote that image; a projected or indexed set does not replace the root binding's scalar image.
 A consume or scope exit removes the affected binding-to-image entry but does not alter an immutable theorem over the former atoms.
 
-At a control-flow join, a binding keeps an identical image held on every non-contradictory input.
+At an [ENT-5] canonical join, a binding keeps an identical image held on every non-contradictory frontier input.
 Otherwise every input image is first normalized: each delta atom an earlier join minted is folded back into the constant interval it stands for — that atom's coefficient times its interval, added to the input's constant — leaving one non-delta nonconstant form and one closed constant interval.
 If every normalized input then has one identical non-delta nonconstant form, the joined image is that common form plus one fresh delta atom whose interval is exactly the minimum through maximum of the inputs' constant intervals; otherwise the binding receives one fresh full-type atom.
 An input carrying no delta atom normalizes to its own nonconstant form and the closed interval of its own constant.
-A delta atom is an ordinary shared atom everywhere except a join, so a relation formed over it after one join still holds at the next; folding at the join is what makes the joined image the same whether the writer spells one branch set as nested conditionals or as one flat `match`, so acceptance never depends on the shape of the join.
+A delta atom is an ordinary shared atom at query points; at a later join it is folded as above.
+[ENT-5]'s frontier fixes the input states and the placement of added premises: regrouping the same ordered incoming edges solely by merge-only continuations gives the same joined images and automatic facts, up to renaming fresh atoms, and the same dispositions.
 The join never equates distinct atoms merely because two source expressions have the same spelling.
 A loop's continuing-kill construction similarly replaces every loop-carried mutable binding by a fresh header atom; proved header invariants are the only source-written relations reintroduced over those header images.
 The counted binder uses the captured lower image for its base, one fresh header image for an arbitrary iteration, and the exact `header_image + 1` form for a reachable next-header obligation.
 
 All of these transfers are source-structural, checked to the same affine formation ceilings, and independent of proof success order.
-They create no independently selectable premise except the invariant conclusions and specification-fixed automatic images expressly listed below.
+These transfers create independently selectable premises exactly for invariant conclusions, the specification-fixed automatic images below, and the transported header relations of [ENT-5].
 
-Every live measure term carries one compiler-owned immutable affine atom as its image, over the complete `u64` interval, minted once per measure term and never retargeted [MSR-4].
-That atom is not a source binding and is not a written `affine_factor` [INV-1]; it exists so that the automatic derivation below can range over measure terms, and it dies exactly when its measure term's support dies [MSR-2].
+A live measure term has its current immutable affine image.
+A measure whose [MSR-1] rule supplies a standing constant or captured range image uses that rule.
+Every other measure uses a fresh atom over the complete u64 interval when its current image is first required.
+A kill of the measure term's support [MSR-2] removes its current-image association; the atom and any retained theorem about its former value stay immutable.
+A canonical join retains a measure's image when every non-contradictory input has that identical image, and otherwise supplies a fresh joined atom when required.
+This association is shared by every consumer at that point and establishes no equality with a predecessor's different image.
 The closed L0-to-affine index is formed on demand from exactly Z, each live measure term, and each live own integer binding having both its ordinary [ENT-2] place term and a current affine value image.
 For every ordered pair of those candidates whose closed L0 state has a tightest bound `left_term - right_term <= c`, substitute the candidates' current affine images to form `left_image - right_image <= c`.
 For one canonical affine coefficient vector retain only the smallest upper bound; a single image whose coefficients or bound are unrepresentable in i128 is skipped and cannot suppress another image.
@@ -3486,11 +3559,13 @@ They are an ephemeral goal-query index over already-closed L0, not copies publis
 For a normalized affine inequality A, `DIRECT(A)` is exactly the following nonrecursive check, in this order: a contradictory current combined state under [ENT-4]; the strongest canonical L0 image having exactly A's canonical coefficient vector and an upper bound no greater than A's; or fixed interval substitution of every remaining atom, using its lower endpoint for a negative coefficient and upper endpoint for a positive coefficient, where each endpoint is the strongest closed L0/type bound for that atom.
 `DIRECT` never selects or subtracts a published affine premise.
 Every invariant conclusion and specification-fixed automatic image is appended when established to one automatic affine-premise sequence; its source category is diagnostic evidence and never partitions proof authority.
-At a join, an inequality survives exactly when the canonically identical inequality is present on every non-contradictory input under [ENT-5]'s all-predecessor rule; contradictory inputs are neutral, and if every input is contradictory the affine sequence is empty because L0 already proves every target.
-The surviving sequence is ordered by the first occurrence of each canonical inequality in the first non-contradictory structural predecessor under the edge orders fixed above.
-For each surviving inequality and each non-contradictory predecessor, the retained representative is that predecessor's first occurrence in insertion order; source and derivation evidence selects diagnostic parents only.
-At every query, canonically identical inequalities are represented once at their first occurrence in this sequence.
-Ordinary L0 relations are not copied into that list.
+At a canonical join, the ordinary surviving affine sequence consists of exactly the inequalities canonically identical on every non-contradictory frontier input.
+It is ordered by first occurrence in the first such input, using [ENT-5]'s edge order, and its representative on each input is that input's first occurrence.
+Append the relations transported under [ENT-5] in that rule's candidate and component order.
+The complete sequence represents each canonical inequality once, at its first occurrence.
+Contradictory inputs are neutral; an entirely contradictory frontier has an empty affine sequence because L0 already proves every target.
+Source and derivation categories determine evidence, not proof authority.
+Ordinary L0 relations stay in their closed domain and its query index.
 
 `AUTO(T)` for one affine target T exhausts exactly these finite families: `DIRECT(T)`; for every listed premise P, form `S = P` and check `DIRECT(T - S)`; for every unordered listed pair P,Q including P equal to Q, form `S = P + Q` in pair order and check `DIRECT(T - S)`; and for every strongest canonical L0 image R, form `S = R` and check `DIRECT(T - S)`.
 Every premise has coefficient one; forming S and then the one residual uses checked `i128` arithmetic in the stated order.
@@ -3616,8 +3691,12 @@ A `call` in `affine_factor` position is a hard error citing INV-1 at the `call` 
 An `affine_factor` `atom` is admitted exactly when it is one `place` formed from an admitted measure place [MSR-1] by one measure-member `psuffix` [OP-15], one bare `place` whose `pbase` is an IDENT and which carries no `psuffix`, or one integer literal; [GRAM-4]'s production is shared with a contract clause [MSR-5] and carries the wider factor set that clause needs.
 A bare `pbase` resolves to a live own-mode integer value as this rule states above, or to an in-scope integer-typed const generic [MSR-6], whose image is the constant [ENT-2] clause (c) already fixes: a concrete instance reads its mathematical value and the one source-canonical symbolic instance reads the symbolic constant term, which no [ENT-5] event kills and whose support is empty.
 A measure place's root resolves in exactly that same context, except that it names a live own-mode value of measured type, or a live reference whose referent is reached through `^` [REF-1, TYPE-7] as section 16's example writes `p^.len`, rather than a live own-mode integer, and it is never a counted header's `for_binding`.
-Such an atom denotes the [ENT-2] measure term over that place, of fragment type u64, lifted to its mathematical integer value like every other atom, and its support is [MSR-2]'s: an event killing that term retargets the atom's image exactly as a write to a named local retargets that local's, so no conclusion resting on it survives the write.
-A subscript inside a measure place is an ordinary [OP-4] occurrence: its offset resolves in that same context and is one of the offsets [ENT-2] clause (b) admits, and it owes `i < base.len` against the prefix reaching its base, judged where the relation is written — at the loop header in its entering ProofContext, at an `invariant_stmt` in that statement's entering one — exactly as one written at a measure read the program executes is judged at the read [MSR-4].
+A measure factor denotes its current [ENT-2] measure term, or that rule's target-instance term at a counted next-header substitution, lifted from u64 to its mathematical integer value.
+[MSR-2] fixes support and [ENT-6] fixes the lifetime of its current-image association and the immutable meaning of a theorem about a former image.
+A subscript inside a measure place owes [OP-4]'s bound with offsets and prefixes resolved in the relation's current value environment.
+At a local invariant it is judged in the entering state.
+At a loop header its base and next-header instances are judged in the corresponding induction input below, before any target from that batch is published; a counted next-header instance uses the next-binder substitution also in offsets.
+[ENT-5] owns the formability checks of optional transport instances.
 A measure over a place whose subscripts are not all discharged is no term here either, so the relation names a slot the window has or it names nothing.
 A const generic is not an integer literal, so it never supplies the one direct literal operand a non-unit `*` requires.
 An integer-typed named const is admitted and denotes the one closed value it declares, folded to that value at formation; it is already an [ENT-2] constant term, so it means in a relation exactly what it means everywhere else. An integer-typed const generic is admitted as the paragraph above states [MSR-6], symbolic in the source-canonical instance and its value in a concrete one, and is not the closed-value admission. Construction, allocation, a field selection not ending in a measure member, a subscript outside a measure place, a reference expression, a moved value, and every other runtime expression form are not admitted as affine atoms in this version, and each is a hard error citing INV-1 at that `affine_factor`.
@@ -3634,16 +3713,39 @@ A header invariant has no proof block and no `proof_use`; a complex base is stat
 All invariant names in one header are distinct and enter scope simultaneously only after the complete header [INV-1].
 Their conclusions form one simultaneous batch.
 
-For the base batch, the checker submits every header target to [MSR-4]'s disposition in the complete preheader state and assumes no conclusion from that same header.
-If any base target fails, no header conclusion is published.
-After all bases succeed, the complete batch is available as the current-iteration assumption throughout the body, and its conclusions leave the loop as [ENT-5] fixes.
-For every reachable normal backedge, including every `continue` resolved to this loop [FN-1], the checker proves every next-header target in one batch from the complete state on that edge while the current-iteration header batch is available; a target never assumes its own unproved next-header result.
-For an ordinary loop the next-header target is the same written relation over the current backedge value images.
-For a counted loop each binder occurrence in the source relation is rendered and proved as the current binder's exact mathematical `+ 1` image, and every other mutable atom uses its current backedge image.
-This is the induction step for an arbitrary iteration, not a check of a particular second iteration.
-A backedge batch is vacuous when neither normal body fallthrough nor a `continue` resolved to that loop reaches it.
-A `break`, `return`, or `propagate` error edge creates no backedge obligation.
-Failure reports the invariant name, whether the failed incoming edge is base or backedge, and the complete required source-level relation after the counted next-state substitution; an internal affine term or value-image identifier is never the writer-facing residual.
+For the base batch, form and submit every header target to [MSR-4] in the complete preheader state, using the counted initialization where [ENT-5] supplies one.
+Every target reads that same state.
+The batch is published as the current-iteration assumptions exactly when all bases succeed.
+No target assumes a conclusion of its own base batch.
+The formed operand instances accompany those assumptions.
+Their formation obligations are part of the same base and next-header induction: they license the header's measure images and publish no additional numeric inequality beyond its written relations.
+
+A loop's induction frontier consists of the normal body-fallthrough edges and every `continue` resolved to that loop [FN-1] reaching its next header, expanded through merge-only continuations by [ENT-5].
+Each input first performs the ordinary body effects and its applicable edge cleanup in source order.
+On each non-contradictory input, form and prove the complete next-header batch against that frozen complete state while retaining the current-iteration assumptions.
+Successful members supply no premise to another member or input.
+The next-header batch succeeds exactly when every member is proved on every input.
+A contradictory input is discharged by its contradiction.
+With no reaching input the batch is vacuous.
+A `break`, `return`, or `propagate` error edge creates no induction input.
+
+An ordinary next-header target uses the current operand values on its input.
+A counted input first forms the exact mathematical current-binder plus one and proves that hidden update representable in u64; it then substitutes that next value for every binder occurrence in the target, including occurrences in indexed operands, and uses the current values of other operands.
+Formation and proof use this target substitution while the premise state still denotes pre-update values.
+A measure selected by a changed offset denotes the selected next place, not the measure at the old offset, through [ENT-2]'s target-instance term.
+This is induction for an arbitrary iteration; neither a particular second iteration nor endpoint re-evaluation supplies a premise.
+
+No joined numeric state or optional transport batch is formed solely for this induction judgment.
+Other required source judgments on its inputs still run at their specified points.
+After successful induction, exactly [ENT-5]'s head facts are available at another iteration; arbitrary body facts and optional successes are not additional induction hypotheses.
+
+Failure reports the invariant name, base or backedge, the failing incoming edge's source location and route, and the complete required source relation after any next-binder substitution.
+Inputs follow [ENT-5]'s edge order, and each owning relation reports its first failing input.
+On that input the disposition is its first failing component's, an equality's forward component before its reverse.
+Selection among violations at distinct source nodes follows [DIAG-1].
+The residual uses source bindings and paths; it contains no internal atom identifier.
+Failure to form an indexed operand identifies its subscript and required bound under [OP-4]; a normalized-relation formation failure keeps this rule's owning-invariant location.
+Required formation or proof failure rejects even when optional transport previously failed silently at another point.
 
 A reachable `invariant_stmt` is checked exactly once in its entering ProofContext.
 Without a proof block its target must succeed under [MSR-4]'s disposition.

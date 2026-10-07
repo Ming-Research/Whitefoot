@@ -60,6 +60,9 @@ impl Input<'_, '_> {
     ) -> String {
         let left = self.render_checked_affine_expression(&relation.left, counted_next_binder);
         let right = self.render_checked_affine_expression(&relation.right, counted_next_binder);
+        if relation.equality {
+            return format!("{left} == {right}");
+        }
         match relation.bound {
             0 => format!("{left} <= {right}"),
             -1 => format!("{left} < {right}"),
@@ -93,6 +96,11 @@ impl Input<'_, '_> {
                 // former over the place, never an internal term identity.
                 CheckedAffineExpressionKind::Measure(measure) => self
                     .render_affine_measure(measure)
+                    .map(|rendered| {
+                        counted_next_binder.map_or(rendered.clone(), |binder| {
+                            substitute_next_name(&rendered, &self.binding_name(binder))
+                        })
+                    })
                     .unwrap_or_else(|| "?".to_owned()),
                 CheckedAffineExpressionKind::ConstGeneric { name, .. } => name.clone(),
                 CheckedAffineExpressionKind::Add(_, _)
@@ -816,6 +824,9 @@ impl Reasoning<'_, '_, '_> {
 
     pub(super) fn render_term(&self, term: TermId) -> String {
         match self.vocabulary.terms.kind(term) {
+            TermKind::TargetMeasure { source, .. } => {
+                format!("next-header {}", self.render_term(*source))
+            }
             TermKind::Zero => "0".to_owned(),
             TermKind::Constant(value) => value.to_string(),
             TermKind::ConstParameter(..) => "<const parameter>".to_owned(),

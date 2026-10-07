@@ -264,6 +264,8 @@ impl<'unit> Checker<'_, 'unit> {
             give_states.extend(checked.give_states);
             loop_transfers.extend(checked.loop_transfers);
             arms.push(CheckedMatchArm {
+                node_path: self.types.declarations.tree.path(arm_node)?.clone(),
+                label,
                 tag: variant.tag,
                 binders,
                 covered,
@@ -524,6 +526,8 @@ impl<'unit> Checker<'_, 'unit> {
             give_states.extend(checked.give_states);
             loop_transfers.extend(checked.loop_transfers);
             arms.push(CheckedMatchArm {
+                node_path: self.types.declarations.tree.path(node)?.clone(),
+                label,
                 tag: variant.tag,
                 binders: Vec::new(),
                 covered: Vec::new(),

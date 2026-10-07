@@ -5,11 +5,12 @@
 This is the written design for C2 in the natural `loop { match }`
 interpreter plan. The owner selected Q137 option B: finite transport of
 active, base-proved affine header relations at joins, together with
-per-input proof at terminal induction edges. This document proposes the
-precise rule and its implementation; it is not implemented language behavior.
-The active [specification](../../../spec/kernel-spec.md) remains the authority.
-No compiler, conformance expectation, specification title or approval log is
-changed by this design-only task.
+per-input proof at terminal induction edges. This document states the
+precise rule and its implementation plan; the rule is now in the active
+[specification](../../../spec/kernel-spec.md) as a proposal awaiting the
+owner's approval, which remains the authority, and
+[Observed after implementation](#observed-after-implementation) records what
+the implementation showed.
 
 The question is whether the existing numeric disposition can carry the
 writer's relation over differing current images without making acceptance
@@ -67,8 +68,9 @@ not a performance comparison. The compiler does not contain this proposal.
 | `correlated-cache.wf` | INV-1, `sum`, backedge `acc + cache == limit` | Accept: both equality components hold for `(limit, 0)` and `(0, limit)`. Neither separate coordinate intervals nor equality between their input atoms is required. |
 | `join-only-set.wf`, `join-only-keep.wf`, `helper-all.wf`, `correlated-one.wf` | All accept | Remain accepted; they isolate the incoming proofs needed above. |
 
-The proposed verdicts are deductions from the rule, **not observed results of
-a changed compiler**. C1 remains a separate prerequisite for using the
+The proposed verdicts were deductions from the rule when written; the
+implementation's observed verdicts are in
+[Observed after implementation](#observed-after-implementation). C1 remains a separate prerequisite for using the
 complete [MSR-4] disposition in all numeric consumers. C2 neither special-cases
 the helper nor changes [CALL-3]'s descriptor kills.
 
@@ -235,8 +237,10 @@ observed after the small sample; no WF or Rust test was run.
 
 ## Exact proposed specification edits
 
-These are replacement passages for integration, **not active specification
-edits on this branch**. Preserve every unmentioned clause. The archive, next
+These were the replacement passages for integration; the active
+specification now carries them, reflowed to one sentence per line, with the
+INV-1 diagnostic wording adjusted as noted below. Preserve every unmentioned
+clause. The archive, next
 title, conformance amendment and eventual approval logs belong to integration.
 Q137 selects relation transport and per-input induction. Q146 below proposes
 the canonical boundary that makes that direction consistent with ENT-6.
@@ -963,6 +967,33 @@ conventions. General join loss outside active header templates remains the
 separate TODO item “An affine bound is lost at a statement join where the
 binding's images differ”; this bounded mechanism does not claim to close it.
 
-No PR, compiler implementation, spec amendment, conformance edit, commit or
-push is part of this delivery. The owner still approves the precise rule;
-implementation, CI and the integrated phase-1 result remain future work.
+## Observed after implementation
+
+Implemented on the phase-1 branch of
+[PR #270](https://github.com/Ming-Research/Whitefoot/pull/270), on top of
+026074111. Observed with that compiler, built locally on an Apple M5:
+
+- The four C2 witnesses `join-min`, `helper-min`, `helper-post-use` and
+  `correlated-cache`, and `rich`, are accepted; the four accepted controls
+  stay accepted; `range-payload`, `range-use` and `validate-targets-unit`
+  stay refused, as they wait for Q139.
+- The guard-reversed input is refused at INV-1 with the failing incoming
+  edge named; the old compiler refuses it too, so it guards against a
+  transport that drops a failing input rather than showing a change.
+- The two conformance expectations this design named change from reject to
+  accept, renamed `ent6-pos-join-one-arm-advances-accumulator` and
+  `inv1-pos-sequential-guarded-steps`. The compiler test
+  `a_failing_body_probe_is_reported_before_the_header_backedge` keeps its
+  diagnostic-order observation with a guard under which the probe fails
+  independently, and its old program is kept as a positive test.
+- Five compiler tests that counted the intermediate joins of nested `if`s
+  now see one join per canonical frontier, which is the nested/flat
+  agreement this rule exists for; their dispositions and evidence are
+  unchanged.
+- The INV-1 diagnostic names the failing incoming edge. Reporting a
+  component separately was not implemented; the specification text says
+  the input's disposition is its first failing component's.
+- The stage-3 interpreter generated as `loop { match }` with `continue`
+  (`gen.py`) is accepted in 7.6 s, against a refusal after 12.0 s by
+  026074111; the dispatch lowering splits it into 318 arm functions and it
+  runs CoreMark with the final CRC wasmi and Silverfir-nano produce.
