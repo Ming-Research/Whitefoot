@@ -941,3 +941,77 @@ and v2h, with `gen.py` writing the loop form. Record, for each:
 This changes no compiler. Each obstacle found then gets its own design,
 and a change to a language rule goes to the owner first. After that,
 v2h's gap to Silverfir-nano and wasmi is measured again in the loop form.
+
+**Outcome of the first step.** The compiler was built from `8a93bbb90` on
+the owner's M5. Two interpreters were written as `loop { match }`:
+- the four-instruction test interpreter, by hand;
+- v2h, by a one-off rewrite of `gen.py`'s output. It turns each arm's
+  `return musttail run(..., pc: X, fp: F, acc: A)` into assignments, and
+  moves the statements that followed a failed guard into its `else`.
+
+The findings, in the order they block:
+
+1. **The back end already splits `loop { match }`.** The test interpreter
+   checks, splits into 4 arm functions and runs correctly. The arms fall
+   off the `match` to one back edge, and each still ends in its own
+   guaranteed tail call.
+2. **A loop invariant's fact does not survive a call that writes the same
+   box.** This holds even when the callee's `ensures` preserves the
+   measure. In v2h the frame contract `fp + 65536 <= stack^.inner.len`,
+   stated as a loop invariant, is lost after a helper writes a frame slot,
+   so `stack^.inner.len - 65536` is refused [OP-2]. The `musttail`
+   spelling stated the same fact as a `requires`, and a `requires` fact
+   survives. Minimal witness, compiler `8a93bbb90`:
+
+   ```wf
+   fn touch(stack: &Box<Array<u64>>) -> r: unit writes(stack.inner) contract {
+     ensures stack^.inner.len == entry(stack)^.inner.len;
+   } {
+     if 0_u64 < stack^.inner.len {
+       set stack^.inner[0_u64] = 1_u64;
+     }
+     return unit;
+   }
+
+   fn walk(stack: &Box<Array<u64>>, fp0: u64, k: u64) -> r: u64 writes(stack.inner) contract {
+     requires fp0 + 4_u64 <= stack^.inner.len;
+   } {
+     let fp = fp0;
+     loop (
+       invariant fb: fp + 4_u64 <= stack^.inner.len
+     ) {
+       touch(stack: stack);
+       let room = stack^.inner.len - 4_u64;
+       set stack^.inner[fp] = room;
+       if room == 7_u64 {
+         return room;
+       }
+     }
+     return 0_u64;
+   }
+   ```
+
+   | variant | verdict |
+   |---|---|
+   | the witness, with the call | refused [OP-2] on `room` |
+   | the call under `if k != 0_u64` | refused [OP-2] on `room` |
+   | no call | accepted |
+   | the same fact as a `requires` of a loop-free function, then the call | accepted |
+   | the fact `4 <= stack^.inner.len` from an `if` guard, then the call | accepted |
+
+   Every arm of v2h that writes a frame slot through a helper meets this.
+   The INV-1 join of `docs/todo.md` is not reached first.
+3. **Check time.** The `musttail` spelling of v2h checks in 2.6 s. The loop
+   spelling ran for 32 s before reporting finding 2, its first error.
+4. **No `continue`.** An arm that leaves early for the next operation must
+   nest everything after that point in an `else`. The `musttail` spelling
+   used `return musttail` as a `continue` carrying new values.
+5. **The cursor's step through the join after the `match`.** Each arm's new
+   `pc` reaches the back edge through one join after the `match`. The step
+   analysis sees that join's value, not the arm's own `pc + 1`, so each arm
+   forms the cursor from the run (`madd` on AArch64) instead of stepping
+   it. The fix is in the back end: read each arm's own incoming value at
+   that join.
+
+Findings 2 to 4 concern the checker and the language, and go to the owner
+as designs. Finding 5 is a lowering fix.
