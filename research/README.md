@@ -59,6 +59,11 @@ the work-branch and merge boundary.
   agent writers established and the checker dropped (loop exit, conjunction,
   value `if`, `Option`, chained certificates), each classified against v0.77
   with its proposed rule change and the URL parser's clamp census.
+- [Loop relations at joins](investigations/join-relations/DESIGN.md): the
+  Q137 design for transporting written header relations over current input
+  images, canonical merge boundaries, per-input induction, the independent
+  scheduling model, counted next-slot identities and the proposed
+  specification and checker changes.
 - [Aggregate postconditions](investigations/aggregate-postconditions/DESIGN.md):
   integer fields of struct results and routed Ok payloads as relation data,
   the placement transport they need, and the separate lockstep-join limit.

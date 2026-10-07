@@ -130,15 +130,20 @@ rarely insert at the same place.
   making the fallthrough return, so that only the update reaches the back
   edge, passes, and so does removing the update. The loss is therefore at
   the join of the two paths, where neither path's own fact survives. The
-  program is sound; a
-  checker could accept it by proving the header batch on each input of the
-  final join, or by closing each input's facts under its value images before
-  joining. Impact: an interpreter written as `loop { match }` whose arms
-  update different loop variables needs a run-time re-check of the invariant
-  per dispatch; Halo's interpreter (Ming-Research/Halo-wf#2) is written as a
-  self-tail call instead.
-  Reopen when a loop-shaped program cannot be rewritten that way, or with
-  the INV-1 join rules.
+  program is sound. Impact: a natural `loop { match }` interpreter cannot
+  carry its stated relations across these joins under the current rules.
+  The owner selected Q137 option B: transport active, base-proved written
+  header relations proved on every input, and prove terminal induction
+  batches per input. The [join-relations design](../research/investigations/join-relations/DESIGN.md)
+  gives the proposed ENT-2, ENT-5, ENT-6 and INV-1 text, canonical merge boundaries,
+  indexed-operand formation, evidence and implementation plan. It remains
+  unimplemented; the precise canonical-boundary refinement awaits Q146.
+  Reopen at phase-1 integration. Validate the four C2 witnesses, shared
+  suffixes, nested/flat agreement, failed inputs, equality batches and
+  measure invalidation without changing the source into a runtime recheck
+  or a self-tail call. The design also records the existing helper
+  diagnostic that advises adding a preservation postcondition already
+  present; repair it with the join diagnostic provenance.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
