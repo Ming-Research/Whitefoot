@@ -250,6 +250,9 @@ pub(super) fn find(
             }
             for successor in successors(candidate) {
                 if region[index] && successor == header {
+                    // Source `continue` and body fallthrough both lower to
+                    // this parameterized jump, with cleanup on the edge.
+                    // Their source spelling cannot affect split eligibility.
                     if !matches!(candidate.terminator(), IrTerminator::Jump { .. }) {
                         problem = Some("an edge back to its match is not a jump".to_owned());
                     }

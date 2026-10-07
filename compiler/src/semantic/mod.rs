@@ -1013,8 +1013,12 @@ pub enum SemanticIssueKind {
         /// The exact restructuring required by ENT-2.
         mechanical_fix: &'static str,
     },
-    /// An unlabeled break has no enclosing structural loop target [GRAM-4,
-    /// FN-1].
+    /// An unlabeled continue has no enclosing structural loop target [TYPE-6].
+    ContinueOutsideLoop {
+        /// The source-level repair for the missing target.
+        mechanical_fix: &'static str,
+    },
+    /// An unlabeled break has no enclosing structural loop target [GRAM-4, FN-1].
     BreakOutsideLoop {
         /// The exact source-level restructuring required by GRAM-4.
         mechanical_fix: &'static str,

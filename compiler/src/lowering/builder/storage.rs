@@ -92,7 +92,9 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
                 }
                 collect_statements(body, bindings);
             }
-            CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => {}
+            CheckedStatement::Proof(_)
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => {}
         }
     }
 }

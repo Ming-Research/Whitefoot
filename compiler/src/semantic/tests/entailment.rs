@@ -179,7 +179,9 @@ fn collect_direct_calls<'checked>(
                 }
                 collect_direct_calls(body, callee, calls);
             }
-            CheckedStatement::Break { .. } | CheckedStatement::Proof(_) => {}
+            CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. }
+            | CheckedStatement::Proof(_) => {}
         }
     }
 }

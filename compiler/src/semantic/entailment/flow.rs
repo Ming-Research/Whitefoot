@@ -214,6 +214,7 @@ struct LoopFrame {
     /// the private endpoint-capture scope as well as source binding scopes.
     capture_path: Option<Vec<u32>>,
     breaks: Vec<ProofFlowState>,
+    continues: Vec<ProofFlowState>,
 }
 
 /// The [ENT-3] facts one `match` scrutinee admits at its arms' entries: the
@@ -1032,10 +1033,26 @@ impl LoopKills {
 #[derive(Default)]
 struct LoopReachability {
     breaks: Vec<(CheckedLoopId, bool)>,
+    continues: Vec<(CheckedLoopId, bool)>,
     gives: Vec<bool>,
 }
 
 impl LoopReachability {
+    fn for_loop(id: CheckedLoopId) -> Self {
+        Self {
+            continues: vec![(id, true)],
+            ..Self::default()
+        }
+    }
+
+    fn continue_reaches(&self, target: CheckedLoopId) -> bool {
+        self.continues
+            .iter()
+            .rev()
+            .find_map(|(id, reaches)| (*id == target).then_some(*reaches))
+            .unwrap_or(false)
+    }
+
     fn break_reaches(&self, target: CheckedLoopId) -> bool {
         self.breaks
             .iter()

@@ -885,6 +885,7 @@ impl Report for SemanticIssueKind {
             UndischargedCallRequirement[detail];
             InvalidCountedEndpoint { mechanical_fix };
             BreakOutsideLoop { mechanical_fix };
+            ContinueOutsideLoop { mechanical_fix };
             InvalidRangeClause { reason, mechanical_fix };
             UndischargedRangeFact { fact, site, missing, mechanical_fix };
             UndischargedApart { pair, mechanical_fix };

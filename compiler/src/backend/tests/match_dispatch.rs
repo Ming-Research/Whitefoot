@@ -1328,3 +1328,16 @@ fn a_hoisted_projection_an_arm_repeats_is_passed_once() {
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
+
+/// The explicit next-iteration edge must receive the same split as an
+/// implicit backedge. Runtime semantics live in the program test.
+#[test]
+fn continue_edges_to_a_header_match_split_into_handlers() {
+    let source = include_bytes!("../../../../tests/programs/continue_interpreter.wf");
+    let module = emit(source);
+    let (convention, _) = host_convention();
+    if !convention.is_empty() {
+        assert!(verdict(&module, "wf_run").starts_with("split:"), "{module}");
+        assert_interpreter_split(&module, "wf_run");
+    }
+}
