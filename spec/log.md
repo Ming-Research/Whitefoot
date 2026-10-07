@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-07 v0.95: renaming, removing and syncing below a writable directory
+
+Rules: changed PRE-2
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the card that presented renaming, removing and syncing within one writable directory as Q212 option A: "212 agreed" (translated); and after the completion report that showed the PRE-2 text and the writable-directory decision as Q214 and the merge as Q215: "approve 214 215" (translated).
+
+Summary: PRE-2 adds `rename_file`, which renames a file below a `DirectoryWrite` and atomically replaces any entry at the destination; `remove_file`, which removes a name below it; and `sync_directory`, which hands the entries changed below it to the host's durability mechanism. A file open through a handle keeps its bytes and stays usable after its name is replaced or removed, and what survives a host failure stays outside the specification for directory entries as for file bytes. Before them a program could append to a file and cut it but not replace it, so an append-only log could not be rewritten without an interruption leaving it partly rewritten; the rewrite Redis performs, and firn needs, writes a synced temporary file, renames it over the log, syncs the directory and removes obsolete parts ([design](../research/investigations/file-replacement/README.md#proposal)).
+
 ## 2026-10-06 v0.94: scanning and clearing a concurrent hash map
 
 Rules: changed SHARE-1, PRE-1, WAIT-2, MSR-1

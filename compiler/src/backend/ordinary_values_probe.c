@@ -708,6 +708,113 @@ static void append_probe(wf_inputs *inputs) {
     }
 }
 
+/* A namespace operation's result, its error kind printed before the check
+ * fails so that a host's refusal names itself. */
+static void check_namespace(wf_close_result *result, const char *what) {
+    if (result->tag != 0) fprintf(stderr, "%s: error kind %d\n", what, (int)result->err.error.tag);
+    assert(result->tag == 0);
+}
+
+/* Names change independently of the lifetime of already-open files. */
+static void replacement_probe(wf_inputs *inputs) {
+#if defined(_WIN32)
+    static const uint16_t old_name[] = { 'o', 'l', 'd' };
+    static const uint16_t new_name[] = { 'n', 'e', 'w' };
+#else
+    static const unsigned char old_name[] = { 'o', 'l', 'd' };
+    static const unsigned char new_name[] = { 'n', 'e', 'w' };
+#endif
+    wf_view old = { (void *)old_name, sizeof old_name };
+    wf_view fresh = { (void *)new_name, sizeof new_name };
+    wf_view source = { (void *)"a", 1 };
+    unsigned char bytes[4];
+    wf_view destination = { bytes, sizeof bytes };
+    wf_open_result writer, reader, replacement, current;
+    wf_write_result written;
+    wf_read_result read;
+    wf_close_result result;
+    wf__body_open_append(&writer, &inputs->handles, &inputs->cwd_write, &old, 0, old.length);
+    assert(writer.tag == 0);
+    wf__body_append_once(&written, &inputs->handles, &writer.ok.value, &source, 0, 1);
+    assert(written.tag == 0 && written.ok.value == 1);
+    wf__body_open_file(&reader, &inputs->handles, &inputs->cwd_read, &old, 0, old.length);
+    assert(reader.tag == 0);
+    wf__body_open_append(&replacement, &inputs->handles, &inputs->cwd_write, &fresh, 0, fresh.length);
+    assert(replacement.tag == 0);
+    source.data = (void *)"b";
+    wf__body_append_once(&written, &inputs->handles, &replacement.ok.value, &source, 0, 1);
+    assert(written.tag == 0 && written.ok.value == 1);
+    /* Invalid windows refuse before any namespace change. */
+    wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
+                         &fresh, 0, 0, &old, 0, old.length);
+    assert(result.tag == 1 && result.err.error.tag == WF_IO_INVALID_PATH);
+    wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
+                         &fresh, 0, fresh.length, &old, 0, 0);
+    assert(result.tag == 1 && result.err.error.tag == WF_IO_INVALID_PATH);
+#if defined(_WIN32)
+    /* Both destination stream-renaming syntax and source stream-opening
+     * syntax must refuse before changing either file's name or contents. */
+    static const uint16_t stream_target[] = { ':', 's', 'a', 'v', 'e', 'd' };
+    /* A colon after more than one letter reaches the stream check rather
+     * than the earlier drive-qualified-path refusal. */
+    static const uint16_t stream_source[] = {
+        'n', 'e', 'w', ':', 's', 't', 'r', 'e', 'a', 'm'
+    };
+    wf_view target_stream = { (void *)stream_target, sizeof stream_target };
+    wf_view source_stream = { (void *)stream_source, sizeof stream_source };
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        const wf_view *from = attempt == 0 ? &fresh : &source_stream;
+        const wf_view *to = attempt == 0 ? &target_stream : &old;
+        wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
+                             from, 0, from->length, to, 0, to->length);
+        assert(result.tag == 1 && result.err.error.tag == WF_IO_INVALID_PATH);
+        const wf_view *names[] = { &old, &fresh };
+        for (unsigned index = 0; index < 2; ++index) {
+            wf__body_open_file(&current, &inputs->handles, &inputs->cwd_read,
+                               names[index], 0, names[index]->length);
+            assert(current.tag == 0);
+            wf__body_read_at(&read, &inputs->handles, &current.ok.value,
+                             &destination, 0, 0, sizeof bytes);
+            assert(read.tag == 0 && read.ok.value == 1 && bytes[0] == "ab"[index]);
+            wf__body_close_read(&result, &inputs->handles, &current.ok.value);
+            check_close(&result);
+        }
+    }
+#endif
+    wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
+                         &fresh, 0, fresh.length, &old, 0, old.length);
+    check_namespace(&result, "rename_file");
+    wf__body_rename_file(&result, &inputs->handles, &inputs->cwd_write,
+                         &fresh, 0, fresh.length, &old, 0, old.length);
+    assert(result.tag == 1 && result.err.error.tag == WF_IO_NOT_FOUND);
+    source.data = (void *)"x";
+    wf__body_append_once(&written, &inputs->handles, &writer.ok.value, &source, 0, 1);
+    assert(written.tag == 0 && written.ok.value == 1);
+    wf__body_read_at(&read, &inputs->handles, &reader.ok.value, &destination, 0, 0, sizeof bytes);
+    assert(read.tag == 0 && read.ok.value == 2 && memcmp(bytes, "ax", 2) == 0);
+    wf__body_open_file(&current, &inputs->handles, &inputs->cwd_read, &old, 0, old.length);
+    assert(current.tag == 0);
+    wf__body_read_at(&read, &inputs->handles, &current.ok.value, &destination, 0, 0, sizeof bytes);
+    assert(read.tag == 0 && read.ok.value == 1 && bytes[0] == 'b');
+    wf__body_remove_file(&result, &inputs->handles, &inputs->cwd_write, &old, 0, 0);
+    assert(result.tag == 1 && result.err.error.tag == WF_IO_INVALID_PATH);
+    wf__body_remove_file(&result, &inputs->handles, &inputs->cwd_write, &old, 0, old.length);
+    check_namespace(&result, "remove_file");
+    wf__body_remove_file(&result, &inputs->handles, &inputs->cwd_write, &old, 0, old.length);
+    assert(result.tag == 1 && result.err.error.tag == WF_IO_NOT_FOUND);
+    source.data = (void *)"y";
+    wf__body_append_once(&written, &inputs->handles, &replacement.ok.value, &source, 0, 1);
+    assert(written.tag == 0 && written.ok.value == 1);
+    wf__body_read_at(&read, &inputs->handles, &current.ok.value, &destination, 0, 0, sizeof bytes);
+    assert(read.tag == 0 && read.ok.value == 2 && memcmp(bytes, "by", 2) == 0);
+    wf__body_sync_directory(&result, &inputs->handles, &inputs->cwd_write);
+    check_namespace(&result, "sync_directory");
+    wf__body_close_read(&result, &inputs->handles, &current.ok.value); check_close(&result);
+    wf__body_close_read(&result, &inputs->handles, &reader.ok.value); check_close(&result);
+    wf__body_close_write(&result, &inputs->handles, &writer.ok.value); check_close(&result);
+    wf__body_close_write(&result, &inputs->handles, &replacement.ok.value); check_close(&result);
+}
+
 /* [PRE-2] two reads through one clock do not go back, a sleep outside every
  * context lasts until its deadline, and every instant operation is total. */
 static void time_probe(wf_inputs *inputs) {
@@ -768,7 +875,7 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         assert(closed.tag == 0 && *budget == before);
     }
     if (files) { wf_test_guard_phase("ordinary file/credits"); file_probe(&inputs, wf__body_open_file, wf__body_read_at); file_probe(&inputs, wf_test_public_open, wf_test_public_read); puts("ordinary file/credits public+body: PASS"); }
-    if (files) { wf_test_guard_phase("ordinary append/sync/truncate/clock"); append_probe(&inputs); time_probe(&inputs); puts("ordinary append/sync/truncate/clock: PASS"); }
+    if (files) { wf_test_guard_phase("ordinary append/sync/truncate/clock"); append_probe(&inputs); replacement_probe(&inputs); time_probe(&inputs); puts("ordinary append/sync/truncate/clock: PASS"); }
     if (directory) { wf_test_guard_phase("ordinary directory/cursors"); directory_probe(&inputs); puts("ordinary directory/cursors: PASS"); }
 #if defined(_WIN32)
     if (directory) {

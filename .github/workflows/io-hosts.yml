@@ -259,4 +259,4 @@ jobs:
           RUST_MIN_STACK: 8388608
         run: |
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
-            --test corpus -- programs::windows:: programs::network:: native_windows::
+            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: conformance::file_replacement:: native_windows::

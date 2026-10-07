@@ -2382,21 +2382,15 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files can only be appended or set to a length.** `std::fs` opens a file
-  for appending, appends, sets its length, syncs and closes it [PRE-2], and
-  has no positioned write, rename, removal, directory creation, directory
-  sync, create rule other than create-if-missing, or way to descend into a
-  subdirectory for writing. A program cannot rewrite a log compactly, as
-  Redis's `BGREWRITEAOF` writes a new file, syncs it, renames it over the old
-  one and syncs the directory, nor clean up a file it made; the surface was
-  chosen as the one the persistent programs in view needed
-  (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
-  directories and append-only files"), and `truncate_file` was added for
-  cutting a log whose end did not load. Each addition is a specification
-  change to `std::fs` taking the write half. Validate with a program that
-  rewrites its log through a new file and a rename, and survives being
-  stopped between the two steps with one of the two files whole. Reopen when
-  a program must rewrite or remove what it wrote.
+- **Files have no positioned writes or directory creation.** `std::fs` still
+  lacks writing at an offset, creating a directory, descending into a
+  subdirectory for writing, and create rules other than create-if-missing
+  [PRE-2]. A program needing a writable directory hierarchy or exclusive
+  creation cannot express it. Add the needed operations through the write
+  half when a program supplies that witness; compare their authority and
+  failure rules with the existing component operations, and validate with
+  that program plus conformance cases for the selected rules. Positioned
+  writes reopen when a program needs in-place updates rather than replacement.
 
 - **A clock's readings cannot be replaced for a test.** `now` and the
   deadline heap read the host's monotonic clock, so a program's behavior at
@@ -2716,7 +2710,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,216 lines: the file
+  `compiler/src/backend/completion/bridge.c` has 4,254 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
@@ -3779,7 +3773,7 @@ condition under which it is taken up.
     the Lua work below can compose without separately committing each call.
   - Make AOF persistence usable through write/sync error handling, rewrite,
     interrupted-write recovery and orderly `SHUTDOWN`/signal handling; verify
-    a practical data migration path. File replacement and signal delivery
+    a practical data migration path. `std::fs` supplies file replacement; signal delivery
     may require Whitefoot library/runtime work; AOF presence alone is not
     durable-recovery evidence. RDB compatibility is not assumed by this item.
   - Add memory accounting, `maxmemory` and the eviction behavior the selected

@@ -37,6 +37,14 @@ int wf_file_request_valid(const wf_file_request *request) {
     case WF_FILE_APPEND:
         return request->operation.write.buffer != NULL
             || request->operation.write.count == 0;
+    case WF_FILE_RENAME:
+        return request->operation.rename.directory >= 0
+            && request->operation.rename.from != NULL
+            && request->operation.rename.to != NULL;
+    case WF_FILE_REMOVE:
+        return request->operation.remove.directory >= 0
+            && request->operation.remove.path != NULL;
+    case WF_FILE_SYNC_DIRECTORY:
     case WF_FILE_SYNC:
         return request->operation.close.descriptor >= 0;
     case WF_FILE_TRUNCATE:

@@ -334,7 +334,7 @@ static void wf_factory_return(wf_value *factory) {
 }
 
 #if defined(_WIN32)
-#define WF_COMPONENT_BYTES 510u
+#define WF_COMPONENT_BYTES WF_WINDOWS_COMPONENT_MAX_BYTES
 #define WF_OPEN_DIRECTORY_FLAGS 0
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS 1
 #define WF_OPEN_COMPONENT_FILE_FLAGS 1
@@ -377,8 +377,10 @@ typedef struct wf_host_operation {
     wf_completion_record record;
     /* A directory read's cursor, which the host may write at completion. */
     int64_t position;
-    /* An open's path component, which the host reads until completion. */
+    /* Path components stay live until an open or namespace change completes. */
     alignas(2) unsigned char component[WF_COMPONENT_BYTES + 2];
+    /* Only rename needs a second name, borrowed from the runtime pool. */
+    unsigned char *destination;
 } wf_host_operation;
 _Static_assert(offsetof(wf_host_operation, record) == 0,
                "a context's operation block begins with its record");
@@ -700,7 +702,8 @@ static int wf_component(unsigned char *component, const wf_view *name,
     for (index = 0; index < length; index += 2) {
         uint16_t unit;
         memcpy(&unit, text + index, 2);
-        if (unit == 0 || unit == '/' || unit == '\\') return 0;
+        /* A colon selects a data stream rather than a file component. */
+        if (unit == 0 || unit == '/' || unit == '\\' || unit == ':') return 0;
     }
     component[length] = 0;
     component[length + 1] = 0;
@@ -907,6 +910,113 @@ void wf__body_truncate_file(wf_close_result *result, wf_value *factory, wf_value
     wf_host_operation operation;
     if (wf__body_truncate_file_start(result, factory, file, length, &operation))
         wf__body_truncate_file_finish(result, factory, file, length, &operation);
+}
+
+/* The unit-result namespace operations share the existing host error mapping. */
+static void wf_namespace_finish(wf_close_result *result, wf_host_operation *operation) {
+    int64_t amount;
+    int error;
+    wf__completion_file_join(&operation->record, &amount, &error);
+    memset(result, 0, sizeof(*result));
+    if (amount < 0) {
+        result->tag = 1;
+        wf_error(&result->err.error, error, 9);
+    }
+}
+
+static int wf_namespace_invalid(wf_close_result *result) {
+    memset(result, 0, sizeof(*result));
+    result->tag = 1;
+    wf_error_class(&result->err.error, WF_IO_INVALID_PATH, 0, 0);
+    return 0;
+}
+
+int wf__body_rename_file_start(wf_close_result *result, wf_value *factory, wf_value *root,
+                               const wf_view *from, uint64_t from_start, uint64_t from_end,
+                               const wf_view *to, uint64_t to_start, uint64_t to_end,
+                               wf_host_operation *operation) {
+    wf_transition(factory);
+    wf_transition(root);
+    if (!wf_component(operation->component, from, from_start, from_end))
+        return wf_namespace_invalid(result);
+    operation->destination = wf__runtime_take(WF_COMPONENT_BYTES + 2);
+    if (!wf_component(operation->destination, to, to_start, to_end)) {
+        wf__runtime_give(operation->destination, WF_COMPONENT_BYTES + 2);
+        operation->destination = NULL;
+        return wf_namespace_invalid(result);
+    }
+    wf__completion_file_rename_submit(wf_descriptor(root), operation->component,
+                                      operation->destination, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_rename_file_finish(wf_close_result *result, wf_value *factory, wf_value *root,
+                                 const wf_view *from, uint64_t from_start, uint64_t from_end,
+                                 const wf_view *to, uint64_t to_start, uint64_t to_end,
+                                 wf_host_operation *operation) {
+    (void)factory; (void)root; (void)from; (void)from_start; (void)from_end;
+    (void)to; (void)to_start; (void)to_end;
+    wf_namespace_finish(result, operation);
+    /* Join has ended host access on success, refusal or cancellation. A
+     * submitted operation completed in start still comes through finish. */
+    wf__runtime_give(operation->destination, WF_COMPONENT_BYTES + 2);
+    operation->destination = NULL;
+}
+
+void wf__body_rename_file(wf_close_result *result, wf_value *factory, wf_value *root,
+                          const wf_view *from, uint64_t from_start, uint64_t from_end,
+                          const wf_view *to, uint64_t to_start, uint64_t to_end) {
+    wf_host_operation operation;
+    if (wf__body_rename_file_start(result, factory, root, from, from_start, from_end,
+                                  to, to_start, to_end, &operation))
+        wf__body_rename_file_finish(result, factory, root, from, from_start, from_end,
+                                    to, to_start, to_end, &operation);
+}
+
+int wf__body_remove_file_start(wf_close_result *result, wf_value *factory, wf_value *root,
+                               const wf_view *name, uint64_t start, uint64_t end,
+                               wf_host_operation *operation) {
+    wf_transition(factory);
+    wf_transition(root);
+    if (!wf_component(operation->component, name, start, end))
+        return wf_namespace_invalid(result);
+    wf__completion_file_remove_submit(wf_descriptor(root), operation->component, &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_remove_file_finish(wf_close_result *result, wf_value *factory, wf_value *root,
+                                 const wf_view *name, uint64_t start, uint64_t end,
+                                 wf_host_operation *operation) {
+    (void)factory; (void)root; (void)name; (void)start; (void)end;
+    wf_namespace_finish(result, operation);
+}
+
+void wf__body_remove_file(wf_close_result *result, wf_value *factory, wf_value *root,
+                          const wf_view *name, uint64_t start, uint64_t end) {
+    wf_host_operation operation;
+    if (wf__body_remove_file_start(result, factory, root, name, start, end, &operation))
+        wf__body_remove_file_finish(result, factory, root, name, start, end, &operation);
+}
+
+int wf__body_sync_directory_start(wf_close_result *result, wf_value *factory, wf_value *root,
+                                  wf_host_operation *operation) {
+    (void)result;
+    wf_transition(factory);
+    wf_transition(root);
+    wf__completion_directory_sync_submit(wf_descriptor(root), &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+void wf__body_sync_directory_finish(wf_close_result *result, wf_value *factory, wf_value *root,
+                                    wf_host_operation *operation) {
+    (void)factory; (void)root;
+    wf_namespace_finish(result, operation);
+}
+
+void wf__body_sync_directory(wf_close_result *result, wf_value *factory, wf_value *root) {
+    wf_host_operation operation;
+    if (wf__body_sync_directory_start(result, factory, root, &operation))
+        wf__body_sync_directory_finish(result, factory, root, &operation);
 }
 
 int wf__body_open_directory_source_start(wf_open_result *result, wf_value *factory,
