@@ -741,17 +741,25 @@ rarely insert at the same place.
   distinct witness that passes, including mutation between builder and
   consumer. Reopen when the port needs to hand structural uniqueness on.
 
-- **An unwritten scalar may block a certified loop.** Snowghost's strided
-  window probes (Snowghost-wf `research/storage-mocks` at 44f616b,
-  `research/investigations/storage-layout/probes/c2-fixed-stride.wf` and
-  `c2-fixed-stride-hoisted.wf`) show the outer loop permitted when a range's
-  length is read before the loop and denied when the same unwritten
-  `ids^.len` is read inside it; the rule that denies it is not yet isolated. Compare a literal operand with an
-  otherwise identical read of an immutable scalar, then adjust only the
-  access classification the specification supports. Validate the read-only
-  case and a scalar written by another iteration, with the latter still
-  denied. Reopen when this read prevents a downstream scatter's permission
-  ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
+- **A measure read of the written storage denies a PAR-2 affine-element
+  loop.** In a counted loop that writes `values[s]` as a proved affine
+  element, a read of the same storage's `len` inside the body, such as the
+  guard `if s < values.len { set values[s] = ...; }`, denies the loop, while
+  the same read hoisted before the loop is permitted; Slots and Paged behave
+  alike. PAR-2's affine family requires every read through the mapped root to
+  be a mapped element, so the descriptor read counts as another access
+  overlapping the root, although [MSR-2] makes descriptor storage disjoint
+  from element storage, and the certified-element family already admits
+  measure reads. Snowghost's Paged port measured it as the dominant barrier:
+  0 of its 415 corresponding renderer loops became newly permitted, and five
+  minimal controls are all permitted once the read is hoisted (Snowghost-wf
+  `research/m2-paged`, `research/investigations/storage-layout/probes/c2-paged-permission.wf`,
+  ledger `research/investigations/structure-edits/runs/paged-layout-ledger.md`).
+  Admit, in the affine family, reads of the mapped root's measure words that
+  no iteration writes, as the certified family does, and validate with the
+  guarded loops permitted, a loop whose body also appends (writing `len`)
+  still denied, and an element read outside the map still denied. Reopen
+  now: it is the next blocker for Snowghost's parallel layout passes.
 
 ## Containers and storage lowering
 
