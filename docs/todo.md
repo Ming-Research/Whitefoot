@@ -745,6 +745,30 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
+- **Reconcile invariant L0 publication with existing explicit certificates.**
+  The v0.102 ENT-3.S16 rule publishes `P: sum - i <= 0` both as the
+  existing affine premise and as an ordinary L0 bound. ENT-6 AUTO tries
+  the permitted pair `P + P` for `T: 3*sum - 3*i <= 0`; its residual
+  `T - (P + P)` is exactly the L0 image P, so DIRECT succeeds. PRF-1 then
+  requires rejecting the explicit `use 3 times sum_bound` block as
+  redundant. The same derivation applies to `sum <= limit` after exhaustion.
+  CI at `47f682ef4c56336b48c0f26f1ca6d8ec6d530c47` reports this precise
+  `RedundantUseBlock` reason in the existing accepted cases
+  `prf1-pos-active-header-reference`, `prf1-pos-certificate-after-exhaustion`
+  and `inv1-pos-operation-and-mode-proof-names`. The implementation path is
+  `establish_invariant_l0`, `first_two_premise_candidate`,
+  `affine_candidate_residual_proof`, then `affine_residual_proof` in
+  `compiler/src/semantic/entailment/flow/{invariants,prover}.rs`.
+  This is a specification/evidence conflict, not a displaced named premise:
+  the redundant-block judgment precedes named-premise admission. Preserving
+  these unchanged sources and verdicts needs an owner-selected adjustment
+  to S16, AUTO or redundancy; suppressing this candidate only in the
+  implementation would contradict the current rules. Reopen immediately
+  when that rule choice is settled, implement it with its corresponding
+  conformance boundary, and run the three unchanged cases, certificate
+  negative cases and the full gate in CI. The rule derivation and code path
+  were inspected; no local execution was performed for this investigation.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**

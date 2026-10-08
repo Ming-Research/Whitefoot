@@ -1,6 +1,6 @@
 fn need(value: Bool) -> r: unit pure contract {
   define first = value;
-  define truth = True();
+  define truth = 0_u64 == 0_u64;
   define complete = band(first, truth);
   requires complete;
 } {
@@ -12,7 +12,7 @@ fn witness(x: u64) -> r: unit pure {
   doc "Nested aliases and Boolean introduction retain the same proposition.";
   let test = x < 9_u64;
   let copied = test;
-  let truth = True();
+  let truth = 0_u64 == 0_u64;
   let nested = band(copied, truth);
   if x < 8_u64 {
     need(value: nested);
