@@ -1,0 +1,24 @@
+fn probe(p: &u64, other: &u64, flip: Bool) -> result: u64 reads(p), reads(other) {
+  doc "saved names the caller's first cell; after the join p may name other. A path rooted at a rebound parameter is not exact, so saved^ and p^ stay distinct terms and the guard on saved^ does not prove p^ nonzero.";
+  let saved = &p^;
+  if flip {
+    set p = &other^;
+  }
+  if saved^ != 0_u64 {
+    let r = 10_u64 / p^;
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The first cell is nonzero and other is zero, and p names other.";
+  let five = 5_u64;
+  let zero = 0_u64;
+  let flip = 0_u64 == 0_u64;
+  let r = probe(p: &five, other: &zero, flip: flip);
+  if r == 2_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

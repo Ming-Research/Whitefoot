@@ -1,0 +1,32 @@
+fn need(x: &u64) -> result: u64 reads(x) contract {
+  requires x^ != 0_u64;
+} {
+  doc "Divides ten by the value x names.";
+  let v = 10_u64 / x^;
+  return v;
+}
+
+fn pick(a: &u64, b: &u64, other: Bool) -> result: u64 reads(a), reads(b) {
+  doc "The control for fn8-neg-guard-on-one-target-of-joined-holder: after the join q's description is not exact, so q^ keeps its spelling through q, and a guard written through q proves the call through q.";
+  let q = &a^;
+  if other {
+    set q = &b^;
+  }
+  if q^ != 0_u64 {
+    let r = need(x: q);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "a is zero and b is five, and q names b, so the guarded call returns two.";
+  let a = 0_u64;
+  let b = 5_u64;
+  let other = a == 0_u64;
+  let r = pick(a: &a, b: &b, other: other);
+  if r == 2_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
