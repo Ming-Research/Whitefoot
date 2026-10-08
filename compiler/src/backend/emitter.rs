@@ -445,18 +445,6 @@ fn emit_module(
         abort.suffix = " noreturn".to_owned();
         text.declare(abort);
     }
-    if has_heap_storage || cleanup::program_has_general_run(program)? {
-        text.declare(Signature::new(
-            "malloc",
-            "ptr",
-            vec![Parameter::unnamed("i64")],
-        ));
-        text.declare(Signature::new(
-            "free",
-            "void",
-            vec![Parameter::unnamed("ptr")],
-        ));
-    }
     if latched_resource_record {
         text.append(resource_record_latch_fallback()?);
         text.append(if windows {
@@ -601,6 +589,25 @@ fn emit_module(
     text.text("\n");
     text.append(floor_runtime_fallback()?);
     text.text("\n");
+    // A declaration selects the allocator unit for text-only linkers. Use
+    // emitted references, including cleanup helpers and parallel thunks,
+    // rather than resource types: Shared storage comes from the runtime pool.
+    for signature in [
+        Signature::new("wf__heap_take", "ptr", vec![Parameter::unnamed("i64")]),
+        Signature::new(
+            "wf__heap_give",
+            "void",
+            vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
+        ),
+    ] {
+        if text
+            .entities
+            .iter()
+            .any(|entity| entity.references.symbols.contains(&signature.name))
+        {
+            text.declare(signature);
+        }
+    }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);

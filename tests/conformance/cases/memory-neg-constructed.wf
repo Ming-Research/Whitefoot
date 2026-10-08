@@ -1,0 +1,3 @@
+fn forged() -> result: std::process::MemoryMeter pure {
+  return std::process::MemoryMeter();
+}

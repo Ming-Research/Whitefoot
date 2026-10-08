@@ -1122,12 +1122,14 @@ fn a_no_heap_entry_build_names_no_allocator_that_its_sibling_entry_uses() {
         .expect("the entry builds")
     };
     let kernel = build("kernel");
+    assert!(!kernel.contains("@wf__heap_take"), "{kernel}");
+    assert!(!kernel.contains("@wf__heap_give"), "{kernel}");
     assert!(!kernel.contains("@malloc"), "{kernel}");
-    assert!(!kernel.contains("@free"), "{kernel}");
+    assert!(!kernel.contains("@free("), "{kernel}");
     assert!(!kernel.contains("spare"), "{kernel}");
     assert!(!kernel.contains("wf_tools.run"), "{kernel}");
     let tool = build("tool");
-    assert!(tool.contains("call ptr @malloc"), "{tool}");
+    assert!(tool.contains("call ptr @wf__heap_take"), "{tool}");
     assert!(tool.contains("@wf_tools.run("), "{tool}");
 }
 

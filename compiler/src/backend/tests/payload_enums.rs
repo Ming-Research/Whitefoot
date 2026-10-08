@@ -388,12 +388,14 @@ const PROGRAM: &[u8] = include_bytes!("payload_enums.wf");
 /// lowering runs handed-out calls on the parallel runtime's worker threads,
 /// and contexts may run on several drivers, so every access to the ledger
 /// holds its lock.
-const ALLOCATION_OBSERVER: &str = r#"#include <stdatomic.h>
+const ALLOCATION_OBSERVER: &str = r#"#include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #define WF_TEST_HELD 256
 static void *held[WF_TEST_HELD];
+static size_t requested[WF_TEST_HELD];
 static unsigned count;
 static atomic_flag ledger = ATOMIC_FLAG_INIT;
 
@@ -409,15 +411,17 @@ void *wf_test_allocate(size_t size) {
     void *allocation = malloc(size);
     lock_ledger();
     if (allocation == NULL || count == WF_TEST_HELD) abort();
+    requested[count] = size;
     held[count++] = allocation;
     unlock_ledger();
     return allocation;
 }
 
-void wf_test_release(void *allocation) {
+void wf_test_release(void *allocation, uint64_t bytes) {
     lock_ledger();
     for (unsigned index = 0; index < count; ++index) {
         if (held[index] == allocation) {
+            if (bytes != requested[index]) abort();
             held[index] = NULL;
             unlock_ledger();
             free(allocation);
@@ -438,8 +442,8 @@ __attribute__((destructor)) static void wf_test_report(void) {
 
 fn observed(module: &str) -> String {
     super::owned_places::retain_calls(module)
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(")
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(")
 }
 
 /// Every construction, match, move, copy, call and release of the program
@@ -790,7 +794,7 @@ fn a_window_of_union_enums_requests_the_union_stride() {
             "  return std::process::exit_status(code: 0_u8);\n}\n",
             "  let components = box_slots_new::<Component>(capacity: 8000000_u64);\n  place_back(window: &components.inner, value: delim);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         );
-    let module = compile(source.as_bytes()).replace("@malloc(", "@wf_test_allocate(");
+    let module = compile(source.as_bytes()).replace("@wf__heap_take(", "@wf_test_allocate(");
     let observer = r#"#include <stdio.h>
 #include <stdlib.h>
 
@@ -905,8 +909,8 @@ fn a_by_value_parameter_nothing_writes_is_read_in_place() {
             "{overlap:?}: the body reads {incoming} in place: {body}"
         );
         let ordinary = module
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         for (form, llvm) in [("ordinary", ordinary), ("retained", observed(&module))] {
             let output = compile_link_and_run(&llvm, Some(ALLOCATION_OBSERVER), &[]);
             assert_eq!(
