@@ -114,7 +114,7 @@ The validation is stated before implementing:
 
 ## Status
 
-Proposal A, including the resident-set reading from D, is being implemented on this branch following owner approval. The primary agent selected signed per-driver counters, a clamped non-instantaneous sum, allocator-free heap-free linkage and an optional resident-set result. Signed lifetime-delta overflow remains an interface/representation gap for the primary agent. CI correctness validation and the stated firn performance comparison remain outstanding.
+Proposal A, including the resident-set reading from D, is being implemented on this branch following owner approval. It counts per driver modulo 2^64 with a clamped non-instantaneous sum, keeps heap-free programs free of the allocator, and returns the resident set as an optional value. CI correctness validation and the stated firn performance comparison remain outstanding.
 
 ## Implementation findings
 
@@ -141,21 +141,16 @@ Summing independently sampled counters is exact when no other context
 allocates or releases during the reading. Otherwise the reading may differ
 from the holding at every single instant by at most the bytes those
 concurrent operations moved; either reading is an execution input [WAIT-2].
-All counters, including the pool and Windows registry, are signed 64-bit
-values. The read sums with signed arithmetic and clamps a negative total to
-zero. For example, sample A at zero, allocate eight bytes on A, transfer and
-free them on B, then sample B at minus eight: the result is zero rather than
-an unsigned value near its maximum. This implements the selected observation
-semantics rather than claiming an instantaneous snapshot.
-
-One representation question remains: a driver can allocate a block repeatedly
-while another driver releases it. Their lifetime deltas grow in opposite
-directions without bound even though the live heap never exceeds one block.
-Signed counters and intermediate sums can overflow. The selected 64-bit
-representation therefore needs a bound or a rebasing decision before
-completion; this branch has not added wrapping, a saturating counter or a
-runtime termination check to hide the gap. `docs/todo.md` records the witness
-and boundary validation to perform after that decision.
+Every counter, including the pool's and the Windows registry's, is a 64-bit
+value taken modulo 2^64, and a read adds them modulo 2^64. A driver can
+allocate blocks that another driver releases, so the two drivers' lifetime
+deltas grow in opposite directions without bound; modulo 2^64 their sum is
+still exact, because the true total is the live heap, which is below 2^63.
+A read is not a snapshot: when a block moves between drivers while the read
+adds their counters, the sum can be below zero, which shows as a total above
+2^63 and is clamped to zero. For example, sample A at zero, allocate eight
+bytes on A, transfer and free them on B, then sample B at minus eight: the
+result is zero rather than a value near 2^64.
 
 This checkout has no Paged implementation. Its existing direct-allocation
 sites are boxes, runtime-capacity windows, buffers and segments. Adoption of
@@ -201,7 +196,7 @@ Focused native regression cases exercise real allocation on a peer thread
 and release on the reader, retained deltas after thread exit, a scripted
 negative sampled total and its clamp, and `None`/`Some` through the ordinary
 resident-reading C body and LLVM result ABI. They do not establish the
-concurrent sampling error bound or settle lifetime-delta overflow, and have
+concurrent sampling error bound, and have
 not been executed here. The negative total is injected through the runtime's
 accounting entry point; it is arithmetic evidence, not a scheduled context
 interleaving.

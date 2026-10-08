@@ -2457,17 +2457,6 @@ rarely insert at the same place.
   overlap and the distinct-capacity witness is admitted. Reopen with the
   first shared generic storage algorithm needing that call.
 
-- **Bound signed lifetime allocation deltas before completing memory statistics.**
-  Driver A can repeatedly allocate a block and hand it to B for release;
-  the live heap stays bounded while A's positive and B's negative deltas
-  grow without bound. Signed 64-bit counters and intermediate signed sums
-  therefore need a representation argument or an approved rebasing scheme;
-  live address-space bounds alone do not supply one. The current draft can
-  overflow in such an execution. Do not conceal this with wrapping,
-  saturation or a runtime stop. Reopen before completion with a primary-agent
-  decision, and validate repeated cross-driver transfer with counters near
-  their limits, including partial sums whose final total fits.
-
 - **Verify memory readings with observed driver participation.** The context
   program checks completed allocations and exact balance after joining at
   requested driver counts one and four; it cannot identify which counters

@@ -1294,17 +1294,19 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
  * Slots outlive threads, since a block may be freed on another driver.
  * A slot is single-writer. Relaxed atomic loads/stores permit concurrent
  * observation without an atomic read-modify-write on the allocation path.
- * Cross-driver frees can make one signed slot negative. A reading sums the
- * slots with the pool and clamps a negative total, rather than exposing an
- * unsigned wraparound as a huge allocation. This is not a snapshot. */
+ * Slots and the sum are modulo 2^64: a block taken on one driver and given
+ * on another moves two slots in opposite directions without bound, but the
+ * sum stays exact because the live total is below 2^63. A concurrent change
+ * can make an unsynchronized sum read as a negative total, which is clamped
+ * to zero. This is not a snapshot. */
 #define WF_HEAP_COUNTERS (1u + WF_DRIVER_LIMIT + WF_SCHED_MAX_THREADS)
 typedef struct {
-    _Alignas(64) _Atomic int64_t bytes;
+    _Alignas(64) _Atomic uint64_t bytes;
 } wf_heap_counter;
 static wf_heap_counter wf_heap_counters[WF_HEAP_COUNTERS];
 static _Atomic unsigned wf_heap_counter_count;
 static _Thread_local wf_heap_counter *wf_heap_self;
-static _Thread_local int64_t wf_heap_local_bytes;
+static _Thread_local uint64_t wf_heap_local_bytes;
 
 void wf__heap_change(int64_t change) {
     if (wf_heap_self == NULL) {
@@ -1315,14 +1317,14 @@ void wf__heap_change(int64_t change) {
         }
         wf_heap_self = &wf_heap_counters[index];
     }
-    wf_heap_local_bytes += change;
+    wf_heap_local_bytes += (uint64_t)change;
     atomic_store_explicit(&wf_heap_self->bytes, wf_heap_local_bytes, memory_order_relaxed);
 }
 
 uint64_t wf__heap_in_use(void) {
-    int64_t bytes;
+    uint64_t bytes;
     wf_spin_lock(&wf_pool_lock);
-    bytes = wf_pool_live_bytes;
+    bytes = (uint64_t)wf_pool_live_bytes;
     wf_spin_unlock(&wf_pool_lock);
     /* Fixed storage also covers a slot still being registered, and retains
      * deltas from drivers that have stopped. */
@@ -1331,9 +1333,9 @@ uint64_t wf__heap_in_use(void) {
         bytes += atomic_load_explicit(&wf_heap_counters[index].bytes, memory_order_relaxed);
     }
 #if defined(_WIN32)
-    bytes += wf__windows_registry_bytes();
+    bytes += (uint64_t)wf__windows_registry_bytes();
 #endif
-    return bytes < 0 ? 0 : (uint64_t)bytes;
+    return bytes > (uint64_t)INT64_MAX ? 0 : bytes;
 }
 
 int wf__resident_bytes(uint64_t *bytes) {
