@@ -111,14 +111,12 @@ reported to show where a deficit comes from and decides nothing.
 
 ## Running
 
-CI only, through the temporary workflow, whose inputs are `rounds` (default 3,
-the size of a probe: choose the scale for the real run from the spreads it
-shows), `reps` (default 20, histograms per measured process) and `runner`
-(`github` or `14900k`). On the 14900K the workflow pins
-`0-7` and runs `par8` at 8 workers and refuses a host with fewer than 8
-processors; a hosted runner pins all its processors and uses that many
-workers, which tests the harness and decides nothing about the criterion.
-The workflow does what these commands do:
+Measured through a temporary workflow on the research branch, removed once
+the results below were recorded (its last revision is `cd2481dc4` in the
+branch history): it built the compiler on the runner and ran the commands
+below on the i9-14900K, pinned to `0-7` with 8 workers, or on a hosted runner
+with all its processors, which tests the harness and decides nothing about
+the criterion. To repeat it, restore that workflow on a work branch.
 
 ```sh
 make -C compiler build
