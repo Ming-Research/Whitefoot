@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.99: continue, and loop relations carried through joins
+
+Rules: changed DIAG-1, ENT-2, ENT-5, ENT-6, FN-1, FORM-2, GIVE-1, GRAM-4, GRAM-6, INV-1, LIV-1, OWN-11, PAR-2, RANGE-3, REF-2, STOR-3, TYPE-6, TYPE-11
+
+Owner-approved: In the session of 2026-10-07 and 2026-10-08, written in Chinese: after the cards for `continue` and for carrying loop relations through joins, "137 and 138 agreed" (translated), selecting Q138 option A and Q137 option B; after the card for canonical merge-only frontiers, "146 agreed" (translated), selecting Q146 option A; after the completion report that presented PR #270's specification and design-tree text rule by rule, "agreed to all the other rulings" (translated).
+
+Summary: GRAM-4 adds `continue_stmt := "continue" LABEL? ";"`, a line-bearing statement [FORM-2], and GRAM-6 lists `continue` among the iteration transfers. A `continue` resolves its target as `break` does [TYPE-6, DIAG-1], delivers in a value initializer as `break` does [GIVE-1], has one edge to the target's next iteration after cleanup with a counted target updated once [FN-1, LIV-1, STOR-3, TYPE-11], joins the target header's validity and ownership agreement [REF-2, OWN-11], is excluded from a parallel loop's body when it leaves it [PAR-2], and is a backedge for the header and range invariants [ENT-5, INV-1, RANGE-3]. ENT-5 then defines canonical merge-only frontiers, with releases and scope kills as per-edge events, joined once at the next real statement, and transports each active written header relation every non-contradictory input proves over its own values to the joined values; an induction frontier is not joined. ENT-6 makes transported relations automatic premises and narrows its join-shape promise to regrouping merges with no statement between them. INV-1 proves the next header's batch on each incoming edge and names the failing edge, and ENT-2 adds the target-instance measure term a counted next header's binder-indexed measure needs. Selected by Q138 option A, Q137 option B and Q146 option A ([design](../research/investigations/join-relations/DESIGN.md)).
+
 ## 2026-10-08 v0.98: writable subdirectories, moving files and names below a root
 
 Rules: changed PRE-2
