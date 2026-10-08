@@ -3449,7 +3449,7 @@ Each subscript bound is submitted to [MSR-4] before the measure below it is form
 Formation uses current resolved places, reference validity, offset values and measure images, together with the existing standing facts for admitted terms.
 These views publish no fact into another candidate's view.
 An unavailable operand, unproved formation bound or unrepresentable affine form makes this optional candidate ineligible.
-[INV-1]'s source formation ceilings and checked integer arithmetic also apply to these forms.
+The source formation ceilings and checked integer arithmetic of [INV-1] also apply to these forms.
 
 For each eligible relation, instantiate its [INV-1] normalized components separately with every non-contradictory input's current images and submit each component to [MSR-4].
 Each query retains the source side's L0 term when available, including the side required by the bridge.
@@ -3489,9 +3489,9 @@ A kill inside a nested ordinary or counted loop whose continuation lies inside L
 Without a parenthesized invariant header, exactly those surviving facts hold at every iteration head; establishment and kills then proceed ordinarily within the iteration, and no fact established inside an iteration survives to the next iteration's head.
 With a header, [INV-1] first proves every header invariant simultaneously in the complete state before L without assuming any invariant from that header.
 After that base batch succeeds, the complete header batch is added to the conservative head state as the assumptions for an arbitrary iteration.
-[INV-1] proves preservation at the ordinary loop's induction frontier.
+Preservation is proved at the ordinary loop's induction frontier [INV-1].
 Only the proved header batch, not an arbitrary body-established fact, is reintroduced at the next ordinary-loop head.
-[INV-1] determines vacuity from that frontier.
+Vacuity is determined from that frontier [INV-1].
 A fact a non-continuing edge kills is still removed on that edge: the continuation join above takes each `break` edge after that edge's scope-exit kills, and an edge to the function-return sink reaches no queried program point, so narrowing this scan opens no path on which a dead fact is read.
 
 A counted `for_stmt` uses one compiler-owned structural binder recurrence.
@@ -3503,7 +3503,7 @@ Kills inside a nested ordinary or counted loop are classified by that same posit
 Third, its conservative head state is the closed post-capture state minus every fact having a support member that a continuing kill event may kill, and the complete proved header batch is then activated there.
 On each true header edge, S11 adds the two structural body-entry bounds to that state.
 The hidden binder update kills every fact supported by the binder before a later header, while S11 re-establishes only its two stated bounds after the next true guard.
-[INV-1] proves the counted next-header batch on each induction input, including the hidden next-binder image and its representability judgment.
+The counted next-header batch is proved on each induction input, including the hidden next-binder image and its representability judgment [INV-1].
 The order is preheader establishment and closure, simultaneous base proof, continuing-kill subtraction, header-batch activation, S11 body-entry establishment, body flow, and [INV-1]'s per-input induction judgment.
 Neither endpoint is evaluated again and neither capture-to-endpoint equality is re-established after the preheader.
 Therefore a continuing write to a mutable endpoint source kills the direct capture-to-source equality, while a consequence already closed in the preheader whose support contains only immutable captures and other still-live terms may soundly survive.
@@ -3536,7 +3536,7 @@ Otherwise every input image is first normalized: each delta atom an earlier join
 If every normalized input then has one identical non-delta nonconstant form, the joined image is that common form plus one fresh delta atom whose interval is exactly the minimum through maximum of the inputs' constant intervals; otherwise the binding receives one fresh full-type atom.
 An input carrying no delta atom normalizes to its own nonconstant form and the closed interval of its own constant.
 A delta atom is an ordinary shared atom at query points; at a later join it is folded as above.
-[ENT-5]'s frontier fixes the input states and the placement of added premises: regrouping the same ordered incoming edges solely by merge-only continuations gives the same joined images and automatic facts, up to renaming fresh atoms, and the same dispositions.
+The frontier of [ENT-5] fixes the input states and the placement of added premises: regrouping the same ordered incoming edges solely by merge-only continuations gives the same joined images and automatic facts, up to renaming fresh atoms, and the same dispositions.
 The join never equates distinct atoms merely because two source expressions have the same spelling.
 A loop's continuing-kill construction similarly replaces every loop-carried mutable binding by a fresh header atom; proved header invariants are the only source-written relations reintroduced over those header images.
 The counted binder uses the captured lower image for its base, one fresh header image for an arbitrary iteration, and the exact `header_image + 1` form for a reachable next-header obligation.
@@ -3692,11 +3692,11 @@ An `affine_factor` `atom` is admitted exactly when it is one `place` formed from
 A bare `pbase` resolves to a live own-mode integer value as this rule states above, or to an in-scope integer-typed const generic [MSR-6], whose image is the constant [ENT-2] clause (c) already fixes: a concrete instance reads its mathematical value and the one source-canonical symbolic instance reads the symbolic constant term, which no [ENT-5] event kills and whose support is empty.
 A measure place's root resolves in exactly that same context, except that it names a live own-mode value of measured type, or a live reference whose referent is reached through `^` [REF-1, TYPE-7] as section 16's example writes `p^.len`, rather than a live own-mode integer, and it is never a counted header's `for_binding`.
 A measure factor denotes its current [ENT-2] measure term, or that rule's target-instance term at a counted next-header substitution, lifted from u64 to its mathematical integer value.
-[MSR-2] fixes support and [ENT-6] fixes the lifetime of its current-image association and the immutable meaning of a theorem about a former image.
+Support is fixed by [MSR-2], and [ENT-6] fixes the lifetime of its current-image association and the immutable meaning of a theorem about a former image.
 A subscript inside a measure place owes [OP-4]'s bound with offsets and prefixes resolved in the relation's current value environment.
 At a local invariant it is judged in the entering state.
 At a loop header its base and next-header instances are judged in the corresponding induction input below, before any target from that batch is published; a counted next-header instance uses the next-binder substitution also in offsets.
-[ENT-5] owns the formability checks of optional transport instances.
+The formability checks of optional transport instances belong to [ENT-5].
 A measure over a place whose subscripts are not all discharged is no term here either, so the relation names a slot the window has or it names nothing.
 A const generic is not an integer literal, so it never supplies the one direct literal operand a non-unit `*` requires.
 An integer-typed named const is admitted and denotes the one closed value it declares, folded to that value at formation; it is already an [ENT-2] constant term, so it means in a relation exactly what it means everywhere else. An integer-typed const generic is admitted as the paragraph above states [MSR-6], symbolic in the source-canonical instance and its value in a concrete one, and is not the closed-value admission. Construction, allocation, a field selection not ending in a measure member, a subscript outside a measure place, a reference expression, a moved value, and every other runtime expression form are not admitted as affine atoms in this version, and each is a hard error citing INV-1 at that `affine_factor`.
