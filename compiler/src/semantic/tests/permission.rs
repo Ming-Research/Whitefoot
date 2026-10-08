@@ -58,6 +58,24 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(pair.verdict.is_eligible(), "{pair:?}");
     assert!(pair.first.call.is_some());
     run_of(&table, "both", &["a conditional call", "fill"]);
+
+    for target in ["go", "unrelated"] {
+        let source = std::str::from_utf8(source)
+            .unwrap()
+            .replace("  if go {", "  let unrelated = True();\n  if go {")
+            .replace("  fill(v: b);", &format!("  set {target} = False();"))
+            .replace("writes(a), writes(b)", "writes(a)");
+        let table = permission_of(source.as_bytes());
+        let pair = pair_of(&table, "both", "a conditional call", "a set statement");
+        if target == "go" {
+            let Denial::Footprint { kind, .. } = denial(pair, 1) else {
+                panic!("expected a condition read conflict, got {:?}", pair.verdict);
+            };
+            assert_eq!(kind.halves(), ("operand read", "write"));
+        } else {
+            assert!(pair.verdict.is_eligible(), "{pair:?}");
+        }
+    }
 }
 
 #[test]

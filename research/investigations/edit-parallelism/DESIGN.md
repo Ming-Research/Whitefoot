@@ -4,8 +4,9 @@
 
 After the [recursive-offer grain fix](../recursive-offer-grain/DESIGN.md),
 Snowghost-wf's incremental edit pair (insert, then delete, a sentence in one
-text node of the ECMAScript page) runs at four workers in 1.08 to 1.10 times
-its sequential time on the 14900K, about 250 microseconds per edit. The
+text node of the ECMAScript page) takes at four workers 1.08 to 1.10 times
+its sequential time on the 14900K, about 250 microseconds per edit: slightly
+slower, not faster. The
 owner asked why it is not faster: whether the edit has no work that can run
 concurrently, or whether such work exists and is lost to scheduling cost or
 never offered (refused by the call grain, or denied permission by the
@@ -57,8 +58,8 @@ Readings, fixed now:
   checker gap to be stated as its minimal witness and brought to the owner
   as a decision.
 - O is material if it carries at least 20 percent while steals per edit
-  stay near the six D3 measured; the tasks are then too small, a grain
-  question.
+  stay near the six the recursive-offer investigation's third diagnostic
+  measured; the tasks are then too small, a grain question.
 
 ## Results
 
@@ -143,6 +144,26 @@ scheduling overhead.
 The owner chose to let a conditional call join a statement group
 (`design/compiler/parallel-lowering.md`): an `if` whose one non-empty arm is
 a single call with total arguments is now a PAR-1 member and lowers, inside
-a permitted group, to a call of a synthesized guard function. That removes
-the second blocker above; the suffix translation stays sequential until the
-stored-data invariant makes its recursive calls provably disjoint.
+a group, to a call of a synthesized guard function.
+
+That does not by itself let the suffix translation's two recursive calls
+form a group, even once the stored-data invariant makes them disjoint. The
+function body at Snowghost-wf `3ec4bb491` (`renderer/layout/reference.wf`,
+lines 427 to 439) is, in order:
+
+```text
+let after = before +sat held.own_events;
+if skip < before { translate_reference_owner_suffix(...left...); }
+if skip < after { let own_skip = skip -sat before; let item = reference_owner_payload(...); translate_reference_payload(...); }
+let right_skip = skip -sat after;
+translate_reference_owner_suffix(...right...);
+```
+
+The left call's statement is now a member. The payload statement's arm has
+three statements, so it is still refused and ends every run, and the
+`let right_skip` before the right call separates it from any group. A group
+of the left call, the payload and the right call would need either the
+source to compute `own_skip`, `item` and `right_skip` before the
+conditionals, so that each arm is a single call with total arguments, or a
+wider member form. Which one, and whether the benefit pays, can be measured
+only once the stored-data invariant exists.

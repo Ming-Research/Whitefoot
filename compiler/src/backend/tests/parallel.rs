@@ -141,13 +141,60 @@ fn conditional_call_is_published_and_preserves_both_outcomes() {
 }
 
 #[test]
-fn conditional_call_without_a_permitted_run_keeps_ordinary_lowering() {
-    let source = CONDITIONAL_CALL_PAIR
-        .replace("  fill(v: b);", "  fill(v: a);")
-        .replace("writes(a), writes(b)", "writes(a)");
-    let ordinary = emit(source.as_bytes());
-    let parallel = emit_with_overlap(source.as_bytes());
+fn conditional_call_without_an_adjacent_call_keeps_ordinary_lowering() {
+    let source = br#"fn fill(v: &u64) -> result: unit writes(v) {
+  set v^ = 7_u64;
+  return unit;
+}
+
+fn both(a: &u64, go: Bool, n: u64) -> result: u64 writes(a) {
+  let after = n +wrap 1_u64;
+  if go {
+    fill(v: a);
+  }
+  return after;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let ordinary = emit(source);
+    let parallel = emit_with_overlap(source);
     assert!(!parallel.contains("_par_cond_"));
+    assert_eq!(parallel, ordinary);
+}
+
+#[test]
+fn conditional_call_inside_atomic_keeps_ordinary_lowering() {
+    let source = br#"fn fill(v: &u64) -> result: unit writes(v) {
+  set v^ = 7_u64;
+  return unit;
+}
+
+fn both(held: Shared<u64>, out: &u64, go: Bool) -> result: unit writes(out) waits {
+  atomic state = &held {
+    if go {
+      fill(v: state);
+    }
+    fill(v: out);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let ordinary = emit(source);
+    let parallel = emit_with_overlap(source);
+    assert!(!parallel.contains("_par_cond_"));
+    let both = function_body(&parallel, "@wf_both");
+    assert!(
+        both.contains("br i1") || both.contains("switch i1"),
+        "{both}"
+    );
+    assert!(both.contains("call i8 @wf_fill("), "{both}");
     assert_eq!(parallel, ordinary);
 }
 
@@ -240,37 +287,37 @@ fn conditional_call_refusals_keep_the_branch_and_name_the_reason() {
             "indexed argument",
             "fn sink(x: u64) -> result: unit pure {\n  return unit;\n}\n\n",
             "  let n = a^.len;\n  if n > 0_u64 {\n    sink(x: a^[0_u64]);\n  }",
-            "a match statement",
+            Some("a match statement"),
         ),
         (
             "two statements",
             "",
             "  if go {\n    fill(v: a);\n    fill(v: a);\n  }",
-            "a match statement",
+            None,
         ),
         (
             "both arms act",
             "",
             "  if go {\n    fill(v: a);\n  } else {\n    fill(v: a);\n  }",
-            "a match statement",
+            None,
+        ),
+        (
+            "else if",
+            "",
+            "  if go {\n    fill(v: a);\n  } else if go {\n    fill(v: a);\n  }",
+            None,
         ),
         (
             "condition conflict",
             "",
             "  let n = b^.len;\n  if n > 0_u64 {\n    if b^[0_u64] == 0_u64 {\n      fill(v: a);\n    }\n    fill(v: b);\n  }",
-            "a conditional call",
-        ),
-        (
-            "affine move",
-            "nocopy struct Payload {\n  value: u64;\n}\n\nfn consume(x: Payload) -> result: unit pure {\n  return unit;\n}\n\n",
-            "  let payload = Payload(value: 3_u64);\n  if go {\n    consume(x: move payload);\n  } else {\n    consume(x: move payload);\n  }",
-            "a match statement",
+            Some("a conditional call"),
         ),
         (
             "discard requires release",
             "fn fresh() -> result: Box<u64> pure {\n  let cell = box_new::<u64>(value: 1_u64);\n  return move cell;\n}\n\n",
             "  if go {\n    fresh();\n  }",
-            "a match statement",
+            Some("a match statement"),
         ),
     ];
     for (name, prelude, replacement, label) in cases {
@@ -280,9 +327,7 @@ fn conditional_call_refusals_keep_the_branch_and_name_the_reason() {
         );
         let source = match name {
             "indexed argument" => source.replace("writes(a), writes(b)", "reads(a), writes(b)"),
-            "affine move" | "discard requires release" => {
-                source.replace("writes(a), writes(b)", "writes(b)")
-            }
+            "discard requires release" => source.replace("writes(a), writes(b)", "writes(b)"),
             _ => source,
         };
         let (module, ledger) = crate::compile_with_permission_ledger(
@@ -292,11 +337,27 @@ fn conditional_call_refusals_keep_the_branch_and_name_the_reason() {
         )
         .unwrap_or_else(|error| panic!("{name}: {error:?}"));
         assert!(!module.into_string().contains("_par_cond_"), "{name}");
-        assert!(
-            ledger.iter().any(|line| line.starts_with("PAR denied")
-                && line.contains(&format!("pair({label}, fill)"))),
-            "{name}: {ledger:?}"
-        );
+        if let Some(label) = label {
+            let denial = ledger
+                .iter()
+                .find(|line| {
+                    line.starts_with("PAR denied") && line.contains(&format!("pair({label}, fill)"))
+                })
+                .unwrap_or_else(|| panic!("{name}: {ledger:?}"));
+            if name == "condition conflict" {
+                assert!(
+                    denial.contains("condition 1: the operand read of s1 overlaps the write of s2"),
+                    "{denial}"
+                );
+            }
+        } else {
+            assert!(
+                !ledger
+                    .iter()
+                    .any(|line| line.contains("pair(a match statement, fill)")),
+                "{name}: {ledger:?}"
+            );
+        }
     }
 }
 

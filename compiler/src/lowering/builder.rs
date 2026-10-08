@@ -1054,11 +1054,17 @@ impl<'program> IrBuilder<'program> {
     /// Keep a permitted conditional member's call definition in its group's
     /// block. Only the shared shape check licenses evaluating arguments before
     /// dispatch; the permission table still owns independence and waiting.
+    /// An adjacent call member is a conservative pre-check: `overlaps` can
+    /// still drop the group for unavailable results, different blocks,
+    /// addressed bindings, or calls already claimed by another group, leaving
+    /// the guard as an ordinary call. Inside an atomic block, keep the branch
+    /// so the arm's ordinary lowering takes its units and binds their entries
+    /// before evaluating the call's arguments.
     fn lower_conditional_call(
         &mut self,
         statement: &CheckedStatement,
     ) -> Result<bool, LoweringFailure> {
-        if self.overlap != OverlapLowering::On {
+        if self.overlap != OverlapLowering::On || !self.atomics.is_empty() {
             return Ok(false);
         }
         let Some(conditional) = crate::semantic::permission::conditional_call(statement) else {
@@ -1070,13 +1076,19 @@ impl<'program> IrBuilder<'program> {
         let member = |site: &crate::semantic::permission::PermissionSite| {
             site.call.as_ref() == Some(conditional.site)
         };
-        let permitted = permissions
-            .runs
+        let adjacent_calls =
+            |first: &crate::semantic::permission::PermissionSite,
+             second: &crate::semantic::permission::PermissionSite| {
+                first.call.is_some() && second.call.is_some() && (member(first) || member(second))
+            };
+        let permitted = permissions.runs.iter().any(|run| {
+            run.sites
+                .windows(2)
+                .any(|sites| adjacent_calls(&sites[0], &sites[1]))
+        }) || permissions
+            .pairs
             .iter()
-            .any(|run| run.sites.len() >= 2 && run.sites.iter().any(member))
-            || permissions.pairs.iter().any(|pair| {
-                pair.verdict.is_eligible() && (member(&pair.first) || member(&pair.second))
-            });
+            .any(|pair| pair.verdict.is_eligible() && adjacent_calls(&pair.first, &pair.second));
         if !permitted {
             return Ok(false);
         }

@@ -1133,14 +1133,20 @@ impl<'check> Program<'check> {
             CheckedStatement::Match {
                 enum_type, arms, ..
             } => (
-                // Report a refused conditional call at an inner call statement
-                // without making it a member. Other matches keep their existing
-                // unreported boundary; they are outside this candidate form.
+                // Report a refused Bool conditional only when its sole acting
+                // arm is one call statement, including a discarded result that
+                // needs release. It gets a diagnostic site, not a call member.
+                // Multi-statement arms, multiple acting arms and other matches
+                // keep their existing unreported boundary.
                 matches!(enum_type, super::model::CheckedEnumType::Bool)
                     .then(|| {
-                        arms.iter()
-                            .flat_map(|arm| &arm.body)
-                            .find_map(|child| match child {
+                        let mut acting = arms.iter().filter(|arm| !arm.body.is_empty());
+                        let arm = acting.next()?;
+                        if acting.next().is_some() {
+                            return None;
+                        }
+                        match arm.body.as_slice() {
+                            [
                                 CheckedStatement::Evaluate {
                                     node_path,
                                     value: CheckedExpression::UserCall { .. },
@@ -1149,9 +1155,10 @@ impl<'check> Program<'check> {
                                     node_path,
                                     value: CheckedExpression::UserCall { .. },
                                     ..
-                                } => Some(node_path),
-                                _ => None,
-                            })
+                                },
+                            ] => Some(node_path),
+                            _ => None,
+                        }
                     })
                     .flatten(),
                 None,
