@@ -3045,8 +3045,9 @@ pub(crate) struct FactState {
     pub(crate) distinct_proofs: Rc<WordHashMap<DistinctKey, DerivationId>>,
     /// Independently live disequality proofs, parallel to `bound_candidates`.
     distinct_candidates: Rc<WordHashMap<DistinctKey, Candidates<DerivationId>>>,
-    /// [ENT-3] comparison origins (b): `own Bool` bindings whose initializer
-    /// comparison is still valid on every path from initializer to here.
+    /// [ENT-3] comparison origins (b): `own Bool` bindings that hold their
+    /// initializer comparison here — no [ENT-5] event has reached the binding
+    /// or the comparison's operands on any path from the initializer.
     pub(crate) origins: HashMap<BindingId, Relation>,
     /// Live exact signed whole-goal facts [ENT-2..ENT-4].
     pub(crate) opaque: WordHashSet<(GoalId, GoalSign)>,

@@ -63,6 +63,20 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **RANGE-2's unplaced write forgets every location, the range walk only
+  every exposed one.** "An `atomic_stmt` and every write the walk cannot
+  place forget every location" [RANGE-2]. Read with a binding as a
+  location, that also forgets the value of a scalar binding no reference
+  has reached, which the walk keeps: such a binding can change only through
+  a `set` the walk places. The walk is therefore more precise than the text
+  for a value read after an `atomic` or an unplaced write, so it can accept
+  a range obligation the text leaves unproved. Change: state the rule as
+  forgetting every location the write can reach, with a binding reachable
+  once a reference to it is formed (`design/compiler/range-judgment.md`,
+  the exposed-binding decision). Validate with a range requirement over a
+  binding read after an `atomic` with and without a reference to it.
+  Reopen with the next RANGE-2 amendment.
+
 - **Checking one function grows faster than its size.** The stage-3 wasm
   interpreter's interpreter function, a `match` whose arms each hold their
   handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s
@@ -2799,6 +2813,19 @@ rarely insert at the same place.
   convention cannot hold, or when a target without `preserve_none` matters.
 
 ## Code structure
+
+- **Comparison origins are removed twice, and one origin map is never
+  read.** Since comparison origins end at every kill event that reaches
+  their binding (`apply_kills_one` in
+  `compiler/src/semantic/entailment/flow/events.rs`, and the loop-head kill
+  in `loop_summary.rs`), two older removals duplicate it: the whole-binding
+  removal in `collect_target_kill` and the loop's `set_bindings` retain.
+  `FactState::ambiguous_goal_origins` is inserted, removed, joined and
+  cloned but read by no decision. Change: delete the two removals, then
+  `set_bindings` if nothing else needs it, and the unread map. Validate with
+  the direct-`set`, loop and Bool-origin tests in
+  `compiler/src/semantic/tests/entailment.rs` and the `ent3-*-bool-origin-*`
+  conformance cases. Reopen with the next change to origin bookkeeping.
 
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's

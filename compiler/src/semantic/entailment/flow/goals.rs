@@ -1919,8 +1919,10 @@ pub(super) fn checked_integer_constant(expression: &CheckedExpression) -> Option
     }
 }
 
-/// A let-origin expansion is valid only while the bound value has no `set`
-/// target on the path to its use. The target's projection does not narrow
+/// A let-origin expansion is valid only while the binding holds its
+/// initializer [ENT-3]; this handles the `set` of the binding itself, and
+/// writes through a reference or a callee end it at their kill events. The
+/// target's projection does not narrow
 /// this invalidation: changing one field or element invalidates the aggregate
 /// value identity even when a separately established length fact survives.
 pub(super) fn invalidate_goal_origin_for_set(state: &mut FactState, target: &CheckedSetTarget) {

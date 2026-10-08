@@ -3668,6 +3668,102 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+/// Every write event that reaches the binding's own storage ends origin (b):
+/// a direct `set`, a `set` through a reference whose resolved place is the
+/// binding, a callee's projected `writes` on such a reference, and the same
+/// write inside a loop body. A write that reaches only another Bool keeps it.
+#[test]
+fn a_write_reaching_the_bool_binding_ends_its_comparison_origin() {
+    let source = br#"const count: u64 = 4_u64;
+
+const values: Array<i32, count> =[0_i32, 0_i32, 0_i32, 0_i32];
+
+fn truth(target: &Bool) -> result: unit writes(target) {
+  set target^ = True();
+  return unit;
+}
+
+fn direct(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  set flag = True();
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn through_holder(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  let holder = &flag;
+  set holder^ = True();
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn through_call(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  truth(target: &flag);
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn through_loop(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  let holder = &flag;
+  loop {
+    if flag {
+      return values[i];
+    }
+    set holder^ = True();
+  }
+  return 0_i32;
+}
+
+fn other_holder(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  let other = False();
+  let holder = &other;
+  set holder^ = True();
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn other_call(i: u64) -> result: i32 pure {
+  let flag = i < 4_u64;
+  let other = False();
+  truth(target: &other);
+  if flag {
+    return values[i];
+  }
+  return 0_i32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for function in ["direct", "through_holder", "through_call", "through_loop"] {
+        assert_eq!(
+            discharge_flags(source, function),
+            vec![false],
+            "{function}: the write to the binding ends its comparison origin"
+        );
+    }
+    for function in ["other_holder", "other_call"] {
+        assert_eq!(
+            discharge_flags(source, function),
+            vec![true],
+            "{function}: a write to another Bool keeps the comparison origin"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------
 // [ENT-4] closure: transitivity, strengthening, contradiction, and the
 // flow/closure boundary
