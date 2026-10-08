@@ -116,7 +116,7 @@ The validation is stated before implementing:
 
 Adopted by the owner: proposal A, including the resident-set reading from D, specified in PRE-2 ([`spec/log.md`](../../../spec/log.md)). It counts per driver modulo 2^64 with a clamped non-instantaneous sum, keeps heap-free programs free of the allocator, and returns the resident set as an optional value.
 
-The cost was measured with firn on the i9-14900K (Firn-wf runs 37811516445 and 37812975250, branch `exp/memstats-cost`: the same firn built with this branch's experiment release `wf-exp-d89b6a051f2e` and with its base `wf-exp-2c28a4ecdd38`). With redis-benchmark `set` and `mset` at depths 1 and 16 on one and two CPUs, two passes and a twin of each image, the counted build ran at 0.971 to 1.025 of the uncounted one, inside the twins' 3 to 7% spread, so the stated 1% bound could not be resolved that way. A profile of the counted build under `set` and `mset` at depth 16 lists neither the counting functions nor `malloc` above 0.01% of samples: those commands' hot path makes no counted allocation, so their cost there is far below 1%. Scripts, whose engine allocates through the emitted heap (the C allocator took 11 to 13% of firn's CPU under rate-limiter-flexible's script), are not measured; `docs/todo.md` records that.
+The cost was measured with firn on the i9-14900K (Firn-wf runs 37811516445 and 37812975250, branch `exp/memstats-cost`: the same firn built with this branch's experiment release `wf-exp-d89b6a051f2e` and with its base `wf-exp-2c28a4ecdd38`). With redis-benchmark `set` and `mset` at depths 1 and 16 on one and two CPUs, two passes and a twin of each image, the counted build ran at 0.971 to 1.025 of the uncounted one, inside the twins' 3 to 7% spread, so the stated 1% bound could not be resolved that way. A profile of the counted build under `set` and `mset` at depth 16 lists neither the counting functions nor `malloc` above 0.01% of samples: those commands' hot path makes no counted allocation of emitted storage. That attributes no visible cost to the emitted counting there, but it does not bound the comparative slowdown, since the pool counts inside its own operations, which the profile attributes to them; the 1% criterion remains unresolved. Scripts, whose engine allocates through the emitted heap (the C allocator took 11 to 13% of firn's CPU under rate-limiter-flexible's script), are not measured; `docs/todo.md` records that.
 
 ## Implementation findings
 
@@ -139,8 +139,10 @@ atomic stores to avoid a C data race with reads; it needs no shared atomic
 read-modify-write for each allocation. Counter slots persist through driver
 shutdown because allocation and release may occur on different drivers.
 
-Summing independently sampled counters is exact when no other context
-allocates or releases during the reading. Otherwise the reading may differ
+Summing independently sampled counters is exact when nothing allocates or
+releases during the reading, neither another context nor a statement of
+the reading's own context that overlaps it [PAR-1], since allocation and
+release never prevent overlap. Otherwise the reading may differ
 from the holding at every single instant by at most the bytes those
 concurrent operations moved; either reading is an execution input [WAIT-2].
 Every counter, including the pool's and the Windows registry's, is a 64-bit

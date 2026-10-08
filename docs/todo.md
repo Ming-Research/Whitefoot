@@ -2139,8 +2139,10 @@ rarely insert at the same place.
   costs measurable time.
 
 - **Measure heap counting under an allocation-heavy program.** The cost of
-  counting each allocation (memory statistics) was bounded only for firn's
-  `set` and `mset`, whose hot path makes no counted allocation. A Lua
+  counting each allocation (memory statistics) was measured only for firn's
+  `set` and `mset`, whose hot path makes no counted allocation of emitted
+  storage, and stayed inside the twins' 3 to 7% spread, leaving the 1%
+  criterion unresolved. A Lua
   engine running scripts allocates through the emitted heap on every call
   (the C allocator took 11 to 13% of firn's CPU under a rate-limiting
   script). Measure the counted against the uncounted build on such a
