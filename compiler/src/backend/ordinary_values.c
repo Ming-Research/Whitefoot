@@ -590,6 +590,22 @@ void wf__body_receive_next(wf_read_result *result, wf_value *receive,
                                      &operation);
 }
 
+/* Prototype: the never watch takes the original start unchanged. This is
+ * its only watch-dependent comparison: no registration or atomic load. */
+int wf__body_receive_next_until_start(wf_read_result *result, wf_value *receive,
+                                      wf_view *destination, uint64_t start, uint64_t end,
+                                      const wf_deadline *deadline, const wf_value *cancel,
+                                      wf_host_operation *operation) {
+    void *source = (void *)wf_value_pointer(cancel);
+    if (source == NULL)
+        return wf__body_receive_next_start(result, receive, destination, start, end,
+                                           deadline, operation);
+    wf_transition(receive);
+    wf_before_submit(deadline);
+    return wf__completion_socket_receive_until_submit(wf_descriptor(receive),
+        wf_window(destination, start), end - start, source, &operation->record);
+}
+
 int wf__body_send_once_start(wf_write_result *result, wf_value *send,
                              const wf_view *source, uint64_t start, uint64_t end,
                              const wf_deadline *deadline, wf_host_operation *operation) {
@@ -1415,6 +1431,53 @@ void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *
     wf_host_operation operation;
     if (wf__body_tcp_accept_start(result, factory, listener, deadline, &operation))
         wf__body_tcp_accept_finish(result, factory, listener, deadline, &operation);
+}
+
+int wf__body_tcp_accept_until_start(wf_accept_result *result, wf_value *factory,
+                                    wf_value *listener, const wf_deadline *deadline,
+                                    const wf_value *cancel, wf_host_operation *operation) {
+    void *source = (void *)wf_value_pointer(cancel);
+    if (source == NULL)
+        return wf__body_tcp_accept_start(result, factory, listener, deadline, operation);
+    memset(result, 0, sizeof(*result));
+    wf_transition(listener);
+    if (!wf_factory_take(factory, &result->err.error)) {
+        result->tag = 1;
+        return 0;
+    }
+    wf_before_submit(deadline);
+    return wf__completion_socket_accept_until_submit(wf_descriptor(listener), source,
+                                                     &operation->record);
+}
+
+void wf__body_cancel_source(wf_value *result) {
+    memset(result, 0, sizeof(*result));
+    result->words[0] = (uint64_t)(uintptr_t)wf__cancel_new();
+}
+
+void wf__body_cancel_share(wf_value *result, const wf_value *source) {
+    wf__cancel_retain((void *)wf_value_pointer(source));
+    *result = *source;
+}
+
+void wf__body_cancel_watch(wf_value *result, const wf_value *source) {
+    wf__body_cancel_share(result, source);
+}
+
+void wf__body_cancel_fire(const wf_value *source) {
+    wf__cancel_fire((void *)wf_value_pointer(source));
+}
+
+void wf__body_cancel_never(wf_value *result) {
+    memset(result, 0, sizeof(*result));
+}
+
+void wf__body_close_cancel_source(const wf_value *source) {
+    wf__cancel_release((void *)wf_value_pointer(source));
+}
+
+void wf__body_close_cancel_watch(const wf_value *watch) {
+    wf__cancel_release((void *)wf_value_pointer(watch));
 }
 
 void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_value *stops) {

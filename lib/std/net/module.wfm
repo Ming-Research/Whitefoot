@@ -2,6 +2,7 @@ alias HandleFactory = pkg::io::HandleFactory;
 alias IoError = pkg::io::IoError;
 alias ReadStop = pkg::io::ReadStop;
 alias Instant = pkg::time::Instant;
+alias CancelWatch = pkg::time::CancelWatch;
 
 public opaque nocopy struct SocketAddress {
 }
@@ -54,3 +55,12 @@ public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> resu
 public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the receiving half of a connection.";
 
 public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
+
+public fn tcp_accept_until(factory: &HandleFactory, listener: &TcpListener, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<AcceptedConnection, IoError> reads(cancel), writes(factory), writes(listener) waits doc "Prototype: tcp_accept with an explicit cancellation watch; a fired watch uses DeadlinePassed as a shortcut instead of a new Cancelled variant, with no connection accepted; a racing host outcome may win.";
+
+public fn receive_next_until(receive: &TcpReceive, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadStop> reads(cancel), writes(receive), writes(destination) waits contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Prototype: receive_next with an explicit cancellation watch; a fired watch uses DeadlinePassed as a shortcut instead of a new Cancelled variant, with no byte received; a racing host outcome may win.";

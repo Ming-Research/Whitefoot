@@ -121,6 +121,14 @@ _Static_assert(sizeof(wf_stop_result) == 16, "ordinary stop Result layout");
  * `wf_std.<module>.<name>`, which no program function can take and no C
  * identifier can spell: ordinary_values.ll defines each one over the C body
  * below, `wf__body_<name>`. */
+/* Prototype cancellation handles use the ordinary opaque value ABI. */
+void wf__body_cancel_source(wf_value *result);
+void wf__body_cancel_share(wf_value *result, const wf_value *source);
+void wf__body_cancel_watch(wf_value *result, const wf_value *source);
+void wf__body_cancel_fire(const wf_value *source);
+void wf__body_cancel_never(wf_value *result);
+void wf__body_close_cancel_source(const wf_value *source);
+void wf__body_close_cancel_watch(const wf_value *watch);
 uint64_t wf__body_args_count(const wf_value *args);
 void wf__body_arg_get(wf_value_result *result, const wf_value *args, uint64_t position);
 uint64_t wf__body_host_bytes_len(const wf_value *value);

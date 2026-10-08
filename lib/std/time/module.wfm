@@ -23,3 +23,24 @@ public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool p
 public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
+
+// Prototype: reference-counted cancellation handles, moved between contexts.
+public opaque nodrop struct CancelSource {
+}
+
+public opaque nodrop struct CancelWatch {
+}
+
+public fn cancel_source() -> result: CancelSource pure doc "Prototype: creates an unfired cancellation source; close each source and watch after use.";
+
+public fn cancel_share(source: &CancelSource) -> result: CancelSource reads(source) doc "Prototype: returns another source for the same cancellation, movable to a spawned context like clock_share.";
+
+public fn cancel_watch(source: &CancelSource) -> result: CancelWatch reads(source) doc "Prototype: returns a watch retaining the source state independently of its source handles.";
+
+public fn cancel_fire(source: &CancelSource) -> result: unit writes(source) doc "Prototype: permanently fires this source and wakes every driver; watched waits reuse DeadlinePassed, with nothing transferred, when cancellation wins the race with host completion.";
+
+public fn cancel_never() -> result: CancelWatch pure doc "Prototype: returns a watch that never fires and needs no registration at a wait.";
+
+public fn close_cancel_source(source: CancelSource) -> result: unit pure doc "Prototype: releases this source handle; remaining sources and watches retain the state; closing does not fire it.";
+
+public fn close_cancel_watch(watch: CancelWatch) -> result: unit pure doc "Prototype: releases this watch handle, including a never watch.";

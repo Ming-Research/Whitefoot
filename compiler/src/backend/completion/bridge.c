@@ -1206,6 +1206,18 @@ struct wf_watch {
 _Static_assert(sizeof(wf_watch) == WF_WATCH_SIZE, "WF_WATCH_SIZE is a watch's size");
 _Static_assert(_Alignof(wf_watch) == WF_WATCH_ALIGN, "WF_WATCH_ALIGN is a watch's alignment");
 
+/* Prototype: sources and watches each retain one reference. A pending call
+ * borrows its watch, so parking adds no reference-count traffic. */
+typedef struct wf_cancel {
+    _Atomic uint64_t references;
+    _Atomic unsigned fired;
+} wf_cancel;
+
+/* A watch without a clock deadline uses the existing timer-slot fast exit
+ * for cleanup: zero still means no wait bookkeeping at all. No heap entry
+ * is allocated for this sentinel. */
+#define WF_CANCEL_ONLY SIZE_MAX
+
 struct wf_context {
     /* The frame the driver resumes when the context is chosen. */
     void *resume;
@@ -1254,9 +1266,16 @@ struct wf_context {
     uint32_t passes;
     /* While the context waits with a deadline [PRE-2]: the reading of the
      * monotonic clock at which its driver next looks at it, and its place in
-     * that driver's deadline heap plus one, zero when it has none. */
+     * that driver's deadline heap plus one; zero means no timer or watch,
+     * and WF_CANCEL_ONLY means a watch without a heap entry. Before park,
+     * timer_at preserves a watched call's original optional clock deadline. */
     uint64_t timer_at;
     size_t timer_slot;
+    /* Prototype: intrusive watched-wait record, owned only by this driver.
+     * Kept here so the native completion record remains 160 bytes. */
+    wf_cancel *cancel;
+    wf_context *cancel_next;
+    wf_context **cancel_previous;
     /* The one host operation the context has pending. */
     union {
         unsigned char bytes[WF_CONTEXT_OPERATION_BYTES];
@@ -1321,9 +1340,13 @@ struct wf_driver {
     size_t pool_bytes;
     /* Contexts resumed since this driver last looked for host completions. */
     unsigned runs_since_reap;
+    /* Prototype: only this driver touches the watched list. A firing thread
+     * sets the pending flag before raising this driver's wake epoch. */
+    wf_context *cancel_waits;
+    _Atomic unsigned cancel_pending;
     /* The contexts parked or polling here with a deadline, as a binary heap
      * on `timer_at` in storage from the context pool, and the bytes that
-     * storage was granted.  Only this driver's thread touches them. */
+     * storage was granted. Only this driver's thread touches them. */
     wf_context **timers;
     size_t timer_count;
     size_t timer_capacity;
@@ -1614,6 +1637,16 @@ static size_t wf_context_record_bucket(const wf_completion_record *record) {
 
 static void wf_timer_remove(wf_driver *driver, wf_context *context);
 
+static void wf_cancel_unlink(wf_context *context) {
+    if (context->cancel == NULL) return;
+    *context->cancel_previous = context->cancel_next;
+    if (context->cancel_next != NULL)
+        context->cancel_next->cancel_previous = context->cancel_previous;
+    context->cancel = NULL;
+    context->cancel_next = NULL;
+    context->cancel_previous = NULL;
+}
+
 static void wf_context_park(wf_driver *driver, wf_context *context) {
     size_t bucket = wf_context_record_bucket(context->record);
     atomic_store_explicit(
@@ -1711,7 +1744,9 @@ static void wf_timer_remove(wf_driver *driver, wf_context *context) {
     size_t index;
     if (context->timer_slot == 0) return;
     index = context->timer_slot - 1u;
+    wf_cancel_unlink(context);
     context->timer_slot = 0;
+    if (index == WF_CANCEL_ONLY - 1u) return;
     driver->timer_count -= 1u;
     if (index != driver->timer_count) {
         wf_timer_place(driver, index, driver->timers[driver->timer_count]);
@@ -1807,6 +1842,49 @@ static void wf_drivers_notify_others(void) {
     for (index = 0; index < count; index++) {
         wf_driver *driver = wf_drivers[index];
         if (driver != NULL && driver != wf_driver_self) {
+            wf_completion_notify_target(driver->runtime);
+        }
+    }
+    atomic_fetch_sub_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
+}
+
+void *wf__cancel_new(void) {
+    wf_cancel *source = wf__runtime_take(sizeof(*source));
+    atomic_init(&source->references, 1u);
+    atomic_init(&source->fired, 0u);
+    return source;
+}
+
+void wf__cancel_retain(void *opaque) {
+    wf_cancel *source = opaque;
+    uint64_t count = atomic_load_explicit(&source->references, memory_order_relaxed);
+    do {
+        if (count == UINT64_MAX) wf__runtime_exhausted();
+    } while (!atomic_compare_exchange_weak_explicit(&source->references, &count,
+                count + 1u, memory_order_relaxed, memory_order_relaxed));
+}
+
+void wf__cancel_release(void *opaque) {
+    wf_cancel *source = opaque;
+    if (source != NULL && atomic_fetch_sub_explicit(&source->references, 1u,
+                                                   memory_order_acq_rel) == 1u)
+        wf__runtime_give(source, sizeof(*source));
+}
+
+void wf__cancel_fire(void *opaque) {
+    wf_cancel *source = opaque;
+    if (atomic_exchange_explicit(&source->fired, 1u, memory_order_acq_rel)) return;
+    atomic_fetch_add_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
+    unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_seq_cst);
+    for (unsigned index = 0; index < count; ++index) {
+        wf_driver *driver = atomic_load_explicit(&wf_drivers[index], memory_order_seq_cst);
+        if (driver != NULL) {
+            /* Chain concurrent firings: overwriting a release store with
+             * another store could hide the first source's publication from
+             * the scan that consumes the second. The RMW acquires it and
+             * republishes both sources before this driver's wake. */
+            (void)atomic_exchange_explicit(&driver->cancel_pending, 1u,
+                                           memory_order_acq_rel);
             wf_completion_notify_target(driver->runtime);
         }
     }
@@ -1977,7 +2055,11 @@ static void wf_context_arm_deadline(wf_driver *driver, wf_context *self,
                                     wf_completion_record *record) {
     uint64_t deadline = atomic_load_explicit(&record->deadline, memory_order_relaxed);
     if (deadline != 0 && deadline != WF_COMPLETION_DEADLINE_FIRED) {
-        wf_timer_insert(driver, self, deadline);
+        /* A watched helper has a nonzero internal bound so it cannot run
+         * on the waiting driver and Windows accept stays interruptible.
+         * Its original clock bound, possibly zero, is saved before submit. */
+        if (self->cancel != NULL) deadline = self->timer_at;
+        if (deadline != 0) wf_timer_insert(driver, self, deadline);
     }
 }
 
@@ -2022,6 +2104,7 @@ int wf__context_wait(void *operation, void *frame) {
         return 1;
     }
     if (wf_bridge_record_state(record) == WF_COMPLETION_DONE) {
+        wf_timer_remove(driver, self);
         return wf_context_pass(self, frame);
     }
     self->record = record;
@@ -2926,45 +3009,59 @@ static int wf_contexts_stuck(const wf_driver *self) {
  * give up through the route that holds it, and completes there with its own
  * outcome or with a cancellation.  Returns nonzero when it made a context
  * ready. */
-static int wf_driver_expire(wf_driver *driver) {
-    int moved = 0;
-    uint64_t now;
-    if (driver->timer_count == 0) return 0;
-    now = wf_file_monotonic_ns();
-    while (driver->timer_count != 0 && driver->timers[0]->timer_at <= now) {
-        wf_context *context = driver->timers[0];
-        wf_completion_record *record = context->record;
-        wf_timer_remove(driver, context);
-        if (record == NULL) continue;
-        if (record->route == WF_COMPLETION_ROUTE_TIMER) {
-            record->result.kind = record->request.kind;
-            record->result.value = 0;
-            wf_completion_record_complete(record);
-            moved = 1;
-            continue;
-        }
-        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
-                              memory_order_release);
-        if (context->poll_events != 0) {
-            wf_context_unlink(&driver->polling, context);
-            driver->polling_count -= 1u;
-            context->poll_events = 0;
-            record->route = WF_COMPLETION_ROUTE_INLINE;
-            record->result.kind = record->request.kind;
-            record->result.value = -1;
-            record->result.error_code = wf_file_cancelled_error();
-            atomic_fetch_add_explicit(&wf_bridge_publications, 1, memory_order_relaxed);
-            wf_completion_record_publish(record);
-            context->record = NULL;
-            wf_context_ready(context);
-            wf_context_host_wait_ended(driver);
-            moved = 1;
-            continue;
-        }
-        if (wf_bridge_cancel(record)) {
-            wf_timer_insert(driver, context, now + WF_DEADLINE_RETRY_NS);
-        }
+static int wf_driver_expire_wait(wf_driver *driver, wf_context *context, uint64_t now) {
+    wf_completion_record *record = context->record;
+    wf_timer_remove(driver, context); /* also unlinks its cancellation watch */
+    if (record == NULL) return 0;
+    if (record->route == WF_COMPLETION_ROUTE_TIMER) {
+        record->result.kind = record->request.kind;
+        record->result.value = 0;
+        wf_completion_record_complete(record);
+        return 1;
     }
+    atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                          memory_order_release);
+    if (context->poll_events != 0) {
+        wf_context_unlink(&driver->polling, context);
+        driver->polling_count -= 1u;
+        context->poll_events = 0;
+        record->route = WF_COMPLETION_ROUTE_INLINE;
+        record->result.kind = record->request.kind;
+        record->result.value = -1;
+        record->result.error_code = wf_file_cancelled_error();
+        atomic_fetch_add_explicit(&wf_bridge_publications, 1, memory_order_relaxed);
+        wf_completion_record_publish(record);
+        context->record = NULL;
+        wf_context_ready(context);
+        wf_context_host_wait_ended(driver);
+        return 1;
+    }
+    if (wf_bridge_cancel(record)) {
+        wf_timer_insert(driver, context, now + WF_DEADLINE_RETRY_NS);
+    }
+    return 0;
+}
+
+static int wf_driver_find_cancelled(wf_driver *driver) {
+    if (!atomic_load_explicit(&driver->cancel_pending, memory_order_acquire)) return 0;
+    if (!atomic_exchange_explicit(&driver->cancel_pending, 0u, memory_order_acquire))
+        return 0;
+    wf_context *context = driver->cancel_waits;
+    while (context != NULL) {
+        wf_context *next = context->cancel_next;
+        if (atomic_load_explicit(&context->cancel->fired, memory_order_acquire))
+            (void)wf_driver_expire_wait(driver, context, wf_file_monotonic_ns());
+        context = next;
+    }
+    return 1;
+}
+
+static int wf_driver_expire(wf_driver *driver) {
+    int moved = wf_driver_find_cancelled(driver);
+    if (driver->timer_count == 0) return moved;
+    uint64_t now = wf_file_monotonic_ns();
+    while (driver->timer_count != 0 && driver->timers[0]->timer_at <= now)
+        moved |= wf_driver_expire_wait(driver, driver->timers[0], now);
     return moved;
 }
 
@@ -3039,7 +3136,9 @@ static void wf_context_drive(wf_driver *driver) {
         }
         {
             uint64_t epoch = wf_completion_wake_epoch(driver->runtime);
-            if (wf_context_harvest(driver)
+            /* Recheck cancellation after capturing the wake epoch: a fire
+             * before the capture must be consumed before this thread sleeps. */
+            if (wf_driver_find_cancelled(driver) || wf_context_harvest(driver)
                 || atomic_load_explicit(&driver->run_count, memory_order_relaxed) != 0u) {
                 continue;
             }
@@ -3702,8 +3801,8 @@ static int wf_bridge_waits_for_readiness(const wf_completion_record *record) {
  * route for a socket operation that must not block this thread, then the
  * bounded adapter, and the engine here when none applies.  Every path ends in
  * a record the runtime owns, so there is nothing to answer. */
-static void wf_bridge_dispatch(wf_completion_record *record) {
-    int bounded = atomic_load_explicit(&record->deadline, memory_order_relaxed) != 0;
+static void wf_bridge_dispatch_bound(wf_completion_record *record, int bounded,
+                                     int readiness) {
     if (wf_bridge_file_request_is_empty(&record->request)) {
         wf_bridge_complete_empty(record);
         return;
@@ -3711,12 +3810,13 @@ static void wf_bridge_dispatch(wf_completion_record *record) {
     if (wf_bridge_ring_offer(record)) {
         return;
     }
-    if (wf_bridge_waits_for_readiness(record)
-        || (bounded && wf_bridge_readiness_kind(record) && wf_file_readiness_supported())) {
+    if (readiness && (wf_bridge_waits_for_readiness(record)
+        || (bounded && wf_bridge_readiness_kind(record) && wf_file_readiness_supported()))) {
         record->route = WF_COMPLETION_ROUTE_READINESS;
         return;
     }
     if (bounded) {
+        if (!readiness && !wf_bridge_ensure_file()) wf__runtime_exhausted();
         /* An operation with a deadline [PRE-2] is never made on the driver
          * thread, which is the thread that has to end it: the helpers take
          * it, and the program keeps every later operation on them, as once
@@ -3730,6 +3830,49 @@ static void wf_bridge_dispatch(wf_completion_record *record) {
         }
     }
     wf_bridge_submit_file(record);
+}
+
+static void wf_bridge_dispatch(wf_completion_record *record) {
+    wf_bridge_dispatch_bound(record,
+        atomic_load_explicit(&record->deadline, memory_order_relaxed) != 0, 1);
+}
+
+/* Prototype: only a real watch reaches here. Register on the driver's own
+ * context record before publishing to a target, then read fired. Nothing
+ * can run this driver's scan between here and its context's suspension.
+ * Always return pending (2) after dispatch: even a racing completion must
+ * pass through context_wait's cleanup before a fairness yield can migrate it. */
+static int wf_bridge_dispatch_watched(wf_completion_record *record, void *opaque) {
+    wf_context *self = wf_context_current;
+    wf_driver *driver = wf_driver_self;
+    wf_cancel *source = opaque;
+    if (self == NULL || driver == NULL || (void *)record != self->operation.bytes)
+        wf_bridge_fail("a watched host operation was submitted outside its context");
+    self->cancel = source;
+    self->cancel_next = driver->cancel_waits;
+    self->cancel_previous = &driver->cancel_waits;
+    if (self->cancel_next != NULL) self->cancel_next->cancel_previous = &self->cancel_next;
+    driver->cancel_waits = self;
+    self->timer_slot = WF_CANCEL_ONLY;
+    self->timer_at = atomic_load_explicit(&record->deadline, memory_order_relaxed);
+    if (atomic_load_explicit(&source->fired, memory_order_acquire)) {
+        wf_timer_remove(driver, self);
+        atomic_store_explicit(&record->deadline, WF_COMPLETION_DEADLINE_FIRED,
+                              memory_order_release);
+        record->route = WF_COMPLETION_ROUTE_INLINE;
+        record->result.kind = record->request.kind;
+        record->result.value = -1;
+        record->result.error_code = wf_file_cancelled_error();
+        wf_completion_record_complete(record);
+        return 1;
+    }
+    /* A native ring wakes through its epoch endpoint. Without one, helpers
+     * provide the same wake and deadline cancellation path; a blocking
+     * readiness poll cannot be interrupted by the driver's condition wake. */
+    if (self->timer_at == 0)
+        atomic_store_explicit(&record->deadline, UINT64_MAX - 1u, memory_order_relaxed);
+    wf_bridge_dispatch_bound(record, 1, 0);
+    return 2;
 }
 
 void wf__completion_file_read_submit(
@@ -4050,10 +4193,7 @@ void wf__completion_socket_listen_submit(
     wf_bridge_dispatch(held);
 }
 
-void wf__completion_socket_accept_submit(
-    int listener,
-    void *record
-) {
+static wf_completion_record *wf_bridge_accept_begin(int listener, void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     if (listener < 0) {
         wf_bridge_fail(
@@ -4066,7 +4206,15 @@ void wf__completion_socket_accept_submit(
      * fits and the host reports back what it actually used. */
     held->request.operation.accept.peer_length =
         (unsigned)sizeof(held->request.operation.accept.peer.native);
-    wf_bridge_dispatch(held);
+    return held;
+}
+
+void wf__completion_socket_accept_submit(int listener, void *record) {
+    wf_bridge_dispatch(wf_bridge_accept_begin(listener, record));
+}
+
+int wf__completion_socket_accept_until_submit(int listener, void *cancel, void *record) {
+    return wf_bridge_dispatch_watched(wf_bridge_accept_begin(listener, record), cancel);
 }
 
 void wf__completion_socket_connect_submit(
@@ -4081,12 +4229,8 @@ void wf__completion_socket_connect_submit(
     wf_bridge_dispatch(held);
 }
 
-void wf__completion_socket_receive_submit(
-    int descriptor,
-    void *buffer,
-    uint64_t count,
-    void *record
-) {
+static wf_completion_record *wf_bridge_receive_begin(int descriptor, void *buffer,
+                                                      uint64_t count, void *record) {
     wf_completion_record *held = wf_bridge_begin(record);
     if ((buffer == NULL && count != 0) || (uint64_t)(size_t)count != count) {
         wf_bridge_fail(
@@ -4097,6 +4241,18 @@ void wf__completion_socket_receive_submit(
     held->request.operation.receive.descriptor = descriptor;
     held->request.operation.receive.buffer = buffer;
     held->request.operation.receive.count = (size_t)count;
+    return held;
+}
+
+int wf__completion_socket_receive_until_submit(int descriptor, void *buffer,
+                                                uint64_t count, void *cancel, void *record) {
+    return wf_bridge_dispatch_watched(
+        wf_bridge_receive_begin(descriptor, buffer, count, record), cancel);
+}
+
+void wf__completion_socket_receive_submit(int descriptor, void *buffer,
+                                          uint64_t count, void *record) {
+    wf_completion_record *held = wf_bridge_receive_begin(descriptor, buffer, count, record);
     /* With other contexts live and a ring to wait in, the receive goes to the
      * ring at once: the scheduler submits it with every other staged
      * operation in one entry, where a first attempt here costs a system call

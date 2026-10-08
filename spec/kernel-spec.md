@@ -2520,6 +2520,27 @@ public fn instant_reached(deadline: Instant, instant: Instant) -> result: Bool p
 public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Completes once the monotonic clock has reached deadline.";
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
+
+// Prototype: reference-counted cancellation handles, moved between contexts.
+public opaque nodrop struct CancelSource {
+}
+
+public opaque nodrop struct CancelWatch {
+}
+
+public fn cancel_source() -> result: CancelSource pure doc "Prototype: creates an unfired cancellation source; close each source and watch after use.";
+
+public fn cancel_share(source: &CancelSource) -> result: CancelSource reads(source) doc "Prototype: returns another source for the same cancellation, movable to a spawned context like clock_share.";
+
+public fn cancel_watch(source: &CancelSource) -> result: CancelWatch reads(source) doc "Prototype: returns a watch retaining the source state independently of its source handles.";
+
+public fn cancel_fire(source: &CancelSource) -> result: unit writes(source) doc "Prototype: permanently fires this source and wakes every driver; watched waits reuse DeadlinePassed, with nothing transferred, when cancellation wins the race with host completion.";
+
+public fn cancel_never() -> result: CancelWatch pure doc "Prototype: returns a watch that never fires and needs no registration at a wait.";
+
+public fn close_cancel_source(source: CancelSource) -> result: unit pure doc "Prototype: releases this source handle; remaining sources and watches retain the state; closing does not fire it.";
+
+public fn close_cancel_watch(watch: CancelWatch) -> result: unit pure doc "Prototype: releases this watch handle, including a never watch.";
 ```
 
 `std::io`, the record `io/module.wfm`:
@@ -2769,6 +2790,7 @@ alias HandleFactory = pkg::io::HandleFactory;
 alias IoError = pkg::io::IoError;
 alias ReadStop = pkg::io::ReadStop;
 alias Instant = pkg::time::Instant;
+alias CancelWatch = pkg::time::CancelWatch;
 
 public opaque nocopy struct SocketAddress {
 }
@@ -2821,6 +2843,15 @@ public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> resu
 public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the receiving half of a connection.";
 
 public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
+
+public fn tcp_accept_until(factory: &HandleFactory, listener: &TcpListener, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<AcceptedConnection, IoError> reads(cancel), writes(factory), writes(listener) waits doc "Prototype: tcp_accept with an explicit cancellation watch; a fired watch uses DeadlinePassed as a shortcut instead of a new Cancelled variant, with no connection accepted; a racing host outcome may win.";
+
+public fn receive_next_until(receive: &TcpReceive, destination: &[u8], start: u64, end: u64, deadline: Option<Instant>, cancel: &CancelWatch) -> result: Result<u64, ReadStop> reads(cancel), writes(receive), writes(destination) waits contract {
+  requires start <= end;
+  requires end <= destination^.len;
+  ensures when Ok(value: next): start <= next;
+  ensures when Ok(value: next): next <= end;
+} doc "Prototype: receive_next with an explicit cancellation watch; a fired watch uses DeadlinePassed as a shortcut instead of a new Cancelled variant, with no byte received; a racing host outcome may win.";
 ```
 
 `StopSignals` is a capability of the invocation. While no `StopListener` is open, the host default applies; on POSIX, the signal's default action ends the program. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. A stop request is an input of the execution [WAIT-2]. A termination the host imposes after its grace period ends the program then.

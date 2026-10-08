@@ -873,3 +873,90 @@ entry:
   call void @wf__body_close_stop_listener_finish(ptr %result, ptr %factory, ptr %listener, ptr %operation)
   ret void
 }
+
+
+declare i32 @wf__body_receive_next_until_start(ptr, ptr, ptr, i64, i64, ptr, ptr, ptr)
+
+define i32 @wf_std.net.receive_next_until.start(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %destination.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %destination.len, ptr %view.len, align 8
+  %state = call i32 @wf__body_receive_next_until_start(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation)
+  ret i32 %state
+}
+
+define void @wf_std.net.receive_next_until.finish(ptr %result, ptr %receive, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %destination.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %destination.len, ptr %view.len, align 8
+  call void @wf__body_receive_next_finish(ptr %result, ptr %receive, ptr %view, i64 %start, i64 %end, ptr %deadline, ptr %operation)
+  ret void
+}
+
+
+declare i32 @wf__body_tcp_accept_until_start(ptr, ptr, ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.net.tcp_accept_until.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_tcp_accept_until_start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation)
+  ret i32 %state
+}
+
+define void @wf_std.net.tcp_accept_until.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %cancel, ptr %operation) align 64 {
+entry:
+  call void @wf__body_tcp_accept_finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  ret void
+}
+
+declare void @wf__body_cancel_source(ptr)
+define void @wf_std.time.cancel_source(ptr %result) align 64 {
+entry:
+  call void @wf__body_cancel_source(ptr %result)
+  ret void
+}
+
+declare void @wf__body_cancel_never(ptr)
+define void @wf_std.time.cancel_never(ptr %result) align 64 {
+entry:
+  call void @wf__body_cancel_never(ptr %result)
+  ret void
+}
+
+declare void @wf__body_cancel_share(ptr, ptr)
+define void @wf_std.time.cancel_share(ptr %result, ptr %source) align 64 {
+entry:
+  call void @wf__body_cancel_share(ptr %result, ptr %source)
+  ret void
+}
+
+declare void @wf__body_cancel_watch(ptr, ptr)
+define void @wf_std.time.cancel_watch(ptr %result, ptr %source) align 64 {
+entry:
+  call void @wf__body_cancel_watch(ptr %result, ptr %source)
+  ret void
+}
+
+declare void @wf__body_cancel_fire(ptr)
+define i8 @wf_std.time.cancel_fire(ptr %source) align 64 {
+entry:
+  call void @wf__body_cancel_fire(ptr %source)
+  ret i8 0
+}
+
+declare void @wf__body_close_cancel_source(ptr)
+define i8 @wf_std.time.close_cancel_source(ptr %source) align 64 {
+entry:
+  call void @wf__body_close_cancel_source(ptr %source)
+  ret i8 0
+}
+
+declare void @wf__body_close_cancel_watch(ptr)
+define i8 @wf_std.time.close_cancel_watch(ptr %source) align 64 {
+entry:
+  call void @wf__body_close_cancel_watch(ptr %source)
+  ret i8 0
+}

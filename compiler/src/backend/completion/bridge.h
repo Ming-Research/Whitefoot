@@ -94,6 +94,17 @@ void wf__completion_file_append_submit(
     void *record
 );
 
+/* Prototype: non-null watches only; pending watched submissions return 2,
+ * completed ones 1, matching an ordinary host start. Source handles own the
+ * state; the pending call borrows a live watch through its finish. */
+void *wf__cancel_new(void);
+void wf__cancel_retain(void *source);
+void wf__cancel_release(void *source);
+void wf__cancel_fire(void *source);
+int wf__completion_socket_accept_until_submit(int listener, void *cancel, void *record);
+int wf__completion_socket_receive_until_submit(int descriptor, void *buffer,
+                                                uint64_t count, void *cancel, void *record);
+
 /* Hands every byte written to the file before it to the host's durability
  * mechanism [PRE-2]. */
 void wf__completion_file_sync_submit(
