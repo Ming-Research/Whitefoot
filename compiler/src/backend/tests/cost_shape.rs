@@ -173,7 +173,7 @@ fn fresh_allocation_for_fill<'module>(
             line.strip_prefix(&prefix)
                 .map(|definition| (index, definition))
         })?;
-        if call_target(lines[index]) == Some("malloc") {
+        if call_target(lines[index]) == Some("wf__heap_take") {
             break index;
         }
         pointer = getelementptr_base(definition)?;
@@ -238,7 +238,7 @@ fn bulk_initializations_use_fresh_storage(function: &str) -> Result<(), String> 
 fn heap_initialization_oracle_refuses_repeated_and_reused_fills() {
     let fresh = r#"define void @fresh() {
 entry:
-  %run = tail call dereferenceable_or_null(4112) ptr @malloc(i64 4112)
+  %run = tail call dereferenceable_or_null(4112) ptr @wf__heap_take(i64 4112)
   %is_null = icmp eq ptr %run, null
   br i1 %is_null, label %failed, label %initialize
 failed:
@@ -263,7 +263,7 @@ initialize:
   ret void
 }"#;
     assert!(bulk_initializations_use_fresh_storage(reused).is_err());
-    let calloc = fresh.replace("@malloc(i64 4112)", "@calloc(i64 1, i64 4112)");
+    let calloc = fresh.replace("@wf__heap_take(i64 4112)", "@calloc(i64 1, i64 4112)");
     assert!(bulk_initializations_use_fresh_storage(&calloc).is_err());
 }
 
@@ -320,7 +320,7 @@ fn aggregate_destination_provenance_ignores_commas_inside_gep_types() {
     assert!(is_aggregate_destination(stack, "%wf.inner"));
 
     let heap = r#"define void @heap() {
-  %wf.cell = call ptr @malloc(i64 24)
+  %wf.cell = call ptr @wf__heap_take(i64 24)
   %wf.slot = getelementptr inbounds { i64, ptr, ptr }, ptr %wf.cell, i64 0, i32 1
   %wf.inner = getelementptr inbounds { i64, ptr, ptr }, ptr %wf.slot, i64 0, i32 2
   ret void
@@ -403,8 +403,8 @@ fn remakes_a_run(function: &str, allocation: &str) -> bool {
     };
     let freed: Vec<_> = function
         .lines()
-        .filter(|line| call_target(line) == Some("free"))
-        .filter_map(|line| call_argument(line, "free", 0))
+        .filter(|line| call_target(line) == Some("wf__heap_give"))
+        .filter_map(|line| call_argument(line, "wf__heap_give", 0))
         .filter_map(|argument| argument.split_whitespace().next_back())
         .collect();
     function.lines().any(|line| {
@@ -420,6 +420,24 @@ fn remakes_a_run(function: &str, allocation: &str) -> bool {
         };
         operand(0) == Some(register) && operand(1).is_some_and(|source| freed.contains(&source))
     })
+}
+
+#[test]
+fn run_remake_oracle_requires_release_of_the_copy_source() {
+    let allocation = "  %fresh = call ptr @wf__heap_take(i64 %bytes)";
+    let remake = r#"define void @grow(ptr %old, i64 %bytes) {
+  %fresh = call ptr @wf__heap_take(i64 %bytes)
+  %destination = getelementptr i8, ptr %fresh, i64 16
+  %source = getelementptr i8, ptr %old, i64 16
+  call void @llvm.memmove.p0.p0.i64(ptr %destination, ptr %source, i64 32, i1 false)
+  call void @wf__heap_give(ptr %old, i64 48)
+  ret void
+}"#;
+    assert!(remakes_a_run(remake, allocation));
+    let retained_source = remake.replace("  call void @wf__heap_give(ptr %old, i64 48)\n", "");
+    assert!(!remakes_a_run(&retained_source, allocation));
+    let other_release = remake.replace("@wf__heap_give(ptr %old,", "@wf__heap_give(ptr %fresh,");
+    assert!(!remakes_a_run(&other_release, allocation));
 }
 
 #[test]
@@ -448,7 +466,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // the larger block, copies the old run into it and frees the old block.
     //
     // The source still owns initialization. With exclusive run rows LLVM can
-    // fold malloc plus the zero-fill loop into calloc. Count either optimized
+    // fold an allocator plus a zero-fill loop into calloc. The counted
+    // wrapper retains its accounting side effect. Count either optimized
     // spelling, including both calloc factors, while retaining the exact
     // source-site and per-size counts, and one allocation per retained helper.
     let mut expanded = 0;
@@ -464,7 +483,7 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
         let helper = signature.contains(" @wf_zeroed_bytes(");
         helper_defined |= helper;
         for line in function.lines() {
-            if let Some(callee @ ("malloc" | "calloc")) = call_target(line) {
+            if let Some(callee @ ("wf__heap_take" | "calloc")) = call_target(line) {
                 if helper {
                     helper_takes += 1;
                     continue;
@@ -542,8 +561,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // take and the hand-back, so a caller cannot reach a filled run without
     // having taken it and cannot re-reach the fill without taking another. A
     // remake fills only the slots it added, and only once, after its copy.
-    // LLVM may retain that first fill as a memset after malloc and
-    // its null check, instead of a calloc. The provenance/control-flow oracle
+    // LLVM may retain that first fill as a memset after the counted allocation
+    // and its null check. The provenance/control-flow oracle
     // permits one such fill per allocation and refuses repeated fills, fills
     // reached again without allocation, and fills through incoming pointers.
     // Aggregate or frame initialization may also become a memset, without
@@ -576,7 +595,7 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // read input necessarily follows a read, since only a read shows a line
     // longer than the window, so the check constrains the first allocation.
     for function in program_functions() {
-        let Some(first_allocation) = ["@malloc(", "@calloc(", "@wf_zeroed_bytes("]
+        let Some(first_allocation) = ["@wf__heap_take(", "@calloc(", "@wf_zeroed_bytes("]
             .iter()
             .filter_map(|site| function.find(site))
             .min()

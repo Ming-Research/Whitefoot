@@ -268,8 +268,8 @@ fn main() -> status: std::process::ExitStatus pure {
         // Ordinary visibility plus noinline preserves the pointer
         // ABI, including the helper-to-helper call, under host optimization.
         let module = retain_calls(&super::emit_lowered(source, overlap))
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         // KEPT AS WRITTEN for the lowering port: the `$` marks the emitted
         // instantiation suffix of a generic source helper. The two helpers
         // lost their region parameter but keep their one const argument, so
@@ -539,8 +539,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = super::owned_places::allocation_observer(4, 0);
         let output = super::compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
@@ -660,8 +660,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         // Each abandoned prefix is released before the next build allocates,
         // so allocation IDs identify source slots. The observer aborts on a
         // duplicate or unknown release, so the ledger also pins "once".
@@ -752,8 +752,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = super::owned_places::allocation_observer(1, 0);
         let output = super::compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1261,8 +1261,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = super::owned_places::u64_allocation_observer(2);
         let output = super::compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1318,8 +1318,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = super::owned_places::allocation_observer(2, 0);
         let output = super::compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1408,8 +1408,8 @@ fn main() -> status: std::process::ExitStatus pure {
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
         let module = super::emit_lowered(source, overlap);
         let observed = retain_calls(&module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         // The second record depends on the first, and the cell consumes both,
         // so allocation IDs identify these source owners.
         let host = super::owned_places::allocation_observer(4, 0);
@@ -1492,8 +1492,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let module = retain_calls(&compile(source))
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(");
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
     let observer = super::owned_places::allocation_observer(3, 0);
     let output = super::compile_link_and_run(&module, Some(&observer), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1518,8 +1518,8 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#;
     let module = retain_calls(&compile(source))
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(");
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
     let observer = format!(
         "{}\n{}",
         super::owned_places::allocation_observer(5, 0),

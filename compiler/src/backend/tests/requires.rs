@@ -300,7 +300,7 @@ fn borrowed_output_capacity_contract_informs_the_body_without_a_callee_prologue(
     // `Box<Slots<u8>>` it was handed is its own affine owner there and the
     // compiler-derived free of that one heap object is on its return edge
     // [STOR-1, STOR-3, LIV-1].
-    assert_eq!(copy.matches("call void @free").count(), 1);
+    assert_eq!(copy.matches("call void @wf__heap_give").count(), 1);
     // Retire the blanket absence-of-assume expectation: source.inner[offset]
     // now receives the qualified nonnegative payload-index fact. The
     // source_length <= out_length requirement itself remains erased; it
