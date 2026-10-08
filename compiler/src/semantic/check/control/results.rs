@@ -435,7 +435,7 @@ impl<'unit> Checker<'_, 'unit> {
             all_paths_deliver: true,
             direct_give: false,
             give_states: Vec::new(),
-            break_states: Vec::new(),
+            loop_transfers: Vec::new(),
         })
     }
 

@@ -63,6 +63,7 @@ impl Input<'_, '_> {
                 reaches
             }
             CheckedStatement::Break { target, .. } => reachability.break_reaches(*target),
+            CheckedStatement::Continue { target, .. } => reachability.continue_reaches(*target),
             CheckedStatement::Proof(_) => normal_reaches,
             CheckedStatement::Match {
                 scrutinee, arms, ..
@@ -98,8 +99,12 @@ impl Input<'_, '_> {
             }
             CheckedStatement::Loop { id, body, .. } => {
                 reachability.breaks.push((*id, normal_reaches));
+                reachability.continues.push((*id, false));
                 let body_reaches = loop_block_reaches(body, false, reachability);
+                reachability.continues.pop();
+                reachability.continues.push((*id, body_reaches));
                 self.collect_continuing_loop_kills(body, body_reaches, reachability, kills);
+                reachability.continues.pop();
                 reachability.breaks.pop();
                 normal_reaches || body_reaches
             }
@@ -111,8 +116,12 @@ impl Input<'_, '_> {
                 ..
             } => {
                 reachability.breaks.push((*id, normal_reaches));
-                let body_reaches =
-                    self.collect_continuing_loop_kills(body, normal_reaches, reachability, kills);
+                reachability.continues.push((*id, normal_reaches));
+                let body_reaches = loop_block_reaches(body, normal_reaches, reachability);
+                reachability.continues.pop();
+                reachability.continues.push((*id, body_reaches));
+                self.collect_continuing_loop_kills(body, body_reaches, reachability, kills);
+                reachability.continues.pop();
                 reachability.breaks.pop();
                 // Both endpoint atoms execute before either the real false
                 // edge or a body path. Their own effects are continuing for
@@ -320,6 +329,7 @@ pub(super) fn loop_statement_reaches(
         CheckedStatement::Return { .. } => false,
         CheckedStatement::Give { .. } => reachability.gives.last().copied().unwrap_or(false),
         CheckedStatement::Break { target, .. } => reachability.break_reaches(*target),
+        CheckedStatement::Continue { target, .. } => reachability.continue_reaches(*target),
         CheckedStatement::Match { arms, .. } => {
             let mut reaches = false;
             for arm in arms {
@@ -348,7 +358,9 @@ pub(super) fn loop_statement_reaches(
             // exit can take another iteration and eventually use that
             // same route.
             reachability.breaks.push((*id, normal_reaches));
+            reachability.continues.push((*id, false));
             let body_reaches = loop_block_reaches(body, false, reachability);
+            reachability.continues.pop();
             reachability.breaks.pop();
             // [FN-1] also keeps a conservative direct edge from the
             // nested loop statement to its normal successor. That edge
@@ -361,7 +373,9 @@ pub(super) fn loop_statement_reaches(
             // then take that same edge. A matching break also reaches the
             // successor; enclosing exits retain their visible targets.
             reachability.breaks.push((*id, normal_reaches));
+            reachability.continues.push((*id, normal_reaches));
             let body_reaches = loop_block_reaches(body, normal_reaches, reachability);
+            reachability.continues.pop();
             reachability.breaks.pop();
             normal_reaches || body_reaches
         }

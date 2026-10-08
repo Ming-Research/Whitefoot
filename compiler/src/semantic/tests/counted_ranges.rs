@@ -697,9 +697,53 @@ fn an_unlabeled_break_requires_an_enclosing_loop() {
   break;
 }
 "#,
-        SemanticRule::Fn1,
+        SemanticRule::Type6,
         SemanticIssueKind::BreakOutsideLoop {
             mechanical_fix: "move `break;` inside a loop or remove it",
         },
     );
+}
+
+#[test]
+fn continue_cleanup_retains_target_and_reverse_scope_release_order() {
+    let source = include_bytes!("../../../../tests/conformance/cases/continue-pos-cleanup.wf");
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("continue cleanup source must check: {outcome:?}");
+        };
+        let body = checked.data.functions[0].body.as_deref().expect("WF body");
+        let CheckedStatement::Let {
+            binding: retained, ..
+        } = &body[0]
+        else {
+            panic!("outer owner");
+        };
+        let CheckedStatement::CountedRange {
+            id, body: outer, ..
+        } = &body[1]
+        else {
+            panic!("target loop");
+        };
+        let CheckedStatement::Let { binding: first, .. } = &outer[0] else {
+            panic!("first iteration owner");
+        };
+        let CheckedStatement::CountedRange { body: inner, .. } = &outer[1] else {
+            panic!("inner loop");
+        };
+        let CheckedStatement::Let {
+            binding: second, ..
+        } = &inner[0]
+        else {
+            panic!("second iteration owner");
+        };
+        let CheckedStatement::Continue { target, drops, .. } = &inner[1] else {
+            panic!("explicit backedge");
+        };
+        assert_eq!(target, id);
+        assert_eq!(
+            drops.iter().map(|drop| drop.binding).collect::<Vec<_>>(),
+            vec![*second, *first]
+        );
+        assert!(drops.iter().all(|drop| drop.binding != *retained));
+    });
 }
