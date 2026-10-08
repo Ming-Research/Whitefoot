@@ -13,7 +13,7 @@ fn measure_box(meter: &MemoryMeter) -> result: u64 writes(meter) {
   }
 }
 
-fn measure_grow(meter: &MemoryMeter) -> result: bool writes(meter) {
+fn measure_grow(meter: &MemoryMeter) -> result: u64 writes(meter) {
   let before = std::process::heap_in_use(meter: meter);
   let cell = box_slots_new::<u64>(capacity: 3_u64);
   place_back(window: &cell.inner, value: 73_u64);
@@ -21,36 +21,39 @@ fn measure_grow(meter: &MemoryMeter) -> result: bool writes(meter) {
   if initial >= before {
     let bytes = initial - before;
     if bytes != 40_u64 {
-      return false;
+      return 1_u64;
     }
   } else {
-    return false;
+    return 1_u64;
   }
   grow(cell: &cell, capacity: 9_u64);
   let grown = std::process::heap_in_use(meter: meter);
   if grown >= before {
     let bytes = grown - before;
     if bytes != 88_u64 {
-      return false;
+      return 1_u64;
     }
   } else {
-    return false;
+    return 1_u64;
   }
   grow(cell: &cell, capacity: 17_u64);
   let regrown = std::process::heap_in_use(meter: meter);
   if regrown >= before {
     let bytes = regrown - before;
     if bytes != 152_u64 {
-      return false;
+      return 1_u64;
     }
   } else {
-    return false;
+    return 1_u64;
   }
   if cell.inner.len == 1_u64 {
     let held = take_back(window: &cell.inner);
-    return held == 73_u64;
+    if held != 73_u64 {
+      return 1_u64;
+    }
+    return 0_u64;
   } else {
-    return false;
+    return 1_u64;
   }
 }
 
@@ -73,8 +76,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   if after != before {
     return exit_status(code: 3_u8);
   }
-  let growth_ok = measure_grow(meter: &meter);
-  if growth_ok == false {
+  let growth = measure_grow(meter: &meter);
+  if growth != 0_u64 {
     return exit_status(code: 6_u8);
   }
   let after_grow = std::process::heap_in_use(meter: &meter);
