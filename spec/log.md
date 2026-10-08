@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.99: a dead linear binding is reinitialized
+
+Rules: changed SET-1, WIN-3
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the completion report that presented reinitializing a dead linear binding as Q230 option A, recommended, with PR #272's specification text, and the merge order as Q234: "Q225–Q234 all approved" (translated).
+
+Summary: SET-1 no longer requires the target type to be copy or affine. A target is writable when it satisfies the writable-root condition, unchanged from the former writability rule except that the binding need not be live, and its root is live or it is the complete own-mode value binding; the commit reinitializes a dead complete binding, and only a live target keeps its previous value until the commit. WIN-3 refuses assigning over a live owned place whose value is linear and states that a dead binding holds no old value, so its reinitialization releases nothing. Before the change the checker refused `let next = step(log: move log); set log = move next;` for a linear `log`, citing WIN-3, although SET-1's dead-binding sentence, OWN-11's loop rule and the affine-replacement decision admitted it; firn's append-only writer, a struct of nodrop handles passed through a fallible step inside a loop, needs that form. A field, index or dereference below a dead root stays unwritable.
+
 ## 2026-10-08 v0.98: writable subdirectories, moving files and names below a root
 
 Rules: changed PRE-2
