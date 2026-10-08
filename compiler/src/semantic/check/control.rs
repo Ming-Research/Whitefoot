@@ -363,6 +363,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_if(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        condition: matched.condition,
                         scrutinee: matched.scrutinee,
                         enum_type: matched.enum_type,
                         arms: matched.arms,
@@ -380,6 +381,7 @@ impl<'unit> Checker<'_, 'unit> {
                 let matched = self.check_match(context, node, bindings, counters, scope, false)?;
                 Ok(StatementResult {
                     statement: CheckedStatement::Match {
+                        condition: matched.condition,
                         scrutinee: matched.scrutinee,
                         enum_type: matched.enum_type,
                         arms: matched.arms,
@@ -631,6 +633,7 @@ impl<'unit> Checker<'_, 'unit> {
             }
             return Ok(StatementResult {
                 statement: CheckedStatement::ValueMatchLet {
+                    condition: matched.condition,
                     node_path: self.types.declarations.tree.path(node)?.clone(),
                     kind: if value_if.is_some() {
                         ValueInitializerKind::ValueIf

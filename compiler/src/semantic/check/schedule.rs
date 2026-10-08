@@ -30,6 +30,13 @@ impl Checker<'_, '_> {
         allow_receipts: bool,
         judged: Option<&[bool]>,
     ) -> Result<PostconditionSchedule, CheckStop> {
+        let condition_scope = functions.iter().enumerate().map(|(index, checked)| {
+            judged.map_or_else(|| {
+                !self.types.function_templates.iter().any(|template| {
+                    template.declaration == checked.function.declaration && !template.generic_parameters.is_empty()
+                })
+            }, |judged| judged[index])
+        }).collect::<Vec<_>>();
         let selected = |index: usize| analyzed.is_none_or(|analyzed| analyzed[index]);
         let const_parameter_types: HashMap<_, _> = self.types.const_generic_types().collect();
         let renaming_classes = (0..functions.len())
@@ -91,6 +98,7 @@ impl Checker<'_, '_> {
                 crate::in_parallel(&fresh, |index| {
                     let checked = &functions[*index];
                     let context = EntailmentContext {
+                        judge_conditions: condition_scope[*index],
                         declarations: types.declarations.resolved.declarations(),
                         callees,
                         constants: &types.checked_constants,
@@ -235,6 +243,7 @@ impl Checker<'_, '_> {
                     crate::in_parallel(&fresh, |index| {
                         let checked = &functions[*index];
                         let context = EntailmentContext {
+                            judge_conditions: condition_scope[*index],
                             declarations: types.declarations.resolved.declarations(),
                             callees,
                             constants: &types.checked_constants,

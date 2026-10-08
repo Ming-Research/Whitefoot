@@ -83,8 +83,8 @@ fn a_non_bool_condition_is_a_gram6_rejection_at_the_condition() {
 
 #[test]
 fn checked_value_initializers_retain_their_source_production_kind() {
-    let source = br#"fn main() -> status: std::process::ExitStatus pure {
-  let flag = True();
+    let source = br#"fn inspect(flag: Bool) -> status: std::process::ExitStatus pure {
+  doc "Retain the distinct conditional and enum initializer productions.";
   let from_if = if flag {
     give 1_i32;
   } else {

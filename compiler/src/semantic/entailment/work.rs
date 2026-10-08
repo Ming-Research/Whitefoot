@@ -19,6 +19,8 @@
 //!   full, ordinary-fallback and expanded-row passes; `intern_calls` counts
 //!   ledger interning attempts before deduplication; `closure_cache_hits`
 //!   counts remembered closed-view reuse.
+//!   `conditions` counts noncontradictory OP-5 judgments, `condition_queries`
+//!   their origin/sign queries, and `redundant_conditions` their rejections.
 //! - `join`: ordinal identifies a pass; `join` identifies its enclosing
 //!   `join_at` call. `inputs` includes contradictory predecessors;
 //!   `union_rows` counts contributing closure rows plus requested extra rows
@@ -92,6 +94,9 @@ struct FunctionWork {
     snapshots: Sizes,
     closures: Sizes,
     probes: Sizes,
+    conditions: u64,
+    condition_queries: u64,
+    redundant_conditions: u64,
     closure_cache_hits: u64,
     intern_calls: u64,
 }
@@ -140,6 +145,9 @@ pub(super) fn function(name: &str) -> FunctionScope {
             snapshots: Sizes::default(),
             closures: Sizes::default(),
             probes: Sizes::default(),
+            conditions: 0,
+            condition_queries: 0,
+            redundant_conditions: 0,
             closure_cache_hits: 0,
             intern_calls: 0,
         }))
@@ -159,6 +167,16 @@ impl Drop for FunctionScope {
             work.write();
         }
     }
+}
+
+pub(super) fn condition() {
+    update(|work| work.conditions = work.conditions.saturating_add(1));
+}
+pub(super) fn condition_query() {
+    update(|work| work.condition_queries = work.condition_queries.saturating_add(1));
+}
+pub(super) fn redundant_condition() {
+    update(|work| work.redundant_conditions = work.redundant_conditions.saturating_add(1));
 }
 
 pub(super) fn join() {
@@ -251,6 +269,9 @@ impl FunctionWork {
         row("function", 0, "joins", self.joins);
         row("function", 0, "join_passes", self.passes.len() as u64);
         row("function", 0, "intern_calls", self.intern_calls);
+        row("function", 0, "conditions", self.conditions);
+        row("function", 0, "condition_queries", self.condition_queries);
+        row("function", 0, "redundant_conditions", self.redundant_conditions);
         row("function", 0, "closure_cache_hits", self.closure_cache_hits);
         for (kind, sizes) in [
             ("snapshot", &self.snapshots),

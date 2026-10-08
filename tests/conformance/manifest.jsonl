@@ -1822,3 +1822,17 @@
 {"id":"ent5-neg-header-frozen-flat","rules":["ENT-5","ENT-6","INV-1","MSR-4"],"expect":{"kind":"reject","rule":"INV-1"},"status":"runnable","doc":"The P/Q/R/H/T/U counterexample: canonical flat frontiers publish H only; U remains unproved. Eager intermediate publication would incorrectly admit the nested form."}
 {"id":"ent5-neg-header-frozen-nested","rules":["ENT-5","ENT-6","INV-1","MSR-4"],"expect":{"kind":"reject","rule":"INV-1"},"status":"runnable","doc":"The P/Q/R/H/T/U counterexample: canonical nested frontiers publish H only; U remains unproved. Eager intermediate publication would incorrectly admit the nested form."}
 {"id":"ent5-pos-header-real-boundary","rules":["ENT-5","ENT-6","INV-1","MSR-4"],"expect":{"kind":"accept"},"status":"runnable","doc":"A real statement after the inner merge publishes H before the outer join. H+R can then establish T there, and T+P proves U. The old compiler has no transport and rejects."}
+{"id":"op5-neg-redundant-proved","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"reject","rule":"OP-5"},"status":"runnable","doc":"Condition redundancy: proved."}
+{"id":"op5-neg-redundant-refuted","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"reject","rule":"OP-5"},"status":"runnable","doc":"Condition redundancy: refuted."}
+{"id":"op5-neg-redundant-else-if","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"reject","rule":"OP-5"},"status":"runnable","doc":"Condition redundancy: else-if."}
+{"id":"op5-neg-redundant-value-if","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"reject","rule":"OP-5"},"status":"runnable","doc":"Condition redundancy: value-if."}
+{"id":"op5-neg-redundant-literal","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"reject","rule":"OP-5"},"status":"runnable","doc":"Condition redundancy: literal."}
+{"id":"op5-neg-redundant-boolean-origin","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"reject","rule":"OP-5"},"status":"runnable","doc":"Condition redundancy: boolean-origin."}
+{"id":"op5-pos-redundant-join-unknown","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"accept"},"status":"runnable","doc":"Condition redundancy: join-unknown."}
+{"id":"op5-pos-redundant-call-unknown","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"accept"},"status":"runnable","doc":"Condition redundancy: call-unknown."}
+{"id":"op5-pos-redundant-unreachable","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"accept"},"status":"runnable","doc":"Condition redundancy: unreachable."}
+{"id":"op5-pos-redundant-uninhabited","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"accept"},"status":"runnable","doc":"Condition redundancy: uninhabited."}
+{"id":"op5-neg-redundant-generic-redundant","rules":["OP-5","ENT-4","FN-2"],"expect":{"kind":"reject","rule":"OP-5"},"status":"runnable","doc":"Condition redundancy: generic-redundant."}
+{"id":"op5-pos-redundant-generic-instance","rules":["OP-5","ENT-4","FN-2"],"expect":{"kind":"accept"},"status":"runnable","doc":"Condition redundancy: generic-instance."}
+{"id":"op5-pos-redundant-explicit-use-needed","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"accept"},"status":"runnable","doc":"Condition redundancy: explicit-use-needed."}
+{"id":"op5-neg-redundant-explicit-use-published","rules":["OP-5","ENT-4","MSR-4"],"expect":{"kind":"reject","rule":"OP-5"},"status":"runnable","doc":"Condition redundancy: explicit-use-published."}

@@ -863,7 +863,6 @@ impl DerivationNode {
         self.for_each_parent(&mut visit);
     }
 
-    #[cfg(test)]
     pub(crate) fn parent_ids(&self) -> Vec<DerivationId> {
         let mut parents = Vec::with_capacity(self.parent_count());
         self.for_each_retained_reference(|parent| parents.push(parent));

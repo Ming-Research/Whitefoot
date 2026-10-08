@@ -717,6 +717,21 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
+- **A binding's goal and its defining expression's goal are distinct.**
+  [The R1 witness](../research/investigations/redundant-tests/origin-publication.wf)
+  computes `parity = iand(view^.len, 1_u64)` for a two-byte view. The
+  checker derives `parity == 0_u64`, but a callee requiring
+  `iand(bytes^.len, 1_u64) == 0_u64` is discharged only by the guard
+  `if parity == 0_u64`, whose branch entry establishes the expanded goal
+  [ENT-3.S1]; outside it the two goals are distinct identities although
+  they state one proposition while the expansion is valid. Impact: R1 must
+  keep such a guard (its rule decides a test only when every origin is
+  derivable), so a dead test stays, and a writer cannot replace the guard
+  by an invariant. Change, a language decision (Q151): identify a goal over
+  let-bound data with its valid expansion in the goal disposition. Validate
+  with the witness's guard deletable, stale-expansion kills, joins and
+  finite query work. Reopen when the owner rules on Q151.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**

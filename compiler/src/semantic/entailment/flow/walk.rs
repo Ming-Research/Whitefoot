@@ -1365,6 +1365,7 @@ impl Analyzer<'_, '_> {
                 false
             }
             CheckedStatement::Match {
+                condition,
                 scrutinee,
                 enum_type,
                 arms,
@@ -1388,6 +1389,9 @@ impl Analyzer<'_, '_> {
                 } else {
                     ArmFacts::default()
                 };
+                if let Some(site) = condition {
+                    self.judging().judge_condition(site, &facts, state);
+                }
                 let mut exits = Vec::new();
                 for arm in arms {
                     let payload = payload.iter().find(|payload| payload.tag == arm.tag);
@@ -1402,6 +1406,7 @@ impl Analyzer<'_, '_> {
             }
             CheckedStatement::ValueMatchLet {
                 node_path,
+                condition,
                 binding,
                 result_type,
                 scrutinee,
@@ -1425,6 +1430,9 @@ impl Analyzer<'_, '_> {
                 } else {
                     ArmFacts::default()
                 };
+                if let Some(site) = condition {
+                    self.judging().judge_condition(site, &facts, state);
+                }
                 self.frames.gives.push(GiveFrame {
                     scope_depth: self.frames.scopes.len(),
                     loop_depth: self.frames.loops.len(),

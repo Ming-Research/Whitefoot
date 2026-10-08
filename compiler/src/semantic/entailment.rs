@@ -199,6 +199,8 @@ impl EntailmentCallee {
 
 /// Program-level context the per-function analysis reads.
 pub(crate) struct EntailmentContext<'check> {
+    /// OP-5 judges nongeneric bodies and canonical symbolic templates only.
+    pub(crate) judge_conditions: bool,
     /// Existing resolved declarations, borrowed for source names in residuals.
     pub(crate) declarations: &'check [crate::DeclarationRecord],
     /// Callee projections indexed by [`FunctionId`].
@@ -1191,6 +1193,7 @@ pub(crate) struct BooleanGoalDecomposition {
 /// Retained summary of one function's entailment analysis [DIAG-2].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FunctionEntailment {
+    pub(crate) conditions: Vec<ConditionOutcome>,
     /// Checked disposition after all independent S4 sources close at body
     /// entry. An uninhabited function retains the exact contradiction root.
     pub(crate) body_disposition: super::model::CheckedBodyDisposition,
@@ -1235,6 +1238,15 @@ pub(crate) struct FunctionEntailment {
     pub(crate) inventory: DerivationInventory,
 }
 
+/// OP-5's source judgment; admitted conditions have no decided truth.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConditionOutcome {
+    pub(crate) node_path: NodePath,
+    pub(crate) decided: Option<bool>,
+    pub(crate) residual: String,
+    pub(crate) facts: Vec<String>,
+}
+
 /// Answers each obligation record of `function` with the judgment that
 /// decided it (`design/compiler/acceptance-records.md`).
 ///
@@ -1249,6 +1261,9 @@ pub(crate) fn answer_records(
     function: &CheckedFunction,
     entailment: &FunctionEntailment,
 ) -> (Vec<Option<RecordAnswer>>, Vec<NodePath>) {
+    let mut conditions = Judgments::of(entailment.conditions.iter().map(|outcome| {
+        (&outcome.node_path, &outcome.node_path)
+    }));
     let mut obligations = Judgments::of(entailment.obligations.iter().map(|outcome| {
         (
             (&outcome.node_path, outcome.family, outcome.conjunct),
@@ -1296,6 +1311,7 @@ pub(crate) fn answer_records(
         .map(|record| {
             let site = &record.site;
             match &record.subject {
+                ObligationSubject::Condition => conditions.take(&site).map(RecordAnswer::Condition),
                 ObligationSubject::Source { family, conjunct } => obligations
                     .take(&(site, *family, *conjunct))
                     .map(RecordAnswer::Obligation),
@@ -1332,6 +1348,7 @@ pub(crate) fn answer_records(
         .collect();
     let mut unrecorded = obligations
         .unanswered()
+        .chain(conditions.unanswered())
         .chain(call_goals.unanswered())
         .chain(loop_invariants.unanswered())
         .chain(source_proofs.unanswered())

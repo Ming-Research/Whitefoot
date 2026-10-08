@@ -100,7 +100,8 @@ impl<'unit> DeclarationInventory<'unit> {
                 .get(index)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?
                 .rejection_node_path(),
-            RecordAnswer::Obligation(_)
+            RecordAnswer::Condition(_)
+            | RecordAnswer::Obligation(_)
             | RecordAnswer::CallGoal(_)
             | RecordAnswer::Postcondition(_)
             | RecordAnswer::Uninhabited => &record.site,
@@ -448,6 +449,26 @@ impl<'unit> TypeContext<'unit> {
         answer: RecordAnswer,
     ) -> Result<SemanticIssue, CheckStop> {
         match (record.rule, answer) {
+            (SemanticRule::Op5, RecordAnswer::Condition(index)) => {
+                let outcome = function.entailment.conditions.get(index).ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let decided = outcome.decided.ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                let repair = if decided {
+                    "delete this test and its else branch; retain the then body's execution and delivery"
+                } else {
+                    "delete this test and its then branch; retain the else body's execution and delivery, or delete the whole statement when it has no else"
+                };
+                Ok(SemanticIssue {
+                    rule: SemanticRule::Op5,
+                    location: self.declarations.source_location(&outcome.node_path)?,
+                    request: None,
+                    kind: SemanticIssueKind::RedundantCondition {
+                        residual: outcome.residual.clone(),
+                        decided: if decided { "True" } else { "False" }.to_owned(),
+                        facts: outcome.facts.clone(),
+                        mechanical_fix: format!("{repair}; the deciding facts are: {}", outcome.facts.join("; ")),
+                    },
+                })
+            }
             (SemanticRule::Inv1, RecordAnswer::LoopInvariant(index)) => self
                 .declarations
                 .undischarged_loop_invariant(&function.entailment, index),

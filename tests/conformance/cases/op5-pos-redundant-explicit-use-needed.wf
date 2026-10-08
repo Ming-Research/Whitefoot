@@ -1,0 +1,38 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn choose(p: u8, pc: u8, q: u8, qc: u8, r: u8, rc: u8) -> result: u64 pure contract {
+  requires p <= pc;
+  requires q <= qc;
+  requires r <= rc;
+} {
+  doc "Three weighted premises exceed AUTO's two-premise family.";
+  let a = cvt::<u8, u64>(p);
+  let ac = cvt::<u8, u64>(pc);
+  let b = cvt::<u8, u64>(q);
+  let bc = cvt::<u8, u64>(qc);
+  let c = cvt::<u8, u64>(r);
+  let cc = cvt::<u8, u64>(rc);
+  invariant ap: a <= ac;
+  invariant bp: b <= bc;
+  invariant cp: c <= cc;
+  let aa = a * 2_u64;
+  let bb = b * 3_u64;
+  let ccc = c * 4_u64;
+  let aac = ac * 2_u64;
+  let bbc = bc * 3_u64;
+  let cccc = cc * 4_u64;
+  let ab = aa + bb;
+  let abc = ab + ccc;
+  let capab = aac + bbc;
+  let capabc = capab + cccc;
+  if abc <= capabc {
+    return 1_u64;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The checker judges every body.";
+  return exit_status(code: 0_u8);
+}

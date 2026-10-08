@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn choose() -> r: u64 pure {
+  doc "An empty loop-exit join proves both signs and selects neither branch.";
+  loop {
+  }
+  if True() {
+    return 1_u64;
+  }
+  return 2_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The checker judges every body.";
+  return exit_status(code: 0_u8);
+}

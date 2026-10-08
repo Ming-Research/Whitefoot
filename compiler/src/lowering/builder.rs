@@ -1358,6 +1358,7 @@ impl<'program> IrBuilder<'program> {
                     enum_type,
                     arms,
                     continues,
+                    ..
                 } => self.lower_match(
                     scrutinee,
                     *enum_type,

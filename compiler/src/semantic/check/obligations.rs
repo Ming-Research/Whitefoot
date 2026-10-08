@@ -226,9 +226,12 @@ impl Records<'_> {
                 );
             }
             CheckedStatement::Match {
-                scrutinee, arms, ..
+                condition, scrutinee, arms, ..
             } => {
                 self.expression(scrutinee);
+                if let Some(condition) = condition {
+                    self.push(SemanticRule::Op5, condition.clone(), ObligationSubject::Condition);
+                }
                 for arm in arms {
                     self.branches.push(arm.label.clone());
                     self.statements(&arm.body);
@@ -236,9 +239,12 @@ impl Records<'_> {
                 }
             }
             CheckedStatement::ValueMatchLet {
-                scrutinee, arms, ..
+                condition, scrutinee, arms, ..
             } => {
                 self.expression(scrutinee);
+                if let Some(condition) = condition {
+                    self.push(SemanticRule::Op5, condition.clone(), ObligationSubject::Condition);
+                }
                 self.gives += 1;
                 for arm in arms {
                     self.branches.push(arm.label.clone());

@@ -2680,6 +2680,8 @@ pub(crate) enum CheckedStatement {
         drops: Vec<CheckedDrop>,
     },
     Match {
+        /// Complete source condition for OP-5; enum matches carry none.
+        condition: Option<NodePath>,
         scrutinee: CheckedExpression,
         enum_type: CheckedEnumType,
         arms: Vec<CheckedMatchArm>,
@@ -2687,6 +2689,7 @@ pub(crate) enum CheckedStatement {
     },
     ValueMatchLet {
         node_path: NodePath,
+        condition: Option<NodePath>,
         kind: ValueInitializerKind,
         binding: BindingId,
         result_type: CheckedType,

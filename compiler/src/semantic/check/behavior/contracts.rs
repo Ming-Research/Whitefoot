@@ -755,6 +755,7 @@ impl<'unit> TypeContext<'unit> {
         let elements = &self.elements;
         let const_parameter_types = self.const_generic_types().collect();
         let context = EntailmentContext {
+            judge_conditions: true,
             declarations: self.declarations.resolved.declarations(),
             callees: &[],
             constants: &self.checked_constants,

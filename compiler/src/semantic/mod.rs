@@ -927,6 +927,12 @@ pub enum SemanticIssueKind {
     /// A conditional was written in a form GRAM-6 does not admit for its
     /// class: a Bool-scrutinee `match`, an empty `else`, or an `else` block
     /// holding exactly one `if`.
+    RedundantCondition {
+        residual: String,
+        decided: String,
+        facts: Vec<String>,
+        mechanical_fix: String,
+    },
     InvalidConditionalForm {
         /// Exact mechanical repair selected by GRAM-6.
         mechanical_fix: &'static str,

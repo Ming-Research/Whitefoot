@@ -33,6 +33,7 @@ struct MatchDescriptor {
 }
 
 pub(super) struct MatchResult {
+    pub(super) condition: Option<crate::NodePath>,
     pub(super) scrutinee: CheckedExpression,
     pub(super) enum_type: CheckedEnumType,
     pub(super) arms: Vec<CheckedMatchArm>,
@@ -298,6 +299,7 @@ impl<'unit> Checker<'_, 'unit> {
             )?;
         }
         Ok(MatchResult {
+            condition: None,
             scrutinee: scrutinee.expression,
             enum_type: descriptor.enum_type,
             arms,
@@ -458,6 +460,7 @@ impl<'unit> Checker<'_, 'unit> {
                 )?;
                 BlockResult {
                     statements: vec![CheckedStatement::Match {
+                        condition: chained.condition,
                         scrutinee: chained.scrutinee,
                         enum_type: chained.enum_type,
                         arms: chained.arms,
@@ -560,6 +563,7 @@ impl<'unit> Checker<'_, 'unit> {
             )?;
         }
         Ok(MatchResult {
+            condition: Some(self.types.declarations.tree.path(expression_node)?.clone()),
             scrutinee: condition.expression,
             enum_type: CheckedEnumType::Bool,
             arms,

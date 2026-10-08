@@ -32,6 +32,8 @@ pub(crate) struct ObligationRecord {
 /// What one record asks, and the identity its answer is found by.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ObligationSubject {
+    /// OP-5 condition redundancy, independently recorded for every source if.
+    Condition,
     /// One [ENT-6] obligation of a fixed family at the site: an [OP-4]
     /// subscript, an [OP-2] exact integer operation, an [OP-6] exact
     /// conversion, one of a [REF-4] formation's two conjuncts, or a
@@ -62,6 +64,7 @@ pub(crate) enum ObligationSubject {
 /// outcome list of that kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecordAnswer {
+    Condition(usize),
     Obligation(usize),
     CallGoal(usize),
     LoopInvariant(usize),
@@ -77,6 +80,7 @@ impl RecordAnswer {
     /// outcome discharges nothing.
     pub(crate) fn discharged(self, entailment: &FunctionEntailment) -> bool {
         match self {
+            Self::Condition(index) => entailment.conditions.get(index).is_some_and(|outcome| outcome.decided.is_none()),
             Self::Obligation(index) => entailment
                 .obligations
                 .get(index)
