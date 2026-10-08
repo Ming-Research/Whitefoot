@@ -148,7 +148,6 @@ impl Analyzer<'_, '_> {
         &mut self,
         loop_id: CheckedLoopId,
         invariants: &[CheckedLoopInvariant],
-        _base: &[RelationBatch],
         edges: &[FlowEdge],
         binder: Option<BindingId>,
         kills: &LoopKills,

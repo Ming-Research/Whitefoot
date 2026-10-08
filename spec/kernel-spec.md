@@ -3423,9 +3423,10 @@ This transport reads no pre-existing fact on x, identifies x with no later value
 
 A canonical join frontier is defined on the conservative structural graph [FN-1].
 Starting at a continuation that merges control inputs, replace an incoming merge-only continuation by its incoming edges, repeatedly, in source edge order.
-A merge-only continuation performs control merging and the pre-exit closure, lexical scope kills and surviving-state closure of this rule, and has one successor.
+A merge-only continuation performs control merging and the compiler-derived releases [STOR-3], pre-exit closure, lexical scope kills and surviving-state closure of this rule, and has one successor.
 Apply those edge events separately to every input routed through it, in their original order.
-The expansion ends at an incoming source action, control split, value transfer, required judgment, loop-header environment boundary, or cleanup action with an effect or required judgment.
+The expansion ends at an incoming source action, control split, value transfer, required source judgment (including an atomic block's exit judgment [TYPE-11]), or loop-header environment boundary.
+Compiler-derived releases and lexical scope kills are edge events that preserve the merge-only region.
 These endpoints and the region's final continuation are its cut points.
 Documentation and administrative block boundaries add no cut point.
 A maximal expanded region has one semantic join at its final continuation and has no intermediate joined fact state.

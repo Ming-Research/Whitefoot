@@ -1624,11 +1624,7 @@ impl<'unit> TypeContext<'unit> {
         let target = match uses.as_slice() {
             [] => scope.loops.last().ok_or_else(|| {
                 self.declarations.issue_value(
-                    if is_continue {
-                        SemanticRule::Type6
-                    } else {
-                        SemanticRule::Fn1
-                    },
+                    SemanticRule::Type6,
                     node,
                     if is_continue {
                         SemanticIssueKind::ContinueOutsideLoop {

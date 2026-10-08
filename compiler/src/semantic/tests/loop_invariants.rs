@@ -413,6 +413,56 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+// The field and counted binder share a spelling but have distinct identities.
+fn counted_field_collision_source(upper: u64, relation: &str) -> String {
+    format!(
+        r#"struct Rows {{
+  i: Slots<Slots<u8, 2>, 2>;
+}}
+
+fn probe(s: &Rows) -> result: unit reads(s) contract {{
+  requires 2_u64 <= s^.i.len;
+}} {{
+  for (
+    i in 0_u64..{upper}_u64,
+    invariant row: {relation}
+  ) {{
+    if 1_u64 <= s^.i[i].len {{
+    }} else {{
+      return unit;
+    }}
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+#[test]
+fn counted_measure_diagnostic_preserves_a_field_named_like_the_binder() {
+    let source = counted_field_collision_source(1, "i <= s^.i[i].len");
+    assert_invariant_required_relation(source.as_bytes(), "(i + 1_u64) <= s^.i[(i + 1_u64)].len");
+}
+
+#[test]
+fn counted_formation_diagnostic_preserves_a_field_named_like_the_binder() {
+    let source = counted_field_collision_source(2, "s^.i[i].len <= s^.i[i].cap");
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a next-header subscript rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Op4);
+        let SemanticIssueKind::UndischargedBoundsObligation { residual, .. } = issue.kind() else {
+            panic!("expected an undischarged subscript, got {:?}", issue.kind());
+        };
+        assert_eq!(residual, "(i + 1_u64) < s^.i.len");
+    });
+}
+
 /// Since v0.79 a proved header conclusion leaves its loop on the `break`
 /// edge [ENT-5]: it is a theorem over the image `value` had at the head of
 /// the iteration that took the exit, and nothing between that head and the
@@ -2705,4 +2755,54 @@ fn a_write_that_kills_a_measure_retargets_the_invariant_image() {
         };
         assert_eq!(issue.rule(), SemanticRule::Op4);
     });
+}
+
+#[test]
+fn arm_releases_preserve_each_nested_induction_input() {
+    for header in [
+        "loop (\n    invariant limit: x <= 1_u64\n  )",
+        "for (\n    i in 0_u64..1_u64,\n    invariant limit: x <= 1_u64\n  )",
+    ] {
+        for tail in ["", "\n    continue;"] {
+            let source = format!(
+                r#"fn probe(outer: Bool, inner: Bool) -> result: unit pure {{
+  let x = 0_u64;
+  {header} {{
+    if outer {{
+      let scratch = box_slots_new::<u8>(capacity: 1_u64);
+      if inner {{
+        set x = 0_u64;
+      }} else {{
+        set x = 1_u64;
+      }}
+    }} else {{
+      set x = 0_u64;
+    }}{tail}
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+            );
+            with_semantics(source.as_bytes(), |outcome| {
+                let SemanticOutcome::Complete(checked) = outcome else {
+                    panic!("release frontiers must agree with the inventory: {outcome:?}");
+                };
+                let probe = checked
+                    .data
+                    .functions
+                    .iter()
+                    .find(|function| function.name == "probe")
+                    .expect("probe was checked");
+                let [invariant] = probe.entailment.loop_invariants.as_slice() else {
+                    panic!("probe has one header invariant");
+                };
+                assert_eq!(invariant.inputs.len(), 3, "{header}, tail {tail:?}");
+                assert!(invariant.inputs.iter().all(|input| input.discharged));
+            });
+        }
+    }
 }

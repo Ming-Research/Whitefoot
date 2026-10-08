@@ -126,21 +126,30 @@ parenthesization. Frozen siblings do not settle it.
 ### Selected refinement of Q137
 
 A **canonical join boundary** is the end of a maximal region made solely of
-control merges and the ordinary edge closure and lexical-scope removal that
-can be applied separately to each incoming state. An intermediate merge in
-that region has no published proof state. Collect its incoming edges into
-one ordered frontier and perform the ordinary join and one transport batch
-at the boundary. This is a definition of the semantic join, not an optimizer
+control merges and the compiler-derived releases, ordinary edge closure and
+lexical-scope removal that can be applied separately to each incoming state.
+An intermediate merge in that region has no published proof state. Collect
+its incoming edges into one ordered frontier and perform the ordinary join
+and one transport batch at the boundary. This is a definition of the semantic join, not an optimizer
 permission to choose when transport happens.
 
 A shared suffix statement ends such a region before that statement. So do a
 new control split, a value delivery or binding, a call, a write, a required
-proof judgment, an effectful release, and entering or leaving a loop's
-header environment. A `doc`, bare block boundary, and an implementation's
-snapshot or cache demand do not. A nontrivial cleanup action is a real event;
-its obligations and effects run at their original point, with a join before
-it when it consumes several alternatives. Only pure lexical kills and their
-closure travel independently on frontier edges.
+source judgment, including an atomic block's exit judgment [TYPE-11], and
+entering or leaving a loop's header environment. A `doc`, bare block boundary,
+and an implementation's snapshot or cache demand do not. Compiler-derived
+releases [STOR-3], lexical scope kills and their closure are edge events
+applied separately to each input in source order; they preserve the region.
+
+The conformance case `ent5-neg-header-frozen-nested-release` adds an arm-local
+`Box` from `box_slots_new` before the inner split of the frozen nested
+counterexample. Before the cleanup-boundary correction, `walk_arm` sealed
+the inner frontier because that arm had `fallthrough_drops`: the inner join
+published H, the outer join proved T from H+R, and T+P proved the consumer U.
+Acceptance before the correction is inferred from those code paths, not a
+local execution. Keeping the release on each edge leaves A, B and C in one
+frozen batch, so T is not published and the consumer is refused under INV-1,
+as in the flat case. CI must confirm that verdict.
 
 The terminal boundary at a next loop header is different: [INV-1] consumes
 the frontier by proving its batch on each input, without forming a joined
@@ -338,15 +347,18 @@ Immediately before “Joins: at the continuation of a `match_stmt`”, insert:
 > [FN-1]. Starting at a continuation that merges control inputs, replace an
 > incoming merge-only continuation by its incoming edges, repeatedly, in
 > source edge order. A merge-only continuation performs control merging and
-> the pre-exit closure, lexical scope kills and surviving-state closure of
-> this rule, and has one successor. Apply those edge events separately to
-> every input routed through it, in their original order. The expansion ends
-> at an incoming source action, control split, value transfer, required
-> judgment, loop-header environment boundary, or cleanup action with an
-> effect or required judgment. These endpoints and the region's final
-> continuation are its cut points. Documentation and administrative block
-> boundaries add no cut point. A maximal expanded region has one semantic
-> join at its final continuation and has no intermediate joined fact state.
+> the compiler-derived releases [STOR-3], pre-exit closure, lexical scope
+> kills and surviving-state closure of this rule, and has one successor.
+> Apply those edge events separately to every input routed through it, in
+> their original order. The expansion ends at an incoming source action,
+> control split, value transfer, required source judgment (including an
+> atomic block's exit judgment [TYPE-11]), or
+> loop-header environment boundary. Compiler-derived releases and lexical
+> scope kills are edge events that preserve the merge-only region.
+> These endpoints and the region's final continuation are its cut points.
+> Documentation and administrative block boundaries add no cut point.
+> A maximal expanded region has one semantic join at its final continuation
+> and has no intermediate joined fact state.
 > Every new control split consumes one state at its cut point, so this
 > expansion contains incoming structural edges, not combinations of earlier
 > branch histories. Edge order is the source NodePath order specified below;

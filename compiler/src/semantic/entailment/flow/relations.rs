@@ -373,41 +373,21 @@ impl Reasoning<'_, '_, '_> {
             proofs.push(proof.derivation.expect("formed subscript has evidence"));
             Ok(())
         } else {
-            let mut required = format!(
-                "{} < {}.len",
-                self.input.render_expression(offset),
-                self.input.render_place(base)
+            let counted_next_binder = next.map(|next| next.binder);
+            let offset = match offset {
+                CheckedExpression::Binding { binding, .. } => self
+                    .input
+                    .render_header_binding(*binding, counted_next_binder),
+                _ => self.input.render_expression(offset),
+            };
+            let required = format!(
+                "{offset} < {}.len",
+                self.input.render_header_place(base, counted_next_binder)
             );
-            if let Some(next) = next {
-                required = substitute_next_name(&required, &self.input.binding_name(next.binder));
-            }
             Err(Some(LoopFormationFailure {
                 site: site.clone(),
                 required,
             }))
         }
     }
-}
-
-/// Render a checked binder occurrence, preserving every other identifier.
-/// The checked renderer is canonical, so identifier boundaries suffice here.
-pub(super) fn substitute_next_name(rendered: &str, binder: &str) -> String {
-    let mut output = String::new();
-    let mut word = String::new();
-    for ch in rendered.chars().chain(std::iter::once('\0')) {
-        if ch.is_alphanumeric() || ch == '_' {
-            word.push(ch);
-        } else {
-            if word == binder {
-                output.push_str(&format!("({binder} + 1_u64)"));
-            } else {
-                output.push_str(&word);
-            }
-            word.clear();
-            if ch != '\0' {
-                output.push(ch);
-            }
-        }
-    }
-    output
 }

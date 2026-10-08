@@ -116,6 +116,34 @@ rarely insert at the same place.
   refused when the guard tests 3 instead of 4, and joins keeping a common
   offset disequality. Reopen when the owner rules on Q148.
 
+- **A header relation about the current element of a whole-table counted
+  loop is refused.** Over `for (i in 0_u64..n, invariant fits:
+  rows^[i].len <= 4_u64)` with `n = rows^.len`, the final header's instance
+  names `rows^[n]`, which does not exist, so it is refused with OP-4
+  `(i + 1_u64) < rows^.len` [ENT-2, INV-1]. Before the target-instance
+  terms, a nonempty table was accepted by forming that slot without a
+  bounds proof; with a possibly empty table it was refused at the base.
+  Impact: a writer who states a property of the current row as a header
+  invariant is refused at the last iteration. Change, a language decision
+  (Q154): keep the refusal and point the repair at a range fact over the
+  rows [RANGE-1], or require such a relation only at headers that enter the
+  body and export none at exhaustion. Validate with the witness and a
+  relation joining a carried value to the current row. Reopen when the
+  owner rules on Q154.
+
+- **The induction inventory repeats the walker's frontier structure.**
+  `induction_inputs` in `compiler/src/semantic/check/obligations.rs` forms
+  each loop's incoming edges, with their sites, branch labels and the
+  atomic-exit rule, independently of the entailment walker's frontiers, and
+  `answer_records` matches the two by exact equality. A divergence is loud
+  (an unanswered INV-1 obligation), and it is kept as an independent
+  structural oracle, but every frontier rule must be changed in both.
+  Change: derive the inventory from the walker's recorded frontiers, or add
+  a differential test over the conformance corpus that compares them.
+  Validate with `arm_releases_preserve_each_nested_induction_input`, which
+  fails when the two disagree on release paths. Reopen when another
+  frontier rule changes.
+
 - **A rejection after a join does not name the input that failed to carry a
   header relation.** When a join cannot carry a loop header's written
   relation because one input does not prove it [ENT-5], a later rejection

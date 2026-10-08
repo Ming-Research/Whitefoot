@@ -697,7 +697,7 @@ fn an_unlabeled_break_requires_an_enclosing_loop() {
   break;
 }
 "#,
-        SemanticRule::Fn1,
+        SemanticRule::Type6,
         SemanticIssueKind::BreakOutsideLoop {
             mechanical_fix: "move `break;` inside a loop or remove it",
         },

@@ -1536,7 +1536,7 @@ impl Analyzer<'_, '_> {
                 }
                 backedges.sort_by(|a, b| a.site.components().cmp(b.site.components()));
                 let batches =
-                    self.prove_induction_frontier(*id, invariants, &base, &backedges, None, &kills);
+                    self.prove_induction_frontier(*id, invariants, &backedges, None, &kills);
                 self.judging()
                     .record_loop_invariant_outcomes(*id, invariants, &base, &batches, None);
 
@@ -1761,7 +1761,6 @@ impl Analyzer<'_, '_> {
                 let batches = self.prove_induction_frontier(
                     *id,
                     invariants,
-                    &base,
                     &backedges,
                     Some(*binder),
                     &kills,
@@ -1915,9 +1914,8 @@ impl Analyzer<'_, '_> {
         }
         if continues {
             let depth = self.frames.scopes.len() - 1;
-            if !arm.fallthrough_drops.is_empty() {
-                self.seal_frontier(&mut state, &mut frontier);
-            }
+            // [ENT-5] compiler-derived releases and lexical kills preserve
+            // each pending input; cleanup does not publish a joined theorem.
             self.exit_frontier_scopes(&mut state, &mut frontier, depth);
             if frontier.is_empty() {
                 frontier.push(FlowEdge {

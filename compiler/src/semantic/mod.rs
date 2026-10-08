@@ -1018,9 +1018,9 @@ pub enum SemanticIssueKind {
         /// The source-level repair for the missing target.
         mechanical_fix: &'static str,
     },
-    /// An unlabeled break has no enclosing structural loop target [GRAM-4, FN-1].
+    /// An unlabeled break has no enclosing structural loop target [TYPE-6].
     BreakOutsideLoop {
-        /// The exact source-level restructuring required by GRAM-4.
+        /// The source-level repair for the missing target.
         mechanical_fix: &'static str,
     },
     /// A range clause, a `use` step or a cross-iteration certificate outside

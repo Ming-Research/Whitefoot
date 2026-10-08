@@ -624,6 +624,7 @@ impl<'unit> TypeContext<'unit> {
 /// The structural induction inventory, formed independently of the proof
 /// walker. Consecutive tail merges contribute their leaves; the next source
 /// action consumes one state. No numeric reachability selects these edges.
+/// Compiler-derived arm releases preserve the leaves, as in `walk_arm`.
 fn induction_inputs(
     loop_id: CheckedLoopId,
     site: &NodePath,
@@ -655,15 +656,8 @@ fn induction_inputs(
                     for arm in arms {
                         let mut route = branches.to_vec();
                         route.push(arm.label.clone());
-                        let mut incoming =
+                        let incoming =
                             walk(&arm.body, &arm.node_path, target, &route, atomic, explicit);
-                        if !incoming.is_empty() && !arm.fallthrough_drops.is_empty() {
-                            incoming = vec![LoopInductionInput {
-                                site: arm.node_path.clone(),
-                                branch: route.join(" / "),
-                                route: LoopInductionRoute::Fallthrough,
-                            }];
-                        }
                         exits.extend(incoming);
                     }
                     exits
