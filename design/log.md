@@ -13,6 +13,13 @@ Owner-approved: On the shared status board of 2026-10-08, written in Chinese, th
 
 Summary: A program reads its heap and resident set through a capability, `MemoryMeter`, as it reads time through `Clock`. Emitted allocations and releases go through counting functions that add the requested size to a counter of the calling driver, without a write shared across drivers, and the runtime pool counts its grants under its lock; counters are taken modulo 2^64, so blocks allocated on one driver and released on another cannot overflow anything, and a read sums them, clamping a total that a concurrent move made negative. The counting functions live in their own source file so a heap-free program still links no allocator, and the resident set is an Option because a host may not report it. Redis 7.0.15 keeps one shared atomic counter of allocator usable sizes instead; usable-size queries, allocator-wide queries and the resident set as the heap reading were refused ([investigation](../research/investigations/memory-statistics/README.md)).
 
+## 2026-10-08 The call grain exempts only recursion that offers its own calls
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the status board on 2026-10-08, on the card asking whether the call grain's recursion exemption should cover only recursion whose own recursive calls are handed out, recommended option A, written in Chinese: "choose A" (translated).
+
+Summary: A statement-group call offer is kept when its callee belongs to or reaches a cyclic component one of whose remaining groups calls into it, the only recursion whose depth the recursion budget bounds, or when its static work reaches the work unit; a callee that reaches only recursion offering none of its own calls is priced like any other, and classification is repeated with pruning until a pass omits nothing. Snowghost's incremental layout had handed out a cursor read reaching a one-way page-directory descent at each of about 13,600 tree nodes per edit, 10 to 13 times slower at four workers than sequentially; with the rule the edit is 1.08 to 1.10 times sequential on the 14900K, and full layout and style show no loss ([recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)). Spending a budget level at every activation that offers and rewriting the downstream program are kept as rejected alternatives.
 ## 2026-10-08 By-value parameters read in place
 
 Nodes: compiler/storage-placement
