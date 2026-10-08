@@ -136,15 +136,26 @@ both K rows for each build and round,
 
 ## Results
 
-No valid performance result yet; the hosted in-program probe above was
-discarded. This harness revision has only been inspected as source: the owner
-prohibits local builds, compilation, tests, lint and timing runs for this
-repair, and prohibits committing, pushing or invoking external services.
-WF acceptance, optimized repetition retention, checksum agreement and process
-timings remain unverified until an authorized CI run.
+The first hosted probe timed the histogram call in-program and measured about
+0.2 ns per key, which a sequential counting loop cannot reach: the optimizer
+moved the local, unescaped counting loop across the opaque clock reads. The
+in-program timing was dropped for the paired K=0 / K=20 process timing above.
 
-Separate existing integration issue: the workflow's branch push trigger lies
-outside the dispatch-only research exemption in
-`.github/check-research-inputs.py`, so the `make static` research boundary
-check would reject its reference to this harness. Resolving that trigger
-policy is separate from the paired timing repair.
+All runs at main `691ea8106` (the #274 merge), through the temporary workflow
+on this branch, since removed.
+
+| Run | Host | Rounds | 256 cells seq/par8 median (min..max) | 4096 cells seq/par8 median (min..max) | seq/twin 256 / 4096 |
+|---|---|---|---|---|---|
+| 37832422819 | GitHub ubuntu-24.04, 4 vCPU, 4 workers | 3 | 1.722 (1.592..1.878) | 1.695 (1.671..1.732) | 0.989 / 1.005 |
+| 37834742412 | i9-14900K VM, cpus 0-7, 8 workers | 3 | 2.328 (1.895..3.212) | 2.000 (1.789..2.310) | 0.976 / 1.004 |
+| 37835484141 | i9-14900K VM, cpus 0-7, 8 workers | 10 | 2.377 (2.152..3.342) | 1.878 (1.582..2.169) | 0.955 / 0.999 |
+
+Sequential time per histogram on the i9-14900K: 1.98 ms (256 cells) and
+2.19 ms (4096 cells), median of 10 rounds. The scheduler report showed 8
+threads, 7 workers started and about 420 steals per run.
+
+Reading against the rejecting result: the 3-round probe's spread straddled
+2.0, so the run was extended to 10 rounds; there every paired round at 256
+cells is at least 2.15, and 4096 cells is faster, not slower (1.88). The
+performance criterion holds for lowering A on this machine and workload; it
+says nothing about other hosts or reduction shapes.
