@@ -2530,6 +2530,15 @@ fn main() -> status: std::process::ExitStatus pure {
         function_body(&every_dissolved, "@wf_main").contains("call void @wf__par_publish("),
         "the lookup pair is permitted and handed out when every offer is kept"
     );
+    let descend_symbol = if every_dissolved.contains("@wf__par_budget_descend(") {
+        "@wf__par_budget_descend"
+    } else {
+        "@wf_descend"
+    };
+    assert!(
+        function_body(&every_dissolved, descend_symbol).contains("call void @wf__par_publish("),
+        "the recursion's own group, the read beside its call, exists before the grain"
+    );
     let pruned = super::emit_lowered(
         dissolved.as_bytes(),
         crate::OverlapLowering::OnWithCallGrain,

@@ -1,0 +1,85 @@
+# Temporary (recursive-offer grain, validation 2): compares the `--par`
+# emission and actualization ledger of every maintained program under the
+# merge base's compiler and this branch's. Removed before the branch is ready.
+name: tmp-par-emission
+
+on:
+  push:
+    branches: [claude/whitefoot-4-thread-granularity-8c190b]
+
+jobs:
+  emission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Two compilers
+        run: |
+          set -euo pipefail
+          rustup default stable
+          base=$(git merge-base origin/main HEAD)
+          echo "base $base head $(git rev-parse HEAD)"
+          git worktree add -q --detach "$RUNNER_TEMP/base" "$base"
+          for side in base head; do
+            root=$GITHUB_WORKSPACE
+            if [ "$side" = base ]; then root=$RUNNER_TEMP/base; fi
+            cargo fetch --locked --manifest-path "$root/compiler/Cargo.toml"
+            cargo build --profile gate --bin whitefootc --locked --offline --manifest-path "$root/compiler/Cargo.toml"
+            cp "$root/compiler/target/gate/whitefootc" "$RUNNER_TEMP/whitefootc-$side"
+          done
+      - name: Emission and ledger of every program
+        run: |
+          set +e -uo pipefail
+          out=$RUNNER_TEMP/emission
+          mkdir -p "$out"
+          files=$(find tests/programs -name '*.wf' | sort)
+          for file in $files; do
+            key=$(echo "$file" | tr '/' '_')
+            for side in base head; do
+              "$RUNNER_TEMP/whitefootc-$side" --par --par-ledger --emit-llvm -o "$out/$key.$side.ll" "$file" > "$out/$key.$side.ledger" 2> "$out/$key.$side.err"
+              echo $? > "$out/$key.$side.status"
+            done
+          done
+          same=0 differ=0 failed=0
+          for file in $files; do
+            key=$(echo "$file" | tr '/' '_')
+            if [ "$(cat "$out/$key.base.status")" != 0 ] || [ "$(cat "$out/$key.head.status")" != 0 ]; then
+              failed=$((failed + 1))
+              echo "NOT EMITTED $file base=$(cat "$out/$key.base.status") head=$(cat "$out/$key.head.status") $(head -c 200 "$out/$key.head.err")"
+            elif cmp -s "$out/$key.base.ll" "$out/$key.head.ll"; then
+              same=$((same + 1))
+            else
+              differ=$((differ + 1))
+              echo "DIFFERS $file"
+              diff "$out/$key.base.ledger" "$out/$key.head.ledger" | grep '^[<>]' | head -20
+            fi
+          done
+          echo "identical=$same differing=$differ not-emitted=$failed"
+          d=tests/programs
+          deflate="$d/raw_deflate.wf $d/raw_deflate_dynamic.wf $d/raw_deflate_dynamic_decode.wf"
+          for set in "deflate-boundary:$deflate $d/raw_deflate_boundary.wf" \
+                     "deflate-vectors:$deflate $d/raw_deflate_vectors.wf" \
+                     "deflate-probe:$deflate $d/raw_deflate_probe.wf" \
+                     "slab:$d/containers/slab-membership-program.wf $d/containers/slab-program.wf" \
+                     "indexed:$d/containers/indexed-store.wf $d/containers/indexed-membership-program.wf"; do
+            key=set-${set%%:*} sources=${set#*:}
+            for side in base head; do
+              "$RUNNER_TEMP/whitefootc-$side" --par --par-ledger --emit-llvm -o "$out/$key.$side.ll" $sources > "$out/$key.$side.ledger" 2> "$out/$key.$side.err"
+              echo $? > "$out/$key.$side.status"
+            done
+            if [ "$(cat "$out/$key.base.status")" != 0 ] || [ "$(cat "$out/$key.head.status")" != 0 ]; then
+              echo "NOT EMITTED $key $(head -c 200 "$out/$key.head.err")"
+            elif cmp -s "$out/$key.base.ll" "$out/$key.head.ll"; then
+              echo "IDENTICAL $key"
+            else
+              echo "DIFFERS $key"
+              diff "$out/$key.base.ledger" "$out/$key.head.ledger" | head -20
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: par-emission
+          path: ${{ runner.temp }}/emission
