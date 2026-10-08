@@ -298,6 +298,26 @@ fn run(code: &Box<Slots<Op>>, funcs: &Box<Slots<Func>>, brtab: &Box<Slots<Target
         }
         return trap(code: 1_u32, pc: pc);
       }
+      BrTableN(c: cv, start: startv, count: countv) => {
+        let ci = cvt::<u16, u64>(cv^);
+        let ct = fp + ci;
+        let iw = stack^.inner[ct];
+        let count = cvt::<u32, u64>(countv^);
+        let i32v = cvt.wrap::<u64, u32>(iw);
+        let i = cvt::<u32, u64>(i32v);
+        let pick = imin(i, count);
+        let base = cvt::<u32, u64>(startv^);
+        let at = base + pick;
+        if at < brtab^.inner.len {
+          let slot = brtab^.inner[at];
+          let target = cvt::<u32, u64>(slot.t);
+          if target < n {
+            set pc = target;
+            continue;
+          }
+        }
+        return trap(code: 1_u32, pc: pc);
+      }
       Return(s: sv, k: kv, l: lv) => {
         let li = cvt::<u16, u64>(lv^);
         if li < 65535_u64 {
