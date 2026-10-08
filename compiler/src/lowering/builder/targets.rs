@@ -124,7 +124,7 @@ impl IrBuilder<'_> {
         })
     }
 
-    /// [WIN-3] "Assigning over any owned place releases the old value when it
+    /// [WIN-3] "Assigning over a live owned place releases the old value when it
     /// is affine."
     ///
     /// The release is the commit's, so this reads the displaced value after
@@ -132,8 +132,8 @@ impl IrBuilder<'_> {
     /// old owner stops being reachable. What it releases is the ordinary
     /// [STOR-3] release of the target's own type: a cell frees its content
     /// and then its heap object, a type with no release action owes nothing,
-    /// and a linear target never reaches lowering at all because [WIN-3]
-    /// makes that assignment a hard error.
+    /// and a live linear target never reaches lowering because [WIN-3]
+    /// makes that overwrite a hard error.
     ///
     /// A directly named binding path is decided by the record the checker
     /// carries on it [DIAG-2]: re-initializing a moved-out binding is an
