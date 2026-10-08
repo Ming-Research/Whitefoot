@@ -891,8 +891,8 @@ fn a_by_value_parameter_nothing_writes_is_read_in_place() {
             "{overlap:?}: the body reads {incoming} in place: {body}"
         );
         let ordinary = module
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         for (form, llvm) in [("ordinary", ordinary), ("retained", observed(&module))] {
             let output = compile_link_and_run(&llvm, Some(ALLOCATION_OBSERVER), &[]);
             assert_eq!(
