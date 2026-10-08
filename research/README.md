@@ -58,6 +58,12 @@ the work-branch and merge boundary.
 - [Origin transport](investigations/origin-transport/DESIGN.md): the proposed
   finite goal disposition over live ordinary-let definitions, including
   invalidation, joins, contract expansion and retained derivation evidence.
+- [Range field terms](investigations/range-field-terms/DESIGN.md): range
+  terms that read a struct field, `Box` content or an enum payload below an
+  element, with copy provenance, for Snowghost's stored left inverse.
+- [Range facts for ordinary obligations](investigations/ordinary-range-obligations/DESIGN.md):
+  how a bounds, overflow or invariant obligation uses a range fact, comparing
+  deferral to the range judgment with range facts inside ordinary entailment.
 - [Writer-lost facts](investigations/writer-lost-facts/DESIGN.md): facts
   agent writers established and the checker dropped (loop exit, conjunction,
   value `if`, `Option`, chained certificates), each classified against v0.77

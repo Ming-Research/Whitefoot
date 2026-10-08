@@ -47,6 +47,76 @@ integer storage, not the injectivity argument. Mutation and wrong-selection
 controls below can answer against that hypothesis. The rejection criteria
 are fixed in [the experiment plan](#criterion-before-implementation).
 
+### Snowghost's minimal case
+
+Snowghost-wf branch `research/inverse-proof-case` at 552dcbf,
+`research/investigations/m2-edit-cost/inverse-proof/natural.wf`, reduces the
+sibling move to one owner's `Open(block: u32)` entries and one write of
+another field of each target:
+
+```text
+struct Block { entry_slot: u32; normal_y: i32; }
+enum Flow { Open(block: u32); }
+
+fn translate_owner_suffix(order: &[Flow], targets: &[Block], first: u64, delta: i32) -> result: unit reads(order), writes(targets) contract {
+  requires forall inv(k in first..order^.len) when order^[k].Open.block < targets^.len: targets^[order^[k].Open.block].entry_slot == k;
+} {
+  let count = order^.len;
+  for (k in first..count, apart(i, j) { }) {
+    let item = order^[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < targets^.len {
+          set targets^[at].normal_y = targets^[at].normal_y +sat delta;
+        }
+      }
+    }
+  }
+  return unit;
+}
+```
+
+Hosted run 37771401960 at Snowghost's pin `wf-0b7f5c5b9854` refuses it at
+`order^[k].Open.block` with `error[RANGE-1]: InvalidRangeClause`, "a range
+term selects below an element", before `.entry_slot` or the certificate is
+reached; the same function without the requirement and certificate,
+`today.wf`, is accepted with serial writes.
+
+The case adds three needs to the struct-field draft below:
+
+1. **An enum payload step.** The order side reads `order^[k].Open.block`. The
+   renderer's full `Flow` also has `Text(paragraph)`, `Child(context)`,
+   `Float(context)`, `Out(context)` and `Close(block)`; Child, Float and Out
+   select the same children store. One fact per variant suffices: when
+   iteration `i` holds `Child(c)` and iteration `j` holds `Float(c)`, the two
+   instances read the same `children^[c].entry_slot` and give `i == j`, so
+   collisions across variants are excluded by read congruence with no
+   further rule. The struct-only scope therefore cannot accept this case.
+2. **Copy provenance.** `let item = order^[k]` copies the element, and
+   [RANGE-2] makes a copy new storage whose contents are unknown, so the
+   match binder `b` is unrelated to `order^[k].Open.block`. The
+   [range-facts decision](../../../design/language/checks-and-proofs/range-facts.md)
+   that made copies unknown reopens "when a program must keep a fact across a
+   copy"; this program is that case. Proposed rule: a copy's contents are
+   defined by the source's version and index tuple at the copy, so a
+   projection of the copy reads the same projection of the source version;
+   later writes make versions of the copy only. Source versions never
+   change, so this is sound, and a `match` arm that takes a variant of the
+   copy constrains the source element's variant at that version.
+3. **Precise field support.** The loop writes `normal_y` and needs the
+   `entry_slot` fact afterwards when a callee requires it again, which is
+   the precise-support option below.
+
+The ordinary-obligation route ([ordinary range obligations](../ordinary-range-obligations/DESIGN.md))
+adds a fourth: a measure of an element, `rows^[k].len`, is a projection below
+an element too, and the same step admits it.
+
+The owner approved range facts over a guarded variant's integer fields on
+2026-10-07 (Q139 A, recorded in the match-dispatch plan of PR #262), for
+validated interpreter code, so the enum step is an approved direction, not a
+new one.
+
 ### Current rule boundary
 
 Rule IDs below refer to the active
@@ -100,9 +170,9 @@ separate array supplies, and existing resolved paths describe its mutations.
 
 ## Proposed rule draft
 
-The recommended package admits finite struct-field and owned `Box.inner`
-suffixes, with precise field support. Enum payload steps are a separate
-choice below. Mutable and readonly integer fields have the same range-term
+This package admits finite struct-field and owned `Box.inner` suffixes,
+with precise field support. Enum payload steps are a separate rule below,
+recommended because Snowghost's case needs them. Mutable and readonly integer fields have the same range-term
 formation rule. Visibility and declared-type selection still apply.
 
 The following quoted paragraphs are candidate normative text. Each belongs
@@ -345,7 +415,7 @@ and add no runtime footprint.
 
 ## Separate option: enum payload projections
 
-The recommended first amendment refuses payload suffixes in a range term.
+Without the enum option, payload suffixes stay refused in a range term.
 They are outside the positive formation list in [RANGE-1], so the existing
 formation-error sentence supplies a RANGE-1 rejection. An ordinary guarded
 enum read in executable code keeps its current [REF-1] behavior.
@@ -415,8 +485,8 @@ certificate with the wrong-variant and unknown-variant controls below.
 |---|---|---|
 | Keep refusing; add a second ordinary array read only by proofs | Uses the existing integer-element inverse form | Duplicates an invariant already stored in the payload, adds maintenance and potentially allocation/stores, and makes language expressibility depend on a representation change. Declined for this experiment, as Snowghost requests. No unmeasured runtime cost is claimed. |
 | Add a ghost/proof-only array feature | Could erase duplicated proof data reliably | Requires a separate data/flow discipline and still duplicates the inverse. The [proof-only-data investigation's ruling](../proof-only-data/DESIGN.md#ruling) refused that discipline because writers must track two kinds of name and one-way flow. This witness supplies no changed ground for reopening it. |
-| Struct fields and Box content now, enums later | Expresses the given struct inverse using total owned projection and existing integer congruence | Leaves enum-backed inverses open. Recommended first scope; whether Snowghost's eventual certified loop actually needs an enum must be checked against its frozen source, not assumed away. |
-| Struct fields, Box content and enum payloads together | Expresses variant-specific inverses over actual payload storage | Requires a conditional read domain, quantified tag identity and exhaustive tag cases. Viable in principle, with the extra rule draft above; not selected merely because the grammar already spells payloads. |
+| Struct fields and Box content now, enums later | Expresses the given struct inverse using total owned projection and existing integer congruence | Leaves enum-backed inverses open, and Snowghost's minimal case reads an enum payload, so it is not selected. |
+| Struct fields, Box content and enum payloads together | Expresses variant-specific inverses over actual payload storage | Requires a conditional read domain, quantified tag identity and exhaustive tag cases. Recommended, with the extra rule draft above and copy provenance, because the reported case needs it. |
 | Sort or copy targets into an independently partitioned representation | Can expose ordinary disjoint ranges | Changes the target algorithm to avoid stating the stored invariant; it does not answer this investigation and is outside its acceptance criterion. |
 
 ## Proposed conformance observations
@@ -520,20 +590,20 @@ condition silently added to this language-expression trial.
   `payloads^[order^[k]].entry_slot`. Struct and Box paths select owned
   content that exists with the element. Enum payloads additionally need a
   versioned active-variant premise for each quantified instance.
-- **A — Struct fields and Box content first (recommended).** Select the
-  main rule draft; keep payload suffixes refused. This directly expresses
-  the supplied struct witness and preserves ordinary entailment's boundary.
-  It leaves enum-backed applications open and may fail the Snowghost trial
-  if its frozen consumer needs one; that is a reason to reopen the scope,
-  not to rewrite the consumer to hide the gap.
-- **B — Include enum payloads.** Select the additional conditional-domain
-  and tag-case rules. This covers more natural stored inverses, at the cost
-  of a further finite-case soundness argument and variant-aware mutation
-  coverage. The risk is unjustified conclusions from vacuous instances.
-- **Confidence 4/5.** The supplied struct witness and current rule texts
-  settle the narrow expressibility gap. Inspection of the frozen consumer
-  or a counterexample to projection/version semantics could change the
-  recommendation; no compiler trial has been run.
+- **A — Struct fields and Box content first.** Select the main rule draft;
+  keep payload suffixes refused. Snowghost's minimal case reads its order
+  side through `order^[k].Open.block`, so this scope refuses it; not
+  recommended.
+- **B — Include enum payloads and copy provenance (recommended).** Select
+  the additional conditional-domain and tag-case rules and the copy rule of
+  [Snowghost's minimal case](#snowghosts-minimal-case). This accepts the
+  case the gap was reported with and is the scope the owner approved for
+  validated code (Q139 A), at the cost of a finite-case soundness argument
+  and variant-aware mutation coverage. The risk is unjustified conclusions
+  from vacuous instances, which the wrong- and unknown-variant cases test.
+- **Confidence 4/5.** Snowghost's minimal case settles that the enum step is
+  needed. The tag-case argument is not yet written out; a counterexample to
+  it would narrow the scope.
 
 ---
 
