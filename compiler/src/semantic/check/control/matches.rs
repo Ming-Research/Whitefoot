@@ -695,8 +695,9 @@ impl<'unit> Checker<'_, 'unit> {
                 u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
             // [OWN-13] matching through a reference leaves the scrutinee live
             // and binds each payload as a reference naming the scrutinee path
-            // extended by that payload step [REF-1], valid exactly while the
-            // arm's refinement fact holds [REF-2, ENT-3.S15]. Matching an own
+            // extended by that payload step [REF-1]. The arm's refinement fact
+            // admits the selection [ENT-3.S15]; the selected place outlives
+            // the arm until its enum is replaced [REF-2]. Matching an own
             // place moves it instead, and its binders receive own payloads.
             let reference = if mode.is_reference() {
                 let parent = scrutinee

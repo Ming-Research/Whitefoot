@@ -520,6 +520,7 @@ impl<'unit> Checker<'_, 'unit> {
                 value,
                 None,
                 bindings,
+                self.body.exactness(),
             )?);
         }
         let invariants = templates

@@ -699,6 +699,7 @@ fn main() -> status: std::process::ExitStatus pure {
                         root: super::super::places::PlaceRoot::Constant(_),
                         ty: CheckedType::Integer(IntegerType::U8),
                         path,
+                        ..
                     },
                     ..
                 },
