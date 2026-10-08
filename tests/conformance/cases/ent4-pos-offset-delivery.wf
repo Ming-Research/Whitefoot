@@ -1,0 +1,28 @@
+fn avoid_four(value: u64) -> result: u64 pure contract {
+  ensures result != 4_u64;
+} {
+  doc "Return checking and caller establishment use the same folded offset.";
+  if value == 4_u64 {
+    return 0_u64;
+  }
+  return value;
+}
+
+fn probe(left: u64, right: u64, flag: Bool) -> result: unit pure {
+  doc "Each call's postcondition is delivered through a different give edge, preserving its offset at the receiving join.";
+  let first = avoid_four(value: left);
+  let second = avoid_four(value: right);
+  let cursor = if flag {
+    give first;
+  } else {
+    give second;
+  };
+  if cursor <= 4_u64 {
+    invariant tightened: cursor <= 3_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

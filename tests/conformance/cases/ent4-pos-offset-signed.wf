@@ -1,0 +1,16 @@
+const sentinel: i64 = -4_i64;
+
+fn probe(cursor: i64) -> result: unit pure {
+  doc "A named negative constant on the left normalizes through Z with the reversed offset.";
+  if sentinel == cursor {
+    return unit;
+  }
+  if cursor <= sentinel {
+    invariant tightened: cursor <= -5_i64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

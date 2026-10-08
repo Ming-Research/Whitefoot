@@ -1091,10 +1091,9 @@ impl Reasoning<'_, '_, '_> {
             .operands
             .iter()
             .map(|operand| {
-                Some((
-                    self.postcondition_relation_term(&operand.datum, results, returns)?,
-                    operand.displacement,
-                ))
+                let term = self.postcondition_relation_term(&operand.datum, results, returns)?;
+                let (term, constant) = self.vocabulary.terms.constant_part(term);
+                Some((term, operand.displacement.checked_add(constant)?))
             })
             .collect::<Option<Vec<_>>>()?;
         let [first, second] = operands.as_slice() else {
@@ -1956,7 +1955,8 @@ impl Reasoning<'_, '_, '_> {
                     exit_state: term_operand.datum.is_exit_state(),
                 });
             }
-            operands.push((term, term_operand.displacement));
+            let (term, constant) = self.vocabulary.terms.constant_part(term);
+            operands.push((term, term_operand.displacement.checked_add(constant)?));
         }
         let [first, second] = operands.as_slice() else {
             return None;

@@ -874,7 +874,12 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     bound: *bound,
                 })
             }
-            DerivationNode::SourceDistinct { left, right, event } => {
+            DerivationNode::SourceDistinct {
+                left,
+                right,
+                difference,
+                event,
+            } => {
                 assert!(left <= right, "disequality identities are normalized");
                 retained_term(summary, *left);
                 retained_term(summary, *right);
@@ -882,7 +887,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 DerivationConclusion::Relation(Relation::Distinct {
                     left: *left,
                     right: *right,
-                    difference: 0,
+                    difference: *difference,
                 })
             }
             DerivationNode::SourceGoal { goal, sign, event } => {
@@ -1003,19 +1008,21 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 weak,
                 distinct,
             } => {
-                assert_eq!(*bound, -1);
-                assert_eq!(retained_bound(&conclusions, *weak, *left, *right), 0);
+                let offset = retained_bound(&conclusions, *weak, *left, *right);
+                assert_eq!(*bound, offset - 1);
                 let DerivationConclusion::Relation(Relation::Distinct {
                     left: distinct_left,
                     right: distinct_right,
-                    difference: 0,
+                    difference,
                 }) = retained_conclusion(&conclusions, *distinct)
                 else {
                     panic!("strengthening's second parent must be a disequality");
                 };
                 assert!(
-                    (*distinct_left == *left && *distinct_right == *right)
-                        || (*distinct_left == *right && *distinct_right == *left)
+                    (*distinct_left == *left && *distinct_right == *right && *difference == offset)
+                        || (*distinct_left == *right
+                            && *distinct_right == *left
+                            && -*difference == offset)
                 );
                 DerivationConclusion::Relation(Relation::Bound {
                     left: *left,
@@ -1060,9 +1067,10 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
             DerivationNode::DisequalityFromStrictBound {
                 left,
                 right,
+                difference,
                 parent,
             } => {
-                assert!(left < right, "strict-derived disequalities are normalized");
+                assert!(left <= right, "strict-derived disequalities are normalized");
                 let DerivationConclusion::Relation(Relation::Bound {
                     left: parent_left,
                     right: parent_right,
@@ -1071,15 +1079,18 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 else {
                     panic!("strict-bound disequality requires a bound parent");
                 };
-                assert!(*parent_bound <= -1);
                 assert!(
-                    (*parent_left == *left && *parent_right == *right)
-                        || (*parent_left == *right && *parent_right == *left)
+                    (*parent_left == *left
+                        && *parent_right == *right
+                        && *parent_bound < *difference)
+                        || (*parent_left == *right
+                            && *parent_right == *left
+                            && *parent_bound < -*difference)
                 );
                 DerivationConclusion::Relation(Relation::Distinct {
                     left: *left,
                     right: *right,
-                    difference: 0,
+                    difference: *difference,
                 })
             }
             DerivationNode::GoalProjection {
@@ -1099,13 +1110,21 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         Relation::Distinct {
                             left: parent_left,
                             right: parent_right,
-                            ..
+                            difference: parent_difference,
                         },
-                        Relation::Distinct { left, right, .. },
+                        Relation::Distinct {
+                            left,
+                            right,
+                            difference,
+                        },
                     ) => assert!(
-                        (parent_left == left && parent_right == right)
-                            || (parent_left == right && parent_right == left),
-                        "disequality parents use unordered fact identity"
+                        (parent_left == left
+                            && parent_right == right
+                            && parent_difference == difference)
+                            || (parent_left == right
+                                && parent_right == left
+                                && *parent_difference == -*difference),
+                        "disequality endpoint reversal negates its offset"
                     ),
                     (_, Relation::Bound { left, right, bound }) => assert!(
                         retained_bound(&conclusions, *parent, *left, *right) <= *bound,
@@ -1128,16 +1147,24 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 };
                 match (relation, &expected) {
                     (
-                        Relation::Distinct { left, right, .. },
+                        Relation::Distinct {
+                            left,
+                            right,
+                            difference,
+                        },
                         Relation::Distinct {
                             left: expected_left,
                             right: expected_right,
-                            ..
+                            difference: expected_difference,
                         },
                     ) => assert!(
-                        (left == expected_left && right == expected_right)
-                            || (left == expected_right && right == expected_left),
-                        "disequality identity is independent of endpoint rendering order"
+                        (left == expected_left
+                            && right == expected_right
+                            && difference == expected_difference)
+                            || (left == expected_right
+                                && right == expected_left
+                                && *difference == -*expected_difference),
+                        "disequality identity includes its oriented offset"
                     ),
                     _ => assert_eq!(*relation, expected),
                 }
@@ -1364,17 +1391,24 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         .expect("an indexed-separation capture has a retained datum term")
                 };
                 let (left_term, right_term) = (term_for(left), term_for(right));
-                let expected = if left_term <= right_term {
+                let fold = |term| match retained_term(summary, term) {
+                    TermKind::Constant(value) => (ZERO, *value),
+                    _ => (term, 0),
+                };
+                let (left_base, left_constant) = fold(left_term);
+                let (right_base, right_constant) = fold(right_term);
+                let difference = right_constant - left_constant;
+                let expected = if left_base <= right_base {
                     Relation::Distinct {
-                        left: left_term,
-                        right: right_term,
-                        difference: 0,
+                        left: left_base,
+                        right: right_base,
+                        difference,
                     }
                 } else {
                     Relation::Distinct {
-                        left: right_term,
-                        right: left_term,
-                        difference: 0,
+                        left: right_base,
+                        right: left_base,
+                        difference: -difference,
                     }
                 };
                 if let Some(substitution) = &detail.substitution {
@@ -1539,6 +1573,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
             DerivationNode::JoinDistinct {
                 left,
                 right,
+                difference,
                 event,
                 parents,
             } => {
@@ -1554,7 +1589,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                             == &DerivationConclusion::Relation(Relation::Distinct {
                                 left: *left,
                                 right: *right,
-                                difference: 0,
+                                difference: *difference,
                             })
                     },
                     true,
@@ -1562,7 +1597,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 DerivationConclusion::Relation(Relation::Distinct {
                     left: *left,
                     right: *right,
-                    difference: 0,
+                    difference: *difference,
                 })
             }
             DerivationNode::JoinGoal {
@@ -1641,6 +1676,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
             DerivationNode::MaterializedDistinct {
                 left,
                 right,
+                difference,
                 event,
                 parent,
             } => {
@@ -1648,7 +1684,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 let conclusion = DerivationConclusion::Relation(Relation::Distinct {
                     left: *left,
                     right: *right,
-                    difference: 0,
+                    difference: *difference,
                 });
                 assert_eq!(retained_conclusion(&conclusions, *parent), &conclusion);
                 conclusion
@@ -1884,6 +1920,43 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                 assert!(!relation_has_bare_binding(summary, source, *receiver));
                 assert!(!relation.terms().contains(carrier));
                 assert!(relation_has_bare_binding(summary, relation, *receiver));
+                if let Relation::Distinct {
+                    left,
+                    right,
+                    difference,
+                } = source
+                {
+                    let receiver_term = relation.terms().into_iter().find(|term| matches!(
+                        retained_term(summary, *term),
+                        TermKind::Place(place, _) if place.root == PlaceRoot::Binding(*receiver)
+                            && place.path.is_empty()
+                    )).expect("the delivered relation contains its receiver");
+                    let replace = |term| {
+                        if term == *carrier {
+                            receiver_term
+                        } else {
+                            term
+                        }
+                    };
+                    let (left, right) = (replace(*left), replace(*right));
+                    let expected = if left <= right {
+                        Relation::Distinct {
+                            left,
+                            right,
+                            difference: *difference,
+                        }
+                    } else {
+                        Relation::Distinct {
+                            left: right,
+                            right: left,
+                            difference: -*difference,
+                        }
+                    };
+                    assert_eq!(
+                        relation, &expected,
+                        "delivery preserves the excluded offset"
+                    );
+                }
                 let retained = retained_event(summary, *event);
                 used_events[event.0 as usize] = true;
                 assert_eq!(retained.kind, FlowEventKind::PostconditionGive);
@@ -1986,13 +2059,20 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                                     assert!(edge_bound <= bound);
                                 }
                                 (
-                                    Relation::Distinct { left, right, .. },
+                                    Relation::Distinct {
+                                        left,
+                                        right,
+                                        difference,
+                                    },
                                     Relation::Distinct {
                                         left: edge_left,
                                         right: edge_right,
-                                        ..
+                                        difference: edge_difference,
                                     },
-                                ) => assert_eq!((left, right), (edge_left, edge_right)),
+                                ) => assert_eq!(
+                                    (left, right, difference),
+                                    (edge_left, edge_right, edge_difference)
+                                ),
                                 _ => panic!("delivery join preserves the L0 relation class"),
                             }
                         }
@@ -2192,7 +2272,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                                 Relation::Distinct {
                                     left,
                                     right: requested.right,
-                                    difference: 0,
+                                    difference: requested.bound,
                                 }
                             } else {
                                 Relation::Bound {
@@ -3161,6 +3241,133 @@ fn main() -> status: std::process::ExitStatus pure {
         vec![true],
         "i <= p.count and p.count < 4 compose to i < values.len"
     );
+}
+
+/// The conformance cases own the source verdicts; this test checks the
+/// additional implementation obligation that offsets survive in the proof
+/// records and that the test-side validator checks their signs and values.
+#[test]
+fn offset_disequality_derivations_retain_and_validate_their_offsets() {
+    let source = include_bytes!("../../../../tests/conformance/cases/ent4-pos-offset-join.wf");
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    for required in ["source", "strict", "join", "strengthened"] {
+        assert!(
+            summary
+                .derivations
+                .nodes
+                .iter()
+                .any(|node| match (required, node) {
+                    ("source", DerivationNode::SourceDistinct { difference, .. })
+                    | ("strict", DerivationNode::DisequalityFromStrictBound { difference, .. })
+                    | ("join", DerivationNode::JoinDistinct { difference, .. }) => *difference != 0,
+                    ("strengthened", DerivationNode::StrengthenedBound { bound, .. }) =>
+                        *bound == 3,
+                    _ => false,
+                }),
+            "missing offset {required} derivation"
+        );
+    }
+    // A wrong excluded value must not pass merely because endpoints match.
+    let mut corrupted = summary.clone();
+    let node = corrupted
+        .derivations
+        .nodes
+        .iter_mut()
+        .find(|node| {
+            matches!(
+                node, DerivationNode::SourceDistinct { difference, .. } if *difference != 0
+            )
+        })
+        .unwrap();
+    let DerivationNode::SourceDistinct { difference, .. } = node else {
+        unreachable!()
+    };
+    *difference += 1;
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| validate_derivations(
+            &corrupted
+        )))
+        .is_err(),
+        "the validator must reject a changed excluded offset"
+    );
+
+    let delivery_source =
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-offset-delivery.wf");
+    validate_derivations(&accepted_entailment(delivery_source, "avoid_four"));
+    let delivery = accepted_entailment(delivery_source, "probe");
+    validate_derivations(&delivery);
+    for join in [false, true] {
+        let mut corrupted = delivery.clone();
+        let node = corrupted.derivations.nodes.iter_mut().find(|node| match node {
+            DerivationNode::PostconditionGive { relation, .. } if !join =>
+                matches!(relation.as_ref(), Relation::Distinct { difference, .. } if *difference != 0),
+            DerivationNode::PostconditionDeliveryJoin { detail } if join =>
+                matches!(detail.relation, Relation::Distinct { difference, .. } if difference != 0),
+            _ => false,
+        }).expect("the delivery retains its offset Give and join evidence");
+        let relation = match node {
+            DerivationNode::PostconditionGive { relation, .. } => relation.as_mut(),
+            DerivationNode::PostconditionDeliveryJoin { detail } => &mut detail.relation,
+            _ => unreachable!(),
+        };
+        let Relation::Distinct { difference, .. } = relation else {
+            unreachable!()
+        };
+        *difference += 1;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| validate_derivations(
+                &corrupted
+            )))
+            .is_err(),
+            "the validator must reject a changed delivery offset"
+        );
+    }
+
+    let mixed_delivery = accepted_entailment(
+        include_bytes!("../../../../tests/conformance/cases/ent5-pos-offset-delivery-candidate.wf"),
+        "probe",
+    );
+    validate_derivations(&mixed_delivery);
+    assert!(mixed_delivery.derivations.nodes.iter().any(|node| matches!(
+        node,
+        DerivationNode::DisequalityFromStrictBound { difference, .. } if *difference != 0
+    )));
+    assert!(mixed_delivery.derivations.nodes.iter().any(|node| matches!(
+        node,
+        DerivationNode::PostconditionDeliveryJoin { detail }
+            if matches!(detail.relation, Relation::Distinct { difference, .. } if difference != 0)
+    )));
+
+    validate_derivations(&accepted_entailment(
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-offset-range-length.wf"),
+        "probe",
+    ));
+
+    let signed = accepted_entailment(
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-offset-signed.wf"),
+        "probe",
+    );
+    validate_derivations(&signed);
+    assert!(
+        signed
+            .derivations
+            .nodes
+            .iter()
+            .any(|node| matches!(node, DerivationNode::SourceDistinct { difference: 4, .. })),
+        "Z - cursor != 4 retains the reversed negative constant"
+    );
+    let boundaries =
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-offset-boundaries.wf");
+    for function in [
+        "signed_up",
+        "signed_down",
+        "unsigned_up",
+        "unsigned_down",
+        "signed_divide",
+    ] {
+        validate_derivations(&accepted_entailment(boundaries, function));
+    }
 }
 
 #[test]

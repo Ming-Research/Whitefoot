@@ -43,10 +43,7 @@ pub(crate) enum Relation {
     },
     /// `left - right != difference`, one disequality.
     ///
-    /// [ENT-4] stores a disequality as an unordered pair, which represents a
-    /// zero displacement exactly. A displaced disequality is therefore
-    /// provable from a strict bound but establishes no stored fact, which
-    /// only under-derives [ENT-1].
+    /// Reversing the endpoints negates the displacement [ENT-2].
     Distinct {
         left: TermId,
         right: TermId,
@@ -343,6 +340,7 @@ pub(crate) enum DerivationNode {
     SourceDistinct {
         left: TermId,
         right: TermId,
+        difference: i128,
         event: FlowEventId,
     },
     SourceGoal {
@@ -401,6 +399,7 @@ pub(crate) enum DerivationNode {
     DisequalityFromStrictBound {
         left: TermId,
         right: TermId,
+        difference: i128,
         parent: DerivationId,
     },
     GoalProjection {
@@ -492,6 +491,7 @@ pub(crate) enum DerivationNode {
     JoinDistinct {
         left: TermId,
         right: TermId,
+        difference: i128,
         event: FlowEventId,
         parents: Vec<JoinParent>,
     },
@@ -515,6 +515,7 @@ pub(crate) enum DerivationNode {
     MaterializedDistinct {
         left: TermId,
         right: TermId,
+        difference: i128,
         event: FlowEventId,
         parent: DerivationId,
     },
@@ -2927,11 +2928,11 @@ pub(crate) struct FactState {
     pub(crate) contradiction: Option<DerivationId>,
     /// Live difference bounds `left - right <= bound`, smallest bound kept.
     pub(crate) bounds: Rc<BoundStore>,
-    /// Live disequalities, stored with ordered term pair.
-    pub(crate) distinct: Rc<WordHashSet<(TermId, TermId)>>,
-    pub(crate) distinct_proofs: Rc<WordHashMap<(TermId, TermId), DerivationId>>,
+    /// Live disequalities, stored with canonical endpoints and displacement.
+    pub(crate) distinct: Rc<WordHashSet<DistinctKey>>,
+    pub(crate) distinct_proofs: Rc<WordHashMap<DistinctKey, DerivationId>>,
     /// Independently live disequality proofs, parallel to `bound_candidates`.
-    distinct_candidates: Rc<WordHashMap<(TermId, TermId), Candidates<DerivationId>>>,
+    distinct_candidates: Rc<WordHashMap<DistinctKey, Candidates<DerivationId>>>,
     /// [ENT-3] comparison origins (b): `own Bool` bindings whose initializer
     /// comparison is still valid on every path from initializer to here.
     pub(crate) origins: HashMap<BindingId, Relation>,
@@ -3103,17 +3104,13 @@ impl FactState {
                 });
                 self.add_bound(*right, *left, -*difference, reverse, ledger);
             }
-            // [ENT-4] stores a disequality as an unordered pair, which is
-            // exactly a zero displacement; a displaced one establishes
-            // nothing and only under-derives.
             Relation::Distinct {
                 left,
                 right,
-                difference: 0,
+                difference,
             } => {
-                self.establish_distinct_with_proof(*left, *right, ledger, event);
+                self.establish_distinct_with_proof(*left, *right, *difference, ledger, event);
             }
-            Relation::Distinct { .. } => {}
         }
     }
 
@@ -3145,12 +3142,11 @@ impl FactState {
             Relation::Distinct {
                 left,
                 right,
-                difference: 0,
+                difference,
             } => {
-                let pair = ordered(*left, *right);
-                self.add_distinct_candidate(pair, proof, ledger);
+                let key = distinct_key(*left, *right, *difference);
+                self.add_distinct_candidate(key, proof, ledger);
             }
-            Relation::Distinct { .. } => {}
         }
     }
 
@@ -3197,14 +3193,14 @@ impl FactState {
             .collect::<Vec<_>>();
         let mut distinct = self.distinct.iter().copied().collect::<Vec<_>>();
         distinct.sort_unstable();
-        relations.extend(distinct.into_iter().map(|(left, right)| {
+        relations.extend(distinct.into_iter().map(|(left, right, difference)| {
             (
                 Relation::Distinct {
                     left,
                     right,
-                    difference: 0,
+                    difference,
                 },
-                self.distinct_proofs[&(left, right)],
+                self.distinct_proofs[&(left, right, difference)],
             )
         }));
         relations
@@ -3225,13 +3221,13 @@ impl FactState {
         }
         let mut pairs = self.distinct_candidates.keys().copied().collect::<Vec<_>>();
         pairs.sort_unstable();
-        for (left, right) in pairs {
-            for parent in &self.distinct_candidates[&(left, right)] {
+        for (left, right, difference) in pairs {
+            for parent in &self.distinct_candidates[&(left, right, difference)] {
                 relations.push((
                     Relation::Distinct {
                         left,
                         right,
-                        difference: 0,
+                        difference,
                     },
                     *parent,
                 ));
@@ -3274,13 +3270,15 @@ impl FactState {
         &mut self,
         left: TermId,
         right: TermId,
+        difference: i128,
         ledger: &mut DerivationLedger,
         event: FlowEventId,
     ) -> DerivationId {
-        let pair = ordered(left, right);
+        let pair = distinct_key(left, right, difference);
         let proof = ledger.intern(DerivationNode::SourceDistinct {
             left: pair.0,
             right: pair.1,
+            difference: pair.2,
             event,
         });
         if !self.all_derivable {
@@ -3334,7 +3332,7 @@ impl FactState {
 
     fn add_distinct_candidate(
         &mut self,
-        pair: (TermId, TermId),
+        pair: DistinctKey,
         proof: DerivationId,
         ledger: &DerivationLedger,
     ) {
@@ -3347,7 +3345,7 @@ impl FactState {
         }
         self.forget_closed_view();
         if !self.distinct.contains(&pair) {
-            self.closure.mark_fresh_cell(pair);
+            self.closure.mark_fresh_cell((pair.0, pair.1));
             self.closure.mark_fresh_cell((pair.1, pair.0));
         }
         if ledger.depends_on_postcondition_call(proof) {
@@ -3361,7 +3359,7 @@ impl FactState {
                     .any(|parent| !ledger.depends_on_postcondition_call(*parent))
             })
         {
-            self.ordinary_closure.mark_fresh_cell(pair);
+            self.ordinary_closure.mark_fresh_cell((pair.0, pair.1));
             self.ordinary_closure.mark_fresh_cell((pair.1, pair.0));
         }
         let candidates = Rc::make_mut(&mut self.distinct_candidates)
@@ -3373,7 +3371,7 @@ impl FactState {
         self.select_distinct_candidate(pair, ledger);
     }
 
-    fn select_distinct_candidate(&mut self, pair: (TermId, TermId), ledger: &DerivationLedger) {
+    fn select_distinct_candidate(&mut self, pair: DistinctKey, ledger: &DerivationLedger) {
         let selected = self.distinct_candidates.get(&pair).and_then(|candidates| {
             candidates.iter().copied().reduce(|current, candidate| {
                 if ledger.better(candidate, current) {
@@ -3444,7 +3442,7 @@ impl FactState {
             .chain(
                 self.distinct
                     .iter()
-                    .flat_map(|(left, right)| [*left, *right]),
+                    .flat_map(|(left, right, _)| [*left, *right]),
             )
             .filter(|term| killed(*term))
             .collect::<Vec<_>>();
@@ -3465,14 +3463,14 @@ impl FactState {
             .distinct_candidates
             .keys()
             .chain(self.distinct.iter())
-            .any(|(left, right)| killed(*left) || killed(*right))
+            .any(|(left, right, _)| killed(*left) || killed(*right))
         {
             Rc::make_mut(&mut self.distinct)
-                .retain(|(left, right)| !killed(*left) && !killed(*right));
+                .retain(|(left, right, _)| !killed(*left) && !killed(*right));
             Rc::make_mut(&mut self.distinct_proofs)
-                .retain(|(left, right), _| !killed(*left) && !killed(*right));
+                .retain(|(left, right, _), _| !killed(*left) && !killed(*right));
             Rc::make_mut(&mut self.distinct_candidates)
-                .retain(|(left, right), _| !killed(*left) && !killed(*right));
+                .retain(|(left, right, _), _| !killed(*left) && !killed(*right));
         }
         self.origins.retain(|_, relation| {
             let [left, right] = relation.terms();
@@ -3570,13 +3568,13 @@ impl FactState {
             let before = candidates.len();
             candidates.retain(|proof| !killed(pair.0, pair.1, *proof));
             if ordinary(candidates) != ordinary_before {
-                ordinary_weakened.push(pair);
+                ordinary_weakened.push((pair.0, pair.1));
             }
             if candidates.len() != before {
                 changed = true;
                 self.select_distinct_candidate(pair, ledger);
                 if !self.distinct.contains(&pair) {
-                    weakened.push(pair);
+                    weakened.push((pair.0, pair.1));
                 }
             }
         }
@@ -3685,12 +3683,22 @@ impl FactState {
     }
 }
 
-pub(crate) fn ordered(left: TermId, right: TermId) -> (TermId, TermId) {
+/// One offset disequality, with endpoint reversal negating its offset.
+pub(crate) type DistinctKey = (TermId, TermId, i128);
+
+pub(crate) fn distinct_key(left: TermId, right: TermId, difference: i128) -> DistinctKey {
     if left <= right {
-        (left, right)
+        (left, right, difference)
     } else {
-        (right, left)
+        (right, left, -difference)
     }
+}
+
+/// Concrete constant operands fold through Z [ENT-2]. A zero-offset pair
+/// containing a retained constant term would bypass ENT-5's nonzero-candidate
+/// boundary, so it must not be materialized as a zero-offset disequality.
+pub(crate) fn zero_distinct_candidate(terms: &TermTable, left: TermId, right: TermId) -> bool {
+    left != right && terms.constant_part(left).0 == left && terms.constant_part(right).0 == right
 }
 
 /// The arithmetic convention used by complete difference-bound closure.
@@ -3716,8 +3724,8 @@ pub(crate) struct ClosedState {
     /// shifted by these bounds, except toward another member of its dormant
     /// implicit component [ENT-2, ENT-4].
     passive: PassiveReading,
-    distinct: WordHashSet<(TermId, TermId)>,
-    distinct_proofs: WordHashMap<(TermId, TermId), DerivationId>,
+    distinct: WordHashSet<DistinctKey>,
+    distinct_proofs: WordHashMap<DistinctKey, DerivationId>,
     opaque: WordHashSet<(GoalId, GoalSign)>,
     opaque_proofs: WordHashMap<(GoalId, GoalSign), DerivationId>,
 }
@@ -4239,16 +4247,20 @@ impl ClosedState {
 
     /// Whether the disequality of an ordered pair is held or derivable from
     /// either strict bound.
-    fn holds_distinct(&self, pair: (TermId, TermId)) -> bool {
+    fn holds_distinct(&self, pair: DistinctKey) -> bool {
         self.distinct.contains(&pair)
-            || self.value(pair.0, pair.1).is_some_and(|bound| bound <= -1)
-            || self.value(pair.1, pair.0).is_some_and(|bound| bound <= -1)
+            || self
+                .value(pair.0, pair.1)
+                .is_some_and(|bound| bound < pair.2)
+            || self
+                .value(pair.1, pair.0)
+                .is_some_and(|bound| bound < -pair.2)
     }
 
     /// The proof of a held or derivable disequality of an ordered pair.
     fn distinct_proof(
         &self,
-        pair: (TermId, TermId),
+        pair: DistinctKey,
         ledger: &mut DerivationLedger,
     ) -> Option<DerivationId> {
         if let Some(proof) = self.distinct_proofs.get(&pair) {
@@ -4258,7 +4270,7 @@ impl ClosedState {
             &Relation::Distinct {
                 left: pair.0,
                 right: pair.1,
-                difference: 0,
+                difference: pair.2,
             },
             ledger,
         )
@@ -4313,14 +4325,14 @@ impl ClosedState {
             .collect::<Vec<_>>();
         let mut distinct = self.distinct.iter().copied().collect::<Vec<_>>();
         distinct.sort_unstable();
-        relations.extend(distinct.into_iter().map(|(left, right)| {
+        relations.extend(distinct.into_iter().map(|(left, right, difference)| {
             (
                 Relation::Distinct {
                     left,
                     right,
-                    difference: 0,
+                    difference,
                 },
-                self.distinct_proofs[&(left, right)],
+                self.distinct_proofs[&(left, right, difference)],
             )
         }));
         relations
@@ -4348,7 +4360,8 @@ impl ClosedState {
                 right,
                 difference,
             } => {
-                (*difference == 0 && self.distinct.contains(&ordered(*left, *right)))
+                self.distinct
+                    .contains(&distinct_key(*left, *right, *difference))
                     || self.derives_bound(*left, *right, difference.saturating_sub(1))
                     || self.derives_bound(
                         *right,
@@ -4532,10 +4545,8 @@ impl ClosedState {
                 right,
                 difference,
             } => {
-                let pair = ordered(*left, *right);
-                let mut best = (*difference == 0)
-                    .then(|| self.distinct_proofs.get(&pair).copied())
-                    .flatten();
+                let pair = distinct_key(*left, *right, *difference);
+                let mut best = self.distinct_proofs.get(&pair).copied();
                 for (from, to, gap) in [
                     (*left, *right, difference.saturating_sub(1)),
                     (*right, *left, difference.saturating_neg().saturating_sub(1)),
@@ -4544,6 +4555,7 @@ impl ClosedState {
                         let candidate = ledger.intern(DerivationNode::DisequalityFromStrictBound {
                             left: pair.0,
                             right: pair.1,
+                            difference: pair.2,
                             parent,
                         });
                         if best.is_none_or(|current| ledger.better(candidate, current)) {
@@ -5026,7 +5038,7 @@ fn complete_contradiction_probe(
     }
 
     let mut distinct = (*state.distinct).clone();
-    distinct.retain(|(left, right)| slot(*left).is_some() && slot(*right).is_some());
+    distinct.retain(|(left, right, _)| slot(*left).is_some() && slot(*right).is_some());
     loop {
         // Floyd-Warshall over the exact same saturating difference bounds.
         // One pass closes the current edge set; a second is needed only when
@@ -5056,24 +5068,27 @@ fn complete_contradiction_probe(
 
         for left in 0..dimension {
             for right in (left + 1)..dimension {
+                if !zero_distinct_candidate(terms, ids[left], ids[right]) {
+                    continue;
+                }
                 let forward = bounds[left * dimension + right];
                 let reverse = bounds[right * dimension + left];
                 if forward.is_some_and(|bound| bound <= -1)
                     || reverse.is_some_and(|bound| bound <= -1)
                 {
-                    distinct.insert((ids[left], ids[right]));
+                    distinct.insert((ids[left], ids[right], 0));
                 }
             }
         }
         let mut strengthened = false;
-        for &(left, right) in &distinct {
-            for (from, to) in [(left, right), (right, left)] {
+        for &(left, right, difference) in &distinct {
+            for (from, to, offset) in [(left, right, difference), (right, left, -difference)] {
                 let (Some(from), Some(to)) = (slot(from), slot(to)) else {
                     continue;
                 };
                 let cell = &mut bounds[from * dimension + to];
-                if *cell == Some(0) {
-                    *cell = Some(-1);
+                if *cell == Some(offset) {
+                    *cell = Some(offset - 1);
                     strengthened = true;
                 }
             }
@@ -5101,7 +5116,7 @@ fn complete_contradiction_probe(
 fn goal_contradiction_without_proofs(
     state: &FactState,
     matrix: DenseClosureBounds,
-    distinct: WordHashSet<(TermId, TermId)>,
+    distinct: WordHashSet<DistinctKey>,
     goals: &GoalTable,
 ) -> bool {
     let closed = ClosedState {
@@ -5283,8 +5298,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
     }
     // Least fixed point of transitivity (1), disequality strengthening (2),
     // and subsumption (3). The rules are monotone over finitely many ordered
-    // pairs, so iteration terminates; strengthening only lowers a bound to
-    // -1, so the outer loop runs at most a handful of rounds.
+    // pairs; strengthening uses only the finite established exclusions.
     loop {
         dense_bounds.begin_round();
         let mut changed = false;
@@ -5351,26 +5365,26 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
                 )
             };
         }
-        // ENT-4 makes every strict bound a disequality in either
-        // orientation. Retain that derived fact in this same fixed point so
-        // it can strengthen an available weak bound and so ENT-5 joins can
-        // intersect the complete closed disequality set.
+        // Materialize zero-offset disequalities from strict bounds for
+        // ENT-5's finite candidate rule. Nonzero candidates come only from
+        // established facts; ENT-4 derives other offsets on demand.
         for left in &ids {
             for right in &ids {
-                if left == right
+                if !zero_distinct_candidate(terms, *left, *right)
                     || dense_bounds
                         .get(*left, *right)
                         .is_none_or(|(bound, _)| bound > -1)
                 {
                     continue;
                 }
-                let pair = ordered(*left, *right);
+                let pair = distinct_key(*left, *right, 0);
                 let (_, parent) = dense_bounds
                     .get(*left, *right)
                     .expect("strict bound checked above");
                 let node = DerivationNode::DisequalityFromStrictBound {
                     left: pair.0,
                     right: pair.1,
+                    difference: pair.2,
                     parent,
                 };
                 let accepted = distinct_proofs
@@ -5386,22 +5400,24 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         }
         let mut distinct_pairs: Vec<_> = distinct.iter().copied().collect();
         distinct_pairs.sort_unstable();
-        for (left, right) in distinct_pairs {
-            for (from, to) in [(left, right), (right, left)] {
-                if let Some((0, weak)) = dense_bounds.get(from, to) {
+        for (left, right, difference) in distinct_pairs {
+            for (from, to, offset) in [(left, right, difference), (right, left, -difference)] {
+                if let Some((held, weak)) = dense_bounds.get(from, to)
+                    && held == offset
+                {
                     let node = DerivationNode::StrengthenedBound {
                         left: from,
                         right: to,
-                        bound: -1,
+                        bound: offset - 1,
                         weak,
-                        distinct: distinct_proofs[&ordered(left, right)],
+                        distinct: distinct_proofs[&(left, right, difference)],
                     };
                     changed |= insert_closed_candidate(
                         &mut dense_bounds,
                         ClosedBoundCandidate {
                             left: from,
                             right: to,
-                            bound: -1,
+                            bound: offset - 1,
                             node,
                         },
                         seeded,
@@ -5588,18 +5604,19 @@ fn insert_fresh_edges<P: ClosureProofs>(
         if let Some((bound, proof)) = dense.get(left, right) {
             pending.push_back((left, right, bound, proof));
         }
-        let pair = ordered(left, right);
-        if let Some(parent) = distinct_proofs.get(&pair).copied()
-            && let Some((0, weak)) = dense.get(left, right)
+        if let Some((bound, weak)) = dense.get(left, right)
+            && let Some(parent) = distinct_proofs
+                .get(&distinct_key(left, right, bound))
+                .copied()
         {
             let proof = ledger.intern(DerivationNode::StrengthenedBound {
                 left,
                 right,
-                bound: -1,
+                bound: bound - 1,
                 weak,
                 distinct: parent,
             });
-            pending.push_back((left, right, -1, proof));
+            pending.push_back((left, right, bound - 1, proof));
         }
     }
 
@@ -5608,6 +5625,7 @@ fn insert_fresh_edges<P: ClosureProofs>(
         distinct,
         distinct_proofs,
         pending,
+        terms,
         ledger,
     ))
 }
@@ -5649,9 +5667,10 @@ type PendingEdges = std::collections::VecDeque<(TermId, TermId, i128, Derivation
 /// edges, as [`insert_fresh_edges`] describes, until none remains.
 fn insert_pending_edges<P: ClosureProofs>(
     mut dense: DenseClosureBounds,
-    mut distinct: WordHashSet<(TermId, TermId)>,
-    mut distinct_proofs: WordHashMap<(TermId, TermId), DerivationId>,
+    mut distinct: WordHashSet<DistinctKey>,
+    mut distinct_proofs: WordHashMap<DistinctKey, DerivationId>,
     mut pending: PendingEdges,
+    terms: &TermTable,
     ledger: &mut P,
 ) -> EdgeClosure {
     let width = dense.dimension;
@@ -5659,8 +5678,8 @@ fn insert_pending_edges<P: ClosureProofs>(
     // consequence, exactly the (2) rule and the strict-bound disequality the
     // fixed point applies.
     let settle = |dense: &DenseClosureBounds,
-                  distinct: &mut WordHashSet<(TermId, TermId)>,
-                  distinct_proofs: &mut WordHashMap<(TermId, TermId), DerivationId>,
+                  distinct: &mut WordHashSet<DistinctKey>,
+                  distinct_proofs: &mut WordHashMap<DistinctKey, DerivationId>,
                   pending: &mut PendingEdges,
                   ledger: &mut P,
                   left: TermId,
@@ -5671,11 +5690,12 @@ fn insert_pending_edges<P: ClosureProofs>(
         let Some((bound, proof)) = dense.get(left, right) else {
             return;
         };
-        let pair = ordered(left, right);
-        if bound <= -1 && !distinct.contains(&pair) {
+        let pair = distinct_key(left, right, 0);
+        if bound <= -1 && zero_distinct_candidate(terms, left, right) && !distinct.contains(&pair) {
             let node = ledger.intern(DerivationNode::DisequalityFromStrictBound {
                 left: pair.0,
                 right: pair.1,
+                difference: pair.2,
                 parent: proof,
             });
             distinct.insert(pair);
@@ -5691,17 +5711,18 @@ fn insert_pending_edges<P: ClosureProofs>(
                 pending.push_back((right, left, -1, strengthened));
             }
         }
-        if bound == 0
-            && let Some(parent) = distinct_proofs.get(&pair).copied()
+        if let Some(parent) = distinct_proofs
+            .get(&distinct_key(left, right, bound))
+            .copied()
         {
             let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
                 left,
                 right,
-                bound: -1,
+                bound: bound - 1,
                 weak: proof,
                 distinct: parent,
             });
-            pending.push_back((left, right, -1, strengthened));
+            pending.push_back((left, right, bound - 1, strengthened));
         }
     };
 
@@ -5834,8 +5855,8 @@ fn insert_pending_edges<P: ClosureProofs>(
 /// The settled matrix and disequalities of [`insert_fresh_edges`].
 struct EdgeClosure {
     dense: DenseClosureBounds,
-    distinct: WordHashSet<(TermId, TermId)>,
-    distinct_proofs: WordHashMap<(TermId, TermId), DerivationId>,
+    distinct: WordHashSet<DistinctKey>,
+    distinct_proofs: WordHashMap<DistinctKey, DerivationId>,
 }
 
 /// Where an edge-insertion closure files the proofs of the facts it derives.
@@ -5977,17 +5998,19 @@ fn close_from_view_seed(
         // The state's own selection, which the view may already improve on.
         if let Some((bound, proof)) = state.bounds.get(left, right) {
             pending.push_back((left, right, bound, proof));
-            if bound == 0
-                && let Some(parent) = view.distinct_proofs.get(&ordered(left, right)).copied()
+            if let Some(parent) = view
+                .distinct_proofs
+                .get(&distinct_key(left, right, bound))
+                .copied()
             {
                 let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
                     left,
                     right,
-                    bound: -1,
+                    bound: bound - 1,
                     weak: proof,
                     distinct: parent,
                 });
-                pending.push_back((left, right, -1, strengthened));
+                pending.push_back((left, right, bound - 1, strengthened));
             }
         }
     }
@@ -6000,6 +6023,7 @@ fn close_from_view_seed(
         view.distinct.clone(),
         view.distinct_proofs.clone(),
         pending,
+        terms,
         ledger,
     );
     let mut contradiction = None;
@@ -6185,10 +6209,10 @@ fn closure_middle_terms(
             admit(right, &mut active);
         }
     }
-    for &(left, right) in state.distinct.iter() {
+    for &(left, right, difference) in state.distinct.iter() {
         if !state
             .distinct_proofs
-            .get(&(left, right))
+            .get(&(left, right, difference))
             .is_some_and(|proof| implicit_only(*proof))
         {
             admit(left, &mut active);
@@ -6957,19 +6981,20 @@ fn materialize_closure(
     let mut distinct_proofs = HashMap::default();
     let mut distinct_keys: Vec<_> = closed.distinct.iter().copied().collect();
     distinct_keys.sort_unstable();
-    for (left, right) in distinct_keys {
-        let parent = closed.distinct_proofs[&(left, right)];
+    for (left, right, difference) in distinct_keys {
+        let parent = closed.distinct_proofs[&(left, right, difference)];
         let proof = if !wrap_implicit && ledger.implicit_only(parent) {
             parent
         } else {
             ledger.intern(DerivationNode::MaterializedDistinct {
                 left,
                 right,
+                difference,
                 event,
                 parent,
             })
         };
-        distinct_proofs.insert((left, right), proof);
+        distinct_proofs.insert((left, right, difference), proof);
     }
     let mut opaque_proofs = HashMap::default();
     let mut opaque_keys: Vec<_> = closed.opaque.iter().copied().collect();
@@ -7048,9 +7073,9 @@ fn materialize_closure(
             .filter(|pair| ordinary_closed.holds_distinct(*pair))
             .collect::<Vec<_>>();
         keys.sort_unstable();
-        for (left, right) in keys {
+        for (left, right, difference) in keys {
             let parent = ordinary_closed
-                .distinct_proof((left, right), ledger)
+                .distinct_proof((left, right, difference), ledger)
                 .expect("the ordinary closure holds this disequality");
             let proof = if !wrap_implicit && ledger.implicit_only(parent) {
                 parent
@@ -7058,11 +7083,12 @@ fn materialize_closure(
                 ledger.intern(DerivationNode::MaterializedDistinct {
                     left,
                     right,
+                    difference,
                     event,
                     parent,
                 })
             };
-            materialized.add_distinct_candidate((left, right), proof, ledger);
+            materialized.add_distinct_candidate((left, right, difference), proof, ledger);
         }
     }
     materialized.closure = ClosureRecord::closed(terms.ids().count());
@@ -7076,8 +7102,8 @@ fn materialize_closure(
 
 /// [ENT-5] join of arm-exit states, each already taken after its scope-exit
 /// kills. Each input is closed first; the join keeps, per ordered term pair,
-/// the weakest bound held by all, and each disequality held by all. The empty
-/// join is the contradictory all-derivable state.
+/// the weakest bound held by all, and ENT-5's finite disequality candidates
+/// held by all under ENT-4. The empty join is contradictory.
 #[cfg(test)]
 pub(crate) fn join(
     states: &[FactState],
@@ -7309,11 +7335,18 @@ fn join_at_once(
         }
     }
     super::work::join_pairs(rows.len(), pairs_evaluated, bounds.live);
-    // Every disequality some predecessor holds and each one holds or
-    // derives from a strict bound.
+    // ENT-5's candidates: established offsets on contributing inputs plus
+    // zero-offset disequalities materialized by closure. Derived-only
+    // nonzero exclusions are queried by ENT-4, never enumerated here.
     let mut distinct_keys = contributing
         .iter()
-        .flat_map(|index| closed[*index].distinct.iter().copied())
+        .flat_map(|index| {
+            closed[*index]
+                .distinct
+                .iter()
+                .copied()
+                .filter(move |key| key.2 == 0 || states[*index].distinct.contains(key))
+        })
         .collect::<Vec<_>>();
     distinct_keys.sort_unstable();
     distinct_keys.dedup();
@@ -7363,6 +7396,9 @@ fn join_at_once(
         let outside = outside
             .get_or_insert_with(|| terms.ids().filter(|id| !row_flags[id.0 as usize]).collect());
         for &other in outside.iter() {
+            if !zero_distinct_candidate(terms, other, term) {
+                continue;
+            }
             let to_zero = implicit_bound_between(terms, (other, ZERO)).map(|(bound, _)| bound);
             let from_zero = implicit_bound_between(terms, (ZERO, other)).map(|(bound, _)| bound);
             let derived = to_zero
@@ -7376,7 +7412,7 @@ fn join_at_once(
             if derived {
                 continue;
             }
-            let pair = ordered(other, term);
+            let pair = distinct_key(other, term, 0);
             if contributing
                 .iter()
                 .all(|input| closed[*input].holds_distinct(pair))
@@ -7396,10 +7432,10 @@ fn join_at_once(
             let independently_live = ledger.implicit_only(shared)
                 || matches!(
                     ledger.nodes[shared.0 as usize],
-                    DerivationNode::SourceDistinct { left, right, .. }
-                        | DerivationNode::JoinDistinct { left, right, .. }
-                        | DerivationNode::MaterializedDistinct { left, right, .. }
-                        if ordered(left, right) == pair
+                    DerivationNode::SourceDistinct { left, right, difference, .. }
+                        | DerivationNode::JoinDistinct { left, right, difference, .. }
+                        | DerivationNode::MaterializedDistinct { left, right, difference, .. }
+                        if distinct_key(left, right, difference) == pair
                 );
             if independently_live
                 && rest_indices
@@ -7430,6 +7466,7 @@ fn join_at_once(
         let proof = ledger.intern(DerivationNode::JoinDistinct {
             left: pair.0,
             right: pair.1,
+            difference: pair.2,
             event,
             parents,
         });
@@ -7611,15 +7648,24 @@ pub(crate) mod tests {
             .collect()
     }
 
-    /// Every ordered pair whose disequality is held or derivable.
-    fn distinct_pairs(closed: &ClosedState) -> Vec<(TermId, TermId)> {
+    /// Zero-offset pairs and every offset candidate held by either view.
+    fn distinct_pairs(closed: &ClosedState, other: &ClosedState) -> Vec<DistinctKey> {
         let width = closed.matrix.term_count.max(closed.passive.bounds.len());
         let ids = (0..width)
             .map(|id| TermId(u32::try_from(id).expect("term index fits the u32 identity")))
             .collect::<Vec<_>>();
-        ids.iter()
-            .flat_map(|left| ids.iter().map(move |right| (*left, *right)))
-            .filter(|(left, right)| left < right && closed.holds_distinct((*left, *right)))
+        let mut candidates = ids
+            .iter()
+            .flat_map(|left| ids.iter().map(move |right| (*left, *right, 0)))
+            .filter(|(left, right, _)| left < right)
+            .chain(closed.distinct.iter().copied())
+            .chain(other.distinct.iter().copied())
+            .collect::<Vec<_>>();
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+            .into_iter()
+            .filter(|key| closed.holds_distinct(*key))
             .collect()
     }
 
@@ -7677,8 +7723,8 @@ pub(crate) mod tests {
             panic!("seeded closure bounds differ from the complete closure: {differing:?}");
         }
         assert_eq!(
-            distinct_pairs(seeded),
-            distinct_pairs(&complete),
+            distinct_pairs(seeded, &complete),
+            distinct_pairs(&complete, seeded),
             "seeded closure disequalities differ from the complete closure"
         );
         assert_eq!(seeded.opaque, complete.opaque);
@@ -7689,6 +7735,301 @@ pub(crate) mod tests {
                     complete.derives_goal(goal, sign, goals),
                     "seeded closure goal answer differs from the complete closure"
                 );
+            }
+        }
+    }
+
+    /// The old state drops every nonzero Distinct relation. These checks
+    /// therefore fail at storage, before either closure implementation can
+    /// tighten the later bound.
+    #[test]
+    fn offset_disequalities_strengthen_later_bounds_in_both_orientations() {
+        let mut terms = TermTable::new();
+        let mut place = |binding| {
+            terms.intern(TermKind::Place(
+                super::super::term::ResolvedPlace::spelled(
+                    super::super::term::PlaceRoot::Binding(BindingId(binding)),
+                    false,
+                    Vec::new(),
+                ),
+                IntegerType::I64,
+            ))
+        };
+        let x = place(0);
+        let y = place(1);
+        let middle = place(2);
+        let goals = GoalTable::default();
+        for difference in [4, -4, i128::from(i64::MIN), i128::from(u64::MAX) - 1] {
+            for reverse in [false, true] {
+                let mut ledger = DerivationLedger::default();
+                let event = ledger.event(FlowEventKind::S1, None);
+                let mut state = FactState::new();
+                let distinct = Relation::Distinct {
+                    left: x,
+                    right: y,
+                    difference,
+                };
+                state.establish(&distinct, &mut ledger, event);
+                assert!(state.distinct.contains(&distinct_key(x, y, difference)));
+                let initial = close(&state, &terms, &goals, &mut ledger);
+                assert!(initial.derives(&distinct));
+                let snapshot = state.numeric_snapshot();
+                assert_eq!(snapshot.live_l0_relations(), state.live_l0_relations());
+                materialize_closure_before_kill(&mut state, &terms, &goals, &mut ledger);
+                let snapshot_proof = state.distinct_proofs[&distinct_key(x, y, difference)];
+                assert!(matches!(ledger.nodes[snapshot_proof.0 as usize],
+                    DerivationNode::MaterializedDistinct { difference: held, .. } if held == difference
+                ));
+                let (left, right, offset) = if reverse {
+                    (y, x, -difference)
+                } else {
+                    (x, y, difference)
+                };
+                for relation in [
+                    Relation::Bound {
+                        left,
+                        right: middle,
+                        bound: 0,
+                    },
+                    Relation::Bound {
+                        left: middle,
+                        right,
+                        bound: offset,
+                    },
+                ] {
+                    state.establish(&relation, &mut ledger, event);
+                }
+                let closed = close(&state, &terms, &goals, &mut ledger);
+                assert!(!closed.contradictory());
+                assert_eq!(closed.tight_bound(left, right), Some(offset - 1));
+                assert_seeded_closure_matches_complete(&state, &terms, &goals, &ledger, &closed);
+                let proof = closed
+                    .relation_proof(
+                        &Relation::Bound {
+                            left,
+                            right,
+                            bound: offset - 1,
+                        },
+                        &mut ledger,
+                    )
+                    .unwrap();
+                assert!(matches!(ledger.nodes[proof.0 as usize],
+                    DerivationNode::StrengthenedBound { bound, .. } if bound == offset - 1
+                ));
+                materialize_closure_before_kill(&mut state, &terms, &goals, &mut ledger);
+                state.kill(|term| term == middle);
+                assert!(close(&state, &terms, &goals, &mut ledger).derives_bound(
+                    left,
+                    right,
+                    offset - 1
+                ));
+                state.kill(|term| term == x);
+                assert!(!state.distinct.contains(&distinct_key(x, y, difference)));
+            }
+        }
+    }
+
+    #[test]
+    fn offset_disequality_conflict_and_wrong_offset_use_the_general_rule() {
+        let mut terms = TermTable::new();
+        let x = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::spelled(
+                super::super::term::PlaceRoot::Binding(BindingId(0)),
+                false,
+                Vec::new(),
+            ),
+            IntegerType::U64,
+        ));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut state = FactState::new();
+        state.establish(
+            &Relation::Distinct {
+                left: x,
+                right: ZERO,
+                difference: 3,
+            },
+            &mut ledger,
+            event,
+        );
+        state.establish(
+            &Relation::Bound {
+                left: x,
+                right: ZERO,
+                bound: 4,
+            },
+            &mut ledger,
+            event,
+        );
+        assert!(!close(&state, &terms, &goals, &mut ledger).derives_bound(x, ZERO, 3));
+        // Unlike the wrong-offset control, the equality conflict would be
+        // missed before offset disequalities became live facts.
+        state.establish(
+            &Relation::Equal {
+                left: x,
+                right: ZERO,
+                difference: 3,
+            },
+            &mut ledger,
+            event,
+        );
+        assert!(contradiction_without_proofs(&state, &terms, &goals));
+        assert!(close(&state, &terms, &goals, &mut ledger).contradictory());
+    }
+
+    #[test]
+    fn offset_join_keeps_explicit_and_strict_bound_proofs_but_drops_a_missing_offset() {
+        let mut terms = TermTable::new();
+        let x = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::spelled(
+                super::super::term::PlaceRoot::Binding(BindingId(0)),
+                false,
+                Vec::new(),
+            ),
+            IntegerType::U64,
+        ));
+        let goals = GoalTable::default();
+        let mut ledger = DerivationLedger::default();
+        let event = ledger.event(FlowEventKind::S1, None);
+        let mut explicit = FactState::new();
+        let relation = Relation::Distinct {
+            left: x,
+            right: ZERO,
+            difference: 4,
+        };
+        explicit.establish(&relation, &mut ledger, event);
+        let mut strict = FactState::new();
+        strict.establish(
+            &Relation::Bound {
+                left: x,
+                right: ZERO,
+                bound: 3,
+            },
+            &mut ledger,
+            event,
+        );
+        let join_event = ledger.event(FlowEventKind::Join, None);
+        let joined = join_at(
+            &[strict.clone(), explicit.clone()],
+            &terms,
+            &goals,
+            &mut ledger,
+            join_event,
+        );
+        let key = distinct_key(x, ZERO, 4);
+        // Before Q148 the explicit input has no stored offset candidate.
+        let proof = joined.distinct_proofs[&key];
+        assert!(matches!(
+            ledger.nodes[proof.0 as usize],
+            DerivationNode::JoinDistinct { difference: -4, .. }
+        ));
+        let closed = close(&joined, &terms, &goals, &mut ledger);
+        assert!(closed.derives(&relation));
+        assert!(!closed.derives_bound(x, ZERO, 3));
+        assert!(!closed.derives_bound(ZERO, x, -5));
+        // The other predecessor order must preserve the same candidate.
+        let reversed = join_at(
+            &[explicit.clone(), strict.clone()],
+            &terms,
+            &goals,
+            &mut ledger,
+            join_event,
+        );
+        assert!(close(&reversed, &terms, &goals, &mut ledger).derives(&relation));
+
+        // Q160's boundary: neither strict-bound input establishes != 4.
+        // Even an explicit candidate on a contradictory input cannot add it.
+        let mut contradictory = explicit.clone();
+        contradictory.establish(
+            &Relation::Equal {
+                left: x,
+                right: ZERO,
+                difference: 4,
+            },
+            &mut ledger,
+            event,
+        );
+        for lower in [5, 100] {
+            let mut high = FactState::new();
+            high.establish(
+                &Relation::Bound {
+                    left: ZERO,
+                    right: x,
+                    bound: -lower,
+                },
+                &mut ledger,
+                event,
+            );
+            for include_contradictory in [false, true] {
+                let mut inputs = vec![strict.clone(), high.clone()];
+                if include_contradictory {
+                    inputs.push(contradictory.clone());
+                }
+                let boundary = join_at(&inputs, &terms, &goals, &mut ledger, join_event);
+                assert!(!boundary.distinct.contains(&key));
+                assert!(!close(&boundary, &terms, &goals, &mut ledger).derives(&relation));
+            }
+        }
+        let missing = join_at(
+            &[explicit, FactState::new()],
+            &terms,
+            &goals,
+            &mut ledger,
+            join_event,
+        );
+        assert!(!close(&missing, &terms, &goals, &mut ledger).derives(&relation));
+    }
+
+    #[test]
+    fn retained_constant_terms_do_not_bypass_the_offset_join_boundary() {
+        let mut terms = TermTable::new();
+        let x = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+            IntegerType::U64,
+        ));
+        let four = terms.intern(TermKind::Constant(4));
+        let goals = GoalTable::default();
+        let excluded = Relation::Distinct {
+            left: x,
+            right: ZERO,
+            difference: 4,
+        };
+        // The optimized join's outside-row scan and the complete closure's
+        // materialized pairs used to retain x != Constant(4), evading Q160.
+        for every_term in [false, true] {
+            let mut run = || {
+                let mut ledger = DerivationLedger::default();
+                let event = ledger.event(FlowEventKind::S1, None);
+                let mut inputs = Vec::new();
+                for (left, right, bound) in [(x, ZERO, 3), (ZERO, x, -5)] {
+                    let mut state = FactState::new();
+                    state.establish(&Relation::Bound { left, right, bound }, &mut ledger, event);
+                    assert!(close(&state, &terms, &goals, &mut ledger).derives(&excluded));
+                    materialize_closure_before_kill(&mut state, &terms, &goals, &mut ledger);
+                    assert!(!state.distinct.contains(&distinct_key(x, four, 0)));
+                    inputs.push(state);
+                }
+                let mut joined = join(&inputs, &terms, &goals, &mut ledger);
+                assert!(!joined.distinct.contains(&distinct_key(x, four, 0)));
+                joined.establish(
+                    &Relation::Bound {
+                        left: x,
+                        right: ZERO,
+                        bound: 4,
+                    },
+                    &mut ledger,
+                    event,
+                );
+                let closed = close(&joined, &terms, &goals, &mut ledger);
+                assert!(!closed.derives(&excluded));
+                assert!(!closed.derives_bound(x, ZERO, 3));
+                assert_seeded_closure_matches_complete(&joined, &terms, &goals, &ledger, &closed);
+            };
+            if every_term {
+                with_every_term(&mut run);
+            } else {
+                run();
             }
         }
     }
@@ -7850,7 +8191,7 @@ pub(crate) mod tests {
                     event,
                 );
             }
-            state.establish_distinct_with_proof(places[0], places[1], &mut ledger, event);
+            state.establish_distinct_with_proof(places[0], places[1], 0, &mut ledger, event);
             for excluded in [None, Some(places[2])] {
                 let mut original_ledger = ledger.clone();
                 let original = close_with_row_pruning::<false, true>(
@@ -8073,7 +8414,7 @@ pub(crate) mod tests {
         assert!(closed.derives(&distinct));
         assert!(closed.tight_bound(a, b).is_some_and(|bound| bound > -1));
         assert!(closed.tight_bound(b, a).is_some_and(|bound| bound > -1));
-        assert!(joined.distinct.contains(&(a, b)));
+        assert!(joined.distinct.contains(&(a, b, 0)));
         // A disequality the joined bounds imply is not stored: `c` holds
         // only its range and `b` stays above it on both paths.
         let c = terms.intern(TermKind::Place(
@@ -8107,7 +8448,7 @@ pub(crate) mod tests {
             right: b,
             difference: 0,
         }));
-        assert!(!joined.distinct.contains(&(b, c)));
+        assert!(!joined.distinct.contains(&(b, c, 0)));
         assert!(!joined.bounds.slot(c).is_some());
     }
 
@@ -8501,7 +8842,7 @@ pub(crate) mod tests {
             ledger.nodes[proof.0 as usize],
             DerivationNode::JoinBound { event: held, .. } if held == event
         ));
-        let distinct = joined.distinct_proofs[&ordered(left, right)];
+        let distinct = joined.distinct_proofs[&distinct_key(left, right, 0)];
         assert!(matches!(
             ledger.nodes[distinct.0 as usize],
             DerivationNode::JoinDistinct { event: held, .. } if held == event
@@ -8516,16 +8857,22 @@ pub(crate) mod tests {
             next,
         );
         assert_eq!(again.bounds.get(left, right), Some((bound, proof)));
-        assert_eq!(again.distinct_proofs[&ordered(left, right)], distinct);
+        assert_eq!(
+            again.distinct_proofs[&distinct_key(left, right, 0)],
+            distinct
+        );
 
         materialize_closure_before_kill(&mut joined, &terms, &goals, &mut ledger);
         joined.kill(|term| term == middle);
         assert_eq!(joined.bounds.get(left, right), Some((bound, proof)));
-        assert_eq!(joined.distinct_proofs[&ordered(left, right)], distinct);
+        assert_eq!(
+            joined.distinct_proofs[&distinct_key(left, right, 0)],
+            distinct
+        );
         // Independence does not let a conclusion outlive its own support.
         joined.kill(|term| term == right);
         assert!(joined.bounds.get(left, right).is_none());
-        assert!(!joined.distinct.contains(&ordered(left, right)));
+        assert!(!joined.distinct.contains(&distinct_key(left, right, 0)));
     }
 
     #[test]
@@ -8823,7 +9170,7 @@ pub(crate) mod tests {
             &mut ledger,
             event,
         );
-        state.establish_distinct_with_proof(a, b, &mut ledger, event);
+        state.establish_distinct_with_proof(a, b, 0, &mut ledger, event);
 
         let closed = close(&state, &terms, &GoalTable::default(), &mut ledger);
         assert!(!closed.all_derivable);
@@ -8951,7 +9298,7 @@ pub(crate) mod tests {
         // new witnesses must reveal the original still-live candidates.
         let mut swapped = state.clone();
         let old_bound = swapped.bounds.get(left, middle).unwrap();
-        let pair = ordered(middle, right);
+        let pair = distinct_key(middle, right, 0);
         let old_distinct = swapped.distinct_proofs[&pair];
         let cached = close(&swapped, &terms, &goals, &mut ledger);
         swapped.establish(
@@ -9035,7 +9382,7 @@ pub(crate) mod tests {
         let closed = close(&state, &terms, &goals, &mut ledger);
         assert!(closed.derives_bound(left, right, 9));
         assert!(!closed.derives_bound(left, right, 8));
-        assert!(closed.distinct.contains(&ordered(middle, right)));
+        assert!(closed.distinct.contains(&distinct_key(middle, right, 0)));
         assert_seeded_closure_matches_complete(&state, &terms, &goals, &ledger, &closed);
     }
 
@@ -9312,25 +9659,31 @@ pub(crate) mod tests {
             });
             result.add_bound(left, right, bound, proof, ledger);
         }
-        let mut distinct = first.distinct.iter().copied().collect::<Vec<_>>();
+        let mut distinct = closed
+            .iter()
+            .filter(|state| !state.contradictory())
+            .flat_map(|state| state.distinct.iter().copied())
+            .collect::<Vec<_>>();
         distinct.sort_unstable();
-        for (left, right) in distinct {
+        distinct.dedup();
+        for (left, right, difference) in distinct {
             let proofs = closed
                 .iter()
                 .map(|state| {
                     state
                         .contradiction
-                        .or_else(|| state.distinct_proofs.get(&(left, right)).copied())
+                        .or_else(|| state.distinct_proof((left, right, difference), ledger))
                 })
                 .collect::<Option<Vec<_>>>();
             if let Some(proofs) = proofs {
                 let proof = ledger.intern(DerivationNode::JoinDistinct {
                     left,
                     right,
+                    difference,
                     event,
                     parents: parents(proofs),
                 });
-                result.add_distinct_candidate((left, right), proof, ledger);
+                result.add_distinct_candidate((left, right, difference), proof, ledger);
             }
         }
         let mut opaque = first.opaque.iter().copied().collect::<Vec<_>>();
@@ -9426,8 +9779,8 @@ pub(crate) mod tests {
                 assert_eq!(actual, expected, "ordinary={ordinary}");
             }
             assert_eq!(
-                distinct_pairs(&fast),
-                distinct_pairs(&reference),
+                distinct_pairs(&fast, &reference),
+                distinct_pairs(&reference, &fast),
                 "ordinary={ordinary}"
             );
             assert_eq!(fast.opaque, reference.opaque, "ordinary={ordinary}");
@@ -9547,7 +9900,7 @@ pub(crate) mod tests {
                                 &Relation::Distinct {
                                     left,
                                     right,
-                                    difference: 0,
+                                    difference: bound,
                                 },
                                 ledger,
                                 event,

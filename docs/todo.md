@@ -99,22 +99,19 @@ rarely insert at the same place.
   repeated checks of the interpreter, or another program meets the same
   growth.
 
-- **A disequality with a constant does not tighten a bound.** Under the
-  header `invariant bounded: cursor <= 4_u64`, the body
-  `if cursor == 4_u64 { break; }` followed by `set cursor = cursor + 1_u64;`
-  is refused [INV-1], while the guard `if 4_u64 <= cursor { break; }` is
-  accepted (compiler at 026074111). The false edge holds
-  `cursor != 4`, but [ENT-4]'s atomic disequality is `t1 != t2` between two
-  terms and a constant operand folds through Z (`a <= 7` is `a - Z <= 7`),
-  so `cursor != 4` gives L0 no fact that closure rule (2), which tightens
-  `t1 - t2 <= 0` with `t1 != t2` to `t1 - t2 <= -1`, can use. Impact: a loop
-  that stops at a sentinel tested with `==`, the form a writer reaches for
-  first, loses its bound. Change, a language decision (Q148): an L0
-  disequality may carry a constant offset, `t1 - t2 != c`, and rule (2)
-  tightens `t1 - t2 <= c` to `t1 - t2 <= c - 1` and `t2 - t1 <= -c` to
-  `t2 - t1 <= -c - 1`. Validate with the witness accepted, the same body
-  refused when the guard tests 3 instead of 4, and joins keeping a common
-  offset disequality. Reopen when the owner rules on Q148.
+- **Common nonzero exclusions derived on every join input (Q160, deferred).**
+  Q160 selects ENT-5's finite candidate rule for ordinary and delivery joins.
+  Inputs proving `x <= 3` and `x >= 5` both derive `x - Z != 4`, but neither
+  establishes it, so their join does not retain that exclusion and a later
+  `x <= 4` cannot tighten to `x <= 3` from it. The alternative is an
+  interval-exclusion fact retaining every common derivable exclusion.
+  Its cost is a new fact representation and closure, support, transport,
+  join and derivation-record rules: gaps such as `x <= 3` / `x >= 100`
+  have arbitrarily many excluded offsets, so enumerating integers is not
+  suitable. No program has needed that fact yet. Reopen when a program
+  needs a nonzero exclusion that every input only derives. Validate a
+  future extension against the finite candidate boundary conformance cases,
+  large gaps, later strengthening, delivery, kills and retained derivations.
 
 - **A header relation about the current element of a whole-table counted
   loop is refused.** Over `for (i in 0_u64..n, invariant fits:

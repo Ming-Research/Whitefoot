@@ -425,8 +425,7 @@ pub(crate) struct BoundsRequest {
     pub(crate) bound: i128,
     /// The requested normalized form. The bounds and overflow families
     /// request the difference bound `left - right <= bound`; the division
-    /// family requests the disequality `left != right`, whose `bound` cell
-    /// is unused and recorded as zero [ENT-6].
+    /// family requests the offset disequality `left - right != bound` [ENT-6].
     pub(crate) distinct: bool,
 }
 
