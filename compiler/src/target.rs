@@ -205,6 +205,12 @@ struct Layout {
 
 const POINTER_LAYOUT: Layout = Layout { size: 8, align: 8 };
 
+/// compiler/storage-representation: the bytes of a `Paged` cell's header,
+/// its `len`, `cap` and directory-capacity words, which the page-pointer
+/// directory follows in the same allocation. The emitter's cell type
+/// `{ i64, i64, i64, [0 x ptr] }` spells the same three words.
+pub(crate) const PAGED_HEADER_BYTES: u64 = 24;
+
 /// One concrete type owned by target lowering rather than by Whitefoot's
 /// source type system.
 ///
@@ -1070,9 +1076,9 @@ fn runtime_capacity_layout(
             match shape {
                 IrWindowShape::Slots => 2,
                 IrWindowShape::Ring => 3,
-                // Three header words and the minimum one directory entry.
+                // The header words and the minimum one directory entry.
                 // The entry count beyond that is checked at run time.
-                IrWindowShape::Paged => 4,
+                IrWindowShape::Paged => PAGED_HEADER_BYTES / 8 + 1,
             },
         ),
         _ => return Err(TargetLayoutFailure::InvalidIr),
@@ -1459,7 +1465,10 @@ impl<'types> LayoutComputer<'types> {
             } => {
                 self.element(element)?;
                 // The directory's runtime pointer tail follows this header.
-                Ok(Layout { size: 24, align: 8 })
+                Ok(Layout {
+                    size: PAGED_HEADER_BYTES,
+                    align: 8,
+                })
             }
             IrType::Window {
                 shape: IrWindowShape::Paged,

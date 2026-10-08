@@ -152,8 +152,13 @@ impl FunctionEmitter<'_, '_> {
         let capacity = self.value_name(capacity);
         let pages = self.paged_count(&capacity, element)?;
         let dircap = self.paged_directory_capacity("1", &pages, &tag, &oom)?;
-        let bytes =
-            self.emit_allocation_size(&dircap, "8", "24", &oom, &format!("{tag}.cell.allocate"))?;
+        let bytes = self.emit_allocation_size(
+            &dircap,
+            "8",
+            &crate::target::PAGED_HEADER_BYTES.to_string(),
+            &oom,
+            &format!("{tag}.cell.allocate"),
+        )?;
         let cell = self.paged_allocate(&bytes, &oom)?;
         // One directory entry keeps even an empty run's interior pointer
         // nonnull and within the cell. Unused entries remain uninitialized.
@@ -190,8 +195,13 @@ impl FunctionEmitter<'_, '_> {
         let dircap = self.paged_directory_capacity(&format!("%{olddircap}"), &pages, &tag, &oom)?;
         writeln!(self.output, "  %{tag}.unchanged = icmp eq i64 {dircap}, %{olddircap}\n  br i1 %{tag}.unchanged, label %{tag}.existing, label %{tag}.resize").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.resize"));
-        let bytes =
-            self.emit_allocation_size(&dircap, "8", "24", &oom, &format!("{tag}.cell.allocate"))?;
+        let bytes = self.emit_allocation_size(
+            &dircap,
+            "8",
+            &crate::target::PAGED_HEADER_BYTES.to_string(),
+            &oom,
+            &format!("{tag}.cell.allocate"),
+        )?;
         let fresh = self.paged_allocate(&bytes, &oom)?;
         let updated = self.next_temporary()?;
         writeln!(self.output, "  %{updated} = insertvalue {HEADER} %{header}, i64 {dircap}, 2\n  store {HEADER} %{updated}, ptr {fresh}").map_err(|_| BackendFailure::TextEmission)?;
@@ -233,7 +243,11 @@ impl FunctionEmitter<'_, '_> {
         writeln!(self.output, "  br label %{tag}.size")
             .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.size"));
-        let limit = self.target.runtime_allocation_max().saturating_sub(24) / 16;
+        let limit = self
+            .target
+            .runtime_allocation_max()
+            .saturating_sub(crate::target::PAGED_HEADER_BYTES)
+            / 16;
         writeln!(self.output, "  %{tag}.capacity = phi i64 [ {initial}, %{tag}.start ], [ %{tag}.doubled, %{tag}.double ]\n  %{tag}.fits = icmp uge i64 %{tag}.capacity, {pages}\n  br i1 %{tag}.fits, label %{tag}.sized, label %{tag}.limit").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.limit"));
         writeln!(self.output, "  %{tag}.overflow = icmp ugt i64 %{tag}.capacity, {limit}\n  br i1 %{tag}.overflow, label %{oom}, label %{tag}.double").map_err(|_| BackendFailure::TextEmission)?;

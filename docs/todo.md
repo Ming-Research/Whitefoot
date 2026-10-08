@@ -1274,11 +1274,11 @@ rarely insert at the same place.
   Reopen when a Snowghost proof must be re-established after growth.
 
 - **Paged references do not survive growth.** Stable element storage does
-  not keep the directory pointer stable; grow_paged writes the whole cell
-  and requires callers to form their references again. A surviving-reference
-  design needs an effect part read by every address formation and written
-  by directory replacement, including Run references. Compare that refinement
-  with a stable directory before changing REF-2. Validate every reference
+  not keep the cell stable; grow_paged may replace the cell that holds the
+  directory and requires callers to form their references again. A
+  surviving-reference design needs an effect part read by every address
+  formation and written by cell replacement, including Run references.
+  Compare that refinement with a cell that never moves before changing REF-2. Validate every reference
   kind, fact invalidation and overlapping growth/address formation. Reopen
   when re-forming references blocks a concrete downstream operation
   ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).

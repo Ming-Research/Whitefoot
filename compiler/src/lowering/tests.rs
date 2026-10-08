@@ -2130,13 +2130,10 @@ fn page_borrows_below_range_elements_keep_the_outer_projection() {
                 })
                 .collect::<Vec<_>>();
             assert!(
-                operations.iter().any(|operation| matches!(
-                    operation,
-                    IrOperation::SliceAddress { .. }
-                ) || matches!(
-                    operation,
-                    IrOperation::RunIndex { .. }
-                )),
+                operations
+                    .iter()
+                    .any(|operation| matches!(operation, IrOperation::SliceAddress { .. })
+                        || matches!(operation, IrOperation::RunIndex { .. })),
                 "{name}: address the enclosing range element: {operations:?}"
             );
             assert!(
@@ -2146,9 +2143,7 @@ fn page_borrows_below_range_elements_keep_the_outer_projection() {
                 "{name}: borrow the selected page"
             );
             if let Err(failure) = crate::emit_llvm(program) {
-                panic!(
-                    "{name}: nested range-element projection must emit: {failure:?}: {operations:?}"
-                );
+                panic!("{name}: nested range-element projection must emit: {failure:?}: {operations:?}");
             }
         });
     }

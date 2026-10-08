@@ -334,12 +334,17 @@ driver timed again; `paged` is the port on the separate-directory lowering
 
 Box construction: hf 0.994, 0.937 and 1.005 against twin 1.001, 1.010
 and 1.013. The C3 criterion holds for the header-first cell on this
-machine: every html5 layout cell is within the twin's spread, while the
-separate-directory lowering was slower in every html5 cell. The evidence is
-moderate: the third round ran 10 to 40 percent slower throughout, consistent
-with thermal throttling, which the best-of-rounds summary discards, and Air
-times are not comparable with the i9-14900K's. Snowghost repeats the run on
-the i9-14900K with page-fault counts when it returns. A like-for-like port
-with one `Paged` per existing store stays 1 to 9 percent slower with the
-header-first cell; its 82,907 per-owner stores with full first pages point
-at the smaller-first-page item in `docs/todo.md` rather than at access cost.
+machine: every html5 layout cell is within the twin's spread. The run does
+not show the separate-directory lowering failing C3 here, since its
+four-worker and ecma262 cells are also within the spread, and so it does not
+attribute a recovery to the cell layout; the `hf` build also carries the
+more conservative overlap cut at calls taking `&Paged<T>`, which the
+four-worker cell confounds with the layout. The evidence is moderate: the
+third round ran 10 to 40 percent slower throughout, consistent with thermal
+throttling, which the best-of-rounds summary discards, and Air times are not
+comparable with the i9-14900K's. Snowghost repeats the run on the
+i9-14900K with performance counters and page-fault counts. A like-for-like
+port with one `Paged` per existing store stays 1 to 9 percent slower with
+the header-first cell; that its 82,907 per-owner stores with full first
+pages cause this is a hypothesis for the smaller-first-page item in
+`docs/todo.md`, which the page-fault counts can reject.
