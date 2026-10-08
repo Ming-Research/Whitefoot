@@ -766,8 +766,8 @@ rarely insert at the same place.
   (`flow/sources.rs`, `flow/prover.rs`); affine arithmetic reports
   `AffineCheckError::ArithmeticOverflow` (`affine.rs`). Impact: some specified
   numeric evidence is unavailable; the full source-verdict impact remains
-  unverified. Deferred from the offset panic repair at the owner's requested
-  consistency boundary. Reopen for an owner-selected implementation of the
+  unverified. Deferred: the offset panic repair only makes offset arithmetic
+  consistent with bound arithmetic. Reopen for an owner-selected implementation of the
   mathematical constant domain; compare exact arithmetic against folding,
   both strict orientations, origin transport, closure and joins in CI.
   Do not reinterpret implementation overflow as a source-language rejection.
