@@ -1,4 +1,5 @@
 const one: u8 = 1_u8;
+
 const also_one: u8 = 1_u8;
 
 fn reduce() -> result: u8 pure {

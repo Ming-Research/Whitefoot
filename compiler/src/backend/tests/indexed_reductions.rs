@@ -968,7 +968,7 @@ fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
     let module = emit_with_overlap(MARKS_FIELDS.as_bytes());
     for function in ["marks_one", "marks_zero", "marks_bool"] {
         let body = super::emitted_body(&module, function);
-        assert!(body.contains("store i1 false, ptr %indexed."), "{body}");
+        assert!(body.contains("store i1 0, ptr %indexed."), "{body}");
         assert!(body.contains(".merged = or i1"), "{body}");
         assert!(body.contains(".is_private = or i1"), "{body}");
     }
