@@ -264,3 +264,177 @@ stayed within their ranges. The gain is the widened rule's across every
 function that receives an aggregate by value, not `push_frame`'s copy alone.
 The owner reopened the rejection and adopted the rule, with firn measured
 for no slowdown before merging.
+
+## By-value let bindings read through a reference
+
+### Question and scope
+
+Does a by-value aggregate let retain its whole snapshot under the host's
+`-O2` pipeline when a call can write its source, even if no path from that
+write reaches a use of the binding? Phase 1 minimizes and inspects this
+shape. It changes neither the compiler nor the specification and selects no
+implementation. The existing parameter rule above does not select local
+let results.
+
+The motivating downstream report is Halo-wf's Lua interpreter,
+`lib/halo/vm/library-sort.wf`, `sort_compare`:
+`let local_call_5 = vm^.library_contexts.inner[context];` snapshots a
+152-byte `LibraryContext`; its fast path reads only
+`local_call_5.frame.func` and `local_call_5.comparator`. Halo reports that a
+`slow::<Host<E>>(... vm: vm ...)` call which writes `vm` on another path
+leaves a 152-byte memcpy and a `0x1f8` frame. Moving that call to another
+function reportedly removes the memcpy, leaves a `0x60` frame, and improves
+the sort kernel by 25% on the 14900K. These are the supplied downstream
+observations, not measurements independently reproduced here; the optimizer
+explanation remains a hypothesis.
+
+### What lowering and emission establish
+
+Source inspection at `0bea2b796` establishes the following path:
+
+- `compiler/src/lowering/builder.rs:1095`: an ordinary
+  `CheckedStatement::Let` evaluates its initializer once and binds its
+  resulting IR value. It does not make this binding an alias of the source.
+- `compiler/src/lowering/builder.rs:1957`: `ReadStorage` computes the
+  selected place's address, including its field and array-element steps
+  (`compiler/src/lowering/builder/storage.rs:499`), then calls
+  `load_storage_value` (`storage.rs:705`) to define an `IrOperation::Load`.
+  The addressed object here is the selected row, not the whole enclosing
+  array or reference target.
+- `compiler/src/backend/storage.rs:24` classifies structs and arrays as
+  stored aggregates. `FunctionStoragePlan::build_in_world` assigns backing
+  to their definitions (`storage.rs:122`); loads and ordinary projections
+  remain snapshots, as the module contract at `storage.rs:8` states.
+  `select_incoming_places` (`compiler/src/backend/emitter.rs:1984`) only
+  selects eligible function parameters, not this load result.
+- `compiler/src/backend/emitter/places.rs:132` routes a stored load to
+  `load_place_result` (`places.rs:764`). It copies from the selected address
+  into the result's planned slot. `copy_storage` (`places.rs:663`) emits
+  one `llvm.memmove.p0.p0.i64` of the complete allocated type size, including
+  padding. The `llvm.memcpy` alternative there is reserved for the admitted
+  equal-or-disjoint operation row; an ordinary witness reader uses memmove.
+  A downstream machine-code memcpy can therefore originate in a memmove
+  intrinsic.
+- Reading `r.f` or `r.g` subsequently projects from that value's slot
+  (`ProjectStruct`, `places.rs:188`) and loads the scalar field. An aggregate
+  field projection, as in `let-field-of-param.wf`, uses the same
+  `load_place_result` copy path. The existing parameter optimization can
+  remove the parameter entry copy without removing this new field snapshot.
+
+Thus the initial LLVM contains one whole copy at the let into `r`'s slot;
+subsequent CFG transfers can also copy storage if their slots were not
+coalesced. It is not an LLVM aggregate SSA value that merely names the
+source's fields. For the reference witnesses the let's copy has this
+schematic form (the witnesses' row has eight `u64` fields, 64 bytes):
+
+```llvm
+call void @llvm.memmove.p0.p0.i64(ptr %r_slot, ptr %selected_row, i64 64, i1 false)
+```
+
+That copy captures the old value required by REF-1 and OWN-1. Simply
+forwarding a later load from `%r_slot` to `%selected_row`, or sinking the
+snapshot past a call that may write the selected row, is invalid if the
+later use must see the old value. Ordinary dead-store elimination cannot
+discard bytes that a subsequent read of the slot observes. The proposed
+explanation for Halo is that the copy is not sunk onto the read-only arm,
+while a may-write call blocks source forwarding and the still-read slot
+survives scalar replacement of aggregates (SROA).
+
+This last explanation is **not established by the emitter**. A write on a
+path with no subsequent use is not a semantic obstacle to forwarding on the
+other path, and even a required old value can be captured in scalar registers.
+SROA may replace a read slot; “the slot is read later” alone is not evidence
+that SROA cannot run. The minimal witnesses deliberately allow LLVM to
+inline the small sink, split the copy, hoist scalar reads, or sink a copy.
+If those transformations remove it, phase 1 has narrowed or rejected the
+explanation, rather than confirmed a compiler change is needed.
+
+### Witnesses and prior expectation
+
+Each file under [witnesses](witnesses/) is a separate complete program, with
+its own `main`. `inplace_let_probe` is the function to inspect in every file;
+the emitted symbol is `wf_inplace_let_probe`. Package declarations use the
+`InplaceLet` or `inplace_let_` prefix to avoid local/declaration collisions.
+The reference cases use a struct holding a two-element array, select an
+index constrained by `requires i < 2_u64`, and read two fields of a 64-byte
+row. Addition uses `+wrap` so arbitrary `u64` inputs introduce no unrelated
+overflow proof or runtime branch. The supplied values sum to 42 without
+wrapping. The sink changes both observed fields in both elements to 99 and
+7, so a post-write direct read would sum to 106.
+
+| Witness | Observation and prior expectation |
+|---|---|
+| [let-no-write.wf](witnesses/let-no-write.wf) | Binding read through a reference, no later source write. Expect the whole snapshot to disappear. |
+| [let-write-other-path.wf](witnesses/let-write-other-path.wf) | `let r = big^.inner[i]; if c { return r.f +wrap r.g; } inplace_let_sink(big: big); return 0_u64;`. The write arm never reads `r`. Expect a retained whole copy if the reported path-insensitive obstacle reproduces. `main` checks both arms and the write. |
+| [let-write-after-last-use.wf](witnesses/let-write-after-last-use.wf) | Computes the sum from `r`, calls the sink, returns the saved sum. Expect a retained whole copy under the hypothesis, though scalar loads before the call would be legal. |
+| [let-write-before-use.wf](witnesses/let-write-before-use.wf) | Calls the sink between the let and the reads of `r`. The old value is required: `main` expects 42 and separately checks the source is now 99 and 7. This falsifies an in-place rule that reads the modified source. A whole physical copy is not required if scalar snapshots preserve the old value. |
+| [let-field-of-param.wf](witnesses/let-field-of-param.wf) | `let r = big.inner;` selects an aggregate field of a by-value parameter. Separates the local projection copy from the parameter entry-copy optimization; expect the redundant local copy to disappear in this no-write control. |
+
+**Rejection criterion, recorded before CI:** if the other-path or
+last-use witness has no whole snapshot after optimization, that witness
+rejects the respective prediction that the later write alone retains it.
+If the no-write control retains it, a may-write call alone does not explain
+the contrast. If both write cases simplify, the five-case minimization has
+not reproduced Halo: inspect the downstream shape before drawing a wider
+conclusion. Inlining away the sink is one possible reason and must be
+reported from the artifacts. The before-use case must preserve the old
+observed fields, regardless of whether a memory intrinsic survives. A wrong
+106 is a correctness failure, never evidence for an optimization.
+
+A zero memcpy/memmove count does not by itself establish removal: a transfer
+may become scalar or vector loads and stores. Inspect the optimized reader
+and assembly for a complete 64-byte snapshot, scalar captures, load/store
+ordering, and the sink call's survival. Frame size corroborates that
+inspection; it does not identify the copy's cause. No runtime speed claim
+will be made from hosted-runner code inspection.
+
+### CI experiment and current evidence
+
+The temporary `inplace-lets` job in
+[compute-bench.yml](../../../.github/workflows/compute-bench.yml) is selected
+only by the new manual experiment option. The scoreboard now selects only
+`scoreboard`, so this dispatch runs neither scoreboard nor placement jobs.
+It uses hosted `ubuntu-24.04`, installs the exact LLVM major in
+`.github/llvm-major` by the gate's setup, builds the compiler with the `gate`
+profile under `run-check.pl compiler/build`, and processes the no-write
+control first, then the other four witnesses. Each is emitted with
+`whitefootc --emit-llvm -o <name>.ll`; the same `/usr/bin/clang` emits
+`<name>.opt.ll` and `<name>.s` from that untouched input at `-O2` for
+`x86_64-unknown-linux-gnu`. There are no forced call boundaries or IR edits.
+
+The summary counts actual memcpy and memmove calls separately in the raw
+and optimized **reader function**, excluding declarations and other
+functions. Its stack column is Clang's static stack-usage report from
+`-fstack-usage` (`<name>.su`), not just an assembly `subq` immediate; the
+assembly permits inspection of saves and red-zone use. A missing reader or
+stack record is an instrument error, not a zero. Small counter and
+missing-reader controls execute in CI before reporting. The artifact
+`inplace-lets-x86-64` contains raw/optimized LLVM, assembly, stack reports,
+`summary.tsv`, and a manifest of the source revision and toolchain. Copy
+counts and frame sizes are observations, not pass/fail thresholds. The job
+does not link or execute these programs, so emitted artifacts alone will
+not establish their exit status.
+
+After these edits have been committed and pushed by the owner, dispatch:
+
+```sh
+gh workflow run compute-bench.yml --repo Ming-Research/Whitefoot --ref claude/inplace-lets -f experiment=inplace-lets
+```
+
+**Current evidence:** source inspection only; the five programs are written
+to the active specification but checker acceptance, optimized code, frame
+sizes and runtime results are unverified. No build, compiler invocation,
+local check or test was run for this phase. The witnesses' `main` functions
+encode deterministic zero-exit expectations for later execution. Remove the
+temporary workflow job and option once its artifacts and conclusions are
+recorded here; retain the witnesses as the investigation's evidence.
+
+### Candidate rule, not an implementation selection
+
+A by-value let could read through its source place when, on every path from
+the let to each use of the binding, nothing may write that source: no `set`
+to it or overlapping storage, no call whose writes reach it, and no write
+through a reference reaching it. The binding must never be written or have
+its address exposed, and the source place's storage must outlive all uses.
+The before-use witness is excluded. This is a candidate condition for later
+work only; phase 1 proposes no lowering, analysis or storage-plan change.
