@@ -2703,6 +2703,7 @@ fn body_rebinds(statements: &[CheckedStatement], binding: BindingId) -> bool {
         | CheckedStatement::Proof(_)
         | CheckedStatement::Return { .. }
         | CheckedStatement::Give { .. }
-        | CheckedStatement::Break { .. } => false,
+        | CheckedStatement::Break { .. }
+        | CheckedStatement::Continue { .. } => false,
     })
 }
