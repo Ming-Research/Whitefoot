@@ -9,6 +9,7 @@
 #include "../ordinary_values.c"
 #include "../runtime_test_guard.h"
 #include <pthread.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 
 #define CHECK(test) do { if (!(test)) { \

@@ -1061,10 +1061,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let bytes =
                 self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
             {
-                self.output.symbol("malloc");
+                self.output.symbol("wf__heap_take");
                 write!(
                     self.output,
-                    "  {address} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  {address} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -1161,10 +1161,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let bytes =
                 self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
             {
-                self.output.symbol("malloc");
+                self.output.symbol("wf__heap_take");
                 write!(
                     self.output,
-                    "  %{fresh} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  %{fresh} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -1209,10 +1209,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         .map_err(|_| BackendFailure::TextEmission)?;
         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
         self.output.symbol("llvm.memmove.p0.p0.i64");
-        self.output.symbol("free");
+        let old_bytes = cleanup::allocation_bytes(
+            self.program,
+            &mut self.output,
+            &mut self.temporary,
+            block_type,
+            &old_block,
+        )?;
+        self.output.symbol("wf__heap_give");
         writeln!(
             self.output,
-            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}"
+            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @wf__heap_give(ptr %{old}, i64 {old_bytes})\n  store ptr %{fresh}, ptr {cell_address}"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, ty, IrConstant::Unit)
@@ -1229,14 +1236,23 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if ty != IrType::Unit || self.value_type(value) != Some(IrType::Nominal(nominal)) {
             return Err(BackendFailure::InvalidIr);
         }
-        let IrNominalKind::Box { .. } = self.nominal(nominal)?.kind() else {
+        let IrNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind() else {
             return Err(BackendFailure::InvalidIr);
         };
+        let referent = *referent;
+        let pointer = self.value_name(value);
+        let bytes = cleanup::allocation_bytes(
+            self.program,
+            &mut self.output,
+            &mut self.temporary,
+            referent,
+            &pointer,
+        )?;
         {
-            self.output.symbol("free");
+            self.output.symbol("wf__heap_give");
             writeln!(
                 self.output,
-                "  call void @free(ptr {})",
+                "  call void @wf__heap_give(ptr {}, i64 {bytes})",
                 self.value_name(value)
             )
         }

@@ -1233,6 +1233,25 @@ void wf__body_factory_share(wf_value *result, const wf_value *factory) {
         : (uint64_t)(uintptr_t)&factory->words[0];
 }
 
+/* Process readings are ordered through the ordinary capability value. */
+void wf__body_meter_share(wf_value *result, const wf_value *meter) {
+    (void)meter;
+    memset(result, 0, sizeof(*result));
+}
+
+uint64_t wf__body_heap_in_use(wf_value *meter) {
+    wf_transition(meter);
+    return wf__heap_in_use();
+}
+
+void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter) {
+    wf_transition(meter);
+    memset(result, 0, sizeof(*result));
+    if (wf__resident_bytes(&result->value)) {
+        result->tag = WF_OPTION_SOME;
+    }
+}
+
 /* [PRE-2] `std::time`.  A clock handle carries nothing: the host has one
  * monotonic clock and one calendar time, and a handle is the authority to
  * read one of them.  An `Instant` holds its reading in nanoseconds in its
