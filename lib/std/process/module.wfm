@@ -22,6 +22,9 @@ public enum StopKind {
   Terminate();
 }
 
+public opaque nocopy struct MemoryMeter {
+}
+
 public struct Inputs {
   public args: Args;
   public cwd: Directory;
@@ -32,6 +35,7 @@ public struct Inputs {
   public clock: Clock;
   public wall_clock: WallClock;
   public stops: StopSignals;
+  public memory_meter: MemoryMeter;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
@@ -41,3 +45,9 @@ public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: R
 public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>) -> result: Result<StopKind, IoError> writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
 
 public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener, restores the host default and returns its handle credit.";
+
+public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) doc "Returns a meter that observes the same process memory as meter.";
+
+public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Returns the program heap bytes counted as specified by PRE-2.";
+
+public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";

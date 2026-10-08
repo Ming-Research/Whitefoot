@@ -29,6 +29,7 @@ mod programs {
     mod heap;
     #[cfg(unix)]
     mod image;
+    mod memory;
     mod network;
     #[cfg(unix)]
     mod numerics;

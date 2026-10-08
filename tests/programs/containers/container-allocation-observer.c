@@ -76,13 +76,14 @@ void *wf_observe_allocate(uint64_t bytes) {
     return pointer;
 }
 
-void wf_observe_release(void *pointer) {
+void wf_observe_release(void *pointer, uint64_t bytes) {
     if (pointer == NULL) return;
     lock_ledger();
     for (size_t index = 0; index < allocation_count; ++index) {
         Allocation *allocation = &allocations[index];
         if (allocation->pointer != pointer) continue;
         require(!allocation->released, "allocation released twice");
+        require(allocation->bytes == bytes, "release size differs from allocation request");
         allocation->released = true;
         ++release_count;
         memset(pointer, 0xa5,
@@ -114,7 +115,7 @@ static void exercise_worker(void *argument) {
     wait_for_workers(&filled);
     size_t other = (worker + 1) % OBSERVER_WORKERS;
     for (size_t index = 0; index < REQUESTS_PER_WORKER; ++index)
-        wf_observe_release(cross_release[other][index]);
+        wf_observe_release(cross_release[other][index], index * 8);
     atomic_fetch_add_explicit(&finished, 1, memory_order_acq_rel);
 }
 
@@ -133,11 +134,14 @@ int main(int argc, char **argv) {
         exercise_concurrent_observation();
     } else if (argc == 2 && strcmp(argv[1], "double-release") == 0) {
         void *pointer = wf_observe_allocate(8);
-        wf_observe_release(pointer);
-        wf_observe_release(pointer);
+        wf_observe_release(pointer, 8);
+        wf_observe_release(pointer, 8);
     } else if (argc == 2 && strcmp(argv[1], "foreign-release") == 0) {
         unsigned char *pointer = wf_observe_allocate(8);
-        wf_observe_release(pointer + 1);
+        wf_observe_release(pointer + 1, 8);
+    } else if (argc == 2 && strcmp(argv[1], "wrong-size") == 0) {
+        void *pointer = wf_observe_allocate(8);
+        wf_observe_release(pointer, 7);
     } else if (argc == 2 && strcmp(argv[1], "missing-release") == 0) {
         (void)wf_observe_allocate(8);
     } else {

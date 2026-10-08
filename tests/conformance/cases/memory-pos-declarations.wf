@@ -1,0 +1,15 @@
+alias MemoryMeter = std::process::MemoryMeter;
+
+fn memory_readings(meter: &MemoryMeter) -> result: u64 writes(meter) {
+  let peer = std::process::meter_share(meter: meter);
+  let heap = std::process::heap_in_use(meter: meter);
+  let resident = std::process::resident_bytes(meter: &peer);
+  match resident {
+    Some(value: bytes) => {
+      return heap +wrap bytes;
+    }
+    None() => {
+      return heap;
+    }
+  }
+}
