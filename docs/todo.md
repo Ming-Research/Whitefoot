@@ -2189,19 +2189,15 @@ rarely insert at the same place.
   validate cross-page cell updates, unchanged length and private-copy
   recombination against sequential execution in CI.
 
-- **Complete the selected indexed mark and record-field interfaces.** The
-  owner selected constant marks and integer/Bool fields after the indexed
-  permission count, superseding the earlier mark deferral. The current split
-  capture uses the same element type and stride for private and original
-  storage; it cannot express a Bool written-mask for an integer root or a
-  packed scalar range combined into record fields. The implementation stopped
-  at that interface under the owner's explicit stop instruction. The
-  [minimal witnesses and proposed extension](../research/investigations/indexed-reductions/DESIGN.md#interface-boundary-constant-marks-and-record-fields)
-  describe the payload and nested-split obligations. Reopen when the owner
-  authorizes that interface extension. Validate mixed-family denials,
-  colliding/untouched marks, unchanged sibling fields, zero-budget and nested
-  execution, and mask release using forced-split observers before recounting
-  the downstream sites.
+- **Qualify the indexed mark and record-field extension.** The authorized
+  family-kind and cell-projection interface now has an implementation and
+  maintained fixtures, but the owner prohibited execution in this worktree.
+  [The implementation record](../research/investigations/indexed-reductions/DESIGN.md#interface-boundary-constant-marks-and-record-fields)
+  identifies the tests and remaining evidence. Reopen in the integrating CI
+  run: establish ordinary source acceptance, intended permission denials,
+  generated IR validity, dense masks and field slabs, nested/zero-budget
+  execution, and allocation failure cleanup before the downstream recount.
+  No performance or recovered-site-count claim follows from source inspection.
 
 ## Platforms and host interfaces
 

@@ -3,7 +3,7 @@
 Status: lowering A and scalar/indexed composition remain selected. The owner
 reported that the merged rule permits none of Snowghost's 32 counted sites
 and selected the extensions below. The original Proposal and Criterion record
-that earlier experiment; the extension implementation and open interface
+that earlier experiment; the extension implementation and authorized interface
 boundary are recorded in [Extensions after the count](#extensions-after-the-count).
 
 ## Question
@@ -125,23 +125,25 @@ Recorded before any implementation or measurement:
 ## Lowering contract
 
 The primary agent authorized Q1, extending the scalar-only lowering boundary.
-The permission payload retains each checked root place and its fixed operation
-alongside the existing optional scalar. Lowering captures a nonowning range
-and its initialized cell count at loop entry; the IR also carries the element
-type, operation and identity. Their lifetime is structural: the site owns
+The permission payload retains each checked root place, cell projection and
+family kind alongside the existing optional scalar. Lowering captures a
+nonowning range, its source/private mode and its initialized cell count at
+loop entry; the IR carries the projection and the reduction operation/identity
+or mark constant. Their lifetime is structural: the site owns
 private storage until every splitter call joins, and the outlined body only
 borrows its assigned cells. Nested outlined loops transport the enclosing
 private root mappings through their captures.
 
-Each root uses one allocation containing one identity-filled cell range per
-leaf. The recursive splitter halves those ranges with its iteration range.
-After the join, the site visits flat cell offsets in ascending order, which
-is leaf order followed by cell order, combining each private contribution into
-the original cell before freeing the allocation. The scalar seed/result uses
+Each family uses one allocation containing one dense cell range per leaf,
+identity-filled for reductions or false-filled for marks. The recursive
+splitter halves those ranges with its iteration range. After the join,
+reductions visit flat cell offsets in leaf order followed by cell order;
+marks OR each cell's masks in leaf order and conditionally store its constant.
+Both combine into the current destination projection before freeing the slab. The scalar seed/result uses
 its existing independent recombination. A sequential world or zero-budget
 split passes the original root ranges and allocates no private storage.
 
-Pricing charges three traversals of leaves times initialized cells for copy,
+Pricing charges three traversals of each family's leaves times initialized cells for copy,
 fill and combine, conservatively retaining the copy charge although identities
 do not require copying source seeds. Saturating scheduling arithmetic cannot
 turn overflowing overhead into a cheap offer. A split is refused when its
@@ -156,7 +158,7 @@ Indexed frames use the existing needed-capture pruning and selected-target
 layout check. A conservative estimate charges any inline aggregate a whole
 lane slot, so refusing before those checks incorrectly leaves the Slots
 fixture sequential merely because its scope retains the initializer array.
-Pruning retains the indexed ranges and initialized counts consumed by the
+Pruning retains the indexed ranges, storage modes and initialized counts consumed by the
 splitter and allocation site, and remaps their capture positions. A genuinely
 oversized candidate reuses its completed body with indexed ranges rebound to
 the original storage, or the enclosing split's private storage. This restores
@@ -242,64 +244,109 @@ The identity table covers every unsigned width independently of emission.
 
 ### Interface boundary: constant marks and record fields
 
-These two parts are stopped under the owner's instruction to report an
-insufficient interface before extending it. Their spec/checker/lowering
-changes and fixtures have not been applied. Minimal fragments are:
+The architecture owner authorized this interface extension in the continuation
+request: family kind `Reduce { op, identity }` or `Mark { constant }`, dense
+private values, and a destination projection with the root's element stride
+and the field's byte offset and type. This supersedes the earlier interface
+stop; no other interface gap has been routed around.
 
-```whitefoot
-set cells[0_u64] = 1_u8;
-set rows[0_u64].count = rows[0_u64].count +wrap 1_u64;
-```
+The checker retains the checked root, field ordinals, scalar type and kind.
+An operation remains direct or one immutable single-use temporary. A mark is
+an integer/Bool literal or named constant; equal typed values agree even when
+names differ. Root occurrence counting aggregates the permitted cell operands
+across sibling field families and requires zero cell reads for marks. The
+root-wide policy still denies an extra read of another record field, a
+whole-element write, a root-derived index, differing mark values, and a mark
+mixed with an operation on the same family. An affine sibling field is brought
+under the indexed policy when any family needs reduction, preventing a shared
+write beside private storage.
 
-`IndexedReduction` retains a container root and `LoopCombine` only;
-`IrIndexedReduction` retains a range capture, count, one element type,
-identity and binary operation. `indexed_capture` and the backend select the
-original range when no private split runs. Thus a Bool mask for a u8 mark
-cannot inhabit that same typed capture. The backend also assumes identical
-private and destination strides. `indexed_slice` maps a container prefix,
-and storage redirection recognizes a terminal subscript; it cannot select a
-field-specific private range or combine a scalar range into strided record
-fields.
+`IrIndexedReduction` carries the family kind and `IrIndexedProjection`,
+whose root type and field ordinals resolve to byte stride and offset through
+the backend's target layout (LLVM constant GEP expressions). A whole-element
+projection has offset zero. The capture record transports its pointer/count
+and a private-storage Bool; sibling families share the captured initialized
+root length. The dedicated indexed address and range operations prevent an
+ordinary source-element stride from addressing a dense field or mask slab.
+Operand remapping, capture pruning and refused-frame splicing retain that
+mode as well as the range and count. Before forming an inbounds address,
+emission selects the correct stride and offset, avoiding an invalid unused
+source-layout pointer into a smaller private slab.
 
-Recommended extension for owner review: make a family retain its checked
-container plus field path and either a combine operation or a typed mark
-constant. Give lowering distinct private-storage and destination descriptions,
-so a mark can write a Bool mask while its unsplit execution still stores the
-source constant, and a field can use packed private scalars while its join
-projects the original record field. Nested splits must preserve that mapping;
-a mark joining into an enclosing mask combines by OR, and the outermost join
-stores the constant. Zero-budget and declined splits must retain source
-semantics. The user has been asked whether to extend this interface; elapsed
-time supplies no approval.
+Each mark leaf writes true to a false-filled mask. After joining, the site
+ORs one cell's masks in leaf order and writes only if any mask was set. An
+outermost store writes the typed constant, including zero; a nested join
+sets the enclosing mask. Reduction fields use identity-filled dense values
+and combine into `root + i * element_stride + field_offset`, or the enclosing
+dense field slab. Source execution and zero budget retain direct source
+writes. Checked allocation sizes, failure release of previously acquired
+slabs and STOR-8 termination remain in the same acquisition path. Pricing
+charges every family's private cells even when their length capture is shared.
 
-Required qualification after that extension: colliding and untouched integer
-and Bool marks, named constants, different constants and operation/mark mixes,
-root-dependent mark indices, independent record field families, unchanged
-sibling fields, and whole-element writes mixed with field families. Force
-splits, zero budget, nested splits and allocation failure. The masks must be
-released after structured joins and introduce no atomics.
+The PAR-2 amendment changes only permission and sequential-equivalence
+reasoning, with no grammar or token changes. Before, indexed cells had to be
+whole integer/Bool elements with an operation; after, a fixed field projection
+can be a family and a fixed typed constant can mark it. The owner's explicit
+extension/interface selection supplies the ground; no additional direction
+choice was made. The former deferred Bool-mark conformance witness is renamed
+positive and now checks its result. Five negative permission fixtures retain
+ordinary accepted-source verdicts. Positive fixtures cover equal named and
+literal marks, zero marks, Boolean marks, and two record-field operations.
+
+`tests/programs/parallel/indexed_marks_fields.wf` owns independent literal
+oracles: 262144 contributions over five cells give counts 52436 in cells zero
+through three and 52435 in cell four from a seed of seven; untouched cells
+retain seven. Marks start at nine or false and check every touched/untouched
+cell; a u64 mark changes 987654321 to 123456789 to distinguish destination
+stride and store width from the one-byte mask. Record tags stay 93. The nested
+case expects 262151 in one counter, zero in one marked byte, one marked Bool
+field, an affine-only sibling mark in each outer iteration, and unchanged
+siblings. A separate conformance function gives sibling fields two different
+affine maps. Backend observers force four
+leaves, require allocations and releases, check zero budget, and fail each of
+the two sibling-field slab acquisitions. Lowering assertions pin one shared
+length capture and separate scalar projections. The ordinary program test
+also runs the fixture's sequential and unmodified-runtime parallel builds.
+These are authored execution tests, not executed results in this worktree.
+
+### Found along the way
+
+- Fixed: selecting families per field must also select an affine sibling
+  family when their maps differ or any family needs a private reduction;
+  otherwise a sibling write could escape the indexed root's policy.
+- Fixed: the permission ledger now names constant marks when there are no
+  binary operations, instead of reporting no accumulator.
+- Pending qualification: the existing TODO entry is updated from an interface
+  stop to CI qualification. Paged storage and the downstream recount remain
+  deferred on their previous grounds.
 
 ### Verification status
 
-All additions in this round are uncommitted and unexecuted. The owner
-prohibits local builds, compilation, tests, lint, whitefootc, CI, external
-services, commits and pushes. Only edited Rust-file formatting is allowed.
-The specification title and archives, design/log.md and spec/log.md are left
-for the owner; the edited design decisions are proposed records. A future CI
-run must check acceptance, permissions, IR validity and native observations
-before these changes are qualified, followed by the downstream recount.
+Extensions 1, 2 and 5 are the committed base of this continuation. Extensions
+3 and 4 are uncommitted and unexecuted. The owner prohibits local builds,
+compilation, tests, lint, whitefootc, CI/external services, commits and pushes;
+only edited-file rustfmt and read-only inspection were used. The specification
+title and archives, design/log.md and spec/log.md remain untouched as requested.
+The task is not qualified for merge: a later integrating run must establish
+source acceptance, intended denials, IR validity, native values, mechanical
+design/spec checks and overall safety. The downstream recount and performance
+comparison remain unmeasured.
 
-Independent read-only completion review covered the complete uncommitted diff
-and new fixtures against `db72af4347a44de7d389d97ca28efd661a7c59b3`, using an
-inherited Codex model whose exact model identifier was unavailable. It read
-the repository review groups A, D, C, T and V and design checks G1–G3/DC1–DC4,
-plus the changed regions and their direct consumers; it ran no commands that
-build, compile, execute, test or lint. The review found one correspondence
-issue: “operand-read occurrence” did not clearly exclude an extra reference
-formation. The rule now requires exactly one runtime use, and a borrowed-
-temporary negative pins that distinction. The reviewer inspected that fix and
-the separate fixture repair adding explicit returned-array length guards
-before the native oracle's subscript reads. No findings remain within the
-implemented scope. Actual source acceptance, diagnostics, IR validity, native
-results, mechanical design/spec checks and overall safety qualification
-remain unverified. No design-lint statistics were collected.
+Independent read-only completion review covered the full working-tree diff
+against `64f48f06cdd8d332d05865d75bf4c912fe80429f`, its untracked fixtures,
+and affected consumers using the inherited Codex model (exact runtime model
+identifier unavailable). It considered review groups A, D, C, T and V plus
+G1–G3/DC1–DC4, with no group skipped wholesale, using only git state/diff and
+source inspection. No suites or design-lint statistics were collected.
+
+The review found one missing regression observation: the new selection of an
+affine sibling family and of two different affine field maps had no fixture.
+The native outer loop now marks `rows[outer].affine` beside colliding inner
+updates; its observer requires 22 allocations and 36 leaves, which would
+change if the affine family were omitted. The positive field fixture adds
+`different_maps` with `count[i]` and `enabled[i+1]`, and semantic/lowering
+assertions require both families and their shared count. The reviewer inspected
+these fixes and found no remaining issue within scope. These expected counts
+are test assertions, not observed results. Typechecking, ordinary WF checking,
+LLVM validation, native observations and full safety qualification remain
+unverified. No additional architecture decision was required.

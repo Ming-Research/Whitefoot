@@ -1895,3 +1895,47 @@ fn main() -> status: std::process::ExitStatus pure waits {
         Some("SET-1")
     );
 }
+
+#[test]
+fn indexed_field_families_share_the_root_length_and_keep_distinct_projections() {
+    let source = include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        for name in ["reduce", "different_maps"] {
+            let function = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == name)
+                .expect("reduce");
+            let families = function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation: IrOperation::LoopSplit { indexed, .. },
+                        ..
+                    } if !indexed.is_empty() => Some(indexed),
+                    _ => None,
+                })
+                .expect("the record field reduction splits");
+            assert_eq!(families.len(), 2);
+            assert_eq!(families[0].count, families[1].count);
+            assert_ne!(families[0].capture, families[1].capture);
+            assert_ne!(families[0].private, families[1].private);
+            assert_eq!(
+                families[0].projection.root_element,
+                families[1].projection.root_element
+            );
+            assert_eq!(families[0].projection.fields, vec![1]);
+            assert_eq!(families[1].projection.fields, vec![2]);
+            assert_eq!(
+                families[0].private_type(),
+                IrType::Integer {
+                    width: 64,
+                    signed: false
+                }
+            );
+            assert_eq!(families[1].private_type(), IrType::Bool);
+        }
+    });
+}

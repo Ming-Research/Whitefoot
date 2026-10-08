@@ -3170,7 +3170,10 @@ fn indexed_operations_and_scalar_composition_are_permitted() {
         assert!(!judged.advises_split);
         assert!(judged.actualization.is_some());
         assert_eq!(judged.indexed.len(), 1);
-        assert_eq!(judged.indexed[0].combine.spelling(), combine);
+        let super::super::IndexedFamilyKind::Reduce { op } = judged.indexed[0].kind else {
+            panic!("expected a reduction family");
+        };
+        assert_eq!(op.spelling(), combine);
     }
 }
 
@@ -3241,11 +3244,6 @@ fn indexed_denials_name_the_failed_condition_after_ordinary_checking() {
         ),
         (
             include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-mixed-write.wf")
-                .as_slice(),
-            "each indexed write",
-        ),
-        (
-            include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-constant-mark.wf")
                 .as_slice(),
             "each indexed write",
         ),
@@ -3407,5 +3405,102 @@ fn indexed_temporary_denials_report_the_temporary_contract() {
         };
         assert!(reason.contains(reason_fragment), "{reason_fragment}: {reason}");
         assert!(!reason.contains("constant mark"), "{reason}");
+    }
+}
+
+#[test]
+fn indexed_marks_and_record_fields_retain_their_family_contracts() {
+    use super::super::{CheckedValue, IndexedFamilyKind};
+    let marks = permitted(
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-marks.wf"),
+        "reduce",
+    );
+    assert_eq!(marks.indexed.len(), 2);
+    for (family, bits) in marks.indexed.iter().zip([1, 0]) {
+        assert!(family.fields.is_empty());
+        assert!(
+            matches!(&family.kind, IndexedFamilyKind::Mark { constant: CheckedValue::Integer { bits: actual, .. } } if *actual == bits)
+        );
+    }
+    let boolean = permitted(
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-constant-mark.wf"),
+        "reduce",
+    );
+    assert!(matches!(
+        boolean.indexed[0].kind,
+        IndexedFamilyKind::Mark {
+            constant: CheckedValue::Bool(true)
+        }
+    ));
+    let table = permission_of(include_bytes!(
+        "../../../../tests/conformance/cases/par2-pos-indexed-fields.wf"
+    ));
+    let maps = only_loop(&table, "different_maps");
+    assert_eq!(maps.verdict, LoopVerdict::PermittedEligible);
+    assert_eq!(maps.indexed.len(), 2);
+    let families = loops(&table, "reduce");
+    let judged = families[0];
+    assert_eq!(judged.verdict, LoopVerdict::PermittedEligible);
+    assert_eq!(judged.indexed.len(), 2);
+    assert_eq!(judged.indexed[0].root, judged.indexed[1].root);
+    assert_eq!(judged.indexed[0].fields, vec![1]);
+    assert_eq!(judged.indexed[1].fields, vec![2]);
+    assert!(matches!(
+        judged.indexed[0].kind,
+        IndexedFamilyKind::Reduce {
+            op: LoopCombine::AddWrap
+        }
+    ));
+    assert!(matches!(
+        judged.indexed[1].kind,
+        IndexedFamilyKind::Reduce {
+            op: LoopCombine::Or
+        }
+    ));
+}
+
+#[test]
+fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
+    for (source, expected) in [
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-mark-constants.wf"
+            )
+            .as_slice(),
+            "one fixed operation or one constant",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-mark-operation.wf"
+            )
+            .as_slice(),
+            "one fixed operation or one constant",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-mark-subscript-read.wf"
+            )
+            .as_slice(),
+            "every occurrence",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-field-whole-write.wf"
+            )
+            .as_slice(),
+            "integer or Bool cell",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-field-sibling-read.wf"
+            )
+            .as_slice(),
+            "every occurrence",
+        ),
+    ] {
+        let LoopDenial::IndexedReduction { reason, .. } = denied(source, "reduce", 1) else {
+            panic!("expected an indexed denial");
+        };
+        assert!(reason.contains(expected), "{reason}");
     }
 }

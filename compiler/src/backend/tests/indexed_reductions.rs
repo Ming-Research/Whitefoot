@@ -959,3 +959,81 @@ fn extended_forms_execute_forced_splits_against_literal_oracles() {
     );
     std::fs::remove_dir_all(directory).expect("remove extended-form artifacts");
 }
+
+const MARKS_FIELDS: &str =
+    include_str!("../../../../tests/programs/parallel/indexed_marks_fields.wf");
+
+#[test]
+fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
+    let module = emit_with_overlap(MARKS_FIELDS.as_bytes());
+    for function in ["marks_one", "marks_zero", "marks_bool"] {
+        let body = super::emitted_body(&module, function);
+        assert!(body.contains("store i1 false, ptr %indexed."), "{body}");
+        assert!(body.contains(".merged = or i1"), "{body}");
+        assert!(body.contains(".is_private = or i1"), "{body}");
+    }
+    let fields = super::emitted_body(&module, "field_values");
+    assert_eq!(fields.matches(".allocation = call ptr @malloc").count(), 2);
+    assert!(fields.contains(".field = select i1"), "{fields}");
+    assert!(fields.contains(".stride = select i1"), "{fields}");
+    assert!(!emit(MARKS_FIELDS.as_bytes()).contains("%indexed."));
+    let directory = test_directory();
+    let names = [
+        "marks_one",
+        "marks_zero",
+        "marks_bool",
+        "field_values",
+        "nested_families",
+    ];
+    let executable = build_linked_executable(
+        &observed_with(&module, &names),
+        Some(OBSERVER),
+        &[],
+        &directory,
+    );
+    let report = run_observed(&executable, false);
+    assert!(
+        report.contains("indexed allocations=22 leaves=36\n"),
+        "{report}"
+    );
+    assert!(
+        report.contains("indexed loops=4,4,4,4,20,0,0,0\n"),
+        "{report}"
+    );
+    let report = run_observed(&executable, true);
+    assert!(
+        report.contains("indexed allocations=0 leaves=9\n"),
+        "{report}"
+    );
+    assert!(
+        report.contains("indexed loops=1,1,1,1,5,0,0,0\n"),
+        "{report}"
+    );
+    std::fs::remove_dir_all(directory).expect("remove mark/field native artifacts");
+}
+
+#[test]
+fn indexed_field_family_acquisition_failure_releases_earlier_sibling_slabs() {
+    let source = include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
+    let module = emit_with_overlap(source);
+    let directory = test_directory();
+    let executable = build_linked_executable(
+        &observed_with(&module, &["reduce"]),
+        Some(OBSERVER),
+        &[],
+        &directory,
+    );
+    for fail in ["1", "2"] {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", "4")
+            .env("WF_TEST_FAIL", fail)
+            .bounded_output()
+            .expect("run field slab acquisition failure");
+        assert_eq!(
+            output.status.code(),
+            Some(90),
+            "allocation {fail}: {output:?}"
+        );
+    }
+    std::fs::remove_dir_all(directory).expect("remove field acquisition artifacts");
+}

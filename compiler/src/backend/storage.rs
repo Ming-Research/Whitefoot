@@ -948,6 +948,7 @@ impl FlowInstruction {
                 (Some(index(*result)), reuse, exposed)
             }
             IrInstruction::StoreSlice { .. }
+            | IrInstruction::IndexedMark { .. }
             | IrInstruction::Store { .. }
             | IrInstruction::Drops(_) => (None, None, None),
         };

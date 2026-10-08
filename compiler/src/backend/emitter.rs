@@ -2196,6 +2196,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => {
                 self.materialize_operands([*slice, *index])?;
             }
+            IrInstruction::IndexedMark {
+                address, private, ..
+            } => {
+                self.materialize_operands([*address, *private])?;
+            }
             IrInstruction::Store { address, .. } => {
                 // A stored aggregate is transferred from its backing below.
                 // Loading it into SSA first lets SROA expand a large array
@@ -2231,6 +2236,17 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 ty,
                 operation,
             } => self.emit_definition(*result, *ty, operation),
+            IrInstruction::IndexedMark {
+                address,
+                private,
+                constant,
+                value_type,
+            } => self.emit_indexed_mark(
+                &self.value_name(*address),
+                &self.value_name(*private),
+                *constant,
+                *value_type,
+            ),
             IrInstruction::StoreSlice {
                 slice,
                 index,
@@ -2495,7 +2511,38 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             IrOperation::SliceFromRun { run } => self.emit_slice_from_run(result, ty, *run),
             IrOperation::SliceRange { slice, start, end } => {
-                self.emit_slice_range(result, ty, *slice, *start, *end)
+                self.emit_slice_range(result, ty, *slice, *start, *end, None)
+            }
+            IrOperation::IndexedRange {
+                slice,
+                start,
+                end,
+                private_type,
+            } => self.emit_slice_range(result, ty, *slice, *start, *end, Some(*private_type)),
+            IrOperation::IndexedAddress {
+                slice,
+                offset,
+                private,
+                projection,
+                private_type,
+                ..
+            } => {
+                let range_type = self.value_type(*slice).ok_or(BackendFailure::InvalidIr)?;
+                let prefix = format!("indexed.address.{}", self.next_temporary()?);
+                let pointer = self.indexed_pointer(
+                    &prefix,
+                    (&self.value_name(*slice), range_type),
+                    &self.value_name(*offset),
+                    &self.value_name(*private),
+                    projection,
+                    *private_type,
+                )?;
+                writeln!(
+                    self.output,
+                    "  {} = getelementptr i8, ptr {pointer}, i64 0",
+                    self.value_name(result)
+                )?;
+                Ok(())
             }
             IrOperation::SliceMeasure { slice } => self.emit_slice_length(result, ty, *slice),
             IrOperation::SliceIndex {
