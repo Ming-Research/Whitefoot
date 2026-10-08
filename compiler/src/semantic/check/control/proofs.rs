@@ -614,18 +614,19 @@ impl<'unit> Checker<'_, 'unit> {
                     "bind the integer value with a `let` and use that binding",
                 );
             }
-            let measured = self.check_indexed_place_rooted(
+            let (expression, declaration) = self.check_proof_measure_place(
                 context,
                 place,
-                bindings,
+                atom,
                 base,
-                place,
+                measure,
+                bindings,
                 loop_depth,
                 owner.value_role(),
             )?;
             // [INV-1] the place resolves in the same context an IDENT does,
             // and its root is one of the values that context admits.
-            if let Some(declaration) = measured.root_declaration()
+            if let Some(declaration) = declaration
                 && !allowed_values.contains(&declaration)
             {
                 return self.types.declarations.invalid_affine_proof(
@@ -635,9 +636,6 @@ impl<'unit> Checker<'_, 'unit> {
                     "measure a value that exists before this proof point",
                 );
             }
-            let expression = self
-                .types
-                .measure_of_indexed_place(measure, measured, atom)?;
             return Ok((
                 CheckedAffineExpression {
                     node_path: self.types.declarations.tree.path(node)?.clone(),
