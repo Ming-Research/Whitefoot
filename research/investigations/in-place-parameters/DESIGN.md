@@ -448,6 +448,26 @@ its shared frame and aggregate calls survive, the frame-provenance
 hypothesis is rejected for this shape. Both contain a falsifier that must
 return the old snapshot's value after the source is written.
 
+**Second result**
+([run 37861211781](https://github.com/Ming-Research/Whitefoot/actions/runs/37861211781),
+same toolchain): the five first witnesses are unchanged; the two Halo-shaped
+ones separate.
+
+| witness | raw memmove | optimized memcpy | static stack |
+|---|---:|---:|---:|
+| `let-union-mixed-frame` (`u32` marker) | 3 | 3 | 296 |
+| `let-union-uniform-frame` (`u64` marker) | 3 | 1 | 56 |
+
+In the mixed case the reader keeps one `%wf.frame` struct allocation and the
+whole 152-byte `memcpy` into the snapshot's slot stays, beside the 16-byte
+argument copies; in the uniform case every slot is its own `alloca`, SROA
+splits the snapshot, and only the 12 bytes of the comparator the call needs
+are copied. The frame-provenance hypothesis survives its falsifier: the
+copy follows the frame representation, selected by compiler/storage-placement's
+uniform-alignment condition for independent allocations, not the later
+write. Whether Halo's `sort_compare` frame is mixed for this reason is
+inferred from its shape, not yet observed.
+
 The job does not link or execute these programs; checker acceptance is
 observed through `--emit-llvm`, runtime results remain unverified. Remove
 the temporary job and option once its conclusions are recorded here; keep
