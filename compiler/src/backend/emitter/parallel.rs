@@ -84,6 +84,7 @@ pub(super) struct LoopSplitSite<'ir> {
     pub(super) captures: &'ir [IrValueId],
     pub(super) weight: u64,
     pub(super) work: Option<&'ir IrWorkEstimate>,
+    pub(super) indexed: &'ir [crate::ir::IrIndexedReduction],
 }
 
 /// The Windows parallel ABI as external obligations.
@@ -836,8 +837,10 @@ impl FunctionEmitter<'_, '_> {
         }
         .map_err(|_| BackendFailure::TextEmission)?;
         self.parallel.queries_split_budget = true;
-        arguments.push(format!("i64 {budget}"));
-        self.emit_split_call(result, abi.result(), &callee, arguments)
+        let private = self.emit_indexed_prepare(split, &span, &weight, &budget, &mut arguments)?;
+        arguments.push(format!("i64 {}", private.budget));
+        self.emit_split_call(result, abi.result(), &callee, arguments)?;
+        self.emit_indexed_finish(split, private)
     }
 
     /// Scheduling arithmetic is total even when the priced source branch
