@@ -1502,36 +1502,3 @@ this core a constant's frame-slot load issues early, off the dependency
 chain, so reading it from the operation instead saves little. The revert
 keeps one fix found with it: a local index is bounded by the constant
 slots' start, so a malformed module cannot reach a constant slot.
-
-**Step 4, the change** (`interp_tail.wf`'s `acc_feed`, `feed_cand`,
-`acc_claim`, `emit_dest`, `set_local` and `end_block`; `gen.py`'s `ACC`),
-following wasmi's register links (an integer result goes to its register,
-an older value still in use keeps its slot, links survive a block's entry
-and are dropped at branch targets and calls):
-- The translator records two things about `acc` on the fall-through path:
-  the local whose value it holds, as in step 1, and the candidate, the
-  newest operation emitted with a form that could leave its result in
-  `acc`, in its slot-writing form, with its code index and slot.
-- A later operation reading the candidate's slot, not only the next one,
-  takes its form reading `acc`, and the candidate is rewritten in place at
-  its code index: to its `D` form when that reader, the temporary's one
-  consumer, is its only reader; to its `SD` form when a `br_if` or `if`
-  emitted since may read the slot at its target or in the other arm. No copy
-  operation is added. A `local.set` of the candidate's temporary that is not
-  the last operation becomes a copy from `acc` (`CopyS`), and `acc` then
-  holds that local.
-- An operation reading the local `acc` holds drops the candidate, since
-  rewriting it afterwards would change `acc` before that read; rewriting
-  the candidate forgets the local.
-- Both are dropped at branch targets (a loop's start, `else`, an `end` that
-  a branch targets or that fall-through does not reach), after calls, host
-  calls and `memory.grow`, and where the fall-through path ends (`br`,
-  `br_table`, `return`, `unreachable`). They now survive a block's entry and
-  an `end` that only fall-through reaches. The candidate is also dropped
-  when another operation writes its slot or the operation is removed by the
-  address or compare fusion; the local, when it is written.
-- New forms, for the hot operations of step 0 that lacked one: `CopyS`,
-  `Copy2S` and `Copy2T` (a copy's source in `acc`), and `V` forms of the
-  indexed `i32` stores (the stored value in `acc`); 6 variants. The
-  comparisons get no `D` forms: a comparison feeding a branch is fused
-  into it, and no other comparison is among the hot operations.

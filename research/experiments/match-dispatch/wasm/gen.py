@@ -12,7 +12,7 @@ error when _start returns, for attributing a change to the dispatch count;
 with --profile it counts each operation kind, in the order --names prints.
 With --inline each handler's body is written into its arm, except a body
 that delivers a value from a match, which stays a helper call. The forms
-that pass a value to a later operation in the interpreter function's acc
+that pass a value to the next operation in the interpreter function's acc
 parameter (the ACC table) are always written into their arms.
 
     python3 gen.py interp.wf [--count | --profile] [--inline]
@@ -429,19 +429,16 @@ def fused_arm(name, op, sign):
 
 
 # ---- the accumulator ------------------------------------------------------
-# A value passes in the interpreter function's acc parameter instead of a
-# frame slot from the operation that computed it to a later operation
-# reading it. The translator (interp_tail.wf's acc_feed) tracks what acc
-# holds on the fall-through path: a local, and the candidate, the newest
-# operation whose result could go to acc, which it rewrites in place when a
-# reader of that result appears. A form's letters name what moves: D its
-# result goes to acc only (the temporary's one reader reads acc), SD its
-# result goes to slot d and to acc (wasmi's SlotAndReg forms: a local.set
-# taking the result, or a temporary a branch may also read), A (B, V, C, S,
-# T) its a (b, v, c, s, t) operand comes from acc. Every form keeps its base
-# operation's fields, so the compare and address fusions and the patching of
-# forward branches carry a form; the field a form reads from acc holds the
-# sentinel 65535, never a slot.
+# A value that the operation just before its single consumer computed into a
+# temporary passes in the interpreter function's acc parameter instead of a
+# frame slot. A form's letters name what moves: D its result goes to acc
+# only, SD its result goes to slot d and to acc (wasmi's SlotAndReg forms,
+# chosen by a local.set or local.tee taking the result, so that the
+# operations after it read that local from acc), A (B, V, C) its a (b, v, c)
+# operand comes from acc. Every form keeps its base operation's fields, so
+# the compare and address fusions and the patching of forward branches carry
+# a form; the field a form reads from acc holds the sentinel 65535, never a
+# slot.
 ACC = {}
 for nm in ["I32Add", "I32Mul", "I32And", "I32Or", "I32Xor"]:
     ACC[nm] = ["A", "D", "AD"]
@@ -460,14 +457,10 @@ for nm in ["I32Load", "I32Load8U", "I32Load8S", "I32Load16U", "I32Load16S"]:
     ACC[nm + "Ix"] = ["A", "D", "AD"]
 for nm in ["I32Store", "I32Store8", "I32Store16"]:
     ACC[nm] = ["A", "V"]
-    ACC[nm + "Ix"] = ["A", "V"]
+    ACC[nm + "Ix"] = ["A"]
 ACC["BrIf"] = ["C"]
 ACC["BrUnless"] = ["C"]
 ACC["Select"] = ["C", "D", "CD"]
-# A copy into a local from acc: a local.set of a value acc holds, or of the
-# candidate's temporary; a pair of copies with either source in acc.
-ACC["Copy"] = ["S"]
-ACC["Copy2"] = ["S", "T"]
 # The operations with SD forms: one for the slot-reading form and one for
 # each form reading an operand from acc.
 SLOT_ACC = ["I32Add", "I32Sub", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Shl", "I32ShrU", "I32ShrS"]
@@ -483,12 +476,12 @@ SWAPS = {"I32Add", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Eq", "I32Ne", "BrI
 # Branches take acc only through the sentinel the translator records for
 # them, since a forward branch is rebuilt when its target is known.
 BRANCHES = {"BrIf", "BrUnless"} | {"BrI32" + nm for _, nm, _, _ in FUSED}
-FIELD = {"A": "a", "B": "b", "V": "v", "C": "c", "S": "s", "T": "t"}
+FIELD = {"A": "a", "B": "b", "V": "v", "C": "c"}
 SENT = "65535_u16"
 
 
 def acc_inputs(name):
-    return [l for l in "ABVCST" if l in ACC[name]]
+    return [l for l in "ABVC" if l in ACC[name]]
 
 
 def base_form(name):
@@ -580,16 +573,6 @@ def acc_control_arms():
             b += ["let di = cvt::<u16, u64>(dv^);", "move_slot(stack: stack, fp: fp, s: si, d: di);"]
             end = advance(6)
         o += [f"    Select{form}(d: dv, a: av, b: bv, c: cv) => {{"] + ["      " + l for l in b] + end
-        o += ["      return trap(code: 1_u32, pc: pc);", "    }"]
-    from_acc = lambda d: [f"let {d}i = cvt::<u16, u64>({d}v^);", f"let {d}t = fp + {d}i;", f"set stack^.inner[{d}t] = acc;"]
-    from_slot = lambda d, s: [f"let {s}i = cvt::<u16, u64>({s}v^);", f"let {s}t = fp + {s}i;", f"let {s}w = stack^.inner[{s}t];",
-                              f"let {d}i = cvt::<u16, u64>({d}v^);", f"let {d}t = fp + {d}i;", f"set stack^.inner[{d}t] = {s}w;"]
-    moves = {"CopyS": ("(d: dv, s: sv)", from_acc("d")),
-             "Copy2S": ("(d: dv, s: sv, e: ev, t: tv)", from_acc("d") + from_slot("e", "t")),
-             "Copy2T": ("(d: dv, s: sv, e: ev, t: tv)", from_slot("d", "s") + from_acc("e"))}
-    for name in [b + f for b in ["Copy", "Copy2"] for f in ACC[b]]:
-        pattern, b = moves[name]
-        o += [f"    {name}{pattern} => {{"] + ["      " + l for l in b] + advance(6)
         o += ["      return trap(code: 1_u32, pc: pc);", "    }"]
     return o
 
