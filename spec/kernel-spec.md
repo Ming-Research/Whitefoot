@@ -591,15 +591,15 @@ Field suffixes introduce no runtime evaluation.
 This rule judges a value target; a `set` whose target is a reference variable and whose right-hand side is a `borrow_expr` rebinds that name and is judged by [REF-1] instead.
 A `set` whose target is a reference variable and whose right-hand side is a value is not a rebinding: it is a hard error citing TYPE-7 at the target `place`, with a repair [DIAG-1].
 The value target's final selected type is T.
-The target is writable exactly when it is rooted in a live own-mode value binding or in the state of a shared object [SHARE-1], or is `p^` or a path below it where `p` is a reference parameter whose declared row carries `writes` of that path [EFF-1, EFF-5] or a local reference variable whose named path is itself writable.
-Fields and indices inherit the writability of their selected base.
+The target satisfies the writable-root condition exactly when it is rooted in an own-mode value binding or in the state of a shared object [SHARE-1], or is `p^` or a path below it where `p` is a reference parameter whose declared row carries `writes` of that path [EFF-1, EFF-5] or a local reference variable whose named path is itself writable.
+Fields and indices inherit the writable-root condition of their selected base.
 A named const is never writable [CONST-2], and a target path that ends at or passes through a readonly field is refused by [TYPE-2].
 A `for_stmt` binder is compiler-updated state and is never source-writable; a target rooted there is a SET-1 rejection at the complete target `place`.
-A place projected, dereferenced, or subscripted from a dead root is never writable; a dead binding is writable only as the complete binding, and that commit reinitializes it [OWN-1, OWN-11].
+A target satisfying the writable-root condition is writable exactly when its root is live or it is the complete own-mode value binding [OWN-1, OWN-11].
 These specific rules own their stated violations; every other failure of this closed writability relation cites SET-1 at the complete target `place` child of the `set_stmt`, carrying the resolved root class and the required writable classes.
 
 The right-hand side is then checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules.
-The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable and that the target root is live.
+The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable under the same writable-root and live-or-complete-binding conditions.
 If the right-hand side moved a strict prefix of the target place, the commit is a later write of a dead root under OWN-1.
 If it invalidated a reference the target path is reached through, [REF-2] rejects the commit.
 This is a static acceptance check: at runtime every target component is evaluated exactly once before `e`, and lowering carries the resulting target address and offset values across `e` rather than evaluating source again.
@@ -608,8 +608,8 @@ No root-liveness or writability fact from before the right-hand side bypasses th
 On successful revalidation, assignment performs exactly one write of the resulting value into `p`.
 The old value's disposition at the commit is [WIN-3]'s.
 A commit derives no drop, release, finalizer, or cleanup edge beyond that disposition.
-The new value occupies the same place and the target root is live after the commit.
-The store occurs only after right-hand-side evaluation completes; until that commit point the target retains its previous value.
+The new value occupies the same place and the target root is live after the commit, reinitializing a dead complete binding [OWN-1, OWN-11].
+The store occurs only after right-hand-side evaluation completes; until that commit point a live target retains its previous value.
 The checked program retains the exact target path, each required target check, the right-hand-side value, the post-right-hand-side liveness and writability judgments, and the single store before lowering [DIAG-2].
 
 [CONST-1] The grammar production `const` of the fence below is usable at `Array<T, N>` sizes and `const` targs, and, being the `const` alternative of `targ` [GRAM-3], at every const argument of a compiler-owned storage nominal [TYPE-9].
