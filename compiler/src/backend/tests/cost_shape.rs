@@ -173,7 +173,9 @@ fn fresh_allocation_for_fill<'module>(
             line.strip_prefix(&prefix)
                 .map(|definition| (index, definition))
         })?;
-        if call_target(lines[index]) == Some("malloc") {
+        // A `grow` [OP-10] reallocates the cell, and the slots it adds are filled
+        // after that call, so its result is a fresh allocation for the fill.
+        if matches!(call_target(lines[index]), Some("malloc" | "realloc")) {
             break index;
         }
         pointer = getelementptr_base(definition)?;
@@ -265,6 +267,17 @@ initialize:
     assert!(bulk_initializations_use_fresh_storage(reused).is_err());
     let calloc = fresh.replace("@malloc(i64 4112)", "@calloc(i64 1, i64 4112)");
     assert!(bulk_initializations_use_fresh_storage(&calloc).is_err());
+    // A `grow` remake fills the slots it added once, after its realloc.
+    let remade = fresh.replace(
+        "tail call dereferenceable_or_null(4112) ptr @malloc(i64 4112)",
+        "call ptr @realloc(ptr %old, i64 4112)",
+    );
+    assert!(bulk_initializations_use_fresh_storage(&remade).is_ok());
+    let remade_twice = twice.replace(
+        "tail call dereferenceable_or_null(4112) ptr @malloc(i64 4112)",
+        "call ptr @realloc(ptr %old, i64 4112)",
+    );
+    assert!(bulk_initializations_use_fresh_storage(&remade_twice).is_err());
 }
 
 /// A compact pointer-provenance trace for optimizer-version failures in the
@@ -372,56 +385,6 @@ fn call_target(line: &str) -> Option<&str> {
     rest[end..].starts_with('(').then(|| &rest[..end])
 }
 
-/// Follows a pointer through its local `getelementptr` definitions to the
-/// value it was derived from.
-fn pointer_root<'module>(function: &'module str, mut pointer: &'module str) -> &'module str {
-    let mut seen = Vec::new();
-    while !seen.contains(&pointer) {
-        seen.push(pointer);
-        let prefix = format!("  {pointer} = ");
-        let Some(base) = function
-            .lines()
-            .find_map(|line| line.strip_prefix(&prefix))
-            .and_then(getelementptr_base)
-        else {
-            break;
-        };
-        pointer = base;
-    }
-    pointer
-}
-
-/// Recognize an allocation that remakes an existing run instead of taking a
-/// new one. `grow` [OP-10] allocates the larger block, copies the old window
-/// into it, and frees the old block, so the allocation is the destination of a
-/// bulk copy whose source block the same function frees. A take may also be a
-/// copy destination, as `walk`'s child path is for the prefix it copies in,
-/// but its source is never a block the function releases.
-fn remakes_a_run(function: &str, allocation: &str) -> bool {
-    let Some(register) = allocation.trim_start().split(" = ").next() else {
-        return false;
-    };
-    let freed: Vec<_> = function
-        .lines()
-        .filter(|line| call_target(line) == Some("free"))
-        .filter_map(|line| call_argument(line, "free", 0))
-        .filter_map(|argument| argument.split_whitespace().next_back())
-        .collect();
-    function.lines().any(|line| {
-        let Some(callee) = call_target(line)
-            .filter(|name| name.starts_with("llvm.memmove") || name.starts_with("llvm.memcpy"))
-        else {
-            return false;
-        };
-        let operand = |ordinal| {
-            call_argument(line, callee, ordinal)
-                .and_then(|argument| argument.split_whitespace().next_back())
-                .map(|pointer| pointer_root(function, pointer))
-        };
-        operand(0) == Some(register) && operand(1).is_some_and(|source| freed.contains(&source))
-    })
-}
-
 #[test]
 fn the_reused_buffers_are_initialized_once_at_allocation() {
     // `wfgrep` asks for exactly eleven runs, and gets exactly eleven store
@@ -444,8 +407,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // flagship re-attribution has to explain. Growth is extra and is not a
     // take: `widen_window` remakes the read input for a line longer than it,
     // and `push_byte` and `push_word` remake a store for a directory whose
-    // names pass 4096 bytes or whose entries pass 512. Each remake allocates
-    // the larger block, copies the old run into it and frees the old block.
+    // names pass 4096 bytes or whose entries pass 512. Each remake is one
+    // `realloc` of the old block to the larger size [OP-10].
     //
     // The source still owns initialization. With exclusive run rows LLVM can
     // fold malloc plus the zero-fill loop into calloc. Count either optimized
@@ -464,6 +427,15 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
         let helper = signature.contains(" @wf_zeroed_bytes(");
         helper_defined |= helper;
         for line in function.lines() {
+            if call_target(line) == Some("realloc") {
+                // `grow` [OP-10] remakes a run with one `realloc`, which keeps
+                // the filled slots; a remake is never a take.
+                remakes += 1;
+                assert!(
+                    call_argument(line, "realloc", 0).is_some_and(|old| !old.ends_with(" null")),
+                    "a realloc remakes an existing run and never takes a new one: {line}"
+                );
+            }
             if let Some(callee @ ("malloc" | "calloc")) = call_target(line) {
                 if helper {
                     helper_takes += 1;
@@ -484,7 +456,6 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
                         expanded += 1;
                         *sizes.entry(bytes).or_insert(0) += 1;
                     }
-                    None if remakes_a_run(function, line) => remakes += 1,
                     None => {
                         expanded += 1;
                         prefix_sized += 1;
@@ -534,9 +505,9 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     );
     assert!(
         remakes >= 3,
-        "widen_window, push_byte and push_word each remake a run by copying it: {remakes}"
+        "widen_window, push_byte and push_word each remake a run by reallocating it: {remakes}"
     );
-    // Nothing reallocates in place, and nothing re-initializes. That the fill
+    // Only `grow` reallocates, and nothing re-initializes. That the fill
     // runs once per take is a source fact under this surface rather than an
     // allocator guarantee: the fill loop is inside `zeroed_bytes`, between the
     // take and the hand-back, so a caller cannot reach a filled run without
@@ -551,7 +522,9 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // which aggregate stores this optimizer combines.
     // Keep the no-refill claim on pointer provenance, rather than forbidding
     // the unrelated aggregate initialization instruction by name.
-    for forbidden in ["@realloc(", "@reallocf(", "bzero"] {
+    // `grow` uses plain `realloc` (counted and null-checked above), so only
+    // the other reallocating or clearing spellings stay forbidden.
+    for forbidden in ["@reallocf(", "bzero"] {
         assert!(
             !optimized().contains(forbidden),
             "the reused buffers must not reach {forbidden}"

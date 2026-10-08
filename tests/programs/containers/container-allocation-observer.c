@@ -93,6 +93,34 @@ void wf_observe_release(void *pointer) {
     require(false, "release did not return an allocated address");
 }
 
+// `grow` [OP-10] reallocates its block: the observer books that as a fresh
+// allocation that takes over the old block's bytes, plus the release of the
+// old one, so a growth is one request and one release exactly as the former
+// allocate, copy and free were. The old block stays quarantined, never handed
+// back to the host allocator until the end, because a real realloc could
+// return the address of an earlier released entry and make the ledger's
+// pointer identity ambiguous.
+void *wf_observe_reallocate(void *pointer, uint64_t bytes) {
+    if (pointer == NULL) return wf_observe_allocate(bytes);
+    void *moved = wf_observe_allocate(bytes);
+    lock_ledger();
+    for (size_t index = 0; index < allocation_count; ++index) {
+        Allocation *allocation = &allocations[index];
+        if (allocation->pointer != pointer) continue;
+        require(!allocation->released, "allocation released twice");
+        uint64_t kept = allocation->bytes < bytes ? allocation->bytes : bytes;
+        memcpy(moved, pointer, (size_t)kept);
+        allocation->released = true;
+        ++release_count;
+        memset(pointer, 0xa5,
+               allocation->bytes == 0 ? 1 : (size_t)allocation->bytes);
+        unlock_ledger();
+        return moved;
+    }
+    require(false, "release did not return an allocated address");
+    return NULL;
+}
+
 enum { OBSERVER_WORKERS = 4, REQUESTS_PER_WORKER = 8 };
 static wf_prim_thread observer_threads[OBSERVER_WORKERS];
 static size_t worker_numbers[OBSERVER_WORKERS];
