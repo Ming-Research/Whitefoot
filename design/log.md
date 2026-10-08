@@ -12,6 +12,14 @@ Nodes: compiler/parallel-lowering
 Owner-approved: On the status board on 2026-10-08, on the card asking whether the call grain's recursion exemption should cover only recursion whose own recursive calls are handed out, recommended option A, written in Chinese: "choose A" (translated).
 
 Summary: A statement-group call offer is kept when its callee belongs to or reaches a cyclic component one of whose remaining groups calls into it, the only recursion whose depth the recursion budget bounds, or when its static work reaches the work unit; a callee that reaches only recursion offering none of its own calls is priced like any other, and classification is repeated with pruning until a pass omits nothing. Snowghost's incremental layout had handed out a cursor read reaching a one-way page-directory descent at each of about 13,600 tree nodes per edit, 10 to 13 times slower at four workers than sequentially; with the rule the edit is 1.08 to 1.10 times sequential on the 14900K, and full layout and style show no loss ([recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)). Spending a budget level at every activation that offers and rewriting the downstream program are kept as rejected alternatives.
+## 2026-10-08 By-value parameters read in place
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board of 2026-10-08, after the card asking whether to reopen the rejected in-place reading of by-value aggregate parameters and adopt it (written in Chinese), the owner chose option A, recommended: reopen and adopt, with firn measured for no slowdown on the 14900K before merging.
+
+Summary: Reading a by-value aggregate parameter through its caller's pointer, rejected earlier because firn showed no gain, is adopted: Halo's interpreter ran fib 3.8% faster on the 14900K with the rule widened to functions with branches, which met the rejection's reopening condition, and six other kernels stayed within noise. A slot qualifies when every value it holds originates from the parameter through block transfers alone, so an `if` or `match` continuation carrying the parameter unchanged no longer forces the copy.
+
 ## 2026-10-08 Stop signals
 
 Nodes: language/system-interface/stop-signals, compiler/completion-runtime/signal-delivery
