@@ -1,0 +1,116 @@
+# Stop signals
+
+## The question
+
+A Whitefoot program cannot learn that its host asks it to stop. A service
+manager stops a server with SIGTERM, a terminal with SIGINT, and Windows
+with a console control event; each ends the program at once, since no part
+of the standard library intercepts them. firn, the Redis-compatible server
+written in Whitefoot, loses the changes its append-only file's writer has
+not yet appended, up to one 10-millisecond cycle, and the bytes not yet
+synced. Redis 7.0.15 instead treats SIGTERM and SIGINT as a request to shut
+down (`src/server.c`, `sigShutdownHandler` setting `shutdown_asap`, which
+`serverCron` turns into `prepareForShutdown`): it stops accepting, flushes
+and syncs its append-only file, and exits. firn already stops this way on
+its `SHUTDOWN` command (Firn-wf `design/firn/orderly-stop.md`); it lacks only
+the signal.
+
+The question is how a program receives a host's request to stop, and what
+happens to the request while the program does not ask for it.
+
+## What a program needs
+
+- To wait for the next stop request in a context of its own, as it waits
+  for a connection or a byte, and then start its own orderly stop.
+- To tell an interrupt (SIGINT, Ctrl-C) from a termination request
+  (SIGTERM, a console close or a system shutdown), as Redis logs them
+  apart; both stop Redis the same way.
+- A program that never asks to be told keeps the host's default: the
+  request ends it at once, as today.
+- A second request while the first is being handled: Redis exits at once on
+  a second SIGINT during a shutdown (`sigShutdownHandler`, "You insist...");
+  a program can do the same by not waiting again, or wait again and decide.
+
+## Constraints from earlier decisions
+
+- Host access is a parameter the function receives, never ambient
+  (`design/language/system-interface.md`, the rejected "ambient mutable
+  host access"); a capability of the invocation reaches the program through
+  `Inputs`, as the clocks do (`system-interface/clocks.md`).
+- An owner of a native resource is linear and closes through an explicit
+  consuming function (`system-interface.md`).
+- Waiting is declared (`waits`), and a waiting host call completes once the
+  host has produced its outcome, an input of the execution [WAIT-2]; a
+  bounded wait takes `deadline: Option<Instant>` [PRE-2].
+
+## Hosts
+
+- **Linux.** `signalfd` on a mask of SIGTERM and SIGINT blocked in every
+  thread delivers them as reads of a descriptor, which the ring can wait on
+  like any other read; unblocking the mask and closing the descriptor
+  restores the default.
+- **macOS.** `kqueue` with `EVFILT_SIGNAL` reports a signal's arrival while
+  its disposition is set to ignore, so the default no longer ends the
+  process; restoring `SIG_DFL` restores it.
+- **Windows.** `SetConsoleCtrlHandler` receives `CTRL_C_EVENT` (an
+  interrupt) and `CTRL_BREAK_EVENT`, `CTRL_CLOSE_EVENT`, `CTRL_SHUTDOWN_EVENT`
+  (terminations) on a thread of its own; the handler can post the event to
+  the completion port a waiting context parks on and return TRUE, and
+  removing the handler restores the default. A close or shutdown event
+  leaves the process a few seconds before the system ends it.
+
+## Candidates
+
+- **A. A capability in `Inputs` and a waiting listener.** `Inputs` gains
+  `stops: StopSignals`, an opaque capability like `Clock`. `stop_listen`
+  opens a linear `StopListener` from it; while a listener is open the
+  runtime intercepts the requests, and `stop_next(factory, listener,
+  deadline)` waits for the next one and returns `Interrupt` or `Terminate`.
+  Closing the listener restores the default. A program that never opens a
+  listener behaves as today.
+- **B. Requests mapped onto shared state.** The runtime sets a flag in a
+  shared object the program names, and the program polls it. This needs no
+  waiting call, but every context that should react must poll, which is the
+  stopgap firn already uses for `SHUTDOWN` and which Firn-wf's `docs/todo.md`
+  records as a gap; it also needs a runtime write into program state.
+- **C. Requests as an ending input stream.** The runtime closes stdin or
+  another stream on a request. This hides a stop request behind an
+  unrelated resource and cannot tell an interrupt from a termination.
+- **D. A handler function the runtime calls.** The runtime calls a program
+  function on a request. It needs a context the program did not start and
+  code that runs at an arbitrary point, which the waiting model excludes.
+
+## Proposal
+
+A. Its parts:
+- `Inputs.stops: StopSignals` (opaque, `nocopy`, drop empty), a
+  capability of the invocation that grants nothing until a listener opens.
+- `stop_listen(factory, stops: &StopSignals) -> Result<StopListener,
+  IoError>` spends a handle credit [PRE-2] and starts interception; a
+  second listener while one is open is refused, since each request is
+  delivered once.
+- `stop_next(factory, listener: &StopListener, deadline:
+  Option<Instant>) -> Result<StopKind, IoError> waits` returns the next
+  request, `Interrupt()` or `Terminate()`, requests arriving while no
+  context waits being kept in order.
+- `close_stop_listener(factory, listener: StopListener)` restores the
+  default and returns the credit.
+
+Validation, stated before implementing:
+- a program test per host that opens a listener, receives a termination
+  sent by the test harness, writes a byte to stdout and exits 0, and the
+  same program without a listener ended by the request with the host's
+  default status;
+- requests sent before the program waits are delivered in order;
+- an interrupt and a termination are told apart where the host can send
+  both (POSIX; Windows `CTRL_C_EVENT` beside `CTRL_BREAK_EVENT`);
+- firn's `SIGTERM` stops it as `SHUTDOWN` does, every acknowledged write
+  replayed after the restart.
+
+The proposal would be rejected if a host cannot deliver a request to a
+waiting context without running program code in a signal handler, or
+cannot restore its default when the listener closes.
+
+## Status
+
+Proposed to the owner as Firn ledger Q222.
