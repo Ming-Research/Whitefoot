@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Memory statistics
+
+Nodes: language/system-interface/memory-statistics
+
+Owner-approved: On the shared status board of 2026-10-08, written in Chinese, the owner approved the item request "approve #277's specification text and design node: MemoryMeter in std::process, appended to Inputs after stops and shared with meter_share; heap_in_use counting requested sizes (the runtime pool its granted sizes); one counter per driver, taken modulo 2^64, a reading that is not a snapshot and clamps a negative total to zero; the counting functions in a separate source file, so a program without a heap links no malloc; resident_bytes returning Option<u64>, None when the host cannot report it" (translated), after approving proposal A of the memory-statistics investigation in the Firn session of 2026-10-08 ("218 agreed", translated).
+
+Summary: A program reads its heap and resident set through a capability, `MemoryMeter`, as it reads time through `Clock`. Emitted allocations and releases go through counting functions that add the requested size to a counter of the calling driver, without a write shared across drivers, and the runtime pool counts its grants under its lock; counters are taken modulo 2^64, so blocks allocated on one driver and released on another cannot overflow anything, and a read sums them, clamping a total that a concurrent move made negative. The counting functions live in their own source file so a heap-free program still links no allocator, and the resident set is an Option because a host may not report it. Redis 7.0.15 keeps one shared atomic counter of allocator usable sizes instead; usable-size queries, allocator-wide queries and the resident set as the heap reading were refused ([investigation](../research/investigations/memory-statistics/README.md)).
+
 ## 2026-10-08 By-value parameters read in place
 
 Nodes: compiler/storage-placement

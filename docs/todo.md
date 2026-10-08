@@ -2138,6 +2138,15 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
+- **Measure heap counting under an allocation-heavy program.** The cost of
+  counting each allocation (memory statistics) was bounded only for firn's
+  `set` and `mset`, whose hot path makes no counted allocation. A Lua
+  engine running scripts allocates through the emitted heap on every call
+  (the C allocator took 11 to 13% of firn's CPU under a rate-limiting
+  script). Measure the counted against the uncounted build on such a
+  workload, interleaved with twins on the i9-14900K; reopen when firn's
+  script path is next measured or when a program reports the counting.
+
 - **Paged indexed storage is absent in this checkout (Q2).** The active
   specification and checked type model define Array, Slots and Ring, with no
   Paged type or storage path. Impact: the selected indexed reduction rule can

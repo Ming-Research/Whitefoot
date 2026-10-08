@@ -114,7 +114,9 @@ The validation is stated before implementing:
 
 ## Status
 
-Proposal A, including the resident-set reading from D, is being implemented on this branch following owner approval. It counts per driver modulo 2^64 with a clamped non-instantaneous sum, keeps heap-free programs free of the allocator, and returns the resident set as an optional value. CI correctness validation and the stated firn performance comparison remain outstanding.
+Adopted by the owner: proposal A, including the resident-set reading from D, specified in PRE-2 ([`spec/log.md`](../../../spec/log.md)). It counts per driver modulo 2^64 with a clamped non-instantaneous sum, keeps heap-free programs free of the allocator, and returns the resident set as an optional value.
+
+The cost was measured with firn on the i9-14900K (Firn-wf runs 37811516445 and 37812975250, branch `exp/memstats-cost`: the same firn built with this branch's experiment release `wf-exp-d89b6a051f2e` and with its base `wf-exp-2c28a4ecdd38`). With redis-benchmark `set` and `mset` at depths 1 and 16 on one and two CPUs, two passes and a twin of each image, the counted build ran at 0.971 to 1.025 of the uncounted one, inside the twins' 3 to 7% spread, so the stated 1% bound could not be resolved that way. A profile of the counted build under `set` and `mset` at depth 16 lists neither the counting functions nor `malloc` above 0.01% of samples: those commands' hot path makes no counted allocation, so their cost there is far below 1%. Scripts, whose engine allocates through the emitted heap (the C allocator took 11 to 13% of firn's CPU under rate-limiter-flexible's script), are not measured; `docs/todo.md` records that.
 
 ## Implementation findings
 
