@@ -95,7 +95,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   let counts = histogram(keys: &keys.inner[0_u64..10000000_u64]);
   let finished = now(clock: &clock);
   let elapsed = nanoseconds_from(earlier: started, later: finished);
-  let checksum = digest(cells: &counts.inner[0_u64..256_u64]);
+  let cell_count = counts.inner.len;
+  let checksum = digest(cells: &counts.inner[0_u64..cell_count]);
   let report = box_array_filled::<u8>(count: 16_u64, value: 0_u8);
   let window = &report.inner[0_u64..16_u64];
   let after_checksum = spell(destination: window, at: 0_u64, value: checksum);
