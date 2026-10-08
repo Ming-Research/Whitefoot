@@ -1,0 +1,25 @@
+fn touch(stack: &Box<Array<u64>>) -> r: unit writes(stack.inner) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  if 0_u64 < stack^.inner.len {
+    set stack^.inner[0_u64] = 1_u64;
+  }
+  return unit;
+}
+
+fn walk(stack: &Box<Array<u64>>, fp0: u64, k: u64) -> r: u64 writes(stack.inner) contract {
+  requires fp0 + 4_u64 <= stack^.inner.len;
+} {
+  let fp = fp0;
+  loop (
+    invariant fb: fp + 4_u64 <= stack^.inner.len
+  ) {
+    let unused = k;
+    let room = stack^.inner.len - 4_u64;
+    set stack^.inner[fp] = room;
+    if room == 7_u64 {
+      return room;
+    }
+  }
+  return 0_u64;
+}

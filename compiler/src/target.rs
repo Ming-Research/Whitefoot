@@ -419,6 +419,7 @@ pub(super) fn element_has_zero_stride(
 struct UnionLayout {
     value: Layout,
     views: Vec<(u32, Layout)>,
+    handler_offset: Option<u64>,
 }
 
 /// What the emitter prints for one union-laid-out enum: the value's size,
@@ -428,7 +429,9 @@ struct UnionLayout {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct UnionEnumLayout {
     size: u64,
+    align: u64,
     aligning_variant: u32,
+    handler_offset: Option<u64>,
 }
 
 impl UnionEnumLayout {
@@ -438,6 +441,15 @@ impl UnionEnumLayout {
 
     pub(crate) const fn aligning_variant(self) -> u32 {
         self.aligning_variant
+    }
+
+    pub(crate) const fn handler_offset(self) -> Option<u64> {
+        self.handler_offset
+    }
+
+    pub(crate) fn handler_alignment(self) -> Option<u64> {
+        self.handler_offset
+            .map(|_| self.align.min(POINTER_LAYOUT.align))
     }
 }
 
@@ -460,19 +472,57 @@ pub(crate) fn union_enum_layout(
         return Err(TargetLayoutFailure::InvalidIr);
     };
     let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
-    let union = layouts.union_layout(variants)?;
+    let union = layouts.union_layout(
+        variants,
+        program.nominal(id).is_some_and(|n| n.threaded_dispatch),
+    )?;
+    let view_align = union.views.iter().map(|(_, view)| view.align).max();
     let aligning_variant = variants
         .iter()
         .zip(&union.views)
-        .find(|(variant, (_, view))| {
-            !variant.fields().is_empty() && view.align == union.value.align
-        })
+        .find(|(variant, (_, view))| !variant.fields().is_empty() && Some(view.align) == view_align)
         .map(|(variant, _)| variant.tag())
         .ok_or(TargetLayoutFailure::InvalidIr)?;
     Ok(UnionEnumLayout {
         size: union.value.size,
+        align: union.value.align,
         aligning_variant,
+        handler_offset: union.handler_offset,
     })
+}
+
+/// A handler word is optional lowering storage, so it must fit the enum's
+/// existing product-layout ceiling. Applying this to every threaded enum
+/// also bounds aggregates containing them, without changing OP-9.
+pub(crate) fn threaded_enum_fits(
+    target: TargetLayout,
+    program: &IrProgram,
+    id: IrNominalId,
+) -> Result<bool, TargetLayoutFailure> {
+    let IrNominalKind::Enum { variants } = program
+        .nominal(id)
+        .ok_or(TargetLayoutFailure::InvalidIr)?
+        .kind()
+    else {
+        return Err(TargetLayoutFailure::InvalidIr);
+    };
+    let mut layouts = LayoutComputer::new(target, program.nominals(), program.elements());
+    let threaded = layouts.union_layout(variants, true)?.value;
+    let mut fields = vec![IrType::Integer {
+        width: 32,
+        signed: false,
+    }];
+    fields.extend(
+        variants
+            .iter()
+            .flat_map(|variant| variant.fields())
+            .map(|field| field.ty()),
+    );
+    let product = layouts.struct_layout(fields)?;
+    // The word can still exceed the product's size (for example three u8
+    // payloads). Keep the independent alignment bound as well: allocation
+    // qualification enforces it, even though word placement now preserves it.
+    Ok(threaded.size <= product.size && threaded.align <= product.align)
 }
 
 /// Whether `id` is laid out as a union of variant views
@@ -1520,7 +1570,8 @@ impl<'types> LayoutComputer<'types> {
             let IrNominalKind::Enum { variants } = nominal.kind() else {
                 return Err(TargetLayoutFailure::InvalidIr);
             };
-            self.union_layout(variants)?.value
+            self.union_layout(variants, nominal.threaded_dispatch)?
+                .value
         } else {
             let mut fields = Vec::new();
             match nominal.kind() {
@@ -1562,6 +1613,7 @@ impl<'types> LayoutComputer<'types> {
     fn union_layout(
         &mut self,
         variants: &[crate::IrVariant],
+        threaded: bool,
     ) -> Result<UnionLayout, TargetLayoutFailure> {
         let mut views = Vec::with_capacity(variants.len());
         let mut size = 0_u64;
@@ -1577,10 +1629,29 @@ impl<'types> LayoutComputer<'types> {
             align = align.max(view.align);
             views.push((variant.tag(), view));
         }
+        let handler_offset = if threaded {
+            // The maximum view alignment equals the product alignment: both
+            // take the maximum over the tag and the same selected field
+            // layouts. Cap the word alignment there, including when it is
+            // below pointer alignment, so the word cannot raise the ceiling.
+            let word_align = POINTER_LAYOUT.align.min(align);
+            let offset = align_up(self.target, size, word_align, TargetObject::Representation)?;
+            size = checked_add(
+                offset,
+                POINTER_LAYOUT.size,
+                self.target,
+                TargetObject::Representation,
+            )?;
+            align = align.max(word_align);
+            Some(offset)
+        } else {
+            None
+        };
         let size = align_up(self.target, size, align, TargetObject::Representation)?;
         Ok(UnionLayout {
             value: Layout { size, align },
             views,
+            handler_offset,
         })
     }
 

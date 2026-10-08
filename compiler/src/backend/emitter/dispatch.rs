@@ -2,8 +2,9 @@
 //! function per arm (compiler/match-dispatch-lowering).
 //!
 //! The header becomes an always-inline dispatch function that computes the
-//! header's values and transfers, through a handler table indexed by the
-//! tag, to the function of the selected arm; every edge back to the header
+//! header's values and transfers through a handler table indexed by the
+//! tag, or a threaded enum's trailing handler word, to the selected arm;
+//! every edge back to the header
 //! becomes a guaranteed tail call of the dispatch function, so each arm ends
 //! in its own indirect transfer. All parts take one parameter list — the
 //! header's parameters, the header values the arms read, the values from
@@ -12,7 +13,7 @@
 //! enclosing function's activation, which calls the dispatch function once
 //! and returns its result.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 
 use super::{
@@ -24,6 +25,141 @@ use crate::{
     IrBlock, IrBlockId, IrDrop, IrEnumType, IrFunction, IrInstruction, IrTerminator, IrType,
     IrValueId,
 };
+
+/// Reachability shared by the program-wide census and function emission.
+pub(super) fn reachable(function: &IrFunction) -> Result<Vec<bool>, BackendFailure> {
+    let mut seen = vec![false; function.blocks().len()];
+    let mut pending = if seen.is_empty() { Vec::new() } else { vec![0] };
+    while let Some(index) = pending.pop() {
+        let visited = seen.get_mut(index).ok_or(BackendFailure::InvalidIr)?;
+        if !*visited {
+            *visited = true;
+            pending.extend(successors(&function.blocks()[index]));
+        }
+    }
+    Ok(seen)
+}
+
+/// The prototype is a whole-program layout choice, made before qualification
+/// or any function is emitted. Counting `find` results includes functions
+/// that planning later leaves whole; those values still reserve the word,
+/// initialized to null when there are no emitted handlers to enter.
+pub(super) fn threaded_program(
+    program: &crate::IrProgram,
+    target: crate::target::TargetLayout,
+) -> Result<std::borrow::Cow<'_, crate::IrProgram>, BackendFailure> {
+    let mut counts = HashMap::new();
+    for function in program.functions() {
+        if let Some(plan) = find(function, &reachable(function)?).0 {
+            *counts.entry(plan.matched).or_insert(0_usize) += 1;
+        }
+    }
+    // A native body cannot initialize this compiler-private word. Keep the
+    // layout of everything it can reach through its ordinary signature.
+    let foreign = foreign_nominals(program)?;
+    let mut selected = Vec::new();
+    for nominal in program.nominals() {
+        if counts.get(&nominal.id()) == Some(&1)
+            && !foreign.contains(&nominal.id())
+            && super::union_enums::is_union_enum(program, nominal.id())?
+        {
+            selected.push(nominal.id());
+        }
+    }
+    if selected.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(program));
+    }
+    let mut threaded = program.clone();
+    for id in &selected {
+        threaded.nominals[id.index()].threaded_dispatch = true;
+    }
+    // Nested enums use the same layouts. Remove candidates until each
+    // trailing word fits its product ceiling with the selected child layouts.
+    loop {
+        let mut removed = false;
+        for id in &selected {
+            if !threaded.nominals[id.index()].threaded_dispatch {
+                continue;
+            }
+            let fits = match crate::target::threaded_enum_fits(target, &threaded, *id) {
+                Ok(fits) => fits,
+                Err(crate::target::TargetLayoutFailure::Unrepresentable(_)) => false,
+                Err(failure) => return Err(BackendFailure::TargetLayout(failure)),
+            };
+            if !fits {
+                threaded.nominals[id.index()].threaded_dispatch = false;
+                removed = true;
+            }
+        }
+        if !removed {
+            break;
+        }
+    }
+    // A larger inline array can exceed the target address domain even when
+    // its element fits OP-9. This optional lowering never turns a qualified
+    // ordinary program into a target failure.
+    match crate::target::validate_program(target, &threaded) {
+        Ok(()) => Ok(std::borrow::Cow::Owned(threaded)),
+        Err(crate::target::TargetLayoutFailure::Unrepresentable(_)) => {
+            Ok(std::borrow::Cow::Borrowed(program))
+        }
+        Err(failure) => Err(BackendFailure::TargetLayout(failure)),
+    }
+}
+
+fn foreign_nominals(
+    program: &crate::IrProgram,
+) -> Result<HashSet<crate::IrNominalId>, BackendFailure> {
+    let mut pending = Vec::new();
+    for function in program.functions().iter().filter(|f| f.blocks().is_empty()) {
+        pending.push(function.result());
+        pending.extend(function.parameters().iter().map(|(_, ty)| *ty));
+    }
+    let mut visited = HashSet::new();
+    let mut nominals = HashSet::new();
+    while let Some(ty) = pending.pop() {
+        if !visited.insert(ty) {
+            continue;
+        }
+        match ty {
+            IrType::Nominal(id) => {
+                nominals.insert(id);
+                match program.nominal(id).ok_or(BackendFailure::InvalidIr)?.kind() {
+                    crate::IrNominalKind::Struct { fields } => {
+                        pending.extend(fields.iter().map(|f| f.ty()))
+                    }
+                    crate::IrNominalKind::Enum { variants } => {
+                        pending.extend(variants.iter().flat_map(|v| v.fields()).map(|f| f.ty()))
+                    }
+                    crate::IrNominalKind::Box { referent, .. } => pending.push(*referent),
+                    crate::IrNominalKind::Shared { state, shape } => {
+                        pending.push(*state);
+                        if let crate::IrShared::Map { entry } = shape {
+                            pending.push(*entry);
+                        }
+                    }
+                    crate::IrNominalKind::Opaque => {}
+                }
+            }
+            IrType::Address(referent) => pending.push(referent.ty()),
+            IrType::Array { element, .. }
+            | IrType::Window { element, .. }
+            | IrType::Buffer { element }
+            | IrType::Segments { element }
+            | IrType::Range { element }
+            | IrType::Entries { element } => {
+                pending.push(program.element(element).ok_or(BackendFailure::InvalidIr)?);
+            }
+            IrType::RuntimeBoxPayload { nominal } => pending.push(IrType::Nominal(nominal)),
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Integer { .. }
+            | IrType::Float { .. }
+            | IrType::KeySet => {}
+        }
+    }
+    Ok(nominals)
+}
 
 /// The calling convention of every part, with its argument registers on the
 /// target: the convention without callee-saved registers where the host's
@@ -413,6 +549,8 @@ enum Role {
     /// The matched element's address, which every edge into the header
     /// passes for the index it gives the header (see [`Cursor`]).
     Cursor,
+    /// The address at another carried index, replacing the run parameter.
+    FrameAddress,
 }
 
 /// The header's `match` reads the element a header parameter indexes in a
@@ -440,6 +578,28 @@ struct Cursor {
     target_domain: crate::IrTargetDomainObligation,
 }
 
+/// A stable, contiguous run addressed relative to a carried unsigned index.
+/// The run parameter is replaced by an element pointer; its original value
+/// is reconstructed in each part, including in the slots handed to helpers.
+/// A retained callable requirement bounds the index by the run's length
+/// on every header edge; the qualified allocation keeps the scaled index
+/// and payload offset exact in the address domain [STOR-6].
+#[derive(Clone)]
+struct FrameCursor {
+    run: IrValueId,
+    index: IrValueId,
+    element: IrType,
+    steps: HashMap<IrValueId, u64>,
+}
+
+/// One outcome per (carried index, canonical run), in deterministic order.
+/// Rejections describe lowering eligibility, never source acceptance.
+#[derive(Default)]
+struct FrameCursorPlan {
+    selected: Vec<FrameCursor>,
+    rejected: Vec<(IrValueId, IrValueId, &'static str)>,
+}
+
 /// The emission state of one split function.
 pub(super) struct DispatchEmission {
     pub(super) plan: DispatchLoop,
@@ -465,6 +625,7 @@ pub(super) struct DispatchEmission {
     table_base: bool,
     /// The matched element's address the parts carry, if any.
     cursor: Option<Cursor>,
+    frame_cursors: Vec<FrameCursor>,
     /// Values the loop cannot change that the parts read from the frame,
     /// stored there by the enclosing function before the loop.
     spilled: Vec<(IrValueId, IrType)>,
@@ -476,6 +637,18 @@ pub(super) struct DispatchEmission {
     destination: bool,
     result: String,
     convention: &'static str,
+    /// The enum's pointer field is the dispatch source instead of the table.
+    threaded: bool,
+}
+
+impl DispatchEmission {
+    pub(super) fn handlers_by_tag(&self) -> Vec<String> {
+        self.plan
+            .table
+            .iter()
+            .map(|arm| self.arm_symbols[*arm].clone())
+            .collect()
+    }
 }
 
 impl FunctionFramePlan {
@@ -559,6 +732,7 @@ impl FunctionEmitter<'_, '_> {
             self.dispatch_ledger.extend(ledger);
             return Ok(None);
         };
+        let threaded = self.nominal(plan.matched)?.threaded_dispatch;
         let kind = if self.function.waits() {
             Some("the function waits")
         } else if self.grain.is_some() {
@@ -621,6 +795,17 @@ impl FunctionEmitter<'_, '_> {
                 }
             }
         }
+        let FrameCursorPlan {
+            selected: frame_cursors,
+            rejected: frame_rejections,
+        } = self.frame_cursors(&plan, &invariant, &parameters, cursor.as_ref())?;
+        for frame in &frame_cursors {
+            for (value, _, role) in &mut parameters {
+                if *value == frame.run {
+                    *role = Role::FrameAddress;
+                }
+            }
+        }
         let readers = self.arms_reading(&plan, &invariant, cursor.as_ref());
         // This includes the run address in each arm whose cursor edge
         // forms an address from the run rather than taking a known step.
@@ -669,7 +854,9 @@ impl FunctionEmitter<'_, '_> {
                 .iter()
                 .filter(|(value, _, role)| {
                     matches!(role, Role::Invariant | Role::Hoisted)
-                        || (*role == Role::Carried && invariant.passed_through.contains(value))
+                        || (*role == Role::Carried
+                            && invariant.passed_through.contains(value)
+                            && !frame_cursors.iter().any(|frame| frame.index == *value))
                 })
                 .map(|(value, _, _)| (readers.get(value).copied().unwrap_or(0), *value))
                 .collect();
@@ -688,7 +875,8 @@ impl FunctionEmitter<'_, '_> {
         // is left for it, instead of being formed again in every arm.
         let mut with_base = types.clone();
         with_base.push("ptr".to_owned());
-        let table_base = spilled.is_empty()
+        let table_base = !threaded
+            && spilled.is_empty()
             && ArgumentRegisters::demand(&with_base).is_ok_and(|demand| registers.fits(demand));
         if table_base {
             types = with_base;
@@ -743,11 +931,29 @@ impl FunctionEmitter<'_, '_> {
             .program
             .nominal(plan.matched)
             .map_or("an enum", |nominal| nominal.name.as_str());
+        if threaded {
+            ledger.insert(
+                0,
+                format!("{body_symbol}: dispatches through the handler word in each {matched}"),
+            );
+        }
         if cursor.is_some() {
             ledger.insert(
                 0,
                 format!("{body_symbol}: carries the matched {matched}'s address between the parts"),
             );
+        }
+        for frame in &frame_cursors {
+            ledger.insert(0, format!(
+                "{body_symbol}: carries a run element's address for carried index v{} between the parts (run v{})",
+                frame.index.ordinal(), frame.run.ordinal()
+            ));
+        }
+        for (index, run, reason) in frame_rejections {
+            ledger.push(format!(
+                "{body_symbol}: carries no element address for carried index v{} into run v{}: {reason}",
+                index.ordinal(), run.ordinal()
+            ));
         }
         if !spills.is_empty() {
             ledger.insert(
@@ -798,6 +1004,7 @@ impl FunctionEmitter<'_, '_> {
             spilled: spills,
             table_base,
             cursor,
+            frame_cursors,
             dropped: header
                 .parameters()
                 .iter()
@@ -808,6 +1015,7 @@ impl FunctionEmitter<'_, '_> {
             destination,
             result: result.to_owned(),
             convention,
+            threaded,
         }))
     }
 
@@ -832,6 +1040,7 @@ impl FunctionEmitter<'_, '_> {
         carried: &[(IrValueId, IrValueId)],
         into_arm: bool,
         cursor: Option<&str>,
+        frames: &[(IrValueId, String)],
     ) -> Result<String, BackendFailure> {
         let dispatch = self.dispatch.as_ref().ok_or(BackendFailure::InvalidIr)?;
         let parameters = dispatch.parameters.clone();
@@ -863,6 +1072,12 @@ impl FunctionEmitter<'_, '_> {
                     self.value_name(argument)
                 }
                 Role::Cursor if !into_arm => cursor.ok_or(BackendFailure::InvalidIr)?.to_owned(),
+                Role::FrameAddress if !into_arm => frames
+                    .iter()
+                    .find(|(run, _)| *run == value)
+                    .map(|(_, address)| address.clone())
+                    .ok_or(BackendFailure::InvalidIr)?,
+                Role::FrameAddress => frame_cursor_name(value),
                 Role::HeaderValue if !into_arm => "poison".to_owned(),
                 Role::HeaderValue | Role::Cursor | Role::Invariant | Role::Hoisted => {
                     self.value_name(value)
@@ -898,6 +1113,7 @@ impl FunctionEmitter<'_, '_> {
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
         let cursor = dispatch.cursor.clone();
+        let frame_cursors = dispatch.frame_cursors.clone();
         let header = self.block(target)?;
         if header.parameters().len() != arguments.len()
             || arguments
@@ -1017,7 +1233,13 @@ impl FunctionEmitter<'_, '_> {
             Some(cursor) => Some(self.edge_cursor(&cursor, &carried, tail)?),
             None => None,
         };
-        let list = self.dispatch_arguments(&carried, false, cursor.as_deref())?;
+        // Edge names are temporary overrides: part parameters retain their
+        // received cursor until all arguments of this transfer are formed.
+        let mut frames = Vec::new();
+        for frame in &frame_cursors {
+            frames.push((frame.run, self.edge_frame_cursor(frame, &carried, tail)?));
+        }
+        let list = self.dispatch_arguments(&carried, false, cursor.as_deref(), &frames)?;
         self.output.symbol(symbol.clone());
         let call = if tail { "musttail call" } else { "call" };
         let text = if result == "void" {
@@ -1032,8 +1254,8 @@ impl FunctionEmitter<'_, '_> {
         Ok(true)
     }
 
-    /// Emits the dispatch header's terminator in the dispatch function: the
-    /// handler table load and the guaranteed tail call of the selected arm.
+    /// Emits the dispatch header's terminator: the handler load and the
+    /// guaranteed tail call of the selected arm.
     /// Returns whether `block` was that header.
     pub(super) fn emit_dispatch_select(
         &mut self,
@@ -1056,31 +1278,53 @@ impl FunctionEmitter<'_, '_> {
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
-        self.materialize_operands([scrutinee])?;
-        let (tag, tag_ty) = self.match_tag(scrutinee, enum_type)?;
+        let threaded = dispatch.threaded;
+        let matched = dispatch.plan.matched;
+        let cursor = dispatch.cursor.as_ref().map(|cursor| cursor.place);
+        if threaded && self.threaded_handlers.get(&matched) != Some(&dispatch.handlers_by_tag()) {
+            return Err(BackendFailure::InvalidIr);
+        }
+        let slot = if threaded {
+            let address = if let Some(place) = cursor {
+                self.value_name(place)
+            } else if matches!(self.value_type(scrutinee), Some(IrType::Address(_))) {
+                self.value_name(scrutinee)
+            } else {
+                self.value_place(scrutinee)?
+            };
+            self.aggregate_field_pointer(IrType::Nominal(matched), &address, 2)?
+        } else {
+            self.materialize_operands([scrutinee])?;
+            let (tag, tag_ty) = self.match_tag(scrutinee, enum_type)?;
+            let slot = self.next_temporary()?;
+            let index = self.next_temporary()?;
+            self.output.symbol(table_symbol);
+            // A two-variant tag-only enum's i1 must index as +1, not -1.
+            if tag_ty == "i64" {
+                writeln!(self.output, "  %{index} = add i64 {tag}, 0")?;
+            } else {
+                writeln!(self.output, "  %{index} = zext {tag_ty} {tag} to i64")?;
+            }
+            writeln!(
+                self.output,
+                "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr {table}, i64 0, i64 %{index}"
+            )?;
+            format!("%{slot}")
+        };
         let carried: Vec<(IrValueId, IrValueId)> = self
             .block(block)?
             .parameters()
             .iter()
             .map(|(parameter, _)| (*parameter, *parameter))
             .collect();
-        let list = self.dispatch_arguments(&carried, true, None)?;
-        let slot = self.next_temporary()?;
+        let list = self.dispatch_arguments(&carried, true, None, &[])?;
         let handler = self.next_temporary()?;
-        self.output.symbol(table_symbol);
-        // A tag narrower than the index is zero-extended: a two-variant
-        // tag-only enum's `i1` tag would otherwise index as -1.
-        let index = self.next_temporary()?;
-        let mut text = if tag_ty == "i64" {
-            format!("  %{index} = add i64 {tag}, 0\n")
+        let alignment = if threaded {
+            format!(", align {}", self.handler_word_alignment(matched)?)
         } else {
-            format!("  %{index} = zext {tag_ty} {tag} to i64\n")
+            String::new()
         };
-        write!(
-            text,
-            "  %{slot} = getelementptr inbounds [{entries} x ptr], ptr {table}, i64 0, i64 %{index}\n  %{handler} = load ptr, ptr %{slot}\n"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
+        let mut text = format!("  %{handler} = load ptr, ptr {slot}{alignment}\n");
         if result == "void" {
             text.push_str(&format!(
                 "  musttail call {convention}void %{handler}({list})\n  ret void\n"
@@ -1106,14 +1350,16 @@ impl FunctionEmitter<'_, '_> {
         }
         for (value, ty, role) in &dispatch.parameters {
             let ty = llvm_type_with_references(self.program, *ty, &mut references.types)?;
-            let name = if part == Part::Header && *role == Role::HeaderValue {
+            let name = if *role == Role::FrameAddress {
+                frame_cursor_name(*value)
+            } else if part == Part::Header && *role == Role::HeaderValue {
                 format!("%wf.dispatch.v{}", value.ordinal())
             } else {
                 value_name(*value)
             };
             // A range arrives in the parts as its `{ ptr, i64 }` pair, which
             // carries no pointer attribute; only a pointer takes the facts.
-            let facts = if ty == "ptr" {
+            let facts = if ty == "ptr" && *role != Role::FrameAddress {
                 dispatch.facts.get(value).map_or("", String::as_str)
             } else {
                 ""
@@ -1156,11 +1402,14 @@ impl FunctionEmitter<'_, '_> {
         let dropped = dispatch.dropped.clone();
         let spilled = dispatch.spilled.clone();
         let pins = dispatch.pins.clone();
+        let frame_cursors = !dispatch.frame_cursors.is_empty();
+        let threaded = dispatch.threaded;
         let mut parts: Vec<(Signature, FunctionBody, HashSet<FunctionSlot>)> = Vec::new();
 
         self.set_part(Part::Header);
         self.output = FunctionBody::default();
         self.output.open_block("entry".to_owned());
+        self.emit_frame_cursor_bases()?;
         writeln!(self.output, "  br label %{}", block_label(header))
             .map_err(|_| BackendFailure::TextEmission)?;
         self.materialized.clear();
@@ -1196,6 +1445,7 @@ impl FunctionEmitter<'_, '_> {
             self.output = FunctionBody::default();
             self.incoming = self.collect_incoming(blocks)?;
             self.output.open_block("entry".to_owned());
+            self.emit_frame_cursor_bases()?;
             writeln!(self.output, "  br label %{}", block_label(*target))
                 .map_err(|_| BackendFailure::TextEmission)?;
             for (index, member) in self.function.blocks().iter().enumerate() {
@@ -1253,19 +1503,23 @@ impl FunctionEmitter<'_, '_> {
             for (parameter, canonical) in &pins {
                 let slot = pin_slot_name(*parameter);
                 writeln!(prelude, "  {slot} = alloca ptr")
-                    .and_then(|()| {
-                        writeln!(
-                            prelude,
-                            "  store ptr {}, ptr {slot}",
-                            value_name(*canonical)
-                        )
-                    })
                     .map_err(|_| BackendFailure::TextEmission)?;
+                if !frame_cursors {
+                    writeln!(
+                        prelude,
+                        "  store ptr {}, ptr {slot}",
+                        value_name(*canonical)
+                    )
+                    .map_err(|_| BackendFailure::TextEmission)?;
+                }
             }
             module.define(signature.define(body, &prelude)?);
             module.text("\n");
         }
 
+        if threaded {
+            return Ok(());
+        }
         let mut references = References::default();
         let entries = table
             .iter()
@@ -1743,6 +1997,299 @@ impl FunctionEmitter<'_, '_> {
         self.emit_instruction(block, index, instruction)
     }
 
+    /// Select one carried base index per stable contiguous run. Recognition
+    /// uses the index or a checked unsigned addition feeding an element
+    /// projection in the loop, including aliases of the index through joins. It
+    /// neither reads source names nor inspects a callee's implementation.
+    fn frame_cursors(
+        &self,
+        plan: &DispatchLoop,
+        invariant: &LoopInvariants,
+        parameters: &[(IrValueId, IrType, Role)],
+        cursor: Option<&Cursor>,
+    ) -> Result<FrameCursorPlan, BackendFailure> {
+        let mut frames = FrameCursorPlan::default();
+        for (index, ty, role) in parameters {
+            if *role != Role::Carried
+                || *ty
+                    != (IrType::Integer {
+                        width: 64,
+                        signed: false,
+                    })
+            {
+                continue;
+            }
+            let steps = self.index_steps(*index);
+            // A direct arithmetic use also gets a candidate, even if the
+            // offset is not a checked sum. Multiple accesses to the same
+            // run produce one outcome; any supported access is a witness.
+            let mut candidates = BTreeMap::<IrValueId, bool>::new();
+            for (block_index, block) in self.function.blocks().iter().enumerate() {
+                if !plan.region[block_index] && block_index != plan.header.index() {
+                    continue;
+                }
+                for instruction in block.instructions() {
+                    let IrInstruction::Define { operation, .. } = instruction else {
+                        continue;
+                    };
+                    let (address, offset) = match operation {
+                        crate::IrOperation::ProjectAddress {
+                            address,
+                            projection:
+                                crate::IrPlaceStep::RunElement { offset, .. }
+                                | crate::IrPlaceStep::ArrayElement { offset, .. }
+                                | crate::IrPlaceStep::BufferElement { offset, .. },
+                        } => (address, *offset),
+                        crate::IrOperation::BufferIndex { buffer, offset, .. } => (buffer, *offset),
+                        crate::IrOperation::RunIndex { run, offset, .. } => (run, *offset),
+                        _ => continue,
+                    };
+                    let supported = steps.get(&offset) == Some(&0)
+                        || self.frame_relative_index(&steps, offset).is_some();
+                    let uses_index = supported || self.function.blocks().iter().any(|block| {
+                        block.instructions().iter().any(|instruction| matches!(instruction,
+                            IrInstruction::Define { result, operation: crate::IrOperation::Integer { arguments, .. }, .. }
+                                if *result == offset && arguments.iter().any(|argument| steps.get(argument) == Some(&0))
+                        ))
+                    });
+                    if !uses_index {
+                        continue;
+                    }
+                    let run = invariant.replaced.get(address).copied().unwrap_or(*address);
+                    if cursor.is_some_and(|cursor| cursor.index == *index && cursor.run == run) {
+                        continue;
+                    }
+                    *candidates.entry(run).or_default() |= supported;
+                }
+            }
+            for (run, supported) in candidates {
+                let bounded = self.function.bounded_box_indices.iter().any(|(header, bounded_index, reference)| {
+                        *header == plan.header && *bounded_index == *index
+                            && (invariant.pins.contains(&(*reference, run))
+                                || invariant.pinned.iter().any(|(parameter, block, position)| {
+                                    *parameter == *reference && matches!(self.function.blocks()[*block].instructions()[*position],
+                                        IrInstruction::Define { result, .. } if result == run)
+                                })
+                                || self.function.blocks()[plan.header.index()].instructions().iter().any(|instruction| {
+                                    matches!(instruction, IrInstruction::Define { result, operation: crate::IrOperation::ProjectAddress {
+                                        address, projection: crate::IrPlaceStep::BoxReferent { .. }
+                                    }, .. } if *result == run && *address == *reference)
+                                }))
+                });
+                let layout = self.frame_run_layout(run)?;
+                let reason = if !supported {
+                    Some("offset is not the index or a checked sum with it")
+                } else if cursor.is_some_and(|cursor| cursor.run == run) {
+                    Some("run already carries the matched element's address")
+                } else if !parameters.iter().any(|(value, _, role)| {
+                    *value == run && matches!(role, Role::Hoisted | Role::Invariant)
+                }) {
+                    Some("run address is not a loop-invariant part parameter")
+                } else if layout.is_none() {
+                    Some("run has no supported contiguous element layout")
+                } else if !bounded {
+                    Some("no checked requirement bounds the index by that run's length")
+                } else if frames.selected.iter().any(|frame| frame.run == run) {
+                    Some("run already carries an element address for another index")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    frames.rejected.push((*index, run, reason));
+                } else if let Some((_, element, _)) = layout {
+                    frames.selected.push(FrameCursor {
+                        run,
+                        index: *index,
+                        element,
+                        steps: steps.clone(),
+                    });
+                }
+            }
+        }
+        Ok(frames)
+    }
+
+    /// The relative operand k of a proved non-wrapping unsigned sum
+    /// index + k (either order). Callers handle the index itself separately.
+    fn frame_relative_index(
+        &self,
+        steps: &HashMap<IrValueId, u64>,
+        offset: IrValueId,
+    ) -> Option<IrValueId> {
+        for block in self.function.blocks() {
+            for instruction in block.instructions() {
+                if let IrInstruction::Define {
+                    result,
+                    ty:
+                        IrType::Integer {
+                            width: 64,
+                            signed: false,
+                        },
+                    operation:
+                        crate::IrOperation::Integer {
+                            operation: crate::IrIntegerOperation::AddExact,
+                            arguments,
+                            ..
+                        },
+                } = instruction
+                    && *result == offset
+                    && let [left, right] = arguments.as_slice()
+                {
+                    if steps.get(left) == Some(&0) {
+                        return Some(*right);
+                    }
+                    if steps.get(right) == Some(&0) {
+                        return Some(*left);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The retained requirement bounds this index by the run's length on
+    /// every header edge, even when the selected arm never accesses a slot.
+    /// Together with the qualified allocation this makes index*stride and
+    /// the payload offset exact in the signed address domain [STOR-6]. Keep
+    /// these synthetic GEPs unflagged, including the inverse steps in each part.
+    fn frame_address_from_run(
+        &mut self,
+        frame: &FrameCursor,
+        index: IrValueId,
+    ) -> Result<String, BackendFailure> {
+        let (run, _, field) = self
+            .frame_run_layout(frame.run)?
+            .ok_or(BackendFailure::InvalidIr)?;
+        let ty = self.output.type_name(self.program, run)?;
+        let field = field.map_or(String::new(), |field| format!(", i32 {field}"));
+        let offset = self.value_name(index);
+        let offset = self.element_address_index(frame.element, &offset)?;
+        let pointer = self.next_temporary()?;
+        writeln!(
+            self.output,
+            "  %{pointer} = getelementptr {ty}, ptr {}, i64 0{field}, i64 {offset}",
+            self.value_name(frame.run)
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        Ok(format!("%{pointer}"))
+    }
+
+    fn edge_frame_cursor(
+        &mut self,
+        frame: &FrameCursor,
+        carried: &[(IrValueId, IrValueId)],
+        tail: bool,
+    ) -> Result<String, BackendFailure> {
+        let argument = carried
+            .iter()
+            .find(|(parameter, _)| *parameter == frame.index)
+            .map(|(_, argument)| *argument)
+            .ok_or(BackendFailure::InvalidIr)?;
+        if tail && let Some(step) = frame.steps.get(&argument) {
+            let address = frame_cursor_name(frame.run);
+            if *step == 0 {
+                return Ok(address);
+            }
+            let pointer = self.next_temporary()?;
+            let ty = self.output.type_name(self.program, frame.element)?;
+            let step = step.to_string();
+            let step = self.element_address_index(frame.element, &step)?;
+            writeln!(
+                self.output,
+                "  %{pointer} = getelementptr {ty}, ptr {address}, i64 {step}"
+            )
+            .map_err(|_| BackendFailure::TextEmission)?;
+            return Ok(format!("%{pointer}"));
+        }
+        self.frame_address_from_run(frame, argument)
+    }
+
+    /// Reconstruct the *allocation/aggregate* address, not just the payload:
+    /// helpers load this value through their pin slot and then apply the
+    /// ordinary header projection. After inlining those loads can forward
+    /// the stored pointer; the header offsets and opposite index GEPs are
+    /// visible together to LLVM. None of the inverse steps is inbounds.
+    fn emit_frame_cursor_bases(&mut self) -> Result<(), BackendFailure> {
+        let frames = self
+            .dispatch
+            .as_ref()
+            .map(|dispatch| dispatch.frame_cursors.clone())
+            .unwrap_or_default();
+        if frames.is_empty() {
+            return Ok(());
+        }
+        for frame in frames {
+            let (run, _, field) = self
+                .frame_run_layout(frame.run)?
+                .ok_or(BackendFailure::InvalidIr)?;
+            let run_ty = self.output.type_name(self.program, run)?;
+            let element = self.output.type_name(self.program, frame.element)?;
+            let index = self.value_name(frame.index);
+            let index = self.element_address_index(frame.element, &index)?;
+            let negative = format!("%wf.element.{}.negative", frame.run.ordinal());
+            let first = format!("%wf.element.{}.first", frame.run.ordinal());
+            let field = field.map_or(String::new(), |field| format!(", i32 {field}"));
+            writeln!(self.output,
+                "  {negative} = sub i64 0, {index}\n  {first} = getelementptr {element}, ptr {}, i64 {negative}\n  {} = getelementptr i8, ptr {first}, i64 sub (i64 0, i64 ptrtoint (ptr getelementptr ({run_ty}, ptr null, i64 0{field}, i64 0) to i64))",
+                frame_cursor_name(frame.run), value_name(frame.run)
+            ).map_err(|_| BackendFailure::TextEmission)?;
+        }
+        if let Some(dispatch) = &self.dispatch {
+            for (parameter, canonical) in &dispatch.pins {
+                writeln!(
+                    self.output,
+                    "  store ptr {}, ptr {}",
+                    value_name(*canonical),
+                    pin_slot_name(*parameter)
+                )
+                .map_err(|_| BackendFailure::TextEmission)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Direct projections use the carried pointer immediately. Calls retain
+    /// their ABI and see the reconstructed run via the existing pin path.
+    pub(super) fn frame_element_place(
+        &mut self,
+        run: IrValueId,
+        offset: IrValueId,
+        element: IrType,
+    ) -> Result<Option<String>, BackendFailure> {
+        let Some(dispatch) = self
+            .dispatch
+            .as_ref()
+            .filter(|dispatch| dispatch.part != Part::Enclosing)
+        else {
+            return Ok(None);
+        };
+        let canonical = dispatch.replaced.get(&run).copied().unwrap_or(run);
+        let Some(frame) = dispatch
+            .frame_cursors
+            .iter()
+            .find(|frame| frame.run == canonical && frame.element == element)
+        else {
+            return Ok(None);
+        };
+        let address = frame_cursor_name(frame.run);
+        if frame.steps.get(&offset) == Some(&0) {
+            return Ok(Some(address));
+        }
+        let Some(relative) = self.frame_relative_index(&frame.steps, offset) else {
+            return Ok(None);
+        };
+        let ty = self.output.type_name(self.program, element)?;
+        let relative = self.value_name(relative);
+        let relative = self.element_address_index(element, &relative)?;
+        let pointer = self.next_temporary()?;
+        writeln!(
+            self.output,
+            "  %{pointer} = getelementptr {ty}, ptr {address}, i64 {relative}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        Ok(Some(format!("%{pointer}")))
+    }
+
     /// The header instruction that addresses the matched element, which the
     /// arms read through that address, by a carried index into a run of
     /// slots at an address the loop cannot change (see [`Cursor`]).
@@ -2031,4 +2578,8 @@ impl FunctionEmitter<'_, '_> {
 /// part hands to callees in its place.
 fn pin_slot_name(parameter: IrValueId) -> String {
     format!("%wf.pin.{}", parameter.ordinal())
+}
+
+fn frame_cursor_name(run: IrValueId) -> String {
+    format!("%wf.element.{}", run.ordinal())
 }

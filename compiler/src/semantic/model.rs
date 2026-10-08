@@ -2899,6 +2899,111 @@ pub(crate) struct CheckedFunction {
     pub(crate) entailment: super::entailment::FunctionEntailment,
 }
 
+impl CheckedFunction {
+    /// A narrow retained consequence of checked callable requirements:
+    /// unsigned index [+ unsigned literal] <= (or <) a box content's len.
+    /// FN-8 and FN-10 establish these on entry and every self-tail transfer.
+    /// This selects an optional lowering; it proves no source obligation.
+    pub(crate) fn bounded_box_indices(&self) -> Vec<(usize, usize)> {
+        use super::goal::{GoalDatum, GoalExpression, GoalOperation, GoalProjection};
+        let parameter = |expression: &GoalExpression| match expression {
+            GoalExpression::Datum(GoalDatum::Parameter {
+                ordinal,
+                projections,
+                ty: CheckedType::Integer(IntegerType::U64),
+            }) if projections.is_empty() => Some(*ordinal as usize),
+            _ => None,
+        };
+        self.requirements
+            .iter()
+            .filter_map(|requirement| {
+                let GoalExpression::Operation {
+                    row:
+                        GoalOperation::Integer {
+                            operation:
+                                CheckedIntegerOperation::Less | CheckedIntegerOperation::LessEqual,
+                            operand_type: CheckedType::Integer(IntegerType::U64),
+                        },
+                    arguments,
+                    ..
+                } = &requirement.template.root
+                else {
+                    return None;
+                };
+                let [left, right] = arguments.as_slice() else {
+                    return None;
+                };
+                let index = parameter(left).or_else(|| {
+                    let GoalExpression::Operation {
+                        row:
+                            GoalOperation::Integer {
+                                operation: CheckedIntegerOperation::AddExact,
+                                operand_type: CheckedType::Integer(IntegerType::U64),
+                            },
+                        arguments,
+                        ..
+                    } = left
+                    else {
+                        return None;
+                    };
+                    let [a, b] = arguments.as_slice() else {
+                        return None;
+                    };
+                    [(a, b), (b, a)].into_iter().find_map(|(index, extra)| {
+                        matches!(
+                            extra,
+                            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer {
+                                ty: IntegerType::U64,
+                                ..
+                            }))
+                        )
+                        .then(|| parameter(index))
+                        .flatten()
+                    })
+                })?;
+                let GoalExpression::Operation { row, arguments, .. } = right else {
+                    return None;
+                };
+                if !matches!(
+                    row,
+                    GoalOperation::BufferMeasure {
+                        measure: CheckedMeasure::Length,
+                        ..
+                    } | GoalOperation::ArrayMeasure {
+                        measure: CheckedMeasure::Length,
+                        ..
+                    } | GoalOperation::ContainerMeasure {
+                        measure: CheckedMeasure::Length,
+                        ..
+                    }
+                ) {
+                    return None;
+                }
+                let [
+                    GoalExpression::Datum(GoalDatum::Parameter {
+                        ordinal,
+                        projections,
+                        ..
+                    }),
+                ] = arguments.as_slice()
+                else {
+                    return None;
+                };
+                // The clause retains both `^` on the reference holder and
+                // `.inner` on its Box. The first step keeps the Box type;
+                // the second reaches the measured content. Accepting only
+                // one step misses ordinary `reference^.inner.len` clauses.
+                if projections.as_slice() != [GoalProjection::Deref, GoalProjection::Deref] {
+                    return None;
+                }
+                let reference = *ordinal as usize;
+                (self.parameters.get(reference)?.mode == CheckedMode::Reference)
+                    .then_some((index, reference))
+            })
+            .collect()
+    }
+}
+
 /// [WAIT-1, WAIT-3] the waiting facts of one function body, in source order.
 ///
 /// Permission reads `calls` to deny overlap to a statement that waits, and

@@ -115,6 +115,42 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .is_some_and(|shape| shape.shape == IrWindowShape::Slots))
     }
 
+    /// Contiguous payload layouts usable by a split loop's frame cursor.
+    /// As with `run_slots_follow_address`, a ring or a descriptor loaded
+    /// through an address does not qualify. Buffer is the runtime Array
+    /// placement, with one header word rather than Slots' two.
+    pub(super) fn frame_run_layout(
+        &self,
+        run: IrValueId,
+    ) -> Result<Option<(IrType, IrType, Option<u32>)>, BackendFailure> {
+        let Some(IrType::Address(referent)) = self.value_type(run) else {
+            return Ok(None);
+        };
+        let ty = referent.ty();
+        let (element, field) = match ty {
+            IrType::Buffer { element } => (element, Some(1)),
+            IrType::Array { element, length } if length > 0 => (element, None),
+            IrType::Window {
+                element, capacity, ..
+            } if self.run_slots_follow_address(run)? && capacity != Some(0) => (
+                element,
+                Some(
+                    RunShape::of(ty)
+                        .ok_or(BackendFailure::InvalidIr)?
+                        .slots_field(),
+                ),
+            ),
+            _ => return Ok(None),
+        };
+        Ok(Some((
+            ty,
+            self.program
+                .element(element)
+                .ok_or(BackendFailure::InvalidIr)?,
+            field,
+        )))
+    }
+
     fn run_storage(&mut self, run: IrValueId) -> Result<Option<String>, BackendFailure> {
         if matches!(self.value_type(run), Some(IrType::Address(_))) {
             Ok(Some(self.value_name(run)))
@@ -164,6 +200,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 })
         {
             return Err(BackendFailure::InvalidIr);
+        }
+        if let Some(pointer) = self.frame_element_place(run, offset, element)? {
+            return Ok(pointer);
         }
         let head = self.window_origin(shape, run_type, run)?;
         let physical = self.wrap_offset(shape, run_type, run, &head, &self.value_name(offset))?;
@@ -377,6 +416,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 })
         {
             return Err(BackendFailure::InvalidIr);
+        }
+        if let Some(pointer) = self.frame_element_place(run, offset, ty)? {
+            return self.load_place_result(result, ty, &pointer);
         }
         let head = self.window_origin(shape, run_type, run)?;
         let offset = self.value_name(offset);

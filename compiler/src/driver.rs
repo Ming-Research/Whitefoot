@@ -27,7 +27,7 @@ use diagnostic::{Anchor, Head, Record};
 pub use diagnostic::{DiagnosticFormat, render_driver_failure};
 pub use packages::{ModuleProgramFailure, form_module_program_graph};
 
-use crate::backend::emitter::{LlvmModule, emit_llvm_with_layout};
+use crate::backend::emitter::{LlvmModule, emit_prepared_llvm, prepare_dispatch_layout};
 use crate::target::TargetLayout;
 use crate::{
     ACTIVE_KERNEL_SPEC_HASH, BackendFailure, CanonicalLimits, CanonicalOutcome,
@@ -509,6 +509,22 @@ pub fn compile_with_cache(
     overlap: crate::OverlapLowering,
     cache: &BuildCache,
 ) -> Result<LlvmModule, CompilationFailure> {
+    compile_for_emission(inputs, limits, overlap, Some(cache), false).map(|(module, _)| module)
+}
+
+/// Compiles a source bundle for one whole LLVM module or link fragments.
+/// Fragment emission disables program-private enum handler words before
+/// layout selection. The returned ledger is the ordinary permission ledger.
+///
+/// # Errors
+/// Returns the same compilation failures as [`compile_with_overlap`].
+pub fn compile_for_emission(
+    inputs: &[SourceInput<'_>],
+    limits: CompilerLimits,
+    overlap: crate::OverlapLowering,
+    cache: Option<&BuildCache>,
+    fragments: bool,
+) -> Result<(LlvmModule, Vec<String>), CompilationFailure> {
     compile_selected(
         inputs,
         None,
@@ -520,10 +536,11 @@ pub fn compile_with_cache(
             no_heap: false,
             public: false,
             written: None,
+            fragments,
         },
-        receipts_for(overlap, Some(cache)),
+        receipts_for(overlap, cache),
     )
-    .map(|reported| reported.module)
+    .map(|reported| (reported.module, reported.ledger))
 }
 
 /// The proof receipts a compilation may use: none for an overlap lowering,
@@ -2223,6 +2240,7 @@ fn entry_selection<'graph>(
                 no_heap: entry.no_heap(),
                 public: true,
                 written: entry.written(),
+                fragments: false,
             }
         }
         ModuleEntry::Function { module, function } => Selection {
@@ -2233,6 +2251,7 @@ fn entry_selection<'graph>(
             no_heap: false,
             public: false,
             written: None,
+            fragments: false,
         },
     })
 }
@@ -2260,19 +2279,8 @@ pub fn compile_module_program_with_permission_ledger(
     limits: CompilerLimits,
     overlap: crate::OverlapLowering,
 ) -> Result<(LlvmModule, Vec<String>), CompilationFailure> {
-    let inputs = &with_library_records(graph, inputs);
-    let selection = entry_selection(graph, entry)?;
-    let (modules, selected) = composition_inputs(graph, inputs, selection.module);
-    require_module_verdicts(graph, inputs, &modules, limits, None)?;
-    compile_selected(
-        &selected,
-        Some(graph.modules()),
-        limits,
-        overlap,
-        &selection,
-        None,
-    )
-    .map(|reported| (reported.module, reported.ledger))
+    build_module_entry_for_emission(graph, inputs, entry, limits, overlap, None, false)
+        .map(|(module, ledger, _)| (module, ledger))
 }
 
 /// Compiles one entry's composition to textual LLVM [MOD-9, PROG-3], reusing
@@ -2291,39 +2299,59 @@ pub fn build_module_entry(
     overlap: crate::OverlapLowering,
     cache: Option<&BuildCache>,
 ) -> Result<(LlvmModule, bool), CompilationFailure> {
+    build_module_entry_for_emission(graph, inputs, entry, limits, overlap, cache, false)
+        .map(|(module, _, reused)| (module, reused))
+}
+
+/// Builds an entry for a whole LLVM module or link fragments. Emission mode
+/// participates in the retained-module key because it changes enum layout.
+/// Pass no cache when the permission ledger must describe this invocation.
+///
+/// # Errors
+/// Returns the same compilation failures as [`build_module_entry`].
+pub fn build_module_entry_for_emission(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    entry: ModuleEntry<'_>,
+    limits: CompilerLimits,
+    overlap: crate::OverlapLowering,
+    cache: Option<&BuildCache>,
+    fragments: bool,
+) -> Result<(LlvmModule, Vec<String>, bool), CompilationFailure> {
     let inputs = &with_library_records(graph, inputs);
-    let selection = entry_selection(graph, entry)?;
+    let mut selection = entry_selection(graph, entry)?;
+    selection.fragments = fragments;
     let (modules, selected) = composition_inputs(graph, inputs, selection.module);
-    let material = entry_module_material(
+    let mut material = entry_module_material(
         graph,
         &selection,
         (&modules, &selected),
         overlap,
         crate::toolchain::facts(),
     );
+    material.extend_from_slice(format!("fragments {fragments}\n").as_bytes());
     // Only a build that composed is recorded, so a recorded module implies
     // that every module verdict of its closure held for these inputs.
     if let Some(module) = cache
         .and_then(|cache| cache.load(ENTRY_MODULES, &material))
         .and_then(|payload| LlvmModule::decode(&payload))
     {
-        return Ok((module, true));
+        return Ok((module, Vec::new(), true));
     }
     require_module_verdicts(graph, inputs, &modules, limits, cache)?;
-    let module = compile_selected(
+    let reported = compile_selected(
         &selected,
         Some(graph.modules()),
         limits,
         overlap,
         &selection,
         receipts_for(overlap, cache),
-    )?
-    .module;
+    )?;
     if let Some(cache) = cache {
         // A failed publication costs only a later rebuild.
-        let _ = cache.store(ENTRY_MODULES, &material, &module.encode());
+        let _ = cache.store(ENTRY_MODULES, &material, &reported.module.encode());
     }
-    Ok((module, false))
+    Ok((reported.module, reported.ledger, false))
 }
 
 /// Emitted modules depend on the runtime host's LLVM forms as well as the
@@ -2374,6 +2402,7 @@ fn compile_reporting(
             no_heap: false,
             public: false,
             written: None,
+            fragments: false,
         },
         None,
     )
@@ -2390,6 +2419,8 @@ struct Selection<'a> {
     public: bool,
     /// Where a named entry is written in the graph record.
     written: Option<&'a Place>,
+    /// A fragment link must retain enum layouts independent of other bodies.
+    fragments: bool,
 }
 
 impl<'a> Selection<'a> {
@@ -2827,6 +2858,7 @@ fn lower_selected(
             no_heap: selection.no_heap,
             public: false,
             written: selection.written,
+            fragments: selection.fragments,
         };
         match compile_selected(
             &with_caller,
@@ -2868,8 +2900,9 @@ fn lower_selected(
         .map(|line| line.text)
         .collect();
     ledger.extend_from_slice(ir.actualization_ledger());
-    emit_llvm_with_layout(&ir, target)
-        .and_then(|mut module| {
+    prepare_dispatch_layout(&ir, target, selection.fragments)
+        .and_then(|ir| {
+            let mut module = emit_prepared_llvm(&ir, target)?;
             // Emission decides which recursive components carry a runtime
             // budget after their clone families are known.
             let mut ledger = ledger;
