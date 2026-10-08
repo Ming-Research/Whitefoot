@@ -1856,48 +1856,79 @@ impl<'unit> Checker<'_, 'unit> {
     }
 }
 
-/// [ENT-2] whether one resolved path may stand as the proof path of every
-/// place written through a reference variable that names it: an exact path
-/// [`ResolvedPlace::is_exact_path`] starting at a local variable, a named
-/// const, an atomic statement's state, or a reference parameter no `set` of
-/// the function rebinds.
-///
-/// A rebound parameter's own binding stands both for the storage it received
-/// and for whatever it names after a rebinding, and its spelling `p^` is
-/// identified by that binding; a description rooted at it would give the
-/// received storage the term a later `p^` forms for another one.
-pub(super) fn is_exact_description(
-    path: &ResolvedPlace,
-    rebound_parameters: &std::collections::HashSet<BindingId>,
-) -> bool {
-    path.is_exact_path()
-        && match path.root {
-            PlaceRoot::Constant(_) => true,
-            PlaceRoot::Binding(root) => !rebound_parameters.contains(&root),
-        }
+/// [ENT-2] which reference variables and paths are exact in the function
+/// being checked: the declarations some `set` of its body rebinds, reachable
+/// or not, and among them the self-anchored reference variables, parameters
+/// and `atomic` binders, whose own binding is the root of the path they name.
+#[derive(Clone, Copy)]
+pub(super) struct Exactness<'body> {
+    rebound_declarations: &'body std::collections::HashSet<DeclarationId>,
+    rebound_anchors: &'body std::collections::HashSet<BindingId>,
 }
 
-impl BodyChecker {
-    /// The exact description `local` has at this point [REF-1, ENT-2], the
-    /// proof base of every place written through it: the one path of a `&T`
-    /// reference variable, when that path is exact. A reference parameter
-    /// that names itself needs none, its spelling being that path already.
-    pub(super) fn exact_description(&self, local: &LocalBinding) -> Option<ResolvedPlace> {
+impl Exactness<'_> {
+    /// Whether one resolved path names one place at every evaluation reading
+    /// it [`ResolvedPlace::is_exact_path`] and starts at a root that names
+    /// one storage throughout the body.
+    ///
+    /// A rebound anchor's own binding stands both for the storage it received
+    /// and for whatever it names after a rebinding, and a place spelled
+    /// through it is identified by that binding; a path rooted at it would
+    /// give the received storage the term a later spelling forms for another.
+    pub(super) fn is_exact_path(self, path: &ResolvedPlace) -> bool {
+        path.is_exact_path()
+            && match path.root {
+                PlaceRoot::Constant(_) => true,
+                PlaceRoot::Binding(root) => !self.rebound_anchors.contains(&root),
+            }
+    }
+
+    /// The path an exact `&T` reference variable names at this point
+    /// [REF-1, ENT-2]: one exact path of a variable no `set` rebinds.
+    pub(super) fn exact_path<'local>(
+        self,
+        local: &'local LocalBinding,
+    ) -> Option<&'local ResolvedPlace> {
         let reference = local.reference.as_ref()?;
         let [path] = reference.paths.as_slice() else {
             return None;
         };
-        let itself = path.root == PlaceRoot::Binding(local.binding) && path.path.is_empty();
         (reference.kind == ReferenceKind::Single
-            && !itself
-            && is_exact_description(path, &self.rebound_parameters))
-        .then(|| ResolvedPlace {
+            && !self.rebound_declarations.contains(&local.declaration)
+            && self.is_exact_path(path))
+        .then_some(path)
+    }
+}
+
+impl BodyChecker {
+    pub(super) const fn exactness(&self) -> Exactness<'_> {
+        Exactness {
+            rebound_declarations: &self.rebound_declarations,
+            rebound_anchors: &self.rebound_anchors,
+        }
+    }
+
+    /// The proof base of every place written through `local` at this point
+    /// [ENT-2]: its exact path. A reference parameter that names itself needs
+    /// none, its spelling being that path already.
+    pub(super) fn exact_description(&self, local: &LocalBinding) -> Option<ResolvedPlace> {
+        let path = self.exactness().exact_path(local)?;
+        let itself = path.root == PlaceRoot::Binding(local.binding) && path.path.is_empty();
+        (!itself).then(|| ResolvedPlace {
             // A spelled place carries no SHARE-2 aliases either; the
             // aliases only widen kills, which resolve the root again.
             atomic_aliases: Vec::new(),
             root: path.root,
             path: path.path.clone(),
         })
+    }
+
+    /// Records an `atomic` binder that some `set` of the body rebinds as a
+    /// rebound anchor [`Exactness`].
+    pub(super) fn note_anchor(&mut self, binding: BindingId, declaration: DeclarationId) {
+        if self.rebound_declarations.contains(&declaration) {
+            self.rebound_anchors.insert(binding);
+        }
     }
 
     /// Retains the structural walk's already-resolved [REF-1] paths without
@@ -1940,15 +1971,14 @@ impl BodyChecker {
 }
 
 impl<'unit> DeclarationInventory<'unit> {
-    /// [ENT-2, REF-1] the reference parameters some `set` of this function
-    /// rebinds, reachable or not: a syntactic scan of every `set` whose
-    /// target is the bare parameter name.
-    pub(super) fn rebound_reference_parameters(
+    /// [ENT-2, REF-1] the declarations some `set` of this function names as
+    /// its bare target, reachable or not: a syntactic scan, so a rebinding
+    /// anywhere in the body counts wherever the variable is read.
+    pub(super) fn rebound_declarations(
         &self,
         check_context: &CheckContext<'_>,
         function: NodeId,
-        parameters: &HashMap<DeclarationId, LocalBinding>,
-    ) -> Result<std::collections::HashSet<BindingId>, CheckStop> {
+    ) -> Result<std::collections::HashSet<DeclarationId>, CheckStop> {
         let mut rebound = std::collections::HashSet::new();
         for set in self.tree.descendants_with(function, Production::SetStmt)? {
             let [target] = self.tree.children_with(set, Production::Place)?[..] else {
@@ -1961,11 +1991,8 @@ impl<'unit> DeclarationInventory<'unit> {
             {
                 continue;
             }
-            if let Some(declaration) = self.complete_binding_target(check_context, target)?
-                && let Some(local) = parameters.get(&declaration)
-                && local.reference.is_some()
-            {
-                rebound.insert(local.binding);
+            if let Some(declaration) = self.complete_binding_target(check_context, target)? {
+                rebound.insert(declaration);
             }
         }
         Ok(rebound)

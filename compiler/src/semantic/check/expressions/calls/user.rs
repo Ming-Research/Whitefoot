@@ -447,7 +447,7 @@ impl<'unit> Checker<'_, 'unit> {
                     _ => None,
                 },
                 bindings,
-                &self.body.rebound_parameters,
+                self.body.exactness(),
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
             argument_atoms.push(atom);
@@ -1150,14 +1150,31 @@ impl<'unit> TypeContext<'unit> {
         argument: &super::super::super::TypedExpression,
         passed_place: Option<&ResolvedPlace>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
-        rebound_parameters: &std::collections::HashSet<BindingId>,
+        exactness: super::super::super::references::Exactness<'_>,
     ) -> Result<GoalExpression, CheckStop> {
-        // [ENT-2] a resolved referent identifies the actual only where it is
-        // an exact description; otherwise the actual keeps the identity of
-        // the reference variable that names it.
-        let passed_place = passed_place.filter(|place| {
-            super::super::super::references::is_exact_description(place, rebound_parameters)
+        // [ENT-2] the actual is identified by the proof path of the place it
+        // names: the resolved path where that path is exact and the place is
+        // not written through a reference variable that is not exact, and
+        // otherwise the place as written through that variable.
+        let spelled = crate::semantic::places::named_place(&argument.expression).and_then(|named| {
+            let PlaceRoot::Binding(root) = named.root else {
+                return None;
+            };
+            let local = bindings.values().find(|local| local.binding == root)?;
+            (local.reference.is_some() && exactness.exact_path(local).is_none()).then(|| {
+                let mut place = ResolvedPlace {
+                    atomic_aliases: Vec::new(),
+                    root: named.root,
+                    path: named.steps,
+                };
+                place.path.extend(named.suffix);
+                place
+            })
         });
+        let passed_place = match &spelled {
+            Some(place) => Some(place),
+            None => passed_place.filter(|place| exactness.is_exact_path(place)),
+        };
         if expected_mode == CheckedMode::Range {
             // [REF-4, MSR-1] a range reference's one measure is `len`, equal
             // to `hi - lo`, and that is no measure of the storage the range
@@ -1233,7 +1250,7 @@ impl<'unit> TypeContext<'unit> {
                 }));
             }
             let (image, _) =
-                self.call_goal_place_inner(check_context, place, bindings, rebound_parameters)?;
+                self.call_goal_place_inner(check_context, place, bindings, exactness)?;
             if image.ty() != expected_type {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
@@ -1324,7 +1341,7 @@ impl<'unit> TypeContext<'unit> {
             });
         }
         let (image, holder_pending) =
-            self.call_goal_place_inner(check_context, place, bindings, rebound_parameters)?;
+            self.call_goal_place_inner(check_context, place, bindings, exactness)?;
         if holder_pending || image.ty() != expected_type {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1402,7 +1419,7 @@ impl<'unit> TypeContext<'unit> {
         check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
-        rebound_parameters: &std::collections::HashSet<BindingId>,
+        exactness: super::super::super::references::Exactness<'_>,
     ) -> Result<(GoalExpression, bool), CheckStop> {
         let pbase = self
             .declarations
@@ -1421,17 +1438,10 @@ impl<'unit> TypeContext<'unit> {
                     let local = bindings
                         .get(&declaration)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if let Some(reference) = &local.reference {
+                    if local.reference.is_some() {
                         (
-                            match reference.paths.as_slice() {
-                                [path]
-                                    if super::super::super::references::is_exact_description(
-                                        path,
-                                        rebound_parameters,
-                                    ) =>
-                                {
-                                    self.goal_referent_image(path, local.ty, place)?
-                                }
+                            match exactness.exact_path(local) {
+                                Some(path) => self.goal_referent_image(path, local.ty, place)?,
                                 // [REF-1, ENT-2] a joined reference still
                                 // denotes one selected referent, but no member
                                 // of its possible-target set is its
@@ -1439,7 +1449,7 @@ impl<'unit> TypeContext<'unit> {
                                 // is not exact identifies no one place. Keep
                                 // the reference's identity so proof kills can
                                 // resolve every candidate.
-                                _ => GoalExpression::Datum(GoalDatum::Place {
+                                None => GoalExpression::Datum(GoalDatum::Place {
                                     root: local.binding,
                                     projections: Vec::new(),
                                     ty: local.ty,

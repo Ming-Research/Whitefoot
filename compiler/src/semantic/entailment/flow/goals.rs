@@ -90,13 +90,18 @@ impl Input<'_, '_> {
                 projections: fields.iter().copied().map(GoalProjection::Field).collect(),
                 ty: *ty,
             })),
-            CheckedExpression::DerefAddressed { binding, ty, .. } if self.is_copy(*ty) => {
-                Some(GoalExpression::Datum(GoalDatum::Place {
+            // [ENT-2] a holder exact here is read at its proof path, which
+            // reaches this arm only when that path starts at a named const.
+            CheckedExpression::DerefAddressed {
+                binding, ty, proof, ..
+            } if self.is_copy(*ty) => match proof {
+                Some(proof) => self.goal_place_datum(proof, *ty),
+                None => Some(GoalExpression::Datum(GoalDatum::Place {
                     root: *binding,
                     projections: Vec::new(),
                     ty: *ty,
-                }))
-            }
+                })),
+            },
             CheckedExpression::BoxDeref {
                 referent, value, ..
             } if self.is_copy(*referent) => self
@@ -333,13 +338,12 @@ impl Input<'_, '_> {
             CheckedExpression::BufferMeasure { measure, root }
                 if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
-                let argument = goal_binding_place(
-                    root.binding,
-                    root.path.iter().map(CheckedPlaceStep::goal_projection),
+                let argument = self.goal_place_datum(
+                    &root.proof_place(),
                     CheckedType::Buffer {
                         element: root.element,
                     },
-                );
+                )?;
                 build_operation(
                     GoalOperation::BufferMeasure {
                         measure: *measure,
@@ -421,11 +425,7 @@ impl Input<'_, '_> {
                 let collection_type = CheckedType::Buffer {
                     element: root.element,
                 };
-                let collection = goal_binding_place(
-                    root.binding,
-                    root.path.iter().map(CheckedPlaceStep::goal_projection),
-                    collection_type,
-                );
+                let collection = self.goal_place_datum(&root.proof_place(), collection_type)?;
                 build_operation(
                     GoalOperation::BufferIndex {
                         element: root.element,
@@ -484,29 +484,32 @@ impl Input<'_, '_> {
     }
 
     /// The Goal datum of one storage place, identified by its [ENT-2] proof
-    /// path: through the exact description its reference variable has
-    /// there, as an L0 term over the same place is.
+    /// path, as an L0 term over the same place is.
     pub(super) fn goal_container_place(
         &self,
         root: &CheckedContainerRoot,
     ) -> Option<GoalExpression> {
-        let (base, mut projections) = match &root.proof_base {
-            Some(base) => (
-                base.root,
-                base.path
-                    .iter()
-                    .map(goal_projection_of_step)
-                    .collect::<Option<Vec<_>>>()?,
-            ),
-            None => (root.root, Vec::new()),
-        };
-        projections.extend(root.goal_projections());
-        Some(match base {
-            PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, root.ty),
+        self.goal_place_datum(&root.proof_place(), root.ty)
+    }
+
+    /// The Goal datum one [ENT-2] proof path names, at a binding or at a
+    /// named const.
+    pub(super) fn goal_place_datum(
+        &self,
+        place: &ResolvedPlace,
+        ty: CheckedType,
+    ) -> Option<GoalExpression> {
+        let projections = place
+            .path
+            .iter()
+            .map(goal_projection_of_step)
+            .collect::<Option<Vec<_>>>()?;
+        Some(match place.root {
+            PlaceRoot::Binding(binding) => goal_binding_place(binding, projections, ty),
             PlaceRoot::Constant(id) => GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration: self.context.constant_declaration(id)?,
                 projections,
-                ty: root.ty,
+                ty,
             }),
         })
     }

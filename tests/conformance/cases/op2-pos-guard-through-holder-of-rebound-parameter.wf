@@ -1,18 +1,18 @@
-fn probe(p: &u64, other: &u64, flip: Bool) -> result: u64 reads(p), reads(other) {
-  doc "saved names the caller's first cell; after the join p may name other. A path rooted at a rebound parameter is not exact, so saved^ and p^ stay distinct terms and the guard on saved^ does not prove p^ nonzero.";
+fn probe(p: &u64, other: &u64, flip: Bool) -> result: u64 reads(p) {
+  doc "The control for op2-neg-guard-through-holder-of-rebound-parameter: the guard and the divisor are both read through saved.";
   let saved = &p^;
   if flip {
     set p = &other^;
   }
   if saved^ != 0_u64 {
-    let r = 10_u64 / p^;
+    let r = 10_u64 / saved^;
     return r;
   }
   return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "The first cell is nonzero and other is zero, and p names other.";
+  doc "The first cell holds five, so the guarded division returns two.";
   let five = 5_u64;
   let zero = 0_u64;
   let flip = 0_u64 == 0_u64;

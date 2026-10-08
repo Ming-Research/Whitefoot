@@ -7,11 +7,11 @@ fn need(x: &u64) -> result: u64 reads(x) contract {
 }
 
 fn pick(a: &u64, b: &u64) -> result: u64 reads(b) {
-  doc "After set q = &b^, q's description is exactly b's cell, so the guard read through q names the place need's requirement is instantiated at.";
+  doc "q is rebound, so the guard read through q and the call through q both keep q's spelling and meet.";
   let q = &a^;
   set q = &b^;
   if q^ != 0_u64 {
-    let r = need(x: b);
+    let r = need(x: q);
     return r;
   }
   return 0_u64;

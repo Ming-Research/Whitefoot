@@ -4,7 +4,7 @@ enum Store {
 }
 
 fn probe_append(store: &Store, required: u64) -> result: unit writes(store) {
-  doc "A guard read immediately before place_back discharges its len < cap requirement through an enum payload reference.";
+  doc "Each iteration's guard read through the payload binder discharges that iteration's place_back requirement, after the previous append killed the length fact.";
   match store^ {
     Vacant() => {
     }
