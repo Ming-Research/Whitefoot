@@ -359,11 +359,11 @@ jobs:
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
 
-  # Temporary: the loop { match } line's baseline. The stage-3 wasm
-  # interpreter as gen.py writes it now, a plain loop { match }, against the
-  # same interpreter in its earlier musttail spelling (gen.py at 3142e15c6),
-  # both compiled by this commit's compiler, with a twin of the natural form,
-  # wasmi 2.0.0 and Silverfir-nano. placement_runner picks the host and
+  # Temporary: the loop { match } line's phase-2 runs. The stage-3 wasm
+  # interpreter as gen.py writes it now, a plain loop { match }, compiled by
+  # this commit's compiler and by its merge base's (with a twin of the base),
+  # and its earlier musttail spelling (gen.py at 3142e15c6) by this commit's,
+  # with wasmi 2.0.0 and Silverfir-nano. placement_runner picks the host and
   # placement_rounds the CoreMark launches per engine.
   natural-baseline:
     if: inputs.experiment == 'natural-baseline'
@@ -398,6 +398,14 @@ jobs:
           cargo fetch --locked --manifest-path compiler/Cargo.toml
           make -C compiler build
           wfc=compiler/target/gate/whitefootc
+          # The merge base's compiler compiles the same natural source: the
+          # base the branch's lowering is measured against.
+          base=$(git merge-base origin/main HEAD)
+          git worktree prune
+          git worktree add --detach "$RUNNER_TEMP/wf-base" "$base"
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/wf-base/compiler/Cargo.toml"
+          make -C "$RUNNER_TEMP/wf-base/compiler" build
+          echo "base $base, head $(git rev-parse HEAD)"
           python3 research/experiments/match-dispatch/wasm/gen.py "$out/natural.wf"
           git archive 3142e15c6 research/experiments/match-dispatch/wasm | tar -x -C "$out/musttail-gen"
           python3 "$out/musttail-gen/research/experiments/match-dispatch/wasm/gen.py" "$out/musttail.wf"
@@ -408,7 +416,9 @@ jobs:
             /usr/bin/time -p "$wfc" --dispatch-ledger "$out/$form.wf" -o "$out/wasm-$form" > "$out/ledger-$form.txt"
             grep -E 'wf_run' "$out/ledger-$form.txt" | head -5
           done
-          cp "$out/wasm-natural" "$out/wasm-twin"
+          echo "== base natural"
+          "$RUNNER_TEMP/wf-base/compiler/target/gate/whitefootc" --dispatch-ledger "$out/natural.wf" -o "$out/wasm-base" | grep -E 'wf_run' | head -5
+          cp "$out/wasm-base" "$out/wasm-twin"
           rm -rf "$RUNNER_TEMP/sf"
           git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
           git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
@@ -421,7 +431,7 @@ jobs:
           out="$RUNNER_TEMP/natural-baseline"
           probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
           cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
-          engines=(natural="$out/wasm-natural" musttail="$out/wasm-musttail" twin="$out/wasm-twin")
+          engines=(natural="$out/wasm-natural" musttail="$out/wasm-musttail" base="$out/wasm-base" twin="$out/wasm-twin")
           engines+=(wasmi="$RUNNER_TEMP/wasmi/bin/wasmi" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp")
           python3 "$probe" --module coremark.wasm --iterations 2000 \
             --launches "${{ inputs.placement_rounds }}" --tsv "$out/run.tsv" "${engines[@]}"
