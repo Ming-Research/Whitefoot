@@ -1314,6 +1314,11 @@ impl<'check, 'unit> Analyzer<'check, 'unit> {
             input: Input {
                 context,
                 function,
+                range_participant: super::super::range_judgment::takes_part(function, |callee| {
+                    context
+                        .callee(callee)
+                        .is_some_and(|callee| callee.range_boundary)
+                }),
                 places: PlaceMap::default(),
                 entry_images: Vec::new(),
                 postcondition_entry_images: Vec::new(),
@@ -1699,6 +1704,7 @@ struct Analyzer<'check, 'unit> {
 struct Input<'check, 'unit> {
     context: &'check EntailmentContext<'unit>,
     function: &'check CheckedFunction,
+    range_participant: bool,
     /// [REF-1] place resolution for this function.
     places: PlaceMap,
     entry_images: Vec<EntryImageRecord>,

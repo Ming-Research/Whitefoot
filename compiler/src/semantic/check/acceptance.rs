@@ -389,6 +389,14 @@ impl<'unit> TypeContext<'unit> {
     /// judgment answering none, are the checker and the engine disagreeing,
     /// and the function is not accepted.
     pub(super) fn entailment_rejection(&self, function: &CheckedFunction) -> Result<(), CheckStop> {
+        self.entailment_rejection_after_range(function, &[])
+    }
+
+    pub(super) fn entailment_rejection_after_range(
+        &self,
+        function: &CheckedFunction,
+        discharged: &[usize],
+    ) -> Result<(), CheckStop> {
         let entailment = &function.entailment;
         if entailment.answers.len() != function.obligations.len()
             || !entailment.unrecorded.is_empty()
@@ -397,7 +405,15 @@ impl<'unit> TypeContext<'unit> {
         }
         let mut body = Vec::new();
         let mut relations = Vec::new();
-        for (record, answer) in function.obligations.iter().zip(&entailment.answers) {
+        for (index, (record, answer)) in function
+            .obligations
+            .iter()
+            .zip(&entailment.answers)
+            .enumerate()
+        {
+            if discharged.contains(&index) {
+                continue;
+            }
             let Some(answer) = *answer else {
                 continue;
             };

@@ -1282,7 +1282,7 @@ impl<'unit> Checker<'_, 'unit> {
         }
         self.install_call_requirements(check_context, &mut phase_a)?;
         self.types.form_obligation_records(&mut phase_a)?;
-        let callees = self.types.entailment_callees()?;
+        let callees = self.types.entailment_callees(&phase_a)?;
         self.validate_generic_body_entailment(
             &mut phase_a,
             &canonical_generic_signatures,

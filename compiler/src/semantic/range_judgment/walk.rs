@@ -12,7 +12,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::super::entailment::ObligationFamily;
+use super::super::obligations::ObligationSubject;
 use crate::NodePath;
+
+mod ordinary;
 
 use super::super::UnsupportedSemanticFeature;
 use super::super::model::{
@@ -68,9 +72,10 @@ pub(super) struct Recording {
 }
 
 pub(super) struct Walker<'program> {
-    pub(super) functions: &'program [CheckedFunction],
+    pub(super) functions: &'program [&'program CheckedFunction],
     nominals: &'program [CheckedNominal],
     pub(super) function: &'program CheckedFunction,
+    constants: &'program [super::super::model::CheckedConstant],
     pub(super) world: World,
     pub(super) facts: Vec<Fact>,
     pub(super) issues: Vec<RangeIssue>,
@@ -79,6 +84,7 @@ pub(super) struct Walker<'program> {
     /// checker follows.
     pub(super) imprecise: Option<NodePath>,
     pub(super) certified: Vec<CertifiedLoop>,
+    pub(super) deferred: Vec<(usize, Option<bool>)>,
     /// Nonzero while a loop body is walked only to learn what it writes.
     dry: usize,
     recording: Option<Recording>,
@@ -89,6 +95,7 @@ pub(super) struct Walker<'program> {
     gives: Vec<Vec<(State, Value)>>,
     /// Each parameter's value at entry.
     entry: BTreeMap<BindingId, Value>,
+    binding_types: BTreeMap<BindingId, IntegerType>,
     /// The node the walk cites for an access it records.
     cite: NodePath,
     /// Whether an exit selected each of the function's postconditions.
@@ -158,14 +165,18 @@ fn literal(left: Linear, relation: Relation, right: Linear) -> Literal {
 
 impl<'program> Walker<'program> {
     pub(super) fn new(
-        functions: &'program [CheckedFunction],
+        functions: &'program [&'program CheckedFunction],
         nominals: &'program [CheckedNominal],
         function: &'program CheckedFunction,
+        deferred: Vec<(usize, Option<bool>)>,
+        constants: &'program [super::super::model::CheckedConstant],
     ) -> Self {
         Self {
             functions,
             nominals,
             function,
+            deferred,
+            constants,
             world: World::default(),
             facts: Vec::new(),
             issues: Vec::new(),
@@ -177,6 +188,7 @@ impl<'program> Walker<'program> {
             continues: BTreeMap::new(),
             gives: Vec::new(),
             entry: BTreeMap::new(),
+            binding_types: BTreeMap::new(),
             cite: empty_path(),
             selected: vec![false; function.range_facts.postconditions.len()],
         }
@@ -188,6 +200,11 @@ impl<'program> Walker<'program> {
         let function = self.function;
         let mut state = State::default();
         for parameter in &function.parameters {
+            if parameter.mode == CheckedMode::Own
+                && let Some(ty) = integer_type(parameter.ty)
+            {
+                self.binding_types.insert(parameter.binding, ty);
+            }
             let value = match parameter.mode {
                 CheckedMode::Range => {
                     let location = Location::root(Origin::Parameter(parameter.binding));
@@ -218,7 +235,7 @@ impl<'program> Walker<'program> {
         }
         // Affine requirements hold at entry.
         for requirement in &function.requirements {
-            if let Some(literal) = self.goal_literal(&state, &requirement.template.root) {
+            if let Some(literal) = self.goal_literal(&mut state, &requirement.template.root) {
                 state.conds.push(literal);
             }
         }
@@ -544,7 +561,16 @@ impl<'program> Walker<'program> {
                 Some(state)
             }
             CheckedStatement::Proof(proof) => {
-                if let Some(literals) = self.affine_relation(&state, &proof.target) {
+                let literals = self.affine_relation(&mut state, &proof.target);
+                let written = self.written_instances(&state, &proof.uses);
+                self.ordinary_goal(
+                    &state,
+                    &proof.node_path,
+                    &ObligationSubject::SourceProof,
+                    literals.as_deref(),
+                    written.as_deref(),
+                );
+                if let Some(literals) = literals {
                     state.conds.extend(literals);
                 }
                 Some(state)
@@ -610,10 +636,11 @@ impl<'program> Walker<'program> {
                 id,
                 node_path,
                 body,
+                invariants,
                 ..
             } => {
                 self.cite = node_path.clone();
-                self.unbounded_loop(state, *id, body)
+                self.unbounded_loop(state, *id, invariants, body)
             }
             CheckedStatement::CountedRange {
                 id,
@@ -785,6 +812,9 @@ impl<'program> Walker<'program> {
 
     /// Binds `value` to `binding`, giving an aggregate a location.
     fn bind(&mut self, state: &mut State, binding: BindingId, ty: CheckedType, value: Value) {
+        if let Some(integer) = integer_type(ty) {
+            self.binding_types.insert(binding, integer);
+        }
         let value = match value {
             Value::Struct(fields) => {
                 let location = Location::root(Origin::Constructed(self.world.new_origin()));
@@ -1038,11 +1068,12 @@ impl<'program> Walker<'program> {
                 container,
                 prefix,
                 offset,
-                ..
+                length,
             })) => Target::Run {
                 container,
                 prefix,
                 offset,
+                length,
             },
             Some(Value::Ref(View::Element {
                 container,
@@ -1056,6 +1087,14 @@ impl<'program> Walker<'program> {
             _ => Target::Unknown,
         };
         for step in path {
+            let evaluated = if let CheckedPlaceStep::Subscript(subscript) = step {
+                let index = self.int(state, &subscript.offset);
+                let length = self.target_length(state, &target, subscript.base_type);
+                self.ordinary_bound(state, &subscript.obligation, &index, length);
+                Some(index)
+            } else {
+                None
+            };
             target = match (target, step) {
                 (Target::Location(location), CheckedPlaceStep::Field(field)) => {
                     Target::Location(location.child(Step::Field(*field)))
@@ -1064,7 +1103,7 @@ impl<'program> Walker<'program> {
                     Target::Location(location.child(Step::BoxContent))
                 }
                 (Target::Location(location), CheckedPlaceStep::Subscript(subscript)) => {
-                    let index = self.int(state, &subscript.offset);
+                    let index = evaluated.clone().unwrap_or_else(|| unreachable!());
                     let location = state.resolve(&location);
                     if matches!(subscript.base_type, CheckedType::Segments { .. }) {
                         match self.world.container(location, 2) {
@@ -1085,8 +1124,8 @@ impl<'program> Walker<'program> {
                         }
                     }
                 }
-                (Target::Row { container, row }, CheckedPlaceStep::Subscript(subscript)) => {
-                    let index = self.int(state, &subscript.offset);
+                (Target::Row { container, row }, CheckedPlaceStep::Subscript(_)) => {
+                    let index = evaluated.clone().unwrap_or_else(|| unreachable!());
                     Target::Element {
                         container,
                         indices: vec![row, index],
@@ -1098,10 +1137,11 @@ impl<'program> Walker<'program> {
                         container,
                         prefix,
                         offset,
+                        ..
                     },
-                    CheckedPlaceStep::Subscript(subscript),
+                    CheckedPlaceStep::Subscript(_),
                 ) => {
-                    let index = self.int(state, &subscript.offset);
+                    let index = evaluated.clone().unwrap_or_else(|| unreachable!());
                     let mut indices = prefix;
                     match offset.plus(&index) {
                         Some(absolute) => {
@@ -1123,7 +1163,12 @@ impl<'program> Walker<'program> {
                     },
                     step,
                 ) => {
-                    self.project_element(state, &mut projection, step);
+                    if matches!(step, CheckedPlaceStep::Subscript(_)) {
+                        // Its offset was evaluated before selecting the target.
+                        projection = None;
+                    } else {
+                        self.project_element(state, &mut projection, step);
+                    }
                     Target::Element {
                         container,
                         indices,
@@ -1131,7 +1176,7 @@ impl<'program> Walker<'program> {
                     }
                 }
                 (_, CheckedPlaceStep::Subscript(subscript)) => {
-                    let _ = self.int(state, &subscript.offset);
+                    let _ = subscript;
                     Target::Unknown
                 }
                 _ => Target::Unknown,
@@ -1182,11 +1227,12 @@ impl<'program> Walker<'program> {
             container,
             prefix,
             offset,
-            ..
+            length,
         })) = state.values.get(&place.root.binding).cloned()
         else {
             return None;
         };
+        self.ordinary_bound(state, &place.obligation, &index, Some(length));
         let mut indices = prefix;
         indices.push(offset.plus(&index)?);
         let mut projection = Some(Vec::new());
@@ -1224,6 +1270,7 @@ impl<'program> Walker<'program> {
                 container,
                 prefix,
                 offset,
+                ..
             } => {
                 let _ = (container, prefix, offset);
                 View::Unknown
@@ -1456,12 +1503,14 @@ impl<'program> Walker<'program> {
                 formal_effects.as_deref(),
             ),
             CheckedExpression::IntegerOperation {
+                carrier,
                 operation,
                 arguments,
                 result,
                 ..
-            } => self.integer_operation(state, *operation, arguments, *result),
+            } => self.integer_operation(state, carrier, *operation, arguments, *result),
             CheckedExpression::NumericConversion {
+                carrier,
                 mode,
                 source,
                 destination,
@@ -1470,6 +1519,23 @@ impl<'program> Walker<'program> {
                 ..
             } => {
                 let converted = self.eval(state, value);
+                if *mode == CheckedConversionMode::Exact
+                    && matches!(
+                        (source, destination),
+                        (
+                            CheckedNumericType::Integer(_),
+                            CheckedNumericType::Integer(_)
+                        )
+                    )
+                {
+                    self.ordinary_domain(
+                        state,
+                        carrier,
+                        ObligationFamily::ConversionDomain,
+                        &converted,
+                        *result,
+                    );
+                }
                 match (mode, source, destination, converted) {
                     (
                         CheckedConversionMode::Exact,
@@ -1547,9 +1613,17 @@ impl<'program> Walker<'program> {
                 root,
                 offset,
                 element_type,
+                length,
+                obligation,
                 ..
             } => {
                 let index = self.int(state, offset);
+                self.ordinary_bound(
+                    state,
+                    obligation,
+                    &index,
+                    length.value().map(|v| Linear::constant(i128::from(v))),
+                );
                 match root {
                     CheckedArrayRoot::Binding { binding, fields } => {
                         let path: Vec<CheckedPlaceStep> = fields
@@ -1560,13 +1634,27 @@ impl<'program> Walker<'program> {
                             Target::Location(location) => {
                                 let location = state.resolve(&location);
                                 match self.world.container(location, 1) {
-                                    Some(container) => self.read_element(
-                                        state,
-                                        container,
-                                        vec![index],
-                                        *element_type,
-                                        carrier,
-                                    ),
+                                    Some(container) => {
+                                        if let Some(length) = length.value() {
+                                            let observed = self.world.measure(
+                                                container,
+                                                state.generation(container),
+                                                CheckedMeasure::Length,
+                                            );
+                                            state.conds.push(literal(
+                                                observed,
+                                                Relation::Equal,
+                                                Linear::constant(i128::from(length)),
+                                            ));
+                                        }
+                                        self.read_element(
+                                            state,
+                                            container,
+                                            vec![index],
+                                            *element_type,
+                                            carrier,
+                                        )
+                                    }
                                     None => self.opaque_of(*element_type),
                                 }
                             }
@@ -1580,6 +1668,7 @@ impl<'program> Walker<'program> {
                 carrier,
                 root,
                 offset,
+                obligation,
                 ..
             } => {
                 let index = self.int(state, offset);
@@ -1588,13 +1677,21 @@ impl<'program> Walker<'program> {
                     Target::Location(location) => {
                         let location = state.resolve(&location);
                         match self.world.container(location, 1) {
-                            Some(container) => self.read_element(
-                                state,
-                                container,
-                                vec![index],
-                                root.element_type,
-                                carrier,
-                            ),
+                            Some(container) => {
+                                let length = self.world.measure(
+                                    container,
+                                    state.generation(container),
+                                    CheckedMeasure::Length,
+                                );
+                                self.ordinary_bound(state, obligation, &index, Some(length));
+                                self.read_element(
+                                    state,
+                                    container,
+                                    vec![index],
+                                    root.element_type,
+                                    carrier,
+                                )
+                            }
                             None => self.opaque_of(root.element_type),
                         }
                     }
@@ -1891,6 +1988,7 @@ impl<'program> Walker<'program> {
     fn integer_operation(
         &mut self,
         state: &mut State,
+        carrier: &NodePath,
         operation: CheckedIntegerOperation,
         arguments: &[CheckedExpression],
         result: CheckedType,
@@ -1914,30 +2012,36 @@ impl<'program> Walker<'program> {
             CheckedIntegerOperation::LessEqual => comparison(Relation::LessEqual),
             CheckedIntegerOperation::Greater => comparison(Relation::Greater),
             CheckedIntegerOperation::GreaterEqual => comparison(Relation::GreaterEqual),
-            // An exact operation's result is its mathematical value: the
-            // operation's own obligation proved it in range. A `.defined`
-            // spelling is a Bool domain query [OP-7], an unknown here.
-            CheckedIntegerOperation::AddExact => match values.as_slice() {
-                [left, right] => left
-                    .plus(right)
-                    .map_or_else(|| self.opaque_of(result), Value::Int),
-                _ => self.opaque_of(result),
-            },
-            CheckedIntegerOperation::SubtractExact => match values.as_slice() {
-                [left, right] => left
-                    .minus(right)
-                    .map_or_else(|| self.opaque_of(result), Value::Int),
-                _ => self.opaque_of(result),
-            },
-            CheckedIntegerOperation::MultiplyExact => match values.as_slice() {
-                [left, right] if left.is_constant() => right
-                    .scaled(left.constant)
-                    .map_or_else(|| self.opaque_of(result), Value::Int),
-                [left, right] if right.is_constant() => left
-                    .scaled(right.constant)
-                    .map_or_else(|| self.opaque_of(result), Value::Int),
-                _ => self.opaque_of(result),
-            },
+            CheckedIntegerOperation::AddExact
+            | CheckedIntegerOperation::SubtractExact
+            | CheckedIntegerOperation::MultiplyExact => {
+                let exact = match (operation, values.as_slice()) {
+                    (CheckedIntegerOperation::AddExact, [left, right]) => left.plus(right),
+                    (CheckedIntegerOperation::SubtractExact, [left, right]) => left.minus(right),
+                    (CheckedIntegerOperation::MultiplyExact, [left, right])
+                        if left.is_constant() =>
+                    {
+                        right.scaled(left.constant)
+                    }
+                    (CheckedIntegerOperation::MultiplyExact, [left, right])
+                        if right.is_constant() =>
+                    {
+                        left.scaled(right.constant)
+                    }
+                    _ => None,
+                };
+                // Never prove the domain using a fresh unknown already bounded
+                // by the result type. Only the mathematical result can pay it.
+                let goal = exact.clone().map_or(Value::Unknown, Value::Int);
+                self.ordinary_domain(
+                    state,
+                    carrier,
+                    ObligationFamily::IntegerDomain,
+                    &goal,
+                    result,
+                );
+                exact.map_or_else(|| self.opaque_of(result), Value::Int)
+            }
             _ => self.opaque_of(result),
         }
     }
@@ -1975,6 +2079,19 @@ impl<'program> Walker<'program> {
                 _ => None,
             }
         };
+        for requirement in &callee.requirements {
+            let subject = ObligationSubject::CallRequirement {
+                callee: function,
+                requires_clause: requirement.clause.clone(),
+                subject: requirement.subject,
+            };
+            if self.has_ordinary(call, &subject) {
+                let goal = self
+                    .goal_literal_with(state, &requirement.template.root, callee, &values)
+                    .map(|goal| vec![goal]);
+                self.ordinary_goal(state, call, &subject, goal.as_deref(), Some(&[]));
+            }
+        }
         // [RANGE-3] the callee's range requirements, at the call.
         if self.dry == 0 {
             for clause in &callee.range_facts.requirements {
@@ -2356,7 +2473,9 @@ impl<'program> Walker<'program> {
         for binding in &modified.bindings {
             if let Some(value) = header.values.get(binding).cloned() {
                 let fresh = match value {
-                    Value::Int(_) => Value::Int(self.world.opaque(None)),
+                    Value::Int(_) => {
+                        Value::Int(self.world.opaque(self.binding_types.get(binding).copied()))
+                    }
                     Value::Bool(_) => Value::Bool(Cond::Unknown),
                     Value::Owned(_) => Value::Owned(Location::root(Origin::Binding(
                         *binding,
@@ -2387,8 +2506,10 @@ impl<'program> Walker<'program> {
         &mut self,
         entry: State,
         id: CheckedLoopId,
+        affine: &[super::super::model::CheckedLoopInvariant],
         body: &[CheckedStatement],
     ) -> Option<State> {
+        self.ordinary_invariants(&mut entry.clone(), affine);
         let modified = self.modified(&entry, body, None);
         let invariants = self.loop_invariants(id);
         let node = self.cite.clone();
@@ -2398,6 +2519,7 @@ impl<'program> Walker<'program> {
             self.require(&entry, clause, &frame, &node, "a loop entry");
         }
         let mut header = self.header(&entry, &modified);
+        self.assume_affine(&mut header, affine);
         for clause in &invariants {
             let mut scratch = header.clone();
             let frame = self.frame(&mut scratch, clause, &|root| binding_value(&header, root));
@@ -2409,7 +2531,8 @@ impl<'program> Walker<'program> {
         let end = self.block(header, body);
         let mut backedges = self.continues.remove(&id.0).unwrap_or_default();
         backedges.extend(end);
-        for end in backedges {
+        for mut end in backedges {
+            self.ordinary_invariants(&mut end, affine);
             for clause in &invariants {
                 let mut scratch = end.clone();
                 let frame = self.frame(&mut scratch, clause, &|root| binding_value(&end, root));
@@ -2440,6 +2563,9 @@ impl<'program> Walker<'program> {
         let low = self.int(&mut entry, lower);
         let high = self.int(&mut entry, upper);
         let invariants = self.loop_invariants(id);
+        let mut at_entry = entry.clone();
+        at_entry.values.insert(binder, Value::Int(low.clone()));
+        self.ordinary_invariants(&mut at_entry, affine);
         // [RANGE-3] each range invariant holds at the first header.
         for clause in &invariants {
             let mut at_entry = entry.clone();
@@ -2468,11 +2594,7 @@ impl<'program> Walker<'program> {
         header
             .conds
             .push(literal(index.clone(), Relation::GreaterEqual, low.clone()));
-        for invariant in affine {
-            if let Some(literals) = self.affine_relation(&header, &invariant.relation) {
-                header.conds.extend(literals);
-            }
-        }
+        self.assume_affine(&mut header, affine);
         let fork = header.conds.len();
         let mut exit = header.clone();
         let mut facts_added = Vec::new();
@@ -2496,6 +2618,7 @@ impl<'program> Walker<'program> {
                 .plus_constant(1)
                 .unwrap_or_else(|| self.world.opaque(None));
             end.values.insert(binder, Value::Int(next));
+            self.ordinary_invariants(&mut end, affine);
             for clause in &invariants {
                 let mut scratch = end.clone();
                 let frame = self.frame(&mut scratch, clause, &|root| binding_value(&end, root));
@@ -2794,7 +2917,11 @@ impl<'program> Walker<'program> {
 
     // ----- affine relations -----
 
-    fn affine(&self, state: &State, expression: &CheckedAffineExpression) -> Option<Linear> {
+    fn affine(
+        &mut self,
+        state: &mut State,
+        expression: &CheckedAffineExpression,
+    ) -> Option<Linear> {
         match &expression.kind {
             CheckedAffineExpressionKind::Constant { value, .. } => Some(Linear::constant(*value)),
             CheckedAffineExpressionKind::Local { binding, .. } => match state.values.get(binding) {
@@ -2810,16 +2937,21 @@ impl<'program> Walker<'program> {
             CheckedAffineExpressionKind::MultiplyByConstant {
                 constant, value, ..
             } => self.affine(state, value)?.scaled(*constant),
-            CheckedAffineExpressionKind::ConstGeneric { .. }
-            | CheckedAffineExpressionKind::Measure(_) => None,
+            CheckedAffineExpressionKind::Measure(expression) => {
+                match self.eval(state, expression) {
+                    Value::Int(value) => Some(value),
+                    _ => None,
+                }
+            }
+            CheckedAffineExpressionKind::ConstGeneric { .. } => None,
         }
     }
 
     /// A checked affine relation `left - right <= bound` (and its reverse
     /// for an equality), where every leaf has a value here.
     fn affine_relation(
-        &self,
-        state: &State,
+        &mut self,
+        state: &mut State,
         relation: &CheckedAffineRelation,
     ) -> Option<Vec<Literal>> {
         let left = self.affine(state, &relation.left)?;
@@ -2839,14 +2971,38 @@ impl<'program> Walker<'program> {
     /// One affine requirement as a literal, where the walk can read it.
     fn goal_literal(
         &mut self,
-        state: &State,
+        state: &mut State,
         root: &super::super::goal::GoalExpression,
     ) -> Option<Literal> {
-        use super::super::goal::{GoalDatum, GoalExpression, GoalOperation, GoalProjection};
+        let values = self
+            .function
+            .parameters
+            .iter()
+            .map(|parameter| {
+                state
+                    .values
+                    .get(&parameter.binding)
+                    .cloned()
+                    .unwrap_or(Value::Unknown)
+            })
+            .collect::<Vec<_>>();
+        self.goal_literal_with(state, root, self.function, &values)
+    }
+
+    fn goal_literal_with(
+        &mut self,
+        state: &mut State,
+        root: &super::super::goal::GoalExpression,
+        function: &CheckedFunction,
+        values: &[Value],
+    ) -> Option<Literal> {
+        use super::super::goal::{GoalDatum, GoalExpression, GoalOperation};
         fn term(
             walker: &mut Walker<'_>,
-            state: &State,
+            state: &mut State,
             expression: &GoalExpression,
+            function: &CheckedFunction,
+            values: &[Value],
         ) -> Option<Linear> {
             match expression {
                 GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) => {
@@ -2854,14 +3010,36 @@ impl<'program> Walker<'program> {
                         *ty, *bits,
                     )))
                 }
-                GoalExpression::Datum(GoalDatum::Parameter {
-                    ordinal,
+                GoalExpression::Datum(GoalDatum::NamedConst {
+                    declaration,
                     projections,
                     ..
                 }) if projections.is_empty() => {
-                    let parameter = walker.function.parameters.get(*ordinal as usize)?;
-                    match state.values.get(&parameter.binding) {
-                        Some(Value::Int(value)) => Some(value.clone()),
+                    let value = &walker
+                        .constants
+                        .iter()
+                        .find(|item| item.declaration == *declaration)?
+                        .value;
+                    match constant(value) {
+                        Value::Int(value) => Some(value),
+                        _ => None,
+                    }
+                }
+                GoalExpression::Datum(GoalDatum::Parameter {
+                    ordinal,
+                    projections,
+                    ty,
+                }) => {
+                    let value = walker.goal_parameter(
+                        state,
+                        function,
+                        values,
+                        *ordinal as usize,
+                        projections,
+                        *ty,
+                    )?;
+                    match value {
+                        Value::Int(value) => Some(value),
                         _ => None,
                     }
                 }
@@ -2873,34 +3051,100 @@ impl<'program> Walker<'program> {
                                 ..
                             },
                             [left, right],
-                        ) => term(walker, state, left)?.plus(&term(walker, state, right)?),
+                        ) => term(walker, state, left, function, values)?
+                            .plus(&term(walker, state, right, function, values)?),
                         (
                             GoalOperation::Integer {
                                 operation: CheckedIntegerOperation::SubtractExact,
                                 ..
                             },
                             [left, right],
-                        ) => term(walker, state, left)?.minus(&term(walker, state, right)?),
+                        ) => term(walker, state, left, function, values)?
+                            .minus(&term(walker, state, right, function, values)?),
                         (
-                            GoalOperation::ContainerMeasure {
-                                measure: CheckedMeasure::Length,
+                            GoalOperation::Integer {
+                                operation: CheckedIntegerOperation::MultiplyExact,
                                 ..
                             },
+                            [left, right],
+                        ) => {
+                            let left = term(walker, state, left, function, values)?;
+                            let right = term(walker, state, right, function, values)?;
+                            if left.is_constant() {
+                                right.scaled(left.constant)
+                            } else if right.is_constant() {
+                                left.scaled(right.constant)
+                            } else {
+                                None
+                            }
+                        }
+                        (
+                            GoalOperation::NumericConversion {
+                                mode: CheckedConversionMode::Exact,
+                                source: CheckedNumericType::Integer(_),
+                                destination: CheckedNumericType::Integer(_),
+                            },
+                            [value],
+                        ) => term(walker, state, value, function, values),
+                        (
+                            GoalOperation::ContainerMeasure { measure, .. },
                             [
                                 GoalExpression::Datum(GoalDatum::Parameter {
                                     ordinal,
                                     projections,
-                                    ..
+                                    ty,
                                 }),
                             ],
                         ) => {
-                            let parameter = walker.function.parameters.get(*ordinal as usize)?;
-                            let value = state.values.get(&parameter.binding)?.clone();
-                            match (value, projections.as_slice()) {
-                                (
-                                    Value::Ref(View::Run { length, .. }),
-                                    [] | [GoalProjection::Deref],
-                                ) => Some(length),
+                            let value = walker.goal_parameter(
+                                state,
+                                function,
+                                values,
+                                *ordinal as usize,
+                                projections,
+                                *ty,
+                            )?;
+                            match value {
+                                Value::Ref(View::Run { length, .. })
+                                    if *measure == CheckedMeasure::Length =>
+                                {
+                                    Some(length)
+                                }
+                                Value::Ref(View::Element {
+                                    container,
+                                    indices,
+                                    projection: Some(mut projection),
+                                }) => {
+                                    projection.push(CheckedRangeProjection::Measure(*measure));
+                                    let version = state.version(&mut walker.world, container);
+                                    Some(walker.world.read(
+                                        version,
+                                        indices,
+                                        projection,
+                                        Some(IntegerType::U64),
+                                    ))
+                                }
+                                Value::Owned(location) | Value::Ref(View::Place(location)) => {
+                                    if let CheckedType::Array { length, .. } = ty
+                                        && *measure != CheckedMeasure::Head
+                                    {
+                                        return length
+                                            .value()
+                                            .map(|v| Linear::constant(i128::from(v)));
+                                    }
+                                    let arity = if matches!(ty, CheckedType::Segments { .. }) {
+                                        2
+                                    } else {
+                                        1
+                                    };
+                                    let container =
+                                        walker.world.container(state.resolve(&location), arity)?;
+                                    Some(walker.world.measure(
+                                        container,
+                                        state.generation(container),
+                                        *measure,
+                                    ))
+                                }
                                 _ => None,
                             }
                         }
@@ -2928,8 +3172,8 @@ impl<'program> Walker<'program> {
         let [left, right] = arguments.as_slice() else {
             return None;
         };
-        let left = term(self, state, left)?;
-        let right = term(self, state, right)?;
+        let left = term(self, state, left, function, values)?;
+        let right = term(self, state, right, function, values)?;
         Some(literal(left, relation, right))
     }
 }
@@ -2942,6 +3186,7 @@ enum Target {
         container: ContainerId,
         prefix: Vec<Linear>,
         offset: Linear,
+        length: Linear,
     },
     /// The outermost element and the owned selection below it.
     Element {

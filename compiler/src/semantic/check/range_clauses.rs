@@ -469,6 +469,94 @@ impl Checker<'_, '_> {
         })
     }
 
+    /// A local proof can instantiate a requirement or an enclosing loop fact.
+    pub(super) fn check_local_range_use(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        step: NodeId,
+        premise: NodeId,
+        declaration: DeclarationId,
+        bindings: &HashMap<DeclarationId, LocalBinding>,
+    ) -> Result<Option<CheckedRangeUse>, CheckStop> {
+        if self
+            .types
+            .declarations
+            .tree
+            .has_fixed(step, FixedTerminal::Times)?
+        {
+            return self.invalid_range(
+                SemanticRule::Range4,
+                step,
+                "a certificate step repeats a premise",
+                "write each instance as its own `use NAME(arguments);` step",
+            );
+        }
+        let Some(list) = self
+            .types
+            .declarations
+            .tree
+            .first_child_with(premise, Production::AtomList)?
+        else {
+            return self.invalid_range(
+                SemanticRule::Range4,
+                premise,
+                "a range fact needs an instance",
+                "write `use NAME(arguments);` with one term per bound variable",
+            );
+        };
+        if self.body.unformed_range_facts.contains(&declaration) {
+            return Ok(None);
+        }
+        let arity = self
+            .body
+            .range_facts
+            .requirements
+            .iter()
+            .chain(
+                self.body
+                    .range_facts
+                    .loops
+                    .values()
+                    .flat_map(|entry| &entry.invariants),
+            )
+            .find(|clause| clause.declaration == declaration)
+            .map(|clause| clause.binders.len());
+        let Some(arity) = arity else {
+            return self.invalid_range(
+                SemanticRule::Range4,
+                premise,
+                "the named fact is not a range fact this proof may use",
+                "name a range requirement or a range invariant of an enclosing loop",
+            );
+        };
+        let atoms = self
+            .types
+            .declarations
+            .tree
+            .children_with(list, Production::Atom)?;
+        if atoms.len() != arity {
+            return self.invalid_range(
+                SemanticRule::Range4,
+                premise,
+                "the step gives a different number of terms than the fact has bound variables",
+                "give one term for each bound variable of the fact, in order",
+            );
+        }
+        let names = RangeNames {
+            generic: self.range_generic(context),
+            ..RangeNames::default()
+        };
+        let mut arguments = Vec::new();
+        for atom in atoms {
+            arguments.push(self.range_atom(context, atom, bindings, &names)?);
+        }
+        Ok(Some(CheckedRangeUse {
+            node: self.types.declarations.tree.path(step)?.clone(),
+            fact: declaration,
+            arguments,
+        }))
+    }
+
     /// The diagnostic one range judgment failure reports [RANGE-3, RANGE-5].
     pub(super) fn range_issue(
         &self,
@@ -827,7 +915,12 @@ impl Checker<'_, '_> {
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+        if self
+            .types
+            .declarations
+            .tree
+            .has_fixed(pbase, FixedTerminal::Entry)?
+        {
             return self.invalid_range(
                 SemanticRule::Range1,
                 place,

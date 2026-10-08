@@ -1,9 +1,9 @@
 //! [RANGE-2, RANGE-3, RANGE-5] the range judgment.
 //!
 //! Range facts are judged over the completed checked program, after every
-//! function's ordinary entailment has succeeded, because a range proof
-//! consumes what that judgment established and no ordinary obligation
-//! consumes a range fact. One forward walk per function carries the facts
+//! function's ordinary entailment has either discharged its records or left
+//! only deferrable integer goals. The walk proves each deferred record at
+//! its own program point before assuming a local invariant's target. One forward walk per function carries the facts
 //! a function's requirements, its loops' invariants and its callees'
 //! postconditions establish, discharges every range fact owed at a call, a
 //! loop's entry, a back edge or an exit, and checks each counted loop's
@@ -85,11 +85,15 @@ pub(crate) use super::range_facts::CheckedCertifiedLoop as CertifiedLoop;
 pub(crate) struct RangeJudgment {
     pub(crate) issues: Vec<RangeIssue>,
     pub(crate) certified: Vec<CertifiedLoop>,
+    pub(crate) discharged: Vec<usize>,
 }
 
 /// Whether a function takes part: it states a range clause, or it calls a
-/// function whose range requirements it owes.
-fn takes_part(functions: &[CheckedFunction], function: &CheckedFunction) -> bool {
+/// function with range requirements or postconditions.
+pub(crate) fn takes_part(
+    function: &CheckedFunction,
+    boundary: impl Fn(super::model::FunctionId) -> bool,
+) -> bool {
     if !function.range_facts.is_empty() {
         return true;
     }
@@ -97,12 +101,7 @@ fn takes_part(functions: &[CheckedFunction], function: &CheckedFunction) -> bool
     for_each_call(
         function.body.as_deref().unwrap_or_default(),
         &mut |callee, _| {
-            if functions
-                .get(callee.0 as usize)
-                .is_some_and(|callee| !callee.range_facts.requirements.is_empty())
-            {
-                calls = true;
-            }
+            calls |= boundary(callee);
         },
     );
     calls
@@ -181,9 +180,10 @@ pub(crate) fn for_each_call(
 
 /// Judges every selected function of a checked program, dense by function.
 pub(crate) fn judge_program(
-    functions: &[CheckedFunction],
+    functions: &[&CheckedFunction],
     nominals: &[CheckedNominal],
     selected: &[bool],
+    constants: &[super::model::CheckedConstant],
 ) -> Vec<RangeJudgment> {
     functions
         .iter()
@@ -191,11 +191,23 @@ pub(crate) fn judge_program(
         .map(|(index, function)| {
             if !selected.get(index).copied().unwrap_or(false)
                 || function.body.is_none()
-                || !takes_part(functions, function)
+                || !takes_part(function, |callee| {
+                    functions.get(callee.0 as usize).is_some_and(|callee| {
+                        !callee.range_facts.requirements.is_empty()
+                            || !callee.range_facts.postconditions.is_empty()
+                    })
+                })
+                || deferred_records(function).is_none()
             {
                 return RangeJudgment::default();
             }
-            let mut walker = walk::Walker::new(functions, nominals, function);
+            let mut walker = walk::Walker::new(
+                functions,
+                nominals,
+                function,
+                deferred_records(function).unwrap_or_default(),
+                constants,
+            );
             walker.run();
             // A walk that forgot more than RANGE-2 does cannot reject: what
             // it left unproved may hold.
@@ -209,7 +221,79 @@ pub(crate) fn judge_program(
             RangeJudgment {
                 issues,
                 certified: walker.certified,
+                discharged: walker
+                    .deferred
+                    .into_iter()
+                    .filter_map(|(index, answer)| (answer == Some(true)).then_some(index))
+                    .collect(),
             }
         })
         .collect()
+}
+
+/// Only functions whose complete remaining ordinary debt is deferrable proceed.
+fn deferred_records(function: &CheckedFunction) -> Option<Vec<(usize, Option<bool>)>> {
+    use super::entailment::ObligationFamily;
+    use super::obligations::ObligationSubject;
+    let mut pending = Vec::new();
+    for (index, record) in function.obligations.iter().enumerate() {
+        let answer = function.entailment.answers.get(index).copied().flatten()?;
+        if answer.discharged(&function.entailment) {
+            continue;
+        }
+        match record.subject {
+            ObligationSubject::Source {
+                family:
+                    ObligationFamily::Bounds
+                    | ObligationFamily::IntegerDomain
+                    | ObligationFamily::ConversionDomain,
+                ..
+            }
+            | ObligationSubject::LoopInvariant { .. } => pending.push((index, None)),
+            ObligationSubject::SourceProof => {
+                let super::obligations::RecordAnswer::SourceProof(proof) = answer else {
+                    return None;
+                };
+                let check = &function.entailment.source_proofs.get(proof)?.check;
+                // A failed target can be deferred; an invalid ordinary certificate cannot.
+                if check.redundant
+                    || check.source_failure.is_some()
+                    || check.certificate_failure.is_some()
+                    || check.residual_failure.is_some()
+                    || check.first_unproved_premise.is_some()
+                {
+                    return None;
+                }
+                pending.push((index, None));
+            }
+            ObligationSubject::CallRequirement { .. } => {
+                let super::obligations::RecordAnswer::CallGoal(goal) = answer else {
+                    return None;
+                };
+                let goal = &function.entailment.call_goals.get(goal)?.goal.root;
+                use super::goal::{GoalExpression, GoalOperation};
+                use super::model::CheckedIntegerOperation as Op;
+                if !matches!(
+                    goal,
+                    GoalExpression::Operation {
+                        row: GoalOperation::Integer {
+                            operation: Op::Equal
+                                | Op::NotEqual
+                                | Op::Less
+                                | Op::LessEqual
+                                | Op::Greater
+                                | Op::GreaterEqual,
+                            ..
+                        },
+                        ..
+                    }
+                ) {
+                    return None;
+                }
+                pending.push((index, None));
+            }
+            _ => return None,
+        }
+    }
+    Some(pending)
 }

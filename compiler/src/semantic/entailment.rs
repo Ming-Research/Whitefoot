@@ -130,6 +130,7 @@ impl CallTransport {
 /// write reaches [CALL-1, CALL-2, CALL-3].
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EntailmentCallee {
+    pub(crate) range_boundary: bool,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
     /// Per parameter, the `epsuffix*` of every declared `writes` entry
@@ -170,6 +171,7 @@ impl EntailmentCallee {
                 .collect()
         };
         Self {
+            range_boundary: false,
             parameter_exhibited_writes: exhibited.map(rooted),
             parameter_declarations: parameters
                 .iter()

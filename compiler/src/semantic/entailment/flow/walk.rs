@@ -763,6 +763,21 @@ impl Analyzer<'_, '_> {
                 true
             }
             CheckedStatement::Proof(proof) => {
+                let ordinary_proof;
+                let proof = if proof
+                    .uses
+                    .iter()
+                    .any(|step| matches!(step.source, CheckedProofUseSource::Range(_)))
+                {
+                    let mut filtered = proof.clone();
+                    filtered
+                        .uses
+                        .retain(|step| !matches!(step.source, CheckedProofUseSource::Range(_)));
+                    ordinary_proof = filtered;
+                    &ordinary_proof
+                } else {
+                    proof
+                };
                 self.judge_affine_relation_subscripts(&proof.target, state);
                 for written_use in &proof.uses {
                     if let CheckedProofUseSource::Relation(relation) = &written_use.source {
@@ -805,6 +820,9 @@ impl Analyzer<'_, '_> {
                     .uses
                     .iter()
                     .map(|written_use| match &written_use.source {
+                        CheckedProofUseSource::Range(_) => {
+                            unreachable!("range premises were filtered")
+                        }
                         CheckedProofUseSource::Named(declaration) => self
                             .vocabulary
                             .invariant_targets
@@ -849,7 +867,9 @@ impl Analyzer<'_, '_> {
                             .and_then(|formed| formed.as_ref().ok())
                             .zip(state.affine.published_invariants.get(declaration))
                             .is_some_and(|(declared, published)| declared == published),
-                        CheckedProofUseSource::Relation(_) => false,
+                        CheckedProofUseSource::Relation(_) | CheckedProofUseSource::Range(_) => {
+                            false
+                        }
                     })
                     .collect::<Vec<_>>();
                 let named_premises = proof
@@ -1013,8 +1033,10 @@ impl Analyzer<'_, '_> {
                     target_refuted,
                 };
 
+                // A participating function may defer this target. Publication
+                // follows its own proof point; acceptance still owes the record.
                 if let Some(target) = target
-                    && check.discharged()
+                    && (check.discharged() || self.input.range_participant)
                 {
                     for inequality in std::iter::once(target.clone()).chain(partner) {
                         state.affine.facts.push(ActiveAffineFact {

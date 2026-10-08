@@ -247,11 +247,13 @@ pub(crate) enum CheckedProofMultiplicity {
 ///
 /// A named source is the immutable theorem image published by the resolved
 /// invariant declaration. A relation source is independently proved by AUTO
-/// in the local invariant's entering context.
+/// in the local invariant's entering context. A range instance belongs to
+/// that target's range problem and is ignored by ordinary entailment.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CheckedProofUseSource {
     Named(DeclarationId),
     Relation(CheckedAffineRelation),
+    Range(super::range_facts::CheckedRangeUse),
 }
 
 /// One erased source-written local invariant. Every `use` and the target are

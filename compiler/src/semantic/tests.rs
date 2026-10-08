@@ -62,6 +62,7 @@ mod owned_places;
 mod permission;
 mod postconditions;
 mod range_facts;
+mod range_ordinary;
 mod range_references;
 mod references;
 mod reinterpret;

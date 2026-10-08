@@ -1187,7 +1187,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // Phase B reads only the completed inventory. Kill-relevant [EFF-2]
         // projections are indexed by dense function identity [ENT-5]; later
         // program-level goal summaries extend this same complete context.
-        let callees = self.types.entailment_callees()?;
+        let callees = self.types.entailment_callees(&function_inventory)?;
         self.install_call_requirements(check_context, &mut function_inventory)?;
         self.types
             .form_obligation_records(&mut function_inventory)?;
@@ -1234,10 +1234,20 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             true,
             None,
         )?;
-        let baseline_functions = function_inventory
-            .iter()
-            .map(|checked| &checked.function)
+        let mut functions = function_inventory
+            .into_iter()
+            .map(|checked| checked.function)
             .collect::<Vec<_>>();
+        for function in &mut functions {
+            function.body_disposition = function.entailment.body_disposition;
+        }
+        let baseline_functions = functions.iter().collect::<Vec<_>>();
+        let ranges = super::range_judgment::judge_program(
+            &baseline_functions,
+            &self.types.nominals,
+            &ordinary,
+            &self.types.checked_constants,
+        );
         if self.reject_entailment {
             let mut rejections = Vec::new();
             let mut rejected = vec![false; baseline_functions.len()];
@@ -1252,7 +1262,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                 }
                 match self
                     .types
-                    .entailment_rejection(function)
+                    .entailment_rejection_after_range(function, &ranges[index].discharged)
                     .map_err(|stop| self.types.attribute_to_request(function.id, stop))
                 {
                     Ok(()) => {}
@@ -1271,6 +1281,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             }
             // Every accepted fresh analysis is kept, whether or not another
             // function's rejection fails this check [MOD-8].
+            for (index, judged) in ranges.iter().enumerate() {
+                rejected[index] |= !judged.issues.is_empty();
+            }
             self.record_receipts(&baseline_functions, &rejected);
             rejections.sort_by(|left, right| {
                 left.0
@@ -1284,10 +1297,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             }
         }
         drop(baseline_functions);
-        let mut functions = function_inventory
-            .into_iter()
-            .map(|checked| checked.function)
-            .collect::<Vec<_>>();
         if optimistic_batch {
             for (index, function) in functions.iter_mut().enumerate() {
                 // A receipt's analysis retains no derivation to prune.
@@ -1295,9 +1304,6 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     finalize_function_entailment(&mut function.entailment);
                 }
             }
-        }
-        for function in &mut functions {
-            function.body_disposition = function.entailment.body_disposition;
         }
 
         let executable_nominals = self.types.view.nominals.clone();
@@ -1314,11 +1320,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // and exact value image retained on that program; no permission rule
         // repeats a local invariant or changes source acceptance.
         // [RANGE-3, RANGE-5] range facts are judged over the completed
-        // program: every callee's range clauses are formed, and no ordinary
-        // obligation consumes a range fact. A certificate that holds is
+        // program: every callee's range clauses are formed, and each deferred
+        // ordinary record has been proved at its own site. A certificate that holds is
         // retained for the counted permission judgment below.
-        let ranges =
-            super::range_judgment::judge_program(&functions, &self.types.nominals, &ordinary);
         for id in &executable_functions {
             if let Some(issue) = ranges[id.0 as usize].issues.first() {
                 return Err(self.range_issue(issue));
@@ -2100,12 +2104,29 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         if !self.reject_entailment {
             return Ok(());
         }
+        for checked in functions.iter_mut() {
+            checked.function.body_disposition = checked.function.entailment.body_disposition;
+        }
+        let range_functions = functions
+            .iter()
+            .map(|checked| &checked.function)
+            .collect::<Vec<_>>();
+        let ranges = super::range_judgment::judge_program(
+            &range_functions,
+            &self.types.nominals,
+            &judged,
+            &self.types.checked_constants,
+        );
         for (index, declaration) in canonical {
             let checked = functions
                 .get(*index)
                 .filter(|checked| checked.function.declaration == *declaration)
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-            self.types.entailment_rejection(&checked.function)?;
+            self.types
+                .entailment_rejection_after_range(&checked.function, &ranges[*index].discharged)?;
+            if let Some(issue) = ranges[*index].issues.first() {
+                return Err(self.range_issue(issue));
+            }
         }
         Ok(())
     }
@@ -3024,7 +3045,10 @@ impl<'unit> TypeContext<'unit> {
     /// source-schema entailment. Function identity must be a true vector
     /// index; silently skipping a malformed identity would make masks observe
     /// a different program from the baseline.
-    fn entailment_callees(&self) -> Result<Vec<EntailmentCallee>, CheckStop> {
+    fn entailment_callees(
+        &self,
+        functions: &[CheckedFunctionInventory],
+    ) -> Result<Vec<EntailmentCallee>, CheckStop> {
         let mut callees = Vec::with_capacity(self.signatures.len());
         for (index, signature) in self.signatures.iter().enumerate() {
             if signature.id.0 as usize != index {
@@ -3038,6 +3062,10 @@ impl<'unit> TypeContext<'unit> {
                 &signature.declared_effects.writes,
                 self.exhibited_writes.get(&signature.id).map(Vec::as_slice),
             ));
+        }
+        for (callee, checked) in callees.iter_mut().zip(functions) {
+            callee.range_boundary = !checked.function.range_facts.requirements.is_empty()
+                || !checked.function.range_facts.postconditions.is_empty();
         }
         Ok(callees)
     }
