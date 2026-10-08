@@ -297,10 +297,19 @@ struct wf__floor_call {
     int status;
 };
 
+/* Floor-only probes have no invocation host library. A full runtime supplies
+ * preparation before thread creation, the launcher's receiver loop, and the
+ * entry's notification that ends that loop. */
+__attribute__((weak)) int wf__stop_initialize(void) { return 0; }
+__attribute__((weak)) int wf__stop_prepare(void) { return wf__stop_initialize(); }
+__attribute__((weak)) void wf__stop_receive(void) {}
+__attribute__((weak)) void wf__stop_entry_returned(void) {}
+
 static void *wf__floor_entry(void *opaque) {
     struct wf__floor_call *call = (struct wf__floor_call *)opaque;
     wf__floor_attach_thread();
     call->status = wf__main_body(call->argc, call->argv);
+    wf__stop_entry_returned();
     return NULL;
 }
 
@@ -308,9 +317,16 @@ static void *wf__floor_entry(void *opaque) {
  * probes can link the floor alone and use this weak no-op. */
 __attribute__((weak)) void wf__runtime_start(void) {}
 
-/* Run on an ordinary thread with the declared stack reservation. If host
- * thread creation fails, retain the existing fallback to the original
- * thread, whose exhaustion handler and bounds are already installed. */
+static _Noreturn void wf__floor_launch_failed(void) {
+    static const char record[] =
+        "whitefoot floor: stop receiver or program entry thread could not be started\n";
+    wf__floor_emit(record, sizeof(record) - 1);
+    abort();
+}
+
+/* Run on an ordinary thread with the declared stack reservation. The original
+ * thread receives stop requests until the entry returns. Running the body on
+ * it after a creation failure would strand the receiver, so fail at startup. */
 int wf__floor_run(int argc, char **argv) {
     pthread_attr_t attributes;
     pthread_t thread;
@@ -322,17 +338,19 @@ int wf__floor_run(int argc, char **argv) {
 
     wf__floor_install();
 
+    if (wf__stop_prepare() != 0) wf__floor_launch_failed();
     wf__runtime_start();
 
     if (pthread_attr_init(&attributes) != 0) {
-        return wf__main_body(argc, argv);
+        wf__floor_launch_failed();
     }
     if (pthread_attr_setstacksize(&attributes, WF_FLOOR_STACK_BYTES) != 0
         || pthread_create(&thread, &attributes, wf__floor_entry, &call) != 0) {
         pthread_attr_destroy(&attributes);
-        return wf__main_body(argc, argv);
+        wf__floor_launch_failed();
     }
     pthread_attr_destroy(&attributes);
+    wf__stop_receive();
     /* The thread was created joinable by this thread, so the two documented
      * failures — joining a non-joinable thread and joining oneself — are both
      * unreachable here. Re-running the entry on a failure would run the whole

@@ -171,12 +171,52 @@ impl<'unit> DeclarationInventory<'unit> {
                 outcome.backedge_target.clone(),
             ),
         };
+        let failing = outcome.inputs.iter().find(|input| !input.discharged);
+        let evidence = if outcome.proof.base {
+            failing.map(|input| &input.evidence)
+        } else {
+            Some(&outcome.base_evidence)
+        };
+        if let Some(failure) = evidence.and_then(|evidence| evidence.formation_failure.as_ref()) {
+            return Ok(SemanticIssue {
+                rule: SemanticRule::Op4,
+                location: self.source_location(&failure.site)?,
+                kind: SemanticIssueKind::UndischargedBoundsObligation {
+                    residual: failure.required.clone(),
+                    disposition,
+                    mechanical_fix: format!(
+                        "prove this subscript bound on every incoming instance of invariant `{}`",
+                        outcome.name
+                    ),
+                },
+                request: None,
+            });
+        }
+        let incoming_edge = if outcome.proof.base {
+            if let Some(input) = failing {
+                let (_, line) = self.tree.source_line(&input.input.site)?;
+                let route = match input.input.route {
+                    crate::semantic::entailment::LoopInductionRoute::Fallthrough => "fallthrough",
+                    crate::semantic::entailment::LoopInductionRoute::Continue { .. } => "continue",
+                };
+                if input.input.branch.is_empty() {
+                    format!("{route} at line {line}")
+                } else {
+                    format!("{route} from {} at line {line}", input.input.branch)
+                }
+            } else {
+                "missing induction input".to_owned()
+            }
+        } else {
+            "preheader".to_owned()
+        };
         Ok(SemanticIssue {
             rule: SemanticRule::Inv1,
             location: self.source_location(&outcome.node_path)?,
             kind: SemanticIssueKind::UndischargedLoopInvariant {
                 name: outcome.name.clone(),
                 obligation,
+                incoming_edge,
                 required_relation,
                 disposition,
                 mechanical_fix,

@@ -1,3 +1,5 @@
+alias IoError = pkg::io::IoError;
+alias Instant = pkg::time::Instant;
 alias HandleFactory = pkg::io::HandleFactory;
 alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
@@ -7,6 +9,17 @@ alias Clock = pkg::time::Clock;
 alias WallClock = pkg::time::WallClock;
 
 public opaque nocopy struct ExitStatus {
+}
+
+public opaque nocopy struct StopSignals {
+}
+
+public opaque nodrop struct StopListener {
+}
+
+public enum StopKind {
+  Interrupt();
+  Terminate();
 }
 
 public opaque nocopy struct MemoryMeter {
@@ -21,10 +34,17 @@ public struct Inputs {
   public stdin: InputStream;
   public clock: Clock;
   public wall_clock: WallClock;
+  public stops: StopSignals;
   public memory_meter: MemoryMeter;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
+
+public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
+
+public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>) -> result: Result<StopKind, IoError> writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
+
+public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener, restores the host default and returns its handle credit.";
 
 public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) doc "Returns a meter that observes the same process memory as meter.";
 

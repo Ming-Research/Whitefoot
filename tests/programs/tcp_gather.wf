@@ -151,7 +151,7 @@ fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Fetches one byte from each of the two loopback ports the arguments name and exits with their sum. Each fetch is a bound spawn [WAIT-3], so the two exchanges proceed together and each is joined at the first statement that uses its byte.";
-  let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
   close_directory(factory: &handles, directory: move unused_cwd);

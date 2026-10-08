@@ -1436,6 +1436,87 @@ void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *
         wf__body_tcp_accept_finish(result, factory, listener, deadline, &operation);
 }
 
+void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_value *stops) {
+    (void)stops;
+    memset(result, 0, sizeof(*result));
+    /* ResourceBusy describes the single delivery stream even when its first
+     * listener spent this factory's last credit. Hold the lifecycle across
+     * the quota reservation so concurrent factories cannot both acquire it. */
+    int error = wf__stop_listen_begin();
+    if (error != 0) {
+        wf_transition(factory);
+        result->tag = 1;
+        wf_error(&result->err.error, error, 5);
+        return;
+    }
+    if (!wf_factory_take(factory, &result->err.error)) {
+        (void)wf__stop_listen_finish(0);
+        result->tag = 1;
+        return;
+    }
+    error = wf__stop_listen_finish(1);
+    if (error != 0) {
+        wf_factory_return(factory);
+        result->tag = 1;
+        wf_error(&result->err.error, error, 5);
+    }
+}
+
+int wf__body_stop_next_start(wf_stop_result *result, wf_value *factory,
+                             wf_value *listener, const wf_deadline *deadline,
+                             wf_host_operation *operation) {
+    (void)result;
+    wf_transition(factory);
+    wf_transition(listener);
+    wf_before_submit(deadline);
+    wf__completion_stop_next_submit(&operation->record);
+    return wf_submitted(operation);
+}
+
+void wf__body_stop_next_finish(wf_stop_result *result, wf_value *factory,
+                               wf_value *listener, const wf_deadline *deadline,
+                               wf_host_operation *operation) {
+    (void)factory; (void)listener; (void)deadline;
+    int64_t kind;
+    int error;
+    wf__completion_file_join(&operation->record, &kind, &error);
+    memset(result, 0, sizeof(*result));
+    if (kind < 0) {
+        result->tag = 1;
+        if (wf__completion_deadline_passed(&operation->record))
+            wf_error_class(&result->err.error, WF_IO_DEADLINE_PASSED, 0, 0);
+        else wf_error(&result->err.error, error, 2);
+    } else result->ok.value = (uint32_t)kind;
+}
+
+void wf__body_stop_next(wf_stop_result *result, wf_value *factory, wf_value *listener,
+                        const wf_deadline *deadline) {
+    wf_host_operation operation;
+    if (wf__body_stop_next_start(result, factory, listener, deadline, &operation))
+        wf__body_stop_next_finish(result, factory, listener, deadline, &operation);
+}
+
+int wf__body_close_stop_listener_start(wf_close_result *result, wf_value *factory,
+                                       const wf_value *listener, wf_host_operation *operation) {
+    (void)result; (void)listener;
+    wf_transition(factory);
+    wf__completion_stop_close_submit(&operation->record);
+    return wf_submitted(operation);
+}
+
+void wf__body_close_stop_listener_finish(wf_close_result *result, wf_value *factory,
+                                         const wf_value *listener, wf_host_operation *operation) {
+    (void)listener;
+    wf_close_finish(result, factory, -1, operation);
+}
+
+void wf__body_close_stop_listener(wf_close_result *result, wf_value *factory,
+                                  const wf_value *listener) {
+    wf_host_operation operation;
+    if (wf__body_close_stop_listener_start(result, factory, listener, &operation))
+        wf__body_close_stop_listener_finish(result, factory, listener, &operation);
+}
+
 #if !defined(_WIN32)
 #include <sys/resource.h>
 #endif
@@ -1444,6 +1525,7 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     int cwd;
     uint64_t capacity;
     memset(inputs, 0, sizeof(*inputs));
+    if (wf__stop_initialize() != 0) return 0;
 #if defined(_WIN32)
     /* The build launcher has an ordinary narrow-argv main. Recover Windows'
      * original UTF-16 arguments here; the backing belongs to the enclosing

@@ -36,6 +36,8 @@ pub const COMPLETION_FILE_ADAPTER_SOURCE: &str = include_str!("completion/file_a
 pub const COMPLETION_FILE_POSIX_SOURCE: &str = include_str!("completion/file_posix.c");
 /// The file adapter's Windows host leaf, the twin of the above.
 pub const COMPLETION_FILE_WINDOWS_SOURCE: &str = include_str!("completion/file_windows.c");
+/// The invocation stop listener and host observers.
+pub const COMPLETION_STOP_SIGNALS_SOURCE: &str = include_str!("completion/stop_signals.c");
 /// The compiler-owned file-completion bridge embedded in the compiler.
 pub const COMPLETION_BRIDGE_SOURCE: &str = include_str!("completion/bridge.c");
 /// The target-guarded Linux io_uring adapter embedded in the compiler.
@@ -149,6 +151,7 @@ mod tests {
             ("completion/file_posix.c", COMPLETION_FILE_POSIX_SOURCE),
             ("completion/file_windows.c", COMPLETION_FILE_WINDOWS_SOURCE),
             ("completion/bridge.c", COMPLETION_BRIDGE_SOURCE),
+            ("completion/stop_signals.c", COMPLETION_STOP_SIGNALS_SOURCE),
             (
                 "completion/linux_io_uring.c",
                 COMPLETION_LINUX_IO_URING_SOURCE,

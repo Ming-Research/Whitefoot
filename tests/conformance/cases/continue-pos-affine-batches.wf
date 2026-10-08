@@ -1,0 +1,25 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Exercises the continue transfer.";
+  let cursor = 0_u64;
+  loop @again (
+    invariant bounded: cursor <= 4_u64
+  ) {
+    if 4_u64 <= cursor {
+      break;
+    }
+    set cursor = cursor + 1_u64;
+    continue @again;
+  }
+  let reached = 0_u64;
+  for (
+    i in 0_u64..4_u64,
+    invariant current: reached == i
+  ) {
+    set reached = i + 1_u64;
+    continue;
+  }
+  if reached != 4_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

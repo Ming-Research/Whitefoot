@@ -1,0 +1,89 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Add(k: u64);
+  Dec();
+  Jnz(t: u64);
+  Halt();
+}
+
+fn run(code: &Box<Slots<Op>>, count0: u64) -> r: u64 reads(code) {
+  doc "Runs a four-operation interpreter through explicit next-iteration edges.";
+  let n = code^.inner.len;
+  if n == 0_u64 {
+    return 0_u64;
+  }
+  let pc = 0_u64;
+  let acc = 0_u64;
+  let count = count0;
+  loop (
+    invariant inb: pc < n
+  ) {
+    match code^.inner[pc] {
+      Add(k: kv) => {
+        let next = pc + 1_u64;
+        if next < n {
+          set acc = acc +wrap kv^;
+          set pc = next;
+          continue;
+        } else {
+          return 0_u64;
+        }
+      }
+      Dec() => {
+        let next = pc + 1_u64;
+        if next < n {
+          set count = count -wrap 1_u64;
+          set pc = next;
+          continue;
+        } else {
+          return 0_u64;
+        }
+      }
+      Jnz(t: tv) => {
+        let next = pc + 1_u64;
+        if count != 0_u64 {
+          set next = tv^;
+        }
+        if next < n {
+          set pc = next;
+          continue;
+        } else {
+          return 0_u64;
+        }
+      }
+      Halt() => {
+        return acc;
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  doc "Appends one instruction when space remains.";
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Checks the interpreter accumulator against the arithmetic oracle.";
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Add(k: 3_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Dec();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Jnz(t: 0_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  let r = run(code: &code, count0: 1000_u64);
+  if r == 3000_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

@@ -11,7 +11,7 @@ alias read_next = std::io::read_next;
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Reads standard input with a deadline ten seconds away while its writer sends a byte after a tenth of a second: the read completes with the byte, well before its deadline [PRE-2].";
-  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: input, clock: clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: input, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   close_directory_write(factory: &handles, directory: move cwd_write);
   close_directory(factory: &handles, directory: move cwd);

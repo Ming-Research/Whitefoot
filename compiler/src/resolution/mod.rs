@@ -364,7 +364,7 @@ pub enum LexicalUseRole {
     /// an IDENT that must resolve to a value parameter of the same callable
     /// and is evaluated once at the call [EFF-1].
     EffectIndex,
-    /// U11: break target.
+    /// U11: lexical loop-transfer target (`break` or `continue`).
     BreakLabel,
     /// U12: constant-expression identifier.
     Const,

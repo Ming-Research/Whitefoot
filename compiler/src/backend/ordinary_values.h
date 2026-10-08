@@ -78,6 +78,7 @@ typedef wf_read_stop wf_list_stop;
 WF_RESULT_UNION(wf_list_status, uint8_t, wf_list_stop);
 typedef struct { wf_list_status result; uint64_t next; uint64_t entries; } wf_list_result;
 WF_RESULT_UNION(wf_close_result, uint8_t, wf_io_error);
+WF_RESULT_UNION(wf_stop_result, uint8_t, wf_io_error);
 WF_RESULT_UNION(wf_open_result, wf_value, wf_io_error);
 WF_RESULT_UNION(wf_connect_result, wf_connection, wf_io_error);
 WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
@@ -91,7 +92,7 @@ typedef struct { uint32_t tag; uint64_t value; } wf_optional_bytes;
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
  * `Directory`. */
 typedef struct {
-    wf_value args, cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, memory_meter;
+    wf_value args, cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops, memory_meter;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
@@ -113,9 +114,11 @@ _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
                sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
 _Static_assert(offsetof(wf_deadline, value) == 16 && sizeof(wf_deadline) == 48,
                "ordinary Option<Instant> layout");
-_Static_assert(sizeof(wf_inputs) == 320, "ordinary Inputs layout");
+_Static_assert(sizeof(wf_inputs) == 352, "ordinary Inputs layout");
 _Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
                "ordinary Option<u64> layout");
+
+_Static_assert(sizeof(wf_stop_result) == 16, "ordinary stop Result layout");
 
 /* A host function's link name is its standard library identity [MOD-10],
  * `wf_std.<module>.<name>`, which no program function can take and no C
@@ -178,6 +181,12 @@ uint64_t wf__body_nanoseconds_from(const wf_value *earlier, const wf_value *late
 _Bool wf__body_instant_reached(const wf_value *deadline, const wf_value *instant);
 int64_t wf__body_unix_nanoseconds(const wf_value *clock);
 void wf__body_sleep_until(uint8_t *result, const wf_value *deadline);
+
+void wf__body_stop_listen(wf_open_result *result, wf_value *factory, const wf_value *stops);
+void wf__body_stop_next(wf_stop_result *result, wf_value *factory, wf_value *listener,
+                        const wf_deadline *deadline);
+void wf__body_close_stop_listener(wf_close_result *result, wf_value *factory,
+                                  const wf_value *listener);
 
 /* Build launcher support: constructs ordinary argument representations. The
  * supplied argument backing remains valid until the selected call returns.

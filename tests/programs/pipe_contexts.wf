@@ -62,7 +62,7 @@ fn produce(factory: HandleFactory, output: OutputStream, sent: Shared<u64>) -> r
 
 fn relay(inputs: Inputs, received: &Shared<u64>, sent: &Shared<u64>) -> result: unit reads(received), reads(sent) waits {
   doc "Spawns the reader of the standard input before the writer of the standard output. When both name one pipe, the reader waits for bytes only the writer's context supplies, so the two finish only if neither blocks the thread the other runs on [WAIT-2].";
-  let Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_err, handles: handles, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   close_directory(factory: &handles, directory: move cwd);

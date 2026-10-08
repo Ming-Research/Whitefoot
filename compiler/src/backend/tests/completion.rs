@@ -169,6 +169,7 @@ fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
             crate::COMPLETION_FILE_POSIX_SOURCE,
         ),
         ("completion/bridge.c", crate::COMPLETION_BRIDGE_SOURCE),
+        ("completion/stop_signals.c", crate::COMPLETION_STOP_SIGNALS_SOURCE),
         (
             "completion/linux_io_uring.c",
             crate::COMPLETION_LINUX_IO_URING_SOURCE,
@@ -669,6 +670,7 @@ fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
     for (name, source) in [
         ("heap.c", crate::HEAP_SOURCE),
         ("bridge.c", crate::COMPLETION_BRIDGE_SOURCE),
+        ("stop_signals.c", crate::COMPLETION_STOP_SIGNALS_SOURCE),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
         ("concurrent_map.h", crate::CONCURRENT_MAP_HEADER),

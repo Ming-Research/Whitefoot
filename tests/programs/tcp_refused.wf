@@ -242,7 +242,7 @@ fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Connects twice to a loopback port nobody listens on through the same ordinary factory, so a refused connect is shown to leave its capacity available for the next attempt. The argument scratch is one inline Slots window of this frame, reached through one range reference for both the copy in and the read out [TYPE-9, REF-4].";
-  let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
   close_directory(factory: &handles, directory: move unused_cwd);

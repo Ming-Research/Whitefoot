@@ -106,7 +106,7 @@ fn factory_refusal(error: &IoError) -> result: Bool reads(error) {
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Ordinary tcp_accept takes &listener and &factory. Refusal leaves both ordinary values available; a successful public connection is destructured and both halves explicitly closed. No shared-listener overlap or permit-return rule survives.";
-  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
   close_directory(factory: &handles, directory: move unused_cwd);

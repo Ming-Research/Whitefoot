@@ -316,7 +316,7 @@ fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryW
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: reader, write: writer) = move directory;
   let folder = array_filled::<u8, 64>(value: 0_u8);
   let folder_end = copy_name(args: &args, position: 1_u64, destination: &folder[0_u64..64_u64]);

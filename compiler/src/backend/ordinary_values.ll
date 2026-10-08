@@ -836,6 +836,44 @@ entry:
   ret void
 }
 
+declare void @wf__body_stop_listen(ptr, ptr, ptr)
+
+define void @wf_std.process.stop_listen(ptr %result, ptr %factory, ptr %stops) align 64 {
+entry:
+  call void @wf__body_stop_listen(ptr %result, ptr %factory, ptr %stops)
+  ret void
+}
+
+declare i32 @wf__body_stop_next_start(ptr, ptr, ptr, ptr, ptr)
+declare void @wf__body_stop_next_finish(ptr, ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_stop_next_start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  ret i32 %state
+}
+
+define void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) align 64 {
+entry:
+  call void @wf__body_stop_next_finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_close_stop_listener_start(ptr, ptr, ptr, ptr)
+declare void @wf__body_close_stop_listener_finish(ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.process.close_stop_listener.start(ptr %result, ptr %factory, ptr %listener, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_close_stop_listener_start(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  ret i32 %state
+}
+
+define void @wf_std.process.close_stop_listener.finish(ptr %result, ptr %factory, ptr %listener, ptr %operation) align 64 {
+entry:
+  call void @wf__body_close_stop_listener_finish(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  ret void
+}
+
 declare void @wf__body_meter_share(ptr, ptr)
 
 define void @wf_std.process.meter_share(ptr %result, ptr %meter) align 64 {

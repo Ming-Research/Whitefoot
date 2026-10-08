@@ -313,6 +313,12 @@ pub(crate) struct PostconditionCallSubstitution {
 /// Parent IDs always precede their child in the arena.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum DerivationNode {
+    /// [ENT-5] introduction of one written relation over joined values.
+    /// Each contributor proves its own complete instance; this is not an
+    /// equality between mutually exclusive predecessor atoms.
+    TransportedHeaderRelation {
+        detail: Box<TransportedHeaderRelation>,
+    },
     /// The fixed affine projection of an established S4 ordering leaf.
     RequirementAffineImage {
         goal: GoalId,
@@ -608,6 +614,52 @@ pub(crate) struct SourceLoopInvariantRef {
     pub(crate) source_ordinal: u32,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct AffineRelationInstance {
+    /// Written leaves in source order, including constants and repeated uses.
+    pub(crate) operands: Vec<AffineForm>,
+    pub(crate) components: Vec<AffineInequality>,
+    pub(crate) sides: Vec<(Option<TermId>, Option<TermId>)>,
+    pub(crate) formation: Vec<DerivationId>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct HeaderRelationInput {
+    pub(crate) site: NodePath,
+    pub(crate) instance: Option<AffineRelationInstance>,
+    pub(crate) components: Vec<DerivationId>,
+    pub(crate) contradiction: Option<DerivationId>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct TransportedHeaderRelation {
+    pub(crate) template: SourceLoopInvariantRef,
+    pub(crate) inputs: Vec<HeaderRelationInput>,
+    pub(crate) output: AffineRelationInstance,
+    pub(crate) component: u8,
+}
+
+impl TransportedHeaderRelation {
+    fn parents(&self) -> impl Iterator<Item = DerivationId> + '_ {
+        self.inputs
+            .iter()
+            .flat_map(|input| {
+                input
+                    .contradiction
+                    .iter()
+                    .chain(input.components.iter())
+                    .copied()
+                    .chain(
+                        input
+                            .instance
+                            .iter()
+                            .flat_map(|instance| instance.formation.iter().copied()),
+                    )
+            })
+            .chain(self.output.formation.iter().copied())
+    }
+}
+
 /// Stable function-local identity of one already-checked affine source fact.
 /// Later proof consumers retain which admitted source statement supplied
 /// their affine premise.
@@ -708,6 +760,7 @@ pub(crate) struct IndexCaptureSubstitution {
 impl DerivationNode {
     fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
         match self {
+            Self::TransportedHeaderRelation { detail } => detail.parents().for_each(visit),
             Self::UnsignedDivisionProduct {
                 division, domain, ..
             } => {
@@ -819,6 +872,7 @@ impl DerivationNode {
 
     fn parent_count(&self) -> usize {
         match self {
+            Self::TransportedHeaderRelation { detail } => detail.parents().count(),
             Self::UnsignedDivisionProduct { .. }
             | Self::TransitiveBound { .. }
             | Self::StrengthenedBound { .. }
@@ -882,6 +936,7 @@ impl DerivationNode {
 
     fn rank(&self) -> u8 {
         match self {
+            Self::TransportedHeaderRelation { .. } => 46,
             Self::ResultTransport { .. } => 42,
             Self::ResultErr { .. } => 43,
             Self::ConversionDomain { .. } => 44,
@@ -946,6 +1001,12 @@ pub(crate) struct DerivationMetrics {
 /// Which mandatory checked-program query owns a retained root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DerivationRootKind {
+    HeaderRelation {
+        occurrence: u32,
+    },
+    LoopInduction {
+        occurrence: u32,
+    },
     BodyEntryContradiction,
     BoundsObligation(u32),
     RangePartition {
@@ -1185,6 +1246,7 @@ impl DerivationLedger {
     }
 
     pub(crate) fn intern(&mut self, node: DerivationNode) -> DerivationId {
+        super::work::intern(&node);
         let key = match self.probe_intern(&node) {
             Ok(id) => return id,
             Err(key) => key,
@@ -1684,6 +1746,19 @@ fn compare_node_ties(left: &DerivationNode, right: &DerivationNode) -> std::cmp:
 
 fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
     match node {
+        DerivationNode::TransportedHeaderRelation { detail } => [
+            detail.template.loop_id.0,
+            detail.template.source_ordinal,
+            u32::from(detail.component),
+        ]
+        .get(index)
+        .copied()
+        .or_else(|| {
+            detail
+                .parents()
+                .nth(index.checked_sub(3)?)
+                .map(|parent| parent.0)
+        }),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
         | DerivationNode::SourceGoal { event, .. } => (index == 0).then_some(event.0),
@@ -1995,6 +2070,25 @@ fn remap_id(id: &mut DerivationId, remap: &[Option<DerivationId>]) {
 
 fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
     match node {
+        DerivationNode::TransportedHeaderRelation { detail } => {
+            for input in &mut detail.inputs {
+                for parent in input
+                    .contradiction
+                    .iter_mut()
+                    .chain(input.components.iter_mut())
+                {
+                    remap_id(parent, remap);
+                }
+                if let Some(instance) = &mut input.instance {
+                    for parent in &mut instance.formation {
+                        remap_id(parent, remap);
+                    }
+                }
+            }
+            for parent in &mut detail.output.formation {
+                remap_id(parent, remap);
+            }
+        }
         DerivationNode::UnsignedDivisionProduct {
             division, domain, ..
         } => {
@@ -4684,6 +4778,7 @@ pub(crate) fn close(
                 &view.closed,
             );
         }
+        super::work::closure_cache_hit();
         return Rc::clone(&view.closed);
     }
     let closed = Rc::new(close_with_excluded_term(state, terms, goals, ledger, None));
@@ -4750,7 +4845,7 @@ fn for_each_implicit_bound(
             emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
             emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
         }
-        TermKind::Measure(measure, _) => {
+        TermKind::Measure(measure, _) | TermKind::TargetMeasure { measure, .. } => {
             let (minimum, maximum) = type_range(IntegerType::U64);
             emit(id, ZERO, maximum, ImplicitBoundKind::TypeMaximum);
             emit(ZERO, id, -minimum, ImplicitBoundKind::TypeMinimum);
@@ -4838,6 +4933,7 @@ pub(crate) fn contradiction_without_proofs(
     goals: &GoalTable,
 ) -> bool {
     if state.all_derivable {
+        super::work::probe(0, 0);
         return true;
     }
     let universe = closure_universe(state, terms, goals, None);
@@ -4847,6 +4943,7 @@ pub(crate) fn contradiction_without_proofs(
     {
         #[cfg(test)]
         tests::record_route(tests::ClosureRoute::InsertionWithoutProofs);
+        super::work::probe(dense.dimension, dense.bounds.len());
         let contradictory = terms
             .ids()
             .any(|id| dense.get(id, id).is_some_and(|(bound, _)| bound < 0))
@@ -4897,6 +4994,7 @@ fn complete_contradiction_probe(
         .filter(|id| universe.contains(*id))
         .collect::<Vec<_>>();
     let dimension = ids.len();
+    super::work::probe(dimension, dimension.saturating_mul(dimension));
     let mut slots = vec![NO_SLOT; term_count];
     for (slot, id) in ids.iter().enumerate() {
         slots[id.0 as usize] = u32::try_from(slot).expect("slot fits the u32 identity");
@@ -5043,7 +5141,9 @@ fn close_with_excluded_term(
     ledger: &mut DerivationLedger,
     excluded: Option<TermId>,
 ) -> ClosedState {
-    close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded)
+    let closed = close_with_row_pruning::<true, false>(state, terms, goals, ledger, excluded);
+    super::work::closure(closed.matrix.dimension, closed.matrix.live);
+    closed
 }
 
 /// One closure implementation; tests instantiate the unpruned traversal and
@@ -6837,6 +6937,7 @@ fn materialize_closure(
     wrap_implicit: bool,
 ) -> FactState {
     let closed = close(state, terms, goals, ledger);
+    super::work::snapshot(closed.matrix.dimension, closed.matrix.live);
     if closed.all_derivable {
         let parent = closed.contradiction.expect("contradictory closure proof");
         let proof = ledger.intern(DerivationNode::MaterializedContradiction { event, parent });
@@ -6996,6 +7097,7 @@ pub(crate) fn join_at(
     ledger: &mut DerivationLedger,
     event: FlowEventId,
 ) -> FactState {
+    super::work::join();
     let mut joined = join_at_once(states, terms, goals, ledger, event, &[]);
     if joined.all_derivable {
         return joined;
@@ -7083,6 +7185,7 @@ fn join_at_once(
     event: FlowEventId,
     also: &[TermId],
 ) -> FactState {
+    let _work = super::work::join_pass(states.len());
     // Close before filtering: a contradiction established immediately before
     // an edge is already the absorbing all-derivable state even when no kill
     // had occasion to materialize its flag.
@@ -7135,6 +7238,7 @@ fn join_at_once(
         .iter()
         .flat_map(|left| rows.iter().map(move |right| (*left, *right)))
         .collect::<Vec<_>>();
+    let pairs_evaluated = pairs.len();
     for (left, right) in pairs {
         let pair = (left, right);
         let Some(bound) = first.value(left, right) else {
@@ -7204,6 +7308,7 @@ fn join_at_once(
             bounds.store_single(pair.0, pair.1, weakest, proof);
         }
     }
+    super::work::join_pairs(rows.len(), pairs_evaluated, bounds.live);
     // Every disequality some predecessor holds and each one holds or
     // derives from a strict bound.
     let mut distinct_keys = contributing
@@ -7255,12 +7360,8 @@ fn join_at_once(
             .map(|(_, to)| *to)
             .collect::<Option<Vec<_>>>()
             .and_then(|all| all.into_iter().max());
-        let outside = outside.get_or_insert_with(|| {
-            terms
-                .ids()
-                .filter(|id| !row_flags[id.0 as usize])
-                .collect()
-        });
+        let outside = outside
+            .get_or_insert_with(|| terms.ids().filter(|id| !row_flags[id.0 as usize]).collect());
         for &other in outside.iter() {
             let to_zero = implicit_bound_between(terms, (other, ZERO)).map(|(bound, _)| bound);
             let from_zero = implicit_bound_between(terms, (ZERO, other)).map(|(bound, _)| bound);

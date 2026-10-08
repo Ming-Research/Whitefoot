@@ -293,6 +293,45 @@ use `musttail` when failure to make the transfer must be a compile-time error.
 The [consuming linked sequence](../tests/programs/tail_list.wf) demonstrates
 moving the next heap cell into a self transfer while releasing the old one.
 
+Write an interpreter's dispatch as a `loop` whose body is one `match` on the
+current operation. Each looping arm `set`s the values it changes and ends in
+`continue`; the bounds the arms rely on are header invariants [INV-1]:
+
+```whitefoot
+let pc = 0_u64;
+loop (
+  invariant inb: pc < n
+) {
+  match code^.inner[pc] {
+    Add(k: kv) => {
+      let next = pc + 1_u64;
+      if next < n {
+        set acc = acc +wrap kv^;
+        set pc = next;
+        continue;
+      }
+      return 0_u64;
+    }
+    Halt() => {
+      return acc;
+    }
+  }
+}
+```
+
+The header batch is proved on each `continue` and fallthrough edge
+separately, and a join inside an arm keeps a header relation every branch
+proves, so a value changed under a guard needs no restatement [ENT-5]. When
+the loop's header ends in the `match` and the arms leave only by returning or
+by reaching the next header, the compiler emits each arm as its own function
+and transfers between them with guaranteed tail calls; no `musttail` is
+written. `whitefootc --dispatch-ledger` prints whether each such loop split,
+or the condition it failed. Values the loop changes travel in argument
+registers, and a loop that changes more of them than the target has
+registers is emitted whole. The
+[continue interpreter](../tests/programs/continue_interpreter.wf) runs this
+form.
+
 Use a range reference for one contiguous run [REF-4]:
 
 ```whitefoot
@@ -527,7 +566,7 @@ A `nodrop` owner must be consumed on every exit [PROV-6]. Destructure a
 non-opaque aggregate whole when its parts need different consumers:
 
 ```whitefoot
-let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
+let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
 let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
 std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
 std::fs::close_directory(factory: &factory, directory: move cwd);
