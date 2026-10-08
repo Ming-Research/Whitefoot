@@ -12,6 +12,14 @@ Nodes: compiler/storage-representation
 Owner-approved: On the status board on 2026-10-08, written in Chinese, approving the item that presented the change: "Agree: approve the storage-representation change in the design tree: `grow` becomes one realloc, replacing the provisional decision of allocating a new block, copying and freeing (the old route recorded as rejected, with Halo's measurement)" (translated); in the paged session, after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
 
 Summary: `grow` of a `Box<Slots<T>>` cell reallocates the cell at the new size instead of allocating a new block, moving the filled slots and freeing the old one, so the allocator can extend in place or remap large blocks. The provisional decision had waited for performance grounds: Halo-wf's in-place table growth measured 1.000 of its copying source with the copying `grow` and 0.860 with `realloc` on the i9-14900K (integer-table 14.0% faster, sort 2.5%, other kernels within noise; [Halo-wf `research/experiments/halo-bench/RESULTS.md`, "Growing the array in place with a reallocating grow"](https://github.com/Ming-Research/Halo-wf/blob/6fc3b83ebdd0/research/experiments/halo-bench/RESULTS.md#growing-the-array-in-place-with-a-reallocating-grow), run 37773076340). The block keeps the alignment `malloc` gave it, STOR-7 already permits the address change, and a failed `realloc` terminates as STOR-8 states.
+## 2026-10-08 Scalar bindings a reference reaches in the range walk
+
+Nodes: compiler/range-judgment
+
+Owner-approved: On the shared status board of 2026-10-08, after the request on the item fixing two range-judgment soundness defects on main (PR #281) to approve its new compiler decision (written in Chinese), the owner approved: "approve #281's new compiler design decision: an integer or Bool binding a reference was taken to has its value forgotten at every write the range judgment cannot place (the alternative, giving such bindings a storage location in the judgment, is more precise but changes how the judgment models every binding); recommended" (translated).
+
+Summary: The range walk held a scalar `let` binding's value directly and forgot only containers, slots and variants at a write it could not place, so after `let w = &n; set w^ = 4_u64;` it kept `n == 1` and accepted a false range requirement over `0..n`. A scalar binding now becomes exposed when a reference to it is formed; every unplaced write and `atomic` forgets exposed bindings, joins keep a binding exposed if any arm exposed it, and loop headers forget what the body's dry walks expose. Giving such bindings a walk location, which would place the write, was not selected because it changes how the walk models every binding.
+
 ## 2026-10-08 The call grain exempts only recursion that offers its own calls
 
 Nodes: compiler/parallel-lowering
