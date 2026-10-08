@@ -875,7 +875,7 @@ each of the following?
 
 **Outcome**
 ([results](../../experiments/match-dispatch/RESULTS.md#stage-3-where-v2hs-time-goes-against-wasmi)).
-- **Dispatch is no longer v2h's bottleneck.**
+- **The measured dispatch counterfactuals leave most of the gap.**
   - On the M5, candidates 1 and 2 with the bounds tests removed save 2.4%
     of cycles. v2h still spends 3.61 cycles per dispatch, against wasmi's
     2.32.
@@ -886,7 +886,9 @@ each of the following?
   - On the M5 they never cost anything.
   - A language mechanism that removes them would not be justified by
     performance on this interpreter.
-- **The remaining cycles go to v2h's design.**
+- **Per-handler attribution concentrates the remaining measured gap in
+  `I32AddD` and calls, whose extra instructions reflect the interpreter's
+  frame and accumulator design.**
   - A value read from a frame slot that the operation before it has just
     written: `I32AddD` takes 4.7 cycles where `I32AddAD`, reading the
     accumulator, takes 1.85.
@@ -1628,3 +1630,66 @@ small (few new arms, no clear rise in checking time). Under it `BrTableN`
 (1.013, every pair at or above 1.003, twin equal, 2 arms) is adopted and
 restored. Steps 2 (1.006, pairs below 1.0) and 4 (1.003, a pair at 0.982)
 stay reverted.
+
+### Constructor and runtime-boundary audit
+
+The handler-word repair distinguishes values built by emitted constructors
+from values that linked code may produce. The eligibility census in
+`compiler/src/backend/emitter/handler_words.rs` derives exclusions from IR:
+bodyless and waiting signatures, shared-object/map shapes, opaque nominals,
+context-start signatures, and the operand/result types of scheduler hand-outs
+and loop splits. It follows reference/container element types and nominal
+payload containment in both directions. Primitive leaves do not connect
+otherwise unrelated enums. No nominal spelling selects an exclusion.
+Opaque leaves also cover the executable launcher's runtime-created `Inputs`
+and runtime-consumed `ExitStatus` through their actual payload graph.
+
+This is a source audit of the repair, not executed validation. The tables
+record the construction owners and dispositions; CI must establish that the
+new fixtures compile, execute and retain their asserted dispatch plans.
+
+| Producer or boundary | Source and disposition |
+| --- | --- |
+| Checked add, subtract, multiply, negate and absolute value | `emitter/integer.rs` enters place emission and constructs the selected Result arm through `places.rs`'s shared enum initializer. The initializer writes the tag and every family word, then the primitive writes its scalar payload through the variant view. Ordinary and handler-word results use this same path. |
+| Checked division and remainder | `emitter/integer.rs` retains its domain branch before division; each branch uses the same enum initializer. The error payload still distinguishes zero divisor from signed overflow. |
+| Checked numeric conversions, including float endpoints | `emitter/conversion.rs` and `conversion/float_endpoint.rs` converge on the same checked-result construction. Domain-only and exact conversions still return scalars. The added outcome branch belongs to result construction; dispatch acquires no branch or trap. |
+| Source enums and propagated errors | Source `ConstructEnum` operations use `places.rs`; `lowering/builder/results.rs` emits that operation for a propagated error. First-class `insertvalue` in `emitter/operations.rs` cannot handle a handler-word enum: stored enum constructors are intercepted by place emission, and tag-only enums cannot fit a handler word. |
+| Map reads, writes, insertion and absent defaults | `emitter/shared.rs` and `emitter.rs` use the map entry type from `IrShared::Map`. The C slot and emitted constant `None` stay zero-filled. Both the entry Option and its payload/containers are excluded, including when a compiler-owned constructor has a body. There is no separate Result-returning C map insertion operation. |
+| Context/waiting and parallel results | `emitter/contexts.rs`, `frames.rs` and `parallel.rs` transport typed storage through emitted thunks or linked start/finish entries. Context signature types and scheduler operand/result types are excluded. Ordinary internal calls, returns, joins and whole-value transfers preserve complete selected storage. |
+| Iteration, ranges and indexed helpers | `emitter/slice.rs`, `runs.rs`, `segments.rs` and `indexed.rs` synthesize pointer/count or storage descriptors, not Option/Result enums. Source/prelude helpers that return enums lower through ordinary `ConstructEnum` or calls. Indexed reduction identities are primitive constants. |
+| Drop helpers and defaults | `emitter/cleanup.rs` reads tags and releases existing payloads; it creates no enum value. `Window` initialization zeroes descriptor words and raw, unoccupied capacity, not live elements. Array/Buffer/Segments fills copy an initialized value with its complete selected layout; box/run allocation and growth use emitted stores or typed copies. Global constants admit scalars, arrays and structs, not payload-enum constructors. |
+
+The C boundary inventory is grouped by the owner of the ABI, including its
+platform implementations and the emitter sites that reach it:
+
+| C units and boundary | IR evidence and disposition |
+| --- | --- |
+| `concurrent_map.c`, `keyed_table.c`: `wf__shared_map_new`, table entry/hold/read-selection, scan, clear, swap, drain and key-set operations | Shared-map shape supplies the state and Option entry types, including nested values. `concurrent_map.c` zeroes its absent slot and fresh slots in direct, held and multi-key paths. All keep ordinary layout. Keys and key-set backing are byte ranges (`u8`) and descriptor words; they contain no nominal payload. Shared map cleanup uses the same excluded entry type. |
+| `completion/bridge.c`: `wf__shared_*`, atomic groups and watches | Shared-object shapes exclude state recursively, including maps inside a shared state. Header counters, locks and watch/hold records have private C layouts and no source enum. The C allocator initializes the shared header; emitted code initializes the state, which remains conservatively excluded as runtime-managed storage. |
+| `ordinary_values.c`, its `ordinary_values.ll` ABI wrappers, `windows_runtime.c`: args/text/path, clocks, filesystem, sockets, process and stop APIs | These cross bodyless IR signatures even when called by a function whose own body is emitted. Parameter/result closure excludes every nested Option/Result, error, endpoint and opaque value. `wf__ordinary_inputs` and `wf__ordinary_exit_code` are launcher calls; `driver/launcher.rs` only supplies the fixed Inputs/opaque status shapes, covered by opaque-leaf closure without a type-name exclusion list. |
+| `completion/bridge.c`, `runtime.c`, `file_adapter.c`, `file_posix.c`, `file_windows.c`, `linux_io_uring.c`, `windows_iocp.c`, `wait_host.c`, `wait_windows.c`, `stop_signals.c` | Linked waiting signatures supply the source-visible types to exclude. Native start/finish bodies translate completion records into those results. Ring/port records, socket addresses, deadlines and stop notifications below that boundary are native records or scalars; they do not independently synthesize another source nominal. `emitter/frames.rs` emits the start/finish calls. |
+| `completion/bridge.c`: context allocation/prepare/launch/join/root APIs | `ContextStart`/`ContextStartBound` signatures and waiting signatures exclude their boundary types. Emitted thunks construct results; the runtime schedules their storage. Local emitted values in coroutine frames are still constructed by emitted code, rather than synthesized from allocator bytes. |
+| `sched/core.c`, `sched/entry.c`, `sched/prim_host.c`, `sched/prim_windows.c` | `emitter/parallel.rs` and `frontier.rs` use scalar budgets and emitted call frames. Handed-out call and `LoopSplit` operand/result types seed exclusion. The runtime deque and lane metadata contain native records; emitted thunks own typed argument/result stores. |
+| `wf_floor.c`, `wf_floor_windows.c`, diagnostic calls in `emitter/floor.rs` and `emitter.rs` | Stack/heap exhaustion records and diagnostics carry native counters or byte messages, never a source enum. `malloc`/`free` only allocate/release raw storage; emitted box, array, run and segment initialization owns the live values. |
+| Root `floor_probe.c`, `ordinary_values_probe.c`, `concurrent_map_test.c`; `completion/*probe.c`, `completion/harness.c`, `completion/shared_object_test.c`; `sched/*probe.c`, `sched/smoke.c`, `sched/grant_observer.c`; `backend/tests/*.c` | Test/probe consumers of the preceding ABIs, not additional production value producers. Their independently linked source values use the bodyless-signature boundary; no test name or probe switches layout selection. |
+
+Regression coverage is in `compiler/src/backend/tests/match_dispatch.rs`:
+checked addition, checked conversion, checked absolute value and checked
+division each produce successful and failing results consumed by a split
+Result loop, require both arm-address stores, require the handler-word ledger
+line and require successful native execution. Before the repair, emission of
+these selected memory-only primitive results fails with `InvalidIr`.
+The map case reads an absent entry, reads a fresh write-locked slot before
+filling it, then reads the present value. It requires ordinary dispatch tables
+for the Option family and a separate enum enclosing the map payload, and a
+handler word for an unrelated enum in the same program. Before the exclusion
+repair the ordinary-layout assertions fail, and an absent/fresh read can call
+through a zero handler. Disabling all handler words would fail the unrelated
+enum control. These are predicted failures from inspection; no before/after
+execution was performed on the editing machine.
+
+CI must run these backend cases, existing integer/conversion and payload-enum
+coverage, the full project gate and platform I/O/runtime checks. It must also
+confirm Rust formatting/lints and the retained split families on supported
+host conventions. This repair changes no specification rule, conformance
+verdict, runtime map initialization or dispatch instruction sequence.

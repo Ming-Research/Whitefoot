@@ -63,9 +63,9 @@ pub(crate) fn prepare_dispatch_layout(
         return Ok(empty());
     }
     let mut plan = census(program, target, &DispatchLayoutPlan::default())?;
-    let foreign = foreign_nominals(program)?;
+    let runtime = runtime_nominals(program)?;
     for nominal in program.nominals() {
-        if foreign.contains(&nominal.id()) {
+        if runtime.contains(&nominal.id()) {
             plan.families.remove(&nominal.id());
         }
     }
@@ -191,14 +191,121 @@ fn census(
     Ok(result)
 }
 
-fn foreign_nominals(
-    program: &crate::IrProgram,
-) -> Result<HashSet<crate::IrNominalId>, BackendFailure> {
+/// Types whose bytes cross a runtime boundary, including boundaries hidden
+/// inside compiler-owned bodies. Shared storage is discovered from its IR
+/// shape, not the constructor's name or whether that constructor has a body.
+fn runtime_nominals(program: &IrProgram) -> Result<HashSet<IrNominalId>, BackendFailure> {
     let mut pending = Vec::new();
-    for function in program.functions().iter().filter(|f| f.blocks().is_empty()) {
-        pending.push(function.result());
-        pending.extend(function.parameters().iter().map(|(_, ty)| *ty));
+    for nominal in program.nominals() {
+        if matches!(
+            nominal.kind(),
+            IrNominalKind::Shared { .. } | IrNominalKind::Opaque
+        ) {
+            pending.push(IrType::Nominal(nominal.id()));
+        }
     }
+    for function in program.functions() {
+        // Linked ordinary and waiting functions include the completion bridge,
+        // I/O, process and stop-signal APIs. Waiting bodies also place their
+        // signature values in runtime-owned context storage.
+        if function.blocks().is_empty() || function.waits() {
+            pending.push(function.result());
+            pending.extend(function.parameters().iter().map(|(_, ty)| *ty));
+        }
+        let handed_out: HashSet<_> = function
+            .overlaps()
+            .iter()
+            .flat_map(IrOverlap::handed_out)
+            .copied()
+            .collect();
+        for instruction in function.blocks().iter().flat_map(IrBlock::instructions) {
+            let IrInstruction::Define { result, ty, operation } = instruction else {
+                continue;
+            };
+            match operation {
+                IrOperation::ContextStart {
+                    function: callee, ..
+                }
+                | IrOperation::ContextStartBound {
+                    function: callee, ..
+                } => {
+                    let callee = program
+                        .functions()
+                        .get(*callee as usize)
+                        .ok_or(BackendFailure::InvalidIr)?;
+                    pending.push(callee.result());
+                    pending.extend(callee.parameters().iter().map(|(_, ty)| *ty));
+                }
+                IrOperation::LoopSplit { .. } => {
+                    pending.push(*ty);
+                    for operand in operation.operands() {
+                        pending.push(
+                            function
+                                .value_type(operand)
+                                .ok_or(BackendFailure::InvalidIr)?,
+                        );
+                    }
+                }
+                IrOperation::Call { .. } if handed_out.contains(result) => {
+                    pending.push(*ty);
+                    for operand in operation.operands() {
+                        pending.push(
+                            function
+                                .value_type(operand)
+                                .ok_or(BackendFailure::InvalidIr)?,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Nominal containment is bidirectional: a runtime payload keeps its
+    // enclosing values ordinary too. Primitive leaves do not connect otherwise
+    // unrelated types (two enums containing u64 remain independent).
+    let mut neighbours: HashMap<IrNominalId, HashSet<IrNominalId>> = HashMap::new();
+    for nominal in program.nominals() {
+        let mut children = Vec::new();
+        match nominal.kind() {
+            IrNominalKind::Struct { fields } => {
+                children.extend(fields.iter().map(|f| f.ty()));
+            }
+            IrNominalKind::Enum { variants } => {
+                children.extend(variants.iter().flat_map(|v| v.fields()).map(|f| f.ty()));
+            }
+            IrNominalKind::Box { referent, .. } => children.push(*referent),
+            IrNominalKind::Shared { state, shape } => {
+                children.push(*state);
+                if let IrShared::Map { entry } = shape {
+                    children.push(*entry);
+                }
+            }
+            IrNominalKind::Opaque => {}
+        }
+        for child in contained_nominals(program, children)? {
+            neighbours.entry(nominal.id()).or_default().insert(child);
+            neighbours.entry(child).or_default().insert(nominal.id());
+        }
+    }
+    let mut nominals = contained_nominals(program, pending)?;
+    let mut pending: Vec<_> = nominals.iter().copied().collect();
+    while let Some(id) = pending.pop() {
+        for child in neighbours.get(&id).into_iter().flatten() {
+            if nominals.insert(*child) {
+                pending.push(*child);
+            }
+        }
+    }
+    Ok(nominals)
+}
+
+/// Resolve descriptors and references down to nominal leaves. The graph above
+/// follows each nominal's payload once, in both directions, including cycles.
+fn contained_nominals(
+    program: &IrProgram,
+    mut pending: Vec<IrType>,
+) -> Result<HashSet<IrNominalId>, BackendFailure> {
     let mut visited = HashSet::new();
     let mut nominals = HashSet::new();
     while let Some(ty) = pending.pop() {
@@ -207,23 +314,8 @@ fn foreign_nominals(
         }
         match ty {
             IrType::Nominal(id) => {
+                program.nominal(id).ok_or(BackendFailure::InvalidIr)?;
                 nominals.insert(id);
-                match program.nominal(id).ok_or(BackendFailure::InvalidIr)?.kind() {
-                    crate::IrNominalKind::Struct { fields } => {
-                        pending.extend(fields.iter().map(|f| f.ty()))
-                    }
-                    crate::IrNominalKind::Enum { variants } => {
-                        pending.extend(variants.iter().flat_map(|v| v.fields()).map(|f| f.ty()))
-                    }
-                    crate::IrNominalKind::Box { referent, .. } => pending.push(*referent),
-                    crate::IrNominalKind::Shared { state, shape } => {
-                        pending.push(*state);
-                        if let crate::IrShared::Map { entry } = shape {
-                            pending.push(*entry);
-                        }
-                    }
-                    crate::IrNominalKind::Opaque => {}
-                }
             }
             IrType::Address(referent) => pending.push(referent.ty()),
             IrType::Array { element, .. }
@@ -244,4 +336,3 @@ fn foreign_nominals(
     }
     Ok(nominals)
 }
-

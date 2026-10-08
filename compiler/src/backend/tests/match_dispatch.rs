@@ -1734,3 +1734,287 @@ fn main() -> status: std::process::ExitStatus pure {
         }
     });
 }
+
+/// The result nominal has room for a handler word (union 16 + word 8,
+/// product ceiling 24). Both primitive outcomes reach the split helper.
+const CHECKED_HANDLER_RESULT: &str = r#"fn handler_result_make(input: INPUT_TYPE) -> result: Result<OUTPUT_TYPE, ERROR_TYPE> pure {
+  return CHECKED_EXPRESSION;
+}
+
+fn handler_result_run(value: &Result<OUTPUT_TYPE, ERROR_TYPE>, count: u64) -> result: OUTPUT_TYPE reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Ok(value: payload) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return payload^;
+      }
+      Err(error: problem) => {
+        break;
+      }
+    }
+  }
+  return 99_OUTPUT_TYPE;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let success = handler_result_make(input: SUCCESS_INPUT);
+  let failure = handler_result_make(input: FAILURE_INPUT);
+  let good = handler_result_run(value: &success, count: 2_u64);
+  let bad = handler_result_run(value: &failure, count: 2_u64);
+  if good == SUCCESS_OUTPUT {
+    if bad == 99_OUTPUT_TYPE {
+      return std::process::exit_status(code: 0_u8);
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+
+fn assert_checked_handler_result(
+    input: &str,
+    output: &str,
+    error: &str,
+    expression: &str,
+    success: &str,
+    failure: &str,
+    expected: &str,
+) {
+    let source = CHECKED_HANDLER_RESULT
+        .replace("INPUT_TYPE", input)
+        .replace("OUTPUT_TYPE", output)
+        .replace("ERROR_TYPE", error)
+        .replace("CHECKED_EXPRESSION", expression)
+        .replace("SUCCESS_INPUT", success)
+        .replace("FAILURE_INPUT", failure)
+        .replace("SUCCESS_OUTPUT", expected);
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_handler_result_run", 2);
+    assert!(
+        module.contains("wf_handler_result_run: dispatches through the handler word"),
+        "{module}"
+    );
+    let producer = emitted_body(&module, "handler_result_make");
+    for arm in 0..2 {
+        assert!(
+            producer.contains(&format!("store ptr @wf_handler_result_run.arm.{arm},")),
+            "{producer}"
+        );
+    }
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn checked_integer_results_initialize_handler_words() {
+    // Before F1 this fails during emission with InvalidIr, before linking.
+    assert_checked_handler_result(
+        "u64",
+        "u64",
+        "Overflow",
+        "input +checked 1_u64",
+        "6_u64",
+        "18446744073709551615_u64",
+        "7_u64",
+    );
+}
+
+#[test]
+fn checked_conversion_results_initialize_handler_words() {
+    // i64 -> u64 has both outcomes while retaining room for the word.
+    // Before F1 the checked-conversion producer fails with InvalidIr.
+    assert_checked_handler_result(
+        "i64",
+        "u64",
+        "NarrowError",
+        "cvt.checked::<i64, u64>(input)",
+        "7_i64",
+        "-1_i64",
+        "7_u64",
+    );
+}
+
+#[test]
+fn checked_absolute_results_initialize_handler_words() {
+    // A different intrinsic producer, formerly another insertvalue path.
+    assert_checked_handler_result(
+        "i64",
+        "i64",
+        "Overflow",
+        "iabs.checked(input)",
+        "-7_i64",
+        "-9223372036854775808_i64",
+        "7_i64",
+    );
+}
+
+#[test]
+fn checked_division_results_initialize_handler_words() {
+    // The successful division remains guarded; both branches construct the
+    // same planned layout. Before F1 emission refuses its memory-only result.
+    assert_checked_handler_result(
+        "i64",
+        "i64",
+        "DivError",
+        "14_i64 /checked input",
+        "2_i64",
+        "0_i64",
+        "7_i64",
+    );
+}
+
+const RUNTIME_HANDLER_RESULT: &[u8] = br#"const handler_map_key: Array<u8, 1> =[97_u8];
+
+enum HandlerMapInner {
+  First(value: u64);
+  Second(value: u64);
+  Third(value: u64);
+}
+
+enum HandlerMapOuter {
+  Left(inner: HandlerMapInner);
+  Right(inner: HandlerMapInner);
+}
+
+enum HandlerIndependent {
+  First(value: u64);
+  Second(value: u64);
+  Third(value: u64);
+}
+
+fn handler_map_run(value: &Option<HandlerMapInner>, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Some(value: payload) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        match payload^ {
+          First(value: number) => {
+            return number^;
+          }
+          Second(value: number) => {
+            return number^;
+          }
+          Third(value: number) => {
+            return number^;
+          }
+        }
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  return 11_u64;
+}
+
+fn handler_outer_run(value: &HandlerMapOuter, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      Left(inner: payload) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return 13_u64;
+      }
+      Right(inner: payload) => {
+        break;
+      }
+    }
+  }
+  return 17_u64;
+}
+
+fn handler_independent_run(value: &HandlerIndependent, count: u64) -> result: u64 reads(value) {
+  let remaining = count;
+  loop {
+    match value^ {
+      First(value: number) => {
+        if remaining > 0_u64 {
+          set remaining = remaining -wrap 1_u64;
+          continue;
+        }
+        return number^;
+      }
+      Second(value: number) => {
+        return number^;
+      }
+      Third(value: number) => {
+        break;
+      }
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<HandlerMapInner>(capacity: 2_u64);
+  let absent = 0_u64;
+  let fresh = 0_u64;
+  let present = 0_u64;
+  let key = &handler_map_key[0_u64..1_u64];
+  atomic slot = &store[key] {
+    set absent = handler_map_run(value: slot, count: 2_u64);
+  }
+  atomic slot = &store[key] {
+    set fresh = handler_map_run(value: slot, count: 2_u64);
+    let content = HandlerMapInner::Second(value: 7_u64);
+    set slot^ = Some<HandlerMapInner>(value: content);
+  }
+  atomic slot = &store[key] {
+    set present = handler_map_run(value: slot, count: 2_u64);
+  }
+  let unrelated = HandlerIndependent::First(value: 19_u64);
+  let control = handler_independent_run(value: &unrelated, count: 2_u64);
+  let content = HandlerMapInner::Third(value: 23_u64);
+  let outer = HandlerMapOuter::Left(inner: content);
+  let enclosed = handler_outer_run(value: &outer, count: 2_u64);
+  if absent == 11_u64 {
+    if fresh == 11_u64 {
+      if present == 7_u64 {
+        if control == 19_u64 {
+          if enclosed == 13_u64 {
+            return std::process::exit_status(code: 0_u8);
+          }
+        }
+      }
+    }
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+
+#[test]
+fn runtime_map_values_keep_ordinary_layout_without_disabling_unrelated_handlers() {
+    // Without F2, Option<HandlerMapInner> receives a word: the assertion fails,
+    // and absent/fresh entries would load a null handler from runtime zeros.
+    let module = emit(RUNTIME_HANDLER_RESULT);
+    for base in ["wf_handler_map_run", "wf_handler_outer_run"] {
+        assert_split(&module, base, 2);
+        assert!(
+            module.contains(&format!("@{base}.dispatch.table = ")),
+            "{module}"
+        );
+        assert!(
+            !module.contains(&format!("{base}: dispatches through the handler word")),
+            "{module}"
+        );
+    }
+    // A blanket shutdown of handler words in a runtime-using program fails
+    // this control. Common primitive leaves must not connect the nominals.
+    assert_split(&module, "wf_handler_independent_run", 3);
+    assert!(
+        module.contains("wf_handler_independent_run: dispatches through the handler word"),
+        "{module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
