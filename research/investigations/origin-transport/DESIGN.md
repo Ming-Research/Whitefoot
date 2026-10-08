@@ -154,6 +154,9 @@ expectations, pending execution on the base and changed compiler in CI.
 | `ent4-pos-origin-boolean` | FN-8 unproved | Accept a Boolean saved before its stronger bound is learned. |
 | `ent4-pos-origin-nested` | FN-8 unproved | Accept nested Boolean links and nested contract definitions together. |
 | `ent4-neg-origin-write` | FN-8 unproved | Remain unproved after an origin-place write. |
+| `ent4-neg-origin-write-through-reference` | FN-8 unproved | Remain unproved after a write through a local reference kills the binding's link and the parity link reading it. |
+| `ent4-neg-origin-write-through-call` | FN-8 unproved | Remain unproved after a callee `writes` row over the borrowed actual kills the same two links. |
+| `ent4-pos-origin-unwritten-control` | FN-8 unproved | Accept the two write cases' shape without the write, so their rejection is attributable to the kill. |
 | `ent4-neg-origin-join` | FN-8 unproved | Remain unproved when one reaching input lost the link. |
 | `ent4-pos-origin-equal-values` | FN-8 unproved | Equate two represented results with one valid defining expression. |
 | `ent4-neg-origin-refuted` | FN-8 unproved | Reject as refuted through a transported negative sign. |

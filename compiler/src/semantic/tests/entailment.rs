@@ -3396,6 +3396,8 @@ fn origin_transport_retains_definitions_and_signed_parents() {
         include_bytes!("../../../../tests/conformance/cases/ent4-pos-origin-nested.wf").as_slice(),
         include_bytes!("../../../../tests/conformance/cases/ent4-pos-origin-named-conversion.wf")
             .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-origin-unwritten-control.wf")
+            .as_slice(),
     ] {
         let summary = accepted_entailment(source, "witness");
         validate_derivations(&summary);
@@ -3526,6 +3528,12 @@ fn origin_transport_does_not_cross_a_killed_or_joined_definition() {
     for source in [
         include_bytes!("../../../../tests/conformance/cases/ent4-neg-origin-write.wf").as_slice(),
         include_bytes!("../../../../tests/conformance/cases/ent4-neg-origin-join.wf").as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/ent4-neg-origin-write-through-reference.wf"
+        )
+        .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/ent4-neg-origin-write-through-call.wf")
+            .as_slice(),
     ] {
         let summary = entailment(source, "witness");
         validate_derivations(&summary);
