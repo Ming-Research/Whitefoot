@@ -151,7 +151,7 @@ impl FunctionEmitter<'_, '_> {
         let tag = format!("paged.v{}", result.ordinal());
         let capacity = self.value_name(capacity);
         let pages = self.paged_count(&capacity, element)?;
-        let dircap = self.paged_directory_capacity("1", &pages, &tag, &oom)?;
+        let dircap = self.paged_directory_capacity("4", &pages, &tag, &oom)?;
         let bytes = self.emit_allocation_size(
             &dircap,
             "8",
@@ -160,8 +160,9 @@ impl FunctionEmitter<'_, '_> {
             &format!("{tag}.cell.allocate"),
         )?;
         let cell = self.paged_allocate(&bytes, &oom)?;
-        // One directory entry keeps even an empty run's interior pointer
-        // nonnull and within the cell. Unused entries remain uninitialized.
+        // Four directory entries avoid cell replacement for the first small grows
+        // and keep an empty run's interior pointer within the cell.
+        // Unused entries remain uninitialized.
         let header = self.next_temporary()?;
         writeln!(self.output, "  %{header} = insertvalue {HEADER} zeroinitializer, i64 {dircap}, 2\n  store {HEADER} %{header}, ptr {cell}").map_err(|_| BackendFailure::TextEmission)?;
         self.paged_allocate_pages(&cell, element, &capacity, ("0", &pages), &tag, &oom)?;
