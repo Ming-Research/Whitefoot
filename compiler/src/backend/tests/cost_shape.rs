@@ -99,6 +99,22 @@ fn getelementptr_base(definition: &str) -> Option<&str> {
     comma_item(operands, 1)?.split_whitespace().next_back()
 }
 
+/// Whether any index of a `getelementptr` is a register rather than a
+/// constant, so that the offset it computes is a run-time value.
+fn getelementptr_has_runtime_index(definition: &str) -> bool {
+    let Some(operands) = definition.strip_prefix("getelementptr ") else {
+        return false;
+    };
+    (2..)
+        .map_while(|ordinal| comma_item(operands, ordinal))
+        .any(|index| {
+            index
+                .split_whitespace()
+                .next_back()
+                .is_some_and(|value| value.starts_with('%'))
+        })
+}
+
 fn is_aggregate_destination<'module>(function: &'module str, mut pointer: &'module str) -> bool {
     let mut seen = Vec::new();
     loop {
@@ -155,7 +171,10 @@ fn is_aggregate_destination<'module>(function: &'module str, mut pointer: &'modu
 /// a malloc whose null check puts the fill in a successor block. Following a
 /// unique predecessor chain back to the allocation excludes a refill loop:
 /// every execution of this fill must first execute that allocation again.
-/// Unknown provenance or a control-flow join fails this narrow test oracle.
+/// A `realloc` root additionally requires the fill's destination to add a
+/// run-time index to the block, because the slots it preserves are a prefix of
+/// run-time length. Unknown provenance or a control-flow join fails this narrow
+/// test oracle.
 fn fresh_allocation_for_fill<'module>(
     function: &'module str,
     mut pointer: &'module str,
@@ -163,6 +182,7 @@ fn fresh_allocation_for_fill<'module>(
 ) -> Option<&'module str> {
     let lines: Vec<_> = function.lines().collect();
     let mut seen = Vec::new();
+    let mut runtime_offset = false;
     let allocation = loop {
         if seen.contains(&pointer) {
             return None;
@@ -173,11 +193,18 @@ fn fresh_allocation_for_fill<'module>(
             line.strip_prefix(&prefix)
                 .map(|definition| (index, definition))
         })?;
-        // A `grow` [OP-10] reallocates the cell, and the slots it adds are filled
-        // after that call, so its result is a fresh allocation for the fill.
-        if matches!(call_target(lines[index]), Some("malloc" | "realloc")) {
-            break index;
+        match call_target(lines[index]) {
+            Some("malloc") => break index,
+            // A `grow` [OP-10] reallocates the cell and keeps the header and the
+            // filled slots, so its result is fresh only past that preserved
+            // prefix. The prefix length is the block's run-time length, which no
+            // constant offset can be shown to reach, so only a destination that
+            // adds a run-time index to the block qualifies.
+            Some("realloc") if runtime_offset => break index,
+            Some("realloc") => return None,
+            _ => {}
         }
+        runtime_offset |= getelementptr_has_runtime_index(definition);
         pointer = getelementptr_base(definition)?;
     };
     let fill = lines.iter().position(|line| *line == fill)?;
@@ -267,17 +294,34 @@ initialize:
     assert!(bulk_initializations_use_fresh_storage(reused).is_err());
     let calloc = fresh.replace("@malloc(i64 4112)", "@calloc(i64 1, i64 4112)");
     assert!(bulk_initializations_use_fresh_storage(&calloc).is_err());
-    // A `grow` remake fills the slots it added once, after its realloc.
-    let remade = fresh.replace(
-        "tail call dereferenceable_or_null(4112) ptr @malloc(i64 4112)",
-        "call ptr @realloc(ptr %old, i64 4112)",
-    );
-    assert!(bulk_initializations_use_fresh_storage(&remade).is_ok());
-    let remade_twice = twice.replace(
-        "tail call dereferenceable_or_null(4112) ptr @malloc(i64 4112)",
-        "call ptr @realloc(ptr %old, i64 4112)",
+    // A `grow` remake keeps the old prefix and fills only the slots it added,
+    // at a run-time offset past that prefix, once, after its realloc.
+    let remade = r#"define void @remade(ptr %old, i64 %length, i64 %added_bytes) {
+entry:
+  %run = call ptr @realloc(ptr %old, i64 4112)
+  %is_null = icmp eq ptr %run, null
+  br i1 %is_null, label %failed, label %initialize
+failed:
+  ret void
+initialize:
+  %payload = getelementptr i8, ptr %run, i64 16
+  %added = getelementptr i8, ptr %payload, i64 %length
+  call void @llvm.memset.p0.i64(ptr %added, i8 0, i64 %added_bytes, i1 false)
+  ret void
+}"#;
+    assert!(bulk_initializations_use_fresh_storage(remade).is_ok());
+    let remade_twice = remade.replace(
+        "  ret void\n}",
+        "  call void @llvm.memset.p0.i64(ptr %added, i8 0, i64 %added_bytes, i1 false)\n  ret void\n}",
     );
     assert!(bulk_initializations_use_fresh_storage(&remade_twice).is_err());
+    let refilled_prefix = remade.replace("ptr %added, i8 0", "ptr %payload, i8 0");
+    assert!(bulk_initializations_use_fresh_storage(&refilled_prefix).is_err());
+    let refilled_block = remade.replace("ptr %added, i8 0", "ptr %run, i8 0");
+    assert!(bulk_initializations_use_fresh_storage(&refilled_block).is_err());
+    let constant_offset = remade.replace("i64 %length\n", "i64 8\n");
+    assert_ne!(constant_offset, remade);
+    assert!(bulk_initializations_use_fresh_storage(&constant_offset).is_err());
 }
 
 /// A compact pointer-provenance trace for optimizer-version failures in the
@@ -512,7 +556,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // allocator guarantee: the fill loop is inside `zeroed_bytes`, between the
     // take and the hand-back, so a caller cannot reach a filled run without
     // having taken it and cannot re-reach the fill without taking another. A
-    // remake fills only the slots it added, and only once, after its copy.
+    // remake fills only the slots it added, at a run-time offset past the
+    // prefix its realloc preserved, and only once.
     // LLVM may retain that first fill as a memset after malloc and
     // its null check, instead of a calloc. The provenance/control-flow oracle
     // permits one such fill per allocation and refuses repeated fills, fills

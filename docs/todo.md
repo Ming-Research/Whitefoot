@@ -1096,8 +1096,9 @@ rarely insert at the same place.
   materially affect a measured consumer or lowering work reaches those paths.
 
 - **Box/window representation costs remain unqualified.** The current runtime-
-  capacity Box is one pointer to one header-first allocation; `grow` uses
-  allocation, memmove and free. A one-word owner, one allocation and header
+  capacity Box is one pointer to one header-first allocation; `grow`
+  reallocates it, selected on Halo's measured table growth only (one consumer,
+  one machine), so its cost in other consumers stays unmeasured. A one-word owner, one allocation and header
   placement are distinct choices: a fat descriptor can also own one element
   allocation and make measure reads direct, while widening transport and
   capture storage. Neither alternative is established as generally faster.

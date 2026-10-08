@@ -671,7 +671,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 /// `grow` computes its size at its own emitted site, so it is observed the
 /// same way: an empty window takes its first allocation, `grow` to 1000
 /// takes the second and releases the first, and a refused count ends the run
-/// after the first allocation alone.
+/// after the first allocation alone. A servable count whose `realloc` the
+/// allocator refuses leaves the first block held and ends in the same record.
 ///
 /// `box_segments_filled` [OP-13] sums its lengths before it sizes its block,
 /// so its run has two lengths of `n` one-byte elements behind a 32-byte
@@ -765,6 +766,19 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
                 assert_eq!(trace, refused_trace, "{shape} with {extra} arguments");
                 assert_resource_record(&output.stderr, "heap");
             }
+        }
+        if shape == "grow" {
+            // A servable size the allocator then refuses: the observer refuses
+            // allocation id 2, the `grow` realloc, returning NULL with the old
+            // block still held. The run ends at the resource abort with the
+            // first block neither released nor freed (no `F1;`).
+            let output = Command::new(&executable)
+                .env("WF_TEST_REFUSE_ALLOCATION", "2")
+                .bounded_output()
+                .expect("run the refused reallocation");
+            assert_eq!(signal_of(&output), Some(libc_sigabrt()), "{output:?}");
+            assert_eq!(output.stdout, b"A1;X2;", "{output:?}");
+            assert_resource_record(&output.stderr, "heap");
         }
         std::fs::remove_dir_all(directory).expect("remove allocation size image");
     }
