@@ -854,3 +854,387 @@ fn an_unproved_postcondition_names_the_exit_that_owes_it() {
         });
     }
 }
+
+// These fixtures exercise the selected range-field proposal before its
+// specification amendment; they do not change conformance verdicts.
+fn field_range_program(body: &str) -> Vec<u8> {
+    format!(
+        "{body}\nfn main() -> status: std::process::ExitStatus pure {{\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+    ).into_bytes()
+}
+
+fn field_range_verdict(source: &[u8], rule: Option<SemanticRule>) {
+    with_semantics(source, |outcome| match (rule, outcome) {
+        (None, SemanticOutcome::Complete(_)) => {}
+        (Some(expected), SemanticOutcome::SourceIssue { issue, .. }) => {
+            assert_eq!(issue.rule(), expected, "{issue:?}");
+        }
+        (expected, outcome) => panic!("expected {expected:?}, got {outcome:?}"),
+    });
+}
+
+fn field_range_scatter(before: &str, order_effect: &str, read: &str) -> Vec<u8> {
+    let before = if before.is_empty() {
+        String::new()
+    } else {
+        format!("{before}\n")
+    };
+    let read = if read.is_empty() {
+        String::new()
+    } else {
+        format!("{read}\n")
+    };
+    field_range_program(&format!(
+        "struct Block {{
+  entry_slot: u64;
+  normal_y: i64;
+}}
+
+fn need(order: &[u64], targets: &[Block]) -> result: unit pure contract {{
+  requires forall inverse(k in 0_u64..order^.len) when order^[k] < targets^.len: targets^[order^[k]].entry_slot == k;
+}} {{
+  return unit;
+}}
+
+fn scatter(order: &[u64], targets: &[Block], unknown: u64) -> result: unit {order_effect}, writes(targets) contract {{
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < targets^.len: targets^[order^[k]].entry_slot == k;
+}} {{
+{before}  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {{
+    }}
+  ) {{
+    let at = order^[k];
+    if at < targets^.len {{
+{read}      set targets^[at].normal_y = 0_i64;
+    }}
+  }}
+  return unit;
+}}
+"
+    ))
+}
+
+#[test]
+fn field_range_scatter_certifies_sibling_write_and_field_read() {
+    let source = field_range_scatter(
+        "",
+        "reads(order)",
+        "      let slot = targets^[at].entry_slot;",
+    );
+    with_semantics(&source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("field scatter must check: {outcome:?}");
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|f| f.name == "scatter")
+            .unwrap();
+        let certified = &function.range_facts.certified;
+        assert_eq!(certified.len(), 1);
+        assert_eq!(certified[0].writes.len(), 1);
+        assert_eq!(certified[0].reads.len(), 1);
+        let table = program.data.permission.named("scatter").unwrap();
+        assert_eq!(table.loops[0].verdict, LoopVerdict::PermittedEligible);
+    });
+}
+
+#[test]
+fn field_range_sibling_write_preserves_inverse_at_call() {
+    let source = field_range_scatter(
+        "  if 0_u64 < targets^.len {\n    set targets^[0_u64].normal_y = 9_i64;\n  }\n  need(order: order, targets: targets);",
+        "reads(order)",
+        "",
+    );
+    field_range_verdict(&source, None);
+}
+
+#[test]
+fn field_range_unknown_inverse_write_rejects_at_range3() {
+    let source = field_range_scatter(
+        "  if 0_u64 < targets^.len {\n    set targets^[0_u64].entry_slot = unknown;\n  }\n  need(order: order, targets: targets);",
+        "reads(order)",
+        "",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range3));
+}
+
+#[test]
+fn field_range_changed_order_rejects_old_inverse_at_range5() {
+    let source = field_range_scatter(
+        "  if 1_u64 < order^.len {\n    let first = order^[0_u64];\n    set order^[1_u64] = first;\n  }",
+        "writes(order)",
+        "",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range5));
+}
+
+#[test]
+fn field_range_congruence_never_equates_different_fields() {
+    let source = field_range_program(
+        "struct Pair {\n  f: u64;\n  g: u64;\n}\n
+fn need_equal(rows: &[Pair]) -> result: unit pure contract {
+  requires forall equal(k in 0_u64..rows^.len): rows^[k].f == rows^[k].g;
+} {
+  return unit;
+}
+
+fn forward(rows: &[Pair]) -> result: unit pure {
+  need_equal(rows: rows);
+  return unit;
+}
+",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range3));
+}
+
+fn field_range_measure_source(before: &str, start: &str, measure: &str) -> Vec<u8> {
+    let (before, effect) = if before.is_empty() {
+        (String::new(), "pure")
+    } else {
+        (format!("{before}\n"), "writes(rows)")
+    };
+    field_range_program(&format!(
+        "fn need_rows(rows: &[Slots<u8, 8>]) -> result: unit pure contract {{
+  requires forall bounded(k in {start}..rows^.len): rows^[k].{measure} <= 4_u64;
+}} {{
+  return unit;
+}}
+
+fn forward(rows: &[Slots<u8, 8>]) -> result: unit {effect} contract {{
+  requires forall held(k in {start}..rows^.len): rows^[k].{measure} <= 4_u64;
+}} {{
+{before}  need_rows(rows: rows);
+  return unit;
+}}
+"
+    ))
+}
+
+#[test]
+fn field_range_element_length_passes_between_contracts() {
+    field_range_verdict(&field_range_measure_source("", "0_u64", "len"), None);
+}
+
+#[test]
+fn field_range_element_capacity_passes_between_contracts() {
+    field_range_verdict(&field_range_measure_source("", "0_u64", "cap"), None);
+}
+
+const FIELD_RANGE_APPEND: &str = "  if 0_u64 < rows^.len {
+    if rows^[0_u64].len < rows^[0_u64].cap {
+      place_back(window: &rows^[0_u64], value: 0_u8);
+    }
+  }";
+
+#[test]
+fn field_range_descriptor_write_invalidates_written_element_measure() {
+    field_range_verdict(
+        &field_range_measure_source(FIELD_RANGE_APPEND, "0_u64", "len"),
+        Some(SemanticRule::Range3),
+    );
+}
+
+#[test]
+fn field_range_descriptor_write_keeps_other_element_measures() {
+    field_range_verdict(
+        &field_range_measure_source(FIELD_RANGE_APPEND, "1_u64", "len"),
+        None,
+    );
+}
+
+#[test]
+fn field_range_box_content_and_nested_fields_form_and_preserve_siblings() {
+    let source = field_range_scatter(
+        "  if 0_u64 < targets^.len {\n    set targets^[0_u64].normal_y = 9_i64;\n  }\n  need(order: order, targets: targets);",
+        "reads(order)",
+        "",
+    );
+    let source = String::from_utf8(source)
+        .unwrap()
+        .replace(
+            "struct Block {",
+            "struct Header {\n  entry_slot: u64;\n}\n\nstruct Block {",
+        )
+        .replacen(
+            "  entry_slot: u64;\n  normal_y",
+            "  header: Header;\n  normal_y",
+            1,
+        )
+        .replace("&[Block]", "&[Box<Block>]")
+        .replace("].entry_slot", "].inner.header.entry_slot")
+        .replace("].normal_y", "].inner.normal_y");
+    field_range_verdict(source.as_bytes(), None);
+}
+
+fn field_range_formation(declarations: &str, element: &str, suffix: &str) -> Vec<u8> {
+    let declarations = if declarations.is_empty() {
+        String::new()
+    } else {
+        format!("{declarations}\n")
+    };
+    field_range_program(&format!(
+        "{declarations}fn inspect(rows: &[{element}]) -> result: unit pure contract {{
+  requires forall held(k in 0_u64..rows^.len): rows^[k]{suffix} == 0_u64;
+}} {{
+  return unit;
+}}
+"
+    ))
+}
+
+#[test]
+fn field_range_enum_payload_still_rejects_at_range1() {
+    let source = field_range_formation(
+        "enum Entry {\n  Open(slot: u64);\n}\n",
+        "Entry",
+        ".Open.slot",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range1));
+}
+
+#[test]
+fn field_range_noninteger_field_rejects_at_range1() {
+    let source = field_range_formation("struct Entry {\n  flag: Bool;\n}\n", "Entry", ".flag");
+    field_range_verdict(&source, Some(SemanticRule::Range1));
+}
+
+#[test]
+fn field_range_second_index_rejects_at_range1() {
+    let source = field_range_formation("", "Slots<u64, 8>", "[0_u64]");
+    field_range_verdict(&source, Some(SemanticRule::Range1));
+}
+
+#[test]
+fn field_range_generic_declared_leaf_forms_and_noninteger_instance_is_empty() {
+    let source = field_range_program(
+        "struct Record<T> {
+  value: T;
+}
+
+fn accept<T>(rows: &[Record<T>]) -> result: unit pure contract {
+  requires forall same(k in 0_u64..rows^.len): rows^[k].value == rows^[k].value;
+} {
+  return unit;
+}
+
+fn forward(numbers: &[Record<u64>], flags: &[Record<Bool>]) -> result: unit pure {
+  accept::<u64>(rows: numbers);
+  accept::<Bool>(rows: flags);
+  return unit;
+}
+",
+    );
+    field_range_verdict(&source, None);
+}
+
+#[test]
+fn field_range_generic_cannot_select_undeclared_field() {
+    let source = field_range_program(
+        "fn inspect<T>(rows: &[T]) -> result: unit pure contract {
+  requires forall held(k in 0_u64..rows^.len): rows^[k].missing == 0_u64;
+} {
+  return unit;
+}
+",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range1));
+}
+
+#[test]
+fn field_range_whole_replacement_uses_known_construction_fields() {
+    let source = field_range_program(
+        "nocopy struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn need_zero(rows: &[Pair]) -> result: unit pure contract {
+  requires forall zero(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
+} {
+  return unit;
+}
+
+fn forward(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires forall held(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
+} {
+  if 0_u64 < rows^.len {
+    let made = Pair(f: 0_u64, g: 7_u64);
+    set rows^[0_u64] = move made;
+  }
+  need_zero(rows: rows);
+  return unit;
+}
+",
+    );
+    field_range_verdict(&source, None);
+}
+
+#[test]
+fn field_range_whole_replacement_forgets_unknown_fields() {
+    let source = field_range_program(
+        "struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn need_zero(rows: &[Pair]) -> result: unit pure contract {
+  requires forall zero(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
+} {
+  return unit;
+}
+
+fn forward(rows: &[Pair], replacement: Pair) -> result: unit writes(rows) contract {
+  requires forall held(k in 0_u64..rows^.len): rows^[k].f == 0_u64;
+} {
+  if 0_u64 < rows^.len {
+    set rows^[0_u64] = replacement;
+  }
+  need_zero(rows: rows);
+  return unit;
+}
+",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range3));
+}
+
+#[test]
+fn field_range_segments_preserve_projection_after_two_indices() {
+    let source = field_range_program(
+        "struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn need_segments(rows: &Segments<Pair>) -> result: unit pure contract {
+  requires forall zero(d in 0_u64..rows^.len, k in 0_u64..rows^[d].len): rows^[d][k].f == 0_u64;
+} {
+  return unit;
+}
+
+fn forward(rows: &Segments<Pair>) -> result: unit writes(rows) contract {
+  requires forall held(d in 0_u64..rows^.len, k in 0_u64..rows^[d].len): rows^[d][k].f == 0_u64;
+} {
+  if 0_u64 < rows^.len {
+    let first = &rows^[0_u64];
+    if 0_u64 < first^.len {
+      set first^[0_u64].g = 1_u64;
+    }
+  }
+  need_segments(rows: rows);
+  return unit;
+}
+",
+    );
+    field_range_verdict(&source, None);
+}
+
+#[test]
+fn field_range_array_element_has_length_but_no_capacity() {
+    let source = field_range_formation("", "Array<u8, 8>", ".len");
+    field_range_verdict(&source, None);
+    let source = field_range_formation("", "Array<u8, 8>", ".cap");
+    field_range_verdict(&source, Some(SemanticRule::Range1));
+}

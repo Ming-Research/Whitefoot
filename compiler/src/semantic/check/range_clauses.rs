@@ -21,12 +21,14 @@ use crate::{
 
 use super::super::model::{
     CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedType, CheckedValue, IntegerType,
+    MeasureCell,
 };
 use super::super::postcondition::CheckedPostconditionSelector;
 use super::super::range_facts::{
     CheckedApart, CheckedRangeBinder, CheckedRangeClause, CheckedRangePlace,
-    CheckedRangePostcondition, CheckedRangeRelation, CheckedRangeRoot, CheckedRangeRoute,
-    CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm, CheckedRangeUse, RangeComparison,
+    CheckedRangePostcondition, CheckedRangeProjection, CheckedRangeRelation, CheckedRangeRoot,
+    CheckedRangeRoute, CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm, CheckedRangeUse,
+    RangeComparison,
 };
 use super::{CheckContext, CheckStop, Checker, FunctionContext, LocalBinding};
 
@@ -1015,31 +1017,24 @@ impl Checker<'_, '_> {
                                     "read an element `s[d][k]` or the length `s[d].len`",
                                 );
                             };
-                            if index + 2 != last {
-                                return self.invalid_range(
-                                    SemanticRule::Range1,
-                                    next,
-                                    "a range term continues past a segment element",
-                                    "end the term at the integer element or the segment length",
-                                );
-                            }
                             return match self.types.declarations.tree.place_suffix(next)? {
                                 PlaceSuffix::Index { offset } => {
                                     let element_index =
                                         self.range_atom(context, offset, bindings, names)?;
-                                    let Some(integer) = Self::range_integer(element, names) else {
-                                        return self.not_integer_element(next);
-                                    };
-                                    Ok(CheckedRangeTerm::Read {
-                                        place: base,
-                                        shape: CheckedRangeShape::Segments,
-                                        indices: vec![index_term, element_index],
-                                        element: integer,
-                                    })
+                                    self.range_element_suffixes(
+                                        context,
+                                        next,
+                                        &suffixes[index + 2..],
+                                        base,
+                                        CheckedRangeShape::Segments,
+                                        vec![index_term, element_index],
+                                        element,
+                                        names,
+                                    )
                                 }
                                 PlaceSuffix::Member(_) => {
                                     let name = self.member_name(next)?;
-                                    if name != "len" {
+                                    if name != "len" || index + 2 != last {
                                         return self.invalid_range(
                                             SemanticRule::Range1,
                                             next,
@@ -1069,23 +1064,16 @@ impl Checker<'_, '_> {
                             );
                         }
                     };
-                    if !at_end {
-                        return self.invalid_range(
-                            SemanticRule::Range1,
-                            suffix,
-                            "a range term selects below an element",
-                            "end the term at the integer element it reads",
-                        );
-                    }
-                    let Some(integer) = Self::range_integer(element, names) else {
-                        return self.not_integer_element(suffix);
-                    };
-                    return Ok(CheckedRangeTerm::Read {
-                        place: base,
-                        shape: CheckedRangeShape::Run,
-                        indices: vec![index_term],
-                        element: integer,
-                    });
+                    return self.range_element_suffixes(
+                        context,
+                        suffix,
+                        &suffixes[index + 1..],
+                        base,
+                        CheckedRangeShape::Run,
+                        vec![index_term],
+                        element,
+                        names,
+                    );
                 }
                 PlaceSuffix::Member(_) => {
                     let name = self.member_name(suffix)?;
@@ -1097,7 +1085,9 @@ impl Checker<'_, '_> {
                         };
                         let measured = match selected {
                             Selected::Run(_) => measure == CheckedMeasure::Length,
-                            Selected::Value(ty) => ty.measured().is_some(),
+                            Selected::Value(ty) => ty
+                                .measured()
+                                .is_some_and(|kind| measure.cell(kind) != MeasureCell::Absent),
                             Selected::Holder { .. } => false,
                         };
                         if measured {
@@ -1122,55 +1112,9 @@ impl Checker<'_, '_> {
                             "dereference the reference with `^` first",
                         );
                     };
-                    if let Some(content) = self.types.box_content(value)? {
-                        if name != "inner" {
-                            return self.invalid_range(
-                                SemanticRule::Range1,
-                                suffix,
-                                "a range term selects a field a `Box` does not have",
-                                "select a `Box`'s content with `.inner`",
-                            );
-                        }
-                        path.push(CheckedRangeStep::BoxContent);
-                        selected = Selected::Value(content);
-                    } else {
-                        let CheckedType::Nominal(nominal) = value else {
-                            return self.invalid_range(
-                                SemanticRule::Range1,
-                                suffix,
-                                "a range term selects a field of a value that has none",
-                                "select a field of a struct",
-                            );
-                        };
-                        let CheckedNominalKind::Struct { fields } =
-                            &self.types.nominal(nominal)?.kind
-                        else {
-                            return self.invalid_range(
-                                SemanticRule::Range1,
-                                suffix,
-                                "a range term selects a field of a value that is not a struct",
-                                "select a field of a struct",
-                            );
-                        };
-                        let Some((ordinal, field)) = fields
-                            .iter()
-                            .enumerate()
-                            .find(|(_, field)| field.name == name)
-                        else {
-                            return self.invalid_range(
-                                SemanticRule::Range1,
-                                suffix,
-                                "a range term selects a field the struct does not declare",
-                                "select a declared field",
-                            );
-                        };
-                        let ty = field.ty;
-                        path.push(CheckedRangeStep::Field(
-                            u32::try_from(ordinal)
-                                .map_err(|_| SemanticCompilerFailure::CounterOverflow)?,
-                        ));
-                        selected = Selected::Value(ty);
-                    }
+                    let (step, ty) = self.range_field(context, value, &name, suffix)?;
+                    path.push(step);
+                    selected = Selected::Value(ty);
                 }
             }
             index += 1;
@@ -1186,6 +1130,118 @@ impl Checker<'_, '_> {
                 "bind the integer in a `let` before the clause, or read one integer element",
             ),
         }
+    }
+
+    /// Resolve an owned field with the same visibility check as ordinary places.
+    fn range_field(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        value: CheckedType,
+        name: &str,
+        suffix: NodeId,
+    ) -> Result<(CheckedRangeStep, CheckedType), CheckStop> {
+        if let Some(content) = self.types.box_content(value)? {
+            if name == "inner" {
+                return Ok((CheckedRangeStep::BoxContent, content));
+            }
+        } else if let CheckedType::Nominal(nominal) = value {
+            if let CheckedNominalKind::Struct { fields } = &self.types.nominal(nominal)?.kind {
+                if let Some((ordinal, field)) = fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, field)| field.name == name)
+                {
+                    let ty = field.ty;
+                    self.types.reject_inaccessible_field(
+                        context.check_context,
+                        nominal,
+                        None,
+                        ordinal,
+                        name,
+                        suffix,
+                    )?;
+                    let ordinal = u32::try_from(ordinal)
+                        .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
+                    return Ok((CheckedRangeStep::Field(ordinal), ty));
+                }
+            }
+        }
+        self.invalid_range(
+            SemanticRule::Range1,
+            suffix,
+            "a range term selects a field the selected type does not declare",
+            "select a declared struct field or a Box's `.inner` content",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn range_element_suffixes(
+        &mut self,
+        context: FunctionContext<'_, '_>,
+        node: NodeId,
+        suffixes: &[NodeId],
+        place: CheckedRangePlace,
+        shape: CheckedRangeShape,
+        indices: Vec<CheckedRangeTerm>,
+        mut selected: CheckedType,
+        names: &RangeNames,
+    ) -> Result<CheckedRangeTerm, CheckStop> {
+        let mut projection = Vec::new();
+        for (position, suffix) in suffixes.iter().copied().enumerate() {
+            if !matches!(
+                self.types.declarations.tree.place_suffix(suffix)?,
+                PlaceSuffix::Member(_)
+            ) {
+                return self.invalid_range(
+                    SemanticRule::Range1,
+                    suffix,
+                    "a range term selects below an element with an unsupported step",
+                    "select struct fields or Box content, optionally ending in a measure",
+                );
+            }
+            let name = self.member_name(suffix)?;
+            if position + 1 == suffixes.len()
+                && selected.measured().is_some()
+                && (name == "len" || name == "cap")
+            {
+                let measure = if name == "len" {
+                    CheckedMeasure::Length
+                } else {
+                    CheckedMeasure::Capacity
+                };
+                if selected
+                    .measured()
+                    .is_some_and(|kind| measure.cell(kind) == MeasureCell::Absent)
+                {
+                    return self.invalid_range(
+                        SemanticRule::Range1,
+                        suffix,
+                        "the selected type has no such measure",
+                        "select a measure present in the type's measure table",
+                    );
+                }
+                projection.push(CheckedRangeProjection::Measure(measure));
+                selected = CheckedType::Integer(IntegerType::U64);
+            } else {
+                let (step, ty) = self.range_field(context, selected, &name, suffix)?;
+                projection.push(match step {
+                    CheckedRangeStep::Field(field) => CheckedRangeProjection::Field(field),
+                    CheckedRangeStep::BoxContent => CheckedRangeProjection::BoxContent,
+                    CheckedRangeStep::Referent => unreachable!("owned field selection"),
+                });
+                selected = ty;
+            }
+        }
+        let Some(element) = Self::range_integer(selected, names) else {
+            return self.not_integer_element(suffixes.last().copied().unwrap_or(node));
+        };
+        Ok(CheckedRangeTerm::Read {
+            place,
+            shape,
+            indices,
+            projection,
+            element,
+        })
     }
 
     fn member_name(&self, suffix: NodeId) -> Result<String, CheckStop> {

@@ -45,6 +45,15 @@ pub(crate) enum CheckedRangeStep {
     BoxContent,
 }
 
+/// An owned selection below an element, optionally ending at a measure.
+/// Ordinals identify fields of the statically selected struct type.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum CheckedRangeProjection {
+    Field(u32),
+    BoxContent,
+    Measure(CheckedMeasure),
+}
+
 /// The value shape a range read selects from.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeShape {
@@ -77,11 +86,12 @@ pub(crate) enum CheckedRangeTerm {
         place: CheckedRangePlace,
         segment: Box<CheckedRangeTerm>,
     },
-    /// One integer element read, `p[i]` or `s[d][k]`.
+    /// An integer or measure selected below `p[i]` or `s[d][k]`.
     Read {
         place: CheckedRangePlace,
         shape: CheckedRangeShape,
         indices: Vec<CheckedRangeTerm>,
+        projection: Vec<CheckedRangeProjection>,
         element: IntegerType,
     },
     /// `constant + sum(coefficient * term)`.

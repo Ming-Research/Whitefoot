@@ -9,12 +9,13 @@
 //! reach one container. Every write makes a new *version* of its container
 //! defined by the old one, which is what lets a fact stated about an old
 //! version answer a question about a newer one: a read of the newer version
-//! is the written value at the written index and the old version's element
-//! everywhere else.
+//! is the written value's projection at the written index, and the old
+//! version's projection at other indices or at a disjoint sibling field.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::super::model::{BindingId, CheckedMeasure, IntegerType};
+use super::super::range_facts::CheckedRangeProjection;
 use super::solver::{AtomId, Linear, Literal, Relation};
 
 /// What owns a location's storage.
@@ -86,12 +87,13 @@ pub(super) enum VersionDef {
     Initial,
     /// Contents nothing here describes.
     Fresh,
-    /// The previous version with one element written. A value of `None` is
-    /// an element the judgment does not represent.
+    /// A located write, with the scalar projections of its value that the
+    /// walk can name. Missing projections are unknown at the written tuple.
     Write {
         previous: VersionId,
         indices: Vec<Linear>,
-        value: Option<Linear>,
+        projection: Vec<CheckedRangeProjection>,
+        values: BTreeMap<Vec<CheckedRangeProjection>, Linear>,
     },
     /// One of the versions of a join's arms, by the arm taken.
     Join {
@@ -114,6 +116,7 @@ pub(super) enum AtomDef {
     Read {
         version: VersionId,
         indices: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
     },
     /// A measure of a container in one generation of its descriptor; the
     /// world interns one atom per container, generation and measure.
@@ -140,7 +143,7 @@ pub(super) struct Atom {
 #[derive(Debug, Default)]
 pub(super) struct World {
     pub(super) atoms: Vec<Atom>,
-    reads: HashMap<(VersionId, Vec<Linear>), AtomId>,
+    reads: HashMap<(VersionId, Vec<Linear>, Vec<CheckedRangeProjection>), AtomId>,
     measures: HashMap<(ContainerId, u32, CheckedMeasure), AtomId>,
     segment_lengths: HashMap<(ContainerId, u32, Linear), AtomId>,
     pub(super) containers: Vec<Container>,
@@ -181,13 +184,21 @@ impl World {
         &mut self,
         version: VersionId,
         indices: Vec<Linear>,
+        projection: Vec<CheckedRangeProjection>,
         ty: Option<IntegerType>,
     ) -> Linear {
-        let key = (version, indices.clone());
+        let key = (version, indices.clone(), projection.clone());
         if let Some(atom) = self.reads.get(&key) {
             return Linear::atom(*atom);
         }
-        let atom = self.push(AtomDef::Read { version, indices }, ty);
+        let atom = self.push(
+            AtomDef::Read {
+                version,
+                indices,
+                projection,
+            },
+            ty,
+        );
         self.reads.insert(key, atom);
         Linear::atom(atom)
     }
@@ -379,6 +390,8 @@ pub(super) enum View {
     Element {
         container: ContainerId,
         indices: Vec<Linear>,
+        /// None for a descendant outside the range projection vocabulary.
+        projection: Option<Vec<CheckedRangeProjection>>,
     },
     /// A whole place.
     Place(Location),
@@ -488,13 +501,15 @@ impl State {
         world: &mut World,
         container: ContainerId,
         indices: Vec<Linear>,
-        value: Option<Linear>,
+        projection: Vec<CheckedRangeProjection>,
+        values: BTreeMap<Vec<CheckedRangeProjection>, Linear>,
     ) {
         let previous = self.version(world, container);
         let version = world.new_version(VersionDef::Write {
             previous,
             indices,
-            value,
+            projection,
+            values,
         });
         self.versions.insert(container, version);
         if let Some(log) = &mut world.log {

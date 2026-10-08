@@ -757,6 +757,17 @@ rarely insert at the same place.
   Validate matching suffixes, wrong suffixes and out-of-range values, keeping
   named arguments covered. Reopen with the next grammar change.
 
+- **Qualify projected range terms at finer call and loop footprints.** Located
+  writes now keep sibling fields and other elements, including element
+  measures. Loop headers still forget a written container, and call rows
+  still use their reference argument's footprint rather than selecting each
+  field of the formal effect row. For example, a loop writing only
+  `rows^[k].g` can lose a fact about `rows^[k].f` after the loop. Reopen when
+  a consumer needs that fact across a loop or an aggregate-reference call;
+  record projected dry-walk and call effects, with whole-owner and descriptor
+  replacement controls. This is conservative precision work, not permission
+  to retain a possibly changed value.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**
