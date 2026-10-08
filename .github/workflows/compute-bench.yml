@@ -425,6 +425,32 @@ jobs:
           cargo build --release --quiet --manifest-path "$RUNNER_TEMP/sf/Cargo.toml" -p sf-nano-cli
           cargo install --quiet --locked --version 2.0.0 --root "$RUNNER_TEMP/wasmi" wasmi_cli
 
+      - name: Print hot arms' machine code and count dispatches
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/natural-baseline"
+          gen=research/experiments/match-dispatch/wasm/gen.py
+          python3 "$gen" "$out/names.wf" --names > "$out/names.txt"
+          for side in natural base; do
+            objdump -d --no-show-raw-insn "$out/wasm-$side" > "$out/$side.s"
+            for name in I32Add I32AddD I32Load I32LoadIx Copy BrIf Call; do
+              index=$(awk -v n="$name" '$0 == n {print NR - 1; exit}' "$out/names.txt")
+              [ -n "$index" ] || continue
+              echo "=== $side $name: arm $index"
+              grep -E "^[0-9a-f]+ <_?wf_run[^>]*arm[^>]*\\b$index\\b" "$out/$side.s" | head -3 || true
+              awk -v sym="wf_run([.]body)?[.]arm[.]$index" '
+                $0 ~ "<_?" sym "(\\.[^>]*)?>:$" {on = 1; count = 0; print; next}
+                on && (/^$/ || /^[0-9a-f]+ <.*>:$/) {print "--- " count " instructions"; on = 0}
+                on {print; count++}' "$out/$side.s"
+            done
+          done
+          python3 "$gen" "$out/profile.wf" --profile
+          compiler/target/gate/whitefootc "$out/profile.wf" -o "$out/wasm-profile" > /dev/null
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          "$out/wasm-profile" coremark.wasm 0x0 0x0 0x66 2000 > "$out/profile.out" 2>&1 || true
+          grep -E '^[0-9]{20}$' "$out/profile.out" > "$out/counts.txt" || true
+          paste "$out/names.txt" "$out/counts.txt" | awk -F'\t' '$2 + 0 > 0 {printf "%s\t%d\n", $1, $2 + 0}' | sort -t$'\t' -k2,2nr | head -60
+
       - name: Run CoreMark
         run: |
           set -eo pipefail
