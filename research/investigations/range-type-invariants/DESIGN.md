@@ -28,6 +28,23 @@ writers; nothing checks that, and nothing carries it to the call. Establishing
 it before the call costs a pass over the owner's slot span per edit, up to
 tens of thousands of entries for a flat owner.
 
+### What the gap costs
+
+The "--par task grain" line measured Snowghost's incremental edit pair
+(Whitefoot#287, `research/investigations/edit-parallelism/DESIGN.md`;
+ECMAScript page, 3ec4bb491, Snowghost-wf run 37840469770, sequential profile
+less a setup control): about 80% of each edit is the suffix translation
+(`translate_reference_payload` 32%, `reference_owner_cursor` 26%,
+`translate_reference_owner_suffix` 16%, `slot_read` 6%). Its subtrees write
+disjoint targets, but `--par` admits none of it, because both recursive calls
+write the context and their disjointness needs the stored invariant "each
+block appears once in its owner's sequence". If that work ran in parallel the
+Amdahl bound is 2.5 times at 4 workers; today the edit runs at 1.08 to 1.10
+times sequential at 4 workers on the 14900K. A second, independent blocker
+there, the parallel planner's refusal of an `if` or `match` group member, is
+that line's to bring to the owner. These are bounds and profiles, not a
+measured gain from this design.
+
 ## Selected direction
 
 A struct may declare a range type invariant: a [TYPE-11] type invariant whose
