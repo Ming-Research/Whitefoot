@@ -156,6 +156,21 @@ rarely insert at the same place.
   route. Validate direct-set and let-then-set positives, false callee results,
   alias writes and stale destination facts under the existing rules.
 
+- **A guard on a rebound reference's current target and a call through the
+  reference do not meet.** Minimal witness:
+  `fn8-neg-guard-through-rebound-local-holder` (`let q = &a^; set q = &b^;
+  if q^ != 0_u64 { need(x: b) }` refuses [FN-8]), and the reverse, a guard on
+  `b^` with a call through `q`. [ENT-2] identifies a place written through a
+  reference variable that some `set` rebinds by its spelling at every point,
+  so the guard and the call name different terms although `q` names `b`
+  there. Identifying the variable's current target at each read instead
+  loses a header invariant read through a variable rebound in the loop, whose
+  identity would switch at the header
+  (`inv1-pos-header-invariant-through-rebound-reference`). The change would
+  judge exactness at each read and re-form every invariant and placement at
+  each point it is checked; validate with both witnesses and the invariant
+  case. Reopen when a program guards a rebound cursor's target directly.
+
 - **Rebinding a reference kills the facts about its old target.** Minimal
   witness: in `fn pick(a: &u64, b: &u64)`, `let q = &a^; if a^ != 0_u64 {
   set q = &b^; let r = need(x: a); }` refuses the call [FN-8], while the
