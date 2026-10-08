@@ -2778,9 +2778,12 @@ fn a_write_that_kills_a_measure_retargets_the_invariant_image() {
 
 #[test]
 fn arm_releases_preserve_each_nested_induction_input() {
-    for header in [
-        "loop (\n    invariant limit: x <= 1_u64\n  )",
-        "for (\n    i in 0_u64..1_u64,\n    invariant limit: x <= 1_u64\n  )",
+    for (header, after) in [
+        ("loop (\n    invariant limit: x <= 1_u64\n  )", ""),
+        (
+            "for (\n    i in 0_u64..1_u64,\n    invariant limit: x <= 1_u64\n  )",
+            "\n  return unit;",
+        ),
     ] {
         for tail in ["", "\n    continue;"] {
             let source = format!(
@@ -2797,8 +2800,7 @@ fn arm_releases_preserve_each_nested_induction_input() {
     }} else {{
       set x = 0_u64;
     }}{tail}
-  }}
-  return unit;
+  }}{after}
 }}
 
 fn main() -> status: std::process::ExitStatus pure {{

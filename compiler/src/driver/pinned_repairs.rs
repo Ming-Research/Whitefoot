@@ -2801,7 +2801,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "GIVE-1",
         sentences: &[
             "]: EmptyDeliverySet\n",
-            "\n  binding: picked\n  mechanical_fix: every arm leaves by `return` or `break`, so no value reaches `picked`: drop `let picked =`, write the `match` as a statement, and delete the statements after it in this block, which no path reaches\n",
+            "\n  binding: picked\n  mechanical_fix: no arm supplies a value to `picked`: drop `let picked =`, write the `match` as a statement, and delete the statements after it in this block, which no path reaches\n",
         ],
         repaired: &[br#"fn choose(flag: Option<i32>) -> result: i32 pure {
   match flag {
