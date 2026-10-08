@@ -7,6 +7,8 @@ pub const ORDINARY_VALUES_HEADER: &str = include_str!("ordinary_values.h");
 pub const ORDINARY_VALUES_SOURCE: &str = include_str!("ordinary_values.c");
 /// Ordinary linked view definitions using the shared Whitefoot callable ABI.
 pub const ORDINARY_VALUES_LLVM: &str = include_str!("ordinary_values.ll");
+/// Counted libc allocation wrappers, linked only for emitted heap references.
+pub const HEAP_SOURCE: &str = include_str!("heap.c");
 
 /// The finite completion core contract embedded in the compiler.
 pub const COMPLETION_CONTRACT_HEADER: &str = include_str!("completion/contract.h");
@@ -92,15 +94,44 @@ mod tests {
         })
     }
 
-    /// [STOR-8] the compiler-owned native supplies every build links never
-    /// call the program's allocator, so an executable requires one exactly
-    /// when its own emitted code does, and a no-heap entry's build requires
-    /// none [MOD-9]. The Windows runtime keeps its host descriptor registry
-    /// in the process heap, a host resource under [SCOPE-3] that this pins to
-    /// that one table.
+    fn without_heap_entry_points(source: &str) -> String {
+        let mut remaining = source.to_owned();
+        for (signature, allocator) in [
+            ("void *wf__heap_take(uint64_t bytes) {", "malloc"),
+            (
+                "void *wf__heap_retake(void *block, uint64_t old_bytes, uint64_t new_bytes) {",
+                "realloc",
+            ),
+            ("void wf__heap_give(void *block, uint64_t bytes) {", "free"),
+        ] {
+            let start = remaining.find(signature).expect("counted heap entry point");
+            let end = start + remaining[start..].find("\n}\n").expect("function end") + 3;
+            let body = &remaining[start..end];
+            assert_eq!(body.matches(&format!("{allocator}(")).count(), 1);
+            for forbidden in [
+                "malloc",
+                "calloc",
+                "realloc",
+                "free",
+                "aligned_alloc",
+                "posix_memalign",
+            ] {
+                if forbidden != allocator {
+                    assert!(!calls(body, forbidden), "{signature} calls {forbidden}");
+                }
+            }
+            remaining.replace_range(start..end, "");
+        }
+        remaining
+    }
+
+    /// Every unconditional unit must remain allocator-free [STOR-8, MOD-9].
+    /// Only the optional heap unit may call libc's allocator; Windows keeps
+    /// its descriptor registry's separate host-heap API.
     #[test]
-    fn no_runtime_unit_calls_the_allocator() {
+    fn runtime_allocator_calls_are_confined_to_counted_entry_points() {
         let units = [
+            ("heap.c", HEAP_SOURCE),
             ("ordinary_values.h", ORDINARY_VALUES_HEADER),
             ("ordinary_values.c", ORDINARY_VALUES_SOURCE),
             ("ordinary_values.ll", ORDINARY_VALUES_LLVM),
@@ -149,6 +180,13 @@ mod tests {
             ),
         ];
         for (name, source) in units {
+            let remaining;
+            let source = if name == "heap.c" {
+                remaining = without_heap_entry_points(source);
+                remaining.as_str()
+            } else {
+                source
+            };
             for allocator in [
                 "malloc",
                 "calloc",
@@ -173,6 +211,9 @@ mod tests {
                 assert_eq!(host_heap, 0, "{name} uses the host heap");
             }
         }
+        // A forbidden call beside either allowed body remains visible.
+        let injected = format!("{HEAP_SOURCE}\nvoid bad(void) {{ free(0); }}");
+        assert!(calls(&without_heap_entry_points(&injected), "free"));
         assert!(calls("  p = malloc (n);", "malloc"));
         assert!(calls("call void @free(ptr %p)", "free"));
         assert!(!calls("a lock-free queue", "free"));

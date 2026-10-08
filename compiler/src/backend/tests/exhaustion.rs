@@ -353,13 +353,13 @@ fn main() -> status: std::process::ExitStatus pure {
 /// and four frees, and the observer limit, the refusal range and both
 /// identity lists below say exactly that. It is the same count
 /// `a_runtime_capacity_window_crosses_functions_updates_and_frees_once` reads
-/// as one `@free` per boxed `Array`.
+/// as one `@wf__heap_give` per boxed `Array`.
 #[test]
 fn each_generated_allocation_form_reaches_its_refusal_record() {
     let directory = test_directory();
     let observed = heap_module()
-        .replace("@malloc(", "@wf_test_allocate(")
-        .replace("@free(", "@wf_test_release(");
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(");
     let host = format!(
         "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
         super::owned_places::allocation_observer_by_process(4)
@@ -414,8 +414,8 @@ fn heap_record_writers_retry_interruption_without_losing_partial_progress() {
             "exercise the sequential and latched record writers"
         );
         let observed = module
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(")
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(")
             .replace("@write(", "@wf_test_record_write(");
         let host = format!(
             "{}\n{}",
@@ -555,7 +555,7 @@ fn target_qualified_buffers_keep_only_the_heap_refusal_path() {
         // row falls into before it has asked for storage.
         let allocation = lines
             .iter()
-            .position(|line| line.contains("call ptr @malloc"))
+            .position(|line| line.contains("call ptr @wf__heap_take"))
             .expect("the row must reach the allocator");
         assert!(
             allocation < refusal,
@@ -629,7 +629,7 @@ fn runtime_count_allocation(statements: &str) -> String {
 }}
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops) = move inputs;
+  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -735,11 +735,11 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
             llvm
         });
         let observed = module
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(")
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(")
             // `grow` reallocates; the observer books a realloc as A(new) then F(old),
             // so the served trace keeps its A1;A2;F1;F2; shape.
-            .replace("@realloc(", "@wf_test_reallocate(");
+            .replace("@wf__heap_retake(", "@wf_test_reallocate(");
         let observer = format!(
             "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
             super::owned_places::allocation_observer_by_process(2)
@@ -813,7 +813,7 @@ fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops) = move inputs;
+  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1324,7 +1324,8 @@ fn assert_recursive_drop_glue(module: &str) {
             assert!(
                 !line.contains("@wf_resource_abort")
                     && !line.contains("@realloc")
-                    && !line.contains("@malloc"),
+                    && !line.contains("@wf__heap_retake")
+                    && !line.contains("@wf__heap_take"),
                 "a release action allocates nothing and reaches no abort: \
                  {line}"
             );
@@ -1484,11 +1485,11 @@ fn a_buffer_in_a_cleanup_cycle_is_walked_in_the_order_the_rule_fixes() {
         "the element must be loaded before its release action: {buffer_drop}"
     );
     assert!(
-        body.contains("br label %walk") && !body.contains("call void @free("),
+        body.contains("br label %walk") && !body.contains("call void @wf__heap_give("),
         "the element loop returns to its header and frees no enclosing cell: {body}"
     );
     assert!(
-        !buffer_drop.contains("call void @free("),
+        !buffer_drop.contains("call void @wf__heap_give("),
         "Slots has no storage reclamation separate from its Box: {buffer_drop}"
     );
     let owner_drop = module
@@ -1496,14 +1497,14 @@ fn a_buffer_in_a_cleanup_cycle_is_walked_in_the_order_the_rule_fixes() {
         .find(|body| {
             body.starts_with("define private void @wf.drop.")
                 && body.contains("call void @wf.drop.run.")
-                && body.contains("call void @free(")
+                && body.contains("call void @wf__heap_give(")
         })
         .expect("the enclosing owner releases the run and its one Box cell");
     let elements = owner_drop
         .find("call void @wf.drop.run.")
         .expect("the owner calls the run release");
     let cell = owner_drop
-        .find("call void @free(")
+        .find("call void @wf__heap_give(")
         .expect("the owner frees the Box cell");
     assert!(
         elements < cell,
@@ -1551,8 +1552,8 @@ fn branching_and_nested_release_walks_reclaim_each_instance_in_order() {
         ("wide buffer", compile(WIDE_BUFFER_CYCLE), 5, wide_trace),
     ] {
         let observed = module
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let directory = test_directory();
         let observer = super::owned_places::allocation_observer(limit, 0);
         let executable = build_linked_executable(&observed, Some(&observer), &[], &directory);

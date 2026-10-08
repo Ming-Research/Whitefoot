@@ -1061,10 +1061,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let bytes =
                 self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
             {
-                self.output.symbol("malloc");
+                self.output.symbol("wf__heap_take");
                 write!(
                     self.output,
-                    "  {address} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  {address} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -1144,20 +1144,36 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let old = self.next_temporary()?;
         writeln!(self.output, "  %{old} = load ptr, ptr {cell_address}")
             .map_err(|_| BackendFailure::TextEmission)?;
+        let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
+        let old_capacity_address =
+            self.aggregate_field_pointer(block_type, &format!("%{old}"), capacity_field as usize)?;
+        let old_capacity = self.next_temporary()?;
+        writeln!(
+            self.output,
+            "  %{old_capacity} = load i64, ptr {old_capacity_address}"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
         let fresh = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
         let ready = window_block_ready_label(result);
         let oom = window_block_oom_label(result);
         let allocate = window_block_allocate_label(result);
         {
+            let old_bytes = self.emit_allocation_size(
+                &format!("%{old_capacity}"),
+                &element_size,
+                &header_size,
+                &oom,
+                &format!("{allocate}.old_size"),
+            )?;
             let count = self.value_name(capacity);
             let bytes =
                 self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
             {
-                self.output.symbol("realloc");
+                self.output.symbol("wf__heap_retake");
                 write!(
                     self.output,
-                    "  %{fresh} = call ptr @realloc(ptr %{old}, i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  %{fresh} = call ptr @wf__heap_retake(ptr %{old}, i64 {old_bytes}, i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -1171,7 +1187,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.output.open_block(ready.to_string());
         };
         let fresh_block = format!("%{fresh}");
-        let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
         let fresh_capacity_address =
             self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
         writeln!(
@@ -1194,14 +1209,23 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         if ty != IrType::Unit || self.value_type(value) != Some(IrType::Nominal(nominal)) {
             return Err(BackendFailure::InvalidIr);
         }
-        let IrNominalKind::Box { .. } = self.nominal(nominal)?.kind() else {
+        let IrNominalKind::Box { referent, .. } = self.nominal(nominal)?.kind() else {
             return Err(BackendFailure::InvalidIr);
         };
+        let referent = *referent;
+        let pointer = self.value_name(value);
+        let bytes = cleanup::allocation_bytes(
+            self.program,
+            &mut self.output,
+            &mut self.temporary,
+            referent,
+            &pointer,
+        )?;
         {
-            self.output.symbol("free");
+            self.output.symbol("wf__heap_give");
             writeln!(
                 self.output,
-                "  call void @free(ptr {})",
+                "  call void @wf__heap_give(ptr {}, i64 {bytes})",
                 self.value_name(value)
             )
         }

@@ -1,0 +1,3 @@
+fn wrong_capability(clock: &std::time::Clock) -> result: u64 writes(clock) {
+  return std::process::heap_in_use(meter: clock);
+}

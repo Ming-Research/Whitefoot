@@ -25,7 +25,7 @@ fn script(state: &State, clock: &Clock, deadline: Instant) -> killed: Bool write
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: a, cwd: c, stdout: o, stderr: e, handles: hf, stdin: i, clock: clock, wall_clock: w, stops: unused_stops) = move inputs;
+  let Inputs(args: a, cwd: c, stdout: o, stderr: e, handles: hf, stdin: i, clock: clock, wall_clock: w, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let st = State(count: 0_u64);
   let h = shared_new::<State>(value: st);
   let no = False();

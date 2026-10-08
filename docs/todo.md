@@ -2195,6 +2195,17 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
+- **Measure heap counting under an allocation-heavy program.** The cost of
+  counting each allocation (memory statistics) was measured only for firn's
+  `set` and `mset`, whose hot path makes no counted allocation of emitted
+  storage, and stayed inside the twins' 3 to 7% spread, leaving the 1%
+  criterion unresolved. A Lua
+  engine running scripts allocates through the emitted heap on every call
+  (the C allocator took 11 to 13% of firn's CPU under a rate-limiting
+  script). Measure the counted against the uncounted build on such a
+  workload, interleaved with twins on the i9-14900K; reopen when firn's
+  script path is next measured or when a program reports the counting.
+
 - **Paged indexed storage is absent in this checkout (Q2).** The active
   specification and checked type model define Array, Slots and Ring, with no
   Paged type or storage path. Impact: the selected indexed reduction rule can
@@ -2562,6 +2573,31 @@ rarely insert at the same place.
   a writer needs that distinction; validate equal-value expressions still
   overlap and the distinct-capacity witness is admitted. Reopen with the
   first shared generic storage algorithm needing that call.
+
+- **Verify memory readings with observed driver participation.** The context
+  program checks completed allocations and exact balance after joining at
+  requested driver counts one and four; it cannot identify which counters
+  contributed. Existing context cases expose no driver participation report,
+  and a host without a usable native ring runs one driver. Add a forwarding
+  native allocation observer when qualifying several-driver accounting; it
+  must show at least two allocation writers, without changing scheduling,
+  and cover a read spanning transfer and release as well as joined balance.
+
+- **Migrate retained allocation experiments before rerunning them.** The
+  memory-statistics emitter now calls wf__heap_take and the size-aware
+  wf__heap_give. Container-representation Makefiles and the families ABI
+  adapters still intercept malloc/free, and their cost harnesses retain
+  one-argument release functions; the compute radix phase observer and
+  buffer-initialization runner also recognize the former symbols. These
+  scripts can miss observations or fail when used with this compiler.
+  Update symbol selection and the WF release ABI together, retain the C
+  controls' intended comparison, and demonstrate wrong release sizes are
+  detected before collecting fresh measurements. Deferred because these
+  experiments are outside the correctness gate and no run is requested;
+  reopen before their next use, not by interpreting old measurements as
+  results of the counted runtime.
+
+- **Route Paged's page and directory allocations through wf__heap_take/wf__heap_give when Paged lands; validate matching allocation and release sizes.**
 
 ## Modules and libraries
 
@@ -3628,6 +3664,20 @@ condition under which it is taken up.
   Found while fixing the completion review of PR #145.
 
 ## Verification tooling
+
+- **The grow initialization oracle recognizes a runtime offset without proving
+  it is past the retained prefix.** In
+  `compiler/src/backend/tests/cost_shape.rs`, `fresh_allocation_for_fill`
+  accepts a `wf__heap_retake` root when any derived `getelementptr` index is
+  an SSA value; an unrelated offset that is zero or inside the old filled
+  prefix also meets that structural condition. This limitation is inherited
+  from the realloc oracle: its positive result alone does not establish the
+  no-refill claim. Keep that requested root handling during counted-retake
+  integration; follow up by tracing the offset to the preserved length or
+  requiring an independent retained-prefix observation. Validate with a
+  negative control whose runtime offset falls inside the prefix, alongside
+  the existing appended-tail and repeated-fill cases. Reopen before using
+  this oracle as evidence for a changed grow-fill lowering.
 
 - **`make -C compiler format` depends on the host's stable rustfmt.**
   `compiler/rust-toolchain.toml` pins only the `stable` channel, and

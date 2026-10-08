@@ -96,6 +96,7 @@ pub(crate) fn timed<T>(phase: &str, run: impl FnOnce() -> T) -> T {
 }
 
 const SOURCES: &[(&str, &str)] = &[
+    ("heap.c", whitefoot::HEAP_SOURCE),
     ("wf_floor.c", FLOOR_SOURCE),
     ("ordinary_values.h", ORDINARY_VALUES_HEADER),
     ("ordinary_values.c", ORDINARY_VALUES_SOURCE),
@@ -135,7 +136,8 @@ const SOURCES: &[(&str, &str)] = &[
 ];
 
 // Preserve the original link order, including all library bodies. These are
-// separate object inputs, not archive members selected by symbol reachability.
+// separate object inputs; the optional heap object is linked only when the
+// caller's emitted storage references it. Keep the floor first for its probes.
 const UNITS: &[&str] = &[
     "wf_floor.c",
     "sched/core.c",
@@ -153,6 +155,7 @@ const UNITS: &[&str] = &[
     "ordinary_values.ll",
     #[cfg(windows)]
     "windows_runtime.c",
+    "heap.c",
 ];
 
 fn stage_sources(directory: &Path) -> Vec<PathBuf> {
@@ -212,7 +215,8 @@ fn compile_objects(c_standard: Option<&str>) -> Vec<Vec<u8>> {
     objects
 }
 
-/// Appends all ordinary library objects and, optionally, one fresh observer.
+/// Appends ordinary library objects, the requested heap object and an optional
+/// fresh observer. A heap-free caller leaves the allocator object unlinked.
 ///
 /// `None` retains the host C dialect; `Some("c11")` retains the grant observer's
 /// explicit dialect. The fixed source bytes, compiler path and options belong
@@ -225,6 +229,7 @@ pub(crate) fn append_runtime_objects(
     directory: &Path,
     c_standard: Option<&str>,
     observer: Option<&Path>,
+    needs_heap: bool,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let sources = stage_sources(directory);
     let objects = match c_standard {
@@ -245,7 +250,9 @@ pub(crate) fn append_runtime_objects(
         .map(|(index, bytes)| {
             let path = directory.join(format!("wf-native-unit-{index}.o"));
             std::fs::write(&path, bytes).expect("materialize native library object");
-            command.arg("-x").arg("none").arg(&path);
+            if UNITS[index] != "heap.c" || needs_heap {
+                command.arg("-x").arg("none").arg(&path);
+            }
             if index == 0
                 && let Some(observer) = observer
             {

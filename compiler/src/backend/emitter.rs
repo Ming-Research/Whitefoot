@@ -329,19 +329,6 @@ pub(super) fn emit_llvm_with_window_address_facts(
             .iter()
             .any(|block| matches!(block.terminator(), IrTerminator::Match { .. }))
     });
-    let has_window_grow = program.functions().iter().any(|function| {
-        function.blocks().iter().any(|block| {
-            block.instructions().iter().any(|instruction| {
-                matches!(
-                    instruction,
-                    IrInstruction::Define {
-                        operation: IrOperation::WindowGrow { .. },
-                        ..
-                    }
-                )
-            })
-        })
-    });
     let drop_helpers = emit_resource_drop_helpers(program, target)?;
     let has_heap_storage = !drop_helpers.is_empty()
         || program.functions().iter().any(IrFunction::contains_buffer)
@@ -410,25 +397,6 @@ pub(super) fn emit_llvm_with_window_address_facts(
         let mut abort = Signature::new("abort", "void", Vec::new());
         abort.suffix = " noreturn".to_owned();
         text.declare(abort);
-    }
-    if has_heap_storage || cleanup::program_has_general_run(program)? {
-        text.declare(Signature::new(
-            "malloc",
-            "ptr",
-            vec![Parameter::unnamed("i64")],
-        ));
-        text.declare(Signature::new(
-            "free",
-            "void",
-            vec![Parameter::unnamed("ptr")],
-        ));
-        if has_window_grow {
-            text.declare(Signature::new(
-                "realloc",
-                "ptr",
-                vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
-            ));
-        }
     }
     if latched_resource_record {
         text.append(resource_record_latch_fallback()?);
@@ -574,6 +542,34 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.text("\n");
     text.append(floor_runtime_fallback()?);
     text.text("\n");
+    // A declaration selects the allocator unit for text-only linkers. Use
+    // emitted references, including cleanup helpers and parallel thunks,
+    // rather than resource types: Shared storage comes from the runtime pool.
+    for signature in [
+        Signature::new(
+            "wf__heap_retake",
+            "ptr",
+            vec![
+                Parameter::unnamed("ptr"),
+                Parameter::unnamed("i64"),
+                Parameter::unnamed("i64"),
+            ],
+        ),
+        Signature::new("wf__heap_take", "ptr", vec![Parameter::unnamed("i64")]),
+        Signature::new(
+            "wf__heap_give",
+            "void",
+            vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
+        ),
+    ] {
+        if text
+            .entities
+            .iter()
+            .any(|entity| entity.references.symbols.contains(&signature.name))
+        {
+            text.declare(signature);
+        }
+    }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
