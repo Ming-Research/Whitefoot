@@ -735,7 +735,10 @@ fn an_allocation_size_the_target_cannot_serve_is_heap_exhaustion_before_the_allo
         });
         let observed = module
             .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@free(", "@wf_test_release(")
+            // `grow` reallocates; the observer books a realloc as A(new) then F(old),
+            // so the served trace keeps its A1;A2;F1;F2; shape.
+            .replace("@realloc(", "@wf_test_reallocate(");
         let observer = format!(
             "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
             super::owned_places::allocation_observer_by_process(2)

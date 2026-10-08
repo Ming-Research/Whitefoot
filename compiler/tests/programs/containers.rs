@@ -138,6 +138,8 @@ fn execute_container_program(
         let observed = llvm
             .replace("@malloc(", "@wf_observe_allocate(")
             .replace("@free(", "@wf_observe_release(")
+            // `grow` reallocates its block; the observer books it as a new allocation plus a release.
+            .replace("@realloc(", "@wf_observe_reallocate(")
             .replace("@main(", "@wf_fixture_main(");
         let observer =
             include_str!("../../../tests/programs/containers/container-allocation-observer.c");
