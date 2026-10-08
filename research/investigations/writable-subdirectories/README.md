@@ -165,3 +165,7 @@ ntdll's `NtSetInformationFile` with `FileRenameInformationEx`: a bare name
 with no root renames within the file's own directory, and `move_file`
 names the destination through `RootDirectory` (passing in io-hosts run
 37696388709).
+
+## Status
+
+Adopted: proposals A and E, with the names rule, are PRE-2 of specification v0.98.

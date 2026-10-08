@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.98: writable subdirectories, moving files and names below a root
+
+Rules: changed PRE-2
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented opening a subdirectory's write half as Q216 option A, moving a file between two directories as Q217 option A, and refusing `.` and `..` below a root as Q221 option A, each recommended: "216 agreed, 217 agreed, ... 221 agreed" (translated).
+
+Summary: PRE-2 adds `open_directory_write`, which opens the write half of a directory below a write half, creating it empty when missing and reading its root as `open_append` does, and `move_file`, which renames a file from below one write half to below another with `rename_file`'s atomic replacement and open-handle rule; the open-handle sentence names `move_file`. A new sentence states that a name given with a root denotes an entry directly below it exactly when it is one nonempty path component other than `.` and `..`, any other name returning `InvalidPath`, so a function given a subdirectory's write half cannot reach the directory above it. Before them a program could write only below its working directory and rename only within one directory; firn's append-only files, kept as Redis 7.0.15 keeps them in a directory of their own, need the directory created when missing and an old single file moved into it ([design](../research/investigations/writable-subdirectories/README.md#proposal)). `rename_file` stays the one-directory form because a rename writes each directory it changes, so the host orders it [HOST-1], and one handle passed as both written roots of a call overlaps itself [EFF-5].
+
 ## 2026-10-07 v0.97: element loops may read the written storage's measures
 
 Rules: changed PAR-2
