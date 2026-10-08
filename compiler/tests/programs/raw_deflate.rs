@@ -112,8 +112,8 @@ fn stored_fixed_and_dynamic_blocks_execute_with_data_failures() {
     // columns and code-length workspaces are fixed-capacity inline Slots in
     // their owning activation. The complete decoder group therefore needs
     // neither allocation nor release of a heap block.
-    assert!(!llvm.contains("call ptr @malloc"));
-    assert!(!llvm.contains("call void @free"));
+    assert!(!llvm.contains("call ptr @wf__heap_take"));
+    assert!(!llvm.contains("call void @wf__heap_give"));
     // `inflate`, `decode_length` and `copy_distance` return in registers, so
     // their checks and the absence of a trap edge are in each one's
     // destination-form body, not in the entry that calls it

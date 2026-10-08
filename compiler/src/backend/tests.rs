@@ -379,8 +379,10 @@ fn append_runtime_units_with_library_defines(
     command: &mut Command,
     directory: &Path,
     library_defines: &[String],
+    needs_heap: bool,
 ) -> Option<Vec<&'static str>> {
     let units = [
+        ("heap.c", crate::HEAP_SOURCE),
         ("ordinary_values.h", ORDINARY_VALUES_HEADER),
         ("ordinary_values.c", ORDINARY_VALUES_SOURCE),
         ("ordinary_values.ll", ORDINARY_VALUES_LLVM),
@@ -433,6 +435,7 @@ fn append_runtime_units_with_library_defines(
         // `keyed_table.c` compiles the concurrent map in, as its host.
         if name.ends_with(".h")
             || name == "concurrent_map.c"
+            || (name == "heap.c" && !needs_heap)
             || (name == "ordinary_values.c" && !library_defines.is_empty())
         {
             continue;
@@ -540,6 +543,11 @@ fn build_linked_executable_inner(
     // dependencies, using the same build inputs as the driver. Source
     // classification never selects a second linkage or callable ABI.
     let mut staged_units = Vec::new();
+    let needs_heap = llvm.contains("@wf__heap_take(")
+        || llvm.contains("@wf__heap_give(")
+        || host.is_some_and(|source| {
+            source.contains("wf__heap_take(") || source.contains("wf__heap_give(")
+        });
     if defines.is_empty() && library_defines.is_empty() {
         // These inputs and options are immutable for this test executable.
         // Keep each program and observer fresh, but compile the ordinary
@@ -549,6 +557,7 @@ fn build_linked_executable_inner(
             directory,
             Some("c11"),
             None,
+            needs_heap,
         );
         staged_units.extend(sources);
         staged_units.extend(objects);
@@ -557,9 +566,12 @@ fn build_linked_executable_inner(
         std::fs::write(&floor_unit, FLOOR_RUNTIME_SOURCE).expect("write the floor runtime");
         command.arg("-x").arg("c").arg(&floor_unit);
         staged_units.push(floor_unit);
-        if let Some(names) =
-            append_runtime_units_with_library_defines(&mut command, directory, library_defines)
-        {
+        if let Some(names) = append_runtime_units_with_library_defines(
+            &mut command,
+            directory,
+            library_defines,
+            needs_heap,
+        ) {
             staged_units.extend(names.into_iter().map(|name| directory.join(name)));
         }
     }

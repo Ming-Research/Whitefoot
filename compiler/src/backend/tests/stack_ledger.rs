@@ -310,6 +310,7 @@ fn link_measured_boundary(directory: &std::path::Path, wide: bool) -> std::path:
         directory,
         Some("c11"),
         None,
+        true,
     );
     // The shared support owns object order; index zero is its staged floor.
     std::fs::write(&objects[0], floor).expect("select the small-stack floor variant");

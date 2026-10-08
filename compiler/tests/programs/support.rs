@@ -132,7 +132,9 @@ fn link_module_with_driver_arguments(
             .arg("-x")
             .arg("none");
     }
-    let (sources, objects) = append_runtime_objects(&mut command, directory, None, None);
+    let needs_heap = llvm.contains("@wf__heap_take(") || llvm.contains("@wf__heap_give(");
+    let (sources, objects) =
+        append_runtime_objects(&mut command, directory, None, None, needs_heap);
     let compilation = run_command(
         command
             .args(HOST_OPTIMIZATION_ARGUMENTS)

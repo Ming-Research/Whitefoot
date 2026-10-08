@@ -14,6 +14,7 @@ IMAGES := $(addprefix $(BUILD)/,$(KERNELS))
 .DEFAULT_GOAL := build
 .DELETE_ON_ERROR:
 
+# Runtime construction belongs to the selected revision, just like its sources.
 include $(ROOT)/compiler/runtime.mk
 
 build: $(IMAGES)

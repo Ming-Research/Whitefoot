@@ -187,7 +187,7 @@ fn is_deadline(problem: std::io::IoError) -> result: Bool pure {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: directory, stdout: unused_out, stderr: unused_err, handles: factory, stdin: unused_in, clock: clock, wall_clock: unused_wall, stops: stops) = move inputs;
+  let Inputs(args: unused_args, cwd: directory, stdout: unused_out, stderr: unused_err, handles: factory, stdin: unused_in, clock: clock, wall_clock: unused_wall, stops: stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: root, write: writable) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move writable);
   std::fs::close_directory(factory: &factory, directory: move root);

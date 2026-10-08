@@ -9,9 +9,10 @@
 #include <string.h>
 
 void *wf_observe_allocate(uint64_t bytes);
-void wf_observe_release(void *pointer);
+void wf_observe_release(void *pointer, uint64_t bytes);
+static void wf_observe_native_release(void *pointer);
 #define malloc wf_observe_allocate
-#define free wf_observe_release
+#define free wf_observe_native_release
 #include <assert.h>
 #include <stdbool.h>
 #include <inttypes.h>
@@ -431,12 +432,13 @@ void *wf_observe_allocate(uint64_t bytes) {
     return pointer;
 }
 
-void wf_observe_release(void *pointer) {
+void wf_observe_release(void *pointer, uint64_t bytes) {
     if (!pointer) return;
     for (size_t i = 0; i < observation.allocated; ++i) {
         ObservedAllocation *entry = &observation.allocations[i];
         if (entry->pointer != pointer) continue;
         require(!entry->released, "owner released twice");
+        require(bytes == entry->bytes, "release extent differs from allocation request");
         if (entry->is_resource) {
             require(entry->bytes == sizeof(Resource), "resource extent changed");
             Resource resource;
@@ -459,6 +461,19 @@ void wf_observe_release(void *pointer) {
         return;
     }
     require(false, "release did not return the original allocation address");
+}
+
+/* The retained C reference calls the native one-argument free interface.
+ * WF releases supply their own extent and are checked above. */
+static void wf_observe_native_release(void *pointer) {
+    if (!pointer) return;
+    for (size_t i = 0; i < observation.allocated; ++i) {
+        if (observation.allocations[i].pointer == pointer) {
+            wf_observe_release(pointer, observation.allocations[i].bytes);
+            return;
+        }
+    }
+    require(false, "native release of an unknown allocation");
 }
 
 static void observation_reset(uint64_t scenario, bool whitefoot) {

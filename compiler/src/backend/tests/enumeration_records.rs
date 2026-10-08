@@ -305,7 +305,7 @@ const PUBLISH_ONE_BATCH: &[u8] = br#"fn exercise(cwd: &std::fs::DirectoryRead, o
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(cwd: &cwd, out: &out, files: &files);
