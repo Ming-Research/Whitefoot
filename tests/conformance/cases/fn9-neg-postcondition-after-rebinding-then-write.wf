@@ -1,7 +1,8 @@
 fn reset(p: &u64) -> result: unit writes(p) contract {
   ensures p^ == 1_u64;
 } {
-  doc "The body rebinds p to a local and then writes one through p, which writes the local. The postcondition concerns the caller's cell, which still holds its old value, so it must not be proved.";
+  doc "The body writes zero to the caller's cell, rebinds p to a local and then writes one through p, which writes the local. The postcondition concerns the caller's cell, which holds zero, so it must not be proved.";
+  set p^ = 0_u64;
   let local = 0_u64;
   set p = &local;
   set p^ = 1_u64;
@@ -9,7 +10,7 @@ fn reset(p: &u64) -> result: unit writes(p) contract {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  doc "x keeps five, while the postcondition would tell the caller it holds one.";
+  doc "x holds zero after the call, while the postcondition would tell the caller it holds one.";
   let x = 5_u64;
   reset(p: &x);
   let quotient = 10_u64 / x;
