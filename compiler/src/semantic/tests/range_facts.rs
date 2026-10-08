@@ -896,3 +896,132 @@ fn an_unproved_postcondition_names_the_exit_that_owes_it() {
         });
     }
 }
+
+/// A callee owing `small` over its first `n` elements, and a caller with
+/// `parameters` and `body` that passes it a bound written through a
+/// reference.
+fn bound_through_reference(parameters: &str, effects: &str, body: &str) -> Vec<u8> {
+    format!(
+        "struct Holder {{
+  value: u64;
+}}
+
+fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {{
+  requires forall small(k in 0_u64..n): xs^[k] < 4_u64;
+}} {{
+  return unit;
+}}
+
+fn caller(xs: &Array<u64, 4>{parameters}) -> result: unit {effects} {{
+{body}  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+/// Asserts that `source` is refused because `small` is not proved.
+fn small_is_undischarged(source: &[u8]) {
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+        let SemanticIssueKind::UndischargedRangeFact { fact, .. } = issue.kind() else {
+            panic!(
+                "expected an undischarged range fact, got {:?}",
+                issue.kind()
+            );
+        };
+        assert_eq!(fact, "small");
+    });
+}
+
+#[test]
+fn a_bound_written_through_a_reference_is_read_after_the_write() {
+    // The walk holds `n` itself, so `w` is a view it cannot place; the
+    // write through it must still forget `n` = 1, or `small` is owed only
+    // over the element the caller wrote.
+    small_is_undischarged(&bound_through_reference(
+        "",
+        "writes(xs)",
+        "  let n = 1_u64;
+  let w = &n;
+  set w^ = 4_u64;
+  set xs^[0_u64] = 0_u64;
+  need(xs: xs, n: n);
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_reference_the_loop_body_takes() {
+    // The first iteration sees `n` = 0, a later one what the previous one
+    // wrote through `w`.
+    small_is_undischarged(&bound_through_reference(
+        "",
+        "pure",
+        "  let n = 0_u64;
+  for (i in 0_u64..2_u64) {
+    need(xs: xs, n: n);
+    let w = &n;
+    set w^ = 4_u64;
+  }
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_reference_rebound_to_it_in_the_loop() {
+    // `w` reaches `n` only from the second iteration on.
+    small_is_undischarged(&bound_through_reference(
+        "",
+        "pure",
+        "  let n = 0_u64;
+  let other = 0_u64;
+  let w = &other;
+  for (i in 0_u64..2_u64) {
+    need(xs: xs, n: n);
+    set w^ = 4_u64;
+    set w = &n;
+  }
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_joined_reference() {
+    small_is_undischarged(&bound_through_reference(
+        ", flag: Bool",
+        "pure",
+        "  let other = 0_u64;
+  let n = 0_u64;
+  let p = if flag {
+    give &other;
+  } else {
+    give &n;
+  }
+  set p^ = 4_u64;
+  need(xs: xs, n: n);
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_reference_inside_an_atomic_statement() {
+    small_is_undischarged(&bound_through_reference(
+        ", state: Shared<Holder>",
+        "pure waits",
+        "  let n = 0_u64;
+  let w = &n;
+  atomic held = &state {
+    set w^ = held^.value;
+  }
+  need(xs: xs, n: n);
+",
+    ));
+}
