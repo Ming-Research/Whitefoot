@@ -1567,6 +1567,7 @@ on the checker-facts line; item 4 follows from the others. The next v2h step
 takes item 1: a `BrTable` form without value moves for tables whose entries
 move nothing.
 
+<<<<<<< HEAD
 **`BrTableN`, observed on the 14900K and not adopted**
 ([run 37825691341](https://github.com/Ming-Research/Whitefoot/actions/runs/37825691341)):
 a br_table form without value moves, which CoreMark's switch takes for 9.2M
@@ -1577,3 +1578,33 @@ a real gain below the +2% criterion, so it is reverted. The per-jump move
 test is therefore a small part of `BrTable`'s 13.5 ms difference from
 wasmi; the two run-time bounds tests and the separate table remain, the
 first of them waiting on range facts used per element in ordinary proofs.
+=======
+**`BrTable` without moves, the change** (`gen.py`'s `CONTROL` and
+`ACC`; `interp_head.wf`'s `BrTableN` arm; `interp_tail.wf`'s
+`emit_table`):
+- `BrTableN(c, start, count)` has the operands and branch-table entries of
+  `BrTable`; its arm clamps the index, reads only the selected entry's
+  target and jumps, with no move test and no copy. `BrTableNC` takes the
+  index from `acc`.
+- The translator reads every entry before emitting the operation. An entry
+  moves a value under the rule a `br_if` uses: its label takes one result
+  and the label's slot differs from the slot of the value below the index.
+  When no entry moves a value it emits `BrTableN`, claiming `acc` for the
+  index as a `br_if` claims its condition; otherwise `BrTable`, unchanged,
+  which keeps reading the index from its slot since it has no `acc` form.
+  The operands are put in their temporaries after the entries are read,
+  which emits nothing in between that changes `acc`.
+- `BrTableN` keeps the 16-byte entries: a separate array of 4-byte targets
+  would add a storage to `run`, the loader and the patching of forward
+  entries, while the arm uses only the entry's target field, which the host
+  optimizer can load alone.
+>>>>>>> parent of 0f3929b26 (Revert "v2h: a br_table form that moves no values")
+
+**The phase-3 criterion, changed by the owner** (status board, 2026-10-08,
+after the card on whether to relax +2%): a step is adopted when its median
+gains at least 1%, every one of the 7 interleaved launch pairs is at or
+above the base, the twin stays within 1% of the base, and its cost is
+small (few new arms, no clear rise in checking time). Under it `BrTableN`
+(1.013, every pair at or above 1.003, twin equal, 2 arms) is adopted and
+restored. Steps 2 (1.006, pairs below 1.0) and 4 (1.003, a pair at 0.982)
+stay reverted.

@@ -460,6 +460,7 @@ for nm in ["I32Store", "I32Store8", "I32Store16"]:
     ACC[nm + "Ix"] = ["A"]
 ACC["BrIf"] = ["C"]
 ACC["BrUnless"] = ["C"]
+ACC["BrTableN"] = ["C"]
 ACC["Select"] = ["C", "D", "CD"]
 # The operations with SD forms: one for the slot-reading form and one for
 # each form reading an operand from acc.
@@ -474,8 +475,10 @@ SWAPS = {"I32Add", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Eq", "I32Ne", "BrI
          "I32LoadIx", "I32Load8UIx", "I32Load8SIx", "I32Load16UIx", "I32Load16SIx",
          "I32StoreIx", "I32Store8Ix", "I32Store16Ix"}
 # Branches take acc only through the sentinel the translator records for
-# them, since a forward branch is rebuilt when its target is known.
-BRANCHES = {"BrIf", "BrUnless"} | {"BrI32" + nm for _, nm, _, _ in FUSED}
+# them, since a forward branch is rebuilt when its target is known, and a
+# br_table takes acc only when none of its entries moves a value (BrTable,
+# the moving form, has no acc form).
+BRANCHES = {"BrIf", "BrUnless", "BrTableN"} | {"BrI32" + nm for _, nm, _, _ in FUSED}
 FIELD = {"A": "a", "B": "b", "V": "v", "C": "c"}
 SENT = "65535_u16"
 
@@ -563,6 +566,11 @@ def acc_control_arms():
         o += [f"    {name}C(t: tv, c: cv) => {{", "      let next = pc + 1_u64;", f"      if acc {test} 0_u64 {{",
               "        set next = cvt::<u32, u64>(tv^);", "      }", "      if next < n {"] + tail("next", 8)
         o += ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
+    o += ["    BrTableNC(c: cv, start: startv, count: countv) => {", "      let count = cvt::<u32, u64>(countv^);",
+          "      let i32v = cvt.wrap::<u64, u32>(acc);", "      let i = cvt::<u32, u64>(i32v);", "      let pick = imin(i, count);",
+          "      let base = cvt::<u32, u64>(startv^);", "      let at = base + pick;", "      if at < brtab^.inner.len {",
+          "        let slot = brtab^.inner[at];", "        let target = cvt::<u32, u64>(slot.t);", "        if target < n {"]
+    o += tail("target", 10) + ["        }", "      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
     for form in ACC["Select"]:
         b = word("c", "cv", "C", form) + ["let pick = bv^;", "if cw != 0_u64 {", "  set pick = av^;", "}",
                                           "let si = cvt::<u16, u64>(pick);"]
@@ -800,6 +808,7 @@ def profile_dispatches(program, variants):
 # Control, variable and call operations; their handlers are in interp_head.wf.
 CONTROL = ["Unreachable()", "Jump(t: u32)", "Br(t: u32, s: u16, d: u16)", "BrIf(t: u32, c: u16)",
            "BrIfMove(c: u16, e: u32)", "BrUnless(t: u32, c: u16)", "BrTable(c: u16, start: u32, count: u32)",
+           "BrTableN(c: u16, start: u32, count: u32)",
            "Return(s: u16, k: u16, l: u16)", "Call(f: u32, at: u16)", "CallIndirect(canon: u32, at: u16, i: u16)",
            "Host(id: u16, at: u16)", "Select(d: u16, a: u16, b: u16, c: u16)", "Copy(d: u16, s: u16)", "Copy2(d: u16, s: u16, e: u16, t: u16)",
            "GlobalGet(d: u16, i: u32)", "GlobalSet(s: u16, i: u32)", "MemorySize(d: u16)",
