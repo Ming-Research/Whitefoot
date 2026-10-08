@@ -453,31 +453,68 @@ This choice requires coordinated wording beyond [RANGE-1]:
    taken match arms establish it; replacement, call effects, joins and
    loop forgetting follow the existing variant-state rule. A payload value
    depends on both its selected content and the selection's variant.
-3. Extend [RANGE-3] with finite variant cases for those enum prefixes:
-   “For each enum selection in the problem, its tag has exactly one case
-   for each declared variant. Reads of the tag at equal index tuples of
-   one version agree. Tag cases supplied by the state or a version
-   definition constrain that selection. An unresolved tag selection is an
-   open item with one branch per declared variant. A payload read's domain
-   holds in its named variant's branch.” Count each tag selection as an
-   atom under the existing structural ceiling. The set of tag selections
-   is fixed by the problem's reads and definitions after step 2, not
-   expanded by recursive instantiation. Tag equality uses the same
-   index-congruence and read-pair case split as scalar selections; a split
-   includes every variant, including variants whose instance contributes
-   no conclusion.
+3. Extend [RANGE-3] with the tag of each enum selection as an integer read,
+   as [the tag as an integer read](#the-tag-as-an-integer-read) states; the
+   derivation's theory and split rule are unchanged.
 4. Extend support with variant identity. Whole-enum replacement changes
    both tag and payload versions; payload steps of different variants use
    [OWN-7]'s overlapping-storage rule. A fact cannot cross a replacement
    that changes the tag by retaining only the old numeric leaf.
 
 These are necessary semantics for the option, not claims that v0.101
-already supplies tag premises inside quantified read instantiation. A
-complete enum amendment must integrate this finite case domain with all
-four [RANGE-3] steps and demonstrate exhaustive, order-independent closure.
-That soundness argument remains unverified here. The struct proposal needs
-none of that tag machinery. A future enum trial should pair an active-arm
-certificate with the wrong-variant and unknown-variant controls below.
+already supplies tag premises inside quantified read instantiation.
+
+### The tag as an integer read
+
+Item 3's separate tag cases are unnecessary: the tag can be one more
+projection of the existing theory. Number an enum's variants `0..V` in
+declaration order. A tag selection `tag(e)` of an enum selection `e` is an
+integer read of `e`'s version at `e`'s index tuple, with projection "tag" and
+type range `0 <= tag(e) < V`.
+
+- **Read domain.** A payload read `e.W.f` is defined where `e` exists and
+  `tag(e) == W`. [RANGE-3] step 1 already makes an instance assert its
+  conclusions only where its reads' domains hold, so the domain adds the
+  equality literal `tag(e) == W` to the instance's premises. A premise is
+  entailed when the literals with each of its negations are contradictory,
+  and the negation `tag(e) != W` is an ordinary disequality, split as `<`
+  and `>` like any other. No new kind of open item exists.
+- **Congruence.** Two tag reads of one version at index tuples that agree at
+  every solution are one value, and two at tuples not held apart are an open
+  item, by step 3 and step 4 as they stand, because a tag read is a read.
+  Two payload reads of one version, index tuple and projection, variant
+  included, are one value the same way. Payload reads of different variants
+  at one tuple are never both defined, since their domains need different
+  tag values.
+- **Sources of tag literals.** A construction stored at a tuple defines the
+  written tag as a constant; a `match` arm that takes `W` on a value the
+  walk holds as `tag(e)` adds the path condition `tag(e) == W`; a write of a
+  whole enum defines the new version's tag at the written tuple and its
+  payload projections from the written value, unknown where the walk cannot
+  name it.
+- **Order independence.** The problem's literals are the existing ones plus
+  equalities, disequalities and bounds over tag atoms, which are integer
+  atoms; the theory, the split rule and its order-independence argument in
+  [RANGE-3] and the
+  [range facts decision](../../../design/language/checks-and-proofs/range-facts.md)
+  cover integer atoms of any origin, so they cover tags. The 4096-atom
+  ceiling counts tag atoms like any read.
+- **Wrong and unknown variant.** If `order^[k]` may hold `Close`, the
+  instance at `k` has the premise `tag(order^[k]) == Open`; a certificate
+  that needs its conclusion fails unless the path conditions entail that
+  premise, which is the intended refusal of the wrong- and unknown-variant
+  controls below.
+- **Variants sharing a store.** With facts per variant, instances at `i`
+  (`tag == Child`, target `c`) and `j` (`tag == Float`, target `c'`) read
+  `children^[c].entry_slot` and `children^[c'].entry_slot`; where `c == c'`
+  those are one read, so `i == j`, contradicting `i != j`. Collisions across
+  variants are excluded by congruence alone.
+
+Copy provenance composes with this: a copy's tag and payload projections
+read the source version at the source tuple, so a `match` arm taken on the
+copy constrains the source's tag. The struct proposal needs none of this.
+The enum trial pairs an active-arm certificate with the wrong-variant and
+unknown-variant controls below.
 
 ## Alternatives and selection grounds
 
