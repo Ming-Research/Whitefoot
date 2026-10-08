@@ -59,6 +59,23 @@ Formal cases will be standalone copies under `tests/conformance/`.
    checking it only at headers that enter the body would not make it
    provable either.
 
+5. A validated interpreter's branch table. The loopmatch session's
+   per-handler attribution on the 14900K (branch `claude/natural-lowering`,
+   `research/investigations/match-dispatch/DESIGN.md`, section "`BrTable`
+   against wasmi's `branch_table_s`") measured v2h's `BrTable` at 28.4 ms
+   over 10.8 million dispatches in CoreMark against wasmi's 14.9 ms, about
+   four tenths of the 34 ms gap between them; v2h's handler is 50
+   instructions to wasmi's 11. Two of the differences are run-time bounds
+   tests, the table index against `brtab^.len` and the target against
+   `code^.len`, which wasmi omits because its bytecode is validated.
+   Removing the second needs a fact of the form
+   `requires forall k(k in 0_u64..brtab^.len): brtab^[k].t < code^.len`,
+   a field below an element ([range field terms](../range-field-terms/DESIGN.md)),
+   used at the read of `brtab^[k]` by the ordinary bound. The rest of the
+   gap is the interpreter's own design. This is the measured cost a run-time
+   test standing in for a stated fact has in a real program; the saving is
+   not measured until v2h states the fact.
+
 ## How the two judgments are built
 
 Ordinary entailment runs first over every function
