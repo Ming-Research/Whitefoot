@@ -5,7 +5,7 @@ fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {
 }
 
 fn caller(xs: &Array<u64, 4>) -> result: unit writes(xs) {
-  doc "The write through w makes n four, so small is owed over all four elements and only the first is known to be below four.";
+  doc "The write through w makes n four; the range walk may not keep its earlier value, so small is owed over all four elements and only the first is known to be below four.";
   let n = 1_u64;
   let w = &n;
   set w^ = 4_u64;

@@ -77,6 +77,20 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **RANGE-2's unplaced write forgets every location, the range walk only
+  every exposed one.** "An `atomic_stmt` and every write the walk cannot
+  place forget every location" [RANGE-2]. Read with a binding as a
+  location, that also forgets the value of a scalar binding no reference
+  has reached, which the walk keeps: such a binding can change only through
+  a `set` the walk places. The walk is therefore more precise than the text
+  for a value read after an `atomic` or an unplaced write, so it can accept
+  a range obligation the text leaves unproved. Change: state the rule as
+  forgetting every location the write can reach, with a binding reachable
+  once a reference to it is formed (`design/compiler/range-judgment.md`,
+  the exposed-binding decision). Validate with a range requirement over a
+  binding read after an `atomic` with and without a reference to it.
+  Reopen with the next RANGE-2 amendment.
+
 - **Checking one function grows faster than its size.** The stage-3 wasm
   interpreter's interpreter function, a `match` whose arms each hold their
   handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s

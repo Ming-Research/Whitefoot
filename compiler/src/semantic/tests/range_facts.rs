@@ -942,20 +942,34 @@ fn small_is_undischarged(source: &[u8]) {
 }
 
 #[test]
-fn a_bound_written_through_a_reference_is_read_after_the_write() {
-    // The walk holds `n` itself, so `w` is a view it cannot place; the
-    // write through it must still forget `n` = 1, or `small` is owed only
-    // over the element the caller wrote.
-    small_is_undischarged(&bound_through_reference(
-        "",
-        "writes(xs)",
-        "  let n = 1_u64;
-  let w = &n;
-  set w^ = 4_u64;
-  set xs^[0_u64] = 0_u64;
+fn a_bound_written_by_a_call_through_its_reference_is_forgotten() {
+    // The callee writes `n` through the reference argument; the walk
+    // cannot place that write in `n`, so it must forget `n` = 0, under
+    // which `small` would hold vacuously.
+    small_is_undischarged(
+        b"fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {
+  requires forall small(k in 0_u64..n): xs^[k] < 4_u64;
+} {
+  return unit;
+}
+
+fn bump(x: &u64) -> result: unit writes(x) {
+  set x^ = 4_u64;
+  return unit;
+}
+
+fn caller(xs: &Array<u64, 4>) -> result: unit pure {
+  let n = 0_u64;
+  bump(x: &n);
   need(xs: xs, n: n);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
 ",
-    ));
+    );
 }
 
 #[test]
