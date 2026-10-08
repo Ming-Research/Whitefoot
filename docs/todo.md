@@ -156,36 +156,37 @@ rarely insert at the same place.
   route. Validate direct-set and let-then-set positives, false callee results,
   alias writes and stale destination facts under the existing rules.
 
-- **A length guard written through a reference holder stops proving the
-  requirement of a call passing that holder once a write reaches the
-  referent.** Minimal witness: in a function with `value: &Value` and
-  `writes(value)`, an arm of `match value^` binding `Items(items: list)` that
-  guards two `deque_pop_front::<u8>(values: list)` calls, each under
-  `if list^.inner.len > 0_u64`, refuses the second [FN-8], instantiated goal
-  `value^.Items.items.inner.len > 0_u64`; a loop with one guarded pop per
-  iteration refuses its first. This is the specified verdict, not a checker
-  defect. The call instantiates the formal at the holder's resolved referent
-  [FN-8, ENT-2]; `list^.inner.len` and `value^.Items.items.inner.len` are
-  distinct terms, "distinct spellings are distinct terms even when they
-  resolve to overlapping storage" [ENT-2]; and the one relation between them
-  is the PAYLOAD placement datum [MSR-3], established at arm entry and killed
-  by the first write through the binder, in the loop by the head's
-  continuing kill [ENT-5]. A `let q = p;` alias, under the REBIND placement,
-  behaves the same; a holder formed by `let q = &x;`, which no placement
-  covers, proves nothing even before a write; a guard on a reference
-  parameter does prove it, the parameter's resolved referent being spelled
-  through the parameter itself. [ENT-1] fixes every call goal's disposition,
-  so the checker cannot accept these on its own. Writers match the enum
-  again before each later pop, or pass the
-  binder to a helper taking a reference parameter, as firn's `pop_items`
-  does with `pop_one` (`apps/firn/commands/lists.wf`). Accepting them is a
-  specification change for the owner, for example giving a place written
-  through a holder whose path is one exact place that place's term identity
-  [REF-1, ENT-2]. Not yet checked: such a rule would also accept
-  `fn8-neg-reference-guard-after-conditional-offset-write`, and it needs the
-  holder's path at the use, not the function-wide origin inventory. Reopen
-  with the owner's decision or the next program that needs the helper or
-  the second match.
+- **A guard on a rebound reference's current target and a call through the
+  reference do not meet.** Minimal witness:
+  `fn8-neg-guard-through-rebound-local-holder` (`let q = &a^; set q = &b^;
+  if q^ != 0_u64 { need(x: b) }` refuses [FN-8]), and the reverse, a guard on
+  `b^` with a call through `q`. [ENT-2] identifies a place written through a
+  reference variable that some `set` rebinds by its spelling at every point,
+  so the guard and the call name different terms although `q` names `b`
+  there. Identifying the variable's current target at each read instead
+  loses a header invariant read through a variable rebound in the loop, whose
+  identity would switch at the header
+  (`inv1-pos-header-invariant-through-rebound-reference`). The change would
+  judge exactness at each read and re-form every invariant and placement at
+  each point it is checked; validate with both witnesses and the invariant
+  case. Reopen when a program guards a rebound cursor's target directly.
+
+- **Rebinding a reference kills the facts about its old target.** Minimal
+  witness: in `fn pick(a: &u64, b: &u64)`, `let q = &a^; if a^ != 0_u64 {
+  set q = &b^; let r = need(x: a); }` refuses the call [FN-8], while the
+  same function without the `set` accepts it. [REF-1] says a rebinding writes
+  no storage, and [ENT-5] puts in a fact's support the places it reads and
+  the reference variables it reads through, so `a^ != 0_u64` survives the
+  rebinding of `q`. The commit kill (`commit_kill` in
+  `compiler/src/semantic/entailment/flow/events.rs`) treats the rebinding as
+  a whole write of the holder resolved through the function-wide origin
+  inventory, which reaches every place the holder ever names. The verdict is
+  conservative; the gap is acceptance only. The change would give a
+  rebinding its own kill event that removes the terms and goals spelled
+  through that holder and nothing below its targets; validate with this
+  witness, its control, and a fact spelled through the holder that must
+  still die. Reopen when a program rebinds a cursor between a guard on its
+  old target and a use of it.
 
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
