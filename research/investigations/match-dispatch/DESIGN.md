@@ -1567,18 +1567,6 @@ on the checker-facts line; item 4 follows from the others. The next v2h step
 takes item 1: a `BrTable` form without value moves for tables whose entries
 move nothing.
 
-<<<<<<< HEAD
-**`BrTableN`, observed on the 14900K and not adopted**
-([run 37825691341](https://github.com/Ming-Research/Whitefoot/actions/runs/37825691341)):
-a br_table form without value moves, which CoreMark's switch takes for 9.2M
-of its 10.8M table dispatches, at `684dbf76b` against `02575f56f`, same
-compiler, 7 interleaved launches, every final CRC 0x4983. It scores 6289.3
-against 6211.2 (twin 6211.2), 1.013, every launch pair at or above 1.003:
-a real gain below the +2% criterion, so it is reverted. The per-jump move
-test is therefore a small part of `BrTable`'s 13.5 ms difference from
-wasmi; the two run-time bounds tests and the separate table remain, the
-first of them waiting on range facts used per element in ordinary proofs.
-=======
 **`BrTable` without moves, the change** (`gen.py`'s `CONTROL` and
 `ACC`; `interp_head.wf`'s `BrTableN` arm; `interp_tail.wf`'s
 `emit_table`):
@@ -1598,7 +1586,17 @@ first of them waiting on range facts used per element in ordinary proofs.
   would add a storage to `run`, the loader and the patching of forward
   entries, while the arm uses only the entry's target field, which the host
   optimizer can load alone.
->>>>>>> parent of 0f3929b26 (Revert "v2h: a br_table form that moves no values")
+
+**`BrTableN`, observed on the 14900K**
+([run 37825691341](https://github.com/Ming-Research/Whitefoot/actions/runs/37825691341)):
+a br_table form without value moves, which CoreMark's switch takes for 9.2M
+of its 10.8M table dispatches, at `684dbf76b` against `02575f56f`, same
+compiler, 7 interleaved launches, every final CRC 0x4983. It scores 6289.3
+against 6211.2 (twin 6211.2), 1.013, every launch pair at or above 1.003:
+a real gain below the +2% criterion then in force, so it was first reverted. The per-jump move
+test is therefore a small part of `BrTable`'s 13.5 ms difference from
+wasmi; the two run-time bounds tests and the separate table remain, the
+first of them waiting on range facts used per element in ordinary proofs.
 
 **The phase-3 criterion, changed by the owner** (status board, 2026-10-08,
 after the card on whether to relax +2%): a step is adopted when its median
