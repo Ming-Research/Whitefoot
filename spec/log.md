@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-08 v0.100: stop signals
+## 2026-10-08 v0.101: stop signals
 
 Rules: changed PRE-2
 
 Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented stop signals as Q222 option A, recommended: "222 agreed" (translated); after the completion report that presented runtime-observation order with host-merged requests counted once as Q228, holding the Windows close, logoff and shutdown handlers until the listener closes as Q229, PR #273's specification text and its two design-tree nodes as Q233 and the merge order as Q234, each recommended: "Q225–Q234 all approved" (translated).
 
 Summary: PRE-2's `std::process` gains the capability `StopSignals`, carried by `Inputs.stops`, the linear handle `StopListener`, the enum `StopKind` with `Interrupt` and `Terminate`, and `stop_listen`, `stop_next` and `close_stop_listener`. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. While a listener is open, `stop_next` returns the requests in the order the runtime observed them, keeping those observed between calls and counting requests the host merged before observation once, and bounds its wait by its deadline; while none is open the host default applies, on POSIX ending the program, and a termination the host imposes after its grace period ends the program then. A stop request is an input of the execution [WAIT-2]. Before the change a program had no way to learn of a host's request to stop, so a server could not run its own orderly stop ([design](../research/investigations/stop-signals/README.md)).
+
+## 2026-10-08 v0.100: places through exact reference variables share their target's identity
+
+Rules: changed ENT-2, ENT-5, FN-8, FN-9, CALL-6
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the card that presented giving a place reached through a reference the identity of the place it names as Q142 option A: "approve them all" (translated); after the report that presented PR #271's specification and design-tree text, with the rule restricted to reference variables no `set` rebinds over the per-read rule, as Q144, and fixing the v0.97 acceptance of guards on rebound parameters and `atomic` binders in the same PR as Q145: "approve 144, approve 145" (translated); after the reports that presented the exact-step rewording of ENT-2 as Q149 and the FN-9 exit state of a rebound written reference parameter as Q150: "approve them all, finish everything, then hand over" (translated).
+
+Summary: ENT-2 replaces "distinct spellings are distinct terms" with proof paths: a place written through a `&T` reference variable that no `set` in its body rebinds and whose path set is one exact path is identified by that path followed by its own steps, and every other place by its spelling; an exact path has no `R.**` cover, selects each index by a literal, const or binding its formation read and each range by endpoints its formation evaluated, and starts at a local variable, a named const, or a parameter or `atomic_stmt` binder no `set` rebinds. Concrete Goal place datums, FN-8's substitution of a reference actual and CALL-6's instantiation use the same identity, and ENT-5's support reads the proof path. FN-9's exit term of a written reference parameter is the storage the parameter received, and a relation over it is unproved when the body rebinds the parameter. The selection ground is that a guard and a requirement over the same storage must meet whichever name reaches it, while a variable or root naming different storage before and after a rebinding must not. Verdicts: `fn8-neg-reference-guard-after-conditional-offset-write` becomes `fn8-pos-...`; the payload-guard append witnesses, `fn8-pos-guard-through-local-alias` and `fn8-pos-disjunctive-guard-through-exact-alias` now run; five programs v0.97 accepted unsoundly now reject (`fn8-neg-guard-through-rebound-parameter`, `fn8-neg-value-through-holder-of-rebound-parameter`, `op2-neg-publication-through-holder-of-rebound-parameter`, `fn8-neg-guard-through-rebound-atomic-binder`, `fn9-neg-postcondition-after-rebinding-then-write`).
 
 ## 2026-10-08 v0.99: a dead linear binding is reinitialized
 
