@@ -2,7 +2,9 @@
 use super::super::super::model::{CheckedLoopInvariant, CheckedProofUse, CheckedProofUseSource};
 use super::*;
 
-type Written = Vec<(FactId, Vec<Linear>, Vec<Linear>)>;
+/// One written instance: the fact and the terms it is instantiated at.
+type WrittenInstance = (FactId, Vec<Linear>, Vec<Linear>);
+type Written = Vec<WrittenInstance>;
 
 impl Walker<'_> {
     /// Project a formal over the already evaluated actual value, without
@@ -174,7 +176,7 @@ impl Walker<'_> {
         site: &NodePath,
         subject: &ObligationSubject,
         goals: Option<&[Literal]>,
-        written: Option<&[(FactId, Vec<Linear>, Vec<Linear>)]>,
+        written: Option<&[WrittenInstance]>,
     ) {
         if !self.has_ordinary(site, subject) {
             return;
