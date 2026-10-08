@@ -2730,6 +2730,20 @@ rarely insert at the same place.
   Reopen when the wasm interpreter's profile shows register pressure the
   convention cannot hold, or when a target without `preserve_none` matters.
 
+- **Handler words are disabled for fragment builds.** Whole-program emission
+  computes one layout plan for every selected dispatch family and applies it
+  to constructors throughout the composition. A separately emitted or cached
+  fragment cannot yet consume that shared plan or bind a constructor to a
+  hidden arm symbol in another fragment, so `--fragments` deliberately keeps
+  ordinary enum layouts and tag-indexed tables. Implement the composition-wide
+  plan as fragment lowering input and cache identity, and give arm definitions
+  and references hidden cross-fragment linkage. Validate constructors and
+  dispatchers in different modules with both fragment granularities, a warm
+  cache, a changed family set, four-aligned enums and whole-value replacement;
+  require identical results and layout to whole-program emission. Reopen when
+  fragment dispatch performance is needed; the uncertainty is dependency and
+  cache invalidation coverage, not language acceptance.
+
 ## Code structure
 
 - **Five parallel substitution walkers over a type invariant.**

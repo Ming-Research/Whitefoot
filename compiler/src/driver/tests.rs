@@ -898,7 +898,7 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
         .expect("the entry builds");
         if seed_foreign_forms {
             let all_inputs = super::with_library_records(&graph, &inputs);
-            let selection = super::entry_selection(&graph, super::ModuleEntry::Named("app"))
+            let mut selection = super::entry_selection(&graph, super::ModuleEntry::Named("app"))
                 .expect("the entry is selected");
             let (modules, selected) =
                 super::composition_inputs(&graph, &all_inputs, selection.module);
@@ -939,6 +939,19 @@ fn an_entry_build_is_reused_for_an_unchanged_composition() {
                     .store(super::ENTRY_MODULES, &material, &cold.encode())
                     .expect("seed an entry module under foreign toolchain forms");
             }
+            // The fragment layout plan is empty. If its mode is omitted
+            // from the key, this seed makes the whole-program lookup hit.
+            selection.fragments = true;
+            let material = super::entry_module_material(
+                &graph,
+                &selection,
+                (&modules, &selected),
+                OverlapLowering::Off,
+                &facts,
+            );
+            cache
+                .store(super::ENTRY_MODULES, &material, &cold.encode())
+                .expect("seed an entry module under fragment layout selection");
         }
         let cached = super::build_module_entry(
             &graph,

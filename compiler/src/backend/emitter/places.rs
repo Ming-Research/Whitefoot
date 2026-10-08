@@ -343,6 +343,30 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     ) -> Result<(), BackendFailure> {
         let destination =
             self.begin_construction(result, IrType::Nominal(nominal), Some(variant))?;
+        let handlers = self
+            .dispatch_layout
+            .families(nominal)
+            .iter()
+            .map(|family| {
+                family
+                    .handlers
+                    .get(variant as usize)
+                    .cloned()
+                    .ok_or(BackendFailure::InvalidIr)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if handlers.len() != self.nominal(nominal)?.handler_words as usize {
+            return Err(BackendFailure::InvalidIr);
+        }
+        for (word, handler) in handlers.iter().enumerate() {
+            self.output.symbol(handler.clone());
+            let address = self.handler_word_pointer(nominal, &destination, word)?;
+            let align = self.handler_word_alignment(nominal)?;
+            writeln!(
+                self.output,
+                "  store ptr @{handler}, ptr {address}, align {align}"
+            )?;
+        }
         for (index, value) in fields.iter().enumerate() {
             let field = u32::try_from(index).map_err(|_| BackendFailure::CounterOverflow)?;
             let address = self.variant_field_pointer(nominal, variant, field, &destination)?;
