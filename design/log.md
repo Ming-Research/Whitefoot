@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 By-value parameters read in place
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board of 2026-10-08, after the card "按值传入的结构体改为直接读调用者的那份、不在入口复制：重开设计树里被否决的这条，正式合入吗？" (whether to reopen the rejected in-place reading of by-value aggregate parameters and adopt it), the owner chose option A, recommended: reopen and adopt, with firn measured for no slowdown on the 14900K before merging.
+
+Summary: Reading a by-value aggregate parameter through its caller's pointer, rejected earlier because firn showed no gain, is adopted: Halo's interpreter ran fib 3.8% faster on the 14900K with the rule widened to functions with branches, which met the rejection's reopening condition, and six other kernels stayed within noise. A slot qualifies when every value it holds originates from the parameter through block transfers alone, so an `if` or `match` continuation carrying the parameter unchanged no longer forces the copy.
+
 ## 2026-10-08 Stop signals
 
 Nodes: language/system-interface/stop-signals, compiler/completion-runtime/signal-delivery
