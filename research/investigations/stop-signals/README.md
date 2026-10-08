@@ -54,10 +54,15 @@ happens to the request while the program does not ask for it.
   process; restoring `SIG_DFL` restores it.
 - **Windows.** `SetConsoleCtrlHandler` receives `CTRL_C_EVENT` (an
   interrupt) and `CTRL_BREAK_EVENT`, `CTRL_CLOSE_EVENT`, `CTRL_SHUTDOWN_EVENT`
-  (terminations) on a thread of its own; the handler can post the event to
-  the completion port a waiting context parks on and return TRUE, and
-  removing the handler restores the default. A close or shutdown event
-  leaves the process a few seconds before the system ends it.
+  (terminations) on a thread of its own; the handler posts the event to the
+  completion port a waiting context parks on, and removing the handler
+  restores the default. For `CTRL_C_EVENT` and `CTRL_BREAK_EVENT`, returning
+  TRUE lets the process continue. For a close, logoff or shutdown event the
+  system ends the process as soon as the handler returns, and after its
+  grace period in any case
+  ([HandlerRoutine](https://learn.microsoft.com/en-us/windows/console/handlerroutine)),
+  so the runtime's handler returns only when the listener closes or the
+  process ends: the program's stop then runs within the grace period.
 
 ## Candidates
 
@@ -91,8 +96,13 @@ A. Its parts:
   delivered once.
 - `stop_next(factory, listener: &StopListener, deadline:
   Option<Instant>) -> Result<StopKind, IoError> waits` returns the next
-  request, `Interrupt()` or `Terminate()`, requests arriving while no
-  context waits being kept in order.
+  request, `Interrupt()` or `Terminate()`, in the order the runtime
+  observed them; requests observed while no context waits are kept. The
+  hosts merge requests that arrive before the runtime observes them: POSIX
+  keeps one pending instance of a standard signal (`signal(7)`), and a
+  kqueue `EVFILT_SIGNAL` event carries a count, not the interleaving of two
+  signals. A program therefore learns that a stop was requested, and of
+  which kind, not how many times.
 - `close_stop_listener(factory, listener: StopListener)` restores the
   default and returns the credit.
 
@@ -101,7 +111,8 @@ Validation, stated before implementing:
   sent by the test harness, writes a byte to stdout and exits 0, and the
   same program without a listener ended by the request with the host's
   default status;
-- requests sent before the program waits are delivered in order;
+- a request sent before the program waits is delivered, and an interrupt
+  sent after a termination's delivery is delivered after it;
 - an interrupt and a termination are told apart where the host can send
   both (POSIX; Windows `CTRL_C_EVENT` beside `CTRL_BREAK_EVENT`);
 - firn's `SIGTERM` stops it as `SHUTDOWN` does, every acknowledged write
