@@ -552,7 +552,11 @@ jobs:
           which perf || ls /usr/lib/linux-tools*/perf 2>/dev/null || true
           perf --version || true
           cat /proc/sys/kernel/perf_event_paranoid || true
-          sudo -n sysctl -w kernel.perf_event_paranoid=1 || echo "cannot lower perf_event_paranoid"
+          # Only on GitHub-hosted runners; a self-hosted machine's kernel
+          # settings belong to its owner and are never changed here.
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            sudo -n sysctl -w kernel.perf_event_paranoid=1 || echo "cannot lower perf_event_paranoid"
+          fi
           cat /proc/sys/kernel/perf_event_paranoid || true
           perf stat -e cpu-clock true 2>&1 | tail -5 || true
 
