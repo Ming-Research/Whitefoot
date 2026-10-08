@@ -4,7 +4,7 @@ alias exit_status = std::process::exit_status;
 const values: Array<u8, 4> =[1_u8, 2_u8, 3_u8, 4_u8];
 
 fn main() -> status: ExitStatus pure {
-  doc "One arm of the body join advances the accumulator and the other leaves it, so the two incoming value images share no nonconstant coefficient vector. [ENT-6] therefore gives sum one fresh full-type atom at the join, [ENT-5]'s all-predecessor intersection keeps no bound the guarded arm alone established, and [INV-1] cannot re-establish the header target over that atom. The rejection is mandatory even though the relation is true on every execution.";
+  doc "Per-input counted induction proves sum <= 255*(i+1) on the unchanged and advancing inputs separately; no terminal joined image is needed.";
   let sum = 0_u32;
   for (
     i in 0_u64..4_u64,

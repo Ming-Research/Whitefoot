@@ -250,6 +250,9 @@ pub(super) fn find(
             }
             for successor in successors(candidate) {
                 if region[index] && successor == header {
+                    // Source `continue` and body fallthrough both lower to
+                    // this parameterized jump, with cleanup on the edge.
+                    // Their source spelling cannot affect split eligibility.
                     if !matches!(candidate.terminator(), IrTerminator::Jump { .. }) {
                         problem = Some("an edge back to its match is not a jump".to_owned());
                     }
@@ -1453,8 +1456,11 @@ impl FunctionEmitter<'_, '_> {
         }
         // What the loop still reads once the hoisted work leaves it: the
         // header's remaining instructions and terminator and every block of
-        // the loop, apart from a back edge's argument for the parameter it
-        // passes through.
+        // the loop, apart from a back edge's argument for a parameter every
+        // back edge passes through, which is that parameter's own value, and
+        // a join's argument for a parameter nothing reads.
+        // Lowering hands every binding in scope to each join inside the loop,
+        // so a binding the loop never uses still reaches the joins.
         let mut reads: HashSet<IrValueId> = HashSet::new();
         for (index, instruction) in header.instructions().iter().enumerate() {
             if !result.hoisted.contains(&index) {
@@ -1462,6 +1468,7 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         reads.extend(header.terminator().operands());
+        let mut joins: Vec<(usize, &[IrValueId])> = Vec::new();
         for (index, block) in blocks.iter().enumerate() {
             if !plan.region[index] {
                 continue;
@@ -1476,15 +1483,36 @@ impl FunctionEmitter<'_, '_> {
                     drops,
                 } if *target == plan.header => {
                     for (position, argument) in arguments.iter().enumerate() {
-                        if !passed_through.get(position).copied().unwrap_or(false)
-                            || root(argument) != *argument
-                        {
+                        if !passed_through.get(position).copied().unwrap_or(false) {
                             reads.insert(*argument);
                         }
                     }
                     reads.extend(drops.iter().map(|drop| drop.operand()));
                 }
+                IrTerminator::Jump {
+                    target,
+                    arguments,
+                    drops,
+                } if plan.region[target.index()] => {
+                    joins.push((target.index(), arguments));
+                    reads.extend(drops.iter().map(|drop| drop.operand()));
+                }
                 terminator => reads.extend(terminator.operands()),
+            }
+        }
+        loop {
+            let mut changed = false;
+            for (target, arguments) in &joins {
+                for ((parameter, _), argument) in
+                    blocks[*target].parameters().iter().zip(*arguments)
+                {
+                    if reads.contains(parameter) {
+                        changed |= reads.insert(*argument);
+                    }
+                }
+            }
+            if !changed {
+                break;
             }
         }
         // A passed-through reference the loop uses only to project its box's

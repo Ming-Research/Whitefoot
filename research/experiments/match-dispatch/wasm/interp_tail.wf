@@ -2696,7 +2696,7 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
     if fp > room {
       return 70_u8;
     }
-    let outcome = run(code: &code, funcs: &funcs, brtab: &brtab, table: &table, consts: &consts, stack: &stack, mem: &mem, globals: &globals, pc: pc, fp: fp, acc: 0_u64);
+    let outcome = run(code: &code, funcs: &funcs, brtab: &brtab, table: &table, consts: &consts, stack: &stack, mem: &mem, globals: &globals, pc0: pc, fp0: fp, acc0: 0_u64);
     match outcome {
       Done() => {
         return 0_u8;

@@ -131,36 +131,6 @@ impl Reasoning<'_, '_, '_> {
         ))
     }
 
-    /// The disposition of one written invariant's batch in this state
-    /// [INV-1]: one inequality, or both bounds of an equality.
-    pub(super) fn prove_affine_relation_batch(
-        &mut self,
-        relation: &CheckedAffineRelation,
-        state: &mut ProofFlowState,
-    ) -> TargetDisposition {
-        let target = self
-            .checked_affine_relation_inequality(
-                relation,
-                &mut state.affine,
-                &mut AffineCheckState::new(),
-            )
-            .ok();
-        let partner = self
-            .checked_affine_relation_partner(
-                relation,
-                &mut state.affine,
-                &mut AffineCheckState::new(),
-            )
-            .map(|partner| partner.ok());
-        let right = self.checked_affine_right_term(&relation.right);
-        let left = self.checked_affine_right_term(&relation.left);
-        let mut members = vec![(target, right, left)];
-        if let Some(partner) = partner {
-            members.push((partner, left, right));
-        }
-        self.affine_target_disposition(&members, &state.facts, &state.affine)
-    }
-
     /// [MSR-4] the disposition of one [INV-1] target's bounds in one state:
     /// proved when every bound is, refuted when the state derives the
     /// negation of one bound, and unproved otherwise. Each member carries its
@@ -220,10 +190,14 @@ impl Reasoning<'_, '_, '_> {
         &mut self,
         invariants: &[CheckedLoopInvariant],
         state: &mut ProofFlowState,
-    ) -> Vec<TargetDisposition> {
+    ) -> Vec<RelationBatch> {
         invariants
             .iter()
-            .map(|invariant| self.prove_affine_relation_batch(&invariant.relation, state))
+            .map(|invariant| {
+                let result = self.prove_relation_instance(&invariant.relation, state, None);
+                self.vocabulary.retain_loop_relation(&result.evidence);
+                result
+            })
             .collect()
     }
 
@@ -464,11 +438,25 @@ impl Judging<'_, '_, '_> {
         &mut self,
         loop_id: CheckedLoopId,
         invariants: &[CheckedLoopInvariant],
-        base: &[TargetDisposition],
-        step: &[Option<TargetDisposition>],
+        base: &[RelationBatch],
+        batches: &[InductionBatch],
         counted_binder: Option<BindingId>,
     ) {
         for (index, invariant) in invariants.iter().enumerate() {
+            let first_failure = batches
+                .iter()
+                .map(|batch| &batch.members[index])
+                .find(|member| member.disposition != TargetDisposition::Proved);
+            let inputs = batches
+                .iter()
+                .map(|batch| super::super::LoopInvariantInput {
+                    input: batch.input.clone(),
+                    discharged: batch.members[index].disposition == TargetDisposition::Proved,
+                    refuted: batch.members[index].disposition == TargetDisposition::Refuted,
+                    hidden_update: batch.hidden_update,
+                    evidence: batch.members[index].evidence.clone(),
+                })
+                .collect();
             self.output.loop_invariants.push(LoopInvariantOutcome {
                 node_path: invariant.relation.node_path.clone(),
                 loop_id,
@@ -480,11 +468,14 @@ impl Judging<'_, '_, '_> {
                 backedge_target: self
                     .input
                     .render_checked_invariant_relation(&invariant.relation, counted_binder),
+                base_evidence: base[index].evidence.clone(),
+                inputs,
                 proof: LoopInvariantProof {
-                    base: base[index] == TargetDisposition::Proved,
-                    step: step[index].map(|step| step == TargetDisposition::Proved),
-                    base_refuted: base[index] == TargetDisposition::Refuted,
-                    step_refuted: step[index] == Some(TargetDisposition::Refuted),
+                    base: base[index].disposition == TargetDisposition::Proved,
+                    step: (!batches.is_empty()).then_some(first_failure.is_none()),
+                    base_refuted: base[index].disposition == TargetDisposition::Refuted,
+                    step_refuted: first_failure
+                        .is_some_and(|member| member.disposition == TargetDisposition::Refuted),
                 },
             });
         }
