@@ -1924,6 +1924,11 @@ impl CheckedContainerRoot {
         self.path.iter().map(CheckedPlaceStep::place_step).collect()
     }
 
+    /// The [ENT-2] proof path before this place's written steps.
+    pub(crate) fn proof_prefix(&self) -> super::places::ResolvedPlace {
+        proof_place_below(self.proof_base.as_ref(), self.root, Vec::new())
+    }
+
     /// The [ENT-2] proof path of this place [`Self::proof_base`].
     pub(crate) fn proof_place(&self) -> super::places::ResolvedPlace {
         proof_place_below(self.proof_base.as_ref(), self.root, self.place_path())

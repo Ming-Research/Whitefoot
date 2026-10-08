@@ -413,6 +413,45 @@ fn main() -> status: std::process::ExitStatus pure {
     );
 }
 
+#[test]
+fn loop_measure_formation_uses_the_exact_reference_proof_path() {
+    for root in ["rows", "q"] {
+        let source = format!(
+            r#"fn probe(rows: &Slots<Slots<u8, 2>, 2>) -> result: unit reads(rows) contract {{
+  requires 0_u64 < rows^.len;
+}} {{
+  let q = &rows^;
+  loop (
+    invariant row: {root}^[0_u64].len <= {root}^[0_u64].cap
+  ) {{
+    break;
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(checked) = outcome else {
+                panic!("the measure through {root} must form at the loop header: {outcome:?}");
+            };
+            let function = checked
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "probe")
+                .expect("probe exists");
+            let [invariant] = function.entailment.loop_invariants.as_slice() else {
+                panic!("probe retains one header invariant");
+            };
+            assert!(invariant.proof.base);
+        });
+    }
+}
+
 // The field and counted binder share a spelling but have distinct identities.
 fn counted_field_collision_source(upper: u64, relation: &str) -> String {
     format!(
