@@ -111,6 +111,7 @@ pub fn fixed_terminal(spelling: &str) -> Pred {
         ("waits", "Waits"),
         ("loop", "Loop"),
         ("break", "Break"),
+        ("continue", "Continue"),
         ("else", "Else"),
         ("give", "Give"),
         ("atomic", "Atomic"),

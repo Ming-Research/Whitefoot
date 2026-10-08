@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-08 v0.101: stop signals
+## 2026-10-08 v0.102: stop signals
 
 Rules: changed PRE-2
 
 Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented stop signals as Q222 option A, recommended: "222 agreed" (translated); after the completion report that presented runtime-observation order with host-merged requests counted once as Q228, holding the Windows close, logoff and shutdown handlers until the listener closes as Q229, PR #273's specification text and its two design-tree nodes as Q233 and the merge order as Q234, each recommended: "Q225–Q234 all approved" (translated).
 
 Summary: PRE-2's `std::process` gains the capability `StopSignals`, carried by `Inputs.stops`, the linear handle `StopListener`, the enum `StopKind` with `Interrupt` and `Terminate`, and `stop_listen`, `stop_next` and `close_stop_listener`. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. While a listener is open, `stop_next` returns the requests in the order the runtime observed them, keeping those observed between calls and counting requests the host merged before observation once, and bounds its wait by its deadline; while none is open the host default applies, on POSIX ending the program, and a termination the host imposes after its grace period ends the program then. A stop request is an input of the execution [WAIT-2]. Before the change a program had no way to learn of a host's request to stop, so a server could not run its own orderly stop ([design](../research/investigations/stop-signals/README.md)).
+
+## 2026-10-08 v0.101: continue, and loop relations carried through joins
+
+Rules: changed DIAG-1, ENT-2, ENT-5, ENT-6, FN-1, FORM-2, GIVE-1, GRAM-4, GRAM-6, INV-1, LIV-1, OWN-11, PAR-2, RANGE-3, REF-2, STOR-3, TYPE-6, TYPE-11
+
+Owner-approved: In the session of 2026-10-07 and 2026-10-08, written in Chinese: after the cards for `continue` and for carrying loop relations through joins, "137 and 138 agreed" (translated), selecting Q138 option A and Q137 option B; after the card for canonical merge-only frontiers, "146 agreed" (translated), selecting Q146 option A; after the completion report that presented PR #270's specification and design-tree text rule by rule, "agreed to all the other rulings" (translated). After main merged PR #271 (proof-path identity), the owner chose option A on the shared status board on 2026-10-08, on the card asking whether a counted next header's target instance is identified by proof path or by source spelling: by proof path.
+
+Summary: GRAM-4 adds `continue_stmt := "continue" LABEL? ";"`, a line-bearing statement [FORM-2], and GRAM-6 lists `continue` among the iteration transfers. A `continue` resolves its target as `break` does [TYPE-6, DIAG-1], delivers in a value initializer as `break` does [GIVE-1], has one edge to the target's next iteration after cleanup with a counted target updated once [FN-1, LIV-1, STOR-3, TYPE-11], joins the target header's validity and ownership agreement [REF-2, OWN-11], is excluded from a parallel loop's body when it leaves it [PAR-2], and is a backedge for the header and range invariants [ENT-5, INV-1, RANGE-3]. ENT-5 then defines canonical merge-only frontiers, with releases and scope kills as per-edge events, joined once at the next real statement, and transports each active written header relation every non-contradictory input proves over its own values to the joined values; an induction frontier is not joined. ENT-6 makes transported relations automatic premises and narrows its join-shape promise to regrouping merges with no statement between them. INV-1 proves the next header's batch on each incoming edge and names the failing edge, and ENT-2 adds the target-instance measure term a counted next header's binder-indexed measure needs. Selected by Q138 option A, Q137 option B and Q146 option A ([design](../research/investigations/join-relations/DESIGN.md)). A target-instance term is identified by the place's proof path [ENT-2], so a measure read through an exact reference alias and through its referent share one term, consistent with ordinary terms since v0.100.
 
 ## 2026-10-08 v0.100: places through exact reference variables share their target's identity
 

@@ -133,8 +133,8 @@ pub fn productions(spec: &str) -> Vec<RawProduction> {
     }
     assert_eq!(
         out.len(),
-        99,
-        "the seven wf-ebnf fences define 99 productions"
+        100,
+        "the seven wf-ebnf fences define 100 productions"
     );
     out
 }

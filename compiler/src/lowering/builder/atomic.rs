@@ -829,6 +829,7 @@ fn statement_bindings(statement: &CheckedStatement, roots: &mut Vec<Root>) {
         CheckedStatement::Loop { .. }
         | CheckedStatement::Proof(_)
         | CheckedStatement::Break { .. }
+        | CheckedStatement::Continue { .. }
         | CheckedStatement::Atomic { .. } => {}
     }
 }
