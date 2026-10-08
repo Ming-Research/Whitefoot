@@ -1423,3 +1423,39 @@ with the twin equal to the base: the criterion's CoreMark half is met, and
 the phase's exit value, the prototype's 1.10, is reproduced on the natural
 form. The criterion's Halo half waits for Halo's interpreter written as
 `loop { match }`. The remaining gap to wasmi is 0.763 to 0.847.
+
+## Phase 3: the interpreter's design follows wasmi
+
+The owner approved (Q143) that v2h's translator adopt wasmi's register,
+immediate and call choices, as interpreter changes measured one at a time;
+a form Whitefoot then refuses or compiles poorly is a gap to report. A
+source reading of wasmi 2.0.0's translator and executor against `gen.py`
+ordered the candidates:
+
+1. A result that `local.set` or `local.tee` takes goes to the local's slot
+   and to the accumulator in one operation (wasmi's `SlotAndReg` forms), so
+   the next operation reading that local reads the accumulator; this
+   targets the slot written and read back by the next operation (`I32AddD`
+   4.7 cycles against `I32AddAD` 1.85 in the attribution).
+2. Immediate operands for `i32` arithmetic, compare-branches and stores,
+   instead of constants in frame slots.
+3. Calls that copy no constants and carry the callee's entry in the
+   operation.
+4. The accumulator kept across operations until overwritten, with every
+   integer operation having its accumulator forms.
+5. Branches on `and` and on not-`and`.
+
+Each step: CoreMark 2K on the 14900K against its base with a twin, adopted
+at +2% or more.
+
+**Step 0, observed** (hosted runner, run 37792262615, the branch's compiler
+at `9b9f14ac3`):
+- `I32Load`'s arm reads its four bytes with one 32-bit load after one
+  bounds test: the host optimizer combines `gen.py`'s byte reads, so the
+  per-byte spelling costs nothing and is not a gap.
+- Its dispatch is the handler word's: the next element's word loaded, the
+  cursor advanced, an indirect jump; the next-index bounds test remains.
+- Dispatch counts on CoreMark 2K, highest first: `I32Add` 48.4M, `Copy`
+  32.0M, `I32Load` 30.0M, `BrIf` 29.9M, `I32LoadD` 21.2M, `BrI32Ne` 20.9M,
+  `Copy2` 17.0M, `I32Store` 15.3M; `Call` 3.0M. Calls are about 0.6% of
+  dispatches, so step 3 is worth little on CoreMark; step 1 goes first.
