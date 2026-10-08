@@ -628,7 +628,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/v2h-perf"
           objdump -d --no-show-raw-insn "$out/v2h" > "$out/v2h.s"
-          for name in BrTable BrTableN BrTableNC Call I32AddD I32AddSD I32LoadSD I32Load8USD; do
+          for name in BrTable Call I32AddD I32AddSD I32LoadSD I32Load8USD; do
             index=$(awk -v n="$name" '$0 == n {print NR - 1; exit}' "$out/arms.txt")
             [ -n "$index" ] || continue
             echo "=== v2h $name: arm $index"

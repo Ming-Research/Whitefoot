@@ -1566,23 +1566,3 @@ Items 1 and 3 are the interpreter's design; item 2 is a language gap already
 on the checker-facts line; item 4 follows from the others. The next v2h step
 takes item 1: a `BrTable` form without value moves for tables whose entries
 move nothing.
-
-**`BrTable` without moves, the change** (`gen.py`'s `CONTROL` and
-`ACC`; `interp_head.wf`'s `BrTableN` arm; `interp_tail.wf`'s
-`emit_table`):
-- `BrTableN(c, start, count)` has the operands and branch-table entries of
-  `BrTable`; its arm clamps the index, reads only the selected entry's
-  target and jumps, with no move test and no copy. `BrTableNC` takes the
-  index from `acc`.
-- The translator reads every entry before emitting the operation. An entry
-  moves a value under the rule a `br_if` uses: its label takes one result
-  and the label's slot differs from the slot of the value below the index.
-  When no entry moves a value it emits `BrTableN`, claiming `acc` for the
-  index as a `br_if` claims its condition; otherwise `BrTable`, unchanged,
-  which keeps reading the index from its slot since it has no `acc` form.
-  The operands are put in their temporaries after the entries are read,
-  which emits nothing in between that changes `acc`.
-- `BrTableN` keeps the 16-byte entries: a separate array of 4-byte targets
-  would add a storage to `run`, the loader and the patching of forward
-  entries, while the arm uses only the entry's target field, which the host
-  optimizer can load alone.

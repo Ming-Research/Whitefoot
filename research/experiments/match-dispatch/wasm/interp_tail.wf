@@ -1189,8 +1189,8 @@ fn emit_branch(st: &Trans, depth: u64, cond: u64, cmp: u64, fa: u64, fb: u64, co
   return True();
 }
 
-fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, cond: u64, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(bytes), reads(ctls), writes(st), writes(r), writes(provs), writes(code), writes(brtab), writes(fixes) {
-  doc "br_table on the index in slot cond, already popped: the entries go to the branch table, each moving its label's result to the label's slot, and then the operands go to their temporaries and the operation is emitted. An entry moves a value when a br_if to its label would; when no entry does, the operation is BrTableN, which reads only the entries' targets and takes the index from acc as a br_if takes its condition.";
+fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, cond: u64, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> ok: Bool reads(bytes), reads(provs), reads(ctls), writes(st), writes(r), writes(code), writes(brtab), writes(fixes) {
+  doc "br_table on the index in slot cond: the entries go to the branch table, each moving its label's result to the label's slot.";
   let n = read_uleb(r: r, bytes: bytes);
   let p = r^.pos;
   let e = r^.end;
@@ -1199,9 +1199,13 @@ fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, cond: u64, provs: 
     return False();
   }
   let start = brtab^.inner.len;
+  let s32 = narrow(value: start);
+  let n32 = narrow(value: n);
+  let c16 = slot16(value: cond);
+  let o = Op::BrTable(c: c16, start: s32, count: n32);
+  emit_plain(st: st, code: code, op: o);
   let top = top_pos(provs: provs, depth: 0_u64);
   let value_slot = temp_slot(st: st, pos: top);
-  let moves = False();
   let total = n + 1_u64;
   for (j in 0_u64..total) {
     let depth = read_uleb(r: r, bytes: bytes);
@@ -1217,11 +1221,6 @@ fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, cond: u64, provs: 
       return False();
     }
     let label_slot = temp_slot(st: st, pos: c.height);
-    if k == 1_u64 {
-      if value_slot != label_slot {
-        set moves = True();
-      }
-    }
     let target = 0_u64;
     if c.kind == 2_u64 {
       set target = c.target;
@@ -1237,21 +1236,6 @@ fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, cond: u64, provs: 
     let k32 = narrow(value: k);
     let tv = Target(t: t32, s: vs32, d: ls32, k: k32);
     push_target(brtab: brtab, t: tv);
-  }
-  let index_slot = cond;
-  if bnot(moves) {
-    set index_slot = acc_claim(st: st, code: code, slot: cond);
-  }
-  flush(st: st, provs: provs, code: code);
-  let s32 = narrow(value: start);
-  let n32 = narrow(value: n);
-  let c16 = slot16(value: index_slot);
-  if moves {
-    let o = Op::BrTable(c: c16, start: s32, count: n32);
-    emit_plain(st: st, code: code, op: o);
-  } else {
-    let o = Op::BrTableN(c: c16, start: s32, count: n32);
-    emit_plain(st: st, code: code, op: o);
   }
   let failed = r^.failed;
   return bnot(failed);
@@ -1409,6 +1393,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let top = top_pos(provs: provs, depth: 0_u64);
     let cond = source(st: st, provs: provs, code: code, pos: top);
     pop_prov(st: st, provs: provs, count: 1_u64);
+    flush(st: st, provs: provs, code: code);
     let ok = emit_table(r: r, bytes: bytes, st: st, cond: cond, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     set st^.dead = True();
     if ok {
