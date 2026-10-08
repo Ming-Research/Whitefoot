@@ -623,3 +623,25 @@ jobs:
               cat "$out/$engine.top"
             fi
           done
+
+      - name: Print selected handlers' machine code
+        run: |
+          out="$RUNNER_TEMP/v2h-perf"
+          objdump -d --no-show-raw-insn "$out/v2h" > "$out/v2h.s"
+          for name in BrTable Call I32AddD I32AddSD I32LoadSD I32Load8USD; do
+            index=$(awk -v n="$name" '$0 == n {print NR - 1; exit}' "$out/arms.txt")
+            [ -n "$index" ] || continue
+            echo "=== v2h $name: arm $index"
+            awk -v sym="wf_run([.]body)?[.]arm[.]$index" '
+              $0 ~ "<_?" sym "(\\.[^>]*)?>:$" {on = 1; count = 0; print; next}
+              on && (/^$/ || /^[0-9a-f]+ <.*>:$/) {print "--- " count " instructions"; on = 0}
+              on {print; count++}' "$out/v2h.s"
+          done
+          objdump -d --no-show-raw-insn --demangle "$RUNNER_TEMP/wasmi/bin/wasmi" > "$out/wasmi.s"
+          for name in branch_table_s call_internal i32_add_rs_si u32_load_mem0_offset16_rs_s; do
+            echo "=== wasmi $name"
+            awk -v sym="exec::$name>:" '
+              index($0, sym) && /^[0-9a-f]+ </ {on = 1; count = 0; print; next}
+              on && (/^$/ || /^[0-9a-f]+ <.*>:$/) {print "--- " count " instructions"; on = 0}
+              on {print; count++}' "$out/wasmi.s" | head -120
+          done
