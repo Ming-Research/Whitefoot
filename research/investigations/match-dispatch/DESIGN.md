@@ -1544,3 +1544,25 @@ the 34 ms gap. Calls follow: 14.9 ms against `call_internal`'s 11.6 ms.
 `I32AddD` costs 1.27 ns a dispatch against `I32AddSD`'s 0.51, which also
 asks for its machine code. The next step reads `BrTable`'s and `Call`'s
 arms against wasmi's handlers before changing anything.
+
+**`BrTable` against wasmi's `branch_table_s`** (hosted runner, run 37821310401,
+the same LLVM): 50 instructions against 11. wasmi reads the selector from a
+slot, clamps it, loads a relative offset from the table inlined after the
+instruction, and jumps through the target cell's handler. v2h in addition:
+1. tests, for every jump, whether the selected entry moves a value into the
+   target block (a 16-byte entry: target, source slot, destination slot, a
+   flag), with a conditional copy, though CoreMark's switch moves nothing;
+   wasmi selects a separate instruction for tables that carry values;
+2. tests the entry index against the table's length and the target index
+   against the code's length at run time: the checker cannot know that a
+   table entry's target lies inside the code, which a range fact over the
+   table's contents (`forall k in 0..brtab.len: brtab[k].t < code.len`,
+   used per element) would prove once range facts serve ordinary proofs,
+   the checker-facts line's item;
+3. loads the table's base from the interpreter's context;
+4. spills a register around the arm.
+
+Items 1 and 3 are the interpreter's design; item 2 is a language gap already
+on the checker-facts line; item 4 follows from the others. The next v2h step
+takes item 1: a `BrTable` form without value moves for tables whose entries
+move nothing.
