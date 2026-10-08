@@ -38,7 +38,7 @@ on:
         type: choice
         # natural-baseline is temporary, for the loop { match } line's
         # second phase, and is removed before claude/natural-lowering is ready.
-        options: [scoreboard, placement, natural-baseline, v2h-step]
+        options: [scoreboard, placement, natural-baseline, v2h-step, v2h-perf]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -535,3 +535,69 @@ jobs:
           python3 "$probe" --module coremark.wasm --iterations 2000 \
             --launches "${{ inputs.placement_rounds }}" --tsv "$out/run.tsv" "${engines[@]}"
           cat "$out/run.tsv"
+
+  # Temporary: where v2h's and wasmi's CoreMark time goes, per handler, by
+  # cpu-clock sampling (no hardware counters needed), with v2h's dispatch
+  # counts per operation kind.
+  v2h-perf:
+    if: inputs.experiment == 'v2h-perf'
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted","14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the profiler
+        run: |
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+          which perf || ls /usr/lib/linux-tools*/perf 2>/dev/null || true
+          perf --version || true
+          cat /proc/sys/kernel/perf_event_paranoid || true
+          perf stat -e cpu-clock true 2>&1 | tail -5 || true
+
+      - name: Install the host toolchain
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            version=$(tr -d '[:space:]' < .github/llvm-major)
+            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+            sudo apt-get install -y -q linux-tools-common linux-tools-generic > /dev/null || true
+            rustup default stable
+          elif [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Build
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/v2h-perf"
+          mkdir -p "$out"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          gen=research/experiments/match-dispatch/wasm/gen.py
+          python3 "$gen" "$out/v2h.wf"
+          python3 "$gen" "$out/names.wf" --names > "$out/names.txt"
+          compiler/target/gate/whitefootc "$out/v2h.wf" -o "$out/v2h" > /dev/null
+          rm -rf "$RUNNER_TEMP/sf"
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
+          git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
+          cargo install --quiet --locked --version 2.0.0 --root "$RUNNER_TEMP/wasmi" wasmi_cli
+
+      - name: Sample each interpreter
+        run: |
+          out="$RUNNER_TEMP/v2h-perf"
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          for engine in v2h wasmi; do
+            if [ "$engine" = v2h ]; then cmd="$out/v2h"; else cmd="$RUNNER_TEMP/wasmi/bin/wasmi"; fi
+            echo "=== $engine"
+            perf stat -e cpu-clock,task-clock $cmd coremark.wasm 0x0 0x0 0x66 2000 2>&1 | grep -E "Iterations/Sec|crcfinal|cpu-clock|task-clock|seconds time" || true
+            perf record -q -e cpu-clock -F 20000 -o "$out/$engine.data" $cmd coremark.wasm 0x0 0x0 0x66 2000 > /dev/null 2>&1 || { echo "perf record failed"; continue; }
+            perf report -q -i "$out/$engine.data" --stdio --sort symbol --percent-limit 0.4 2>/dev/null | head -60 > "$out/$engine.top"
+            if [ "$engine" = v2h ]; then
+              awk -v names="$out/names.txt" 'BEGIN { while ((getline n < names) > 0) name[i++] = n }
+                { line = $0; if (match(line, /wf_run[.](body[.])?arm[.][0-9]+/)) { a = substr(line, RSTART, RLENGTH); sub(/.*arm[.]/, "", a); line = line "  <" name[a + 0] ">" } print line }' "$out/$engine.top"
+            else
+              cat "$out/$engine.top"
+            fi
+          done
