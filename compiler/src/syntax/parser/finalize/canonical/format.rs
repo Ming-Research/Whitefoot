@@ -37,6 +37,7 @@ fn is_line_bearing(topology: &FinalizedTopology, node: NodeId) -> Result<bool, S
             | Production::ExprStmt
             | Production::ReturnStmt
             | Production::BreakStmt
+            | Production::ContinueStmt
             | Production::ProofUse
             | Production::GiveStmt
             // [GRAM-2, FORM-2] `program no_heap;` is a simple item.

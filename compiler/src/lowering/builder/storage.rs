@@ -92,7 +92,9 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
                 }
                 collect_statements(body, bindings);
             }
-            CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => {}
+            CheckedStatement::Proof(_)
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => {}
         }
     }
 }
@@ -299,6 +301,22 @@ impl IrBuilder<'_> {
         root: &crate::semantic::CheckedContainerRoot,
         write: bool,
     ) -> Result<IrValueId, LoweringFailure> {
+        if let Some((crate::semantic::CheckedPlaceStep::Subscript(index), prefix)) =
+            root.path.split_last()
+            && let Some(slice) = self.indexed_slice(root.root, prefix)
+        {
+            let offset = self.expression(&index.offset)?;
+            let referent = IrAddressed::of(lower_type(self.erasure, root.ty)?)
+                .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+            return self.define(
+                IrType::Address(referent),
+                IrOperation::SliceAddress {
+                    slice,
+                    offset,
+                    target_domain: index.target_domain.into(),
+                },
+            );
+        }
         let address = match root.root {
             crate::semantic::CheckedPlaceRoot::Binding(binding) => self
                 .bindings
@@ -327,6 +345,19 @@ impl IrBuilder<'_> {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
         Ok(address)
+    }
+
+    pub(super) fn indexed_slice(
+        &self,
+        root: crate::semantic::CheckedPlaceRoot,
+        path: &[crate::semantic::CheckedPlaceStep],
+    ) -> Option<IrValueId> {
+        self.indexed_roots
+            .iter()
+            .rev()
+            .find_map(|(candidate, slice)| {
+                (candidate.root == root && candidate.path == path).then_some(*slice)
+            })
     }
 
     pub(super) fn borrow_may_write(&self, writable: bool, places: &[CheckedResolvedPlace]) -> bool {

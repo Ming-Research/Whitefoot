@@ -1170,18 +1170,15 @@ impl Analyzer<'_, '_> {
     ) -> bool {
         // [ENT-2] each subscript's bound is stated over the place's proof
         // path, as the guard that proves it is.
-        let (proof_root, mut projections) = match &root.proof_base {
-            Some(base) => (base.root, base.path.clone()),
-            None => (root.root, Vec::new()),
-        };
+        let mut base = root.proof_prefix();
         let mut reached = true;
         for step in &root.path {
             match step {
                 CheckedPlaceStep::Field(field) => {
-                    projections.push(PlaceStep::Field(*field));
+                    base.path.push(PlaceStep::Field(*field));
                 }
                 CheckedPlaceStep::BoxReferent(_) => {
-                    projections.push(PlaceStep::Deref);
+                    base.path.push(PlaceStep::Deref);
                 }
                 CheckedPlaceStep::Subscript(subscript) => {
                     if matches!(subscript.base_type, CheckedType::Nominal(_)) {
@@ -1190,16 +1187,11 @@ impl Analyzer<'_, '_> {
                                 std::iter::once(&subscript.offset),
                                 states,
                             );
-                        projections.push(PlaceStep::Index(subscript.captured));
+                        base.path.push(PlaceStep::Index(subscript.captured));
                         continue;
                     }
                     let Some(measured) = measured_kind(subscript.base_type) else {
                         return false;
-                    };
-                    let base = ResolvedPlace {
-                        atomic_aliases: Vec::new(),
-                        root: proof_root,
-                        path: projections.clone(),
                     };
                     let reaches_offset = self
                         .judge_children_reach_parent(std::iter::once(&subscript.offset), states);
@@ -1211,7 +1203,7 @@ impl Analyzer<'_, '_> {
                             states,
                         );
                         self.judge_obligation(
-                            base,
+                            base.clone(),
                             measured,
                             type_constant(subscript.base_type),
                             &subscript.offset,
@@ -1224,7 +1216,7 @@ impl Analyzer<'_, '_> {
                         && self
                             .judging()
                             .obligations_since_discharged(obligation_start);
-                    projections.push(PlaceStep::Index(subscript.captured));
+                    base.path.push(PlaceStep::Index(subscript.captured));
                 }
             }
         }

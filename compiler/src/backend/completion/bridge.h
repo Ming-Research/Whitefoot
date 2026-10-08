@@ -7,6 +7,30 @@
 extern "C" {
 #endif
 
+/* Invocation stop source; initialization alone is safe for native callers. */
+struct wf_completion_record;
+int wf__stop_initialize(void);
+#if !defined(_WIN32)
+/* One launcher invocation: prepare on the floor-attached original thread
+ * before creating the entry or any other thread, then receive on that same
+ * thread. The entry calls entry_returned after its body, before being joined.
+ * Without this loop, opening a listener returns ENOTSUP. */
+int wf__stop_prepare(void);
+void wf__stop_receive(void);
+void wf__stop_entry_returned(void);
+#endif
+/* begin holds the lifecycle lock on success; finish releases it, starting
+ * interception only if the ordinary library acquired a factory credit. */
+int wf__stop_listen_begin(void);
+int wf__stop_listen_finish(int has_credit);
+int wf__stop_close(void);
+/* Host observers publish in this lock's acquisition order; 0 interrupt, 1 termination. */
+void wf__stop_observe(unsigned kind);
+void wf__stop_next(struct wf_completion_record *record);
+void wf__stop_cancel(struct wf_completion_record *record);
+void wf__completion_stop_next_submit(void *record);
+void wf__completion_stop_close_submit(void *record);
+
 /* Every submit fills the record the caller supplies and answers nothing: the
  * runtime either accepted the operation or executed it itself and published
  * its completion into the record, and either way the operation is the

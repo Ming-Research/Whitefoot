@@ -43,7 +43,7 @@ fn append_range(factory: &std::io::HandleFactory, root: &std::fs::DirectoryWrite
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock) = move inputs;
+  let Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock, stops: unused_stops) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   let first = append_range(factory: &handles, root: &cwd_write, start: 0_u64, end: 3_u64);
   let second = append_range(factory: &handles, root: &cwd_write, start: 3_u64, end: 5_u64);

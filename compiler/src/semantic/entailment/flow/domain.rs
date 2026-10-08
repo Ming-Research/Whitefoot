@@ -281,6 +281,7 @@ impl Vocabulary {
             // const parameter throughout the generic body.
             TermKind::ConstParameter(..)
             | TermKind::Measure(..)
+            | TermKind::TargetMeasure { .. }
             | TermKind::EntryDatum {
                 measure: Some(_), ..
             }
