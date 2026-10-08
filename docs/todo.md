@@ -77,21 +77,26 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **Wide-match checking still has unresolved scaling costs.** The
-  [C3 investigation](../research/investigations/check-time/DESIGN.md#direction-a2-demand-the-affine-index)
-  implements the owner's selected unchanged-state reuse plus lazy affine L0
-  index. Historical M5 reuse timings improve the natural interpreter by about
-  10% but leave the synthetic series around 9–10× per doubling. The lazy path
-  needs full-rebuild entry/parent differentials, retained-derivation validation,
-  the complete gate and paired CI timing on the 14900K. It avoids unused pair
-  images for DIRECT/residual queries, but an exhausted final AUTO family can
-  still demand quadratically many vectors, each scanning the candidate list;
-  that possible cubic cost must be measured before claiming improvement.
-  Reopen representation if the same-source base/twin/head panel regresses or
-  fails to separate from noise. Dense single-input snapshots, image formation,
-  inventory scans and the series' cubic join work remain deferred; revisit each
-  only when its elapsed share warrants another experiment. No acceptance or
-  specification change is part of this work.
+- **Wide-match checking still grows about tenfold per doubling of arms.**
+  The demanded affine L0 index cut the natural wasm interpreter's check to
+  0.215 of its base on the 14900K but left the plain constant-assignment
+  series unchanged: it grows 4.0, 5.5, 7.3 and 10.5 times per doubling from
+  40 to 640 arms
+  ([C3 results](../research/investigations/check-time/DESIGN.md#14900k-timing-results)).
+  Impact: a match with several hundred arms that each assign distinct
+  constants takes seconds to minutes to check. The source attribution puts
+  that series' cost in the join: pair enumeration, per-input lookups and
+  parent construction in `join_at_once` (`compiler/src/semantic/entailment/state.rs`),
+  cubic on the series. Change: direction A1 of the C3 investigation, reducing
+  or demanding the join locally, after a profile or counters rank those
+  phases in seconds. Validate with the same base/twin/head panel on the
+  14900K, the series' doublings at most 2.5, unchanged verdicts and the
+  eager-join differential. Dense single-input snapshots, image formation and
+  inventory scans remain deferred until their elapsed share warrants an
+  experiment. Reopen with that profile, or when a real program meets the
+  series' growth. An exhausted final AUTO family can still demand
+  quadratically many vectors, each scanning the candidate list; no measured
+  input has shown it.
 
 - **Checking Halo takes about 9 seconds.** The Halo-wf session reported that
   rewriting Halo's interpreter as plain `loop { match }` raised its source
@@ -108,7 +113,9 @@ rarely insert at the same place.
   repeated checks of unchanged functions. Validate each with a same-source
   base/twin/head timing of Halo's check on the 14900K through CI, unchanged
   conformance and corpus verdicts, and the full-rebuild differentials.
-  Reopen when the lazy-index timing lands, or sooner if Halo's check passes
+  The lazy index cut the v2h interpreter's check to 0.215 of its base;
+  Halo's check has not been timed with it. Reopen when that change reaches
+  main and Halo's check is timed with it, or sooner if Halo's check passes
   10 s.
 
 - **A disequality with a constant does not tighten a bound.** Under the
