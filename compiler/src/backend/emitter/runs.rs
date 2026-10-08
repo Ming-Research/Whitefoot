@@ -1104,13 +1104,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         Ok(())
     }
 
-    /// [OP-10] `grow`: the cell's content is remade whole at the new
+    /// [OP-10] `grow`: the cell's content is reallocated at the new
     /// capacity.
     ///
-    /// One allocation, one copy of the header and the filled slots, one
-    /// free, and the cell's pointer slot takes the new block. [STOR-7] makes
-    /// the copying route legal at every value, because no judgment depends
-    /// on the block's address.
+    /// Experiment (Halo board Q5): one `realloc` keeps the header and the
+    /// filled slots, possibly in place, and the cell's pointer slot takes the
+    /// returned block, which then records the new capacity. [STOR-7] makes
+    /// an address change legal at every value, because no judgment depends
+    /// on the block's address; a failed `realloc` leaves the old block and
+    /// terminates [STOR-8].
     pub(super) fn emit_window_grow(
         &mut self,
         result: IrValueId,
@@ -1142,15 +1144,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let old = self.next_temporary()?;
         writeln!(self.output, "  %{old} = load ptr, ptr {cell_address}")
             .map_err(|_| BackendFailure::TextEmission)?;
-        let old_block = format!("%{old}");
-        let old_length_address =
-            self.aggregate_field_pointer(block_type, &old_block, shape.length_field() as usize)?;
-        let length = self.next_temporary()?;
-        writeln!(
-            self.output,
-            "  %{length} = load i64, ptr {old_length_address}"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
         let fresh = self.next_temporary()?;
         let nonnull = self.next_temporary()?;
         let ready = window_block_ready_label(result);
@@ -1161,10 +1154,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let bytes =
                 self.emit_allocation_size(&count, &element_size, &header_size, &oom, &allocate)?;
             {
-                self.output.symbol("malloc");
+                self.output.symbol("realloc");
                 write!(
                     self.output,
-                    "  %{fresh} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  %{fresh} = call ptr @realloc(ptr %{old}, i64 {bytes})\n  %{nonnull} = icmp ne ptr %{fresh}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -1178,41 +1171,13 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.output.open_block(ready.to_string());
         };
         let fresh_block = format!("%{fresh}");
-        let fresh_length_address =
-            self.aggregate_field_pointer(block_type, &fresh_block, shape.length_field() as usize)?;
-        writeln!(
-            self.output,
-            "  store i64 %{length}, ptr {fresh_length_address}"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
         let capacity_field = shape.capacity_field().ok_or(BackendFailure::InvalidIr)?;
         let fresh_capacity_address =
             self.aggregate_field_pointer(block_type, &fresh_block, capacity_field as usize)?;
         writeln!(
             self.output,
-            "  store i64 {}, ptr {fresh_capacity_address}",
+            "  store i64 {}, ptr {fresh_capacity_address}\n  store ptr %{fresh}, ptr {cell_address}",
             self.value_name(capacity)
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        // The filled slots move as bytes: no value's judgment depends on its
-        // address [STOR-7], and a `Slots` window begins at slot zero, so the
-        // filled prefix is one contiguous extent.
-        let old_slots = self.next_temporary()?;
-        let fresh_slots = self.next_temporary()?;
-        let moved = self.next_temporary()?;
-        let block = self.output.type_name(self.program, block_type)?;
-        writeln!(
-            self.output,
-            "  %{old_slots} = getelementptr inbounds {block}, ptr %{old}, i64 0, i32 {slots}, i64 0\n  %{fresh_slots} = getelementptr inbounds {block}, ptr %{fresh}, i64 0, i32 {slots}, i64 0\n  %{moved} = mul nuw i64 %{length}, {element_size}",
-            slots = shape.slots_field(),
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
-        self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
-        self.output.symbol("llvm.memmove.p0.p0.i64");
-        self.output.symbol("free");
-        writeln!(
-            self.output,
-            "  call void @llvm.memmove.p0.p0.i64(ptr %{fresh_slots}, ptr %{old_slots}, i64 %{moved}, i1 false)\n  call void @free(ptr %{old})\n  store ptr %{fresh}, ptr {cell_address}"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
         self.emit_constant(result, ty, IrConstant::Unit)

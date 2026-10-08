@@ -328,6 +328,19 @@ pub(super) fn emit_llvm_with_window_address_facts(
             .iter()
             .any(|block| matches!(block.terminator(), IrTerminator::Match { .. }))
     });
+    let has_window_grow = program.functions().iter().any(|function| {
+        function.blocks().iter().any(|block| {
+            block.instructions().iter().any(|instruction| {
+                matches!(
+                    instruction,
+                    IrInstruction::Define {
+                        operation: IrOperation::WindowGrow { .. },
+                        ..
+                    }
+                )
+            })
+        })
+    });
     let drop_helpers = emit_resource_drop_helpers(program, target)?;
     let has_heap_storage = !drop_helpers.is_empty()
         || program.functions().iter().any(IrFunction::contains_buffer)
@@ -408,6 +421,13 @@ pub(super) fn emit_llvm_with_window_address_facts(
             "void",
             vec![Parameter::unnamed("ptr")],
         ));
+        if has_window_grow {
+            text.declare(Signature::new(
+                "realloc",
+                "ptr",
+                vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
+            ));
+        }
     }
     if latched_resource_record {
         text.append(resource_record_latch_fallback()?);
