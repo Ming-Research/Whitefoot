@@ -126,4 +126,4 @@ cannot restore its default when the listener closes.
 
 ## Status
 
-Adopted: proposal A, with observation order and host merging as settled in Firn ledger Q228 and the Windows handler lifetime as settled in Q229, in specification v0.99.
+Adopted by the owner: proposal A, with requests returned in runtime observation order and requests the host merged before observation counted once, and the Windows close, logoff and shutdown handlers held until their listener closes; specified in PRE-2, whose approval [`spec/log.md`](../../../spec/log.md) records.

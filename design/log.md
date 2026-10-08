@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Stop signals
+
+Nodes: language/system-interface/stop-signals, compiler/completion-runtime/signal-delivery
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented stop signals as Q222 option A, recommended: "222 agreed" (translated); after the completion report that presented runtime-observation order with host-merged requests counted once as Q228, holding the Windows close, logoff and shutdown handlers until the listener closes as Q229, PR #273's specification text and its two design-tree nodes as Q233 and the merge order as Q234, each recommended: "Q225–Q234 all approved" (translated).
+
+Summary: A program receives a host's interrupt and termination requests through a capability passed with its inputs and a linear listener whose waiting `stop_next` returns them in runtime observation order, instead of shared state every context must poll, an input stream whose end hides the request, or a handler the runtime calls outside the waiting model. The runtime keeps observed requests in a growing queue under the completion pool's lock so none is lost between waits; on Linux the invocation blocks SIGINT and SIGTERM in every thread and one receiver reads them through signalfd, macOS observes them through kqueue, and Windows publishes from its console handler and holds the close, logoff and shutdown callbacks until their listener closes, since Windows ends the process when they return ([host constraints](../research/investigations/stop-signals/README.md#hosts)).
+
 ## 2026-10-08 Writable subdirectories, moving files and names below a root
 
 Nodes: language/system-interface/writable-directory
