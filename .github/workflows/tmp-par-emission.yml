@@ -31,7 +31,7 @@ jobs:
           done
       - name: Emission and ledger of every program
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out=$RUNNER_TEMP/emission
           mkdir -p "$out"
           files=$(find tests/programs research/experiments/par-quicksort -name '*.wf' | sort)
