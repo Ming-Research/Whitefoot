@@ -1144,9 +1144,9 @@ impl Checker<'_, '_> {
             if name == "inner" {
                 return Ok((CheckedRangeStep::BoxContent, content));
             }
-        } else if let CheckedType::Nominal(nominal) = value {
-            if let CheckedNominalKind::Struct { fields } = &self.types.nominal(nominal)?.kind {
-                if let Some((ordinal, field)) = fields
+        } else if let CheckedType::Nominal(nominal) = value
+            && let CheckedNominalKind::Struct { fields } = &self.types.nominal(nominal)?.kind
+                && let Some((ordinal, field)) = fields
                     .iter()
                     .enumerate()
                     .find(|(_, field)| field.name == name)
@@ -1164,8 +1164,6 @@ impl Checker<'_, '_> {
                         .map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
                     return Ok((CheckedRangeStep::Field(ordinal), ty));
                 }
-            }
-        }
         self.invalid_range(
             SemanticRule::Range1,
             suffix,
@@ -1202,8 +1200,8 @@ impl Checker<'_, '_> {
                 );
             }
             let name = self.member_name(suffix)?;
-            if let CheckedType::Nominal(nominal) = selected {
-                if let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind {
+            if let CheckedType::Nominal(nominal) = selected
+                && let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind {
                     let PlaceSuffix::Member(member) =
                         self.types.declarations.tree.place_suffix(suffix)?
                     else {
@@ -1264,7 +1262,6 @@ impl Checker<'_, '_> {
                     position += 1;
                     continue;
                 }
-            }
             if matches!(self.types.declarations.tree.place_suffix(suffix)?, PlaceSuffix::Member(member) if member.variant.is_some())
             {
                 return self.invalid_range(

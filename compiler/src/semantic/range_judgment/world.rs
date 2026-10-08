@@ -699,12 +699,11 @@ pub(super) fn join_states(
         .collect();
     for location in locations {
         let all: Vec<_> = arms.iter().map(|arm| arm.slots.get(&location)).collect();
-        if let Some(slot) = all[0] {
-            if all.iter().all(|other| *other == Some(slot)) {
+        if let Some(slot) = all[0]
+            && all.iter().all(|other| *other == Some(slot)) {
                 out.slots.insert(location, slot.clone());
                 continue;
             }
-        }
         // An absent override in one arm means that arm's ancestor source,
         // never permission to discard another arm's write. Unsupported
         // definitions remain unknown and still shadow an ancestor source.

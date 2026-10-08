@@ -872,8 +872,8 @@ impl<'program> Walker<'program> {
             Some(Slot::Ref(view)) => return Value::Ref(view.clone()),
             _ => {}
         }
-        if let Some(source) = state.read_source(&location) {
-            if let CheckedType::Integer(integer) = ty {
+        if let Some(source) = state.read_source(&location)
+            && let CheckedType::Integer(integer) = ty {
                 return Value::Int(self.world.read(
                     source.version,
                     source.indices,
@@ -881,7 +881,6 @@ impl<'program> Walker<'program> {
                     Some(integer),
                 ));
             }
-        }
         match ty {
             CheckedType::Integer(integer) => {
                 // One unknown field reads as one value until it is written.
@@ -1345,11 +1344,10 @@ impl<'program> Walker<'program> {
     }
 
     fn variant_count(&self, ty: CheckedType) -> u32 {
-        if let CheckedType::Nominal(nominal) = ty {
-            if let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind {
+        if let CheckedType::Nominal(nominal) = ty
+            && let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind {
                 return variants.len() as u32;
             }
-        }
         0
     }
 
