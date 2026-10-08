@@ -1,0 +1,258 @@
+alias Inputs = std::process::Inputs;
+alias ExitStatus = std::process::ExitStatus;
+alias Instant = std::time::Instant;
+
+fn is_busy(problem: std::io::IoError) -> result: Bool pure {
+  match problem {
+    NotFound(code: code_0, origin: origin_0) => {
+      return False();
+    }
+    PermissionDenied(code: code_1, origin: origin_1) => {
+      return False();
+    }
+    AlreadyExists(code: code_2, origin: origin_2) => {
+      return False();
+    }
+    NotDirectory(code: code_3, origin: origin_3) => {
+      return False();
+    }
+    IsDirectory(code: code_4, origin: origin_4) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: code_5, origin: origin_5) => {
+      return False();
+    }
+    ReadOnly(code: code_6, origin: origin_6) => {
+      return False();
+    }
+    ResourceBusy(code: code_7, origin: origin_7) => {
+      return True();
+    }
+    InvalidInput(code: code_8, origin: origin_8) => {
+      return False();
+    }
+    InvalidPath(code: code_9, origin: origin_9) => {
+      return False();
+    }
+    Unsupported(code: code_10, origin: origin_10) => {
+      return False();
+    }
+    TimedOut(code: code_11, origin: origin_11) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return False();
+    }
+    BrokenPipe(code: code_13, origin: origin_13) => {
+      return False();
+    }
+    WriteZero(code: code_14, origin: origin_14) => {
+      return False();
+    }
+    UnexpectedEnd(code: code_15, origin: origin_15) => {
+      return False();
+    }
+    ConnectionRefused(code: code_16, origin: origin_16) => {
+      return False();
+    }
+    ConnectionReset(code: code_17, origin: origin_17) => {
+      return False();
+    }
+    ConnectionAborted(code: code_18, origin: origin_18) => {
+      return False();
+    }
+    NotConnected(code: code_19, origin: origin_19) => {
+      return False();
+    }
+    AddressInUse(code: code_20, origin: origin_20) => {
+      return False();
+    }
+    AddressUnavailable(code: code_21, origin: origin_21) => {
+      return False();
+    }
+    ResourceExhausted(code: code_22, origin: origin_22) => {
+      return False();
+    }
+    FileTooLarge(code: code_23, origin: origin_23) => {
+      return False();
+    }
+    NoSpace(code: code_24, origin: origin_24) => {
+      return False();
+    }
+    QuotaExceeded(code: code_25, origin: origin_25) => {
+      return False();
+    }
+    CrossDevice(code: code_26, origin: origin_26) => {
+      return False();
+    }
+    DeviceFailure(code: code_27, origin: origin_27) => {
+      return False();
+    }
+    Other(code: code_28, origin: origin_28) => {
+      return False();
+    }
+  }
+}
+
+fn is_deadline(problem: std::io::IoError) -> result: Bool pure {
+  match problem {
+    NotFound(code: code_0, origin: origin_0) => {
+      return False();
+    }
+    PermissionDenied(code: code_1, origin: origin_1) => {
+      return False();
+    }
+    AlreadyExists(code: code_2, origin: origin_2) => {
+      return False();
+    }
+    NotDirectory(code: code_3, origin: origin_3) => {
+      return False();
+    }
+    IsDirectory(code: code_4, origin: origin_4) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: code_5, origin: origin_5) => {
+      return False();
+    }
+    ReadOnly(code: code_6, origin: origin_6) => {
+      return False();
+    }
+    ResourceBusy(code: code_7, origin: origin_7) => {
+      return False();
+    }
+    InvalidInput(code: code_8, origin: origin_8) => {
+      return False();
+    }
+    InvalidPath(code: code_9, origin: origin_9) => {
+      return False();
+    }
+    Unsupported(code: code_10, origin: origin_10) => {
+      return False();
+    }
+    TimedOut(code: code_11, origin: origin_11) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return True();
+    }
+    BrokenPipe(code: code_13, origin: origin_13) => {
+      return False();
+    }
+    WriteZero(code: code_14, origin: origin_14) => {
+      return False();
+    }
+    UnexpectedEnd(code: code_15, origin: origin_15) => {
+      return False();
+    }
+    ConnectionRefused(code: code_16, origin: origin_16) => {
+      return False();
+    }
+    ConnectionReset(code: code_17, origin: origin_17) => {
+      return False();
+    }
+    ConnectionAborted(code: code_18, origin: origin_18) => {
+      return False();
+    }
+    NotConnected(code: code_19, origin: origin_19) => {
+      return False();
+    }
+    AddressInUse(code: code_20, origin: origin_20) => {
+      return False();
+    }
+    AddressUnavailable(code: code_21, origin: origin_21) => {
+      return False();
+    }
+    ResourceExhausted(code: code_22, origin: origin_22) => {
+      return False();
+    }
+    FileTooLarge(code: code_23, origin: origin_23) => {
+      return False();
+    }
+    NoSpace(code: code_24, origin: origin_24) => {
+      return False();
+    }
+    QuotaExceeded(code: code_25, origin: origin_25) => {
+      return False();
+    }
+    CrossDevice(code: code_26, origin: origin_26) => {
+      return False();
+    }
+    DeviceFailure(code: code_27, origin: origin_27) => {
+      return False();
+    }
+    Other(code: code_28, origin: origin_28) => {
+      return False();
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: unused_args, cwd: directory, stdout: unused_out, stderr: unused_err, handles: factory, stdin: unused_in, clock: clock, wall_clock: unused_wall, stops: stops) = move inputs;
+  let std::fs::Directory(read: root, write: writable) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move writable);
+  std::fs::close_directory(factory: &factory, directory: move root);
+  let code = 0_u8;
+  match std::process::stop_listen(factory: &factory, stops: &stops) {
+    Ok(value: listener) => {
+      match std::process::stop_listen(factory: &factory, stops: &stops) {
+        Ok(value: duplicate) => {
+          std::process::close_stop_listener(factory: &factory, listener: move duplicate);
+          set code = 1_u8;
+        }
+        Err(error: busy_problem) => {
+          let busy = is_busy(problem: busy_problem);
+          if busy {
+          } else {
+            set code = 2_u8;
+          }
+        }
+      }
+      let start = std::time::now(clock: &clock);
+      let end = std::time::instant_after(instant: start, nanoseconds: 1000000_u64);
+      let deadline = Some<Instant>(value: end);
+      match std::process::stop_next(factory: &factory, listener: &listener, deadline: deadline) {
+        Ok(value: unexpected) => {
+          set code = 3_u8;
+        }
+        Err(error: timed_problem) => {
+          let timed = is_deadline(problem: timed_problem);
+          if timed {
+          } else {
+            set code = 4_u8;
+          }
+        }
+      }
+      let after = std::time::now(clock: &clock);
+      let reached = std::time::instant_reached(deadline: end, instant: after);
+      if reached {
+      } else {
+        set code = 5_u8;
+      }
+      match std::process::close_stop_listener(factory: &factory, listener: move listener) {
+        Ok(value: done) => {
+        }
+        Err(error: close_problem) => {
+          set code = 6_u8;
+        }
+      }
+      match std::process::stop_listen(factory: &factory, stops: &stops) {
+        Ok(value: reopened) => {
+          match std::process::close_stop_listener(factory: &factory, listener: move reopened) {
+            Ok(value: reclosed) => {
+            }
+            Err(error: reclose_problem) => {
+              set code = 7_u8;
+            }
+          }
+        }
+        Err(error: reopen_problem) => {
+          set code = 8_u8;
+        }
+      }
+    }
+    Err(error: open_problem) => {
+      set code = 9_u8;
+    }
+  }
+  return std::process::exit_status(code: code);
+}

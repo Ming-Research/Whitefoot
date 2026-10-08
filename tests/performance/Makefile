@@ -14,7 +14,7 @@ IMAGES := $(addprefix $(BUILD)/,$(KERNELS))
 .DEFAULT_GOAL := build
 .DELETE_ON_ERROR:
 
-include $(CURRENT)/compiler/runtime.mk
+include $(ROOT)/compiler/runtime.mk
 
 build: $(IMAGES)
 

@@ -98,6 +98,8 @@ enum wf_file_operation_kind {
     WF_FILE_OPEN_DIRECTORY_WRITE = 22,
     /* Namespace move between two directory write halves [PRE-2]. */
     WF_FILE_MOVE = 23,
+    WF_FILE_STOP_NEXT = 24,
+    WF_FILE_STOP_CLOSE = 25,
 };
 
 /* Which direction of one connection a half-close releases (ordinary native library). */
@@ -298,7 +300,8 @@ enum wf_completion_route {
     WF_COMPLETION_ROUTE_READINESS = 5,
     /* No engine at all: the driver whose context waits on the record
      * completes it when the monotonic clock reaches its deadline. */
-    WF_COMPLETION_ROUTE_TIMER = 6
+    WF_COMPLETION_ROUTE_TIMER = 6,
+    WF_COMPLETION_ROUTE_STOP = 7
 };
 
 /* A record's deadline once the driver has cancelled its operation for it,
