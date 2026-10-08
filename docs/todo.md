@@ -3729,6 +3729,23 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
+- **`compute-regression` on AMD hosts reacts to where the launch places
+  data.** A change that only created one idle thread before the entry made
+  stencil 9 to 30 percent slower at width 1 on Zen 3 and Zen 4 hosted
+  runners and not at all on Zen 5 or Intel
+  ([stop-signals record](../research/investigations/stop-signals/README.md#startup-cost-on-amd-hosts)).
+  The placement control shifts code by 96 bytes and leaves data, stacks and
+  heap mappings where they were, so a change that reorders startup mappings
+  can fail the instrument without changing generated code, and a real
+  regression can hide behind the same variance. A data-placement control
+  (for example a padded first mapping, or a fixed-size allocation before the
+  entry) would show whether a host is placement-sensitive before a verdict.
+  Uncertainty: the cache structure involved is not identified; hosted VMs
+  expose no counters. Validate by rerunning the stop-signals probe with the
+  control on Zen 3 hosts and checking the control flags the receiver-first
+  layout. Reopen when another startup or allocator change trips stencil on
+  AMD hosts only.
+
 - **The first cold compiler build in `compute-regression` is 10–15% slower.**
   Whichever compiler the job builds first takes longer, so the candidate's
   build time carries a bias its budget now covers

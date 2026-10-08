@@ -169,6 +169,33 @@ Whether the cost is that placement or the thread's existence is not
 separated here; a remedy that starts no thread before the entry removes
 both.
 
+A second probe (Whitefoot run 37764957433, branch `claude/stop-probe2` at
+1adb44abe, six hosted jobs) added P, this branch with the receiver created
+after the entry thread instead of before it, and traced each variant's
+large mappings once with `strace`. stencil at width 1:
+
+| job | host | B to S | B to N | B to P |
+|---|---|---|---|---|
+| 1 | EPYC 7763 (Zen 3) | 0.70 (fail) | 1.01 | 0.96 (suspect) |
+| 2 | EPYC 7763 | 0.87 (fail) | 1.00 | 0.92 |
+| 4 | EPYC 7763 | 0.91 (fail) | 0.97 | 0.96 |
+| 3 | EPYC 9V45 (Zen 5) | 1.05 | 0.97 | 1.01 |
+| 5 | EPYC 9V45 | 1.00 | 1.01 | 1.06 |
+| 6 | Xeon 8370C | 1.00 | 0.99 | 0.56 (fail; its identical-image control read 0.58, so this host was too noisy to read) |
+
+On Zen 3, moving the same idle thread after the entry recovers most of the
+loss, so most of the cost is where the launch places memory rather than the
+thread's existence; Zen 5 and the Intel hosts show no loss, and the earlier
+Zen 4 (EPYC 9V74) jobs did. The traces show the two 32 MiB grids at relative
+offsets that differ between variants, but also between runs of one variant,
+so one traced run cannot be matched to the timed runs; which cache
+structure the placement defeats is not established, and hosted virtual
+machines expose no performance counters to settle it. The launcher-thread
+implementation creates no thread before the entry and restores the merge
+base's mapping order; its compute-regression run on an EPYC 9V74 host
+(Whitefoot run 37766132007, head dfcf31b81) passed with stencil at 0.986,
+1.009 and 1.004.
+
 The owner selected the launcher's original thread for POSIX stop reception,
 with no receiver thread created before the entry. Linux blocks the stop
 signals before creating the entry and unblocks only the launcher's mask
@@ -179,9 +206,7 @@ failure, since executing it on the original thread would strand reception;
 floor-only probes retain no-op hooks, and native callers without a launcher
 loop receive ENOTSUP when opening a listener. Windows already uses the host's
 console callback and creates no stop-receiver thread at launch, so it is
-unchanged. This implementation still needs CI correctness and performance
-validation; the measurements above establish the removed thread's cost, not
-the replacement's measured performance.
+unchanged.
 
 ## Status
 
