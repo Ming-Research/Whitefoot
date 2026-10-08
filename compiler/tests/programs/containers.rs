@@ -130,14 +130,14 @@ fn execute_container_program(
         assert!(output.stderr.is_empty(), "{context}: {output:?}");
 
         assert!(
-            llvm.contains("@malloc("),
+            llvm.contains("@wf__heap_take("),
             "{context}: missing allocator calls"
         );
-        assert!(llvm.contains("@free("), "{context}: missing release calls");
+        assert!(llvm.contains("@wf__heap_give("), "{context}: missing release calls");
         assert_eq!(llvm.matches("define i32 @main(").count(), 1, "{context}");
         let observed = llvm
-            .replace("@malloc(", "@wf_observe_allocate(")
-            .replace("@free(", "@wf_observe_release(")
+            .replace("@wf__heap_take(", "@wf_observe_allocate(")
+            .replace("@wf__heap_give(", "@wf_observe_release(")
             .replace("@main(", "@wf_fixture_main(");
         let observer =
             include_str!("../../../tests/programs/containers/container-allocation-observer.c");
@@ -178,6 +178,7 @@ fn execute_container_program(
             );
             for (argument, message) in [
                 ("double-release", "allocation released twice"),
+                ("wrong-size", "release size differs from allocation request"),
                 (
                     "foreign-release",
                     "release did not return an allocated address",

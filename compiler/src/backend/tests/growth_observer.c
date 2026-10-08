@@ -26,10 +26,12 @@ void *wf_observe_allocate(uint64_t bytes) {
     live[at] = 1;
     return owners[at];
 }
-void wf_observe_release(void *owner) {
+void wf_observe_release(void *owner, uint64_t bytes) {
     for (size_t at = 0; at < requests; ++at) {
         if (owners[at] != owner) continue;
         require(live[at], "repeated release");
+        require(bytes == slots_header_size + (at ? grown_size : initial_size),
+                "release extent differs from allocation request");
         live[at] = 0; ++releases;
         /* Quarantine addresses until the whole case has returned. */
         memset(owner, 0xdd, slots_header_size + (at ? grown_size : initial_size));

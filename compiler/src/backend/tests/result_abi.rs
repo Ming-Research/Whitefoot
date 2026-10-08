@@ -405,9 +405,12 @@ fn linked_definitions_return_their_declared_register_results() {
                 );
                 linked.push(function.name().to_owned());
             }
-            // `Result<u64, Utf8Error>` is the one linked result that fits,
-            // named by its standard library module [MOD-10].
-            assert_eq!(linked, ["std.text.host_utf8_len"]);
+            // Both `Result<u64, Utf8Error>` and the resident reading's
+            // `Option<u64>` fit the register-result budget.
+            assert_eq!(
+                linked,
+                ["std.text.host_utf8_len", "std.process.resident_bytes"]
+            );
         },
     );
 }
