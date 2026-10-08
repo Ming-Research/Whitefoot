@@ -1502,3 +1502,18 @@ this core a constant's frame-slot load issues early, off the dependency
 chain, so reading it from the operation instead saves little. The revert
 keeps one fix found with it: a local index is bounded by the constant
 slots' start, so a malformed module cannot reach a constant slot.
+
+**Step 4, observed on the 14900K and not adopted**
+([run 37815760130](https://github.com/Ming-Research/Whitefoot/actions/runs/37815760130)):
+acc tracked until overwritten (6 variants, 366 arms) at `74bccff82` against
+`4cad9dab9`, same compiler, 7 interleaved launches, every final CRC 0x4983.
+The step scores 6211.2 against 6192.0 (twin 6211.2), 1.003, launch ratios
+0.982 to 1.009: reverted.
+
+**What steps 2 and 4 say about the attribution.** Both removed frame-slot
+traffic the stage-3 attribution priced on the M5 (a slot written and read
+back by the next operation, constants in slots), and neither moved
+CoreMark on the 14900K, while step 1 gained 3.7%. The M5 prices do not
+transfer to this core, where store-to-load forwarding is cheap. The
+remaining gap to wasmi (0.795 to 0.850) is attributed next on the 14900K
+itself, per handler, before any further interpreter change.
