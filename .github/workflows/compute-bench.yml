@@ -38,7 +38,7 @@ on:
         type: choice
         # natural-baseline is temporary, for the loop { match } line's
         # second phase, and is removed before claude/natural-lowering is ready.
-        options: [scoreboard, placement, natural-baseline]
+        options: [scoreboard, placement, natural-baseline, v2h-step]
         default: scoreboard
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
@@ -458,6 +458,79 @@ jobs:
           probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
           cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
           engines=(natural="$out/wasm-natural" musttail="$out/wasm-musttail" base="$out/wasm-base" twin="$out/wasm-twin")
+          engines+=(wasmi="$RUNNER_TEMP/wasmi/bin/wasmi" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp")
+          python3 "$probe" --module coremark.wasm --iterations 2000 \
+            --launches "${{ inputs.placement_rounds }}" --tsv "$out/run.tsv" "${engines[@]}"
+          cat "$out/run.tsv"
+
+  # Temporary: one v2h interpreter-design step of phase 3. gen.py at this
+  # commit against gen.py at the commit placement_unaligned names, both
+  # compiled by this commit's compiler, with a twin of the earlier one,
+  # wasmi 2.0.0 and Silverfir-nano.
+  v2h-step:
+    if: inputs.experiment == 'v2h-step'
+    runs-on: ${{ inputs.placement_runner == '14900k' && fromJSON('["self-hosted","14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            version=$(tr -d '[:space:]' < .github/llvm-major)
+            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+            rustup default stable
+          elif [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          /usr/bin/clang --version | head -1
+          lscpu | grep -E 'Model name|^CPU\(s\)'
+
+      - name: Build the interpreters
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/v2h-step"
+          mkdir -p "$out/prev-gen"
+          prev="${{ inputs.placement_unaligned }}"
+          [ -n "$prev" ] || { echo "placement_unaligned must name the earlier gen.py commit"; exit 1; }
+          echo "prev $prev, head $(git rev-parse HEAD)"
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          wfc=compiler/target/gate/whitefootc
+          gen=research/experiments/match-dispatch/wasm/gen.py
+          python3 "$gen" "$out/step.wf"
+          git archive "$prev" research/experiments/match-dispatch/wasm | tar -x -C "$out/prev-gen"
+          python3 "$out/prev-gen/$gen" "$out/prev.wf"
+          for form in step prev; do
+            echo "== $form"
+            /usr/bin/time -p "$wfc" --dispatch-ledger "$out/$form.wf" -o "$out/wasm-$form" > "$out/ledger-$form.txt"
+            grep -E 'wf_run' "$out/ledger-$form.txt" | head -5
+          done
+          cp "$out/wasm-prev" "$out/wasm-twin"
+          python3 "$gen" "$out/profile.wf" --profile
+          "$wfc" "$out/profile.wf" -o "$out/wasm-profile" > /dev/null
+          python3 "$gen" "$out/names.wf" --names > "$out/names.txt"
+          rm -rf "$RUNNER_TEMP/sf"
+          git clone --quiet https://github.com/mbbill/Silverfir-nano "$RUNNER_TEMP/sf"
+          git -C "$RUNNER_TEMP/sf" checkout --quiet 5f248e44
+          cargo build --release --quiet --manifest-path "$RUNNER_TEMP/sf/Cargo.toml" -p sf-nano-cli
+          cargo install --quiet --locked --version 2.0.0 --root "$RUNNER_TEMP/wasmi" wasmi_cli
+
+      - name: Count dispatches and run CoreMark
+        run: |
+          set -eo pipefail
+          out="$RUNNER_TEMP/v2h-step"
+          probe="$PWD/research/experiments/match-dispatch/wasm/coremark.py"
+          cd "$RUNNER_TEMP/sf/benchmarks/wasi/coremark"
+          "$out/wasm-profile" coremark.wasm 0x0 0x0 0x66 2000 > "$out/profile.out" 2>&1 || true
+          grep -E '^[0-9]{20}$' "$out/profile.out" > "$out/counts.txt" || true
+          paste "$out/names.txt" "$out/counts.txt" | awk -F'\t' '$2 + 0 > 0 {printf "%s\t%d\n", $1, $2 + 0; s += $2} END {printf "total\t%d\n", s}' | sort -t$'\t' -k2,2nr | head -40
+          engines=(step="$out/wasm-step" prev="$out/wasm-prev" twin="$out/wasm-twin")
           engines+=(wasmi="$RUNNER_TEMP/wasmi/bin/wasmi" nano="$RUNNER_TEMP/sf/target/release/sf-nano-cli --interp")
           python3 "$probe" --module coremark.wasm --iterations 2000 \
             --launches "${{ inputs.placement_rounds }}" --tsv "$out/run.tsv" "${engines[@]}"
