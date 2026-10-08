@@ -2777,6 +2777,50 @@ fn a_write_that_kills_a_measure_retargets_the_invariant_image() {
 }
 
 #[test]
+fn break_free_inner_return_has_matching_empty_induction_inputs() {
+    use super::super::obligations::ObligationSubject;
+
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/inv1-pos-ordinary-break-free-inner-return.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the vacuous header inventory must match its proof: {outcome:?}");
+        };
+        let main = checked
+            .data
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main was checked");
+        let [invariant] = main.entailment.loop_invariants.as_slice() else {
+            panic!("main has one header invariant");
+        };
+        let records = main
+            .obligations
+            .iter()
+            .filter(|record| matches!(record.subject, ObligationSubject::LoopInvariant { .. }))
+            .collect::<Vec<_>>();
+        let [record] = records.as_slice() else {
+            panic!("main has one header inventory record");
+        };
+        let ObligationSubject::LoopInvariant { inputs } = &record.subject else {
+            unreachable!("selected the loop invariant record");
+        };
+        let proof_inputs = invariant
+            .inputs
+            .iter()
+            .map(|input| input.input.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(record.site, invariant.node_path);
+        assert_eq!(inputs, &proof_inputs);
+        assert!(inputs.is_empty(), "the returning inner loop has no backedge");
+        assert!(invariant.proof.base);
+        assert_eq!(invariant.proof.step, None);
+    });
+}
+
+#[test]
 fn arm_releases_preserve_each_nested_induction_input() {
     for (header, after) in [
         ("loop (\n    invariant limit: x <= 1_u64\n  )", ""),
