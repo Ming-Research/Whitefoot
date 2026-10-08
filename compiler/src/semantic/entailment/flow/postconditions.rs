@@ -460,6 +460,42 @@ impl Input<'_, '_> {
         })
     }
 
+    /// [FN-9, ENT-2] whether one relation reads the exit state of a written
+    /// reference parameter that some `set` of the body rebinds. The exit
+    /// term is the storage the parameter received, and after a rebinding no
+    /// term of the body names it: a place spelled through the parameter is
+    /// its current target. Such a relation is unproved at every return.
+    pub(super) fn reads_rebound_exit_state(&self, postcondition: &CheckedPostcondition) -> bool {
+        postcondition.relation.operands.iter().any(|operand| {
+            let ordinal = match &operand.datum {
+                RelationDatum::Parameter {
+                    ordinal,
+                    denotation: ParameterDenotation::ExitState,
+                    ..
+                } => *ordinal,
+                RelationDatum::Measure(_, place) => match place.root {
+                    PostconditionPlaceRoot::ExitParameter { ordinal } => ordinal,
+                    PostconditionPlaceRoot::Parameter { .. }
+                    | PostconditionPlaceRoot::Result { .. } => return false,
+                },
+                RelationDatum::Parameter { .. }
+                | RelationDatum::Result { .. }
+                | RelationDatum::NamedConst { .. }
+                | RelationDatum::Literal { .. } => return false,
+            };
+            self.function
+                .parameters
+                .get(ordinal as usize)
+                .is_some_and(|parameter| {
+                    parameter.mode.is_reference()
+                        && body_rebinds(
+                            self.function.body.as_deref().unwrap_or_default(),
+                            parameter.binding,
+                        )
+                })
+        })
+    }
+
     pub(super) fn collect_postcondition_entry_images(&mut self) {
         let mut data = Vec::new();
         let mut relation_images = Vec::with_capacity(self.function.postconditions.len());
@@ -2498,7 +2534,8 @@ impl Judging<'_, '_, '_> {
             let unavailable = !value_reached
                 || entry_images
                     .iter()
-                    .any(|image| image.invalidation.is_some());
+                    .any(|image| image.invalidation.is_some())
+                || self.input.reads_rebound_exit_state(postcondition);
             let complete = self.reasoning().judge_postcondition(
                 relation_ordinal,
                 occurrence,
@@ -2639,4 +2676,32 @@ pub(super) fn entry_datum_kind(
         measure,
         ty,
     }
+}
+
+/// Whether some `set` among `statements`, nested blocks included, rebinds
+/// the reference variable `binding` [REF-1]: a whole-place `set` of a
+/// reference variable rebinds it.
+fn body_rebinds(statements: &[CheckedStatement], binding: BindingId) -> bool {
+    statements.iter().any(|statement| match statement {
+        CheckedStatement::Set {
+            target: CheckedSetTarget::Place(place),
+            ..
+        } => place.binding == binding && place.fields.is_empty(),
+        CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } => arms
+            .iter()
+            .any(|arm| body_rebinds(&arm.body, binding)),
+        CheckedStatement::Loop { body, .. }
+        | CheckedStatement::CountedRange { body, .. }
+        | CheckedStatement::Atomic { body, .. } => body_rebinds(body, binding),
+        CheckedStatement::Let { .. }
+        | CheckedStatement::DestructuringLet { .. }
+        | CheckedStatement::PropagateLet { .. }
+        | CheckedStatement::Set { .. }
+        | CheckedStatement::Evaluate { .. }
+        | CheckedStatement::DropExpression { .. }
+        | CheckedStatement::Proof(_)
+        | CheckedStatement::Return { .. }
+        | CheckedStatement::Give { .. }
+        | CheckedStatement::Break { .. } => false,
+    })
 }
