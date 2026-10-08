@@ -1,4 +1,4 @@
-# Kernel Specification v0.104
+# Kernel Specification v0.103
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -3189,14 +3189,11 @@ Nothing else is a fact: a writer's `ensures_clause` is only an FN-9 proof obliga
 S11 is only the compiler-owned consequence of the counted operations [FN-1] actually executes, and S12 exists only from the declaration relations available under FN-9: a separately verified earlier-SCC summary or a PRE-1 or PRE-2 supplied declaration, under the publication formula below.
 Each accepted fact retains the constructor identity and direct parents that already produced it; this diagnostic information establishes and kills no additional relation or signed goal, and no [ENT-4] answer depends on a second provenance state.
 
-An ordinary-let binding b holds its initializer right-hand side E at a use when, on every path from that initializer to the use that does not execute the initializer again, no [ENT-5] kill event (a)–(d) applies to a fact supported by b or by any member of E's opaque-goal support [ENT-5].
-Thus a `set` commit through a reference whose resolved place is b, a call whose projected `writes` reach b through a reference actual, and a write to any place E reads each end the hold exactly as a direct `set` of b does.
-
-A comparison origin is defined next.
-An expression has comparison origin R when (a) it is an `infix` expression whose operator is a `compare_op` — `==`, `!=`, `<`, `<=`, `>`, `>=` [OP-2] — and whose two operands are each a term, a constant, or a widening conversion of one [ENT-2], R the corresponding relation over them; or (b) it is a bare IDENT naming an ordinary-let binding of type `own Bool` that holds at the use an initializer right-hand side satisfying (a) with relation R.
+A comparison origin is defined first.
+An expression has comparison origin R when (a) it is an `infix` expression whose operator is a `compare_op` — `==`, `!=`, `<`, `<=`, `>`, `>=` [OP-2] — and whose two operands are each a term, a constant, or a widening conversion of one [ENT-2], R the corresponding relation over them; or (b) it is a bare IDENT naming a `let` binding of type `own Bool` whose initializer right-hand side satisfies (a) with relation R, no [ENT-5] kill event (a)–(d) applies to a fact supported by an operand term of R on any path from that initializer to the use, and the binding is the target of no `set` on any such path.
 No other shape has one: `band`, `bor`, `bxor`, `bnot`, `eeq`, `ene`, user-function results, and deeper indirection chains contribute no L0 comparison origin in this version; an established Boolean goal contributes relations only through the members of its signed decomposition set.
 
-An expression has operation-domain-predicate origin G when (a) it is one total `+defined`, `-defined`, `*defined`, `/defined`, `%defined`, `ineg.defined`, `iabs.defined`, `ishl.defined`, `ishr.defined`, or `cvt.defined` operation with its selected types and complete ordered admitted value-expression identities, after every nested obligation in those operands has succeeded, G that exact typed GoalExpression; or (b) it is a bare IDENT naming an own-Bool ordinary-let binding that holds at the use an initializer satisfying (a) with goal G.
+An expression has operation-domain-predicate origin G when (a) it is one total `+defined`, `-defined`, `*defined`, `/defined`, `%defined`, `ineg.defined`, `iabs.defined`, `ishl.defined`, `ishr.defined`, or `cvt.defined` operation with its selected types and complete ordered admitted value-expression identities, after every nested obligation in those operands has succeeded, G that exact typed GoalExpression; or (b) it is a bare IDENT naming an own-Bool ordinary-let binding whose initializer satisfies (a), no [ENT-5] kill event applies to G's support on any path from that initializer to the use, and the binding is the target of no `set` on any such path.
 This origin is one ordinary exact goal, not a second fact channel.
 Its support, expansion, kills, scope exit, joins, and signed establishment are the ordinary goal rules below.
 
@@ -3204,10 +3201,10 @@ A Bool expression has an ordinary goal origin G when, after its ordinary express
 Construction, an ordinary function call, a move or borrow, an undischarged partial operation, an expression requiring occurrence-local evaluated-value identity, and every other expression shape has no goal origin.
 A checked exact integer operation or subscript may therefore occur only below that total root and only through the admitted structure above; it never establishes its own safety merely by occurring in G.
 The unexpanded tree G is the direct goal.
-Starting from that direct goal, its complete origin expansion recursively replaces an ordinary-let datum by that binding's unique defining right-hand side exactly when the right-hand side itself has an admitted value expression formed after its own nested obligations succeeded and the binding holds it at this use.
+Starting from that direct goal, its complete origin expansion recursively replaces an ordinary-let datum by that binding's unique defining right-hand side exactly when the right-hand side itself has an admitted value expression formed after its own nested obligations succeeded, the binding is no `set` target on any path from that initializer to this use, and no [ENT-5] kill event applies to the replacement's support on any such path.
 Expansion continues to a fixed point and is all-or-nothing for every eligible leaf; it never performs an algebraic rewrite.
 The goal-origin set is the direct goal plus that one complete valid expansion when it differs.
-Thus a condition binding's own Bool value and its still-valid computation origin are both retained: a later write to an origin place kills the expanded goal but not the already-computed binding goal, while a write that reaches the binding [ENT-5] kills the latter normally.
+Thus a condition binding's own Bool value and its still-valid computation origin are both retained: a later write to an origin place kills the expanded goal but not the already-computed binding goal, while a write to the binding kills the latter normally.
 Definition expansion in FN-8 is unconditional because every `contract_define` is erased pure proof syntax and the admitted block contains no mutation.
 
 Signed Boolean decomposition applies at every ordinary establishment of a signed goal fact by the sources below.
