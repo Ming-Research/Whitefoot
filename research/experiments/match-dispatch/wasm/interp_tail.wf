@@ -593,7 +593,7 @@ fn slot16(value: u64) -> n: u16 pure {
 }
 
 fn branch_op(form: u64, target: u64, s: u64, d: u64, c: u64) -> op: Op pure {
-  doc "The branch operation of a form: 0 Jump, 1 Br moving slot s to d, 2 BrIf on slot c, 4 BrUnless on slot c, 5 a branch on comparison c of slot s and slot d, or of slot s and the immediate d when c carries the immediate flag (fused_branch).";
+  doc "The branch operation of a form: 0 Jump, 1 Br moving slot s to d, 2 BrIf on slot c, 4 BrUnless on slot c, 5 a branch on comparison c of slots s and d.";
   let t = narrow(value: target);
   if form == 1_u64 {
     let s16 = slot16(value: s);
@@ -613,7 +613,8 @@ fn branch_op(form: u64, target: u64, s: u64, d: u64, c: u64) -> op: Op pure {
   }
   if form == 5_u64 {
     let s16 = slot16(value: s);
-    return fused_branch(code: c, a: s16, b: d, t: t);
+    let d16 = slot16(value: d);
+    return fused_branch(code: c, a: s16, b: d16, t: t);
   }
   let o = Op::Jump(t: t);
   return o;
@@ -911,32 +912,6 @@ fn emit_plain(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> r: unit writes(st), 
   return unit;
 }
 
-fn named_slot(p: Prov) -> slot: u64 pure {
-  doc "The frame slot an operand's provider names: kind 1 a local or a constant other than i32 with its slot as value, kind 3 an i32 constant with its value times 65536 plus its slot; the largest u64 for an operand in its temporary.";
-  if p.kind == 1_u64 {
-    return p.value;
-  }
-  if p.kind == 3_u64 {
-    return iand(p.value, 65535_u64);
-  }
-  return 18446744073709551615_u64;
-}
-
-fn immediate(provs: &Box<Slots<Prov>>, pos: u64) -> (found: Bool, imm: u32) reads(provs) {
-  doc "Whether the operand at pos is an i32 constant, and its 32 bits for an operation's immediate.";
-  if pos < provs^.inner.len {
-    let p = provs^.inner[pos];
-    if p.kind == 3_u64 {
-      let high = ishr.wrap(p.value, 16_u32);
-      let bits = cvt.wrap::<u64, u32>(high);
-      let yes = True();
-      return yes, bits;
-    }
-  }
-  let no = False();
-  return no, 0_u32;
-}
-
 fn materialize(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos: u64) -> r: unit writes(st), writes(provs), writes(code) {
   doc "Copies a local or constant operand into its own temporary.";
   if pos >= provs^.inner.len {
@@ -948,9 +923,8 @@ fn materialize(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos:
   }
   let ts = temp_slot(st: st, pos: pos);
   let d = slot16(value: ts);
-  let named = named_slot(p: p);
-  if named < 65536_u64 {
-    let s = slot16(value: named);
+  if p.kind == 1_u64 {
+    let s = slot16(value: p.value);
     let o = Op::Copy(d: d, s: s);
     emit_dest(st: st, code: code, op: o, pos: pos);
   } else {
@@ -974,12 +948,11 @@ fn flush(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> r: unit
 }
 
 fn source(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos: u64) -> slot: u64 writes(st), writes(provs), writes(code) {
-  doc "The slot holding the operand at pos: a local's or a constant's own slot, or its temporary.";
+  doc "The slot holding the operand at pos: a local's own slot, or its temporary, a constant first copied there.";
   if pos < provs^.inner.len {
     let p = provs^.inner[pos];
-    let named = named_slot(p: p);
-    if named < 65536_u64 {
-      return named;
+    if p.kind == 1_u64 {
+      return p.value;
     }
     if p.kind == 2_u64 {
       materialize(st: st, provs: provs, code: code, pos: pos);
@@ -1056,8 +1029,8 @@ fn top_pos(provs: &Box<Slots<Prov>>, depth: u64) -> pos: u64 reads(provs) {
   return h -wrap above;
 }
 
-fn take_add(st: &Trans, provs: &Box<Slots<Prov>>, consts: &Box<Slots<u64>>, code: &Box<Slots<Op>>, pos: u64) -> (found: Bool, a: u64, b: u64) reads(provs), reads(consts), writes(st), writes(code) {
-  doc "When the operand at pos is the temporary the last emitted operation, an i32.add, just wrote, removes that operation and returns its operand slots for a load or store to add itself, an add of an immediate giving the frame slot holding that constant; otherwise, or when no slot holds the immediate (a sub turned add), found is false and the add stays.";
+fn take_add(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos: u64) -> (found: Bool, a: u64, b: u64) reads(provs), writes(st), writes(code) {
+  doc "When the operand at pos is the temporary the last emitted operation, an i32.add, just wrote, removes that operation and returns its operand slots for a load or store to add itself; otherwise found is false.";
   let no = False();
   if pos >= provs^.inner.len {
     return no, 0_u64, 0_u64;
@@ -1078,26 +1051,19 @@ fn take_add(st: &Trans, provs: &Box<Slots<Prov>>, consts: &Box<Slots<u64>>, code
     return no, 0_u64, 0_u64;
   }
   let old = code^.inner[latest];
-  let (kind, a16, b32) = add_operands(op: old);
-  if kind == 0_u64 {
+  let (found, a16, b16) = add_operands(op: old);
+  if bnot(found) {
     return no, 0_u64, 0_u64;
-  }
-  let b = cvt::<u32, u64>(b32);
-  if kind == 2_u64 {
-    set b = const_slot(st: st, consts: consts, value: b);
-    if b == 18446744073709551615_u64 {
-      return no, 0_u64, 0_u64;
-    }
   }
   let gone = take_back(window: &code^.inner);
   set st^.last = 18446744073709551615_u64;
   let a = cvt::<u16, u64>(a16);
-  let yes = True();
-  return yes, a, b;
+  let b = cvt::<u16, u64>(b16);
+  return found, a, b;
 }
 
 fn take_compare(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> (cmp: u64, a: u64, b: u64) reads(provs), writes(st), writes(code) {
-  doc "When the top operand is the temporary the last emitted operation, an i32 comparison, just wrote, removes that operation and returns its comparison and operands (compare_code) for a branch to test directly; otherwise returns comparison zero.";
+  doc "When the top operand is the temporary the last emitted operation, an i32 comparison, just wrote, removes that operation and returns its comparison and operand slots for a branch to test directly; otherwise returns comparison zero.";
   let h = provs^.inner.len;
   if h == 0_u64 {
     return 0_u64, 0_u64, 0_u64;
@@ -1119,14 +1085,14 @@ fn take_compare(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> 
     return 0_u64, 0_u64, 0_u64;
   }
   let old = code^.inner[latest];
-  let (c, a16, b32) = compare_code(op: old);
+  let (c, a16, b16) = compare_code(op: old);
   if c == 0_u64 {
     return 0_u64, 0_u64, 0_u64;
   }
   let gone = take_back(window: &code^.inner);
   set st^.last = 18446744073709551615_u64;
   let a = cvt::<u16, u64>(a16);
-  let b = cvt::<u32, u64>(b32);
+  let b = cvt::<u16, u64>(b16);
   return c, a, b;
 }
 
@@ -1382,7 +1348,8 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       set cond = fa;
       set fused_b = fb;
       let a16 = slot16(value: fa);
-      let o = fused_branch(code: fused_cmp, a: a16, b: fb, t: 0_u32);
+      let b16 = slot16(value: fb);
+      let o = fused_branch(code: fused_cmp, a: a16, b: b16, t: 0_u32);
       emit_plain(st: st, code: code, op: o);
     }
     let height = provs^.inner.len -wrap p;
@@ -1597,7 +1564,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
 
 fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local: u64) -> ok: Bool writes(st), writes(provs), writes(code) {
   doc "local.set: the operation that computed the top operand into its temporary writes the local instead when it is the last one emitted, in its form also leaving the value in acc when it has one, acc then holding the local; otherwise a copy or a constant writes it.";
-  if local >= st^.cslot {
+  if local >= st^.l {
     return False();
   }
   if provs^.inner.len == 0_u64 {
@@ -1614,9 +1581,8 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
     set st^.held = 18446744073709551615_u64;
   }
   let li = slot16(value: local);
-  let named = named_slot(p: p);
-  if named < 65536_u64 {
-    let s = slot16(value: named);
+  if p.kind == 1_u64 {
+    let s = slot16(value: p.value);
     let length = code^.inner.len;
     let latest = length -wrap 1_u64;
     let paired = st^.last == latest;
@@ -1636,7 +1602,7 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
     set st^.last = latest +wrap 1_u64;
     set st^.last_pos = 18446744073709551614_u64;
     set st^.copy_d = local;
-    set st^.copy_s = named;
+    set st^.copy_s = p.value;
     return True();
   }
   if p.kind == 2_u64 {
@@ -1679,7 +1645,7 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
 }
 
 fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Box<Slots<u64>>, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> status: u64 reads(bytes), reads(consts), writes(st), writes(r), writes(provs), writes(code) {
-  doc "Parametric, variable, memory and constant operations, 0x1a through 0x44: a local.get or a constant becomes the operand's provider and emits nothing, an i32 constant carrying its value for an immediate (named_slot); an i32 store of an i32 constant takes it as its immediate.";
+  doc "Parametric, variable, memory and constant operations, 0x1a through 0x44: a local.get or a constant becomes the operand's provider and emits nothing.";
   if op == 26_u8 {
     pop_prov(st: st, provs: provs, count: 1_u64);
     return 0_u64;
@@ -1721,7 +1687,7 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
     if op <= 36_u8 {
       let index = read_uleb(r: r, bytes: bytes);
       if op == 32_u8 {
-        if index >= st^.cslot {
+        if index >= st^.l {
           return 2_u64;
         }
         let p = Prov(kind: 1_u64, value: index);
@@ -1777,13 +1743,12 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
         if v_pos < provs^.inner.len {
           let vp = provs^.inner[v_pos];
           let eligible = indexed(code: op);
-          let vslot = named_slot(p: vp);
-          let named = vslot < 65536_u64;
+          let named = vp.kind == 1_u64;
           if band(eligible, named) {
-            let (found, xa, xb) = take_add(st: st, provs: provs, consts: consts, code: code, pos: a_pos);
+            let (found, xa, xb) = take_add(st: st, provs: provs, code: code, pos: a_pos);
             if found {
               pop_prov(st: st, provs: provs, count: 2_u64);
-              let v16x = slot16(value: vslot);
+              let v16x = slot16(value: vp.value);
               let xa16 = slot16(value: xa);
               let xb16 = slot16(value: xb);
               match indexed_op(code: op, first: v16x, a: xa16, b: xb16, offset: o32) {
@@ -1795,21 +1760,6 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
                   return 2_u64;
                 }
               }
-            }
-          }
-        }
-        let (v_const, v_imm) = immediate(provs: provs, pos: v_pos);
-        if v_const {
-          let addr = source(st: st, provs: provs, code: code, pos: a_pos);
-          pop_prov(st: st, provs: provs, count: 2_u64);
-          let addr16 = slot16(value: addr);
-          match store_imm_op(code: op, a: addr16, imm: v_imm, offset: o32) {
-            Some(value: stored) => {
-              emit_plain(st: st, code: code, op: stored);
-              return 0_u64;
-            }
-            None() => {
-              return 2_u64;
             }
           }
         }
@@ -1830,7 +1780,7 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
       }
       let a_pos = top_pos(provs: provs, depth: 0_u64);
       if indexed(code: op) {
-        let (found, xa, xb) = take_add(st: st, provs: provs, consts: consts, code: code, pos: a_pos);
+        let (found, xa, xb) = take_add(st: st, provs: provs, code: code, pos: a_pos);
         if found {
           pop_prov(st: st, provs: provs, count: 1_u64);
           let xpos = provs^.inner.len;
@@ -1910,61 +1860,13 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
   if cs == 18446744073709551615_u64 {
     return 2_u64;
   }
-  if op == 65_u8 {
-    let high = ishl.wrap(value, 16_u32);
-    let packed = ior(high, cs);
-    let ip = Prov(kind: 3_u64, value: packed);
-    push_prov(cell: provs, value: ip);
-    return 0_u64;
-  }
   let p = Prov(kind: 1_u64, value: cs);
   push_prov(cell: provs, value: p);
   return 0_u64;
 }
 
-fn step_immediate(op: u8, st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> status: u64 writes(st), writes(provs), writes(code) {
-  doc "A two-operand i32 operation with an i32 constant operand that has an immediate form (imm_op): emits that form with the constant as its immediate and the other operand from its slot, and returns 0; otherwise emits nothing and returns 3.";
-  let ins = numeric_inputs(code: op);
-  if ins != 2_u64 {
-    return 3_u64;
-  }
-  let b_pos = top_pos(provs: provs, depth: 0_u64);
-  let a_pos = top_pos(provs: provs, depth: 1_u64);
-  let (b_const, b_imm) = immediate(provs: provs, pos: b_pos);
-  let (a_const, a_imm) = immediate(provs: provs, pos: a_pos);
-  let reg_pos = a_pos;
-  let imm = b_imm;
-  let left = False();
-  let b_plain = bnot(b_const);
-  if b_plain {
-    let a_plain = bnot(a_const);
-    if a_plain {
-      return 3_u64;
-    }
-    set reg_pos = b_pos;
-    set imm = a_imm;
-    set left = True();
-  }
-  let a = source(st: st, provs: provs, code: code, pos: reg_pos);
-  let dest_pos = provs^.inner.len -wrap 2_u64;
-  let d = temp_slot(st: st, pos: dest_pos);
-  let d16 = slot16(value: d);
-  let a16 = slot16(value: a);
-  match imm_op(code: op, left: left, d: d16, a: a16, imm: imm) {
-    Some(value: o) => {
-      pop_prov(st: st, provs: provs, count: 2_u64);
-      emit_dest(st: st, code: code, op: o, pos: dest_pos);
-      push_temp(st: st, provs: provs);
-      return 0_u64;
-    }
-    None() => {
-      return 3_u64;
-    }
-  }
-}
-
 fn step_numeric(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> status: u64 reads(bytes), writes(st), writes(r), writes(provs), writes(code) {
-  doc "Numeric operations 0x45 through 0xc4 and the 0xfc prefix; an i32 operation with an i32 constant operand takes its immediate form where it has one (step_immediate); the zero-extension and reinterpretations need no operation, the representation already holding their result.";
+  doc "Numeric operations 0x45 through 0xc4 and the 0xfc prefix; the zero-extension and reinterpretations need no operation, the representation already holding their result.";
   if op == 252_u8 {
     let sub = read_uleb(r: r, bytes: bytes);
     if sub < 8_u64 {
@@ -2022,10 +1924,6 @@ fn step_numeric(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, provs: &
     if op <= 191_u8 {
       return 0_u64;
     }
-  }
-  let with_imm = step_immediate(op: op, st: st, provs: provs, code: code);
-  if with_imm != 3_u64 {
-    return with_imm;
   }
   let ins = numeric_inputs(code: op);
   let b = 0_u64;

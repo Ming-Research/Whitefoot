@@ -13,8 +13,7 @@ with --profile it counts each operation kind, in the order --names prints.
 With --inline each handler's body is written into its arm, except a body
 that delivers a value from a match, which stays a helper call. The forms
 that pass a value to the next operation in the interpreter function's acc
-parameter (the ACC table) and the forms taking an i32 constant as an
-immediate (the I forms) are always written into their arms.
+parameter (the ACC table) are always written into their arms.
 
     python3 gen.py interp.wf [--count | --profile] [--inline]
     whitefootc interp.wf -o wasm-interp
@@ -206,27 +205,6 @@ FUSED = [(0x46, "Eq", "==", "u"), (0x47, "Ne", "!=", "u"), (0x48, "LtS", "<", "i
          (0x4f, "GeU", ">=", "u")]
 NEGATE = {0x46: 0x47, 0x47: 0x46, 0x48: 0x4e, 0x4e: 0x48, 0x49: 0x4f, 0x4f: 0x49,
           0x4a: 0x4c, 0x4c: 0x4a, 0x4b: 0x4d, 0x4d: 0x4b, 0x45: 0xa8, 0xa8: 0x45}
-
-# ---- immediates -----------------------------------------------------------
-# An i32 constant operand travels in the operation as the u32 field imm, the
-# constant's 32 bits exactly (wasmi's rri and rsi forms), instead of naming
-# the frame slot that holds it. An I form takes imm in place of b for the
-# arithmetic operations and comparisons below and for the compare-branches,
-# and in place of v for the i32 stores. A signed operation reinterprets imm as
-# i32, an unsigned one and a store use it as it is, so no extension is needed;
-# a store zero-extends it to the u64 word it writes the low bytes of. Sub by a
-# constant c is add of the wrapped negation 0 -wrap c. A commutative operation
-# with the constant on the left takes it as its right operand, a comparison
-# with the constant on the left becomes its mirror (wasmi's ris forms).
-IMM_ARITH = ["I32Add", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Shl", "I32ShrS", "I32ShrU"]
-IMM_CMP = ["I32" + nm for _, nm, _, _ in FUSED]
-IMM_STORES = ["I32Store", "I32Store8", "I32Store16"]
-COMMUTES = {"I32Add", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Eq", "I32Ne"}
-MIRROR = {"Eq": "Eq", "Ne": "Ne", "LtS": "GtS", "LtU": "GtU", "GtS": "LtS", "GtU": "LtU",
-          "LeS": "GeS", "LeU": "GeU", "GeS": "LeS", "GeU": "LeU"}
-# A comparison with an immediate right operand is its opcode plus IMM_FLAG
-# where the translator passes comparisons between a compare and its branch.
-IMM_FLAG = 0x100
 
 ARGS = "code: code, funcs: funcs, brtab: brtab, table: table, consts: consts, stack: stack, mem: mem, globals: globals"
 
@@ -483,22 +461,11 @@ for nm in ["I32Store", "I32Store8", "I32Store16"]:
 ACC["BrIf"] = ["C"]
 ACC["BrUnless"] = ["C"]
 ACC["Select"] = ["C", "D", "CD"]
-# The I forms compose with acc as their slot forms do, less the B forms,
-# their b being the immediate: the arithmetic ones take a from acc, leave
-# the result in acc, or both, and have SD forms; a comparison and a
-# compare-branch take a from acc, so a compare-branch on a local that acc
-# holds (a loop counter just incremented) or on the value computed just
-# before reads acc; a store takes its address from acc.
-for nm in IMM_ARITH:
-    ACC[nm + "I"] = ["A", "D", "AD"]
-for nm in IMM_CMP + ["Br" + c for c in IMM_CMP] + IMM_STORES:
-    ACC[nm + "I"] = ["A"]
 # The operations with SD forms: one for the slot-reading form and one for
 # each form reading an operand from acc.
 SLOT_ACC = ["I32Add", "I32Sub", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Shl", "I32ShrU", "I32ShrS"]
 for nm in ["I32Load", "I32Load8U", "I32Load8S", "I32Load16U", "I32Load16S"]:
     SLOT_ACC += [nm, nm + "Ix"]
-SLOT_ACC += [nm + "I" for nm in IMM_ARITH]
 for nm in SLOT_ACC:
     ACC[nm] = ACC[nm] + [f + "SD" for f in ["", "A", "B"] if f == "" or f in ACC[nm]]
 # Operations whose a and b may trade places: a b operand from acc becomes
@@ -508,7 +475,7 @@ SWAPS = {"I32Add", "I32Mul", "I32And", "I32Or", "I32Xor", "I32Eq", "I32Ne", "BrI
          "I32StoreIx", "I32Store8Ix", "I32Store16Ix"}
 # Branches take acc only through the sentinel the translator records for
 # them, since a forward branch is rebuilt when its target is known.
-BRANCHES = {"BrIf", "BrUnless"} | {"BrI32" + nm for _, nm, _, _ in FUSED} | {"BrI32" + nm + "I" for _, nm, _, _ in FUSED}
+BRANCHES = {"BrIf", "BrUnless"} | {"BrI32" + nm for _, nm, _, _ in FUSED}
 FIELD = {"A": "a", "B": "b", "V": "v", "C": "c"}
 SENT = "65535_u16"
 
@@ -545,21 +512,10 @@ def result(form, ind):
     return store + advance(ind)
 
 
-def imm_value(var, ty):
-    """Binds var to the immediate operand of an I form, an i32 one reinterpreted."""
-    if ty == "u32":
-        return [f"let {var} = immv^;"]
-    if ty == "i32":
-        return [f"let {var}u = immv^;", f"let {var} = reinterpret::<u32, i32>({var}u);"]
-    raise ValueError(ty)
-
-
-def acc_numeric_arm(name, ins, out, lines, form, fields, imm=False):
+def acc_numeric_arm(name, ins, out, lines, form, fields):
     binds = ", ".join(f"{f}: {f}v" for f in fields)
     b = word("x", "av", "A", form) + decode("x", "xw", ins[0])
-    if imm:
-        b += imm_value("y", ins[1])
-    elif len(ins) == 2:
+    if len(ins) == 2:
         b += word("y", "bv", "B", form) + decode("y", "yw", ins[1])
     b += lines
     b += (["let zw = 0_u64;", "if z {", "  set zw = 1_u64;", "}"] if out == "bool" else encode(out))
@@ -580,27 +536,24 @@ def acc_load_arm(name, nbytes, signed, out, form, indexed):
     return o
 
 
-def acc_store_arm(name, nbytes, form, indexed, imm=False):
+def acc_store_arm(name, nbytes, form, indexed):
     pat = "b: bv, " if indexed else ""
     b = ["let offset = ov^;"] + word("a", "av", "A", form)
     if indexed:
         b += slot("b", "bv^")
-    b += ["let vw = cvt::<u32, u64>(immv^);"] if imm else word("v", "vv", "V", form)
+    b += word("v", "vv", "V", form)
     b += indexed_address(nbytes) if indexed else memory_address(nbytes)
-    value = "imm: immv" if imm else "v: vv"
-    o = [f"    {name}{form}(a: av, {pat}{value}, o: ov) => {{"] + ["      " + l for l in b]
+    o = [f"    {name}{form}(a: av, {pat}v: vv, o: ov) => {{"] + ["      " + l for l in b]
     o += ["      if lim <= mem^.inner.len {"] + ["        " + l for l in store_value(nbytes)]
     o += advance(8) + ["      }", "      return trap(code: 3_u32, pc: pc);", "    }"]
     return o
 
 
-def acc_fused_arm(name, op, sign, form, imm=False):
+def acc_fused_arm(name, op, sign, form):
     ty = sign + "32"
-    b = word("x", "av", "A", form) + decode("x", "xw", ty)
-    b += imm_value("y", ty) if imm else word("y", "bv", "B", form) + decode("y", "yw", ty)
+    b = word("x", "av", "A", form) + decode("x", "xw", ty) + word("y", "bv", "B", form) + decode("y", "yw", ty)
     b += [f"let taken = x {op} y;", "let next = pc + 1_u64;", "if taken {", "  set next = cvt::<u32, u64>(tv^);", "}"]
-    second = "imm: immv" if imm else "b: bv"
-    o = [f"    {name}{form}(a: av, {second}, t: tv) => {{"] + ["      " + l for l in b]
+    o = [f"    {name}{form}(a: av, b: bv, t: tv) => {{"] + ["      " + l for l in b]
     return o + ["      if next < n {"] + tail("next", 8) + ["      }", "      return trap(code: 1_u32, pc: pc);", "    }"]
 
 
@@ -891,15 +844,6 @@ for sub, name, *_ in FC:
 for code, nm, _, _ in FUSED:
     w(f"  BrI32{nm}(a: u16, b: u16, t: u32);")
     variants.append((f"BrI32{nm}", ["a", "b", "t"], False))
-for nm in IMM_ARITH + IMM_CMP:
-    w(f"  {nm}I(d: u16, a: u16, imm: u32);")
-    variants.append((nm + "I", ["d", "a", "imm"], True))
-for nm in IMM_STORES:
-    w(f"  {nm}I(a: u16, imm: u32, o: u32);")
-    variants.append((nm + "I", ["a", "imm", "o"], False))
-for code, nm, _, _ in FUSED:
-    w(f"  BrI32{nm}I(a: u16, imm: u32, t: u32);")
-    variants.append((f"BrI32{nm}I", ["a", "imm", "t"], False))
 declared = {line.strip().split("(")[0]: line.strip()[len(line.strip().split("(")[0]):] for line in out[1:]}
 for name, fields, dest in list(variants):
     for form in ACC.get(name, []):
@@ -929,47 +873,6 @@ for code, name, ins, *_ in N:
         w("    return 2_u64;")
         w("  }")
 w("  return 1_u64;")
-w("}")
-w("")
-OPCODE = {name: code for code, name, *_ in N}
-w("fn imm_op(code: u8, left: Bool, d: u16, a: u16, imm: u32) -> found: Option<Op> pure {")
-w('  doc "The I form of a two-operand i32 opcode writing slot d from slot a and the constant imm, the right operand, or the left one when left: sub by a constant is add of its wrapped negation, a comparison with the constant on the left its mirror; None for an opcode without such a form.";')
-w("  if left {")
-for nm in IMM_ARITH + IMM_CMP:
-    if nm in COMMUTES:
-        target = nm
-    elif nm in IMM_CMP:
-        target = "I32" + MIRROR[nm[3:]]
-    else:
-        continue
-    w(f"    if code == {OPCODE[nm]}_u8 {{")
-    w(f"      let o = Op::{target}I(d: d, a: a, imm: imm);")
-    w("      return Some<Op>(value: o);")
-    w("    }")
-w("    return None<Op>();")
-w("  }")
-for nm in IMM_ARITH + IMM_CMP:
-    w(f"  if code == {OPCODE[nm]}_u8 {{")
-    w(f"    let o = Op::{nm}I(d: d, a: a, imm: imm);")
-    w("    return Some<Op>(value: o);")
-    w("  }")
-w(f"  if code == {OPCODE['I32Sub']}_u8 {{")
-w("    let neg_imm = 0_u32 -wrap imm;")
-w("    let o = Op::I32AddI(d: d, a: a, imm: neg_imm);")
-w("    return Some<Op>(value: o);")
-w("  }")
-w("  return None<Op>();")
-w("}")
-w("")
-w("fn store_imm_op(code: u8, a: u16, imm: u32, offset: u32) -> found: Option<Op> pure {")
-w('  doc "The i32 store of opcode code writing the constant imm at the address in slot a plus offset, or None for another opcode.";')
-for code, name, _ in STORES:
-    if name in IMM_STORES:
-        w(f"  if code == {code}_u8 {{")
-        w(f"    let o = Op::{name}I(a: a, imm: imm, o: offset);")
-        w("    return Some<Op>(value: o);")
-        w("  }")
-w("  return None<Op>();")
 w("}")
 w("")
 w("fn saturating_op(sub: u64, d: u16, a: u16) -> found: Option<Op> pure {")
@@ -1043,78 +946,60 @@ for code, name, *_ in LOADS + STORES:
 w("  return False();")
 w("}")
 w("")
-w("fn add_operands(op: Op) -> (kind: u64, a: u16, b: u32) pure {")
-w('  doc "An i32.add\'s operands: kind 1 with slots a and b, kind 2 with slot a and the immediate b, kind 0 for any other operation.";')
+w("fn add_operands(op: Op) -> (found: Bool, a: u16, b: u16) pure {")
+w('  doc "An i32.add\'s operand slots, found false for any other operation.";')
 w("  match op {")
 for name, fields, dest in variants:
     if name in ("I32Add", "I32AddA"):
         w(f"    {name}(d: x_d, a: x_a, b: x_b) => {{")
-        w("      let b32 = cvt::<u16, u32>(x_b);")
-        w("      return 1_u64, x_a, b32;")
-        w("    }")
-    elif name in ("I32AddI", "I32AddIA"):
-        w(f"    {name}(d: x_d, a: x_a, imm: x_imm) => {{")
-        w("      return 2_u64, x_a, x_imm;")
+        w("      let yes = True();")
+        w("      return yes, x_a, x_b;")
         w("    }")
     else:
         w(f"    {name}(..) => {{")
-        w("      return 0_u64, 0_u16, 0_u32;")
+        w("      let no = False();")
+        w("      return no, 0_u16, 0_u16;")
         w("    }")
 w("  }")
 w("}")
 w("")
 
-w("fn compare_code(op: Op) -> (code: u64, a: u16, b: u32) pure {")
-w(f'  doc "An i32 comparison\'s opcode and operands, slot a and slot b, or for a form with an immediate the opcode plus {IMM_FLAG} and the immediate as b; 0x45 for eqz, or zero for any other operation.";')
+w("fn compare_code(op: Op) -> (code: u64, a: u16, b: u16) pure {")
+w('  doc "An i32 comparison\'s opcode and operand slots, 0x45 for eqz, or zero for any other operation.";')
 w("  match op {")
 compares = {f"I32{nm}": c for c, nm, _, _ in FUSED}
 compares["I32Eqz"] = 0x45
-for c, nm, _, _ in FUSED:
-    compares[f"I32{nm}I"] = c + IMM_FLAG
 for name in list(compares):
     for form in ACC.get(name, []):
         compares[name + form] = compares[name]
 for name, fields, dest in variants:
     if name in compares:
         binds = ", ".join(f"{f}: x_{f}" for f in fields)
+        second = "x_b" if "b" in fields else "0_u16"
         w(f"    {name}({binds}) => {{")
-        if "imm" in fields:
-            w(f"      return {compares[name]}_u64, x_a, x_imm;")
-        elif "b" in fields:
-            w("      let b32 = cvt::<u16, u32>(x_b);")
-            w(f"      return {compares[name]}_u64, x_a, b32;")
-        else:
-            w(f"      return {compares[name]}_u64, x_a, 0_u32;")
+        w(f"      return {compares[name]}_u64, x_a, {second};")
         w("    }")
     else:
         w(f"    {name}(..) => {{")
-        w("      return 0_u64, 0_u16, 0_u32;")
+        w("      return 0_u64, 0_u16, 0_u16;")
         w("    }")
 w("  }")
 w("}")
 w("")
 w("fn negate_compare(code: u64) -> negated: u64 pure {")
-w('  doc "The comparison true exactly when code\'s is false, keeping an immediate\'s flag; 0xa8 stands for a value tested nonzero.";')
-negations = list(NEGATE.items()) + [(c + IMM_FLAG, NEGATE[c] + IMM_FLAG) for c, _, _, _ in FUSED]
-for a, b in negations:
+w('  doc "The comparison true exactly when code\'s is false; 0xa8 stands for a value tested nonzero.";')
+for a, b in NEGATE.items():
     w(f"  if code == {a}_u64 {{")
     w(f"    return {b}_u64;")
     w("  }")
 w("  return 0_u64;")
 w("}")
 w("")
-w("fn fused_branch(code: u64, a: u16, b: u64, t: u32) -> op: Op pure {")
-w(f'  doc "The branch to t taken when comparison code holds of slot a and slot b, or of slot a and the immediate b when code carries the flag {IMM_FLAG}: eqz is BrUnless, nonzero is BrIf.";')
-w("  let b16 = cvt.wrap::<u64, u16>(b);")
-w("  let imm = cvt.wrap::<u64, u32>(b);")
+w("fn fused_branch(code: u64, a: u16, b: u16, t: u32) -> op: Op pure {")
+w('  doc "The branch to t taken when comparison code holds of slots a and b: eqz is BrUnless, nonzero is BrIf.";')
 for c, nm, _, _ in FUSED:
     w(f"  if code == {c}_u64 {{")
-    w(f"    let o = Op::BrI32{nm}(a: a, b: b16, t: t);")
-    w("    return acc_norm(op: o);")
-    w("  }")
-for c, nm, _, _ in FUSED:
-    w(f"  if code == {c + IMM_FLAG}_u64 {{")
-    w(f"    let o = Op::BrI32{nm}I(a: a, imm: imm, t: t);")
+    w(f"    let o = Op::BrI32{nm}(a: a, b: b, t: t);")
     w("    return acc_norm(op: o);")
     w("  }")
 w("  if code == 69_u64 {")
@@ -1161,17 +1046,6 @@ for code, name, ins, outty, lines in N:
 for code, nm, op, sign in FUSED:
     for form in ACC.get(f"BrI32{nm}", []):
         arms += acc_fused_arm(f"BrI32{nm}", op, sign, form)
-for code, name, ins, outty, lines in N:
-    if name in IMM_ARITH or name in IMM_CMP:
-        for form in [""] + ACC[name + "I"]:
-            arms += acc_numeric_arm(name + "I", ins, outty, lines, form, ["d", "a", "imm"], imm=True)
-for code, nm, op, sign in FUSED:
-    for form in [""] + ACC[f"BrI32{nm}I"]:
-        arms += acc_fused_arm(f"BrI32{nm}I", op, sign, form, imm=True)
-for code, name, nbytes in STORES:
-    if name in IMM_STORES:
-        for form in [""] + ACC[name + "I"]:
-            arms += acc_store_arm(name + "I", nbytes, form, False, imm=True)
 arms += acc_control_arms()
 if "--inline" in sys.argv:
     arms, kept = inline_helpers(arms, HELPERS)

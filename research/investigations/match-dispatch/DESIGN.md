@@ -1489,36 +1489,3 @@ final CRC 0x4983. The step scores 6211.2 against 5988.0 (twin 5988.0),
 0.795 of Silverfir-nano and wasmi 0.850. The split grew from 318 to 360
 arms; compiling and checking the interpreter takes 22.8 s against 19.1 s
 on that host.
-
-**Step 2, the change** (`gen.py`'s `IMM_ARITH`, `IMM_CMP`, `IMM_STORES`,
-`imm_op` and `store_imm_op`; `interp_tail.wf`'s `step_immediate`,
-`named_slot` and `immediate`), following wasmi's translator, where
-`i32.const` pushes an immediate and emits nothing:
-- `i32.const` still emits nothing; its operand provider now carries the
-  constant's 32 bits beside the frame slot that holds it.
-- `I32Add`, `I32Mul`, `I32And`, `I32Or`, `I32Xor`, `I32Shl`, `I32ShrS`,
-  `I32ShrU`, the ten `i32` comparisons, the ten compare-branches and
-  `I32Store`, `I32Store8`, `I32Store16` gain `I` forms, whose `u32` field
-  `imm` takes the place of the constant operand's slot: the right operand,
-  or a store's value. An `i32` is exactly its 32 bits, so an immediate needs
-  no extension: a signed operation reinterprets it as `i32`, and a store
-  zero-extends it to the word whose low bytes it writes.
-- The arithmetic `I` forms compose with `acc` as their slot forms do, less
-  the `B` forms: `A`, `D`, `AD`, `SD` and `ASD`. The comparisons,
-  compare-branches and stores have an `A` form, so that a loop test on a
-  counter that `acc` holds, `i < 100` after `i = i + 1`, reads `acc` and the
-  immediate.
-- An operation whose right operand is an `i32` constant takes its `I` form.
-  With the constant on the left, a commutative operation takes it as its
-  right operand and a comparison becomes its mirror, `c < x` being
-  `x > c`. Sub by a constant `c` is add of `0 -wrap c`. A comparison with an
-  immediate reaches the branch that takes it with its opcode flagged (plus
-  256), the immediate in place of the second slot.
-- The frame-slot path remains for `i64` and float constants and for every
-  operand position without an `I` form: the left operand of sub and of the
-  shifts, division and remainder, `select`, branch conditions, call
-  arguments, `local.set`, and the indexed loads and stores. An add of an
-  immediate that a load or store folds into its indexed form gives that
-  form the constant's slot, which `enter` still fills, so the fold survives
-  until step 3 removes the constant copy; an add that no slot holds (a sub
-  by a constant) stays an operation.
