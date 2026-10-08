@@ -24,7 +24,9 @@ use super::super::range_facts::{
 use super::solver::{
     AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict,
 };
-use super::world::{AtomDef, ContainerId, FactId, VersionDef, VersionId, World};
+use super::world::{
+    AtomDef, ContainerId, FactId, Stored, VersionDef, VersionId, World, projections_overlap,
+};
 
 /// What one place of a clause denotes in a frame.
 #[derive(Clone, Debug)]
@@ -149,10 +151,7 @@ impl Former<'_> {
                         self.within(index, &length);
                         let mut selected = prefix;
                         selected.push(offset.plus(index)?);
-                        Some(
-                            self.world
-                                .read(version, selected, projection.clone(), Some(*element)),
-                        )
+                        Some(self.projected_read(version, selected, projection, *element))
                     }
                     (
                         PlaceView::Segments {
@@ -171,10 +170,7 @@ impl Former<'_> {
                             .world
                             .segment_length(container, generation, row.clone());
                         self.within(index, &length);
-                        Some(
-                            self.world
-                                .read(version, values, projection.clone(), Some(*element)),
-                        )
+                        Some(self.projected_read(version, values, projection, *element))
                     }
                     _ => None,
                 }
@@ -187,6 +183,32 @@ impl Former<'_> {
                 Some(sum)
             }
         }
+    }
+
+    fn projected_read(
+        &mut self,
+        version: VersionId,
+        indices: Vec<Linear>,
+        projection: &[CheckedRangeProjection],
+        element: super::super::model::IntegerType,
+    ) -> Linear {
+        for (at, step) in projection.iter().enumerate() {
+            if let CheckedRangeProjection::Payload {
+                variant, variants, ..
+            } = step
+            {
+                let mut tag_path = projection[..at].to_vec();
+                tag_path.push(CheckedRangeProjection::Tag(*variants));
+                let tag = self.world.read(version, indices.clone(), tag_path, None);
+                self.bounds.push(Literal::new(
+                    tag,
+                    Relation::Equal,
+                    Linear::constant(*variant as i128),
+                ));
+            }
+        }
+        self.world
+            .read(version, indices, projection.to_vec(), Some(element))
     }
 
     fn within(&mut self, index: &Linear, length: &Linear) {
@@ -516,8 +538,36 @@ fn expand(
                 for index in &indices {
                     collect_linear(index, atoms);
                 }
+                if let Some(CheckedRangeProjection::Tag(variants)) = projection.last() {
+                    query.units.push(Literal::new(
+                        value.clone(),
+                        Relation::GreaterEqual,
+                        Linear::constant(0),
+                    ));
+                    query.units.push(Literal::new(
+                        value.clone(),
+                        Relation::Less,
+                        Linear::constant(*variants as i128),
+                    ));
+                }
                 match world.versions[version as usize].def.clone() {
                     VersionDef::Initial | VersionDef::Fresh => {}
+                    VersionDef::Forget {
+                        previous,
+                        projections,
+                    } => {
+                        if !projections
+                            .iter()
+                            .any(|path| projections_overlap(path, &projection))
+                        {
+                            let old = world.read(previous, indices.clone(), projection.clone(), ty);
+                            alternatives.push(vec![Literal::new(
+                                value.clone(),
+                                Relation::Equal,
+                                old,
+                            )]);
+                        }
+                    }
                     VersionDef::Write {
                         previous,
                         indices: written,
@@ -534,18 +584,37 @@ fn expand(
                             .collect();
                         // Different declared fields are disjoint. An ancestor
                         // replacement overlaps every descendant, measures included.
-                        if !projection.starts_with(&footprint)
-                            && !footprint.starts_with(&projection)
-                        {
+                        if !projections_overlap(&projection, &footprint) {
                             hit.push(Literal::new(value.clone(), Relation::Equal, old.clone()));
                         } else if let Some(relative) = projection.strip_prefix(footprint.as_slice())
                         {
-                            if let Some(stored) = stored.get(relative) {
-                                hit.push(Literal::new(
-                                    value.clone(),
-                                    Relation::Equal,
-                                    stored.clone(),
-                                ));
+                            for length in (0..=relative.len()).rev() {
+                                if let Some(stored) = stored.get(&relative[..length]) {
+                                    let defined = match stored {
+                                        Stored::Int(value) if length == relative.len() => {
+                                            Some(value.clone())
+                                        }
+                                        Stored::Read(source) => {
+                                            let mut path = source.projection.clone();
+                                            path.extend_from_slice(&relative[length..]);
+                                            Some(world.read(
+                                                source.version,
+                                                source.indices.clone(),
+                                                path,
+                                                ty,
+                                            ))
+                                        }
+                                        _ => None,
+                                    };
+                                    if let Some(defined) = defined {
+                                        hit.push(Literal::new(
+                                            value.clone(),
+                                            Relation::Equal,
+                                            defined,
+                                        ));
+                                    }
+                                    break;
+                                }
                             }
                         }
                         alternatives.push(hit);

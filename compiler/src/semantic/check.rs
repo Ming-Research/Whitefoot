@@ -1317,7 +1317,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
         // program: every callee's range clauses are formed, and no ordinary
         // obligation consumes a range fact. A certificate that holds is
         // retained for the counted permission judgment below.
-        let ranges = super::range_judgment::judge_program(&functions, &ordinary);
+        let ranges =
+            super::range_judgment::judge_program(&functions, &self.types.nominals, &ordinary);
         for id in &executable_functions {
             if let Some(issue) = ranges[id.0 as usize].issues.first() {
                 return Err(self.range_issue(issue));

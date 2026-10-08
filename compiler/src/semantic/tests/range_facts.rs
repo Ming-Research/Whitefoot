@@ -869,6 +869,9 @@ fn field_range_verdict(source: &[u8], rule: Option<SemanticRule>) {
         (Some(expected), SemanticOutcome::SourceIssue { issue, .. }) => {
             assert_eq!(issue.rule(), expected, "{issue:?}");
         }
+        (Some(expected), SemanticOutcome::Complete(_)) => {
+            panic!("expected {expected:?}, got acceptance")
+        }
         (expected, outcome) => panic!("expected {expected:?}, got {outcome:?}"),
     });
 }
@@ -1086,13 +1089,13 @@ fn field_range_formation(declarations: &str, element: &str, suffix: &str) -> Vec
 }
 
 #[test]
-fn field_range_enum_payload_still_rejects_at_range1() {
+fn field_range_enum_payload_forms() {
     let source = field_range_formation(
         "enum Entry {\n  Open(slot: u64);\n}\n",
         "Entry",
         ".Open.slot",
     );
-    field_range_verdict(&source, Some(SemanticRule::Range1));
+    field_range_verdict(&source, None);
 }
 
 #[test]
@@ -1237,4 +1240,327 @@ fn field_range_array_element_has_length_but_no_capacity() {
     field_range_verdict(&source, None);
     let source = field_range_formation("", "Array<u8, 8>", ".cap");
     field_range_verdict(&source, Some(SemanticRule::Range1));
+}
+
+fn field_range_enum_scatter(multi: bool, after: bool, wrong: bool) -> Vec<u8> {
+    let variants = if multi || wrong {
+        "  Close(block: u32);\n  Child(context: u32);\n  Float(context: u32);\n"
+    } else {
+        ""
+    };
+    let mut facts = String::from(
+        "  requires forall inv(k in first..order^.len) when order^[k].Open.block < targets^.len: targets^[order^[k].Open.block].entry_slot == k;\n",
+    );
+    if multi {
+        for (name, field, store) in [
+            ("Close", "block", "targets"),
+            ("Child", "context", "children"),
+            ("Float", "context", "children"),
+        ] {
+            let fact_name = name.to_lowercase();
+            facts.push_str(&format!("  requires forall inv_{fact_name}(k in first..order^.len) when order^[k].{name}.{field} < {store}^.len: {store}^[order^[k].{name}.{field}].entry_slot == k;\n"));
+        }
+    }
+    let mut arms = String::new();
+    for (name, field, store) in [
+        ("Open", "block", "targets"),
+        ("Close", "block", "targets"),
+        ("Child", "context", "children"),
+        ("Float", "context", "children"),
+    ] {
+        if name != "Open" && !multi && !wrong {
+            continue;
+        }
+        arms.push_str(&format!("      {name}({field}: b) => {{\n"));
+        if multi || (!wrong && name == "Open") || (wrong && name == "Close") {
+            arms.push_str(&format!("        let at = cvt::<u32, u64>(b);\n        if at < {store}^.len {{\n          set {store}^[at].normal_y = {store}^[at].normal_y +sat delta;\n        }}\n"));
+        }
+        arms.push_str("      }\n");
+    }
+    let extra_param = if multi { ", children: &[Block]" } else { "" };
+    let extra_effect = if multi { "), writes(children" } else { "" };
+    let extra_arg = if multi { ", children: children" } else { "" };
+    let tail = if after {
+        format!("  need(order: order, targets: targets, first: first{extra_arg});\n")
+    } else {
+        String::new()
+    };
+    field_range_program(&format!(
+        "struct Block {{\n  entry_slot: u32;\n  normal_y: i32;\n}}\n\nenum Flow {{\n  Open(block: u32);\n{variants}}}\n\nfn need(order: &[Flow], targets: &[Block], first: u64{extra_param}) -> result: unit pure contract {{\n{facts}}} {{\n  return unit;\n}}\n\nfn translate_owner_suffix(order: &[Flow], targets: &[Block], first: u64, delta: i32{extra_param}) -> result: unit reads(order), writes(targets{extra_effect}) contract {{\n{facts}}} {{\n  let count = order^.len;\n  for (\n    k in first..count,\n    apart(i, j) {{\n    }}\n  ) {{\n    let item = order^[k];\n    match item {{\n{arms}    }}\n  }}\n{tail}  return unit;\n}}\n"
+    ))
+}
+
+fn field_range_assert_enum_certificate(source: &[u8], writes: usize) {
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("enum scatter must check: {outcome:?}");
+        };
+        let function = program
+            .data
+            .executable_functions()
+            .find(|f| f.name == "translate_owner_suffix")
+            .unwrap();
+        assert_eq!(function.range_facts.certified.len(), 1);
+        assert_eq!(function.range_facts.certified[0].writes.len(), writes);
+        assert_eq!(
+            program
+                .data
+                .permission
+                .named("translate_owner_suffix")
+                .unwrap()
+                .loops[0]
+                .verdict,
+            LoopVerdict::PermittedEligible
+        );
+    });
+}
+
+#[test]
+fn field_range_enum_snowghost_certificate_and_permission() {
+    field_range_assert_enum_certificate(&field_range_enum_scatter(false, false, false), 1);
+}
+
+/// Snowghost-wf `research/investigations/m2-edit-cost/inverse-proof/natural.wf`
+/// at 552dcbf, verbatim: the stored inverse reported as the gap.
+const FIELD_RANGE_SNOWGHOST_NATURAL: &str = r#"struct Block {
+  entry_slot: u32;
+  normal_y: i32;
+}
+
+enum Flow {
+  Open(block: u32);
+}
+
+fn translate_owner_suffix(order: &[Flow], targets: &[Block], first: u64, delta: i32) -> result: unit reads(order), writes(targets) contract {
+  requires forall inv(k in first..order^.len) when order^[k].Open.block < targets^.len: targets^[order^[k].Open.block].entry_slot == k;
+} {
+  let count = order^.len;
+  for (
+    k in first..count,
+    apart(i, j) {
+    }
+  ) {
+    let item = order^[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < targets^.len {
+          set targets^[at].normal_y = targets^[at].normal_y +sat delta;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+#[test]
+fn field_range_snowghost_natural_witness_is_certified() {
+    field_range_assert_enum_certificate(FIELD_RANGE_SNOWGHOST_NATURAL.as_bytes(), 1);
+}
+
+#[test]
+fn field_range_enum_shared_targets_across_variants() {
+    field_range_assert_enum_certificate(&field_range_enum_scatter(true, false, false), 4);
+}
+
+#[test]
+fn field_range_enum_inverse_survives_projected_loop_header() {
+    field_range_assert_enum_certificate(&field_range_enum_scatter(false, true, false), 1);
+}
+
+#[test]
+fn field_range_enum_wrong_variant_rejects_at_range5() {
+    field_range_verdict(
+        &field_range_enum_scatter(false, false, true),
+        Some(SemanticRule::Range5),
+    );
+}
+
+#[test]
+fn field_range_enum_unknown_variant_cannot_supply_unconditional_fact() {
+    let source = field_range_program(
+        "enum Flow {\n  Open(block: u32);\n  Close(block: u32);\n}\n\nfn need(targets: &[u32]) -> result: unit pure contract {\n  requires forall wanted(k in 0_u64..targets^.len): targets^[k] == k;\n} {\n  return unit;\n}\n\nfn check(order: &[Flow], targets: &[u32]) -> result: unit pure contract {\n  requires forall inv(k in 0_u64..targets^.len) when order^[k].Open.block == order^[k].Open.block: targets^[k] == k;\n} {\n  need(targets: targets);\n  return unit;\n}\n",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range3));
+}
+
+fn field_range_enum_copy_source_write(expected: u32) -> Vec<u8> {
+    field_range_program(&format!(
+        "enum Flow {{\n  Open(block: u32);\n}}\n\nfn need(order: &[Flow], expected: u32) -> result: unit pure contract {{\n  requires forall wanted(k in 0_u64..order^.len): order^[k].Open.block == expected;\n}} {{\n  return unit;\n}}\n\nfn check(order: &[Flow]) -> result: unit writes(order) contract {{\n  requires order^.len == 1_u64;\n}} {{\n  set order^[0_u64] = Flow::Open(block: 3_u32);\n  let item = order^[0_u64];\n  set order^[0_u64] = Flow::Open(block: 9_u32);\n  match item {{\n    Open(block: b) => {{\n      set order^[0_u64] = Flow::Open(block: b);\n    }}\n  }}\n  need(order: order, expected: {expected}_u32);\n  return unit;\n}}\n"
+    ))
+}
+
+#[test]
+fn field_range_enum_copy_keeps_old_payload_after_source_write() {
+    field_range_verdict(&field_range_enum_copy_source_write(3), None);
+}
+
+#[test]
+fn field_range_enum_copy_does_not_acquire_new_payload() {
+    field_range_verdict(
+        &field_range_enum_copy_source_write(9),
+        Some(SemanticRule::Range3),
+    );
+}
+
+#[test]
+fn field_range_enum_replaced_variant_cannot_reuse_old_domain() {
+    let source = field_range_program(
+        r#"enum Flow {
+  Open(block: u32);
+  Close(block: u32);
+}
+
+fn need(order: &[Flow], saved: u32) -> result: unit pure contract {
+  requires forall wanted(k in 0_u64..order^.len): order^[k].Open.block == saved;
+} {
+  return unit;
+}
+
+fn check(order: &[Flow]) -> result: unit writes(order) contract {
+  requires order^.len == 1_u64;
+  requires forall inv(k in 0_u64..order^.len): order^[k].Open.block == 3_u32;
+} {
+  set order^[0_u64] = Flow::Close(block: 9_u32);
+  let current = order^[0_u64];
+  match current {
+    Open(block: b) => {
+    }
+    Close(block: b) => {
+      set order^[0_u64] = Flow::Open(block: b);
+    }
+  }
+  need(order: order, saved: 3_u32);
+  return unit;
+}
+"#,
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range3));
+}
+
+#[test]
+fn field_range_enum_inactive_requirement_is_vacuous_after_replacement() {
+    let source = String::from_utf8(field_range_enum_copy_source_write(3)).unwrap()
+        .replace("  Open(block: u32);", "  Open(block: u32);\n  Close(block: u32);")
+        .replace("  let item = order^[0_u64];\n  set order^[0_u64] = Flow::Open(block: 9_u32);\n  match item {\n    Open(block: b) => {\n      set order^[0_u64] = Flow::Open(block: b);\n    }\n  }", "  set order^[0_u64] = Flow::Close(block: 9_u32);");
+    field_range_verdict(source.as_bytes(), None);
+}
+
+#[test]
+fn field_range_loop_overlapping_projection_is_forgotten() {
+    let source = String::from_utf8(field_range_enum_scatter(false, true, false))
+        .unwrap()
+        .replace(
+            "set targets^[at].normal_y = targets^[at].normal_y +sat delta;",
+            "set targets^[at].entry_slot = 0_u32;",
+        );
+    field_range_verdict(source.as_bytes(), Some(SemanticRule::Range3));
+}
+
+#[test]
+fn field_range_enum_aggregate_copy_sites_keep_payload_definition() {
+    let source = field_range_program(
+        r#"struct Payload {
+  slot: u32;
+}
+
+enum Flow {
+  Open(block: Payload);
+}
+
+struct Holder {
+  value: Payload;
+}
+
+fn need(order: &[Flow]) -> result: unit pure contract {
+  requires forall wanted(k in 0_u64..order^.len): order^[k].Open.block.slot == 3_u32;
+} {
+  return unit;
+}
+
+fn check(order: &[Flow]) -> result: unit writes(order) contract {
+  requires order^.len == 1_u64;
+} {
+  let initial = Payload(slot: 3_u32);
+  set order^[0_u64] = Flow::Open(block: initial);
+  let item = order^[0_u64];
+  let saved = match item {
+    Open(block: b) => {
+      give b;
+    }
+  }
+  let held = Holder(value: saved);
+  let target = Payload(slot: 9_u32);
+  set target = held.value;
+  set order^[0_u64] = Flow::Open(block: target);
+  need(order: order);
+  return unit;
+}
+"#,
+    );
+    field_range_verdict(&source, None);
+}
+
+#[test]
+fn field_range_struct_cannot_ignore_variant_qualifier() {
+    let source = field_range_formation("struct Entry {\n  slot: u64;\n}\n", "Entry", ".Open.slot");
+    field_range_verdict(&source, Some(SemanticRule::Range1));
+}
+
+#[test]
+fn field_range_enum_missing_shared_store_variant_fact_rejects() {
+    let source = String::from_utf8(field_range_enum_scatter(true, false, false)).unwrap();
+    let source = source
+        .lines()
+        .filter(|line| !line.contains("requires forall inv_float("))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    field_range_verdict(source.as_bytes(), Some(SemanticRule::Range5));
+}
+
+fn field_range_copy_join_source(body: &str) -> Vec<u8> {
+    field_range_program(&format!(
+        "struct Entry {{\n  slot: u32;\n}}\n\nfn need(rows: &[Entry]) -> result: unit pure contract {{\n  requires forall wanted(k in 0_u64..rows^.len): rows^[k].slot == 3_u32;\n}} {{\n  return unit;\n}}\n\nfn check(rows: &[Entry], flag: Bool) -> result: unit writes(rows) contract {{\n  requires rows^.len == 1_u64;\n}} {{\n  set rows^[0_u64] = Entry(slot: 3_u32);\n  let item = rows^[0_u64];\n{body}  need(rows: rows);\n  return unit;\n}}\n"
+    ))
+}
+
+#[test]
+fn field_range_copy_join_never_resurrects_written_field() {
+    for branches in [
+        "  if flag {\n    set item.slot = 9_u32;\n  }\n",
+        "  if flag {\n  } else {\n    set item.slot = 9_u32;\n  }\n",
+    ] {
+        let source =
+            field_range_copy_join_source(&format!("{branches}  set rows^[0_u64] = item;\n"));
+        field_range_verdict(&source, Some(SemanticRule::Range3));
+    }
+}
+
+#[test]
+fn field_range_give_join_keeps_aggregate_copy_provenance() {
+    let source = field_range_copy_join_source(
+        "  let saved = if flag {\n    give item;\n  } else {\n    give item;\n  }\n  set rows^[0_u64] = saved;\n",
+    );
+    field_range_verdict(&source, None);
+}
+
+#[test]
+fn field_range_give_join_tracks_each_arms_copy() {
+    let source = field_range_copy_join_source(
+        "  let saved = if flag {\n    set item.slot = 9_u32;\n    give item;\n  } else {\n    give item;\n  }\n  set rows^[0_u64] = saved;\n",
+    );
+    field_range_verdict(&source, Some(SemanticRule::Range3));
+}
+
+#[test]
+fn field_range_copy_join_keeps_nested_alias_overrides() {
+    let source = String::from_utf8(field_range_copy_join_source("  let held = Holder(value: item);\n  if flag {\n    set item.slot = 9_u32;\n    set held.value = item;\n  }\n  set rows^[0_u64] = held.value;\n")).unwrap()
+        .replace("fn need(", "struct Holder {\n  value: Entry;\n}\n\nfn need(");
+    field_range_verdict(source.as_bytes(), Some(SemanticRule::Range3));
 }

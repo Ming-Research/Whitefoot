@@ -1187,7 +1187,9 @@ impl Checker<'_, '_> {
         names: &RangeNames,
     ) -> Result<CheckedRangeTerm, CheckStop> {
         let mut projection = Vec::new();
-        for (position, suffix) in suffixes.iter().copied().enumerate() {
+        let mut position = 0;
+        while position < suffixes.len() {
+            let suffix = suffixes[position];
             if !matches!(
                 self.types.declarations.tree.place_suffix(suffix)?,
                 PlaceSuffix::Member(_)
@@ -1200,6 +1202,78 @@ impl Checker<'_, '_> {
                 );
             }
             let name = self.member_name(suffix)?;
+            if let CheckedType::Nominal(nominal) = selected {
+                if let CheckedNominalKind::Enum { variants } = &self.types.nominal(nominal)?.kind {
+                    let PlaceSuffix::Member(member) =
+                        self.types.declarations.tree.place_suffix(suffix)?
+                    else {
+                        unreachable!()
+                    };
+                    if member.variant.is_none() {
+                        return self.invalid_range(
+                            SemanticRule::Range1,
+                            suffix,
+                            "a range payload needs its variant",
+                            "select `.Variant.field`",
+                        );
+                    }
+                    let variant_name = self
+                        .types
+                        .declarations
+                        .deferred_use_at(suffix, crate::DeferredUseRole::PayloadVariant)?
+                        .spelling();
+                    let count = variants.len() as u32;
+                    let Some(variant) =
+                        variants.iter().find(|variant| variant.name == variant_name)
+                    else {
+                        return self.invalid_range(
+                            SemanticRule::Range1,
+                            suffix,
+                            "a range payload selects an undeclared variant",
+                            "select a declared variant and its field",
+                        );
+                    };
+                    let tag = variant.tag;
+                    let Some((ordinal, field)) = variant
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, field)| field.name == name)
+                    else {
+                        return self.invalid_range(
+                            SemanticRule::Range1,
+                            suffix,
+                            "a range payload selects an undeclared field",
+                            "select a field of this variant",
+                        );
+                    };
+                    selected = field.ty;
+                    self.types.reject_inaccessible_field(
+                        context.check_context,
+                        nominal,
+                        Some(tag as usize),
+                        ordinal,
+                        &name,
+                        suffix,
+                    )?;
+                    projection.push(CheckedRangeProjection::Payload {
+                        variant: tag,
+                        field: ordinal as u32,
+                        variants: count,
+                    });
+                    position += 1;
+                    continue;
+                }
+            }
+            if matches!(self.types.declarations.tree.place_suffix(suffix)?, PlaceSuffix::Member(member) if member.variant.is_some())
+            {
+                return self.invalid_range(
+                    SemanticRule::Range1,
+                    suffix,
+                    "a variant-qualified field requires an enum",
+                    "select a struct field without a variant qualifier",
+                );
+            }
             if position + 1 == suffixes.len()
                 && selected.measured().is_some()
                 && (name == "len" || name == "cap")
@@ -1231,6 +1305,7 @@ impl Checker<'_, '_> {
                 });
                 selected = ty;
             }
+            position += 1;
         }
         let Some(element) = Self::range_integer(selected, names) else {
             return self.not_integer_element(suffixes.last().copied().unwrap_or(node));
