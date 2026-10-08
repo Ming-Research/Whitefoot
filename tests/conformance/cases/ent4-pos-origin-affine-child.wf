@@ -8,10 +8,11 @@ fn need(value: Bool) -> r: unit pure contract {
 fn witness(x: u64, y: u64) -> r: unit pure contract {
   requires x <= 10_u64;
   requires y <= 10_u64;
-  requires x + y >= 9_u64;
+  requires 2_u64 * x + 2_u64 * y >= 18_u64;
 } {
   doc "The negative affine child remains available through the Boolean definition.";
-  let test = x + y < 9_u64;
+  let sum = x + y;
+  let test = sum < 9_u64;
   need(value: test);
   return unit;
 }

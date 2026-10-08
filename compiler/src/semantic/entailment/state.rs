@@ -222,6 +222,8 @@ pub(crate) enum FlowEventKind {
     S11,
     /// [ENT-3.S13] one declared relation instantiated at its call.
     S13,
+    /// [ENT-3.S16] a proved header or local invariant's exact L0 conclusion.
+    S16,
     /// [MSR-3] one entry datum minted at body entry, per parameter measure a
     /// declared relation names.
     Entry,
@@ -8120,7 +8122,7 @@ pub(crate) mod tests {
         // The optimized join's outside-row scan and the complete closure's
         // materialized pairs used to retain x != Constant(4), evading Q160.
         for every_term in [false, true] {
-            let mut run = || {
+            let run = || {
                 let mut ledger = DerivationLedger::default();
                 let event = ledger.event(FlowEventKind::S1, None);
                 let mut inputs = Vec::new();
@@ -8149,7 +8151,7 @@ pub(crate) mod tests {
                 assert_seeded_closure_matches_complete(&joined, &terms, &goals, &ledger, &closed);
             };
             if every_term {
-                with_every_term(&mut run);
+                with_every_term(run);
             } else {
                 run();
             }

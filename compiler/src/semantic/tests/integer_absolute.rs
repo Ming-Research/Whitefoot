@@ -1,6 +1,6 @@
 use crate::{SemanticIssueKind, SemanticOutcome, SemanticRule};
 
-use super::super::entailment::{DerivationNode, ObligationFamily};
+use super::super::entailment::ObligationFamily;
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedExpression, CheckedIntegerOperation, CheckedStatement};
 use super::{assert_rule, with_semantics};
@@ -108,27 +108,21 @@ fn main() -> status: std::process::ExitStatus pure {
         let root = absolute
             .derivation
             .expect("the accepted iabs retains a derivation root");
-        let mut seen = vec![false; function.entailment.derivations.nodes.len()];
-        let mut stack = vec![root];
-        let mut used_invariant = false;
-        while let Some(node) = stack.pop() {
-            let index = node.0 as usize;
-            if seen[index] {
-                continue;
-            }
-            seen[index] = true;
-            let retained = &function.entailment.derivations.nodes[index];
-            used_invariant |= matches!(
-                retained,
-                DerivationNode::AffineConsequence {
-                    premises,
-                    ..
-                } if !premises.is_empty()
-            );
-            stack.extend(retained.parent_ids());
-        }
+        // [ENT-3.S16] publishes floor <= value into L0. Its source path
+        // must remain an ancestor of the proof excluding i32::MIN.
+        super::entailment::validate_derivations(&function.entailment);
+        let invariant = function
+            .entailment
+            .loop_invariants
+            .iter()
+            .find(|invariant| invariant.name == "above_minimum")
+            .expect("the lower-bound source invariant is retained");
         assert!(
-            used_invariant,
+            super::entailment::root_has_invariant_source(
+                &function.entailment,
+                root,
+                &invariant.node_path,
+            ),
             "the iabs proof must consume the active source invariant"
         );
     });

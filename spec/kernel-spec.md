@@ -3320,6 +3320,13 @@ Its support is that scrutinee place's own storage, so it dies on any [ENT-5] eve
 This loss forbids a new payload selection; it does not itself destroy a payload place already captured by a reference [REF-2].
 It establishes no L0 relation and no signed goal; it is an ownership-side refinement consumed by [REF-1], [REF-2] and [OWN-7].
 
+[ENT-3.S16]
+- S16 (proved invariant conclusions).
+When a header or local invariant gains authority under [INV-1], each bound of its conclusion whose normalized source-term form is exactly `a - b <= c`, with a and b admitted [ENT-2] terms including Z and c a mathematical integer constant, also establishes that ordinary L0 fact.
+An equality contributes its two bounds together.
+Normalization here combines the written affine expression over its source terms, without substituting their current immutable value images or eliminating other terms using premises.
+The fact has ordinary [ENT-5] term support, kills, joins and snapshots; a conclusion outside this exact difference-bound form contributes only its existing affine premise.
+
 [CALL-6] Publication: how a declared relation becomes a fact, where it is computed, where it is established, and that the set it belongs to is consistent.
 Every published relation in this document is published by exactly one route — [ENT-3.S12]'s, with [ENT-3.S13]'s substitution — and nothing else publishes anything.
 This rule states that route's four points once, so no rule computes a fact at one program point and uses it at another without naming both.
@@ -3398,10 +3405,10 @@ Every reference variable and every `Box` binding used by a goal's resolved place
 The two signs of one goal have identical support.
 
 A requirement or verified postcondition fact has exactly the ordinary L0 or opaque-goal support of its normalized relation after the rule's stated substitutions.
-An affine invariant conclusion is different: it is a theorem over the immutable mathematical value-image atoms captured when that invariant occurrence was proved, not a proposition that rereads the mutable source bindings whose spellings formed it.
+The affine component of an invariant conclusion is different: it is a theorem over the immutable mathematical value-image atoms captured when that invariant occurrence was proved, not a proposition that rereads the mutable source bindings whose spellings formed it.
 A write, consume, or scope exit changes or removes the current binding-to-image map but does not make an already proved theorem about the old image false; a live alias may therefore continue to use it, and a named `proof_use` source denotes exactly that immutable theorem while its invariant declaration remains in lexical scope [INV-1, PRF-1].
 Without a current value image or another retained theorem connecting an old atom to a submitted target, an unreachable old atom cannot help prove that target.
-Header and local invariant conclusions retain their immutable value-image meaning on every edge, including edges leaving their loop; their ordinary survival at a join is the canonical intersection specified below and in [ENT-6].
+Header and local invariant affine components retain their immutable value-image meaning on every edge, including edges leaving their loop; their ordinary survival at a join is the canonical intersection specified below and in [ENT-6].
 The additional transport below proves fresh instances of active header relations.
 A header invariant's name leaves lexical scope with its loop body [INV-1].
 The compiler neither removes one constructor and reruns the body nor computes a masked fact state to decide whether any fact was necessary.
@@ -3761,6 +3768,7 @@ Their conclusions form one simultaneous batch.
 For the base batch, form and submit every header target to [MSR-4] in the complete preheader state, using the counted initialization where [ENT-5] supplies one.
 Every target reads that same state.
 The batch is published as the current-iteration assumptions exactly when all bases succeed.
+Its L0 establishment is [ENT-3.S16].
 No target assumes a conclusion of its own base batch.
 The formed operand instances accompany those assumptions.
 Their formation obligations are part of the same base and next-header induction: they license the header's measure images and publish no additional numeric inequality beyond its written relations.
@@ -3797,8 +3805,9 @@ Without a proof block its target must succeed under [MSR-4]'s disposition.
 With a proof block it is checked by [PRF-1].
 It cannot assume its own target.
 On success its normalized target and immutable value images become one published affine fact after the statement; the fact may serve every later goal in the declaration's dominance region and may itself be named by a later `proof_use`.
+Its L0 establishment is [ENT-3.S16].
 Only that target is published: formation state, certificate premises, scaled premises, accumulator values, and residuals are never added to ProofContext.
-At a control-flow join, facts are compared by canonical inequality and immutable value images rather than invariant spelling or proof-source ordinal; identical conclusions reaching every non-contradictory input survive under [ENT-5].
+At a control-flow join, affine facts are compared by canonical inequality and immutable value images rather than invariant spelling or proof-source ordinal; identical conclusions reaching every non-contradictory input survive under [ENT-5].
 The invariant name keeps only its lexical scope and never changes canonical fact identity.
 
 For a counted loop whose complete header batch succeeds, the fixed exact-exhaustion rule is available only when the captured lower endpoint is proved no greater than the captured upper endpoint without using that header batch and, when a backedge is reachable, the hidden `binder + 1` update is proved representable in u64.

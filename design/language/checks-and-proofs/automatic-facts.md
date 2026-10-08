@@ -20,6 +20,8 @@ Decision: L0 stores an offset disequality between two terms and tightens a bound
 
 Decision: Ordinary and delivery joins use ENT-5's finite disequality candidates, because this preserves existing zero-offset consequences and admits established offsets without an interval-exclusion fact for arbitrarily wide gaps, which no program has needed yet, instead of retaining every common derivable nonzero exclusion; reopen when a program needs a nonzero exclusion every input only derives, as tracked in [Q160](../../../docs/todo.md).
 
+Decision: A proved header or local invariant also establishes its exact normalized source-term difference bounds as ordinary L0 facts, both directions of an equality together, with ordinary term support, kills, joins and snapshots, because an equality-sentinel loop needs its proved header bound and the false guard's disequality in the same closure to prove its increment preserves the header, instead of a query-local composition rule or projecting general affine premises into L0; conclusions with three or more normalized terms or scaled coefficients remain affine premises only.
+
 Rejected:
 - Keeping constant disequalities outside L0: rejected because the false edge of an equality sentinel test then cannot tighten the loop's existing upper bound.
 - A branch-entry special case for a constant comparison: rejected because it misses a weak bound established after the test and splits one arithmetic closure rule by its source event.
