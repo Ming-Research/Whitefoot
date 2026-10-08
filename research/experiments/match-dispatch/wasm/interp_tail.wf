@@ -37,6 +37,9 @@ struct Trans {
   copy_d: u64;
   copy_s: u64;
   held: u64;
+  cand_at: u64;
+  cand_slot: u64;
+  cand_pinned: Bool;
   failed: Bool;
   cslot: u64;
   cbase: u64;
@@ -807,40 +810,86 @@ fn temp_slot(st: &Trans, pos: u64) -> slot: u64 reads(st) {
   return st^.base +wrap pos;
 }
 
-fn fresh_slot(st: &Trans, code: &Box<Slots<Op>>) -> slot: u64 reads(st), reads(code) {
-  doc "The temporary the last emitted operation wrote, when nothing was emitted or labeled since, or the largest u64.";
-  let length = code^.inner.len;
-  if length == 0_u64 {
-    return 18446744073709551615_u64;
-  }
-  let latest = length - 1_u64;
-  if st^.last != latest {
-    return 18446744073709551615_u64;
-  }
-  if st^.last_pos == 18446744073709551614_u64 {
-    return 18446744073709551615_u64;
-  }
-  return temp_slot(st: st, pos: st^.last_pos);
+fn forget_cand(st: &Trans) -> r: unit writes(st) {
+  doc "Drops the candidate: its operation keeps writing only its slot, and no later reader may change that.";
+  set st^.cand_at = 18446744073709551615_u64;
+  set st^.cand_slot = 18446744073709551615_u64;
+  return unit;
 }
 
-fn acc_feed(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> o: Op writes(st), writes(code) {
-  doc "An operation about to be emitted that pops the temporary the last emitted operation just wrote takes it from acc, and that operation leaves its result in acc, when both have such forms; the temporary is dead after its one consumer. Otherwise an operation reading the local whose value acc holds takes that operand from acc when it has such a form.";
-  let t = fresh_slot(st: st, code: code);
-  if t < 65535_u64 {
-    let t16 = slot16(value: t);
-    match acc_input(op: op, s: t16) {
-      Some(value: o) => {
-        let latest = code^.inner.len -wrap 1_u64;
-        if latest < code^.inner.len {
-          match acc_dest(op: code^.inner[latest]) {
-            Some(value: p) => {
-              set code^.inner[latest] = p;
-              set st^.held = 18446744073709551615_u64;
-              return o;
-            }
-            None() => {
-            }
-          }
+fn acc_forget(st: &Trans) -> r: unit writes(st) {
+  doc "Forgets what acc holds and the candidate: at a branch target, after a call or memory.grow, which change acc, and where the fall-through path ends.";
+  set st^.held = 18446744073709551615_u64;
+  forget_cand(st: st);
+  return unit;
+}
+
+fn acc_capable(op: Op) -> yes: Bool pure {
+  doc "Whether an operation has a form leaving its result in acc, alone or with its slot.";
+  match acc_dest(op: op) {
+    Some(value: only) => {
+      return True();
+    }
+    None() => {
+    }
+  }
+  match acc_slot_dest(op: op) {
+    Some(value: both) => {
+      return True();
+    }
+    None() => {
+    }
+  }
+  return False();
+}
+
+fn feed_cand(st: &Trans, code: &Box<Slots<Op>>) -> given: Bool writes(st), writes(code) {
+  doc "Rewrites the candidate's operation, at its code index, into its form leaving its result in acc: in acc only when its one reader, the operation about to be emitted, is the only one, and in its slot and acc when a branch since may read the slot. acc then holds the candidate's value from that operation on, so the local it held and the candidate are forgotten. False, changing nothing, when the operation has no such form.";
+  let at = st^.cand_at;
+  if at >= code^.inner.len {
+    return False();
+  }
+  let producer = code^.inner[at];
+  let pinned = st^.cand_pinned;
+  if pinned {
+    match acc_slot_dest(op: producer) {
+      Some(value: both) => {
+        set code^.inner[at] = both;
+        acc_forget(st: st);
+        return True();
+      }
+      None() => {
+      }
+    }
+    return False();
+  }
+  match acc_dest(op: producer) {
+    Some(value: only) => {
+      set code^.inner[at] = only;
+      acc_forget(st: st);
+      return True();
+    }
+    None() => {
+    }
+  }
+  return False();
+}
+
+fn acc_feed(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> (fed: Op, took: Bool) writes(st), writes(code) {
+  doc "The form of an operation about to be emitted reading an operand from acc, and whether it does. An operand in the candidate's slot comes from acc when the operation has such a form and the candidate's operation can be rewritten to leave its result there. Otherwise an operand in the local whose value acc holds comes from acc, and the candidate is dropped: rewriting it later would change acc before this read.";
+  let at = st^.cand_at;
+  let cs = st^.cand_slot;
+  let live = at < code^.inner.len;
+  let fits = cs < 65535_u64;
+  let usable = band(live, fits);
+  if usable {
+    let c16 = slot16(value: cs);
+    match acc_input(op: op, s: c16) {
+      Some(value: from_cand) => {
+        let given = feed_cand(st: st, code: code);
+        if given {
+          let yes = True();
+          return from_cand, yes;
         }
       }
       None() => {
@@ -848,56 +897,73 @@ fn acc_feed(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> o: Op writes(st), writ
     }
   }
   let held = st^.held;
-  if held >= 65535_u64 {
-    return op;
-  }
-  let h16 = slot16(value: held);
-  match acc_input(op: op, s: h16) {
-    Some(value: from_held) => {
-      return from_held;
+  if held < 65535_u64 {
+    let h16 = slot16(value: held);
+    match acc_input(op: op, s: h16) {
+      Some(value: from_held) => {
+        forget_cand(st: st);
+        let yes = True();
+        return from_held, yes;
+      }
+      None() => {
+      }
     }
-    None() => {
-    }
   }
-  return op;
+  let no = False();
+  return op, no;
 }
 
 fn acc_claim(st: &Trans, code: &Box<Slots<Op>>, slot: u64) -> s: u64 writes(st), writes(code) {
-  doc "A branch condition in slot, popped by the branch, read from acc as the sentinel 65535: the temporary the last emitted operation just wrote, that operation then leaving its result in acc, or the local whose value acc holds; otherwise slot.";
-  let t = fresh_slot(st: st, code: code);
-  let fresh = t == slot;
-  let fits = t < 65535_u64;
-  let fused = band(fresh, fits);
-  if fused {
-    let latest = code^.inner.len -wrap 1_u64;
-    if latest < code^.inner.len {
-      match acc_dest(op: code^.inner[latest]) {
-        Some(value: p) => {
-          set code^.inner[latest] = p;
-          set st^.last = 18446744073709551615_u64;
-          set st^.held = 18446744073709551615_u64;
-          return 65535_u64;
-        }
-        None() => {
-        }
+  doc "A branch condition in slot, popped by the branch, read from acc as the sentinel 65535: the candidate's temporary, the candidate's operation then leaving its result in acc, or the local whose value acc holds, the candidate then dropped; otherwise slot.";
+  let cs = st^.cand_slot;
+  if cs == slot {
+    if cs < 65535_u64 {
+      let given = feed_cand(st: st, code: code);
+      if given {
+        set st^.last = 18446744073709551615_u64;
+        return 65535_u64;
       }
     }
   }
   let held = st^.held;
   if held < 65535_u64 {
     if held == slot {
+      forget_cand(st: st);
       return 65535_u64;
     }
   }
   return slot;
 }
 
+fn emit_fed(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> took: Bool writes(st), writes(code) {
+  doc "Emits an operation in its form reading acc where acc_feed finds one, and tells whether it reads acc.";
+  let normal = acc_norm(op: op);
+  let (fed, from_acc) = acc_feed(st: st, code: code, op: normal);
+  push_op(code: code, op: fed);
+  return from_acc;
+}
+
 fn emit_dest(st: &Trans, code: &Box<Slots<Op>>, op: Op, pos: u64) -> r: unit writes(st), writes(code) {
-  doc "Emits an operation writing the temporary of stack position pos and remembers it, so that a local.set right after it can take over its destination, or the next operation popping it can take it from acc.";
+  doc "Emits an operation writing the temporary of stack position pos and remembers it, so that a local.set right after it can take over its destination. One with a form leaving its result in acc becomes the candidate, the newest such operation, whose result a later reader can take from acc; one without that overwrites the candidate's slot drops it.";
   let at = code^.inner.len;
   let normal = acc_norm(op: op);
-  let fed = acc_feed(st: st, code: code, op: normal);
+  let (fed, took) = acc_feed(st: st, code: code, op: normal);
   push_op(code: code, op: fed);
+  let ts = temp_slot(st: st, pos: pos);
+  if ts == st^.cand_slot {
+    forget_cand(st: st);
+  }
+  if ts == st^.held {
+    set st^.held = 18446744073709551615_u64;
+  }
+  let capable = acc_capable(op: fed);
+  let placed = at < code^.inner.len;
+  let candidate = band(capable, placed);
+  if candidate {
+    set st^.cand_at = at;
+    set st^.cand_slot = ts;
+    set st^.cand_pinned = False();
+  }
   set st^.last = at;
   set st^.last_pos = pos;
   return unit;
@@ -905,9 +971,7 @@ fn emit_dest(st: &Trans, code: &Box<Slots<Op>>, op: Op, pos: u64) -> r: unit wri
 
 fn emit_plain(st: &Trans, code: &Box<Slots<Op>>, op: Op) -> r: unit writes(st), writes(code) {
   doc "Emits an operation writing no temporary.";
-  let normal = acc_norm(op: op);
-  let fed = acc_feed(st: st, code: code, op: normal);
-  push_op(code: code, op: fed);
+  let took = emit_fed(st: st, code: code, op: op);
   set st^.last = 18446744073709551615_u64;
   return unit;
 }
@@ -1002,7 +1066,7 @@ fn push_temp(st: &Trans, provs: &Box<Slots<Prov>>) -> r: unit writes(st), writes
 }
 
 fn set_height(st: &Trans, provs: &Box<Slots<Prov>>, height: u64) -> r: unit writes(st), writes(provs) {
-  doc "Makes the operand stack height operands deep, every new one in its temporary.";
+  doc "Makes the operand stack height operands deep, every new one in its temporary, which no emitted operation wrote, so the candidate is dropped.";
   loop @lower {
     if provs^.inner.len <= height {
       break @lower;
@@ -1017,6 +1081,7 @@ fn set_height(st: &Trans, provs: &Box<Slots<Prov>>, height: u64) -> r: unit writ
     if failed {
       break @raise;
     }
+    forget_cand(st: st);
     push_temp(st: st, provs: provs);
   }
   return unit;
@@ -1030,7 +1095,7 @@ fn top_pos(provs: &Box<Slots<Prov>>, depth: u64) -> pos: u64 reads(provs) {
 }
 
 fn take_add(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos: u64) -> (found: Bool, a: u64, b: u64) reads(provs), writes(st), writes(code) {
-  doc "When the operand at pos is the temporary the last emitted operation, an i32.add, just wrote, removes that operation and returns its operand slots for a load or store to add itself; otherwise found is false.";
+  doc "When the operand at pos is the temporary the last emitted operation, an i32.add, just wrote, removes that operation, and the candidate when it was that operation, and returns its operand slots for a load or store to add itself; otherwise found is false.";
   let no = False();
   if pos >= provs^.inner.len {
     return no, 0_u64, 0_u64;
@@ -1055,6 +1120,9 @@ fn take_add(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos: u6
   if bnot(found) {
     return no, 0_u64, 0_u64;
   }
+  if st^.cand_at == latest {
+    forget_cand(st: st);
+  }
   let gone = take_back(window: &code^.inner);
   set st^.last = 18446744073709551615_u64;
   let a = cvt::<u16, u64>(a16);
@@ -1063,7 +1131,7 @@ fn take_add(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos: u6
 }
 
 fn take_compare(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> (cmp: u64, a: u64, b: u64) reads(provs), writes(st), writes(code) {
-  doc "When the top operand is the temporary the last emitted operation, an i32 comparison, just wrote, removes that operation and returns its comparison and operand slots for a branch to test directly; otherwise returns comparison zero.";
+  doc "When the top operand is the temporary the last emitted operation, an i32 comparison, just wrote, removes that operation, and the candidate when it was that operation, and returns its comparison and operand slots for a branch to test directly; otherwise returns comparison zero.";
   let h = provs^.inner.len;
   if h == 0_u64 {
     return 0_u64, 0_u64, 0_u64;
@@ -1088,6 +1156,9 @@ fn take_compare(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>) -> 
   let (c, a16, b16) = compare_code(op: old);
   if c == 0_u64 {
     return 0_u64, 0_u64, 0_u64;
+  }
+  if st^.cand_at == latest {
+    forget_cand(st: st);
   }
   let gone = take_back(window: &code^.inner);
   set st^.last = 18446744073709551615_u64;
@@ -1242,7 +1313,7 @@ fn emit_table(r: &Reader, bytes: &Box<Array<u8>>, st: &Trans, cond: u64, provs: 
 }
 
 fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab: &Box<Slots<Target>>, ctls: &Box<Slots<Ctl>>, fixes: &Box<Slots<Pending>>) -> status: u64 writes(st), writes(provs), writes(code), writes(brtab), writes(ctls), writes(fixes) {
-  doc "end: puts the block's results in their slots, patches the branches to the closing block and returns 0, or emits the function's return and returns 1; 2 reports a malformed body.";
+  doc "end: puts the block's results in their slots, patches the branches to the closing block and returns 0, or emits the function's return and returns 1; 2 reports a malformed body. What acc holds is kept only where fall-through alone reaches the end: a loop's end, or a block's that no branch targets.";
   if ctls^.inner.len == 0_u64 {
     return 2_u64;
   }
@@ -1286,6 +1357,7 @@ fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab:
       patch(code: code, brtab: brtab, p: p, target: here);
     }
   }
+  let targeted = c.kind == 3_u64;
   let keep = c.fixes;
   let from = c.fixes;
   let total = fixes^.inner.len;
@@ -1294,6 +1366,7 @@ fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab:
       let f = fixes^.inner[i];
       if f.depth == depth {
         patch(code: code, brtab: brtab, p: f, target: here);
+        set targeted = True();
       } else if keep < fixes^.inner.len {
         set fixes^.inner[keep] = f;
         set keep = keep +wrap 1_u64;
@@ -1308,9 +1381,13 @@ fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab:
   }
   let height = c.height +wrap c.results;
   set_height(st: st, provs: provs, height: height);
+  let unreached = st^.dead;
   set st^.dead = False();
   set st^.last = 18446744073709551615_u64;
-  set st^.held = 18446744073709551615_u64;
+  let joined = bor(targeted, unreached);
+  if joined {
+    acc_forget(st: st);
+  }
   if c.kind == 0_u64 {
     return 1_u64;
   }
@@ -1336,6 +1413,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     }
     pop_prov(st: st, provs: provs, count: 1_u64);
     flush(st: st, provs: provs, code: code);
+    set st^.cand_pinned = True();
     let else_at = code^.inner.len;
     let fused_cmp = 0_u64;
     let fused_b = 0_u64;
@@ -1382,6 +1460,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     }
     pop_prov(st: st, provs: provs, count: 1_u64);
     flush(st: st, provs: provs, code: code);
+    set st^.cand_pinned = True();
     let yes = True();
     let ok = emit_branch(st: st, depth: depth, cond: cond, cmp: cmp, fa: fa, fb: fb, conditional: yes, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     if ok {
@@ -1396,6 +1475,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     flush(st: st, provs: provs, code: code);
     let ok = emit_table(r: r, bytes: bytes, st: st, cond: cond, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     set st^.dead = True();
+    acc_forget(st: st);
     if ok {
       return 0_u64;
     }
@@ -1420,6 +1500,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let o = Op::Return(s: s16, k: k16, l: l16);
     emit_plain(st: st, code: code, op: o);
     set st^.dead = True();
+    acc_forget(st: st);
     return 0_u64;
   }
   flush(st: st, provs: provs, code: code);
@@ -1427,6 +1508,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let o = Op::Unreachable();
     emit_plain(st: st, code: code, op: o);
     set st^.dead = True();
+    acc_forget(st: st);
     return 0_u64;
   }
   let opening = False();
@@ -1447,11 +1529,11 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     if op == 3_u8 {
       set kind = 2_u64;
       set brk = p;
+      acc_forget(st: st);
     }
     let height = provs^.inner.len -wrap p;
     let target = code^.inner.len;
     set st^.last = 18446744073709551615_u64;
-    set st^.held = 18446744073709551615_u64;
     let marks = fixes^.inner.len;
     let c = Ctl(kind: kind, height: height, params: p, brk: brk, results: q, target: target, fixes: marks, else_at: else_at, c: cond, cmp: fused_cmp, fb: fused_b);
     push_ctl(cell: ctls, value: c);
@@ -1487,7 +1569,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let height = c.height +wrap c.params;
     set_height(st: st, provs: provs, height: height);
     set st^.dead = False();
-    set st^.held = 18446744073709551615_u64;
+    acc_forget(st: st);
     return 0_u64;
   }
   if op == 12_u8 {
@@ -1495,6 +1577,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let no = False();
     let ok = emit_branch(st: st, depth: depth, cond: 0_u64, cmp: 0_u64, fa: 0_u64, fb: 0_u64, conditional: no, provs: provs, code: code, brtab: brtab, ctls: ctls, fixes: fixes);
     set st^.dead = True();
+    acc_forget(st: st);
     if ok {
       return 0_u64;
     }
@@ -1523,7 +1606,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       let o = Op::Call(f: f32v, at: at16);
       emit_plain(st: st, code: code, op: o);
     }
-    set st^.held = 18446744073709551615_u64;
+    acc_forget(st: st);
     pop_prov(st: st, provs: provs, count: callee.params);
     for (i in 0_u64..callee.results) {
       push_temp(st: st, provs: provs);
@@ -1552,7 +1635,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
     let idx16 = slot16(value: index_slot);
     let o = Op::CallIndirect(canon: canon, at: at16, i: idx16);
     emit_plain(st: st, code: code, op: o);
-    set st^.held = 18446744073709551615_u64;
+    acc_forget(st: st);
     pop_prov(st: st, provs: provs, count: ft.params);
     for (i in 0_u64..ft.results) {
       push_temp(st: st, provs: provs);
@@ -1563,7 +1646,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
 }
 
 fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local: u64) -> ok: Bool writes(st), writes(provs), writes(code) {
-  doc "local.set: the operation that computed the top operand into its temporary writes the local instead when it is the last one emitted, in its form also leaving the value in acc when it has one, acc then holding the local; otherwise a copy or a constant writes it.";
+  doc "local.set: the operation that computed the top operand into its temporary writes the local instead when it is the last one emitted, in its form also leaving the value in acc when it has one, acc then holding the local; otherwise a copy, reading acc when acc holds its source or can take it from the candidate, acc then holding the local, or a constant writes it.";
   if local >= st^.cslot {
     return False();
   }
@@ -1591,18 +1674,31 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
       if latest < code^.inner.len {
         let d0 = slot16(value: st^.copy_d);
         let s0 = slot16(value: st^.copy_s);
-        let o = Op::Copy2(d: d0, s: s0, e: li, t: s);
-        set code^.inner[latest] = o;
+        let second = s;
+        let first_plain = st^.copy_s < 65535_u64;
+        let from_acc = st^.held == p.value;
+        let second_acc = band(first_plain, from_acc);
+        if second_acc {
+          set second = 65535_u16;
+          forget_cand(st: st);
+        }
+        let o = Op::Copy2(d: d0, s: s0, e: li, t: second);
+        let pair = acc_norm(op: o);
+        set code^.inner[latest] = pair;
         set st^.last = 18446744073709551615_u64;
         return True();
       }
     }
     let o = Op::Copy(d: li, s: s);
-    emit_plain(st: st, code: code, op: o);
+    let took = emit_fed(st: st, code: code, op: o);
     set st^.last = latest +wrap 1_u64;
     set st^.last_pos = 18446744073709551614_u64;
     set st^.copy_d = local;
     set st^.copy_s = p.value;
+    if took {
+      set st^.copy_s = 65535_u64;
+      set st^.held = local;
+    }
     return True();
   }
   if p.kind == 2_u64 {
@@ -1623,10 +1719,14 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
           match acc_slot_dest(op: o) {
             Some(value: both) => {
               set code^.inner[latest] = both;
+              forget_cand(st: st);
               set st^.held = local;
             }
             None() => {
               set code^.inner[latest] = o;
+              if st^.cand_at == latest {
+                forget_cand(st: st);
+              }
             }
           }
           set st^.last = 18446744073709551615_u64;
@@ -1640,7 +1740,11 @@ fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local:
   let ts = temp_slot(st: st, pos: top);
   let s = slot16(value: ts);
   let o = Op::Copy(d: li, s: s);
-  emit_plain(st: st, code: code, op: o);
+  let read_acc = emit_fed(st: st, code: code, op: o);
+  set st^.last = 18446744073709551615_u64;
+  if read_acc {
+    set st^.held = local;
+  }
   return True();
 }
 
@@ -1839,7 +1943,7 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
     let s16 = slot16(value: s);
     let o = Op::MemoryGrow(d: d16, s: s16);
     emit_dest(st: st, code: code, op: o, pos: dest_pos);
-    set st^.held = 18446744073709551615_u64;
+    acc_forget(st: st);
     push_temp(st: st, provs: provs);
     return 0_u64;
   }
@@ -2087,7 +2191,7 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
   }
   let base = l +wrap 2_u64;
   let no = False();
-  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, copy_d: 0_u64, copy_s: 0_u64, held: 18446744073709551615_u64, failed: no, cslot: pl, cbase: cbase, cn: cn);
+  let st = Trans(dead: no, skip: 0_u64, base: base, l: l, results: f.results, last: 18446744073709551615_u64, last_pos: 0_u64, copy_d: 0_u64, copy_s: 0_u64, held: 18446744073709551615_u64, cand_at: 18446744073709551615_u64, cand_slot: 18446744073709551615_u64, cand_pinned: no, failed: no, cslot: pl, cbase: cbase, cn: cn);
   let top = Ctl(kind: 0_u64, height: 0_u64, params: 0_u64, brk: f.results, results: f.results, target: 0_u64, fixes: 0_u64, else_at: 18446744073709551615_u64, c: 0_u64, cmp: 0_u64, fb: 0_u64);
   push_ctl(cell: ctls, value: top);
   loop @ops {
