@@ -246,7 +246,8 @@ static void wf_stop_read_observed(int descriptor) {
     wf_completion_record record;
     int64_t amount;
     int error;
-    /* Use the ordinary stream-read submit/join and its shared adapter route.
+    /* Use ordinary stream-read submit/join: offer the read to the ring first,
+     * then use the file-adapter path when the ring does not take it.
      * Only this receiver submits reads of the descriptor, and a read is
      * submitted only after poll reports it ready; close runs on this receiver
      * after its read has joined. */

@@ -202,18 +202,15 @@ Closing a file twice is rejected too: the first `close_read` consumed
 `file`, so the second `move file` is a use after a move (OWN-1).
 
 Every program that takes the standard `Inputs` meets this rule at once. The
-directory the program starts in, `Inputs.cwd`, is a `Directory` with read
-and write halves, so `main` takes it apart and closes both:
+directory the program starts in, `Inputs.cwd`, is a `DirectoryRead`, so
+`main` takes `Inputs` apart and closes it:
 
 ```
-let Inputs(cwd: directory, handles: files, ..) = move inputs;
-let std::fs::Directory(read: cwd, write: cwd_write) = move directory;
-std::fs::close_directory_write(factory: &files, directory: move cwd_write);
-std::fs::close_directory(factory: &files, directory: move cwd);
+let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: input) = move inputs;
+close_directory(factory: &files, directory: move cwd);
 ```
 
-Leaving out either close is rejected at `main`'s `return`, naming the
-unconsumed half.
+Leaving out the second line is rejected at `main`'s `return`, naming `cwd`.
 
 Closing is an ordinary call written in the source, not code that the
 compiler adds at the end of a scope. A reader sees every place a resource is

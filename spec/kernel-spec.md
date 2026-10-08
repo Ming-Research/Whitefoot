@@ -2812,7 +2812,7 @@ public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result:
 public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
 ```
 
-`StopSignals` is a capability of the invocation. While no `StopListener` is open, the host default applies and a stop request ends the program. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. A stop request is an input of the execution [WAIT-2]. A termination the host imposes after its grace period ends the program then.
+`StopSignals` is a capability of the invocation. While no `StopListener` is open, the host default applies; on POSIX, the signal's default action ends the program. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. A stop request is an input of the execution [WAIT-2]. A termination the host imposes after its grace period ends the program then.
 
 `std::process`, the record `process/module.wfm`:
 

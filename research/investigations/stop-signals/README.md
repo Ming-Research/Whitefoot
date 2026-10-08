@@ -4,8 +4,9 @@
 
 A Whitefoot program cannot learn that its host asks it to stop. A service
 manager stops a server with SIGTERM, a terminal with SIGINT, and Windows
-with a console control event; each ends the program at once, since no part
-of the standard library intercepts them. firn, the Redis-compatible server
+with a console control event; the host's default applies, since no part
+of the standard library intercepts them. On POSIX, the signal's default
+action ends the program. firn, the Redis-compatible server
 written in Whitefoot, loses the changes its append-only file's writer has
 not yet appended, up to one 10-millisecond cycle, and the bytes not yet
 synced. Redis 7.0.15 instead treats SIGTERM and SIGINT as a request to shut
@@ -25,11 +26,12 @@ happens to the request while the program does not ask for it.
 - To tell an interrupt (SIGINT, Ctrl-C) from a termination request
   (SIGTERM, a console close or a system shutdown), as Redis logs them
   apart; both stop Redis the same way.
-- A program that never asks to be told keeps the host's default: the
-  request ends it at once, as today.
+- A program that never asks to be told keeps the host's default; on POSIX,
+  the signal's default action ends it, as today.
 - A second request while the first is being handled: Redis exits at once on
   a second SIGINT during a shutdown (`sigShutdownHandler`, "You insist...");
-  a program can do the same by not waiting again, or wait again and decide.
+  a program can do the same by closing the listener after the first request,
+  restoring the host's default, or keep it open and wait again to decide.
 
 ## Constraints from earlier decisions
 

@@ -3710,18 +3710,6 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
-- **The paired comparison compiles both arms' runtime with the candidate's
-  flags.** `tests/performance/Makefile` includes the candidate's
-  `compiler/runtime.mk`, so the baseline's runtime sources compile with the
-  candidate's `NATIVE_OPTIMIZATION_FLAGS` and against the candidate's unit
-  list. A change to how the driver compiles the runtime, as
-  `-falign-functions=64` in the code-placement change, reaches both arms and
-  the comparison cannot see it, and a runtime unit added or removed would
-  fail the baseline's build. The change: include each arm's own
-  `runtime.mk`, from `$(ROOT)`, so each arm builds its runtime as its own
-  driver does; validate that a flag change in the candidate's `runtime.mk`
-  then differs between the arms' native objects. Reopen at the next change to
-  the runtime's compile flags or unit list.
 - **The first cold compiler build in `compute-regression` is 10–15% slower.**
   Whichever compiler the job builds first takes longer, so the candidate's
   build time carries a bias its budget now covers
