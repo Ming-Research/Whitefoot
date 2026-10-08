@@ -11,9 +11,20 @@ use std::process::Command;
 /// Exercise the real counted allocation ABI with allocation and release on
 /// different threads. Script the negative sampled-total boundary separately:
 /// it is the arithmetic a concurrent scan can see, not a claimed snapshot.
+/// Near-wrap lifetime deltas also retain an exact modular sum across zero.
 #[test]
 fn heap_readings_sum_cross_thread_deltas_and_clamp_negative_totals() {
-    let llvm = "declare i32 @memory_probe()\ndefine i32 @main() {\n  %status = call i32 @memory_probe()\n  ret i32 %status\n}\n";
+    let llvm = r#"declare i32 @memory_probe()
+declare i32 @wf__floor_run(i32, ptr)
+define i32 @main(i32 %argc, ptr %argv) {
+  %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+  ret i32 %status
+}
+define i32 @wf__main_body(i32 %argc, ptr %argv) {
+  %status = call i32 @memory_probe()
+  ret i32 %status
+}
+"#;
     let host = r#"
 #include "completion/bridge.h"
 #include <pthread.h>
@@ -21,6 +32,14 @@ fn heap_readings_sum_cross_thread_deltas_and_clamp_negative_totals() {
 static void *allocate_on_peer(void *unused) {
     (void)unused;
     return wf__heap_take(8);
+}
+static void *publish_near_wrap_on_peer(void *unused) {
+    (void)unused;
+    /* Script lifetime deltas, not actual allocations: this slot ends at
+     * 2^64 - 2 without overflowing any signed arithmetic. */
+    wf__heap_change(INT64_MAX);
+    wf__heap_change(INT64_MAX);
+    return NULL;
 }
 int memory_probe(void) {
     pthread_t peer;
@@ -31,15 +50,26 @@ int memory_probe(void) {
     if (wf__heap_in_use() != before + 8) return 3;
     wf__heap_give(block, 8);
     if (wf__heap_in_use() != before) return 4;
-    /* With no runtime startup the pool is empty. The peer's +8 and this
-     * thread's -8 must cancel, including after the peer exits. */
+    /* With no context or pool allocation the pool is empty. The peer's +8
+     * and this thread's -8 must cancel, including after the peer exits. */
     if (before != 0) return 5;
     wf__heap_change(-8);
     if (wf__heap_in_use() != 0) return 6;
     wf__heap_change(16);
     if (wf__heap_in_use() != 8) return 7;
     wf__heap_change(-8);
-    return wf__heap_in_use() == 0 ? 0 : 8;
+    if (wf__heap_in_use() != 0) return 8;
+    if (pthread_create(&peer, NULL, publish_near_wrap_on_peer, NULL) != 0) return 9;
+    if (pthread_join(peer, NULL) != 0) return 10;
+    if (wf__heap_in_use() != 0) return 11;
+    /* The slots are now +8, 2^64 - 8 and 2^64 - 2. Move this thread's
+     * slot to 2^64 - 1, then through zero: the modular totals are 5 and 6. */
+    wf__heap_change(7);
+    if (wf__heap_in_use() != 5) return 12;
+    wf__heap_change(1);
+    if (wf__heap_in_use() != 6) return 13;
+    wf__heap_change(-6);
+    return wf__heap_in_use() == 0 ? 0 : 14;
 }
 "#;
     let output = super::compile_link_and_run(llvm, Some(host), &[]);
@@ -55,7 +85,12 @@ fn resident_reading_returns_none_and_some_through_the_ordinary_abi() {
     let directory = test_directory();
     let llvm = r#"
 declare { i32, i64 } @wf_std.process.resident_bytes(ptr)
-define i32 @main() {
+declare i32 @wf__floor_run(i32, ptr)
+define i32 @main(i32 %argc, ptr %argv) {
+  %status = call i32 @wf__floor_run(i32 %argc, ptr %argv)
+  ret i32 %status
+}
+define i32 @wf__main_body(i32 %argc, ptr %argv) {
   %meter = alloca { i64, i64, i64, i64 }, align 16
   store { i64, i64, i64, i64 } zeroinitializer, ptr %meter, align 16
   %missing = call { i32, i64 } @wf_std.process.resident_bytes(ptr %meter)

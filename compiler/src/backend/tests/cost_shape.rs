@@ -403,8 +403,8 @@ fn remakes_a_run(function: &str, allocation: &str) -> bool {
     };
     let freed: Vec<_> = function
         .lines()
-        .filter(|line| call_target(line) == Some("free"))
-        .filter_map(|line| call_argument(line, "free", 0))
+        .filter(|line| call_target(line) == Some("wf__heap_give"))
+        .filter_map(|line| call_argument(line, "wf__heap_give", 0))
         .filter_map(|argument| argument.split_whitespace().next_back())
         .collect();
     function.lines().any(|line| {
@@ -420,6 +420,24 @@ fn remakes_a_run(function: &str, allocation: &str) -> bool {
         };
         operand(0) == Some(register) && operand(1).is_some_and(|source| freed.contains(&source))
     })
+}
+
+#[test]
+fn run_remake_oracle_requires_release_of_the_copy_source() {
+    let allocation = "  %fresh = call ptr @wf__heap_take(i64 %bytes)";
+    let remake = r#"define void @grow(ptr %old, i64 %bytes) {
+  %fresh = call ptr @wf__heap_take(i64 %bytes)
+  %destination = getelementptr i8, ptr %fresh, i64 16
+  %source = getelementptr i8, ptr %old, i64 16
+  call void @llvm.memmove.p0.p0.i64(ptr %destination, ptr %source, i64 32, i1 false)
+  call void @wf__heap_give(ptr %old, i64 48)
+  ret void
+}"#;
+    assert!(remakes_a_run(remake, allocation));
+    let retained_source = remake.replace("  call void @wf__heap_give(ptr %old, i64 48)\n", "");
+    assert!(!remakes_a_run(&retained_source, allocation));
+    let other_release = remake.replace("@wf__heap_give(ptr %old,", "@wf__heap_give(ptr %fresh,");
+    assert!(!remakes_a_run(&other_release, allocation));
 }
 
 #[test]
@@ -543,8 +561,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // take and the hand-back, so a caller cannot reach a filled run without
     // having taken it and cannot re-reach the fill without taking another. A
     // remake fills only the slots it added, and only once, after its copy.
-    // LLVM may retain that first fill as a memset after malloc and
-    // its null check, instead of a calloc. The provenance/control-flow oracle
+    // LLVM may retain that first fill as a memset after the counted allocation
+    // and its null check. The provenance/control-flow oracle
     // permits one such fill per allocation and refuses repeated fills, fills
     // reached again without allocation, and fills through incoming pointers.
     // Aggregate or frame initialization may also become a memset, without
