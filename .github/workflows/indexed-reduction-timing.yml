@@ -6,10 +6,11 @@
 #
 # research-boundary: manual-only
 # Explicitly requested measurement. A push to its own research branch runs it
-# with PUSH_RUNNER and PUSH_ROUNDS below, because a manual dispatch needs the
-# workflow on the default branch; no pull-request trigger. No ratio,
-# spread or elapsed time selects a pass here: the job fails only on a build
-# failure, a checksum mismatch between builds, or a missing host capability.
+# with the hosted runner, 3 rounds and 20 repetitions, because a manual
+# dispatch needs the workflow on the default branch; no pull-request trigger. No speedup or
+# spread threshold selects a pass here: the job fails on a build failure,
+# a checksum mismatch, malformed or missing measurement data, a failed
+# process, or a missing host capability.
 name: indexed-reduction-timing
 
 on:
@@ -21,6 +22,10 @@ on:
         description: Interleaved rounds over every build and both programs (3 is a probe)
         type: string
         default: "3"
+      reps:
+        description: Histograms per measured process, paired with a K=0 baseline
+        type: string
+        default: "20"
       runner:
         description: Where it runs, a GitHub runner (tests the harness only) or the owner's i9-14900K, a self-hosted virtual machine labelled 14900k
         type: choice
@@ -71,7 +76,7 @@ jobs:
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
           missing=
-          for tool in /usr/bin/clang cargo make taskset perl python3 od git; do
+          for tool in /usr/bin/clang cargo make taskset perl python3 od git date stat timeout tr realpath sha256sum nproc; do
             command -v "$tool" >/dev/null || missing="$missing $tool"
           done
           if [ -n "$missing" ]; then
@@ -102,6 +107,7 @@ jobs:
       - name: Build, verify and time
         env:
           ROUNDS: ${{ (inputs.rounds || '3') }}
+          REPS: ${{ (inputs.reps || '20') }}
           WHITEFOOT_CHECK_TIMEOUT: "3000"
         run: |
           rm -rf "$RUNNER_TEMP/timing"
@@ -113,7 +119,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## indexed-reduction-timing (${{ (inputs.runner || 'github') }}, ${{ (inputs.rounds || '3') }} rounds)"
+            echo "## indexed-reduction-timing (${{ (inputs.runner || 'github') }}, ${{ (inputs.rounds || '3') }} rounds, ${{ (inputs.reps || '20') }} repetitions)"
             echo
             echo '```text'
             head -1 "$RUNNER_TEMP/timing/manifest.txt" 2>/dev/null || echo "the manifest was not written"
