@@ -199,6 +199,105 @@ Validation, recorded before the measurement:
 4. Snowghost's full-layout timing of html5 and ecma262 at four workers is no
    slower than the base compiler's (Snowghost-wf runs it on the 14900K).
 
+## Emission comparison (validation 2)
+
+A temporary workflow on this branch (run
+[37781288310](https://github.com/Ming-Research/Whitefoot/actions/runs/37781288310))
+built the merge base's and this branch's compilers and emitted every program
+under `tests/programs` and `research/experiments/par-quicksort` with `--par
+--emit-llvm`, the multi-file programs in the source sets their tests compile
+together. 97 single-file programs and all five multi-file sets (the three
+raw-deflate drivers, the slab and the indexed-membership programs) are
+byte-identical, the five formal kernels among them. One differs:
+`tests/programs/containers/ordered-map-program.wf`, a container correctness
+program, loses three offers, two calls of `ordered_map_put` (static work
+135,892 and 88,532) and one of a test check (332), each of which reaches only
+the ordered map's one-way descent. It is not timed: the program inserts a
+handful of keys per call to check results, so its offers measure nothing a
+performance criterion protects, and the criterion's wording ("timed") is not
+met for it.
+
+## Candidate on the D1 workload (validation 3)
+
+The owner chose the proposed rule on 2026-10-08. Experiment release
+`wf-exp-95be0340e904` (this branch at `95be0340e`, gate green) against
+`wf-c18e6708b6cc` (main at the merge base, the same source without the
+change), both building `3ec4bb491`'s `layout_oracle`, Snowghost-wf run
+[37777439403](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37777439403),
+one hosted 4-vCPU runner, three interleaved rounds, median per-edit
+microseconds and the process's steals:
+
+| Compiler | Sequential | `--par` W1 | `--par` W4 | W4 steals |
+|---|---:|---:|---:|---:|
+| base | 263 | 266 | 2,692 (twin 2,729) | 19.0 M |
+| candidate | 261 | 262 | 355 | 74 k |
+
+Work counters are identical in every cell. The candidate removes the cursor
+offers (`--par-ledger` names 22 omitted Snowghost offers that reach only
+recursion offering none of its own calls, `reference_owner_cursor` among
+them) and takes the four-worker edit from 10.2 to 1.36 times sequential.
+Criterion 3 (at most 1.1 times) is not met: about 94 microseconds per edit
+remain at four workers.
+
+## D3: the residual four-worker cost
+
+Recorded before the run. On the candidate's images, three rounds of: the
+sequential image at W1; the `--par` image at W4 and W2; at W4 with
+`WF_SPLIT_WORK=1000000000`, under which no range split affords a second
+chunk; and the same two W4 settings on a two-edit script, whose steal count
+is the setup's, so that the 2,000-edit run's steals less the two-edit run's,
+over 1,998, are the steals per edit. A profile of the W4 run follows.
+
+- If the W4 time without splits is at most 1.1 times sequential, the
+  residual is the edit path's range splits.
+- If the edit path steals less than one task per edit and W4 stays above
+  1.1 times sequential, the residual is a cost of having workers at all
+  (waking or spinning workers, for instance), not of any offer.
+- Otherwise the profile names the next candidate.
+
+## D3 result
+
+Snowghost-wf run
+[37781362015](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37781362015),
+the candidate's images, one hosted runner reporting an AMD EPYC 7763 with 4
+CPUs as 2 cores of 2 threads each. This runner was slower than the previous
+one; every cell below comes from it. Median per-edit microseconds, median
+of three rounds, and the process's steals:
+
+| Setting | Per edit | Steals, 2,000 edits | Steals, 2 edits |
+|---|---:|---:|---:|
+| sequential image, W1 | 504 | | |
+| `--par`, W2 | 506 | 41 k | |
+| `--par`, W4 | 728 | 72 k | 59 k |
+| `--par`, W4, no range splits | 739 | 118 k | 110 k |
+
+- Range splits are not the residual: without them W4 is no faster.
+- The edit path steals about six tasks per edit at W4 ((72,132 - 59,219) /
+  1,998), so the first reading's condition of less than one does not hold;
+  the profile decides.
+- Two workers cost nothing (506 against 504) and four cost 224 microseconds
+  per edit (1.44 times). The W4 profile puts 39 percent of samples in
+  `wf__par_worker_main` and 1.3 percent in `wf__par_join`, and the edit's
+  own functions keep their sequential shares.
+
+Provisional attribution, not yet separated by an experiment: with four
+lanes on two two-thread cores, three workers spin in their idle window and
+one of them shares the main thread's core, slowing it; with two lanes the one
+spinning worker can sit on the other core. The idle window is used exactly
+when the lane count fits the CPUs the process may use
+([parallel runtime](../../../design/compiler/parallel-lowering/parallel-runtime.md)),
+and four lanes fit four CPUs that are only two cores. The runtime decision
+records an earlier "sparse-cadence loss on hosted SMT runners" whose
+comparisons did not reproduce across apparently identical machines. This is
+a property of the runtime's waiting policy on an SMT host, not of the call
+grain, and it is recorded in `docs/todo.md`. The pair workload on the
+14900K, where four threads need not share a core, would separate it; it is
+requested with Snowghost-wf's full-layout check.
+
+The candidate therefore meets criterion 3 at two workers on this host and
+not at four; whether the four-worker residual is the host's cost of
+spinning workers is open.
+
 ## Found along the way
 
 - `publish_reference_owner_suffix` in the same Snowghost module is a

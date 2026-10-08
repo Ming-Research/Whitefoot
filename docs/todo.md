@@ -2072,6 +2072,23 @@ rarely insert at the same place.
   them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
 
+- **Spinning workers may slow the main thread on a two-thread-per-core
+  host.** With the call grain's recursion fix, Snowghost-wf's edit pair on a
+  hosted runner of 2 cores with 2 threads each takes 504 microseconds
+  sequentially, 506 at two workers and 728 at four, with about six steals
+  per edit and 39 percent of samples in `wf__par_worker_main`
+  ([recursive offers, D3](../research/investigations/recursive-offer-grain/DESIGN.md#d3-result)).
+  The idle window is chosen when the lane count fits the usable CPUs, and
+  four lanes fit four CPUs that are two cores, so one spinning worker can
+  share the main thread's core. Unseparated: the cost may instead be the
+  wake-up of the six stolen tasks per edit. Impact: small `--par` work
+  between sequential phases runs about 1.4 times slower at four workers on
+  such hosts, GitHub's 4-vCPU runners among them. Change, if the 14900K
+  run shows no such cost: count physical cores, not CPUs, when choosing
+  the idle window, or spin only up to one lane per core. Validate with the
+  edit pair at W1, W2 and W4 on the hosted runner and the 14900K, and the
+  formal kernels' paired comparison. Reopen with the 14900K pair result.
+
 - **A recursion without a sequential clone offers without a budget.**
   `--par-ledger` of Snowghost-wf's layout at `3ec4bb491` excludes
   `publish_reference_owner_suffix`, an AVL suffix recursion whose left and
