@@ -860,7 +860,7 @@ mod tests {
         // [GRAM-5] after the comparison atoms, with `spawn` [WAIT-3] beside
         // it. v0.77's `waits` [WAIT-1] follows the declaration's `->`. v0.84's
         // `apart` [RANGE-5] first occurs in the counted header after the match
-        // atoms, and `forall` [RANGE-1] after the element read's `^`. v0.98's
+        // atoms, and `forall` [RANGE-1] after the element read's `^`. v0.100's
         // `continue` [GRAM-4] first occurs right after `break`, moving every
         // later terminal one slot.
         assert_eq!(FixedTerminal::Alias as u8, 1);

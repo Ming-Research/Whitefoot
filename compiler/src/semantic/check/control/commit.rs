@@ -250,7 +250,7 @@ impl<'unit> Checker<'_, 'unit> {
             atomic_read_out,
             bindings,
         )?;
-        // [WIN-3, STOR-3] "Assigning over any owned place releases the old
+        // [WIN-3, STOR-3] "Assigning over a live owned place releases the old
         // value when it is affine." The commit may revive an
         // entry-dead binding, and a right-hand side that reads any target out
         // takes the value the write would otherwise displace. Both were
@@ -367,7 +367,7 @@ impl<'unit> Checker<'_, 'unit> {
         if self.types.is_copy_type(check_context, ty)? || atomic_read_out || !root_live {
             return Ok(());
         }
-        // [WIN-3] assigning over any owned place releases the old value when
+        // [WIN-3] assigning over a live owned place releases the old value when
         // it is affine. A linear one has no release, which the target-class
         // judgment already refused at formation, so what remains here is the
         // affine case, which this commit admits: the old value takes its
