@@ -5,6 +5,22 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Places through exact reference variables share their target's identity
+
+Nodes: language/checks-and-proofs/proof-identity, compiler/checker-facts
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the card that presented giving a place reached through a reference the identity of the place it names as Q142 option A: "approve them all" (translated); after the report that presented PR #271's specification and design-tree text, with the rule restricted to reference variables no `set` rebinds over the per-read rule, as Q144, and fixing the v0.97 acceptance of guards on rebound parameters and `atomic` binders in the same PR as Q145: "approve 144, approve 145" (translated); after the reports that presented the exact-step rewording of ENT-2 as Q149 and the FN-9 exit state of a rebound written reference parameter as Q150: "approve them all, finish everything, then hand over" (translated).
+
+Summary: A place written through a reference variable that no `set` of its body rebinds, whose path is one exact path (no descendant cover, every index step a literal, const or binding its formation read and every range step its formation's endpoints, rooted at owned or constant storage or at a parameter or `atomic` binder no `set` rebinds), is now the term and Goal datum of that path; every other place keeps its spelling. A guard read through a payload binder or a local alias therefore proves the requirement of a call through it after `grow` and in append loops, which Snowghost's Paged port needed. Spelling-only identity, judging exactness at each read (which switched a loop-rebound variable's identity at the header and lost header invariants' entry proofs, `inv1-pos-header-invariant-through-rebound-reference`), and entry referents for rebound variables are kept as rejected alternatives. The compiler carries the exact path as a proof base on checked places, which only term and Goal formation read, and finds rebound declarations by a syntactic scan before the walk. The change also closes two unsound acceptances that v0.97 had: a reference formed from a later-rebound parameter or `atomic` binder shared that variable's spelling after the rebinding, and a postcondition on a rebound written reference parameter was proved from the local it named.
+
+## 2026-10-08 Writable subdirectories, moving files and names below a root
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented opening a subdirectory's write half as Q216 option A, moving a file between two directories as Q217 option A, and refusing `.` and `..` below a root as Q221 option A, each recommended: "216 agreed, 217 agreed, ... 221 agreed" (translated).
+
+Summary: The node gains three decisions beside its unchanged ones: a program opens the write half of a directory below a write half, created when missing and reading its root as `open_append` does, instead of a separate creation or a flat layout in the program; a file moves between two directories' write halves through a second operation, since a rename writes the directories it changes and one handle cannot fill two written roots of a call, instead of a `rename_file` with two roots; and a name given with a root denotes only an entry directly below it, so `.` and `..` are refused and a write half cannot reach the directory above it ([design](../research/investigations/writable-subdirectories/README.md)).
+
 ## 2026-10-07 Element loops may read the written storage's measures
 
 Nodes: language/parallelism/loop-permission

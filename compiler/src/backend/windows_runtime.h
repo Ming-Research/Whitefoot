@@ -177,6 +177,14 @@ int64_t wf__windows_diagnostic_write(const void *bytes, uint64_t length);
  * mutation; no writer-visible descriptor or factory credit is created. */
 HANDLE wf__windows_open_delete(HANDLE root, const char *path, int *error_code);
 
+/* Rename the synchronous provisional delete handle to a validated, terminated
+ * component (at most WF_WINDOWS_COMPONENT_MAX_BYTES of UTF-16). A NULL root
+ * keeps the file in its own directory; otherwise root is the destination.
+ * Returns 0, or -1 with the NT failure translated to a Win32 error. */
+int wf__windows_rename_file(
+    HANDLE file, HANDLE root, const char *path, int *error_code
+);
+
 /* Reopens root with write access for flushing; the caller closes the handle. */
 HANDLE wf__windows_open_directory_for_sync(HANDLE root, int *error_code);
 
@@ -190,6 +198,9 @@ int wf__windows_completion_file_open_at_worker(
     unsigned descriptor_class,
     int *error_code,
     unsigned *open_outcome
+);
+int wf__windows_completion_directory_write_open_worker(
+    HANDLE root, const char *path, int *error_code, unsigned *open_outcome
 );
 int64_t wf__windows_completion_file_write_worker(
     HANDLE handle,

@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.99: places through exact reference variables share their target's identity
+
+Rules: changed ENT-2, ENT-5, FN-8, FN-9, CALL-6
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the card that presented giving a place reached through a reference the identity of the place it names as Q142 option A: "approve them all" (translated); after the report that presented PR #271's specification and design-tree text, with the rule restricted to reference variables no `set` rebinds over the per-read rule, as Q144, and fixing the v0.97 acceptance of guards on rebound parameters and `atomic` binders in the same PR as Q145: "approve 144, approve 145" (translated); after the reports that presented the exact-step rewording of ENT-2 as Q149 and the FN-9 exit state of a rebound written reference parameter as Q150: "approve them all, finish everything, then hand over" (translated).
+
+Summary: ENT-2 replaces "distinct spellings are distinct terms" with proof paths: a place written through a `&T` reference variable that no `set` in its body rebinds and whose path set is one exact path is identified by that path followed by its own steps, and every other place by its spelling; an exact path has no `R.**` cover, selects each index by a literal, const or binding its formation read and each range by endpoints its formation evaluated, and starts at a local variable, a named const, or a parameter or `atomic_stmt` binder no `set` rebinds. Concrete Goal place datums, FN-8's substitution of a reference actual and CALL-6's instantiation use the same identity, and ENT-5's support reads the proof path. FN-9's exit term of a written reference parameter is the storage the parameter received, and a relation over it is unproved when the body rebinds the parameter. The selection ground is that a guard and a requirement over the same storage must meet whichever name reaches it, while a variable or root naming different storage before and after a rebinding must not. Verdicts: `fn8-neg-reference-guard-after-conditional-offset-write` becomes `fn8-pos-...`; the payload-guard append witnesses, `fn8-pos-guard-through-local-alias` and `fn8-pos-disjunctive-guard-through-exact-alias` now run; five programs v0.97 accepted unsoundly now reject (`fn8-neg-guard-through-rebound-parameter`, `fn8-neg-value-through-holder-of-rebound-parameter`, `op2-neg-publication-through-holder-of-rebound-parameter`, `fn8-neg-guard-through-rebound-atomic-binder`, `fn9-neg-postcondition-after-rebinding-then-write`).
+
+## 2026-10-08 v0.98: writable subdirectories, moving files and names below a root
+
+Rules: changed PRE-2
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented opening a subdirectory's write half as Q216 option A, moving a file between two directories as Q217 option A, and refusing `.` and `..` below a root as Q221 option A, each recommended: "216 agreed, 217 agreed, ... 221 agreed" (translated).
+
+Summary: PRE-2 adds `open_directory_write`, which opens the write half of a directory below a write half, creating it empty when missing and reading its root as `open_append` does, and `move_file`, which renames a file from below one write half to below another with `rename_file`'s atomic replacement and open-handle rule; the open-handle sentence names `move_file`. A new sentence states that a name given with a root denotes an entry directly below it exactly when it is one nonempty path component other than `.` and `..`, any other name returning `InvalidPath`, so a function given a subdirectory's write half cannot reach the directory above it. Before them a program could write only below its working directory and rename only within one directory; firn's append-only files, kept as Redis 7.0.15 keeps them in a directory of their own, need the directory created when missing and an old single file moved into it ([design](../research/investigations/writable-subdirectories/README.md#proposal)). `rename_file` stays the one-directory form because a rename writes each directory it changes, so the host orders it [HOST-1], and one handle passed as both written roots of a call overlaps itself [EFF-5].
+
 ## 2026-10-07 v0.97: element loops may read the written storage's measures
 
 Rules: changed PAR-2
