@@ -1,4 +1,4 @@
-# Kernel Specification v0.103
+# Kernel Specification v0.102
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -2485,7 +2485,7 @@ A host handle is an opaque struct [TYPE-2] a host module declares with no fields
 An opaque struct a host module declares with fields, `Instant` alone, has the representation and capabilities its fields give it [PROV-6]; its fields are private to a module with no implementation record [MOD-6], and only a host function returns one.
 A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(d)` has completed, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
-A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
+A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
 A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
@@ -2823,13 +2823,9 @@ public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result:
 public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
 ```
 
-`StopSignals` is a capability of the invocation. While no `StopListener` is open, the host default applies; on POSIX, the signal's default action ends the program. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. A stop request is an input of the execution [WAIT-2]. A termination the host imposes after its grace period ends the program then.
-
 `std::process`, the record `process/module.wfm`:
 
 ```
-alias IoError = pkg::io::IoError;
-alias Instant = pkg::time::Instant;
 alias HandleFactory = pkg::io::HandleFactory;
 alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
@@ -2841,17 +2837,6 @@ alias WallClock = pkg::time::WallClock;
 public opaque nocopy struct ExitStatus {
 }
 
-public opaque nocopy struct StopSignals {
-}
-
-public opaque nodrop struct StopListener {
-}
-
-public enum StopKind {
-  Interrupt();
-  Terminate();
-}
-
 public struct Inputs {
   public args: Args;
   public cwd: Directory;
@@ -2861,16 +2846,9 @@ public struct Inputs {
   public stdin: InputStream;
   public clock: Clock;
   public wall_clock: WallClock;
-  public stops: StopSignals;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
-
-public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
-
-public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>) -> result: Result<StopKind, IoError> writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
-
-public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener, restores the host default and returns its handle credit.";
 ```
 
 ## 15. Obligation discharge: deterministic facts, invariants, and local certificates (normative)
