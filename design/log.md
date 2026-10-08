@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Indexed reductions in counted loops
+
+Nodes: language/parallelism/loop-permission, compiler/parallel-lowering
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the classification of Snowghost's denied loops that presented indexed reductions as the next PAR-2 extension, recorded as Q148: "approve them all" (translated); in the paged session of 2026-10-08, after the card that presented the lowering as Q153 with private copies per split leaf combined in leaf order recommended, and the investigation's open choices: "agree to all" (translated); on the status board, after the cards that presented a scalar accumulator beside indexed accumulators and deferring constant marks: "choose A" and "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: A counted loop may combine into an indexed family of cells with one fixed associative and commutative operation, instead of refusing every loop where two iterations may write one cell. When it splits, each leaf reduces into its own identity-filled private range, folded into the root in leaf order after the join and freed, with pricing that charges leaves times cells so small loops stay sequential; atomic read-modify-write (synchronization in generated code, contention, compare-and-swap loops for `imin`, `imax` and `*wrap`) and partitioning cells among workers (every worker evaluates every subscript) are kept as rejected alternatives. A failed slab acquisition releases the slabs already acquired before STOR-8 termination; heap exhaustion during a leaf terminates as for every owner. A scalar accumulator and indexed accumulators recombine independently in one loop; constant marks are deferred.
+
 ## 2026-10-08 continue, and loop relations carried through joins
 
 Nodes: language/continue, language/checks-and-proofs/join-relations, compiler/checker-facts, language/surface-form

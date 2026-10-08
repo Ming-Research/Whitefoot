@@ -2127,6 +2127,26 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
+- **Paged indexed storage is absent in this checkout (Q2).** The active
+  specification and checked type model define Array, Slots and Ring, with no
+  Paged type or storage path. Impact: the selected indexed reduction rule can
+  cover Array and Slots here, but cannot yet name or lower Paged cells.
+  Change: apply the same cell rule to Paged once its owning definition and
+  checked storage representation arrive. Reopen when PR #263 lands on main;
+  validate cross-page cell updates, unchanged length and private-copy
+  recombination against sequential execution in CI.
+
+- **Constant idempotent indexed marks remain deferred.** A repeated
+  `set flags[e] = True();` cannot use the indexed accumulator family, so
+  coverage-mark loops with colliding indices remain sequential. Proposed
+  change: select a rule admitting constant idempotent stores, potentially by
+  normalizing this form to Boolean OR with a proved-true contribution;
+  neither that normalization nor other constant stores are admitted now.
+  Validate a positive colliding mark, false and nonconstant stores, mixed
+  operations and reads of partial marks, plus sequential/parallel equality.
+  Reopen when a real coverage-mark loop needs permission after the explicit
+  indexed operations have been implemented and qualified.
+
 ## Platforms and host interfaces
 
 - **Upstream LLVM on Darwin does not yet support the selected stack-probe
