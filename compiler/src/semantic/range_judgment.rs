@@ -18,7 +18,7 @@ mod world;
 
 use crate::NodePath;
 
-use super::model::CheckedFunction;
+use super::model::{CheckedFunction, CheckedNominal};
 
 /// One range judgment failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,6 +182,7 @@ pub(crate) fn for_each_call(
 /// Judges every selected function of a checked program, dense by function.
 pub(crate) fn judge_program(
     functions: &[CheckedFunction],
+    nominals: &[CheckedNominal],
     selected: &[bool],
 ) -> Vec<RangeJudgment> {
     functions
@@ -194,7 +195,7 @@ pub(crate) fn judge_program(
             {
                 return RangeJudgment::default();
             }
-            let mut walker = walk::Walker::new(functions, function);
+            let mut walker = walk::Walker::new(functions, nominals, function);
             walker.run();
             // A walk that forgot more than RANGE-2 does cannot reject: what
             // it left unproved may hold.

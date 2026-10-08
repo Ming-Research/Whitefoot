@@ -19,9 +19,10 @@ use super::super::model::{
     BindingId, CheckedAffineExpression, CheckedAffineExpressionKind, CheckedAffineRelation,
     CheckedArrayRoot, CheckedBodyDisposition, CheckedBooleanOperation, CheckedConversionMode,
     CheckedEnumType, CheckedExpression, CheckedFunction, CheckedIntegerOperation, CheckedLoopId,
-    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNumericType, CheckedPlaceStep,
-    CheckedRangeElementPlace, CheckedRangeSource, CheckedSegmentSelect, CheckedSetTarget,
-    CheckedStatement, CheckedType, CheckedValue, IntegerType,
+    CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominal, CheckedNominalKind,
+    CheckedNumericType, CheckedPlaceStep, CheckedRangeElementPlace, CheckedRangeSource,
+    CheckedSegmentSelect, CheckedSetTarget, CheckedStatement, CheckedType, CheckedValue,
+    IntegerType,
 };
 use super::super::places::PlaceRoot;
 use super::super::range_facts::{
@@ -30,9 +31,10 @@ use super::super::range_facts::{
 };
 use super::facts::{self, Fact, Frame, PlaceView, Query};
 use super::solver::{Capacity, Linear, Literal, Relation, Verdict};
+use super::world::stored_projections;
 use super::world::{
-    Cond, ContainerId, FactId, Location, Modified, Origin, Slot, State, Step, Value, View, World,
-    join, join_states, join_values, negated,
+    Cond, ContainerId, FactId, Location, Modified, Origin, ReadSource, Slot, State, Step, Value,
+    VersionDef, View, World, join, join_states, join_values, negated,
 };
 use super::{ApartFailure, CertifiedLoop, RangeIssue};
 
@@ -67,6 +69,7 @@ pub(super) struct Recording {
 
 pub(super) struct Walker<'program> {
     pub(super) functions: &'program [CheckedFunction],
+    nominals: &'program [CheckedNominal],
     pub(super) function: &'program CheckedFunction,
     pub(super) world: World,
     pub(super) facts: Vec<Fact>,
@@ -156,10 +159,12 @@ fn literal(left: Linear, relation: Relation, right: Linear) -> Literal {
 impl<'program> Walker<'program> {
     pub(super) fn new(
         functions: &'program [CheckedFunction],
+        nominals: &'program [CheckedNominal],
         function: &'program CheckedFunction,
     ) -> Self {
         Self {
             functions,
+            nominals,
             function,
             world: World::default(),
             facts: Vec::new(),
@@ -492,7 +497,7 @@ impl<'program> Walker<'program> {
                             // A field of storage that is not handed over is
                             // a copy; a statement form that always consumes
                             // its operand [OWN-1] never reaches this arm.
-                            Value::Owned(_) if copied => self.copied(),
+                            Value::Owned(source) if copied => self.copied(&mut state, &source),
                             other => other,
                         },
                         Value::Struct(fields) => fields
@@ -580,12 +585,12 @@ impl<'program> Walker<'program> {
                     return None;
                 }
                 let (states, values): (Vec<State>, Vec<Value>) = given.into_iter().unzip();
-                let (mut joined, join_id) = join_states(&mut self.world, fork, states)?;
+                let (mut joined, join_id) = join_states(&mut self.world, fork, states.clone())?;
                 let value = match join_id {
                     None => values.into_iter().next().unwrap_or(Value::Unknown),
                     Some(join_id) => {
                         let all: Vec<&Value> = values.iter().collect();
-                        join_values(&mut self.world, join_id, &all)
+                        join_values(&mut self.world, join_id, &all, &states, &mut joined)
                     }
                 };
                 self.bind(&mut joined, *binding, *result_type, value);
@@ -701,16 +706,17 @@ impl<'program> Walker<'program> {
                     }
                 }
             }
-            CheckedEnumType::Nominal(_) => {
+            CheckedEnumType::Nominal(nominal) => {
+                let variants = self.variant_count(CheckedType::Nominal(nominal));
                 let (location, fields, known) = match &value {
                     Value::Owned(location) => {
                         let location = state.resolve(location);
                         let known = state.variants.get(&location).copied();
                         (Some(location), None, known)
                     }
-                    Value::Variant { variant, fields } => {
-                        (None, Some(fields.clone()), Some(*variant))
-                    }
+                    Value::Variant {
+                        variant, fields, ..
+                    } => (None, Some(fields.clone()), Some(*variant)),
                     _ => (None, None, None),
                 };
                 for arm in arms {
@@ -719,6 +725,18 @@ impl<'program> Walker<'program> {
                     }
                     let mut forked = state.clone();
                     if let Some(location) = &location {
+                        let tag = self.read_location(
+                            &mut forked,
+                            &location.child(Step::Tag(variants)),
+                            CheckedType::Integer(IntegerType::U32),
+                        );
+                        if let Value::Int(tag) = tag {
+                            forked.conds.push(literal(
+                                tag,
+                                Relation::Equal,
+                                Linear::constant(arm.tag as i128),
+                            ));
+                        }
                         forked.variants.insert(location.clone(), arm.tag);
                         let enabled: Vec<FactId> = forked
                             .routed
@@ -738,12 +756,15 @@ impl<'program> Walker<'program> {
                                 let payload = location.child(Step::Payload {
                                     variant: arm.tag,
                                     field: binder.field,
+                                    variants,
                                 });
                                 if binder.mode.is_reference() {
                                     Value::Ref(View::Place(forked.resolve(&payload)))
                                 } else {
                                     match self.read_location(&mut forked, &payload, binder.ty) {
-                                        Value::Owned(_) if copied => self.copied(),
+                                        Value::Owned(source) if copied => {
+                                            self.copied(&mut forked, &source)
+                                        }
                                         other => other,
                                     }
                                 }
@@ -770,9 +791,13 @@ impl<'program> Walker<'program> {
                 self.place_fields(state, &location, &fields, None);
                 Value::Owned(location)
             }
-            Value::Variant { variant, fields } => {
+            Value::Variant {
+                variant,
+                variants,
+                fields,
+            } => {
                 let location = Location::root(Origin::Constructed(self.world.new_origin()));
-                self.place_fields(state, &location, &fields, Some(variant));
+                self.place_fields(state, &location, &fields, Some((variant, variants)));
                 state.variants.insert(location.clone(), variant);
                 Value::Owned(location)
             }
@@ -795,12 +820,20 @@ impl<'program> Walker<'program> {
         state: &mut State,
         location: &Location,
         fields: &[Value],
-        variant: Option<u32>,
+        variant: Option<(u32, u32)>,
     ) {
+        if let Some((variant, variants)) = variant {
+            state.set_slot(
+                &mut self.world,
+                location.child(Step::Tag(variants)),
+                Slot::Int(Linear::constant(variant as i128)),
+            );
+        }
         for (index, field) in fields.iter().enumerate() {
             let step = match variant {
-                Some(variant) => Step::Payload {
+                Some((variant, variants)) => Step::Payload {
                     variant,
+                    variants,
                     field: index as u32,
                 },
                 None => Step::Field(index as u32),
@@ -819,10 +852,11 @@ impl<'program> Walker<'program> {
                 }
                 Value::Variant {
                     variant: inner_variant,
+                    variants,
                     fields: inner,
                 } => {
                     let inner = inner.clone();
-                    self.place_fields(state, &at, &inner, Some(*inner_variant));
+                    self.place_fields(state, &at, &inner, Some((*inner_variant, *variants)));
                     state.variants.insert(state.resolve(&at), *inner_variant);
                 }
                 Value::Bool(_) | Value::Unknown => {}
@@ -837,6 +871,16 @@ impl<'program> Walker<'program> {
             Some(Slot::Int(value)) => return Value::Int(value.clone()),
             Some(Slot::Ref(view)) => return Value::Ref(view.clone()),
             _ => {}
+        }
+        if let Some(source) = state.read_source(&location) {
+            if let CheckedType::Integer(integer) = ty {
+                return Value::Int(self.world.read(
+                    source.version,
+                    source.indices,
+                    source.projection,
+                    Some(integer),
+                ));
+            }
         }
         match ty {
             CheckedType::Integer(integer) => {
@@ -925,7 +969,7 @@ impl<'program> Walker<'program> {
         self.access(container, &indices, true, node, state);
         let mut values = BTreeMap::new();
         if projection.is_some() {
-            self.stored_projections(state, value, &mut Vec::new(), &mut values);
+            stored_projections(&mut self.world, state, value, &mut Vec::new(), &mut values);
         }
         state.write_element(
             &mut self.world,
@@ -934,73 +978,6 @@ impl<'program> Walker<'program> {
             projection.unwrap_or_default(),
             values,
         );
-    }
-
-    fn stored_projections(
-        &mut self,
-        state: &State,
-        value: &Value,
-        path: &mut Vec<CheckedRangeProjection>,
-        values: &mut BTreeMap<Vec<CheckedRangeProjection>, Linear>,
-    ) {
-        match value {
-            Value::Int(value) => {
-                values.insert(path.clone(), value.clone());
-            }
-            Value::Struct(fields) => {
-                for (ordinal, field) in fields.iter().enumerate() {
-                    path.push(CheckedRangeProjection::Field(ordinal as u32));
-                    self.stored_projections(state, field, path, values);
-                    path.pop();
-                }
-            }
-            Value::Owned(location) => {
-                let location = state.resolve(location);
-                // Snapshot named scalar contents before the destination write.
-                // Copies have already become new, empty storage in stored_value.
-                for (slot, value) in &state.slots {
-                    if !slot.starts_with(&location) {
-                        continue;
-                    }
-                    let Some(suffix) = owned_projection(&slot.steps[location.steps.len()..]) else {
-                        continue;
-                    };
-                    let length = path.len();
-                    path.extend(suffix);
-                    match value {
-                        Slot::Int(value) => {
-                            values.insert(path.clone(), value.clone());
-                        }
-                        Slot::Alias(source) => self.stored_projections(
-                            state,
-                            &Value::Owned(source.clone()),
-                            path,
-                            values,
-                        ),
-                        Slot::Ref(_) => {}
-                    }
-                    path.truncate(length);
-                }
-                for container in self.world.containers_under(&location) {
-                    let at = &self.world.containers[container as usize].location;
-                    let Some(suffix) = owned_projection(&at.steps[location.steps.len()..]) else {
-                        continue;
-                    };
-                    let length = path.len();
-                    path.extend(suffix);
-                    for measure in [CheckedMeasure::Length, CheckedMeasure::Capacity] {
-                        path.push(CheckedRangeProjection::Measure(measure));
-                        let value =
-                            self.world
-                                .measure(container, state.generation(container), measure);
-                        values.insert(path.clone(), value);
-                        path.pop();
-                    }
-                    path.truncate(length);
-                }
-            }
-            _ => {}
-        }
     }
 
     fn store(
@@ -1022,8 +999,12 @@ impl<'program> Walker<'program> {
                 state.set_slot(&mut self.world, location, Slot::Alias(source));
             }
             Value::Struct(fields) => self.place_fields(state, &location, &fields, None),
-            Value::Variant { variant, fields } => {
-                self.place_fields(state, &location, &fields, Some(variant));
+            Value::Variant {
+                variant,
+                variants,
+                fields,
+            } => {
+                self.place_fields(state, &location, &fields, Some((variant, variants)));
                 state.variants.insert(location, variant);
             }
             Value::Bool(_) | Value::Unknown => {
@@ -1354,23 +1335,100 @@ impl<'program> Walker<'program> {
         }
     }
 
-    /// A value about to be stored in a binding, a place or a field. Reading
-    /// an aggregate that already lives in storage yields that storage's
-    /// location; only a consuming read hands the storage itself over, and
-    /// any other read is a copy, whose contents this walk then forgets, so
-    /// that a write to the copy can never be taken for a write to its
-    /// source.
+    /// A stored copy owns fresh storage whose definitions capture its source.
     fn stored_value(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
         let value = self.eval(state, expression);
         match value {
-            Value::Owned(_) if copies(expression) => self.copied(),
+            Value::Owned(source) if copies(expression) => self.copied(state, &source),
             other => other,
         }
     }
 
-    /// A copy of an aggregate: new storage whose contents are unknown.
-    fn copied(&mut self) -> Value {
-        Value::Owned(Location::root(Origin::Constructed(self.world.new_origin())))
+    fn variant_count(&self, ty: CheckedType) -> u32 {
+        if let CheckedType::Nominal(nominal) = ty {
+            if let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind {
+                return variants.len() as u32;
+            }
+        }
+        0
+    }
+
+    fn copied(&mut self, state: &mut State, source: &Location) -> Value {
+        let source = state.resolve(source);
+        // Give as-yet unnamed contents a stable source definition before
+        // copying, so future reads of either storage share the old value.
+        if state.read_source(&source).is_none()
+            && matches!(state.slots.get(&source), None | Some(Slot::Unknown))
+        {
+            let version = self.world.new_version(VersionDef::Initial);
+            state.slots.insert(
+                source.clone(),
+                Slot::Read(ReadSource {
+                    version,
+                    indices: Vec::new(),
+                    projection: Vec::new(),
+                }),
+            );
+        }
+        let destination = Location::root(Origin::Constructed(self.world.new_origin()));
+        if let Some(read) = state.read_source(&source) {
+            state.set_slot(&mut self.world, destination.clone(), Slot::Read(read));
+        }
+        let slots: Vec<_> = state
+            .slots
+            .iter()
+            .filter(|(at, _)| at.starts_with(&source))
+            .map(|(at, slot)| (at.clone(), slot.clone()))
+            .collect();
+        for (at, slot) in slots {
+            let mut target = destination.clone();
+            target
+                .steps
+                .extend_from_slice(&at.steps[source.steps.len()..]);
+            let slot = if let Slot::Alias(from) = slot {
+                let Value::Owned(copy) = self.copied(state, &from) else {
+                    unreachable!()
+                };
+                Slot::Alias(copy)
+            } else {
+                slot
+            };
+            state.set_slot(&mut self.world, target, slot);
+        }
+        let variants: Vec<_> = state
+            .variants
+            .iter()
+            .filter(|(at, _)| at.starts_with(&source))
+            .map(|(at, tag)| (at.clone(), *tag))
+            .collect();
+        for (at, tag) in variants {
+            let mut target = destination.clone();
+            target
+                .steps
+                .extend_from_slice(&at.steps[source.steps.len()..]);
+            state.variants.insert(target, tag);
+        }
+        // Containers in an owned copy have separate identity but the captured
+        // element version. Descriptor values remain equal at the copy.
+        for container in self.world.containers_under(&source) {
+            let original = self.world.containers[container as usize].clone();
+            let mut target = destination.clone();
+            target
+                .steps
+                .extend_from_slice(&original.location.steps[source.steps.len()..]);
+            if let Some(copy) = self.world.container(target, original.arity) {
+                let version = state.version(&mut self.world, container);
+                state.versions.insert(copy, version);
+                for measure in [CheckedMeasure::Length, CheckedMeasure::Capacity] {
+                    let old = self
+                        .world
+                        .measure(container, state.generation(container), measure);
+                    let new = self.world.measure(copy, 0, measure);
+                    state.conds.push(literal(new, Relation::Equal, old));
+                }
+            }
+        }
+        Value::Owned(destination)
     }
 
     pub(super) fn eval(&mut self, state: &mut State, expression: &CheckedExpression) -> Value {
@@ -1759,7 +1817,10 @@ impl<'program> Walker<'program> {
                 Value::Struct(values)
             }
             CheckedExpression::ConstructEnum {
-                variant, fields, ..
+                nominal,
+                variant,
+                fields,
+                ..
             } => {
                 let mut values = Vec::with_capacity(fields.len());
                 for field in fields {
@@ -1767,6 +1828,7 @@ impl<'program> Walker<'program> {
                 }
                 Value::Variant {
                     variant: *variant,
+                    variants: self.variant_count(CheckedType::Nominal(*nominal)),
                     fields: values,
                 }
             }
@@ -1802,6 +1864,25 @@ impl<'program> Walker<'program> {
             (CheckedType::Integer(integer), Some(projection)) => {
                 let version = state.version(&mut self.world, container);
                 Value::Int(self.world.read(version, indices, projection, Some(integer)))
+            }
+            (other, Some(projection))
+                if !matches!(
+                    other,
+                    CheckedType::Bool | CheckedType::Unit | CheckedType::Float(_)
+                ) =>
+            {
+                let version = state.version(&mut self.world, container);
+                let location = Location::root(Origin::Constructed(self.world.new_origin()));
+                state.set_slot(
+                    &mut self.world,
+                    location.clone(),
+                    Slot::Read(ReadSource {
+                        version,
+                        indices,
+                        projection,
+                    }),
+                );
+                Value::Owned(location)
             }
             (other, _) => self.opaque_of(other),
         }
@@ -1998,6 +2079,8 @@ impl<'program> Walker<'program> {
                 let at = state.resolve(&location);
                 let payload = at.child(Step::Payload {
                     variant: route.tag,
+                    variants: self
+                        .variant_count(post.results.get(index).copied().unwrap_or(callee.result)),
                     field: 0,
                 });
                 results[index] = Some(self.read_location(state, &payload, route.payload));
@@ -2077,7 +2160,9 @@ impl<'program> Walker<'program> {
             if let Some(route) = post.route {
                 let index = route.ordinal as usize;
                 let payload = match results.get(index).cloned().flatten() {
-                    Some(Value::Variant { variant, fields }) => {
+                    Some(Value::Variant {
+                        variant, fields, ..
+                    }) => {
                         if variant != route.tag {
                             continue;
                         }
@@ -2094,6 +2179,9 @@ impl<'program> Walker<'program> {
                         }
                         let payload = at.child(Step::Payload {
                             variant: route.tag,
+                            variants: self.variant_count(
+                                post.results.get(index).copied().unwrap_or(function.result),
+                            ),
                             field: 0,
                         });
                         Some(self.read_location(state, &payload, route.payload))
@@ -2180,6 +2268,13 @@ impl<'program> Walker<'program> {
         if let Some(outer) = &mut self.world.log {
             outer.containers.extend(total.containers.iter().copied());
             outer.descriptors.extend(total.descriptors.iter().copied());
+            for (container, paths) in &total.projections {
+                outer
+                    .projections
+                    .entry(*container)
+                    .or_default()
+                    .extend(paths.iter().cloned());
+            }
             outer.bindings.extend(total.bindings.iter().copied());
             outer.slots.extend(total.slots.iter().cloned());
             outer.everything |= total.everything;
@@ -2203,8 +2298,25 @@ impl<'program> Walker<'program> {
         };
         let mut deciding = log.everything && !total.everything;
         total.everything |= log.everything;
-        total.containers.extend(log.containers);
-        total.descriptors.extend(log.descriptors);
+        for container in log.containers {
+            if existed(&self.world.containers[container as usize].location) {
+                deciding |= total.containers.insert(container);
+            }
+        }
+        for container in log.descriptors {
+            if existed(&self.world.containers[container as usize].location) {
+                deciding |= total.descriptors.insert(container);
+            }
+        }
+        for (container, paths) in log.projections {
+            if !existed(&self.world.containers[container as usize].location) {
+                continue;
+            }
+            let entry = total.projections.entry(container).or_default();
+            for path in paths {
+                deciding |= entry.insert(path);
+            }
+        }
         for binding in log.bindings {
             if total.bindings.insert(binding) && entry.values.contains_key(&binding) {
                 deciding = true;
@@ -2230,6 +2342,17 @@ impl<'program> Walker<'program> {
             let descriptor = modified.descriptors.contains(container);
             header.havoc_container(&mut self.world, *container, descriptor);
         }
+        for (container, projections) in &modified.projections {
+            if modified.containers.contains(container) {
+                continue;
+            }
+            let previous = header.version(&mut self.world, *container);
+            let version = self.world.new_version(VersionDef::Forget {
+                previous,
+                projections: projections.clone(),
+            });
+            header.versions.insert(*container, version);
+        }
         for binding in &modified.bindings {
             if let Some(value) = header.values.get(binding).cloned() {
                 let fresh = match value {
@@ -2254,6 +2377,7 @@ impl<'program> Walker<'program> {
             header.slots.retain(|location, held| {
                 !location.starts_with(slot) || matches!(held, Slot::Alias(_))
             });
+            header.slots.insert(slot.clone(), Slot::Unknown);
             header.forget_variants(slot);
         }
         header
@@ -2831,18 +2955,6 @@ enum Target {
         row: Linear,
     },
     Unknown,
-}
-
-/// Only owned struct/Box paths can name the stored projections of a value.
-fn owned_projection(steps: &[Step]) -> Option<Vec<CheckedRangeProjection>> {
-    steps
-        .iter()
-        .map(|step| match step {
-            Step::Field(field) => Some(CheckedRangeProjection::Field(*field)),
-            Step::BoxContent => Some(CheckedRangeProjection::BoxContent),
-            Step::Payload { .. } => None,
-        })
-        .collect()
 }
 
 fn binding_value(state: &State, root: CheckedRangeRoot) -> Option<Value> {

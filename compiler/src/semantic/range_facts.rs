@@ -46,12 +46,18 @@ pub(crate) enum CheckedRangeStep {
 }
 
 /// An owned selection below an element, optionally ending at a measure.
-/// Ordinals identify fields of the statically selected struct type.
+/// Ordinals identify declared fields and variants of the selected type.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum CheckedRangeProjection {
     Field(u32),
     BoxContent,
     Measure(CheckedMeasure),
+    Payload {
+        variant: u32,
+        field: u32,
+        variants: u32,
+    },
+    Tag(u32),
 }
 
 /// The value shape a range read selects from.

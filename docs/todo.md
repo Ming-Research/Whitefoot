@@ -750,16 +750,15 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
-- **Qualify projected range terms at finer call and loop footprints.** Located
-  writes now keep sibling fields and other elements, including element
-  measures. Loop headers still forget a written container, and call rows
-  still use their reference argument's footprint rather than selecting each
-  field of the formal effect row. For example, a loop writing only
-  `rows^[k].g` can lose a fact about `rows^[k].f` after the loop. Reopen when
-  a consumer needs that fact across a loop or an aggregate-reference call;
-  record projected dry-walk and call effects, with whole-owner and descriptor
-  replacement controls. This is conservative precision work, not permission
-  to retain a possibly changed value.
+- **Qualify projected range terms at finer call footprints.** Located writes
+  and loop headers keep disjoint sibling projections, including element
+  measures. Call rows still use their reference argument's footprint rather
+  than selecting each field of the formal effect row. An aggregate-reference
+  call writing only `row.g` can therefore lose a range fact about `row.f`.
+  Reopen when a consumer needs that fact across such a call; record projected
+  call effects and validate sibling preservation against whole-owner and
+  descriptor replacement controls. This is conservative precision work,
+  not permission to retain a possibly changed value.
 
 ## Containers and storage lowering
 
