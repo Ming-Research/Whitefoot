@@ -223,7 +223,7 @@ fn last_byte(v: u64) -> result: u8 pure {
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "A pure call handed out while a pure call written as an if condition runs.";
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1868,8 +1868,8 @@ fn run_owned_lane_cases(
         .replace("call void @wf__par_release(", "call void @wf_test_release_lane(")
         .replace("call void @wf__par_publish(", "call void @wf_test_publish_lane(")
         .replace("call void @wf__par_join(", "call void @wf_test_join_lane(")
-        .replace("@malloc(", "@wf_test_source_allocate(")
-        .replace("@free(", "@wf_test_source_release(");
+        .replace("@wf__heap_take(", "@wf_test_source_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_source_release(");
     let executable = build_linked_executable(&observed, Some(OWNED_LANE_OBSERVER), &[], &directory);
     let mut outcomes = Vec::new();
     for (mode, workers) in [("1", "1"), ("0", "4"), ("2", "4")] {
@@ -2024,11 +2024,12 @@ void *wf_test_source_allocate(size_t size) {
     return value;
 }
 
-void wf_test_source_release(void *value) {
+void wf_test_source_release(void *value, uint64_t bytes) {
     if (value == NULL) abort();
     for (unsigned id = 1; id < 10; ++id) {
         void *expected = value;
         if (atomic_compare_exchange_strong(&held[id], &expected, NULL)) {
+            if (bytes != sizes[id]) abort();
             if (sizes[id] == 3) atomic_fetch_add(&spares, 1);
             atomic_fetch_add(&frees, 1);
             free(value);
@@ -2083,7 +2084,7 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_waiting_helper_is_never_handed_out() {
     let source = br#"fn write_byte(inputs: std::process::Inputs) -> result: u64 pure waits {
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   std::fs::close_directory(factory: &factory, directory: move cwd);

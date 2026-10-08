@@ -14,6 +14,7 @@ pub(super) struct IndexedPrivate {
 
 struct PrivateRoot {
     pointer: String,
+    bytes: String,
     cells: String,
     total: String,
     original: String,
@@ -127,15 +128,19 @@ impl FunctionEmitter<'_, '_> {
             let stride = format!("ptrtoint (ptr getelementptr ({ty}, ptr null, i64 1) to i64)");
             let bytes = self.emit_allocation_size(&total, &stride, "0", &failed, &malloc)?;
             let pointer = format!("%{prefix}.allocation");
-            self.output.symbol("malloc");
+            self.output.symbol("wf__heap_take");
             writeln!(
                 self.output,
-                "  %{prefix}.empty = icmp eq i64 {bytes}, 0\n  %{prefix}.bytes = select i1 %{prefix}.empty, i64 1, i64 {bytes}\n  {pointer} = call ptr @malloc(i64 %{prefix}.bytes)\n  %{prefix}.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.ok, label %{init}, label %{failed}"
+                "  %{prefix}.empty = icmp eq i64 {bytes}, 0\n  %{prefix}.bytes = select i1 %{prefix}.empty, i64 1, i64 {bytes}\n  {pointer} = call ptr @wf__heap_take(i64 %{prefix}.bytes)\n  %{prefix}.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.ok, label %{init}, label %{failed}"
             )?;
             self.output.open_block(failed);
             for previous in &roots {
-                self.output.symbol("free");
-                writeln!(self.output, "  call void @free(ptr {})", previous.pointer)?;
+                self.output.symbol("wf__heap_give");
+                writeln!(
+                    self.output,
+                    "  call void @wf__heap_give(ptr {}, i64 {})",
+                    previous.pointer, previous.bytes
+                )?;
             }
             self.output.symbol("wf_resource_abort");
             writeln!(
@@ -162,6 +167,7 @@ impl FunctionEmitter<'_, '_> {
             self.output.open_block(done);
             roots.push(PrivateRoot {
                 pointer,
+                bytes: format!("%{prefix}.bytes"),
                 cells: count,
                 total,
                 original: self.value_name(range),
@@ -176,13 +182,15 @@ impl FunctionEmitter<'_, '_> {
         // Emit every phi before descriptor construction or ABI projections.
         for (ordinal, root) in roots.iter_mut().enumerate() {
             let pointer = format!("%indexed.{id}.{ordinal}.private");
+            let bytes = format!("%indexed.{id}.{ordinal}.requested");
             let total = format!("%indexed.{id}.{ordinal}.total");
             writeln!(
                 self.output,
-                "  {pointer} = phi ptr [ {}, %{ready} ], [ null, %{sequential} ]\n  {total} = phi i64 [ {}, %{ready} ], [ 0, %{sequential} ]",
-                root.pointer, root.total
+                "  {pointer} = phi ptr [ {}, %{ready} ], [ null, %{sequential} ]\n  {bytes} = phi i64 [ {}, %{ready} ], [ 0, %{sequential} ]\n  {total} = phi i64 [ {}, %{ready} ], [ 0, %{sequential} ]",
+                root.pointer, root.bytes, root.total
             )?;
             root.pointer = pointer;
+            root.bytes = bytes;
             root.total = total;
         }
         for (ordinal, (root, spec)) in roots.iter().zip(split.indexed).enumerate() {
@@ -337,8 +345,12 @@ impl FunctionEmitter<'_, '_> {
                 "  store {ty} %{prefix}.value, ptr {destination}\n  %{prefix}.next = add i64 %{prefix}.i, 1\n  br label %{head}"
             )?;
             self.output.open_block(done);
-            self.output.symbol("free");
-            writeln!(self.output, "  call void @free(ptr {})", root.pointer)?;
+            self.output.symbol("wf__heap_give");
+            writeln!(
+                self.output,
+                "  call void @wf__heap_give(ptr {}, i64 {})",
+                root.pointer, root.bytes
+            )?;
         }
         writeln!(self.output, "  br label %{finished}")?;
         self.output.open_block(finished);
@@ -493,8 +505,12 @@ impl FunctionEmitter<'_, '_> {
             "  %{prefix}.nextcell = add i64 %{prefix}.cell, 1\n  br label %{head}"
         )?;
         self.output.open_block(done);
-        self.output.symbol("free");
-        writeln!(self.output, "  call void @free(ptr {})", root.pointer)?;
+        self.output.symbol("wf__heap_give");
+        writeln!(
+            self.output,
+            "  call void @wf__heap_give(ptr {}, i64 {})",
+            root.pointer, root.bytes
+        )?;
         Ok(())
     }
 }

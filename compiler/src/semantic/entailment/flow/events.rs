@@ -239,11 +239,13 @@ impl Input<'_, '_> {
         (resolved, holders)
     }
 
-    /// An ordinary-let origin is available only while the binding whose
-    /// initializer it describes has not itself been written or consumed.
-    /// This key guard is separate from the goal's value support: invalidating
-    /// it stops future alias expansion without erasing a signed snapshot fact
-    /// that an earlier branch already established.
+    /// An ordinary-let origin, comparison [ENT-3] (b) or goal, is available
+    /// only while the binding whose initializer it describes has not itself
+    /// been written — directly, through a reference or by a call's projected
+    /// `writes` — or consumed [ENT-5]. This key guard is separate from the
+    /// goal's value support: invalidating it stops future alias expansion
+    /// without erasing a signed snapshot fact that an earlier branch already
+    /// established.
     pub(super) fn event_kills_goal_origin_binding(
         &self,
         separations: &dyn SeparationOracle,
@@ -857,6 +859,12 @@ impl Reasoning<'_, '_, '_> {
             events
                 .iter()
                 .any(|event| self.event_kills_goal(separations, goal, event))
+        });
+        state.origins.retain(|binding, _| {
+            !events.iter().any(|event| {
+                self.input
+                    .event_kills_goal_origin_binding(separations, *binding, event)
+            })
         });
         state.goal_origins.retain(|binding, _| {
             !events.iter().any(|event| {

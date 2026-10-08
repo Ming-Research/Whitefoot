@@ -77,6 +77,20 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **RANGE-2's unplaced write forgets every location, the range walk only
+  every exposed one.** "An `atomic_stmt` and every write the walk cannot
+  place forget every location" [RANGE-2]. Read with a binding as a
+  location, that also forgets the value of a scalar binding no reference
+  has reached, which the walk keeps: such a binding can change only through
+  a `set` the walk places. The walk is therefore more precise than the text
+  for a value read after an `atomic` or an unplaced write, so it can accept
+  a range obligation the text leaves unproved. Change: state the rule as
+  forgetting every location the write can reach, with a binding reachable
+  once a reference to it is formed (`design/compiler/range-judgment.md`,
+  the exposed-binding decision). Validate with a range requirement over a
+  binding read after an `atomic` with and without a reference to it.
+  Reopen with the next RANGE-2 amendment.
+
 - **Checking one function grows faster than its size.** The stage-3 wasm
   interpreter's interpreter function, a `match` whose arms each hold their
   handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s
@@ -2180,6 +2194,17 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
+- **Measure heap counting under an allocation-heavy program.** The cost of
+  counting each allocation (memory statistics) was measured only for firn's
+  `set` and `mset`, whose hot path makes no counted allocation of emitted
+  storage, and stayed inside the twins' 3 to 7% spread, leaving the 1%
+  criterion unresolved. A Lua
+  engine running scripts allocates through the emitted heap on every call
+  (the C allocator took 11 to 13% of firn's CPU under a rate-limiting
+  script). Measure the counted against the uncounted build on such a
+  workload, interleaved with twins on the i9-14900K; reopen when firn's
+  script path is next measured or when a program reports the counting.
+
 - **Paged indexed storage is absent in this checkout (Q2).** The active
   specification and checked type model define Array, Slots and Ring, with no
   Paged type or storage path. Impact: the selected indexed reduction rule can
@@ -2547,6 +2572,31 @@ rarely insert at the same place.
   overlap and the distinct-capacity witness is admitted. Reopen with the
   first shared generic storage algorithm needing that call.
 
+- **Verify memory readings with observed driver participation.** The context
+  program checks completed allocations and exact balance after joining at
+  requested driver counts one and four; it cannot identify which counters
+  contributed. Existing context cases expose no driver participation report,
+  and a host without a usable native ring runs one driver. Add a forwarding
+  native allocation observer when qualifying several-driver accounting; it
+  must show at least two allocation writers, without changing scheduling,
+  and cover a read spanning transfer and release as well as joined balance.
+
+- **Migrate retained allocation experiments before rerunning them.** The
+  memory-statistics emitter now calls wf__heap_take and the size-aware
+  wf__heap_give. Container-representation Makefiles and the families ABI
+  adapters still intercept malloc/free, and their cost harnesses retain
+  one-argument release functions; the compute radix phase observer and
+  buffer-initialization runner also recognize the former symbols. These
+  scripts can miss observations or fail when used with this compiler.
+  Update symbol selection and the WF release ABI together, retain the C
+  controls' intended comparison, and demonstrate wrong release sizes are
+  detected before collecting fresh measurements. Deferred because these
+  experiments are outside the correctness gate and no run is requested;
+  reopen before their next use, not by interpreting old measurements as
+  results of the counted runtime.
+
+- **Route Paged's page and directory allocations through wf__heap_take/wf__heap_give when Paged lands; validate matching allocation and release sizes.**
+
 ## Modules and libraries
 
 - **Whole-map iteration.** Shared maps provide selections, counting and swaps,
@@ -2783,6 +2833,19 @@ rarely insert at the same place.
   convention cannot hold, or when a target without `preserve_none` matters.
 
 ## Code structure
+
+- **Comparison origins are removed twice, and one origin map is never
+  read.** Since comparison origins end at every kill event that reaches
+  their binding (`apply_kills_one` in
+  `compiler/src/semantic/entailment/flow/events.rs`, and the loop-head kill
+  in `loop_summary.rs`), two older removals duplicate it: the whole-binding
+  removal in `collect_target_kill` and the loop's `set_bindings` retain.
+  `FactState::ambiguous_goal_origins` is inserted, removed, joined and
+  cloned but read by no decision. Change: delete the two removals, then
+  `set_bindings` if nothing else needs it, and the unread map. Validate with
+  the direct-`set`, loop and Bool-origin tests in
+  `compiler/src/semantic/tests/entailment.rs` and the `ent3-*-bool-origin-*`
+  conformance cases. Reopen with the next change to origin bookkeeping.
 
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's

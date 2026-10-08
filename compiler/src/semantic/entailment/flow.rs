@@ -1006,9 +1006,10 @@ struct LoopKills {
     /// never the argument-consume/callee-write events inside a group.
     entry_image_groups: Vec<LoopKillEventGroup>,
     /// Every binding named as a `set` target. An ordinary-let origin is valid
-    /// only while its bound value has no intervening whole, field, or element
-    /// mutation; the narrower comparison/outcome origins can only inhabit
-    /// nonprojectable Bool/outcome bindings, so this same set is exact there.
+    /// only while its binding holds its initializer [ENT-3]; a write reaching
+    /// the binding through a reference or a callee ends it through the loop's
+    /// kill events, which this set does not record, so it is a subset of the
+    /// writes that end an origin, not an exact account of them.
     set_bindings: HashSet<BindingId>,
 }
 

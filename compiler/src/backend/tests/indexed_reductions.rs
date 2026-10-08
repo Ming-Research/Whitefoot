@@ -11,14 +11,14 @@ const PROGRAM: &[u8] = include_bytes!("../../../../tests/programs/parallel/index
 fn indexed_ir_contains_private_fill_ordered_combine_and_release() {
     let module = emit_with_overlap(PROGRAM);
     for expected in [
-        ".allocation = call ptr @malloc",
+        ".allocation = call ptr @wf__heap_take",
         ".fill.head:",
         "store i64 9223372036854775807, ptr %indexed.",
         "store i64 -9223372036854775808, ptr %indexed.",
         "store i64 1, ptr %indexed.",
         ".combine.head:",
         " = urem i64 %indexed.",
-        "call void @free(ptr %indexed.",
+        "call void @wf__heap_give(ptr %indexed.",
         "@llvm.umul.with.overflow.i64",
         "@llvm.uadd.with.overflow.i64",
         ".pays = icmp ugt i64",
@@ -33,7 +33,7 @@ fn indexed_ir_contains_private_fill_ordered_combine_and_release() {
         let split = body.find("@wf__par_split_").expect("split call");
         let combine = body.find(".combine.head:").expect("combine loop");
         let free = body[combine..]
-            .find("call void @free")
+            .find("call void @wf__heap_give")
             .expect("release after combine");
         assert!(split < combine && free > 0);
         assert!(body.contains(".next = add i64 %indexed."));
@@ -62,10 +62,10 @@ fn observed_with(module: &str, names: &[&str]) -> String {
                     .unwrap_or(names.len()),
             );
         }
-        let line = if line.contains(".allocation = call ptr @malloc(") {
-            line.replace("@malloc(", "@wf_test_private_allocate(")
-        } else if line.contains("call void @free(ptr %indexed.") {
-            line.replace("@free(", "@wf_test_private_free(")
+        let line = if line.contains(".allocation = call ptr @wf__heap_take(") {
+            line.replace("@wf__heap_take(", "@wf_test_private_allocate(")
+        } else if line.contains("call void @wf__heap_give(ptr %indexed.") {
+            line.replace("@wf__heap_give(", "@wf_test_private_free(")
         } else {
             line.replace(
                 "call i64 @wf__par_split_budget(",
@@ -84,7 +84,7 @@ fn observed_with(module: &str, names: &[&str]) -> String {
             output.push_str(&format!("  call void @wf_test_indexed_leaf(i32 {tag})\n"));
         }
     }
-    output.push_str("\ndeclare ptr @wf_test_private_allocate(i64)\ndeclare void @wf_test_private_free(ptr)\ndeclare i64 @wf_test_indexed_budget(i64, i64)\ndeclare void @wf_test_indexed_abort()\ndeclare void @wf_test_indexed_leaf(i32)\n");
+    output.push_str("\ndeclare ptr @wf_test_private_allocate(i64)\ndeclare void @wf_test_private_free(ptr, i64)\ndeclare i64 @wf_test_indexed_budget(i64, i64)\ndeclare void @wf_test_indexed_abort()\ndeclare void @wf_test_indexed_leaf(i32)\n");
     output
 }
 
@@ -107,17 +107,23 @@ void *wf_test_private_allocate(uint64_t bytes) {
     unsigned n = atomic_fetch_add(&allocations, 1) + 1;
     const char *fail = getenv("WF_TEST_FAIL");
     if (fail && n == (unsigned)atoi(fail)) return NULL;
-    void *p = malloc((size_t)bytes);
-    if (p) atomic_fetch_add(&live, 1);
+    uint64_t *block = malloc(sizeof(*block) + (size_t)bytes);
+    void *p = block ? block + 1 : NULL;
+    if (block) {
+        *block = bytes;
+        atomic_fetch_add(&live, 1);
+    }
     for (uint64_t i = 0; p && i < bytes; ++i)
         ((unsigned char *)p)[i] = (unsigned char)((i * 0x9E3779B1u) >> 11);
     return p;
 }
-void wf_test_private_free(void *p) {
+void wf_test_private_free(void *p, uint64_t bytes) {
     if (!p || !atomic_load(&live)) _Exit(110);
+    uint64_t *block = (uint64_t *)p - 1;
+    if (*block != bytes) _Exit(116);
     atomic_fetch_sub(&live, 1);
     atomic_fetch_add(&releases, 1);
-    free(p);
+    free(block);
 }
 void wf_test_indexed_abort(void) {
     const char *fail = getenv("WF_TEST_FAIL");
@@ -243,7 +249,7 @@ fn indexed_storage_shapes_and_all_operations_emit_private_ranges() {
     ] {
         let body = super::emitted_body(&module, name);
         assert!(
-            body.contains(".allocation = call ptr @malloc"),
+            body.contains(".allocation = call ptr @wf__heap_take"),
             "{name}: {body}"
         );
     }
@@ -292,7 +298,7 @@ fn main() -> status: std::process::ExitStatus pure {{
         let module = emit_with_overlap(source.as_bytes());
         let body = super::emitted_body(&module, "folded");
         assert_eq!(
-            body.contains(".allocation = call ptr @malloc"),
+            body.contains(".allocation = call ptr @wf__heap_take"),
             splits,
             "length={length}: {body}"
         );
@@ -596,7 +602,7 @@ fn indexed_bitwise_and_boolean_combines_match_an_independent_oracle_across_force
     for name in OPERATION_FUNCTIONS {
         let body = super::emitted_body(&module, name);
         assert!(
-            body.contains(".allocation = call ptr @malloc"),
+            body.contains(".allocation = call ptr @wf__heap_take"),
             "{name} must be permitted to split:\n{body}"
         );
     }
@@ -761,9 +767,9 @@ fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_rang
             panic!("{function}: exactly the outer chunk enters the inner splitter\n{module}");
         };
         assert!(
-            outer.contains(".allocation = call ptr @malloc")
+            outer.contains(".allocation = call ptr @wf__heap_take")
                 && outer.contains(".combine.head:")
-                && outer.contains("call void @free(ptr %indexed."),
+                && outer.contains("call void @wf__heap_give(ptr %indexed."),
             "{function}: the inner split must own its private ranges inside the outer leaf:\n{outer}"
         );
         let inner: Vec<_> = chunks
@@ -773,11 +779,11 @@ fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_rang
         assert!(
             inner
                 .iter()
-                .all(|chunk| !chunk.contains(".allocation = call ptr @malloc")),
+                .all(|chunk| !chunk.contains(".allocation = call ptr @wf__heap_take")),
             "{function}: a leaf never allocates for itself"
         );
         assert_eq!(
-            super::emitted_body(&module, function).contains(".allocation = call ptr @malloc"),
+            super::emitted_body(&module, function).contains(".allocation = call ptr @wf__heap_take"),
             outer_allocates_in_caller,
             "{function}"
         );
@@ -906,10 +912,10 @@ fn extended_forms_lower_to_private_ranges_and_unsigned_saturating_combines() {
     for name in ["measured", "temporaries", "indexed_saturation"] {
         let body = super::emitted_body(&module, name);
         for expected in [
-            ".allocation = call ptr @malloc",
+            ".allocation = call ptr @wf__heap_take",
             ".fill.head:",
             ".combine.head:",
-            "call void @free(ptr %indexed.",
+            "call void @wf__heap_give(ptr %indexed.",
         ] {
             assert!(
                 body.contains(expected),
@@ -973,7 +979,10 @@ fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
         assert!(body.contains(".is_private = or i1"), "{body}");
     }
     let fields = super::emitted_body(&module, "field_values");
-    assert_eq!(fields.matches(".allocation = call ptr @malloc").count(), 2);
+    assert_eq!(
+        fields.matches(".allocation = call ptr @wf__heap_take").count(),
+        2
+    );
     assert!(fields.contains(".field = select i1"), "{fields}");
     assert!(fields.contains(".stride = select i1"), "{fields}");
     assert!(!emit(MARKS_FIELDS.as_bytes()).contains("%indexed."));

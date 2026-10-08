@@ -1,0 +1,17 @@
+fn clear_all(xs: &[u64]) -> result: unit writes(xs) contract {
+  ensures forall cleared(k in 0_u64..entry(xs)^.len): xs^[k] == 0_u64;
+} {
+  doc "A range term reads no entry image.";
+  let count = xs^.len;
+  for (
+    k in 0_u64..count,
+    invariant forall done(j in 0_u64..k): xs^[j] == 0_u64
+  ) {
+    set xs^[k] = 0_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.105: memory statistics
+
+Rules: changed PRE-2
+
+Owner-approved: On the shared status board of 2026-10-08, written in Chinese, the owner approved the item request "approve #277's specification text and design node: MemoryMeter in std::process, appended to Inputs after stops and shared with meter_share; heap_in_use counting requested sizes (the runtime pool its granted sizes); one counter per driver, taken modulo 2^64, a reading that is not a snapshot and clamps a negative total to zero; the counting functions in a separate source file, so a program without a heap links no malloc; resident_bytes returning Option<u64>, None when the host cannot report it" (translated), after approving proposal A of the memory-statistics investigation in the Firn session of 2026-10-08 ("218 agreed", translated); after the completion review, the owner approved on the board "Agreed: approve one narrowing of PRE-2: the condition for an exact reading changes from 'no other context allocates or releases' to 'nothing allocates or releases during the reading, neither another context nor a statement of this context that executes overlapping the reading'. The rest of the specification text is unchanged." (translated).
+
+Summary: PRE-2's `std::process` gains the opaque capability `MemoryMeter`, carried by `Inputs.memory_meter` and shared with `meter_share`, `heap_in_use`, which reads the bytes the program's heap holds as requested by its allocations, and `resident_bytes`, which reads the host's resident set or None. A reading is an input of the execution [WAIT-2]; with no allocation or release during the read, by another context or by a statement of its own context that overlaps it, it equals the heap held, and otherwise it may differ by the bytes those operations moved. A Redis-compatible server needs the counted heap to bound its memory as Redis's `maxmemory` does, and the resident set to report beside it, as the [memory-statistics investigation](../research/investigations/memory-statistics/README.md) argues.
+
+## 2026-10-08 v0.104: a Bool binding's origin ends at every write that reaches it
+
+Rules: changed ENT-3
+
+Owner-approved: On the shared status board of 2026-10-08, after the card asking when a Bool binding that saves a comparison, `let inside = x < 4_u64;`, stops meaning that comparison (written in Chinese), the owner chose option A, recommended: at every write that reaches the binding's storage, direct or through a reference, a `swap` or update, and a call whose projected writes cover it, the ENT-5 write events, as the checker already ends other facts; the PR's description presented the ENT-3 text rule by rule.
+
+Summary: ENT-3 gains one definition, an ordinary-let binding holding its initializer right-hand side at a use, which the comparison origin (b), the operation-domain-predicate origin (b) and the goal-origin expansion now cite. The comparison origin (b) previously ended only at a `set` naming the binding, so `set writer^ = True()` with `writer = &inside`, or a callee writing `&inside`, kept `inside` meaning `x < 4_u64`, and main accepted `if inside { return table^[x]; }`, an out-of-bounds read at `x = 7`. Ending the hold at every ENT-5 write event that reaches the binding or the places its initializer reads closes that; paths that execute the initializer again are excluded, so a binding declared in a loop body still holds within its iteration. Ending the origin at any reference taken to the binding was not selected: it refuses programs that only read through the reference and differs from how every other fact ends.
+
 ## 2026-10-08 v0.103: stop signals
 
 Rules: changed PRE-2
