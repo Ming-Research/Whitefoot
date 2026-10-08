@@ -2001,8 +2001,32 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     with_ir_mode(source, OverlapLowering::On, |program| {
         let main = function(program, "main");
+        let borrows = main
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| {
+                let IrInstruction::Define {
+                    result,
+                    operation: IrOperation::Call { function, .. },
+                    ..
+                } = instruction
+                else {
+                    return None;
+                };
+                let name = program
+                    .functions()
+                    .get(*function as usize)
+                    .expect("call target")
+                    .name();
+                (name == "ignore").then_some(*result)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(borrows.len(), 2, "two borrowed calls");
         assert!(
-            main.overlaps().iter().any(|group| group.members.len() == 2),
+            main.overlaps()
+                .iter()
+                .any(|group| borrows.iter().all(|call| group.members.contains(call))),
             "disjoint borrows of one block overlap: {:?}",
             main.overlaps()
         );
