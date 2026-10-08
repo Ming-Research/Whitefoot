@@ -231,7 +231,9 @@ complete preservation arguments.
 ## Direction A2: demand the affine index
 
 The owner selected unchanged-state reuse plus lazy construction after the M5
-results showed that most states change between queries. `affine_query_view`
+results showed that unchanged-state reuse recovered only about 10% of the
+natural interpreter's check; that most queries meet a changed state is an
+inference from that result, not a measured miss rate. `affine_query_view`
 still forms the complete ordered candidate vector before closing, then keys
 one function-local memo by retained closed-Rc identity and exact equality of
 candidate terms and images, including constants, coefficients and atom IDs.
@@ -510,8 +512,9 @@ cost is the join, which this prototype does not touch, and it still grows
 about 9 to 10 times per doubling, so the 2.5x criterion is not met.
 
 The index is 64% of the profile, yet reusing it at an unchanged state
-recovers 10%: nearly every statement changes the state, so most queries
-still rebuild the index. The remaining cost is the rebuild itself, all
+recovers 10%. The inference, not measured here, is that nearly every
+statement changes the state, so most queries still rebuild the index; no
+counter recorded the memo's hit rate. The remaining cost is the rebuild itself, all
 candidate pairs per query, and its next candidates are building only the
 part a target can use or updating the index across events.
 
