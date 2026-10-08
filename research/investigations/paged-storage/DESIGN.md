@@ -311,3 +311,35 @@ loaded `dir_ptr` from its descriptor before loading a page pointer, while
 header-first cell above removes that extra dependent load and is the owner's
 selected response to be measured against the same criterion. The C3 result
 does not yet measure this response or isolate the whole loss to that load.
+
+### C3 header-first measurement on the M5 Air
+
+2026-10-07, with the i9-14900K out of service and the owner's approval to
+time on the M5 Air under the host lock. Snowghost-wf commit `ddba8ab`,
+[`research/investigations/storage-layout/c3-m5/`](https://github.com/Ming-Research/Snowghost-wf/tree/ddba8ab/research/investigations/storage-layout/c3-m5)
+holds the harness, every measurement and the build pins: macOS arm64
+drivers from CI run `37710808694`, every build warmed once, then three
+rounds running every build once in turn; per-run time is
+`(T(REPS) - T(0)) / REPS` (boxes 30, layout 10) and each cell takes the best
+round. `pages` is the hand-written two-level page table and `twin` the same
+driver timed again; `paged` is the port on the separate-directory lowering
+(`wf-exp-496186df5346`), `hf` the same source on the header-first cell
+(`wf-exp-f1971c00269a`).
+
+| layout, ratio to `pages` | twin | paged | hf |
+|---|---|---|---|
+| html5 sequential | 0.998 | 1.015 | 0.980 |
+| html5, four workers | 1.041 | 1.054 | 1.049 |
+| ecma262 sequential | 1.006 | 1.002 | 1.003 |
+
+Box construction: hf 0.994, 0.937 and 1.005 against twin 1.001, 1.010
+and 1.013. The C3 criterion holds for the header-first cell on this
+machine: every html5 layout cell is within the twin's spread, while the
+separate-directory lowering was slower in every html5 cell. The evidence is
+moderate: the third round ran 10 to 40 percent slower throughout, consistent
+with thermal throttling, which the best-of-rounds summary discards, and Air
+times are not comparable with the i9-14900K's. Snowghost repeats the run on
+the i9-14900K with page-fault counts when it returns. A like-for-like port
+with one `Paged` per existing store stays 1 to 9 percent slower with the
+header-first cell; its 82,907 per-owner stores with full first pages point
+at the smaller-first-page item in `docs/todo.md` rather than at access cost.
