@@ -1400,3 +1400,26 @@ median rises at least 2% and neither of Halo's `fib` and `loop`, once Halo
 is written as `loop { match }`, is more than 2% slower. A result below 2%
 rejects this representation on the natural form and reopens the choice
 between an address and a 32-bit offset.
+
+### Outcome of the handler word on the natural form
+
+Observed on the 14900K with the gate's pinned LLVM
+([run 37789304542](https://github.com/Ming-Research/Whitefoot/actions/runs/37789304542)):
+the branch at `d63883029` against its merge base `1a6a96c5b`, both compiling
+the same `gen.py` output, CoreMark 2000 iterations, 7 interleaved launches,
+every final CRC 0x4983.
+
+| engine | median score | of nano | spread |
+|---|---:|---:|---:|
+| v2h, `loop { match }`, the branch's compiler | 5988.0 | 0.763 | 0.6% |
+| v2h, `loop { match }`, the merge base's compiler | 5449.6 | 0.695 | 1.1% |
+| its twin | 5449.6 | 0.695 | 0.8% |
+| v2h, the `musttail` spelling, the branch's compiler | 6006.0 | 0.766 | 1.5% |
+| wasmi 2.0.0 | 6644.5 | 0.847 | 0.7% |
+| Silverfir-nano `5f248e44` | 7843.1 | 1.000 | 0.4% |
+
+The natural form gains 1.099 over its base, ahead in all 7 launch pairs,
+with the twin equal to the base: the criterion's CoreMark half is met, and
+the phase's exit value, the prototype's 1.10, is reproduced on the natural
+form. The criterion's Halo half waits for Halo's interpreter written as
+`loop { match }`. The remaining gap to wasmi is 0.763 to 0.847.
