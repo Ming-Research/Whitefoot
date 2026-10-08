@@ -908,3 +908,181 @@ fn a_by_value_parameter_nothing_writes_is_read_in_place() {
         }
     }
 }
+
+const IN_PLACE_BRANCHES: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Rec {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+  e: u64;
+  f: u64;
+  g: u64;
+  h: u64;
+  i: u64;
+  j: u64;
+}
+
+fn rec_first(r: Rec) -> s: u64 pure {
+  return r.a;
+}
+
+fn rec_forward(r: Rec) -> s: u64 pure {
+  return rec_first(r: r);
+}
+
+fn rec_push(v: &Box<Slots<Rec>>, r: Rec) -> ok: Bool writes(v) {
+  if v^.inner.len < v^.inner.cap {
+    place_back(window: &v^.inner, value: r);
+    return True();
+  }
+  return False();
+}
+
+fn rec_push_via(v: &Box<Slots<Rec>>, r: Rec) -> ok: Bool writes(v) {
+  return rec_push(v: v, r: r);
+}
+
+fn rec_set(v: &Box<Slots<Rec>>, r: Rec) -> ok: Bool writes(v) {
+  if 0_u64 < v^.inner.len {
+    set v^.inner[0_u64] = r;
+    return True();
+  }
+  return False();
+}
+
+fn rec_pick(r: Rec, c: Bool) -> s: u64 pure {
+  if c {
+    return r.a;
+  }
+  return r.b;
+}
+
+fn main() -> status: ExitStatus pure {
+  let v = box_slots_new::<Rec>(capacity: 4_u64);
+  let r = Rec(a: 1_u64, b: 2_u64, c: 3_u64, d: 4_u64, e: 5_u64, f: 6_u64, g: 7_u64, h: 8_u64, i: 9_u64, j: 10_u64);
+  let first = rec_first(r: r);
+  let forwarded = rec_forward(r: r);
+  let pushed = rec_push(v: &v, r: r);
+  let via = rec_push_via(v: &v, r: r);
+  let stored = rec_set(v: &v, r: r);
+  let picked = rec_pick(r: r, c: via);
+  if pushed {
+    if stored {
+      if first == forwarded {
+        if picked == 1_u64 {
+          return exit_status(code: 0_u8);
+        }
+      }
+    }
+  }
+  return exit_status(code: 1_u8);
+}
+"#;
+
+/// Both straight-line and branched readers use the incoming record's place.
+/// `rec_set` still copies the record into the container element it assigns.
+#[test]
+fn unchanged_by_value_parameters_are_read_in_place_across_branches() {
+    with_ir(IN_PLACE_BRANCHES, |program| {
+        for (name, position) in [("rec_pick", 0), ("rec_push", 1), ("rec_set", 1)] {
+            let function = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == name)
+                .expect("branched reader");
+            let storage = super::super::storage::FunctionStoragePlan::build(program, function)
+                .expect("storage plan");
+            let (parameter, ty) = function.parameters()[position];
+            let carries: Vec<_> = function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.parameters())
+                .filter(|(_, parameter_ty)| *parameter_ty == ty)
+                .map(|(value, _)| *value)
+                .collect();
+            assert_eq!(carries.len(), 1, "{name}: one continuation record");
+            assert_eq!(storage.slot(parameter), storage.slot(carries[0]), "{name}");
+            assert!(storage.holds_only(parameter), "{name}: unchanged contents");
+        }
+    });
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = emit_lowered(IN_PLACE_BRANCHES, overlap);
+        for (name, copies) in [
+            ("rec_first", 0),
+            ("rec_forward", 0),
+            ("rec_push_via", 0),
+            ("rec_pick", 0),
+            ("rec_push", 0),
+            ("rec_set", 1),
+        ] {
+            let body = super::emitted_function(&module, name);
+            assert_eq!(
+                body.matches("@llvm.memmove").count() + body.matches("@llvm.memcpy").count(),
+                copies,
+                "{overlap:?} {name}: {body}"
+            );
+        }
+        let retained = super::owned_places::retain_calls(&module);
+        let output = compile_link_and_run(&retained, None, &[]);
+        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+    }
+}
+
+/// A join that merges the incoming record with a new record shares storage,
+/// but its contents differ, so the original argument needs a private copy.
+#[test]
+fn a_different_value_on_one_branch_keeps_the_parameter_entry_copy() {
+    let mut source = IN_PLACE_BRANCHES.to_vec();
+    source.extend_from_slice(
+        br#"
+fn rec_rebind(r: Rec, c: Bool) -> s: u64 pure {
+  if c {
+    set r = Rec(a: 11_u64, b: 12_u64, c: 13_u64, d: 14_u64, e: 15_u64, f: 16_u64, g: 17_u64, h: 18_u64, i: 19_u64, j: 20_u64);
+  }
+  return r.a;
+}
+"#,
+    );
+    with_ir(&source, |program| {
+        let function = program
+            .functions()
+            .iter()
+            .find(|function| function.name() == "rec_rebind")
+            .expect("branched replacement");
+        let storage = super::super::storage::FunctionStoragePlan::build(program, function)
+            .expect("storage plan");
+        let (parameter, ty) = function.parameters()[0];
+        let slot = storage.slot(parameter).expect("record slot");
+        let replacement = function
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .find_map(|instruction| match instruction {
+                crate::IrInstruction::Define {
+                    result,
+                    ty: result_ty,
+                    ..
+                } if *result_ty == ty => Some(*result),
+                _ => None,
+            })
+            .expect("replacement record");
+        assert_eq!(storage.slot(replacement), Some(slot));
+        assert!(storage.destination(slot).is_none());
+        assert!(storage.field_destination(slot).is_none());
+        assert!(!storage.is_exposed(slot));
+        assert!(!storage.holds_only(parameter));
+    });
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let module = emit_lowered(&source, overlap);
+        let body = super::emitted_function(&module, "rec_rebind");
+        let copies: Vec<_> = body
+            .lines()
+            .filter(|line| line.contains("@llvm.memmove") || line.contains("@llvm.memcpy"))
+            .collect();
+        assert_eq!(copies.len(), 1, "{overlap:?}: {body}");
+        assert!(copies[0].contains(", ptr %wf.arg.v0,"), "{overlap:?}: {body}");
+    }
+}

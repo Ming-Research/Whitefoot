@@ -54,6 +54,8 @@ pub(super) fn is_stored_aggregate(program: &IrProgram, ty: IrType) -> Result<boo
 
 pub(super) struct FunctionStoragePlan {
     values: Vec<Option<usize>>,
+    /// The unique definition carried unchanged through CFG transfers, if any.
+    origins: Vec<Option<usize>>,
     slots: Vec<IrType>,
     exposed: BTreeSet<usize>,
     /// A fresh binding can be the destination of its initializing value.
@@ -100,6 +102,7 @@ impl FunctionStoragePlan {
         if function.blocks().is_empty() {
             return Ok(Self {
                 values: vec![None; function.value_types().len()],
+                origins: vec![None; function.value_types().len()],
                 slots: Vec::new(),
                 exposed: BTreeSet::new(),
                 destinations: Vec::new(),
@@ -161,11 +164,15 @@ impl FunctionStoragePlan {
             .map_or(slot, |field| field.parent_slot)
     }
 
-    /// Whether `value` is the only value its slot holds and that slot is a
-    /// complete allocation of its own: no binding destination, no field
+    /// Whether every value its slot holds is `value` or a block parameter
+    /// carrying only that same definition on every incoming edge, and the
+    /// slot is a complete allocation: no binding destination, no field
     /// placement in a parent, no child placed in it, and no exposed address.
-    /// Nothing but `value`'s own definition then writes the allocation
-    /// (compiler/storage-placement).
+    /// Instruction results (including updates) are distinct contents even
+    /// when coalesced. Cyclic carries qualify only with one known origin.
+    /// The emitter elides transfers into an incoming place selected by this
+    /// rule, including unchanged carries from a different slot, so nothing
+    /// writes the caller's allocation (compiler/storage-placement).
     pub(super) fn holds_only(&self, value: IrValueId) -> bool {
         let Some(slot) = self.slot(value) else {
             return false;
@@ -181,9 +188,10 @@ impl FunctionStoragePlan {
             && self
                 .values
                 .iter()
-                .filter(|held| **held == Some(slot))
-                .count()
-                == 1
+                .enumerate()
+                .all(|(held, place)| {
+                    *place != Some(slot) || self.origins[held] == Some(index(value))
+                })
     }
 
     fn select_field_destinations(
@@ -441,7 +449,57 @@ struct FlowInstruction {
     exposed: Option<usize>,
 }
 
+/// A finite union of definition identities: no seed yet, one, or several.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ValueOrigin {
+    Pending,
+    Definition(usize),
+    Mixed,
+}
+
 impl FlowGraph {
+    /// Transfers preserve contents; all other definitions introduce contents.
+    /// Union to a fixed point so a loop carrying its input unchanged keeps
+    /// that input's origin, but any path supplying a different definition
+    /// invalidates the whole downstream carry chain.
+    fn origins(&self, values: usize) -> Vec<Option<usize>> {
+        let mut origins = vec![ValueOrigin::Pending; values];
+        for value in self.entry_parameters.iter().copied().chain(self.blocks.iter().flat_map(
+            |block| {
+                block
+                    .instructions
+                    .iter()
+                    .filter_map(|instruction| instruction.result)
+            },
+        )) {
+            origins[value] = ValueOrigin::Definition(value);
+        }
+        loop {
+            let mut changed = false;
+            for (destination, source) in self.blocks.iter().flat_map(|block| &block.transfers) {
+                let origin = match (origins[*destination], origins[*source]) {
+                    (ValueOrigin::Pending, source) => source,
+                    (destination, ValueOrigin::Pending) => destination,
+                    (left, right) if left == right => left,
+                    _ => ValueOrigin::Mixed,
+                };
+                if origins[*destination] != origin {
+                    origins[*destination] = origin;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return origins
+                    .into_iter()
+                    .map(|origin| match origin {
+                        ValueOrigin::Definition(value) => Some(value),
+                        ValueOrigin::Pending | ValueOrigin::Mixed => None,
+                    })
+                    .collect();
+            }
+        }
+    }
+
     fn definitions(&self) -> impl Iterator<Item = usize> + '_ {
         self.entry_parameters
             .iter()
@@ -635,6 +693,7 @@ impl FlowGraph {
             .filter_map(|value| values[value])
             .collect();
         Ok(FunctionStoragePlan {
+            origins: self.origins(values.len()),
             values,
             slots,
             exposed,
@@ -956,6 +1015,70 @@ mod tests {
         }
         compare_execution(graph, &plan);
         plan
+    }
+
+    #[test]
+    fn unchanged_loop_carries_keep_one_origin_but_updates_do_not() {
+        for update in [false, true] {
+            let mut entry = block(&[], Vec::new(), &[0]);
+            entry.successors.push(1);
+            entry.transfers.push((1, 0));
+            let instructions = if update {
+                vec![define(2, &[1], Some(1))]
+            } else {
+                Vec::new()
+            };
+            let carried = if update { 2 } else { 1 };
+            let mut body = block(&[1], instructions, &[carried]);
+            body.successors.push(1);
+            body.transfers.push((1, carried));
+            let graph = FlowGraph {
+                entry_parameters: vec![0],
+                blocks: vec![entry, body],
+                coalesce: true,
+            };
+            let storage = plan(&graph, 3);
+            assert_eq!(storage.values[0], storage.values[1]);
+            assert_eq!(storage.holds_only(IrValueId(0)), !update);
+            if update {
+                assert_eq!(storage.values[0], storage.values[2]);
+            }
+        }
+    }
+
+    #[test]
+    fn carried_origins_follow_all_predecessors_without_relying_on_slot_equality() {
+        let mut entry = block(&[], Vec::new(), &[0]);
+        entry.successors.push(1);
+        entry.transfers.push((1, 0));
+        let mut body = block(&[1], Vec::new(), &[0, 1]);
+        body.successors.push(2);
+        body.transfers.push((2, 1));
+        let mut graph = FlowGraph {
+            entry_parameters: vec![0],
+            blocks: vec![entry, body, block(&[2], Vec::new(), &[2])],
+            coalesce: true,
+        };
+        let storage = plan(&graph, 3);
+        assert_ne!(storage.values[0], storage.values[1]);
+        assert_eq!(storage.origins, vec![Some(0); 3]);
+
+        let mut alternative = block(&[], vec![define(3, &[], None)], &[3]);
+        alternative.successors.push(2);
+        alternative.transfers.push((2, 3));
+        graph.blocks[0].successors.push(3);
+        graph.blocks.push(alternative);
+        assert_eq!(graph.origins(4), vec![Some(0), Some(0), None, Some(3)]);
+
+        let mut cycle = block(&[1], Vec::new(), &[1]);
+        cycle.successors.push(1);
+        cycle.transfers.push((1, 1));
+        let graph = FlowGraph {
+            entry_parameters: vec![0],
+            blocks: vec![block(&[], Vec::new(), &[0]), cycle],
+            coalesce: true,
+        };
+        assert_eq!(graph.origins(2), vec![Some(0), None]);
     }
 
     #[test]

@@ -1969,8 +1969,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// call when the definition has no result destination that the caller
     /// could have placed in that storage, no frame that outlives the call,
     /// no deferred hand-out, and no split part, and when the parameter's
-    /// slot is a complete allocation that only the parameter occupies and
-    /// no address exposes.
+    /// slot is a complete, unexposed allocation holding only the parameter
+    /// and block parameters carrying it unchanged on every incoming edge.
+    /// Transfers into a selected slot are elided by `emit_place_edge`;
+    /// updates, reinitializations and other definitions keep the entry copy.
     fn select_incoming_places(&mut self, public: &FunctionAbi, abi: &FunctionAbi, waiting: bool) {
         if waiting
             || public.result().uses_destination()
