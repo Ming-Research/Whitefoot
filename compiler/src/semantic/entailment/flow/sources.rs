@@ -21,8 +21,9 @@ use super::super::super::model::{
 use super::super::super::places::CapturedTerm;
 use super::super::fragment_type;
 use super::super::state::{
-    DerivationId, DerivationNode, FactState, FlowEventId, FlowEventKind, ImplicitBoundKind,
-    Relation, close, implicit_bound_between, ordered,
+    DerivationId, DerivationNode, DistinctKey, FactState, FlowEventId, FlowEventKind,
+    ImplicitBoundKind, Relation, close, distinct_key, implicit_bound_between,
+    zero_distinct_candidate,
 };
 use super::super::term::{
     CountedCaptureSide, MeasurePlacement, PlaceRoot, PlaceStep, ResolvedPlace, TermId, TermKind,
@@ -1954,14 +1955,14 @@ impl Vocabulary {
     fn delivery_image_distinct_bound(
         &self,
         image: &FactState,
-        pair: (TermId, TermId),
+        pair: DistinctKey,
         receiver: TermId,
     ) -> Option<(TermId, TermId, DeliveryImageBound)> {
-        [pair, (pair.1, pair.0)]
+        [pair, (pair.1, pair.0, -pair.2)]
             .into_iter()
-            .find_map(|(left, right)| {
+            .find_map(|(left, right, difference)| {
                 let edge = self.delivery_image_bound(image, (left, right), receiver)?;
-                (edge.bound() <= -1).then_some((left, right, edge))
+                (edge.bound() < difference).then_some((left, right, edge))
             })
     }
 
@@ -2037,7 +2038,7 @@ impl Vocabulary {
         &mut self,
         edge: DeliveryImageBound,
         (left, right): (TermId, TermId),
-        pair: (TermId, TermId),
+        pair: DistinctKey,
         receiver: TermId,
     ) -> DerivationId {
         let (strict, give) = match self.delivery_image_transitive(edge, (left, right), receiver) {
@@ -2066,12 +2067,17 @@ impl Vocabulary {
             Err((_, transitive, give)) => (transitive, give),
         };
         let other = if pair.0 == receiver { pair.1 } else { pair.0 };
-        let carrier_pair = ordered(give.carrier, other);
+        let carrier_pair = if pair.0 == receiver {
+            distinct_key(give.carrier, other, pair.2)
+        } else {
+            distinct_key(other, give.carrier, pair.2)
+        };
         let parent = self
             .derivations
             .intern(DerivationNode::DisequalityFromStrictBound {
                 left: carrier_pair.0,
                 right: carrier_pair.1,
+                difference: carrier_pair.2,
                 parent: strict,
             });
         self.derivations.intern(DerivationNode::PostconditionGive {
@@ -2081,7 +2087,7 @@ impl Vocabulary {
             relation: Box::new(Relation::Distinct {
                 left: pair.0,
                 right: pair.1,
-                difference: 0,
+                difference: pair.2,
             }),
             event: give.event,
             parent,
@@ -2283,7 +2289,10 @@ impl Vocabulary {
             target.establish_from_proof(&relation, proof, &self.derivations);
         }
 
-        // [ENT-5] each disequality held by all. An image holds a disequality
+        // [ENT-5] finite candidates held by all: established offsets in a
+        // contributing image, and zero-offset pairs derived in every image.
+        // Derived-only nonzero exclusions are not candidates.
+        // An image holds a disequality
         // when it stores it or a strict bound of its own derives it [ENT-4],
         // a bound held through the receiver's Z bound and the other term's
         // implicit bound included; images store only the disequalities among
@@ -2316,10 +2325,10 @@ impl Vocabulary {
         ) && lowest_to_zero.saturating_add(lowest_from_zero) <= -2
         {
             for other in self.terms.ids() {
-                if other == receiver || other == ZERO {
+                if other == ZERO || !zero_distinct_candidate(&self.terms, receiver, other) {
                     continue;
                 }
-                let pair = ordered(receiver, other);
+                let pair = distinct_key(receiver, other, 0);
                 if candidates.contains(&pair) {
                     continue;
                 }
@@ -2360,20 +2369,23 @@ impl Vocabulary {
                     .iter()
                     .flatten()
                     .any(|proof| self.derivations.depends_on_postcondition_call(*proof));
-            if [pair, (pair.1, pair.0)].into_iter().any(|(left, right)| {
-                self.delivery_join_implied(
-                    target,
-                    (left, right),
-                    -1,
-                    context.receiver,
-                    call_dependent,
-                ) || target
-                    .bounds
-                    .candidate_minimum((left, right), |proof| {
-                        call_dependent || !self.derivations.depends_on_postcondition_call(proof)
-                    })
-                    .is_some_and(|bound| bound <= -1)
-            }) {
+            if [pair, (pair.1, pair.0, -pair.2)]
+                .into_iter()
+                .any(|(left, right, difference)| {
+                    self.delivery_join_implied(
+                        target,
+                        (left, right),
+                        difference - 1,
+                        context.receiver,
+                        call_dependent,
+                    ) || target
+                        .bounds
+                        .candidate_minimum((left, right), |proof| {
+                            call_dependent || !self.derivations.depends_on_postcondition_call(proof)
+                        })
+                        .is_some_and(|bound| bound < difference)
+                })
+            {
                 continue;
             }
             if ordinary_only
@@ -2401,7 +2413,7 @@ impl Vocabulary {
             let relation = Relation::Distinct {
                 left: pair.0,
                 right: pair.1,
-                difference: 0,
+                difference: pair.2,
             };
             let proof = self
                 .derivations

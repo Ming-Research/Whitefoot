@@ -1,0 +1,21 @@
+fn probe(cursor: u64, flag: Bool) -> result: unit pure {
+  doc "The second input excludes a different constant, so four remains possible after the join.";
+  if flag {
+    if cursor == 4_u64 {
+      return unit;
+    }
+  } else {
+    if cursor == 3_u64 {
+      return unit;
+    }
+  }
+  let marker = 0_u8;
+  if cursor <= 4_u64 {
+    invariant tightened: cursor <= 3_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

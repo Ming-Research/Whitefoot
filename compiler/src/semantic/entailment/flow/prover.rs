@@ -1467,18 +1467,17 @@ impl Reasoning<'_, '_, '_> {
     ) -> Option<ProofResult> {
         let left_term = self.captured_index_term(left)?;
         let right_term = self.captured_index_term(right)?;
-        let relation = if left_term <= right_term {
-            Relation::Distinct {
-                left: left_term,
-                right: right_term,
-                difference: 0,
-            }
-        } else {
-            Relation::Distinct {
-                left: right_term,
-                right: left_term,
-                difference: 0,
-            }
+        let (left_base, left_constant) = self.vocabulary.terms.constant_part(left_term);
+        let (right_base, right_constant) = self.vocabulary.terms.constant_part(right_term);
+        let (left_base, right_base, difference) = super::super::state::distinct_key(
+            left_base,
+            right_base,
+            right_constant - left_constant,
+        );
+        let relation = Relation::Distinct {
+            left: left_base,
+            right: right_base,
+            difference,
         };
         let left_image = state
             .affine
@@ -3238,14 +3237,19 @@ pub(super) fn affine_consequence_from_residual(
     AffineConsequenceProof { premises, parents }
 }
 
-pub(super) fn normalize_distinct_requests(requests: &mut [BoundsRequest]) {
+pub(super) fn normalize_distinct_requests(requests: &mut [BoundsRequest], terms: &TermTable) {
     for request in requests {
         if request.distinct
             && let Some(left) = request.left
-            && request.right < left
         {
-            request.left = Some(request.right);
-            request.right = left;
+            let (left, left_constant) = terms.constant_part(left);
+            let (right, right_constant) = terms.constant_part(request.right);
+            let difference = request.bound + right_constant - left_constant;
+            let (left, right, difference) =
+                super::super::state::distinct_key(left, right, difference);
+            request.left = Some(left);
+            request.right = right;
+            request.bound = difference;
         }
     }
 }
@@ -3256,7 +3260,7 @@ pub(super) fn request_relation(request: &BoundsRequest) -> Option<Relation> {
         Relation::Distinct {
             left,
             right: request.right,
-            difference: 0,
+            difference: request.bound,
         }
     } else {
         Relation::Bound {
