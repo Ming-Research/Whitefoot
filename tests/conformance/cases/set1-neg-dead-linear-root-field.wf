@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Token {
+  value: u8;
+}
+
+struct Holder {
+  token: Token;
+}
+
+fn transfer(input: Holder) -> transferred: Holder pure {
+  return move input;
+}
+
+fn close(finished: Holder) -> closed: u8 pure {
+  let Holder(token: contained) = move finished;
+  let Token(value: observed) = move contained;
+  return observed;
+}
+
+fn main() -> status: ExitStatus pure {
+  let initial = Token(value: 41_u8);
+  let log = Holder(token: move initial);
+  let next = transfer(input: move log);
+  set log.token = Token(value: 42_u8);
+  let final_value = close(finished: move next);
+  return exit_status(code: final_value);
+}

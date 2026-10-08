@@ -1,4 +1,4 @@
-# Kernel Specification v0.99
+# Kernel Specification v0.98
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -598,6 +598,7 @@ A `for_stmt` binder is compiler-updated state and is never source-writable; a ta
 A place projected, dereferenced, or subscripted from a dead root is never writable; a dead binding is writable only as the complete binding, and that commit reinitializes it [OWN-1, OWN-11].
 These specific rules own their stated violations; every other failure of this closed writability relation cites SET-1 at the complete target `place` child of the `set_stmt`, carrying the resolved root class and the required writable classes.
 
+T is copy or affine under [OWN-1].
 The right-hand side is then checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules.
 The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable and that the target root is live.
 If the right-hand side moved a strict prefix of the target place, the commit is a later write of a dead root under OWN-1.
@@ -819,8 +820,7 @@ This vocabulary is ordinary: a user function may declare the same rows a built-i
 A move out of a field or out of `Box` content consumes the whole owner: the owner ceases to exist, its other affine parts take their compiler-derived release [STOR-3], and a remaining linear part is a hard error citing WIN-3 at the complete consumed `place`, with a repair [DIAG-1].
 A destructuring consume binds the fields it names and covers the rest with `..` [GRAM-4], and an own-place `arm` does the same [GRAM-10].
 A move out of a window slot or an array element is a hard error citing WIN-3 at that `place`, with a repair [DIAG-1].
-Assigning over a live owned place releases the old value when it is affine and is a hard error citing WIN-3 at the target `place` when it is linear.
-A dead binding holds no old value, and its reinitialization [SET-1] releases nothing.
+Assigning over any owned place releases the old value when it is affine and is a hard error citing WIN-3 at the target `place` when it is linear.
 At scope exit the compiler releases the slots inside the window recursively and frees the block; an `Array` releases every slot.
 No operation releases a linear element: a storage whose element type is linear is itself linear [PROV-6] and the program must take every element out and consume it, and then, with the storage proved empty, call `free_empty` [OP-14].
 That one route also consumes a `Box` whose content is such a window, freeing the cell with it [OP-14].
