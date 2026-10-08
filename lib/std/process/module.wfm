@@ -30,4 +30,4 @@ public fn meter_share(meter: &MemoryMeter) -> result: MemoryMeter reads(meter) d
 
 public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Returns the program heap bytes counted as specified by PRE-2.";
 
-public fn resident_bytes(meter: &MemoryMeter) -> bytes: u64 writes(meter) doc "Returns the operating system resident set size of this process in bytes.";
+public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter) doc "Returns Some resident bytes reported by the host, or None when unavailable.";

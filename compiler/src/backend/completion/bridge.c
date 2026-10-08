@@ -1013,7 +1013,7 @@ static wf_pool_block *wf_pool_released[WF_POOL_CLASSES];
 static unsigned char *wf_pool_cursor;
 static size_t wf_pool_remaining;
 static atomic_flag wf_pool_lock = ATOMIC_FLAG_INIT;
-static uint64_t wf_pool_live_bytes;
+static int64_t wf_pool_live_bytes;
 
 static void wf_spin_lock(atomic_flag *flag) {
     while (atomic_flag_test_and_set_explicit(flag, memory_order_acquire)) {
@@ -1089,7 +1089,7 @@ static void *wf_pool_take(size_t bytes, size_t *granted) {
     void *block;
     wf_spin_lock(&wf_pool_lock);
     block = wf_pool_take_locked(bytes, granted);
-    wf_pool_live_bytes += *granted;
+    wf_pool_live_bytes += (int64_t)*granted;
     wf_spin_unlock(&wf_pool_lock);
     return block;
 }
@@ -1149,7 +1149,7 @@ static void wf_pool_give(void *block, size_t granted) {
         return;
     }
     wf_spin_lock(&wf_pool_lock);
-    wf_pool_live_bytes -= granted;
+    wf_pool_live_bytes -= (int64_t)granted;
     if (granted > WF_POOL_LARGEST) {
         wf_spin_unlock(&wf_pool_lock);
         wf_pool_host_release(block, granted);
@@ -1294,18 +1294,19 @@ _Static_assert(sizeof(uintptr_t) <= sizeof(uint64_t), "a group word holds a cont
  * Slots outlive threads, since a block may be freed on another driver.
  * A slot is single-writer. Relaxed atomic loads/stores permit concurrent
  * observation without an atomic read-modify-write on the allocation path.
- * Unsigned deltas deliberately wrap: cross-driver frees can make one slot
- * negative, while their sum after synchronization is the live byte count. */
+ * Cross-driver frees can make one signed slot negative. A reading sums the
+ * slots with the pool and clamps a negative total, rather than exposing an
+ * unsigned wraparound as a huge allocation. This is not a snapshot. */
 #define WF_HEAP_COUNTERS (1u + WF_DRIVER_LIMIT + WF_SCHED_MAX_THREADS)
 typedef struct {
-    _Alignas(64) _Atomic uint64_t bytes;
+    _Alignas(64) _Atomic int64_t bytes;
 } wf_heap_counter;
 static wf_heap_counter wf_heap_counters[WF_HEAP_COUNTERS];
 static _Atomic unsigned wf_heap_counter_count;
 static _Thread_local wf_heap_counter *wf_heap_self;
-static _Thread_local uint64_t wf_heap_local_bytes;
+static _Thread_local int64_t wf_heap_local_bytes;
 
-static void wf_heap_change(uint64_t increase, uint64_t decrease) {
+void wf__heap_change(int64_t change) {
     if (wf_heap_self == NULL) {
         unsigned index = atomic_fetch_add_explicit(
             &wf_heap_counter_count, 1u, memory_order_relaxed);
@@ -1314,28 +1315,12 @@ static void wf_heap_change(uint64_t increase, uint64_t decrease) {
         }
         wf_heap_self = &wf_heap_counters[index];
     }
-    wf_heap_local_bytes += increase;
-    wf_heap_local_bytes -= decrease;
+    wf_heap_local_bytes += change;
     atomic_store_explicit(&wf_heap_self->bytes, wf_heap_local_bytes, memory_order_relaxed);
 }
 
-void *wf__heap_take(uint64_t bytes) {
-    void *block = malloc((size_t)bytes);
-    if (block != NULL) {
-        wf_heap_change(bytes, 0);
-    }
-    return block;
-}
-
-void wf__heap_give(void *block, uint64_t bytes) {
-    if (block != NULL) {
-        wf_heap_change(0, bytes);
-    }
-    free(block);
-}
-
 uint64_t wf__heap_in_use(void) {
-    uint64_t bytes;
+    int64_t bytes;
     wf_spin_lock(&wf_pool_lock);
     bytes = wf_pool_live_bytes;
     wf_spin_unlock(&wf_pool_lock);
@@ -1348,10 +1333,10 @@ uint64_t wf__heap_in_use(void) {
 #if defined(_WIN32)
     bytes += wf__windows_registry_bytes();
 #endif
-    return bytes;
+    return bytes < 0 ? 0 : (uint64_t)bytes;
 }
 
-uint64_t wf__resident_bytes(void) {
+int wf__resident_bytes(uint64_t *bytes) {
 #if defined(__linux__)
     /* statm reports current resident pages; ru_maxrss is a high-water mark.
      * Use a stack buffer and descriptor I/O, not stdio's allocated buffer. */
@@ -1359,38 +1344,56 @@ uint64_t wf__resident_bytes(void) {
     int descriptor = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
     ssize_t count;
     if (descriptor < 0) {
-        wf_bridge_fail("cannot open the process resident-set reading");
+        return 0;
     }
     do {
         count = read(descriptor, buffer, sizeof(buffer) - 1u);
     } while (count < 0 && errno == EINTR);
     (void)close(descriptor);
     if (count <= 0) {
-        wf_bridge_fail("cannot read the process resident set");
+        return 0;
     }
     buffer[count] = 0;
     char *end;
+    errno = 0;
     (void)strtoull(buffer, &end, 10);
-    unsigned long long pages = strtoull(end, &end, 10);
-    long page_bytes = sysconf(_SC_PAGESIZE);
-    if (page_bytes <= 0 || pages > UINT64_MAX / (uint64_t)page_bytes) {
-        wf_bridge_fail("invalid process resident-set reading");
+    if (end == buffer || errno == ERANGE) {
+        return 0;
     }
-    return (uint64_t)pages * (uint64_t)page_bytes;
+    char *resident = end;
+    while (*resident == ' ' || *resident == '\t') {
+        ++resident;
+    }
+    if (*resident < '0' || *resident > '9') {
+        return 0;
+    }
+    unsigned long long pages = strtoull(resident, &end, 10);
+    long page_bytes = sysconf(_SC_PAGESIZE);
+    if (errno == ERANGE || (*end != ' ' && *end != '\t' && *end != '\n') ||
+            page_bytes <= 0 || pages > UINT64_MAX / (uint64_t)page_bytes) {
+        return 0;
+    }
+    *bytes = (uint64_t)pages * (uint64_t)page_bytes;
+    return 1;
 #elif defined(__APPLE__)
     mach_task_basic_info_data_t information;
     mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
     if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
             (task_info_t)&information, &count) != KERN_SUCCESS) {
-        wf_bridge_fail("cannot read the process resident set");
+        return 0;
     }
-    return (uint64_t)information.resident_size;
+    *bytes = (uint64_t)information.resident_size;
+    return 1;
 #elif defined(_WIN32)
     PROCESS_MEMORY_COUNTERS information;
     if (!GetProcessMemoryInfo(GetCurrentProcess(), &information, sizeof(information))) {
-        wf_bridge_fail("cannot read the process resident set");
+        return 0;
     }
-    return (uint64_t)information.WorkingSetSize;
+    *bytes = (uint64_t)information.WorkingSetSize;
+    return 1;
+#else
+    (void)bytes;
+    return 0;
 #endif
 }
 

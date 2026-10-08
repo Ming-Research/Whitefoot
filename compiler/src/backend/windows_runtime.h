@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-uint64_t wf__windows_registry_bytes(void);
+int64_t wf__windows_registry_bytes(void);
 
 /* Native name bytes in one component, shared by call storage and host leaves. */
 #define WF_WINDOWS_COMPONENT_MAX_BYTES 510u

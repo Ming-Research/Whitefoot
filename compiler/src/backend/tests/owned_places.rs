@@ -1618,8 +1618,7 @@ fn boxed_runtime_ring_wraps_and_releases_each_owner_in_order() {
     let partial = format!("{partial}  return std::process::exit_status(code: 0_u8);\n}}\n");
     let host = allocation_observer(5, 0).replace(
         "held[id] = allocation;",
-        "memset(allocation, 0xa5, size);\n    held[id] = allocation;
-    requested[id] = size;",
+        "memset(allocation, 0xa5, size);\n    held[id] = allocation;",
     );
     for source in [source, partial.as_str()] {
         let module = compile(source.as_bytes());

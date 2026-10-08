@@ -7,6 +7,8 @@ pub const ORDINARY_VALUES_HEADER: &str = include_str!("ordinary_values.h");
 pub const ORDINARY_VALUES_SOURCE: &str = include_str!("ordinary_values.c");
 /// Ordinary linked view definitions using the shared Whitefoot callable ABI.
 pub const ORDINARY_VALUES_LLVM: &str = include_str!("ordinary_values.ll");
+/// Counted libc allocation wrappers, linked only for emitted heap references.
+pub const HEAP_SOURCE: &str = include_str!("heap.c");
 
 /// The finite completion core contract embedded in the compiler.
 pub const COMPLETION_CONTRACT_HEADER: &str = include_str!("completion/contract.h");
@@ -117,11 +119,13 @@ mod tests {
         remaining
     }
 
-    /// Only the counted heap entry points may call libc's allocator. The
-    /// Windows descriptor registry retains its separate host-heap API.
+    /// Every unconditional unit must remain allocator-free [STOR-8, MOD-9].
+    /// Only the optional heap unit may call libc's allocator; Windows keeps
+    /// its descriptor registry's separate host-heap API.
     #[test]
     fn runtime_allocator_calls_are_confined_to_counted_entry_points() {
         let units = [
+            ("heap.c", HEAP_SOURCE),
             ("ordinary_values.h", ORDINARY_VALUES_HEADER),
             ("ordinary_values.c", ORDINARY_VALUES_SOURCE),
             ("ordinary_values.ll", ORDINARY_VALUES_LLVM),
@@ -170,7 +174,7 @@ mod tests {
         ];
         for (name, source) in units {
             let remaining;
-            let source = if name == "completion/bridge.c" {
+            let source = if name == "heap.c" {
                 remaining = without_heap_entry_points(source);
                 remaining.as_str()
             } else {
@@ -201,7 +205,7 @@ mod tests {
             }
         }
         // A forbidden call beside either allowed body remains visible.
-        let injected = format!("{COMPLETION_BRIDGE_SOURCE}\nvoid bad(void) {{ free(0); }}");
+        let injected = format!("{HEAP_SOURCE}\nvoid bad(void) {{ free(0); }}");
         assert!(calls(&without_heap_entry_points(&injected), "free"));
         assert!(calls("  p = malloc (n);", "malloc"));
         assert!(calls("call void @free(ptr %p)", "free"));

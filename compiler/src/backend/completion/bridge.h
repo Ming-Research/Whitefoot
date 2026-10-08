@@ -464,15 +464,20 @@ void wf__watch_written(wf_watch_list *list);
 enum { WF_WATCH_WRITTEN = 1, WF_WATCH_EARLY };
 void wf__watch_seen(unsigned moment);
 
+/* Emitted heap storage uses the optional heap.c unit; accounting and reads
+ * are always available without allocator references. Resident observation
+ * returns 1 with bytes written, or 0 when the host cannot report it. */
+void *wf__heap_take(uint64_t bytes);
+void wf__heap_give(void *block, uint64_t bytes);
+void wf__heap_change(int64_t change);
+uint64_t wf__heap_in_use(void);
+int wf__resident_bytes(uint64_t *bytes);
+
 /* What the runtime's concurrent maps take from this runtime: the number of
  * the driver running the caller, below WF_CMAP_MAX_USERS, which numbers a
  * map's users; blocks from the context pool, never from the program's
  * allocator [STOR-8]; a yield of the processor; and the end a frame no
  * memory can hold brings. */
-void *wf__heap_take(uint64_t bytes);
-void wf__heap_give(void *block, uint64_t bytes);
-uint64_t wf__heap_in_use(void);
-uint64_t wf__resident_bytes(void);
 unsigned wf__driver_index(void);
 void *wf__runtime_take(uint64_t bytes);
 void wf__runtime_give(void *block, uint64_t bytes);

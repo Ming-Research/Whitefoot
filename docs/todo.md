@@ -2457,39 +2457,41 @@ rarely insert at the same place.
   overlap and the distinct-capacity witness is admitted. Reopen with the
   first shared generic storage algorithm needing that call.
 
-- **Settle concurrent memory-reading semantics before using them for eviction.**
-  Proposal A's independently sampled driver deltas do not form a snapshot:
-  a read can sample driver A at zero, A can allocate eight bytes and transfer
-  the block to B, B can release it, and the read can then sample B at minus
-  eight. The unsigned sum is then near the maximum despite no live block.
-  This contradicts a reading of live requested bytes. The
-  [implementation findings](../research/investigations/memory-statistics/README.md#implementation-findings)
-  keep this open; choose a snapshot algorithm or explicitly bounded
-  observation semantics before claiming completion, and validate that exact
-  interleaving as well as the joined zero balance. Do not use saturation to
-  conceal the mismatch. The draft context program runs at requested driver
-  counts one and four, but actual multi-driver execution remains unverified:
-  the existing runtime falls back to one without a native ring.
+- **Bound signed lifetime allocation deltas before completing memory statistics.**
+  Driver A can repeatedly allocate a block and hand it to B for release;
+  the live heap stays bounded while A's positive and B's negative deltas
+  grow without bound. Signed 64-bit counters and intermediate signed sums
+  therefore need a representation argument or an approved rebasing scheme;
+  live address-space bounds alone do not supply one. The current draft can
+  overflow in such an execution. Do not conceal this with wrapping,
+  saturation or a runtime stop. Reopen before completion with a primary-agent
+  decision, and validate repeated cross-driver transfer with counters near
+  their limits, including partial sums whose final total fits.
 
-- **Preserve allocator-free linkage when adding counted heap wrappers.**
-  A no-heap entry returning only exit_status emits no allocation, but linking
-  completion/bridge.c now brings its wf__heap_take/wf__heap_give libc
-  references into that executable. The existing waiting-context and
-  concurrent-map decisions promise an allocator-free runtime for that entry.
-  Isolate the counted allocator wrappers into an optional native object while
-  retaining shared counters in the unconditional runtime; review the native
-  link inventory and prove a no-heap native link without an allocator. This
-  is an unresolved integration requirement of the memory-statistics draft,
-  to reopen before its completion rather than weaken the no-heap promise.
+- **Verify memory readings with observed driver participation.** The context
+  program checks completed allocations and exact balance after joining at
+  requested driver counts one and four; it cannot identify which counters
+  contributed. Existing context cases expose no driver participation report,
+  and a host without a usable native ring runs one driver. Add a forwarding
+  native allocation observer when qualifying several-driver accounting; it
+  must show at least two allocation writers, without changing scheduling,
+  and cover a read spanning transfer and release as well as joined balance.
 
-- **Define failure of the resident-set observation.** The proposed
-  resident_bytes result is u64, but Linux can refuse opening
-  /proc/self/statm, including in a process without that proc mount or with
-  exhausted descriptors. A fabricated zero would not be a resident-set
-  reading; the draft stops in the host runtime. Determine whether the host
-  availability is an execution prerequisite or the API needs an ordinary
-  error outcome, then validate that selected failure behavior on each host
-  before calling the interface complete.
+- **Migrate retained allocation experiments before rerunning them.** The
+  memory-statistics emitter now calls wf__heap_take and the size-aware
+  wf__heap_give. Container-representation Makefiles and the families ABI
+  adapters still intercept malloc/free, and their cost harnesses retain
+  one-argument release functions; the compute radix phase observer and
+  buffer-initialization runner also recognize the former symbols. These
+  scripts can miss observations or fail when used with this compiler.
+  Update symbol selection and the WF release ABI together, retain the C
+  controls' intended comparison, and demonstrate wrong release sizes are
+  detected before collecting fresh measurements. Deferred because these
+  experiments are outside the correctness gate and no run is requested;
+  reopen before their next use, not by interpreting old measurements as
+  results of the counted runtime.
+
+- **Route Paged's page and directory allocations through wf__heap_take/wf__heap_give when Paged lands; validate matching allocation and release sizes.**
 
 ## Modules and libraries
 

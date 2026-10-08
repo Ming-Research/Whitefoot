@@ -716,7 +716,6 @@ fn emit_cleanup_jobs(
         match job {
             CleanupJob::FreePointer { pointer, referent } => {
                 let bytes = allocation_bytes(program, output, temporary, referent, &pointer)?;
-                output.symbol("wf__heap_give");
                 {
                     output.symbol("wf__heap_give");
                     writeln!(output, "  call void @wf__heap_give(ptr {pointer}, i64 {bytes})")
@@ -1192,7 +1191,7 @@ pub(super) fn allocation_bytes(
     };
     let element_type = output.type_name(
         program,
-                program.element(element).ok_or(BackendFailure::InvalidIr)?,
+        program.element(element).ok_or(BackendFailure::InvalidIr)?,
     )?;
     let count_address = next_temporary(temporary)?;
     let count = next_temporary(temporary)?;

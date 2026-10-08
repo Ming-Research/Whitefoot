@@ -15,8 +15,8 @@ by the resident set would overshoot and oscillate.
 
 firn, the Redis-compatible server written in Whitefoot, needs that number:
 its deployment milestone requires memory-bounded operation. A Whitefoot
-program cannot read it today. Nothing in the standard library reports what
-the program's heap holds.
+program on the base of this branch cannot read it; this branch adds the
+standard-library observation of what the program's heap holds.
 
 The question is what a program should be able to read about its own
 memory, and how the implementation counts it, cheaply enough to be read
@@ -24,12 +24,12 @@ before every write command.
 
 ## Where a Whitefoot program's memory comes from
 
-- **Emitted code.** A `Box` is allocated with `malloc` of its content's
-  size and released with `free` (`compiler/src/backend/emitter/boxes.rs`),
+- **Emitted code.** A `Box` is allocated with `wf__heap_take` of its content's
+  size and released with `wf__heap_give` (`compiler/src/backend/emitter/boxes.rs`),
   and runtime-capacity storage, runs and segments do the same
   (`emitter/buffer.rs`, `runs.rs`, `segments.rs`, `cleanup.rs`).
-  `Paged<T>` (open PR #263) allocates its pages and page directory with
-  direct `malloc` and `free`. Each release site knows the size it frees:
+  `Paged<T>` is absent from this checkout; its page and directory allocations
+  must adopt these wrappers when it lands. Each release site knows the size it frees:
   the type for a `Box`, the stored capacity for the others.
 - **The runtime's pool** (`completion/bridge.c`, `wf_pool_take`/`give`).
   Under one spin lock it grants size classes and maps larger blocks. It
@@ -38,9 +38,9 @@ before every write command.
 - **The host heap,** for one descriptor registry on Windows
   (`windows_runtime.c`).
 
-The runtime's sources may not call `malloc` or `free` themselves
-(`compiler/src/backend/runtime.rs`, the allocator assertions), so only the
-emitted code and Paged reach libc's heap.
+Only the optional `heap.c` wrappers may call libc's allocator
+(`compiler/src/backend/runtime.rs`, the allocator assertions). Counter
+storage and observations in the always-linked bridge call no allocator.
 
 ## Candidates
 
@@ -54,7 +54,9 @@ emitted code and Paged reach libc's heap.
     allocation, at the cost of a sum over drivers on each read.
   - Cost: one call layer and one add to a driver-local counter per
     allocation and free, with no shared write.
-  - The count is exact in requested bytes, and includes every source above.
+  - The count is exact when allocations and releases are quiescent; emitted
+    storage contributes requested bytes and pool storage contributes granted
+    bytes. Concurrent reads have the bounded error described below.
 - **B. Count usable sizes at release.** Wrap `free` and ask the allocator
   for the block's size (`malloc_usable_size`, `malloc_size`, `_msize`),
   as Redis 7.0.15's `zmalloc_size` does where its allocator offers it. This needs no size at the
@@ -73,15 +75,15 @@ emitted code and Paged reach libc's heap.
 
 A read of a quantity other contexts change concurrently follows the
 existing host pattern of `now(clock: &Clock)`: a capability handed to the
-entry, whose reads are ordered through it. A sketch, to be settled with the
-candidate:
+entry, whose reads are ordered through it. The selected interface is:
 
 ```
-public opaque struct MemoryMeter { }
+public opaque nocopy struct MemoryMeter { }
 public fn heap_in_use(meter: &MemoryMeter) -> bytes: u64 writes(meter)
+public fn resident_bytes(meter: &MemoryMeter) -> bytes: Option<u64> writes(meter)
 ```
 
-`Inputs` would gain the meter, and `meter_share` would give one to another
+`Inputs` gains the meter, and `meter_share` gives one to another
 context, as `clock_share` does.
 
 A reading depends on how other contexts' allocations interleave, so it is
@@ -89,12 +91,12 @@ an input of the execution [WAIT-2], as a clock reading is: a program may
 branch on it, as firn's eviction must, without making its acceptance depend
 on the host.
 
-A counts the bytes the program requested, where Redis counts the
+A counts emitted storage's requested bytes and the pool's granted bytes, where Redis counts the
 allocator's usable sizes, which round each request up to a size class. For
-the same dataset firn's reading is therefore lower than an allocator-exact
-one by the rounding, and `maxmemory` bounds the data rather than the
-allocator's footprint; the resident set reported beside it shows the
-difference.
+the same emitted allocation requests, the difference is libc's rounding;
+pool grants include their own size-class rounding. `maxmemory` bounds the
+counted storage, while a resident-set reading includes retained resident
+pages and other process mappings and is not a measurement of that rounding.
 
 ## Proposal
 
@@ -103,14 +105,16 @@ A, with D's resident set as a second reading for `INFO`.
 The validation is stated before implementing:
 - a program case whose reading grows by at least the size of a box it
   allocates and returns to within a bound after release;
-- the count stays exact under contexts allocating on several drivers;
+- the count is exact after contexts allocating on several drivers join,
+  with separate evidence that at least two drivers contributed and that a
+  concurrent reading obeys the selected error bound;
 - the cost of the counting layer is measured on firn's redis-bench at
   depth 1 and 16, the rule being that the counted build loses no more than
   1% against the uncounted one on the 14900K.
 
 ## Status
 
-Proposal A, including the resident-set reading from D, is being implemented on this branch following owner approval. CI correctness validation and the stated firn performance comparison remain outstanding.
+Proposal A, including the resident-set reading from D, is being implemented on this branch following owner approval. The primary agent selected signed per-driver counters, a clamped non-instantaneous sum, allocator-free heap-free linkage and an optional resident-set result. Signed lifetime-delta overflow remains an interface/representation gap for the primary agent. CI correctness validation and the stated firn performance comparison remain outstanding.
 
 ## Implementation findings
 
@@ -133,37 +137,74 @@ atomic stores to avoid a C data race with reads; it needs no shared atomic
 read-modify-write for each allocation. Counter slots persist through driver
 shutdown because allocation and release may occur on different drivers.
 
-Summing independently sampled counters is exact after the allocating contexts
-have joined; it is not an instantaneous snapshot while other contexts update
-them. In particular, cross-driver allocation and release can be observed on
-different sides of a read: sample A at zero, allocate eight bytes on A,
-transfer and free them on B, then sample B at minus eight; the unsigned sum
-is near its maximum although no block remains. The required semantics and acceptable error during
-such a read remain an implementation question to settle before this can be
-claimed ready for eviction. The branch has not substituted a snapshot claim
-or a saturating fallback for that question.
+Summing independently sampled counters is exact when no other context
+allocates or releases during the reading. Otherwise the reading may differ
+from the holding at every single instant by at most the bytes those
+concurrent operations moved; either reading is an execution input [WAIT-2].
+All counters, including the pool and Windows registry, are signed 64-bit
+values. The read sums with signed arithmetic and clamps a negative total to
+zero. For example, sample A at zero, allocate eight bytes on A, transfer and
+free them on B, then sample B at minus eight: the result is zero rather than
+an unsigned value near its maximum. This implements the selected observation
+semantics rather than claiming an instantaneous snapshot.
+
+One representation question remains: a driver can allocate a block repeatedly
+while another driver releases it. Their lifetime deltas grow in opposite
+directions without bound even though the live heap never exceeds one block.
+Signed counters and intermediate sums can overflow. The selected 64-bit
+representation therefore needs a bound or a rebasing decision before
+completion; this branch has not added wrapping, a saturating counter or a
+runtime termination check to hide the gap. `docs/todo.md` records the witness
+and boundary validation to perform after that decision.
 
 This checkout has no Paged implementation. Its existing direct-allocation
 sites are boxes, runtime-capacity windows, buffers and segments. Adoption of
 Paged must use the same counted allocation and size-aware release ABI.
 
 The resident-set paths use `/proc/self/statm` on Linux, `task_info` on macOS
-and `GetProcessMemoryInfo` on Windows. The u64-only interface has no outcome
-for failure to obtain that reading; the draft implementation reports a host
-failure rather than fabricating zero. Whether that failure belongs outside
-the execution boundary or needs an ordinary result is unresolved.
+and `GetProcessMemoryInfo` on Windows. The selected result is `Option<u64>`:
+host failure returns `None`, including an unavailable proc mount, failed
+task-info query or failed Windows process query. A successful query returns
+`Some` of the byte count. No failure to obtain this reading terminates the
+program. The ordinary C representation and LLVM register-return wrapper use
+the existing tag-and-payload ABI.
 
-The existing allocation observers are being migrated to the two-argument
-release ABI and retain allocation-request sizes to detect an incorrect size
-at release. No local build, test, format check or performance measurement was
-run for this implementation; the primary session owns CI validation.
+The formal allocation observers use the two-argument release ABI and retain
+allocation-request sizes to detect an incorrect size at release. Retained
+research adapters still matching `malloc`/`free` need migration before reuse;
+their scope and validation are recorded in `docs/todo.md`. No local build,
+test, format check or performance measurement was run for this implementation;
+the primary session owns CI validation.
 
-The counted wrappers currently live in the always-linked completion bridge.
-That introduces libc allocator references even for a no-heap entry, contrary
-to the existing allocator-free runtime linkage commitment. An optional native
-object for the two wrappers is the proposed integration repair, still to be
-selected and wired by the primary session; the emitter and source no-heap
-acceptance have not been weakened.
+The counted wrappers live in `heap.c`; only emitted heap references select
+that unit in the compiler's fresh and cached link paths. Native Makefile
+callers receive it as an archive member, extracted only when referenced.
+The completion probe inventories and Windows link list include the unit,
+and the shared test-link builders select it for emitted heap dependencies.
+The existing allocator-source assertion again checks the whole completion
+bridge; only `heap.c` has a narrowly delimited exception. The driver inventory
+test checks that a memory reading alone selects no heap unit and either heap
+entry point does. All linkage execution remains pending CI.
+
+The context program follows `compiler/tests/programs/contexts.rs` and
+`parallel.rs`: it requests one and four drivers with `WF_DRIVERS`, checks the
+independent arithmetic total and exact balance after joining a warmed wave.
+Those existing cases do not assert that work ran on several drivers. The
+compute tests' `WF_SCHED_REPORT` reports compute workers, not context drivers
+or allocation-counter contributors. Context drivers expose no corresponding
+report or source identity, and no usable native ring means only one driver.
+Consequently this program does not establish two-driver contribution; that
+qualification remains explicit in `docs/todo.md` rather than being inferred
+from the requested count.
+
+Focused native regression cases exercise real allocation on a peer thread
+and release on the reader, retained deltas after thread exit, a scripted
+negative sampled total and its clamp, and `None`/`Some` through the ordinary
+resident-reading C body and LLVM result ABI. They do not establish the
+concurrent sampling error bound or settle lifetime-delta overflow, and have
+not been executed here. The negative total is injected through the runtime's
+accounting entry point; it is arithmetic evidence, not a scheduled context
+interleaving.
 
 Context completion previously published its join before returning the context
 record to the pool. The memory reading makes that ordering visible: a joined

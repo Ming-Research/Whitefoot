@@ -84,6 +84,7 @@ COMPLETION_HARNESS_DEFINES := \
 	-DWF_COMPLETION_WAIT_RETURN=wf_completion_test_wait_return
 COMPLETION_HARNESS_CFLAGS := $(COMPLETION_CFLAGS) $(COMPLETION_HARNESS_DEFINES)
 COMPLETION_RUNTIME_SOURCES := \
+	src/backend/heap.c \
 	$(SCHED_SOURCES) \
 	$(COMPLETION_DIR)/runtime.c \
 	$(COMPLETION_DIR)/wait_host.c \
@@ -527,6 +528,7 @@ completion-tsan: $(COMPLETION_TMP)/harness-tsan
 # same list as the POSIX one with the leaves swapped, which is the whole point
 # of step (iv).
 WINDOWS_LINK_SOURCES := \
+	src/backend/heap.c \
 	$(SCHED_DIR)/core.c \
 	$(SCHED_DIR)/prim_windows.c \
 	$(SCHED_DIR)/entry.c \

@@ -852,10 +852,12 @@ entry:
   ret i64 %bytes
 }
 
-declare i64 @wf__body_resident_bytes(ptr)
+declare void @wf__body_resident_bytes(ptr, ptr)
 
-define i64 @wf_std.process.resident_bytes(ptr %meter) align 64 {
+define { i32, i64 } @wf_std.process.resident_bytes(ptr %meter) align 64 {
 entry:
-  %bytes = call i64 @wf__body_resident_bytes(ptr %meter)
-  ret i64 %bytes
+  %result = alloca { i32, i64 }, align 8
+  call void @wf__body_resident_bytes(ptr %result, ptr %meter)
+  %bytes = load { i32, i64 }, ptr %result, align 8
+  ret { i32, i64 } %bytes
 }

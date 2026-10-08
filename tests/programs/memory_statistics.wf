@@ -38,8 +38,15 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     return exit_status(code: 4_u8);
   }
   let resident = std::process::resident_bytes(meter: &meter);
-  if resident == 0_u64 {
-    return exit_status(code: 5_u8);
+  match resident {
+    Some(value: bytes) => {
+      if bytes == 0_u64 {
+        return exit_status(code: 5_u8);
+      }
+    }
+    None() => {
+      return exit_status(code: 0_u8);
+    }
   }
   return exit_status(code: 0_u8);
 }

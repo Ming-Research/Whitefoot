@@ -1228,9 +1228,12 @@ uint64_t wf__body_heap_in_use(wf_value *meter) {
     return wf__heap_in_use();
 }
 
-uint64_t wf__body_resident_bytes(wf_value *meter) {
+void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter) {
     wf_transition(meter);
-    return wf__resident_bytes();
+    memset(result, 0, sizeof(*result));
+    if (wf__resident_bytes(&result->value)) {
+        result->tag = WF_OPTION_SOME;
+    }
 }
 
 /* [PRE-2] `std::time`.  A clock handle carries nothing: the host has one

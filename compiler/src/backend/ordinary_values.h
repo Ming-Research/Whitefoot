@@ -86,6 +86,7 @@ WF_RESULT_UNION(wf_accept_result, wf_accepted_connection, wf_io_error);
  * the tag and then the instant, whose first word is its reading in
  * nanoseconds of the monotonic clock. */
 typedef struct { uint32_t tag; wf_value value; } wf_deadline;
+typedef struct { uint32_t tag; uint64_t value; } wf_optional_bytes;
 #define WF_OPTION_SOME 1u
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
  * `Directory`. */
@@ -113,6 +114,8 @@ _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
 _Static_assert(offsetof(wf_deadline, value) == 16 && sizeof(wf_deadline) == 48,
                "ordinary Option<Instant> layout");
 _Static_assert(sizeof(wf_inputs) == 320, "ordinary Inputs layout");
+_Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
+               "ordinary Option<u64> layout");
 
 /* A host function's link name is its standard library identity [MOD-10],
  * `wf_std.<module>.<name>`, which no program function can take and no C
@@ -166,7 +169,7 @@ void wf__body_close_write(wf_close_result *result, wf_value *factory, const wf_v
 void wf__body_close_directory_write(wf_close_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_meter_share(wf_value *result, const wf_value *meter);
 uint64_t wf__body_heap_in_use(wf_value *meter);
-uint64_t wf__body_resident_bytes(wf_value *meter);
+void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter);
 void wf__body_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_wall_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_now(wf_value *result, wf_value *clock);

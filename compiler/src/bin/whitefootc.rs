@@ -865,10 +865,12 @@ fn print_stack_ledger(llvm: &str) -> Result<Vec<String>, String> {
 ///
 /// Every module links the complete ordinary library, including its floor,
 /// scheduler and completion dependencies. Each group combines shared units
-/// with this platform's leaves; source-call classifications select no units.
-fn runtime_units() -> (Vec<RuntimeUnit>, Vec<&'static str>) {
+/// with this platform's leaves. Only emitted heap references add the separate
+/// allocator unit; ordinary source-call classifications select no units.
+fn runtime_units(llvm: &str) -> (Vec<RuntimeUnit>, Vec<&'static str>) {
     let mut staged: Vec<RuntimeUnit> = FLOOR_SHARED_UNITS.to_vec();
     staged.extend([
+        unit("heap.c", whitefoot::HEAP_SOURCE),
         unit("ordinary_values.h", ORDINARY_VALUES_HEADER),
         unit("ordinary_values.c", ORDINARY_VALUES_SOURCE),
         unit("ordinary_values.ll", ORDINARY_VALUES_LLVM),
@@ -876,6 +878,11 @@ fn runtime_units() -> (Vec<RuntimeUnit>, Vec<&'static str>) {
     staged.extend_from_slice(FLOOR_PLATFORM_UNITS);
     let mut compiled: Vec<&'static str> = FLOOR_COMPILE_UNITS.to_vec();
     compiled.extend(["ordinary_values.c", "ordinary_values.ll"]);
+    // The allocator unit is a dependency of emitted storage alone. The
+    // reading and all counter storage stay in the unconditional library.
+    if llvm.contains("@wf__heap_take(") || llvm.contains("@wf__heap_give(") {
+        compiled.push("heap.c");
+    }
     {
         staged.extend_from_slice(CORE_SHARED_UNITS);
         staged.extend_from_slice(CORE_PLATFORM_UNITS);
@@ -895,7 +902,8 @@ fn runtime_units() -> (Vec<RuntimeUnit>, Vec<&'static str>) {
 /// The lists above supply each platform's complete ordinary library. Compute
 /// joins help on the current stack; completion joins wait through their native
 /// backend. Neither source-call classification nor effect rows select a
-/// different set of link inputs.
+/// different ordinary library. Emitted heap references add only the allocator
+/// wrapper unit.
 ///
 /// Every one of those bytes travels inside this executable, so no installed
 /// path, no build directory, and no environment decides which runtime a
@@ -915,7 +923,7 @@ fn compile_executable(
     let build = BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!("whitefootc-{}-{build}", std::process::id()));
     let result = (|| {
-        let (staged, compiled) = runtime_units();
+        let (staged, compiled) = runtime_units(llvm);
         std::fs::create_dir_all(&directory)
             .map_err(|error| format!("cannot create the runtime directory: {error}"))?;
         for unit in &staged {
@@ -1828,7 +1836,16 @@ mod tests {
     /// receive its transitive headers and native implementation units.
     #[test]
     fn the_ordinary_library_links_the_same_units_for_every_source_module() {
-        let (staged, compiled) = runtime_units();
+        let (staged, compiled) = runtime_units("declare i64 @wf__heap_in_use()");
+        assert!(!compiled.contains(&"heap.c"));
+        assert!(staged.iter().any(|unit| unit.relative_path == "heap.c"));
+        for dependency in [
+            "declare ptr @wf__heap_take(i64)",
+            "declare void @wf__heap_give(ptr, i64)",
+        ] {
+            let (_, with_heap) = runtime_units(dependency);
+            assert!(with_heap.contains(&"heap.c"));
+        }
         for required in [
             "ordinary_values.c",
             "ordinary_values.ll",
@@ -1873,7 +1890,7 @@ mod tests {
             Some(result)
         }
 
-        let (units, compiled) = runtime_units();
+        let (units, compiled) = runtime_units("declare ptr @wf__heap_take(i64)");
         let staged: HashSet<PathBuf> = units
             .iter()
             .map(|unit| PathBuf::from(unit.relative_path))

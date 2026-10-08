@@ -8,12 +8,100 @@
 use super::test_directory;
 use std::process::Command;
 
+/// Exercise the real counted allocation ABI with allocation and release on
+/// different threads. Script the negative sampled-total boundary separately:
+/// it is the arithmetic a concurrent scan can see, not a claimed snapshot.
+#[test]
+fn heap_readings_sum_cross_thread_deltas_and_clamp_negative_totals() {
+    let llvm = "declare i32 @memory_probe()\ndefine i32 @main() {\n  %status = call i32 @memory_probe()\n  ret i32 %status\n}\n";
+    let host = r#"
+#include "completion/bridge.h"
+#include <pthread.h>
+#include <stdint.h>
+static void *allocate_on_peer(void *unused) {
+    (void)unused;
+    return wf__heap_take(8);
+}
+int memory_probe(void) {
+    pthread_t peer;
+    void *block;
+    uint64_t before = wf__heap_in_use();
+    if (pthread_create(&peer, NULL, allocate_on_peer, NULL) != 0) return 1;
+    if (pthread_join(peer, &block) != 0 || block == NULL) return 2;
+    if (wf__heap_in_use() != before + 8) return 3;
+    wf__heap_give(block, 8);
+    if (wf__heap_in_use() != before) return 4;
+    /* With no runtime startup the pool is empty. The peer's +8 and this
+     * thread's -8 must cancel, including after the peer exits. */
+    if (before != 0) return 5;
+    wf__heap_change(-8);
+    if (wf__heap_in_use() != 0) return 6;
+    wf__heap_change(16);
+    if (wf__heap_in_use() != 8) return 7;
+    wf__heap_change(-8);
+    return wf__heap_in_use() == 0 ? 0 : 8;
+}
+"#;
+    let output = super::compile_link_and_run(llvm, Some(host), &[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+/// A scripted host failure and success cross the production C body and LLVM
+/// register-return wrapper. A scalar return, wrong tag or stale payload fails
+/// this ABI observation; no source-language verdict is synthesized here.
+#[test]
+fn resident_reading_returns_none_and_some_through_the_ordinary_abi() {
+    use super::BoundedOutput;
+    let directory = test_directory();
+    let llvm = r#"
+declare { i32, i64 } @wf_std.process.resident_bytes(ptr)
+define i32 @main() {
+  %meter = alloca { i64, i64, i64, i64 }, align 16
+  store { i64, i64, i64, i64 } zeroinitializer, ptr %meter, align 16
+  %missing = call { i32, i64 } @wf_std.process.resident_bytes(ptr %meter)
+  %missing.tag = extractvalue { i32, i64 } %missing, 0
+  %none = icmp eq i32 %missing.tag, 0
+  %present = call { i32, i64 } @wf_std.process.resident_bytes(ptr %meter)
+  %present.tag = extractvalue { i32, i64 } %present, 0
+  %present.bytes = extractvalue { i32, i64 } %present, 1
+  %some = icmp eq i32 %present.tag, 1
+  %bytes = icmp eq i64 %present.bytes, 8192
+  %tags = and i1 %none, %some
+  %ok = and i1 %tags, %bytes
+  %status = select i1 %ok, i32 0, i32 1
+  ret i32 %status
+}
+"#;
+    let host = r#"
+#include <stdint.h>
+int wf_test_resident_bytes(uint64_t *bytes) {
+    static unsigned calls;
+    if (calls++ == 0) return 0;
+    *bytes = 8192;
+    return 1;
+}
+"#;
+    let executable = super::build_linked_executable_with_library_defines(
+        llvm,
+        Some(host),
+        &[],
+        &["wf__resident_bytes=wf_test_resident_bytes".to_owned()],
+        &directory,
+    );
+    let output = Command::new(executable)
+        .bounded_output()
+        .expect("run optional resident reading");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    std::fs::remove_dir_all(directory).expect("remove resident reading case");
+}
+
 #[test]
 fn the_compiler_owned_c_units_compile_in_the_default_dialect() {
     let directory = test_directory();
     // Keep the repository's directory layout so relative includes resolve as
     // they do when the compiler stages these native units for linking.
     let units = [
+        ("heap.c", crate::HEAP_SOURCE),
         ("completion/contract.h", crate::COMPLETION_CONTRACT_HEADER),
         (
             "completion/file_adapter.h",
@@ -544,6 +632,7 @@ fn a_native_ring_carries_opens_and_closes_under_one_kind_rule() {
 #[test]
 fn linked_c_units_avoid_identifiers_the_host_compiler_predefines() {
     for (name, source) in [
+        ("heap.c", crate::HEAP_SOURCE),
         ("bridge.c", crate::COMPLETION_BRIDGE_SOURCE),
         ("concurrent_map.c", crate::CONCURRENT_MAP_SOURCE),
         ("keyed_table.c", crate::KEYED_TABLE_SOURCE),
