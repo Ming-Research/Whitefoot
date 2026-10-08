@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Scalar bindings a reference reaches in the range walk
+
+Nodes: compiler/range-judgment
+
+Owner-approved: On the shared status board of 2026-10-08, after the request on the item fixing two range-judgment soundness defects on main (PR #281) to approve its new compiler decision (written in Chinese), the owner approved: "approve #281's new compiler design decision: an integer or Bool binding a reference was taken to has its value forgotten at every write the range judgment cannot place (the alternative, giving such bindings a storage location in the judgment, is more precise but changes how the judgment models every binding); recommended" (translated).
+
+Summary: The range walk held a scalar `let` binding's value directly and forgot only containers, slots and variants at a write it could not place, so after `let w = &n; set w^ = 4_u64;` it kept `n == 1` and accepted a false range requirement over `0..n`. A scalar binding now becomes exposed when a reference to it is formed; every unplaced write and `atomic` forgets exposed bindings, joins keep a binding exposed if any arm exposed it, and loop headers forget what the body's dry walks expose. Giving such bindings a walk location, which would place the write, was not selected because it changes how the walk models every binding.
+
 ## 2026-10-08 The call grain exempts only recursion that offers its own calls
 
 Nodes: compiler/parallel-lowering
