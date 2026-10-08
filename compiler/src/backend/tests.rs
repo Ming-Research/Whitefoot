@@ -29,6 +29,7 @@ mod floating;
 mod frames;
 mod generics;
 mod heap_programs;
+mod indexed_reductions;
 mod integer_absolute;
 mod integer_conversion;
 mod integer_extended;

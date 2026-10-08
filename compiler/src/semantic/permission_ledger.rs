@@ -277,10 +277,9 @@ fn loop_detail<Source: LedgerSource>(
     // silence.
     let carried = match judged.combines.as_slice() {
         [] => "no accumulator".to_owned(),
-        combines if judged.actualization.is_none() && judged.verdict.is_permitted() => format!(
-            "indexed reductions under {}; lowering unavailable: the split contract carries only one scalar seed/result",
-            combines.join(", ")
-        ),
+        combines if !judged.indexed.is_empty() => {
+            format!("indexed reductions under {}", combines.join(", "))
+        }
         combines => format!("one accumulator under {}", combines.join(", ")),
     };
     Ok(match &judged.verdict {

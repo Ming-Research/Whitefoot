@@ -117,6 +117,10 @@ enum Decline {
 /// ordinary statement lowering from the value carried in its task frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CaptureReconstruction {
+    IndexedRoot {
+        index: usize,
+    },
+    IndexedCount,
     Direct {
         readonly_reference: bool,
     },
@@ -371,6 +375,63 @@ impl<'program> IrBuilder<'program> {
             });
         }
 
+        // Range captures borrow the source roots through the structured join.
+        // In an enclosing leaf they inherit its private range, never the shared
+        // source address. Own reductions replace those ranges at this split.
+        let mut indexed_roots = permission
+            .indexed
+            .iter()
+            .map(|root| root.root.clone())
+            .collect::<Vec<_>>();
+        for (root, _) in &self.indexed_roots {
+            if !indexed_roots.contains(root) {
+                indexed_roots.push(root.clone());
+            }
+        }
+        let mut indexed = Vec::new();
+        for (index, root) in indexed_roots.iter().enumerate() {
+            let root_type = super::lower_type(self.erasure, root.ty)?;
+            let element = match root_type {
+                IrType::Array { element, .. }
+                | IrType::Buffer { element }
+                | IrType::Window { element, .. } => element,
+                _ => return Err(LoweringFailure::InvalidCheckedProgram),
+            };
+            let binding = root
+                .binding()
+                .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+            let capture = captures.len();
+            captures.push(Capture {
+                binding,
+                ty: IrType::Range { element },
+                reconstruction: CaptureReconstruction::IndexedRoot { index },
+            });
+            if let Some(reduction) = permission.indexed.get(index) {
+                let element_type = self.element_type(element)?;
+                indexed.push(crate::ir::IrIndexedReduction {
+                    capture,
+                    count: captures.len(),
+                    element_type,
+                    identity: identity(reduction.combine, element_type)
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?,
+                    operation: operation(reduction.combine),
+                });
+                captures.push(Capture {
+                    binding,
+                    ty: U64,
+                    reconstruction: CaptureReconstruction::IndexedCount,
+                });
+            }
+        }
+        // The existing capture-pruning fallback splices a source CFG. Private
+        // root captures must retain their count even when only the splitter
+        // uses it; refuse an oversized indexed frame before building a CFG.
+        if !indexed_roots.is_empty()
+            && let Some(decline) = self.frame_decline(result_type, &captures)?
+        {
+            self.note(node_path, &format!("declined: {}", decline.reason()));
+            return Ok(false);
+        }
         let prune_captures = self.frame_decline(result_type, &captures)?.is_some();
         // Preserve the established preorder names and complete fitting ABI.
         // Only a still-undecided wide frame delays its helper reservation.
@@ -394,6 +455,7 @@ impl<'program> IrBuilder<'program> {
             &captures,
             permission,
             prune_captures,
+            &indexed_roots,
         )?;
         captures = captures
             .into_iter()
@@ -445,6 +507,29 @@ impl<'program> IrBuilder<'program> {
         for capture in &captures {
             let stored = self.bindings[&capture.binding];
             let value = match capture.reconstruction {
+                CaptureReconstruction::IndexedRoot { index } => {
+                    let root = &indexed_roots[index];
+                    if let Some(slice) = self.indexed_slice(root.root, &root.path) {
+                        slice
+                    } else {
+                        let address = self.lower_place_address(root)?;
+                        let operation = if matches!(
+                            super::lower_type(self.erasure, root.ty)?,
+                            IrType::Buffer { .. }
+                        ) {
+                            IrOperation::SliceFromBuffer { buffer: address }
+                        } else {
+                            IrOperation::SliceFromRun { run: address }
+                        };
+                        self.define(capture.ty, operation)?
+                    }
+                }
+                CaptureReconstruction::IndexedCount => {
+                    let slice = *capture_values
+                        .last()
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                    self.define(U64, IrOperation::SliceMeasure { slice })?
+                }
                 CaptureReconstruction::Direct { .. } => stored,
                 CaptureReconstruction::BoxSlot { .. } => self.load_storage_value(stored)?,
                 CaptureReconstruction::RuntimeBoxPayload { nominal, .. } => {
@@ -468,6 +553,7 @@ impl<'program> IrBuilder<'program> {
             actualization,
             result_type,
             &capture_types,
+            &indexed,
         )?;
         {
             let mut synthesis = self.synthesis.borrow_mut();
@@ -488,6 +574,7 @@ impl<'program> IrBuilder<'program> {
                 // chunk's own emitted IR and the IR of what it calls.
                 weight: 0,
                 work: None,
+                indexed,
             },
         )?;
         if let LoopActualization::Reduction { accumulator, .. } = actualization {
@@ -539,12 +626,7 @@ impl<'program> IrBuilder<'program> {
         // selected-target layout before declining the completed candidate.
         let mut bytes = 3 * FRAME_FIELD_ALIGN + 2 * frame_bytes(result_type);
         for capture in captures {
-            let ty = self
-                .bindings
-                .get(&capture.binding)
-                .copied()
-                .ok_or(LoweringFailure::InvalidCheckedProgram)
-                .and_then(|value| self.value_type(value))?;
+            let ty = capture.ty;
             bytes = bytes.saturating_add(frame_bytes(ty));
         }
         Ok((bytes > LANE_FRAME_BYTES).then_some(Decline::FrameTooWide {
@@ -588,6 +670,7 @@ impl<'program> IrBuilder<'program> {
         captures: &[Capture],
         permission: &'program LoopPermission,
         prune_captures: bool,
+        indexed_roots: &[crate::semantic::CheckedContainerRoot],
     ) -> Result<BuiltChunk, LoweringFailure> {
         #[cfg(test)]
         {
@@ -625,6 +708,13 @@ impl<'program> IrBuilder<'program> {
         for capture in captures {
             let value = builder.new_parameter(capture.ty)?;
             let value = match &capture.reconstruction {
+                CaptureReconstruction::IndexedRoot { index } => {
+                    builder
+                        .indexed_roots
+                        .push((indexed_roots[*index].clone(), value));
+                    continue;
+                }
+                CaptureReconstruction::IndexedCount => continue,
                 CaptureReconstruction::Direct { readonly_reference } => {
                     if *readonly_reference {
                         builder.readonly_reference_parameters.push(value);
@@ -865,6 +955,7 @@ impl<'program> IrBuilder<'program> {
         actualization: LoopActualization,
         result_type: IrType,
         capture_types: &[IrType],
+        indexed: &[crate::ir::IrIndexedReduction],
     ) -> Result<IrFunction, LoweringFailure> {
         let mut builder = IrBuilder::new(
             self.context(),
@@ -1013,8 +1104,38 @@ impl<'program> IrBuilder<'program> {
                 builder.identity_value(combine, result_type)?
             }
         };
+        let mut left_captures = captures.clone();
+        let mut right_captures = captures.clone();
+        for root in indexed {
+            let slice = captures[root.capture];
+            let length = builder.define(U64, IrOperation::SliceMeasure { slice })?;
+            let half_cells = builder.define(
+                U64,
+                IrOperation::Integer {
+                    operation: IrIntegerOperation::ShiftRightWrap,
+                    operand_type: U64,
+                    arguments: vec![length, one_bit],
+                },
+            )?;
+            left_captures[root.capture] = builder.define(
+                capture_types[root.capture],
+                IrOperation::SliceRange {
+                    slice,
+                    start: zero,
+                    end: half_cells,
+                },
+            )?;
+            right_captures[root.capture] = builder.define(
+                capture_types[root.capture],
+                IrOperation::SliceRange {
+                    slice,
+                    start: half_cells,
+                    end: length,
+                },
+            )?;
+        }
         let mut left_arguments = vec![seed, lower, middle];
-        left_arguments.extend(captures.iter().copied());
+        left_arguments.extend(left_captures);
         left_arguments.push(remaining);
         let left = builder.define(
             result_type,
@@ -1024,7 +1145,8 @@ impl<'program> IrBuilder<'program> {
             },
         )?;
         let mut right_arguments = vec![right_seed, middle, upper];
-        right_arguments.extend(captures.iter().copied());
+        right_arguments.extend(right_captures);
+
         right_arguments.push(remaining);
         let right = builder.define(
             result_type,

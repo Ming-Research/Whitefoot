@@ -168,6 +168,8 @@ pub(crate) struct LoopPermission {
     /// Resolved places written by the body, retained for capture permissions
     /// in the context executing an actualized chunk.
     pub(crate) written_places: Vec<ResolvedPlace>,
+    /// Indexed roots live through the structured join; lengths are read at entry.
+    pub(crate) indexed: Vec<IndexedReduction>,
 }
 
 impl LoopPermission {
@@ -188,6 +190,14 @@ pub(crate) enum LoopActualization {
         accumulator: BindingId,
         combine: LoopCombine,
     },
+}
+
+/// A checked indexed root and its fixed cell operation. The root is borrowed
+/// until the split joins; private cells never acquire source cleanup authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IndexedReduction {
+    pub(crate) root: CheckedContainerRoot,
+    pub(crate) combine: LoopCombine,
 }
 
 /// The closed set of operations an accumulator may be combined under: exactly
@@ -533,6 +543,7 @@ struct Accumulate {
 /// Bindings, paths and bounds come from ordinary checking, never from syntax
 /// reconstruction. The whole binding's occurrences are checked at finish.
 struct IndexedAccumulator {
+    root: CheckedContainerRoot,
     binding: BindingId,
     origin: ResolvedPlace,
     map: Option<ProvedAffineIndexMap>,
@@ -616,7 +627,13 @@ impl<'check> Survey<'check, '_> {
                 }) {
                     root.needs_reduction |= map.is_none() || root.map != map;
                 } else {
+                    let mut root = target.clone();
+                    let Some(CheckedPlaceStep::Subscript(index)) = root.path.pop() else {
+                        unreachable!("indexed_origin established the final subscript");
+                    };
+                    root.ty = index.base_type;
                     self.indexed.push(IndexedAccumulator {
+                        root,
                         binding,
                         origin,
                         map,
@@ -1860,18 +1877,15 @@ impl<'check> Survey<'check, '_> {
         // admitted element family is the positive witness which selects
         // IndependentMap; an accumulator selects Reduction, including a
         // reduction whose body also contains independent element maps.
-        // The existing actualization contract carries only one scalar. An
-        // indexed permission must never become an IndependentMap or a scalar
-        // split that would capture its shared cells. The ledger discloses the
-        // missing lowering contract until that interface is extended.
-        let actualization = if denial.is_some() || !self.indexed.is_empty() {
+        let actualization = if denial.is_some() {
             None
         } else if let Some(accumulate) = self.accumulates.first() {
             Some(LoopActualization::Reduction {
                 accumulator: accumulate.binding,
                 combine: accumulate.combine,
             })
-        } else if self.element_writes.is_empty()
+        } else if self.indexed.is_empty()
+            && self.element_writes.is_empty()
             && self.certified_writes.is_empty()
             && !self.range_references.iter().any(|range| range.written)
         {
@@ -1879,6 +1893,7 @@ impl<'check> Survey<'check, '_> {
         } else {
             Some(LoopActualization::IndependentMap)
         };
+        let permitted = denial.is_none();
         let verdict = match denial {
             Some(denial) => LoopVerdict::Denied(denial),
             None => LoopVerdict::PermittedEligible,
@@ -1889,6 +1904,19 @@ impl<'check> Survey<'check, '_> {
             combines,
             advises_split,
             actualization,
+            indexed: if permitted {
+                self.indexed
+                    .iter()
+                    .filter_map(|root| {
+                        root.combine.map(|combine| IndexedReduction {
+                            root: root.root.clone(),
+                            combine,
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             written_places: self.written_places,
         }
     }

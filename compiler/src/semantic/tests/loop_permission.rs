@@ -3175,9 +3175,9 @@ fn indexed_operations_and_scalar_composition_are_permitted() {
         let judged = permitted(source, "reduce");
         assert_eq!(judged.combines, vec![combine]);
         assert!(!judged.advises_split);
-        // Until the carried-root contract is extended, permission must not
-        // be misclassified as a map or a scalar-only reduction.
-        assert_eq!(judged.actualization, None);
+        assert!(judged.actualization.is_some());
+        assert_eq!(judged.indexed.len(), 1);
+        assert_eq!(judged.indexed[0].combine.spelling(), combine);
     }
 }
 
@@ -3201,7 +3201,8 @@ fn indexed_storage_shapes_and_repeated_updates_share_the_rule() {
             LoopVerdict::PermittedEligible,
             "{name}: {judged:?}"
         );
-        assert_eq!(judged.actualization, None);
+        assert!(judged.actualization.is_some());
+        assert!(!judged.indexed.is_empty());
     }
     assert_eq!(
         only_loop(&table, "several_roots").combines,
@@ -3292,23 +3293,12 @@ fn indexed_denials_name_the_failed_condition_after_ordinary_checking() {
 }
 
 #[test]
-fn indexed_histogram_and_extrema_are_permitted_without_a_shared_capture_split() {
+fn indexed_histogram_and_extrema_carry_private_root_contracts() {
     let source = include_bytes!("../../../../tests/programs/parallel/indexed_reductions.wf");
     let table = with_semantics(source, |outcome| {
         let SemanticOutcome::Complete(program) = outcome else {
             panic!("the indexed program must check: {outcome:?}");
         };
-        assert_eq!(
-            program
-                .data
-                .permission_ledger
-                .iter()
-                .filter(|line| line.text.contains(
-                    "lowering unavailable: the split contract carries only one scalar seed/result"
-                ))
-                .count(),
-            2
-        );
         program.data.permission.clone()
     });
     for name in ["histogram", "extrema"] {
@@ -3318,7 +3308,11 @@ fn indexed_histogram_and_extrema_are_permitted_without_a_shared_capture_split() 
             LoopVerdict::PermittedEligible,
             "{name}: {judged:?}"
         );
-        assert_eq!(judged.actualization, None);
+        assert!(judged.actualization.is_some());
+        assert_eq!(
+            judged.indexed.len(),
+            if name == "histogram" { 1 } else { 2 }
+        );
     }
     assert_eq!(only_loop(&table, "extrema").combines, vec!["imin", "imax"]);
 }

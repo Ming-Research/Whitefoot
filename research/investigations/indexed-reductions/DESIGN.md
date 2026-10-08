@@ -2,8 +2,9 @@
 
 Status: the owner selected the Proposal, lowering A (private copies combined
 in leaf order), and choice 3 (scalar and indexed accumulators in one body).
-Choice 2 (constant idempotent marks) is deferred. Implementation and CI
-verification are pending; the Criterion below is unchanged.
+Choice 2 (constant idempotent marks) is deferred. Permission and the private-range
+lowering path are implemented on the work branch. Compilation, execution and
+CI verification remain pending. The Criterion below is unchanged.
 
 ## Question
 
@@ -120,3 +121,47 @@ Recorded before any implementation or measurement:
    about stores that are not written as an operation.
 3. A loop may also carry a scalar accumulator in the same body; the two
    recombine independently.
+
+## Lowering contract
+
+The primary agent authorized Q1, extending the scalar-only lowering boundary.
+The permission payload retains each checked root place and its fixed operation
+alongside the existing optional scalar. Lowering captures a nonowning range
+and its initialized cell count at loop entry; the IR also carries the element
+type, operation and identity. Their lifetime is structural: the site owns
+private storage until every splitter call joins, and the outlined body only
+borrows its assigned cells. Nested outlined loops transport the enclosing
+private root mappings through their captures.
+
+Each root uses one allocation containing one identity-filled cell range per
+leaf. The recursive splitter halves those ranges with its iteration range.
+After the join, the site visits flat cell offsets in ascending order, which
+is leaf order followed by cell order, combining each private contribution into
+the original cell before freeing the allocation. The scalar seed/result uses
+its existing independent recombination. A sequential world or zero-budget
+split passes the original root ranges and allocates no private storage.
+
+Pricing charges three traversals of leaves times initialized cells for copy,
+fill and combine, conservatively retaining the copy charge although identities
+do not require copying source seeds. Saturating scheduling arithmetic cannot
+turn overflowing overhead into a cheap offer. A split is refused when its
+estimated work does not exceed that charge. Allocation counts and byte sizes
+use the ordinary target-bounded checked allocation helper. Failure while
+acquiring temporary slabs releases earlier slabs before STOR-8 termination.
+Heap exhaustion during leaf execution, in a leaf's own allocation or a
+nested split's, terminates the program from the trusted base [STOR-8], so no
+private storage needs release on that path, as for every other live owner.
+
+The maintained compiler tests inspect private fill, leaf-order combine, frees,
+all operations and storage shapes; native observers force a split budget,
+count private allocations and leaves, force zero budget, refuse a tiny loop
+over many cells, and fail each temporary allocation in a two-root loop. The
+whole-program oracle checks colliding histogram updates, positive minima,
+negative maxima, odd wrapping products, untouched cells and an independent
+scalar count against fixed expected values and a sequential build. These
+checks have not been run in this worktree: the owner prohibits local builds,
+compilation, tests and lint, and prohibits committing or pushing this round.
+CI must establish the emitted IR's validity and the native observations before
+this implementation is qualified. The performance and downstream permission
+criteria above remain unmeasured. Paged remains deferred until PR #263 lands
+on main; it is not a type or storage path in this checkout.

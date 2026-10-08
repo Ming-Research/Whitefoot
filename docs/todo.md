@@ -2108,25 +2108,12 @@ rarely insert at the same place.
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
 
-- **Indexed reduction lowering needs a carried-root contract (Q1).** The
-  selected private-copy lowering cannot be expressed by `LoopActualization`,
-  which describes only an independent map or one scalar binding/combine,
-  nor by the splitter's single scalar seed/result. Minimal witness:
-  `set counts.inner[bucket] = counts.inner[bucket] +wrap 1_u64;` alongside
-  `set total = total +wrap 1_u64;`. Impact: permission can be established but
-  this loop cannot be split using the existing contract. Change: transport
-  indexed root paths, cell types, counts and operations alongside an optional
-  scalar, then allocate, fill, combine and free per leaf with grain charging
-  for leaves times cells. Reopen after owner authorization to extend those
-  interfaces; validate actual split execution, identities including signed
-  extrema, leaf-order combination, cleanup and tiny-loop refusal in CI.
-
 - **Paged indexed storage is absent in this checkout (Q2).** The active
   specification and checked type model define Array, Slots and Ring, with no
   Paged type or storage path. Impact: the selected indexed reduction rule can
   cover Array and Slots here, but cannot yet name or lower Paged cells.
   Change: apply the same cell rule to Paged once its owning definition and
-  checked storage representation arrive. Reopen with that implementation;
+  checked storage representation arrive. Reopen when PR #263 lands on main;
   validate cross-page cell updates, unchanged length and private-copy
   recombination against sequential execution in CI.
 
