@@ -186,6 +186,12 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
+    let ledger = super::compile_permission_ledger(source);
+    assert!(
+        ledger.iter().any(|line| line.starts_with("PAR permitted")
+            && line.contains("pair(a conditional call, fill)")),
+        "the pair inside the atomic body is permitted, so only the atomic exclusion keeps the branch: {ledger:?}"
+    );
     let ordinary = emit(source);
     let parallel = emit_with_overlap(source);
     assert!(!parallel.contains("_par_cond_"));

@@ -133,6 +133,11 @@ bound with G perfectly parallel at four workers and C sequential is 1 /
 (0.2 + 0.8 / 4) = 2.5 times; real tasks would be coarser than the 13,600
 entries, so the attainable gain is below that.
 
+The four-worker edit's remaining 8 to 10 percent is not offered work: the
+recursive-offer investigation measured about 15 microseconds per edit of
+fixed `--par` cost on main's edit path at two and four workers on the
+14900K with either compiler, which this edit pays as well.
+
 Answer to the question: the edit is not faster because about 80 percent of
 it, the suffix translation, is independent work that the program cannot
 prove independent in today's language, and the compiler would not form the
@@ -149,7 +154,7 @@ a group, to a call of a synthesized guard function.
 That does not by itself let the suffix translation's two recursive calls
 form a group, even once the stored-data invariant makes them disjoint. The
 function body at Snowghost-wf `3ec4bb491` (`renderer/layout/reference.wf`,
-lines 427 to 439) is, in order:
+lines 428 to 438) is, in order:
 
 ```text
 let after = before +sat held.own_events;
