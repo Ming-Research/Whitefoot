@@ -2428,13 +2428,13 @@ impl GoalTable {
 }
 
 impl Relation {
-    /// [ENT-3] S1 exact negation over mathematical integers.
+    /// [ENT-3] S1 negation using the stored bound arithmetic convention.
     pub(crate) fn negated(&self) -> Self {
         match self {
             Self::Bound { left, right, bound } => Self::Bound {
                 left: *right,
                 right: *left,
-                bound: -bound - 1,
+                bound: bound.saturating_neg().saturating_sub(1),
             },
             Self::Equal {
                 left,
@@ -3210,10 +3210,10 @@ impl FactState {
                     relation: relation.clone(),
                     left: *right,
                     right: *left,
-                    bound: -*difference,
+                    bound: difference.saturating_neg(),
                     event,
                 });
-                self.add_bound(*right, *left, -*difference, reverse, ledger);
+                self.add_bound(*right, *left, difference.saturating_neg(), reverse, ledger);
             }
             Relation::Distinct {
                 left,
@@ -3248,7 +3248,7 @@ impl FactState {
                 difference,
             } => {
                 self.add_bound(*left, *right, *difference, proof, ledger);
-                self.add_bound(*right, *left, -*difference, proof, ledger);
+                self.add_bound(*right, *left, difference.saturating_neg(), proof, ledger);
             }
             Relation::Distinct {
                 left,
@@ -3808,13 +3808,16 @@ impl FactState {
 }
 
 /// One offset disequality, with endpoint reversal negating its offset.
+/// Stored arithmetic follows the saturating i128 convention of difference
+/// bounds, including reversal at MIN. This is not an unbounded integer
+/// representation; the source-folding limit is tracked in docs/todo.md.
 pub(crate) type DistinctKey = (TermId, TermId, i128);
 
 pub(crate) fn distinct_key(left: TermId, right: TermId, difference: i128) -> DistinctKey {
     if left <= right {
         (left, right, difference)
     } else {
-        (right, left, -difference)
+        (right, left, difference.saturating_neg())
     }
 }
 
@@ -4372,13 +4375,11 @@ impl ClosedState {
     /// Whether the disequality of an ordered pair is held or derivable from
     /// either strict bound.
     fn holds_distinct(&self, pair: DistinctKey) -> bool {
-        self.distinct.contains(&pair)
-            || self
-                .value(pair.0, pair.1)
-                .is_some_and(|bound| bound < pair.2)
-            || self
-                .value(pair.1, pair.0)
-                .is_some_and(|bound| bound < -pair.2)
+        self.derives(&Relation::Distinct {
+            left: pair.0,
+            right: pair.1,
+            difference: pair.2,
+        })
     }
 
     /// The proof of a held or derivable disequality of an ordered pair.
@@ -4477,7 +4478,7 @@ impl ClosedState {
                 difference,
             } => {
                 self.derives_bound(*left, *right, *difference)
-                    && self.derives_bound(*right, *left, -*difference)
+                    && self.derives_bound(*right, *left, difference.saturating_neg())
             }
             Relation::Distinct {
                 left,
@@ -4656,7 +4657,7 @@ impl ClosedState {
                 difference,
             } => {
                 let forward = self.bound_proof(*left, *right, *difference, ledger)?;
-                let reverse = self.bound_proof(*right, *left, -*difference, ledger)?;
+                let reverse = self.bound_proof(*right, *left, difference.saturating_neg(), ledger)?;
                 Some(ledger.intern(DerivationNode::Equality {
                     left: *left,
                     right: *right,
@@ -5206,13 +5207,16 @@ fn complete_contradiction_probe(
         }
         let mut strengthened = false;
         for &(left, right, difference) in &distinct {
-            for (from, to, offset) in [(left, right, difference), (right, left, -difference)] {
+            for (from, to, offset) in [
+                (left, right, difference),
+                (right, left, difference.saturating_neg()),
+            ] {
                 let (Some(from), Some(to)) = (slot(from), slot(to)) else {
                     continue;
                 };
                 let cell = &mut bounds[from * dimension + to];
-                if *cell == Some(offset) {
-                    *cell = Some(offset - 1);
+                if *cell == Some(offset) && offset.saturating_sub(1) < offset {
+                    *cell = Some(offset.saturating_sub(1));
                     strengthened = true;
                 }
             }
@@ -5525,14 +5529,18 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
         let mut distinct_pairs: Vec<_> = distinct.iter().copied().collect();
         distinct_pairs.sort_unstable();
         for (left, right, difference) in distinct_pairs {
-            for (from, to, offset) in [(left, right, difference), (right, left, -difference)] {
+            for (from, to, offset) in [
+                (left, right, difference),
+                (right, left, difference.saturating_neg()),
+            ] {
                 if let Some((held, weak)) = dense_bounds.get(from, to)
                     && held == offset
+                    && offset.saturating_sub(1) < offset
                 {
                     let node = DerivationNode::StrengthenedBound {
                         left: from,
                         right: to,
-                        bound: offset - 1,
+                        bound: offset.saturating_sub(1),
                         weak,
                         distinct: distinct_proofs[&(left, right, difference)],
                     };
@@ -5541,7 +5549,7 @@ fn close_with_row_pruning<const PRUNE_ROWS: bool, const REFERENCE_PRODUCT: bool>
                         ClosedBoundCandidate {
                             left: from,
                             right: to,
-                            bound: offset - 1,
+                            bound: offset.saturating_sub(1),
                             node,
                         },
                         seeded,
@@ -5729,6 +5737,7 @@ fn insert_fresh_edges<P: ClosureProofs>(
             pending.push_back((left, right, bound, proof));
         }
         if let Some((bound, weak)) = dense.get(left, right)
+            && bound.saturating_sub(1) < bound
             && let Some(parent) = distinct_proofs
                 .get(&distinct_key(left, right, bound))
                 .copied()
@@ -5736,11 +5745,11 @@ fn insert_fresh_edges<P: ClosureProofs>(
             let proof = ledger.intern(DerivationNode::StrengthenedBound {
                 left,
                 right,
-                bound: bound - 1,
+                bound: bound.saturating_sub(1),
                 weak,
                 distinct: parent,
             });
-            pending.push_back((left, right, bound - 1, proof));
+            pending.push_back((left, right, bound.saturating_sub(1), proof));
         }
     }
 
@@ -5835,18 +5844,19 @@ fn insert_pending_edges<P: ClosureProofs>(
                 pending.push_back((right, left, -1, strengthened));
             }
         }
-        if let Some(parent) = distinct_proofs
-            .get(&distinct_key(left, right, bound))
-            .copied()
+        if bound.saturating_sub(1) < bound
+            && let Some(parent) = distinct_proofs
+                .get(&distinct_key(left, right, bound))
+                .copied()
         {
             let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
                 left,
                 right,
-                bound: bound - 1,
+                bound: bound.saturating_sub(1),
                 weak: proof,
                 distinct: parent,
             });
-            pending.push_back((left, right, bound - 1, strengthened));
+            pending.push_back((left, right, bound.saturating_sub(1), strengthened));
         }
     };
 
@@ -6122,19 +6132,20 @@ fn close_from_view_seed(
         // The state's own selection, which the view may already improve on.
         if let Some((bound, proof)) = state.bounds.get(left, right) {
             pending.push_back((left, right, bound, proof));
-            if let Some(parent) = view
-                .distinct_proofs
-                .get(&distinct_key(left, right, bound))
-                .copied()
+            if bound.saturating_sub(1) < bound
+                && let Some(parent) = view
+                    .distinct_proofs
+                    .get(&distinct_key(left, right, bound))
+                    .copied()
             {
                 let strengthened = ledger.intern(DerivationNode::StrengthenedBound {
                     left,
                     right,
-                    bound: bound - 1,
+                    bound: bound.saturating_sub(1),
                     weak: proof,
                     distinct: parent,
                 });
-                pending.push_back((left, right, bound - 1, strengthened));
+                pending.push_back((left, right, bound.saturating_sub(1), strengthened));
             }
         }
     }
@@ -7858,6 +7869,152 @@ pub(crate) mod tests {
                     seeded.derives_goal(goal, sign, goals),
                     complete.derives_goal(goal, sign, goals),
                     "seeded closure goal answer differs from the complete closure"
+                );
+            }
+        }
+    }
+
+    // These are storage-domain checks, not a choice of source integer limits.
+    // Before the repair, MIN with reversed endpoints panics in distinct_key.
+    #[test]
+    fn offset_extremes_canonicalize_in_both_orientations() {
+        let x = TermId(1);
+        for (offset, reversed) in [
+            (i128::MIN, i128::MAX),
+            (i128::MIN + 1, i128::MAX),
+            (i128::MAX - 1, i128::MIN + 2),
+            (i128::MAX, i128::MIN + 1),
+        ] {
+            assert_eq!(distinct_key(ZERO, x, offset), (ZERO, x, offset));
+            assert_eq!(distinct_key(x, ZERO, offset), (ZERO, x, reversed));
+        }
+    }
+
+    // Isolate rule 2 from type bounds: an actual i64 term's implicit range
+    // would subsume a huge positive bound or contradict a huge negative one.
+    // Before the repair, the MIN row panics at bound - 1 (or its reversal).
+    #[test]
+    fn offset_extremes_rule_two_saturates_without_requeueing_the_floor() {
+        let mut terms = TermTable::new();
+        let x = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+            IntegerType::I64,
+        ));
+        for (offset, reversed, strict) in [
+            (i128::MIN, i128::MAX, i128::MIN),
+            (i128::MIN + 1, i128::MAX, i128::MIN),
+            (i128::MAX - 1, i128::MIN + 2, i128::MAX - 2),
+            (i128::MAX, i128::MIN + 1, i128::MAX - 1),
+        ] {
+            for reverse in [false, true] {
+                let (left, right, key) = if reverse {
+                    (x, ZERO, (ZERO, x, reversed))
+                } else {
+                    (ZERO, x, (ZERO, x, offset))
+                };
+                let dense = DenseClosureBounds::with_terms(2, vec![ZERO, x]);
+                let result = insert_pending_edges(
+                    dense,
+                    [key].into_iter().collect(),
+                    [(key, DerivationId(0))].into_iter().collect(),
+                    [(left, right, offset, DerivationId(0))]
+                        .into_iter()
+                        .collect(),
+                    &terms,
+                    &mut NoProofs,
+                );
+                assert_eq!(result.dense.get(left, right).map(|cell| cell.0), Some(strict));
+            }
+        }
+    }
+
+    // Before the repair, a canonically oriented MIN reaches unchecked
+    // negation in the complete closure and in the contradiction probe.
+    #[test]
+    fn offset_extremes_close_probe_and_join_with_implicit_ranges() {
+        let mut terms = TermTable::new();
+        let x = terms.intern(TermKind::Place(
+            super::super::term::ResolvedPlace::binding(BindingId(0)),
+            IntegerType::I64,
+        ));
+        let goals = GoalTable::default();
+        for offset in [i128::MIN, i128::MIN + 1, i128::MAX - 1, i128::MAX] {
+            for (left, right) in [(ZERO, x), (x, ZERO)] {
+                let mut ledger = DerivationLedger::default();
+                let event = ledger.event(FlowEventKind::S1, None);
+                let relation = Relation::Distinct {
+                    left,
+                    right,
+                    difference: offset,
+                };
+                let mut explicit = FactState::new();
+                explicit.establish(&relation, &mut ledger, event);
+                assert!(!contradiction_without_proofs(&explicit, &terms, &goals));
+                let closed = close(&explicit, &terms, &goals, &mut ledger);
+                assert!(!closed.contradictory());
+                assert!(closed.derives(&relation));
+                assert!(closed.relation_proof(&relation, &mut ledger).is_some());
+                assert_seeded_closure_matches_complete(&explicit, &terms, &goals, &ledger, &closed);
+                // No i64 value equals any of these offsets in either
+                // orientation. The empty input derives the candidate too.
+                let join_event = ledger.event(FlowEventKind::Join, None);
+                for inputs in [
+                    [explicit.clone(), FactState::new()],
+                    [FactState::new(), explicit.clone()],
+                ] {
+                    let joined = join_at(&inputs, &terms, &goals, &mut ledger, join_event);
+                    let key = distinct_key(left, right, offset);
+                    assert!(joined.distinct.contains(&key));
+                    assert!(joined.distinct_proofs.contains_key(&key));
+                    let closed = close(&joined, &terms, &goals, &mut ledger);
+                    assert!(!closed.contradictory());
+                    assert!(closed.derives(&relation));
+                    assert!(!closed.derives(&relation.negated()));
+                }
+            }
+        }
+    }
+
+    // Negative origin projections use establish_from_proof; source facts
+    // use establish. Both used to panic reversing the negated MIN equality.
+    #[test]
+    fn offset_extremes_negation_and_proved_projection_share_bound_arithmetic() {
+        let x = TermId(1);
+        for (offset, reverse_bound, negative_bound) in [
+            (i128::MIN, i128::MAX, i128::MAX - 1),
+            (i128::MIN + 1, i128::MAX, i128::MAX - 1),
+            (i128::MAX - 1, i128::MIN + 2, i128::MIN + 1),
+            (i128::MAX, i128::MIN + 1, i128::MIN),
+        ] {
+            for (left, right) in [(ZERO, x), (x, ZERO)] {
+                let mut ledger = DerivationLedger::default();
+                let event = ledger.event(FlowEventKind::S1, None);
+                let distinct = Relation::Distinct {
+                    left,
+                    right,
+                    difference: offset,
+                };
+                let equality = distinct.negated();
+                let mut source = FactState::new();
+                source.establish(&equality, &mut ledger, event);
+                assert_eq!(source.bounds.get(left, right).unwrap().0, offset);
+                assert_eq!(source.bounds.get(right, left).unwrap().0, reverse_bound);
+                let proof = source.bound_parent(left, right, offset).unwrap();
+                let mut projected = FactState::new();
+                projected.establish_from_proof(&equality, proof, &ledger);
+                assert_eq!(projected.bounds.get(right, left).unwrap().0, reverse_bound);
+                let bound = Relation::Bound {
+                    left,
+                    right,
+                    bound: offset,
+                };
+                assert_eq!(
+                    bound.negated(),
+                    Relation::Bound {
+                        left: right,
+                        right: left,
+                        bound: negative_bound,
+                    }
                 );
             }
         }

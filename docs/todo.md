@@ -740,6 +740,38 @@ rarely insert at the same place.
   Validate matching suffixes, wrong suffixes and out-of-range values, keeping
   named arguments covered. Reopen with the next grammar change.
 
+- **Mathematical clause constants exceed the checker's i128 projection domain.**
+  ENT-2 and MSR-5 specify mathematical integers, not an i128 ceiling. Source
+  folding in `goal_affine_side` and `goal_projection`
+  (`compiler/src/semantic/entailment/flow/goals.rs`) uses checked i128
+  operations and returns no L0 projection on overflow; `comparison_relation`
+  (`flow/sources.rs`) does the same for strict-bound and reverse-bound
+  constants. Minimal arithmetic witness: with i64 constants
+  `low = -9223372036854775808_i64` and `high = 9223372036854775807_i64`,
+  let M denote the clause expression `low * high + low * high + low + low`.
+  M and every intermediate fit i128, with M = -2^127, but the admitted clause
+  fragment `x < M` loses its required `x - Z <= M - 1` projection at
+  `gap.checked_sub(1)?`; `x > M` also loses its representable reverse bound
+  `Z - x <= 2^127 - 1` at `gap.checked_neg()?` before subtracting one.
+  These are projection witnesses, not claims about an executed whole-program
+  verdict. `x <= M - 1_i64` additionally overflows source folding itself.
+  Closed-bound composition already saturates (`compose_transitive_bounds`
+  in `state.rs`); stored offset arithmetic follows that convention as a
+  consistency repair, including saturated reversal and strict-bound
+  arithmetic. It does not implement unbounded offsets: reversing MIN stores
+  MAX, and negating then decrementing MIN gives MAX - 1. Fragment term ranges
+  make those extreme disequalities tautologies, but do not justify silently
+  losing specified source projections. Interval extraction likewise checks
+  lower-endpoint negation and otherwise keeps the type endpoint
+  (`flow/sources.rs`, `flow/prover.rs`); affine arithmetic reports
+  `AffineCheckError::ArithmeticOverflow` (`affine.rs`). Impact: some specified
+  numeric evidence is unavailable; the full source-verdict impact remains
+  unverified. Deferred from the offset panic repair at the owner's requested
+  consistency boundary. Reopen for an owner-selected implementation of the
+  mathematical constant domain; compare exact arithmetic against folding,
+  both strict orientations, origin transport, closure and joins in CI.
+  Do not reinterpret implementation overflow as a source-language rejection.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**

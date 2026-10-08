@@ -1,0 +1,13 @@
+const offset_limit_low: i64 = -9223372036854775808_i64;
+const offset_limit_high: i64 = 9223372036854775807_i64;
+
+fn probe(x: i64) -> result: unit pure contract {
+  requires x != offset_limit_low * offset_limit_high + offset_limit_low * offset_limit_high + offset_limit_low + offset_limit_low;
+} {
+  doc "The mathematical offset is minus two to the 127th power, outside every i64 value; establishing this requirement must not overflow the checker.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

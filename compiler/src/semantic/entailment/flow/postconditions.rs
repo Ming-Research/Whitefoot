@@ -1145,19 +1145,15 @@ impl Reasoning<'_, '_, '_> {
                 right: second.0,
                 difference: gap,
             }),
-            NormalizedRelation::NotEqual => Some(if first.0 <= second.0 {
-                Relation::Distinct {
-                    left: first.0,
-                    right: second.0,
-                    difference: gap,
-                }
-            } else {
-                Relation::Distinct {
-                    left: second.0,
-                    right: first.0,
-                    difference: gap.checked_neg()?,
-                }
-            }),
+            NormalizedRelation::NotEqual => {
+                let (left, right, difference) =
+                    super::super::state::distinct_key(first.0, second.0, gap);
+                Some(Relation::Distinct {
+                    left,
+                    right,
+                    difference,
+                })
+            }
             NormalizedRelation::UpperBound {
                 left,
                 right,
@@ -2007,18 +2003,12 @@ impl Reasoning<'_, '_, '_> {
                 difference: gap,
             },
             NormalizedRelation::NotEqual => {
-                if first.0 <= second.0 {
-                    Relation::Distinct {
-                        left: first.0,
-                        right: second.0,
-                        difference: gap,
-                    }
-                } else {
-                    Relation::Distinct {
-                        left: second.0,
-                        right: first.0,
-                        difference: gap.checked_neg()?,
-                    }
+                let (left, right, difference) =
+                    super::super::state::distinct_key(first.0, second.0, gap);
+                Relation::Distinct {
+                    left,
+                    right,
+                    difference,
                 }
             }
             NormalizedRelation::UpperBound {
@@ -2640,20 +2630,12 @@ pub(super) fn replace_relation_term(relation: &Relation, from: TermId, to: TermI
             right,
             difference,
         } => {
-            let (left, right) = (replace(*left), replace(*right));
-            // Ordering the pair reverses the difference with it.
-            if left <= right {
-                Relation::Distinct {
-                    left,
-                    right,
-                    difference: *difference,
-                }
-            } else {
-                Relation::Distinct {
-                    left: right,
-                    right: left,
-                    difference: -difference,
-                }
+            let (left, right, difference) =
+                super::super::state::distinct_key(replace(*left), replace(*right), *difference);
+            Relation::Distinct {
+                left,
+                right,
+                difference,
             }
         }
     }

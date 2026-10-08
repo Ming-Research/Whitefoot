@@ -749,7 +749,7 @@ impl Reasoning<'_, '_, '_> {
                                 Box::new(Relation::Bound {
                                     left: right,
                                     right: left,
-                                    bound: -difference,
+                                    bound: difference.saturating_neg(),
                                 })
                             }),
                             premises: reverse_proof.premises.into_boxed_slice(),
@@ -1566,7 +1566,7 @@ impl Reasoning<'_, '_, '_> {
         let (left_base, right_base, difference) = super::super::state::distinct_key(
             left_base,
             right_base,
-            right_constant - left_constant,
+            right_constant.checked_sub(left_constant)?,
         );
         let relation = Relation::Distinct {
             left: left_base,
@@ -3338,7 +3338,15 @@ pub(super) fn normalize_distinct_requests(requests: &mut [BoundsRequest], terms:
         {
             let (left, left_constant) = terms.constant_part(left);
             let (right, right_constant) = terms.constant_part(request.right);
-            let difference = request.bound + right_constant - left_constant;
+            let Some(difference) = request
+                .bound
+                .checked_add(right_constant)
+                .and_then(|bound| bound.checked_sub(left_constant))
+            else {
+                // Match goal_projection's checked source-constant folding.
+                request.left = None;
+                continue;
+            };
             let (left, right, difference) =
                 super::super::state::distinct_key(left, right, difference);
             request.left = Some(left);
