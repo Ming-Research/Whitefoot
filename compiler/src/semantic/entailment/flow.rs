@@ -2105,6 +2105,7 @@ mod range_argument_kill_tests {
             root: PlaceRoot::Binding(ORIGIN),
             path: Vec::new(),
             ty: CheckedType::Integer(IntegerType::U64),
+            proof_base: None,
         })
     }
 

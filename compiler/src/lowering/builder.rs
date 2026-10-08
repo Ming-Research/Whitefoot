@@ -2088,6 +2088,7 @@ impl<'program> IrBuilder<'program> {
                         root: crate::semantic::CheckedPlaceRoot::Binding(*binding),
                         path,
                         ty: *ty,
+                        proof_base: None,
                     };
                     let address = self.lower_place_address(&root)?;
                     return self.load_storage_value(address);
