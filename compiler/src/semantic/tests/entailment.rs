@@ -348,6 +348,19 @@ fn obligation_root(summary: &FunctionEntailment, ordinal: usize) -> DerivationId
         .unwrap_or_else(|| panic!("obligation {ordinal} must have one exact root"))
 }
 
+/// S16 retains the exact proved invariant as an ordinary L0 source.
+pub(super) fn root_has_invariant_source(
+    summary: &FunctionEntailment,
+    root: DerivationId,
+    path: &NodePath,
+) -> bool {
+    root_contains(summary, root, |node| {
+        matches!(node, DerivationNode::SourceBound { event, .. }
+            if retained_event(summary, *event).kind == FlowEventKind::S16
+                && retained_event(summary, *event).node_path.as_ref() == Some(path))
+    })
+}
+
 fn call_root(summary: &FunctionEntailment, ordinal: usize) -> DerivationId {
     summary.call_goals[ordinal]
         .derivation
@@ -3469,11 +3482,12 @@ fn origin_transport_projects_only_the_entering_source() {
   return unit;
 }
 
-fn witness(x: u64) -> r: unit pure {
+fn witness(x: u64) -> r: unit pure contract {
+  define masked = iand(x, 7_u64);
+  requires masked < 4_u64;
+} {
   let masked = iand(x, 7_u64);
-  if iand(x, 7_u64) < 4_u64 {
-    need(value: masked);
-  }
+  need(value: masked);
   return unit;
 }
 
@@ -3483,6 +3497,9 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     let summary = accepted_entailment(source, "witness");
     validate_derivations(&summary);
+    // The contract expands the call-valued comparison without violating
+    // GRAM-9. Its entering S4 fact has no L0 projection until OT forms the
+    // masked term view; two runtime aliases could instead use OriginEquality.
     assert!(
         summary
             .derivations
@@ -3571,7 +3588,14 @@ fn origin_transport_keeps_affine_negative_proofs_inside_introduction() {
         "the negative affine child transported to its Boolean datum",
     );
 
-    let expanded = source.replace("need(value: test);", "need(value: x + y < 9_u64);");
+    // [GRAM-5, GRAM-9] call actuals are atoms. Contract definitions expand
+    // the comparison directly under bnot without a saved Boolean actual.
+    let expanded = source
+        .replace(
+            "fn need(value: Bool) -> r: unit pure contract {\n  requires bnot(value);",
+            "fn need(x: u64, y: u64) -> r: unit pure contract {\n  define sum = x + y;\n  define test = sum < 9_u64;\n  requires bnot(test);",
+        )
+        .replace("need(value: test);", "need(x: x, y: y);");
     validate_derivations(&accepted_entailment(expanded.as_bytes(), "witness"));
 
     let standalone = source.replace("requires bnot(value);", "requires value;");
@@ -3680,8 +3704,25 @@ fn main() -> status: std::process::ExitStatus pure {
 /// records and that the test-side validator checks their signs and values.
 #[test]
 fn offset_disequality_derivations_retain_and_validate_their_offsets() {
-    let source = include_bytes!("../../../../tests/conformance/cases/ent4-pos-offset-join.wf");
-    let summary = accepted_entailment(source, "probe");
+    // Local invariants record their verdict, not a retained query root. Add
+    // an ordinary-call consumer of the same bound BEFORE the invariant:
+    // [ENT-3.S16] would otherwise supply a fresh source instead of retaining
+    // the offset join/strengthening this test validates. The conformance
+    // fixture and its invariant verdict remain exercised unchanged below it.
+    fn with_retained_bound(source: &str, ty: &str, limit: &str, target: &str) -> String {
+        let consumer = format!(
+            "fn retain_bound(value: {ty}) -> result: unit pure contract {{\n  requires value < {limit};\n}} {{\n  return unit;\n}}\n\n"
+        );
+        assert_eq!(source.matches(target).count(), 1);
+        consumer + &source.replace(target, &format!("retain_bound(value: cursor);\n    {target}"))
+    }
+    let source = with_retained_bound(
+        include_str!("../../../../tests/conformance/cases/ent4-pos-offset-join.wf"),
+        "u64",
+        "4_u64",
+        "invariant tightened: cursor <= 3_u64;",
+    );
+    let summary = accepted_entailment(source.as_bytes(), "probe");
     validate_derivations(&summary);
     for required in ["source", "strict", "join", "strengthened"] {
         assert!(
@@ -3724,10 +3765,14 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
         "the validator must reject a changed excluded offset"
     );
 
-    let delivery_source =
-        include_bytes!("../../../../tests/conformance/cases/ent4-pos-offset-delivery.wf");
-    validate_derivations(&accepted_entailment(delivery_source, "avoid_four"));
-    let delivery = accepted_entailment(delivery_source, "probe");
+    let delivery_source = with_retained_bound(
+        include_str!("../../../../tests/conformance/cases/ent4-pos-offset-delivery.wf"),
+        "u64",
+        "4_u64",
+        "invariant tightened: cursor <= 3_u64;",
+    );
+    validate_derivations(&accepted_entailment(delivery_source.as_bytes(), "avoid_four"));
+    let delivery = accepted_entailment(delivery_source.as_bytes(), "probe");
     validate_derivations(&delivery);
     for join in [false, true] {
         let mut corrupted = delivery.clone();
@@ -3756,10 +3801,13 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
         );
     }
 
-    let mixed_delivery = accepted_entailment(
-        include_bytes!("../../../../tests/conformance/cases/ent5-pos-offset-delivery-candidate.wf"),
-        "probe",
+    let mixed_source = with_retained_bound(
+        include_str!("../../../../tests/conformance/cases/ent5-pos-offset-delivery-candidate.wf"),
+        "u64",
+        "4_u64",
+        "invariant tightened: cursor <= 3_u64;",
     );
+    let mixed_delivery = accepted_entailment(mixed_source.as_bytes(), "probe");
     validate_derivations(&mixed_delivery);
     assert!(mixed_delivery.derivations.nodes.iter().any(|node| matches!(
         node,
@@ -3776,10 +3824,13 @@ fn offset_disequality_derivations_retain_and_validate_their_offsets() {
         "probe",
     ));
 
-    let signed = accepted_entailment(
-        include_bytes!("../../../../tests/conformance/cases/ent4-pos-offset-signed.wf"),
-        "probe",
+    let signed_source = with_retained_bound(
+        include_str!("../../../../tests/conformance/cases/ent4-pos-offset-signed.wf"),
+        "i64",
+        "-4_i64",
+        "invariant tightened: cursor <= -5_i64;",
     );
+    let signed = accepted_entailment(signed_source.as_bytes(), "probe");
     validate_derivations(&signed);
     assert!(
         signed
@@ -7413,7 +7464,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 left,
                 middle,
                 right,
-                bound: -1,
+                bound: -4,
                 ..
             } => {
                 matches!(
@@ -7423,7 +7474,7 @@ fn main() -> status: std::process::ExitStatus pure {
                         retained_term(&killed, *right),
                     ),
                     (
-                        TermKind::Constant(3),
+                        TermKind::Zero,
                         TermKind::Place(n, IntegerType::U64),
                         TermKind::Measure(CheckedMeasure::Length, window),
                     ) if n.root == PlaceRoot::Binding(BindingId(1))
@@ -7432,7 +7483,7 @@ fn main() -> status: std::process::ExitStatus pure {
             }
             _ => false,
         },
-        "the exact 3 - n <= -1 plus n - b.len <= 0 projection",
+        "the exact Z - n <= -4 plus n - b.len <= 0 projection [ENT-2]",
     );
 }
 
@@ -9957,34 +10008,49 @@ fn assert_real_read_bits_routes(program: &CheckedProgramData) {
             "read_bits row {ordinal} conditional call clause"
         );
         for relation in direct {
-            assert!(
-                relation.terms().into_iter().any(|term| match call.mask {
-                    MaskActual::Literal(mask) => {
-                        retained_term(summary, term) == &TermKind::Constant(i128::from(mask))
-                    }
-                    // [MSR-3] an `own` operand read at a caller denotes that
-                    // call's call datum, which the same call established
-                    // equal to the actual's pre-transfer term. A binding
-                    // actual is mutable, so the relation names the datum and
-                    // the actual's own place term is retained beside it; a
-                    // literal actual is already immutable with empty support
-                    // and the datum is that constant itself.
-                    MaskActual::Binding(binding) => {
+            let Relation::Bound { left, right, bound } = relation else {
+                panic!("read_bits row {ordinal} must retain result <= mask");
+            };
+            assert!(matches!(
+                retained_term(summary, *left),
+                TermKind::ResultPayload { .. }
+            ));
+            match call.mask {
+                MaskActual::Literal(mask) => {
+                    // [ENT-2, CALL-6] a literal actual is folded into
+                    // result - Z <= mask; its value must remain exact.
+                    assert_eq!(*right, ZERO, "read_bits row {ordinal}");
+                    assert_eq!(*bound, i128::from(mask), "read_bits row {ordinal}");
+                }
+                // [MSR-3] an `own` operand read at a caller denotes that
+                // call's call datum, which the same call established
+                // equal to the actual's pre-transfer term. A binding
+                // actual is mutable, so the relation names the datum and
+                // the actual's own place term is retained beside it; a
+                // literal actual is normalized by the branch above.
+                MaskActual::Binding(binding) => {
+                    assert_eq!(*bound, 0, "read_bits row {ordinal}");
+                    assert!(matches!(
+                        retained_term(summary, *right),
+                        TermKind::CallDatum {
+                            call_path,
+                            formal: 3,
+                            projections,
+                            measure: None,
+                            ty: IntegerType::U64,
+                        } if call_path.as_slice() == call.path.components()
+                            && projections.is_empty()
+                    ));
+                    assert!(summary.inventory.terms.iter().any(|kind| {
                         matches!(
-                            retained_term(summary, term),
-                            TermKind::CallDatum { measure: None, .. }
-                        ) && summary.inventory.terms.iter().any(|kind| {
-                            matches!(
-                                kind,
-                                TermKind::Place(place, IntegerType::U64)
-                                    if place.root == PlaceRoot::Binding(binding)
-                                        && place.path.is_empty()
-                            )
-                        })
-                    }
-                }),
-                "read_bits row {ordinal} relation must retain its exact mask actual"
-            );
+                            kind,
+                            TermKind::Place(place, IntegerType::U64)
+                                if place.root == PlaceRoot::Binding(binding)
+                                    && place.path.is_empty()
+                        )
+                    }));
+                }
+            }
         }
         assert!(summary.derivations.nodes.iter().all(|node| {
             let DerivationNode::PostconditionDirectReceiver { parent, .. } = node else {
@@ -11649,7 +11715,7 @@ fn main() -> status: std::process::ExitStatus pure {
                 left,
                 middle,
                 right,
-                bound: -1,
+                bound: 9,
                 ..
             } => {
                 matches!(
@@ -11661,14 +11727,14 @@ fn main() -> status: std::process::ExitStatus pure {
                     (
                         TermKind::Place(old, IntegerType::U64),
                         TermKind::Place(value, IntegerType::U64),
-                        TermKind::Constant(10),
+                        TermKind::Zero,
                     ) if old.root == PlaceRoot::Binding(BindingId(1))
                         && value.root == PlaceRoot::Binding(BindingId(0))
                 )
             }
             _ => false,
         },
-        "the exact old - value^ <= 0 plus value^ - 10 <= -1 projection",
+        "the exact old - value^ <= 0 plus value^ - Z <= 9 projection [ENT-2]",
     );
 }
 

@@ -1,6 +1,7 @@
 fn need(value: Bool) -> r: unit pure contract {
   define first = value;
-  define complete = band(first, True());
+  define truth = True();
+  define complete = band(first, truth);
   requires complete;
 } {
   doc "Contract definitions compose with ordinary-let origins.";
@@ -11,7 +12,8 @@ fn witness(x: u64) -> r: unit pure {
   doc "Nested aliases and Boolean introduction retain the same proposition.";
   let test = x < 9_u64;
   let copied = test;
-  let nested = band(copied, True());
+  let truth = True();
+  let nested = band(copied, truth);
   if x < 8_u64 {
     need(value: nested);
   }

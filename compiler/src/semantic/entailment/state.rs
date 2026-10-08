@@ -8122,7 +8122,7 @@ pub(crate) mod tests {
         // The optimized join's outside-row scan and the complete closure's
         // materialized pairs used to retain x != Constant(4), evading Q160.
         for every_term in [false, true] {
-            let mut run = || {
+            let run = || {
                 let mut ledger = DerivationLedger::default();
                 let event = ledger.event(FlowEventKind::S1, None);
                 let mut inputs = Vec::new();
@@ -8151,7 +8151,7 @@ pub(crate) mod tests {
                 assert_seeded_closure_matches_complete(&joined, &terms, &goals, &ledger, &closed);
             };
             if every_term {
-                with_every_term(&mut run);
+                with_every_term(run);
             } else {
                 run();
             }
