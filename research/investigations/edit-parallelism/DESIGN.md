@@ -137,3 +137,12 @@ it, the suffix translation, is independent work that the program cannot
 prove independent in today's language, and the compiler would not form the
 group even with the proof. It is neither a dependency chain nor lost to
 scheduling overhead.
+
+## Follow-up
+
+The owner chose to let a conditional call join a statement group
+(`design/compiler/parallel-lowering.md`): an `if` whose one non-empty arm is
+a single call with total arguments is now a PAR-1 member and lowers, inside
+a permitted group, to a call of a synthesized guard function. That removes
+the second blocker above; the suffix translation stays sequential until the
+stored-data invariant makes its recursive calls provably disjoint.

@@ -2135,23 +2135,6 @@ rarely insert at the same place.
   edit pair at W1, W2 and W4 on the hosted runner and the 14900K, and the
   formal kernels' paired comparison. Reopen with the 14900K pair result.
 
-- **The permission planner admits fewer statements than PAR-1.** PAR-1
-  admits an `if` or `match` statement with the footprint of its condition
-  and every arm that may execute, but `classify` in
-  `compiler/src/semantic/permission.rs` gives a footprint only to a `match`
-  whose scrutinee is a call and refuses every other `if`/`match` as "a match
-  statement", and lowering hands out only call-rooted members. Witness:
-  `if go { fill(v: a); } fill(v: b);` over disjoint slices is not overlapped.
-  Impact: a guarded recursive call (Snowghost's suffix translation,
-  `if skip < before { translate_reference_owner_suffix(...) }`, about 80
-  percent of an incremental edit,
-  [edit parallelism](../research/investigations/edit-parallelism/DESIGN.md#results))
-  cannot join a group even once its targets are provably disjoint. Change:
-  the owner's board card on conditional group members selects the scope.
-  Validate with the witness's emission and Snowghost's edit pair at one and
-  four workers. Reopen when that card is ruled or the stored-data invariant
-  lands.
-
 - **A recursion without a sequential clone offers without a budget.**
   `--par-ledger` of Snowghost-wf's layout at `3ec4bb491` excludes
   `publish_reference_owner_suffix`, an AVL suffix recursion whose left and
