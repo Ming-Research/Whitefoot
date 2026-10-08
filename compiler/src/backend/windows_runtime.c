@@ -456,6 +456,11 @@ typedef struct wf_windows_descriptor_row {
 static SRWLOCK wf_windows_registry_lock = SRWLOCK_INIT;
 static wf_windows_descriptor_row *wf_windows_registry;
 static size_t wf_windows_registry_capacity;
+static _Atomic uint64_t wf_windows_registry_requested;
+
+uint64_t wf__windows_registry_bytes(void) {
+    return atomic_load_explicit(&wf_windows_registry_requested, memory_order_relaxed);
+}
 
 static int wf_windows_registry_grow(size_t required) {
     wf_windows_descriptor_row *grown;
@@ -488,6 +493,8 @@ static int wf_windows_registry_grow(size_t required) {
     }
     wf_windows_registry = grown;
     wf_windows_registry_capacity = capacity;
+    atomic_store_explicit(&wf_windows_registry_requested,
+        capacity * sizeof(*wf_windows_registry), memory_order_relaxed);
     return 1;
 }
 

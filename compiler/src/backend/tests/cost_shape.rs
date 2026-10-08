@@ -173,7 +173,7 @@ fn fresh_allocation_for_fill<'module>(
             line.strip_prefix(&prefix)
                 .map(|definition| (index, definition))
         })?;
-        if call_target(lines[index]) == Some("malloc") {
+        if call_target(lines[index]) == Some("wf__heap_take") {
             break index;
         }
         pointer = getelementptr_base(definition)?;
@@ -238,7 +238,7 @@ fn bulk_initializations_use_fresh_storage(function: &str) -> Result<(), String> 
 fn heap_initialization_oracle_refuses_repeated_and_reused_fills() {
     let fresh = r#"define void @fresh() {
 entry:
-  %run = tail call dereferenceable_or_null(4112) ptr @malloc(i64 4112)
+  %run = tail call dereferenceable_or_null(4112) ptr @wf__heap_take(i64 4112)
   %is_null = icmp eq ptr %run, null
   br i1 %is_null, label %failed, label %initialize
 failed:
@@ -263,7 +263,7 @@ initialize:
   ret void
 }"#;
     assert!(bulk_initializations_use_fresh_storage(reused).is_err());
-    let calloc = fresh.replace("@malloc(i64 4112)", "@calloc(i64 1, i64 4112)");
+    let calloc = fresh.replace("@wf__heap_take(i64 4112)", "@calloc(i64 1, i64 4112)");
     assert!(bulk_initializations_use_fresh_storage(&calloc).is_err());
 }
 
@@ -320,7 +320,7 @@ fn aggregate_destination_provenance_ignores_commas_inside_gep_types() {
     assert!(is_aggregate_destination(stack, "%wf.inner"));
 
     let heap = r#"define void @heap() {
-  %wf.cell = call ptr @malloc(i64 24)
+  %wf.cell = call ptr @wf__heap_take(i64 24)
   %wf.slot = getelementptr inbounds { i64, ptr, ptr }, ptr %wf.cell, i64 0, i32 1
   %wf.inner = getelementptr inbounds { i64, ptr, ptr }, ptr %wf.slot, i64 0, i32 2
   ret void
@@ -448,7 +448,8 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // the larger block, copies the old run into it and frees the old block.
     //
     // The source still owns initialization. With exclusive run rows LLVM can
-    // fold malloc plus the zero-fill loop into calloc. Count either optimized
+    // fold an allocator plus a zero-fill loop into calloc. The counted
+    // wrapper retains its accounting side effect. Count either optimized
     // spelling, including both calloc factors, while retaining the exact
     // source-site and per-size counts, and one allocation per retained helper.
     let mut expanded = 0;
@@ -464,7 +465,7 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
         let helper = signature.contains(" @wf_zeroed_bytes(");
         helper_defined |= helper;
         for line in function.lines() {
-            if let Some(callee @ ("malloc" | "calloc")) = call_target(line) {
+            if let Some(callee @ ("wf__heap_take" | "calloc")) = call_target(line) {
                 if helper {
                     helper_takes += 1;
                     continue;
@@ -576,7 +577,7 @@ fn the_reused_buffers_are_initialized_once_at_allocation() {
     // read input necessarily follows a read, since only a read shows a line
     // longer than the window, so the check constrains the first allocation.
     for function in program_functions() {
-        let Some(first_allocation) = ["@malloc(", "@calloc(", "@wf_zeroed_bytes("]
+        let Some(first_allocation) = ["@wf__heap_take(", "@calloc(", "@wf_zeroed_bytes("]
             .iter()
             .filter_map(|site| function.find(site))
             .min()

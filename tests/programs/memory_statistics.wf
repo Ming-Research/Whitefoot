@@ -1,0 +1,45 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias MemoryMeter = std::process::MemoryMeter;
+alias exit_status = std::process::exit_status;
+
+fn measure_box(meter: &MemoryMeter) -> result: u64 writes(meter) {
+  let cell = box_new::<u64>(value: 73_u64);
+  let held = std::process::heap_in_use(meter: meter);
+  if cell.inner == 73_u64 {
+    return held;
+  } else {
+    return 0_u64;
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, memory_meter: meter, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  let before = std::process::heap_in_use(meter: &meter);
+  let during = measure_box(meter: &meter);
+  let after = std::process::heap_in_use(meter: &meter);
+  if during >= before {
+    let growth = during - before;
+    if growth < 8_u64 {
+      return exit_status(code: 1_u8);
+    }
+  } else {
+    return exit_status(code: 2_u8);
+  }
+  if after != before {
+    return exit_status(code: 3_u8);
+  }
+  let shared_meter = std::process::meter_share(meter: &meter);
+  let same = std::process::heap_in_use(meter: &shared_meter);
+  if same != after {
+    return exit_status(code: 4_u8);
+  }
+  let resident = std::process::resident_bytes(meter: &meter);
+  if resident == 0_u64 {
+    return exit_status(code: 5_u8);
+  }
+  return exit_status(code: 0_u8);
+}

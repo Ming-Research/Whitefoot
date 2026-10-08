@@ -90,14 +90,37 @@ mod tests {
         })
     }
 
-    /// [STOR-8] the compiler-owned native supplies every build links never
-    /// call the program's allocator, so an executable requires one exactly
-    /// when its own emitted code does, and a no-heap entry's build requires
-    /// none [MOD-9]. The Windows runtime keeps its host descriptor registry
-    /// in the process heap, a host resource under [SCOPE-3] that this pins to
-    /// that one table.
+    fn without_heap_entry_points(source: &str) -> String {
+        let mut remaining = source.to_owned();
+        for (signature, allocator) in [
+            ("void *wf__heap_take(uint64_t bytes) {", "malloc"),
+            ("void wf__heap_give(void *block, uint64_t bytes) {", "free"),
+        ] {
+            let start = remaining.find(signature).expect("counted heap entry point");
+            let end = start + remaining[start..].find("\n}\n").expect("function end") + 3;
+            let body = &remaining[start..end];
+            assert_eq!(body.matches(&format!("{allocator}(")).count(), 1);
+            for forbidden in [
+                "malloc",
+                "calloc",
+                "realloc",
+                "free",
+                "aligned_alloc",
+                "posix_memalign",
+            ] {
+                if forbidden != allocator {
+                    assert!(!calls(body, forbidden), "{signature} calls {forbidden}");
+                }
+            }
+            remaining.replace_range(start..end, "");
+        }
+        remaining
+    }
+
+    /// Only the counted heap entry points may call libc's allocator. The
+    /// Windows descriptor registry retains its separate host-heap API.
     #[test]
-    fn no_runtime_unit_calls_the_allocator() {
+    fn runtime_allocator_calls_are_confined_to_counted_entry_points() {
         let units = [
             ("ordinary_values.h", ORDINARY_VALUES_HEADER),
             ("ordinary_values.c", ORDINARY_VALUES_SOURCE),
@@ -146,6 +169,13 @@ mod tests {
             ),
         ];
         for (name, source) in units {
+            let remaining;
+            let source = if name == "completion/bridge.c" {
+                remaining = without_heap_entry_points(source);
+                remaining.as_str()
+            } else {
+                source
+            };
             for allocator in [
                 "malloc",
                 "calloc",
@@ -170,6 +200,9 @@ mod tests {
                 assert_eq!(host_heap, 0, "{name} uses the host heap");
             }
         }
+        // A forbidden call beside either allowed body remains visible.
+        let injected = format!("{COMPLETION_BRIDGE_SOURCE}\nvoid bad(void) {{ free(0); }}");
+        assert!(calls(&without_heap_entry_points(&injected), "free"));
         assert!(calls("  p = malloc (n);", "malloc"));
         assert!(calls("call void @free(ptr %p)", "free"));
         assert!(!calls("a lock-free queue", "free"));

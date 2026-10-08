@@ -198,7 +198,7 @@ fn rewrite(factory: &HandleFactory, root: &DirectoryWrite, log: &[u8], temporary
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Checks the existing log on every start. Argument 3 selects check-only (0) or a stop before rename (1), after rename (2), or after directory sync (3). Names arrive as native host bytes.";
-  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall) = move inputs;
+  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: reader, write: writer) = move directory;
   let log = array_filled::<u8, 64>(value: 0_u8);
   let temporary = array_filled::<u8, 64>(value: 0_u8);

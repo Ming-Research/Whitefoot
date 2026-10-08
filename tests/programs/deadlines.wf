@@ -327,7 +327,7 @@ fn exercise(factory: &HandleFactory, listener: &TcpListener, address: &SocketAdd
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Listens on the loopback port the first argument names and shows that a passed deadline ends an accept and a receive with nothing transferred, while the connection keeps every byte sent afterwards [PRE-2].";
-  let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   close_directory_write(factory: &handles, directory: move cwd_write);
   close_directory(factory: &handles, directory: move cwd);

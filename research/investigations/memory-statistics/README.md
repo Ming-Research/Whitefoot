@@ -101,7 +101,7 @@ difference.
 A, with D's resident set as a second reading for `INFO`.
 
 The validation is stated before implementing:
-- a conformance case whose reading grows by at least the size of a box it
+- a program case whose reading grows by at least the size of a box it
   allocates and returns to within a bound after release;
 - the count stays exact under contexts allocating on several drivers;
 - the cost of the counting layer is measured on firn's redis-bench at
@@ -110,4 +110,64 @@ The validation is stated before implementing:
 
 ## Status
 
-Proposed to the owner as Firn ledger Q218.
+Proposal A, including the resident-set reading from D, is being implemented on this branch following owner approval. CI correctness validation and the stated firn performance comparison remain outstanding.
+
+## Implementation findings
+
+The capability is `std::process::MemoryMeter`: process memory is its resource,
+while `std::time::Clock` supplies the capability, sharing and effect pattern.
+`Inputs.memory_meter` follows `wall_clock`. The host interface is specified in
+[PRE-2](../../../spec/kernel-spec.md), and `meter_share`, `heap_in_use` and
+`resident_bytes` are ordinary declarations of `std::process`.
+
+The pool counts its granted size classes, not the caller's smaller request
+or the whole mapped reserve. Thus the count has no libc usable-size rounding,
+but it does include pool grant rounding. The earlier claim that every byte
+is the program's unrounded request was too broad. Windows's descriptor
+registry also contributes its requested capacity while that table stays live.
+
+Emitted code can allocate on compute workers as well as context drivers.
+The counter inventory therefore includes both, with one registration per
+thread and a separate cache line per single-writer counter. Publication uses
+atomic stores to avoid a C data race with reads; it needs no shared atomic
+read-modify-write for each allocation. Counter slots persist through driver
+shutdown because allocation and release may occur on different drivers.
+
+Summing independently sampled counters is exact after the allocating contexts
+have joined; it is not an instantaneous snapshot while other contexts update
+them. In particular, cross-driver allocation and release can be observed on
+different sides of a read: sample A at zero, allocate eight bytes on A,
+transfer and free them on B, then sample B at minus eight; the unsigned sum
+is near its maximum although no block remains. The required semantics and acceptable error during
+such a read remain an implementation question to settle before this can be
+claimed ready for eviction. The branch has not substituted a snapshot claim
+or a saturating fallback for that question.
+
+This checkout has no Paged implementation. Its existing direct-allocation
+sites are boxes, runtime-capacity windows, buffers and segments. Adoption of
+Paged must use the same counted allocation and size-aware release ABI.
+
+The resident-set paths use `/proc/self/statm` on Linux, `task_info` on macOS
+and `GetProcessMemoryInfo` on Windows. The u64-only interface has no outcome
+for failure to obtain that reading; the draft implementation reports a host
+failure rather than fabricating zero. Whether that failure belongs outside
+the execution boundary or needs an ordinary result is unresolved.
+
+The existing allocation observers are being migrated to the two-argument
+release ABI and retain allocation-request sizes to detect an incorrect size
+at release. No local build, test, format check or performance measurement was
+run for this implementation; the primary session owns CI validation.
+
+The counted wrappers currently live in the always-linked completion bridge.
+That introduces libc allocator references even for a no-heap entry, contrary
+to the existing allocator-free runtime linkage commitment. An optional native
+object for the two wrappers is the proposed integration repair, still to be
+selected and wired by the primary session; the emitter and source no-heap
+acceptance have not been weakened.
+
+Context completion previously published its join before returning the context
+record to the pool. The memory reading makes that ordering visible: a joined
+wave could still count its final record. The draft returns that record before
+publishing the join; the group resides in the starter's frame and survives the
+released record. This is covered by the program's exact post-join balance,
+with execution still pending CI.

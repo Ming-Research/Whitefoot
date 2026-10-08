@@ -469,6 +469,10 @@ void wf__watch_seen(unsigned moment);
  * map's users; blocks from the context pool, never from the program's
  * allocator [STOR-8]; a yield of the processor; and the end a frame no
  * memory can hold brings. */
+void *wf__heap_take(uint64_t bytes);
+void wf__heap_give(void *block, uint64_t bytes);
+uint64_t wf__heap_in_use(void);
+uint64_t wf__resident_bytes(void);
 unsigned wf__driver_index(void);
 void *wf__runtime_take(uint64_t bytes);
 void wf__runtime_give(void *block, uint64_t bytes);

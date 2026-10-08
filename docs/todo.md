@@ -2457,6 +2457,40 @@ rarely insert at the same place.
   overlap and the distinct-capacity witness is admitted. Reopen with the
   first shared generic storage algorithm needing that call.
 
+- **Settle concurrent memory-reading semantics before using them for eviction.**
+  Proposal A's independently sampled driver deltas do not form a snapshot:
+  a read can sample driver A at zero, A can allocate eight bytes and transfer
+  the block to B, B can release it, and the read can then sample B at minus
+  eight. The unsigned sum is then near the maximum despite no live block.
+  This contradicts a reading of live requested bytes. The
+  [implementation findings](../research/investigations/memory-statistics/README.md#implementation-findings)
+  keep this open; choose a snapshot algorithm or explicitly bounded
+  observation semantics before claiming completion, and validate that exact
+  interleaving as well as the joined zero balance. Do not use saturation to
+  conceal the mismatch. The draft context program runs at requested driver
+  counts one and four, but actual multi-driver execution remains unverified:
+  the existing runtime falls back to one without a native ring.
+
+- **Preserve allocator-free linkage when adding counted heap wrappers.**
+  A no-heap entry returning only exit_status emits no allocation, but linking
+  completion/bridge.c now brings its wf__heap_take/wf__heap_give libc
+  references into that executable. The existing waiting-context and
+  concurrent-map decisions promise an allocator-free runtime for that entry.
+  Isolate the counted allocator wrappers into an optional native object while
+  retaining shared counters in the unconditional runtime; review the native
+  link inventory and prove a no-heap native link without an allocator. This
+  is an unresolved integration requirement of the memory-statistics draft,
+  to reopen before its completion rather than weaken the no-heap promise.
+
+- **Define failure of the resident-set observation.** The proposed
+  resident_bytes result is u64, but Linux can refuse opening
+  /proc/self/statm, including in a process without that proc mount or with
+  exhausted descriptors. A fabricated zero would not be a resident-set
+  reading; the draft stops in the host runtime. Determine whether the host
+  availability is an execution prerequisite or the API needs an ordinary
+  error outcome, then validate that selected failure behavior on each host
+  before calling the interface complete.
+
 ## Modules and libraries
 
 - **Whole-map iteration.** Shared maps provide selections, counting and swaps,

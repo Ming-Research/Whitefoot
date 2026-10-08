@@ -835,3 +835,27 @@ entry:
   call void @wf__body_sync_directory_finish(ptr %result, ptr %factory, ptr %root, ptr %operation)
   ret void
 }
+
+declare void @wf__body_meter_share(ptr, ptr)
+
+define void @wf_std.process.meter_share(ptr %result, ptr %meter) align 64 {
+entry:
+  call void @wf__body_meter_share(ptr %result, ptr %meter)
+  ret void
+}
+
+declare i64 @wf__body_heap_in_use(ptr)
+
+define i64 @wf_std.process.heap_in_use(ptr %meter) align 64 {
+entry:
+  %bytes = call i64 @wf__body_heap_in_use(ptr %meter)
+  ret i64 %bytes
+}
+
+declare i64 @wf__body_resident_bytes(ptr)
+
+define i64 @wf_std.process.resident_bytes(ptr %meter) align 64 {
+entry:
+  %bytes = call i64 @wf__body_resident_bytes(ptr %meter)
+  ret i64 %bytes
+}

@@ -775,7 +775,7 @@ pub(super) fn run_emitted_on_deterministic_host(
 /// An ordinary entry that explicitly closes both halves of its initial working
 /// directory, the write half first.
 const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   let closed = std::fs::close_directory(factory: &factory, directory: move cwd);
@@ -787,7 +787,7 @@ const RELEASES_ONE_DIRECTORY: &[u8] = br#"fn main(inputs: std::process::Inputs) 
 /// at all, so every row it uses is one both target columns share.
 const READS_ITS_ARGUMENTS: &[u8] =
     br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: args, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -834,7 +834,7 @@ const WRITES_THEN_RELEASES_BOTH: &[u8] =
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "PRE-2 ordinary std::process::Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move cwd_write);
   let outcome = exercise(cwd: &cwd, out: &out, entry_factory: &entry_factory);
@@ -866,7 +866,7 @@ fn opens_one_file(named: &[(&str, &str)], default: &str) -> String {
 }}
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   let outcome = std::process::exit_status(code: 0_u8);
@@ -1121,7 +1121,7 @@ fn substituting_linked_closes_keeps_one_ordinary_call_in_optimized_ir() {
     assert!(optimized.contains("@wf_std.fs.close_directory.start("));
     assert!(optimized.contains("@wf_std.fs.close_directory.finish("));
     assert!(!optimized.contains("@wf_test_close_submit"));
-    assert!(!optimized.contains("@malloc"));
+    assert!(!optimized.contains("@wf__heap_take"));
 }
 
 #[test]
@@ -1329,7 +1329,7 @@ fn the_heap_resource_record_writer_stays_native_on_the_deterministic_target() {
     // on it; allocation is total in the source, so the record writer below is
     // the trusted base's own exhaustion path and not a source-visible arm.
     let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1384,7 +1384,7 @@ pub(super) fn assert_zero_write_outcome() {
     );
     let source = format!(
         r#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: factory, stdin: input, clock: unused_clock, wall_clock: unused_wall_clock, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move cwd_write);
   std::fs::close_directory(factory: &factory, directory: move cwd);

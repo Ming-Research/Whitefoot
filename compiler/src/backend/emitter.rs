@@ -399,14 +399,14 @@ pub(super) fn emit_llvm_with_window_address_facts(
     }
     if has_heap_storage || cleanup::program_has_general_run(program)? {
         text.declare(Signature::new(
-            "malloc",
+            "wf__heap_take",
             "ptr",
             vec![Parameter::unnamed("i64")],
         ));
         text.declare(Signature::new(
-            "free",
+            "wf__heap_give",
             "void",
-            vec![Parameter::unnamed("ptr")],
+            vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
         ));
     }
     if latched_resource_record {

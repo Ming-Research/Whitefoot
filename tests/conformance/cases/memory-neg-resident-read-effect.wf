@@ -1,0 +1,3 @@
+fn missing_write(meter: &std::process::MemoryMeter) -> result: u64 reads(meter) {
+  return std::process::resident_bytes(meter: meter);
+}

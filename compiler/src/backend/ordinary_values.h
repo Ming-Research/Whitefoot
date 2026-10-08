@@ -90,7 +90,7 @@ typedef struct { uint32_t tag; wf_value value; } wf_deadline;
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
  * `Directory`. */
 typedef struct {
-    wf_value args, cwd_read, cwd_write, out, err, handles, in, clock, wall_clock;
+    wf_value args, cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, memory_meter;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
@@ -112,7 +112,7 @@ _Static_assert(offsetof(wf_accept_result, ok.value) == 16 &&
                sizeof(wf_accept_result) == 112, "ordinary accept Result layout");
 _Static_assert(offsetof(wf_deadline, value) == 16 && sizeof(wf_deadline) == 48,
                "ordinary Option<Instant> layout");
-_Static_assert(sizeof(wf_inputs) == 288, "ordinary Inputs layout");
+_Static_assert(sizeof(wf_inputs) == 320, "ordinary Inputs layout");
 
 /* A host function's link name is its standard library identity [MOD-10],
  * `wf_std.<module>.<name>`, which no program function can take and no C
@@ -164,6 +164,9 @@ void wf__body_sync_directory(wf_close_result *result, wf_value *factory, wf_valu
 void wf__body_truncate_file(wf_close_result *result, wf_value *factory, wf_value *file, uint64_t length);
 void wf__body_close_write(wf_close_result *result, wf_value *factory, const wf_value *file);
 void wf__body_close_directory_write(wf_close_result *result, wf_value *factory, const wf_value *directory);
+void wf__body_meter_share(wf_value *result, const wf_value *meter);
+uint64_t wf__body_heap_in_use(wf_value *meter);
+uint64_t wf__body_resident_bytes(wf_value *meter);
 void wf__body_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_wall_clock_share(wf_value *result, const wf_value *clock);
 void wf__body_now(wf_value *result, wf_value *clock);
