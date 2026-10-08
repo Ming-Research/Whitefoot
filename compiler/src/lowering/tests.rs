@@ -2166,7 +2166,8 @@ fn clear(entries: &Entries<{value_type}>) -> result: unit writes(entries) {{
 fn borrow_then_clear(entries: &Entries<{value_type}>) -> result: unit writes(entries) {{
   doc "Keeps entry payloads alive until the borrowed call enters.";
   if entries^.len > 0_u64 {{
-    match entries^[0_u64] {{
+    let first = &entries^[0_u64];
+    match first^ {{
       Some(value: b) => {{
         ignore(part: {borrowed});
         clear(entries: entries);
@@ -2581,7 +2582,8 @@ fn ignore(part: &u64) -> result: u64 pure {{
 
 fn both(cell: &Box<u64>, part: &u64) -> result: u64 writes(cell) {{
   doc "Replaces an owner while borrowing another cell.";
-  return replace(cell: cell);
+  let replaced = replace(cell: cell);
+  return replaced;
 }}
 
 fn plain(value: u64) -> result: u64 pure {{
@@ -2589,7 +2591,7 @@ fn plain(value: u64) -> result: u64 pure {{
   return value;
 }}
 
-fn grouped(left: &Box<u64>, right: &Box<u64>) -> result: u64 writes(left, right) {{
+fn grouped(left: &Box<u64>, right: &Box<u64>) -> result: u64 writes(left), writes(right) {{
   doc "Keeps neutral members on each side of a storage conflict.";
   let a = {first};
   let b = plain(value: 0_u64);
