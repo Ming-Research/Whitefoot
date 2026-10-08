@@ -12,6 +12,13 @@ Nodes: compiler/storage-representation
 Owner-approved: On the status board on 2026-10-08, written in Chinese, approving the item that presented the change: "Agree: approve the storage-representation change in the design tree: `grow` becomes one realloc, replacing the provisional decision of allocating a new block, copying and freeing (the old route recorded as rejected, with Halo's measurement)" (translated); in the paged session, after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
 
 Summary: `grow` of a `Box<Slots<T>>` cell reallocates the cell at the new size instead of allocating a new block, moving the filled slots and freeing the old one, so the allocator can extend in place or remap large blocks. The provisional decision had waited for performance grounds: Halo-wf's in-place table growth measured 1.000 of its copying source with the copying `grow` and 0.860 with `realloc` on the i9-14900K (integer-table 14.0% faster, sort 2.5%, other kernels within noise; [Halo-wf `research/experiments/halo-bench/RESULTS.md`, "Growing the array in place with a reallocating grow"](https://github.com/Ming-Research/Halo-wf/blob/6fc3b83ebdd0/research/experiments/halo-bench/RESULTS.md#growing-the-array-in-place-with-a-reallocating-grow), run 37773076340). The block keeps the alignment `malloc` gave it, STOR-7 already permits the address change, and a failed `realloc` terminates as STOR-8 states.
+## 2026-10-08 By-value parameters read in place
+
+Nodes: compiler/storage-placement
+
+Owner-approved: On the shared status board of 2026-10-08, after the card asking whether to reopen the rejected in-place reading of by-value aggregate parameters and adopt it (written in Chinese), the owner chose option A, recommended: reopen and adopt, with firn measured for no slowdown on the 14900K before merging.
+
+Summary: Reading a by-value aggregate parameter through its caller's pointer, rejected earlier because firn showed no gain, is adopted: Halo's interpreter ran fib 3.8% faster on the 14900K with the rule widened to functions with branches, which met the rejection's reopening condition, and six other kernels stayed within noise. A slot qualifies when every value it holds originates from the parameter through block transfers alone, so an `if` or `match` continuation carrying the parameter unchanged no longer forces the copy.
 
 ## 2026-10-08 Stop signals
 
