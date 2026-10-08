@@ -2067,6 +2067,42 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_release_and_borrow_are_separate(source, "consume");
 }
 
+/// A joined reference can name either owner. Keeping only one alternative
+/// would allow the other owner's release to race the borrowed call's entry.
+#[test]
+fn joined_reference_retains_every_borrowed_origin() {
+    for consumed in ["left", "right"] {
+        let source = format!(
+            r#"fn ignore(part: &u64) -> result: unit pure {{
+  doc "Borrows without reading.";
+  return unit;
+}}
+
+fn consume(value: Box<u64>) -> result: unit pure {{
+  doc "Releases the selected owner.";
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  doc "Orders either origin's release after joined borrowed call entry.";
+  let left = box_new::<u64>(value: 0_u64);
+  let right = box_new::<u64>(value: 1_u64);
+  let pick = 1_u64;
+  let q = if pick == 1_u64 {{
+    give &left.inner;
+  }} else {{
+    give &right.inner;
+  }}
+  ignore(part: &q^);
+  consume(value: move {consumed});
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        assert_release_and_borrow_are_separate(source.as_bytes(), "consume");
+    }
+}
+
 /// The review's range witness: range formation and direct indexing produce
 /// different IR path depths for the same owned Box slot.
 #[test]
@@ -2339,27 +2375,85 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// Written Box references both borrow and may release. Match-bound sibling
+/// subtrees still share a group: their resolved payload paths are disjoint,
+/// and forwarding their references reloads no common ancestor owner slot.
+#[test]
+fn written_box_references_to_disjoint_match_subtrees_still_overlap() {
+    let source = br#"enum Node {
+  doc "Owns either a leaf value or two disjoint child trees.";
+  Leaf(w: u64);
+  Branch(left: Box<Node>, right: Box<Node>, w: u64);
+}
+
+fn fold(node: &Box<Node>) -> result: u64 writes(node) {
+  doc "Folds both children in place and records the branch total.";
+  match node^.inner {
+    Leaf(w: leaf_w) => {
+      return leaf_w^;
+    }
+    Branch(left: l, right: r, w: slot) => {
+      let a = fold(node: l);
+      let b = fold(node: r);
+      let total = a +wrap b;
+      set slot^ = total;
+      return total;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Observes a fold over two owned subtrees.";
+  let left_node = Node::Leaf(w: 17_u64);
+  let left = box_new::<Node>(value: move left_node);
+  let right_node = Node::Leaf(w: 29_u64);
+  let right = box_new::<Node>(value: move right_node);
+  let branch = Node::Branch(left: move left, right: move right, w: 0_u64);
+  let root = box_new::<Node>(value: move branch);
+  let total = fold(node: &root);
+  if total != 46_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let fold = function(program, "fold");
+        let children = calls_to(program, fold, &["fold"]);
+        assert_eq!(children.len(), 2, "left and right recursive folds");
+        assert!(
+            fold.overlaps()
+                .iter()
+                .any(|group| children.iter().all(|call| group.members.contains(call))),
+            "written references to disjoint match-bound subtrees must overlap: {:?}",
+            fold.overlaps()
+        );
+    });
+}
+
 /// A neutral call must neither hide an earlier conflict nor prevent a new
-/// group after it. A call that both releases and borrows can group with that
-/// neutral call, but not with another releasing or borrowing member.
+/// group after it. Both directions, including members that both release and
+/// borrow, conflict only when their resolved storage overlaps.
 #[test]
 fn release_borrow_conflicts_check_every_member_and_restart_groups() {
     for (first, last) in [
-        ("fold(tree: move left)", "ignore(part: &view^)"),
-        ("ignore(part: &view^)", "fold(tree: move right)"),
+        ("replace(cell: left)", "ignore(part: &left^.inner)"),
+        ("ignore(part: &right^.inner)", "replace(cell: right)"),
         (
-            "both(tree: move left, part: &view^)",
-            "both(tree: move right, part: &view^)",
+            "both(cell: left, part: &right^.inner)",
+            "both(cell: right, part: &left^.inner)",
         ),
         (
-            "both(tree: move left, part: &view^)",
-            "fold(tree: move right)",
+            "both(cell: left, part: &right^.inner)",
+            "replace(cell: right)",
         ),
     ] {
         let source = format!(
-            r#"fn fold(tree: Box<u64>) -> result: u64 pure {{
-  doc "Reads the owned tree and releases it on return.";
-  return tree.inner;
+            r#"fn replace(cell: &Box<u64>) -> result: u64 writes(cell) {{
+  doc "Replaces the owner and releases its old cell.";
+  let next = box_new::<u64>(value: 0_u64);
+  set cell^ = move next;
+  return 0_u64;
 }}
 
 fn ignore(part: &u64) -> result: u64 pure {{
@@ -2367,9 +2461,9 @@ fn ignore(part: &u64) -> result: u64 pure {{
   return 0_u64;
 }}
 
-fn both(tree: Box<u64>, part: &u64) -> result: u64 pure {{
-  doc "Consumes an owner while borrowing unrelated storage.";
-  return tree.inner;
+fn both(cell: &Box<u64>, part: &u64) -> result: u64 writes(cell) {{
+  doc "Replaces an owner while borrowing another cell.";
+  return replace(cell: cell);
 }}
 
 fn plain(value: u64) -> result: u64 pure {{
@@ -2377,7 +2471,7 @@ fn plain(value: u64) -> result: u64 pure {{
   return value;
 }}
 
-fn grouped(left: Box<u64>, right: Box<u64>, view: &u64) -> result: u64 pure {{
+fn grouped(left: &Box<u64>, right: &Box<u64>) -> result: u64 writes(left, right) {{
   doc "Keeps neutral members on each side of a storage conflict.";
   let a = {first};
   let b = plain(value: 0_u64);
@@ -2396,8 +2490,7 @@ fn main() -> status: std::process::ExitStatus pure {{
   doc "Exercises both groups and observes their results.";
   let left = box_new::<u64>(value: 0_u64);
   let right = box_new::<u64>(value: 0_u64);
-  let value = 0_u64;
-  let outcome = grouped(left: move left, right: move right, view: &value);
+  let outcome = grouped(left: &left, right: &right);
   if outcome != 0_u64 {{
     return std::process::exit_status(code: 1_u8);
   }}
@@ -2407,7 +2500,7 @@ fn main() -> status: std::process::ExitStatus pure {{
         );
         with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
             let grouped = function(program, "grouped");
-            let calls = calls_to(program, grouped, &["fold", "ignore", "both", "plain"]);
+            let calls = calls_to(program, grouped, &["replace", "ignore", "both", "plain"]);
             assert_eq!(calls.len(), 4, "{first}; plain; {last}; plain");
             let groups = grouped
                 .overlaps()

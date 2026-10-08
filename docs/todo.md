@@ -1141,6 +1141,19 @@ rarely insert at the same place.
   next change to `Slots` lowering or when a profile shows the clearing
   again.
 
+- **Audit nonempty release classification for shared handles and key sets.**
+  `has_nonempty_release` in `compiler/src/semantic/check/linearity.rs`
+  reaches no owned component for `Shared` and has no `KeySet` action, while
+  the backend's `type_derives_release` classifies both as releasing storage.
+  Its `check_self_tail_releases` consumer may therefore omit an FN-10
+  release obligation. This is an inspection finding, not a reproduced
+  acceptance failure; keep it separate from the call-group boundary, which
+  uses the release graph's storage actions and changes no acceptance rule.
+  Reopen before the next tail-release change: construct shared-handle and
+  key-set self-tail witnesses, compare their required cleanup with STOR-3,
+  SHARE-1 and FN-10, then unify the action classification if the discrepancy
+  affects the judgment; validate empty scalar and zero-capacity controls too.
+
 ## Parallel lowering and runtime
 
 - **PAR-1 operand footprints treat a copied reference as its referent.**
@@ -1765,12 +1778,14 @@ rarely insert at the same place.
   program observes that non-call pair: the lowering hands out only calls,
   and a member that is not a call ends every overlap group (`overlaps` in
   `compiler/src/lowering/builder.rs`). Call argument formation is protected
-  separately: no two distinct group members combine a release (owned heap
-  argument, written heap-owning referent, or checked argument cleanup) with
-  a borrow (reference argument or reference formation). A conflict ends the
-  group before the new member's arguments form; that member may start a
-  new group. Disjoint owned transfers retain overlap eligibility. The
-  permission judgment still lacks the owner-slot read described here.
+  separately: the checker retains released places (owned heap arguments,
+  written heap-owning referents, and whole aggregates consumed by argument
+  cleanup) and borrowed places (reference arguments and owner slots loaded
+  by reference formation) on each call site. Lowering ends a group before
+  argument formation when one member releases storage overlapping another
+  member's borrowed place under OWN-7; the new member may start a new group.
+  Disjoint written Box references and disjoint owned transfers retain overlap
+  eligibility. The PAR-1 verdict still lacks the owner-slot read described here.
   Forming a reference to storage held in place needs only its address, so
   only a path through a Box's `inner`
   reads its owner. Record a read of the owner above each `inner` step a
@@ -2114,6 +2129,24 @@ rarely insert at the same place.
   calls on disjoint storage: permitted as a pair and splitting, with the
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
+
+- **Qualify release through borrowed Entries storage.** The call-group
+  lifetime boundary uses the referent type's release action; both the prior
+  IR `type_derives_release` and the checker's storage classification give
+  `Entries<T>` an empty release because its descriptor owns no entries.
+  A written `&Entries<Box<u64>>` can nevertheless replace an element and
+  release its Box. A candidate witness is a helper taking that reference,
+  guarding `entries^.len > 0_u64`, matching `entries^[0_u64]` to
+  `Some(value: b)`, then calling `ignore(part: &b^.inner)` followed by a
+  `clear(entries: entries)` helper that replaces elements with `None`.
+  Source inspection suggests PAR-1 can admit these calls while the current
+  lifetime boundary misses the payload release; fixture acceptance and
+  actualization remain unverified. This predates the place-based boundary
+  and is deferred from its selected type-release rule. Reopen before
+  claiming complete protection for map-entry helpers: qualify that witness
+  in CI and select a mode-aware reference-reachable release classification,
+  keeping descriptor ownership separate; validate a Box-payload conflict
+  and a scalar-payload overlap control, with source verdicts unchanged.
 
 ## Platforms and host interfaces
 

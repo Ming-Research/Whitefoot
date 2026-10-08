@@ -109,6 +109,9 @@ pub(crate) struct PermissionSignature {
     pub(crate) name: String,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
+    /// Whether each parameter's type can execute a storage release. Used
+    /// only by the lowering boundary, never by the permission verdict.
+    pub(crate) parameter_releases: Vec<bool>,
     pub(crate) reads: Vec<CheckedStatePath>,
     pub(crate) writes: Vec<CheckedStatePath>,
 }
@@ -306,6 +309,33 @@ pub(crate) struct PermissionSite {
     /// The callee's name for a call member, or the statement's form for any
     /// other member. The ledger prints it.
     pub(crate) callee_name: String,
+    /// Call-entry and argument-formation storage, resolved by the checker.
+    /// This narrows actualization only; PAR-1 never reads it.
+    pub(crate) storage_effects: CallStorageEffects,
+}
+
+/// Storage lifetime effects beyond the reads and writes PAR-1 separates.
+/// `None` is a place whose root is unknown and overlaps every place.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CallStorageEffects {
+    borrowed: Vec<Option<ResolvedPlace>>,
+    released: Vec<Option<ResolvedPlace>>,
+}
+
+impl CallStorageEffects {
+    pub(crate) fn conflicts(&self, other: &Self) -> bool {
+        let overlaps = |released: &[Option<ResolvedPlace>], borrowed: &[Option<ResolvedPlace>]| {
+            released.iter().any(|release| {
+                borrowed.iter().any(|borrow| match (release, borrow) {
+                    (Some(release), Some(borrow)) => {
+                        places_overlap(&UnprovedSeparations, release, borrow)
+                    }
+                    _ => true,
+                })
+            })
+        };
+        overlaps(&self.released, &other.borrowed) || overlaps(&other.released, &self.borrowed)
+    }
 }
 
 /// One ordered pair of adjacent statements and its verdict.
@@ -1087,15 +1117,117 @@ impl<'check> Program<'check> {
                     .map(|signature| signature.name.clone())
             })
             .unwrap_or_else(|| label.to_owned());
+        let storage_effects = statement_value(statement)
+            .filter(|value| call_projection(value).is_some())
+            .map(|value| self.call_storage_effects(places, value))
+            .unwrap_or_default();
         Classified {
             site: node.cloned().map(|statement| PermissionSite {
                 statement,
                 binding,
                 call,
                 callee_name,
+                storage_effects,
             }),
             footprint,
         }
+    }
+
+    /// Resolve the call's lifetime boundary while the checker's reference
+    /// inventories are available. Neither these sets nor their conflicts
+    /// change source permission, its proof questions, or its diagnostics.
+    fn call_storage_effects(
+        &self,
+        places: &PlaceMap,
+        expression: &CheckedExpression,
+    ) -> CallStorageEffects {
+        let mut effects = CallStorageEffects::default();
+        let mut pending = vec![expression];
+        while let Some(expression) = pending.pop() {
+            if let Some(call) = call_projection(expression) {
+                if let Some(signature) = self.signatures.get(call.target.0 as usize) {
+                    let writes = call
+                        .formal_effects
+                        .map_or(&signature.writes, |row| &row.writes);
+                    for (index, mode) in signature.parameter_modes.iter().enumerate() {
+                        let argument = call.arguments.get(index);
+                        if mode.is_reference() {
+                            extend_storage_places(&mut effects.borrowed, places, argument);
+                        }
+                        // A range parameter's type is its element type. A
+                        // write anywhere below a reference formal may release
+                        // an owning part of its referent.
+                        let written =
+                            signature
+                                .parameter_declarations
+                                .get(index)
+                                .is_none_or(|declaration| {
+                                    writes.iter().any(|path| path.root == *declaration)
+                                });
+                        if (*mode == CheckedMode::Own || written)
+                            && signature
+                                .parameter_releases
+                                .get(index)
+                                .copied()
+                                .unwrap_or(true)
+                        {
+                            extend_storage_places(&mut effects.released, places, argument);
+                        }
+                    }
+                } else {
+                    effects.borrowed.push(None);
+                    effects.released.push(None);
+                }
+            }
+            match expression {
+                CheckedExpression::Project {
+                    binding,
+                    residual_drops,
+                    ..
+                } if !residual_drops.is_empty() => {
+                    // Moving a selected field also cleans up its siblings:
+                    // the consumed aggregate, not the selected argument, is
+                    // the lifetime boundary [WIN-3, STOR-3].
+                    effects.released.extend(storage_places_at(
+                        places,
+                        PlaceRoot::Binding(*binding),
+                        &[],
+                    ));
+                }
+                CheckedExpression::BoxTake {
+                    binding, cleanup, ..
+                } if !cleanup.is_empty() => {
+                    effects.released.extend(storage_places_at(
+                        places,
+                        PlaceRoot::Binding(*binding),
+                        &[],
+                    ));
+                }
+                CheckedExpression::BorrowAddressed { .. }
+                | CheckedExpression::BorrowRangeIndex { .. }
+                | CheckedExpression::BorrowSegment { .. }
+                | CheckedExpression::RangeOf { .. } => {
+                    extend_storage_places(&mut effects.borrowed, places, Some(expression));
+                    if let Some(named) = named_place(expression) {
+                        let mut prefix = Vec::new();
+                        for step in named.steps.iter().chain(&named.suffix) {
+                            if *step == PlaceStep::Deref {
+                                // Only the written formation loads this Box
+                                // slot. Forwarding a reference to a subtree
+                                // does not reload its resolved ancestors.
+                                effects
+                                    .borrowed
+                                    .extend(storage_places_at(places, named.root, &prefix));
+                            }
+                            prefix.push(*step);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            pending.extend(expression_children(expression));
+        }
+        effects
     }
 
     /// The footprint of one statement's right-hand side: its own operand
@@ -1990,6 +2122,52 @@ fn collect_operand_reads(
     }
     for child in expression_children(expression) {
         collect_operand_reads(places, child, node, footprint);
+    }
+}
+
+/// Resolve storage for the lowering boundary. An empty reference inventory
+/// leaves even the referent's root unknown: the holder is not that root.
+fn storage_places_at(
+    places: &PlaceMap,
+    root: PlaceRoot,
+    path: &[PlaceStep],
+) -> Vec<Option<ResolvedPlace>> {
+    let resolved = places.resolve(root, path);
+    if resolved.is_empty() {
+        vec![None]
+    } else {
+        resolved.into_iter().map(Some).collect()
+    }
+}
+
+fn extend_storage_places(
+    into: &mut Vec<Option<ResolvedPlace>>,
+    places: &PlaceMap,
+    expression: Option<&CheckedExpression>,
+) {
+    if let Some(named) = expression.and_then(named_place) {
+        let path = named
+            .steps
+            .iter()
+            .chain(&named.suffix)
+            .copied()
+            .collect::<Vec<_>>();
+        into.extend(storage_places_at(places, named.root, &path));
+    } else if let Some(binding) = expression.and_then(named_binding) {
+        // A known root with no classified selection covers all of that
+        // root's storage. Resolve reference holders before widening it.
+        into.extend(
+            storage_places_at(places, PlaceRoot::Binding(binding), &[])
+                .into_iter()
+                .map(|place| {
+                    place.map(|mut place| {
+                        place.path.clear();
+                        place
+                    })
+                }),
+        );
+    } else {
+        into.push(None);
     }
 }
 

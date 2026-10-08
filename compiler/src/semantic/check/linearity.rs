@@ -172,6 +172,31 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(None)
     }
+    /// Whether a type's release graph may reclaim storage [STOR-3, SHARE-1].
+    /// Scheduling uses this conservative classification only to narrow
+    /// overlap; even a statically empty run retains its element's actions.
+    pub(super) fn may_release_storage(&self, ty: CheckedType) -> Result<bool, CheckStop> {
+        for node in self.release_graph_nodes(ty)? {
+            match node {
+                CheckedType::Buffer { .. }
+                | CheckedType::Segments { .. }
+                | CheckedType::Window { capacity: None, .. }
+                | CheckedType::KeySet
+                | CheckedType::Generic(_) => return Ok(true),
+                CheckedType::Nominal(id)
+                    if matches!(
+                        self.nominal(id)?.kind,
+                        CheckedNominalKind::Box { .. } | CheckedNominalKind::Shared { .. }
+                    ) =>
+                {
+                    return Ok(true);
+                }
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
+
     /// [STOR-3, FN-10] whether the release graph can execute an action.
     /// The capability class alone is insufficient: a nocopy aggregate of
     /// scalars and a statically empty run both have empty releases.

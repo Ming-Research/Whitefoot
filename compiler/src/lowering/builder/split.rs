@@ -81,7 +81,7 @@ use crate::{
 };
 
 use super::loops::U64;
-use super::{BuildingBlock, CallStorageEffects, IrBuilder};
+use super::{BuildingBlock, IrBuilder};
 
 /// The widest scalar the backend puts in a frame, and so the alignment every
 /// frame field is conservatively charged.
@@ -248,7 +248,7 @@ struct BuiltChunk {
     needed: Vec<bool>,
     binding_roots: HashMap<BindingId, IrValueId>,
     reconstructions: Vec<IrValueId>,
-    call_results: HashMap<NodePath, (IrBlockId, IrValueId, CallStorageEffects)>,
+    call_results: HashMap<NodePath, (IrBlockId, IrValueId)>,
 }
 
 impl<'program> IrBuilder<'program> {
@@ -822,9 +822,9 @@ impl<'program> IrBuilder<'program> {
             source_call.result = value(source_call.result);
             self.source_calls.push(source_call);
         }
-        for (path, (original_block, result, effects)) in call_results {
+        for (path, (original_block, result)) in call_results {
             self.call_results
-                .insert(path, (block(original_block), value(result), effects));
+                .insert(path, (block(original_block), value(result)));
         }
         for mut range in function.counted_ranges {
             range.blocks = (range.blocks.start + block_offset)..(range.blocks.end + block_offset);
