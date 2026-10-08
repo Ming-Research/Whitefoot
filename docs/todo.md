@@ -727,6 +727,17 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
+- **A const generic argument refuses a type-suffixed literal.** The call
+  fragment `aof_map_len::<K, V, 4294967296_u64>` is refused with GRAM-3 at
+  the literal: `targ`'s `const` admits only unsuffixed decimals or names as operands,
+  while numeric value literals require their suffix [FORM-5]. A writer who
+  writes the suffix everywhere meets a refusal at a const argument. The
+  owner's witness is Firn-wf commit `430b25b90`, which replaced the literal
+  with a name; that downstream run has not been reproduced here. Change:
+  admit a suffixed literal whose suffix matches the const parameter's type.
+  Validate matching suffixes, wrong suffixes and out-of-range values, keeping
+  named arguments covered. Reopen with the next grammar change.
+
 ## Containers and storage lowering
 
 - **The no-heap declaration withdraws no memory the runtime's pool gives.**
@@ -2738,7 +2749,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,276 lines: the file
+  `compiler/src/backend/completion/bridge.c` exceeds 4,000 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
@@ -4054,18 +4065,17 @@ condition under which it is taken up.
   shared statement on each command, which would serialize every connection.
   Reopen when firn is monitored through `INFO`, or with the next work on
   firn's statistics.
-- **A signal stops firn without writing its pending append-only bytes.**
-  firn handles no signal, and the standard library's `std::process`
-  delivers none, so SIGTERM or SIGINT ends it at once, losing the changes its
-  writer (`write_log` in `apps/firn/persistence/persistence.wf`) has not yet
-  appended, up to one 10-millisecond cycle, and the bytes not yet synced,
-  where Redis on SIGTERM appends and syncs its file before it exits, as its
-  `SHUTDOWN` command does, which firn lacks. Seen on 2026-10-03: a `SET` sent
-  a few milliseconds before a SIGTERM was absent after the replay. A signal
-  delivered to a context could set the keyspace's `stopping`, which makes the
-  writer append, sync and close, as it does once the client limit is
-  reached. Reopen with `SHUTDOWN`, or when firn runs under a service manager
-  that stops it with SIGTERM.
+- **firn must connect stop requests to its append-only writer.** The
+  standard library now exposes `std::process::stop_listen` and `stop_next`
+  [PRE-2], but `apps/firn/server/server.wf` still does not open a listener.
+  Its host default therefore still ends it on SIGTERM or SIGINT, losing
+  changes its writer has not appended or synced. The 2026-10-03 witness was
+  a `SET` acknowledged a few milliseconds before SIGTERM and absent after
+  replay. Connect a waiting stop context to the keyspace's `stopping` state,
+  join its writer's append, sync and close, and close the listener before
+  returning. Validate a stop after acknowledged writes and replay every one
+  after restart. Reopen with firn's next orderly-stop change; the host
+  capability is implemented here, its application integration is not.
 - **firn writes decimals and reads `CONFIG SET`'s integers in repeated
   code.** `text_reserve` and `text_number` in `apps/firn/commands/info.wf`
   copy `log_reserve` and `log_number` in `apps/firn/store/store.wf`, the one

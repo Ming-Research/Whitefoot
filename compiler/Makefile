@@ -90,6 +90,7 @@ COMPLETION_RUNTIME_SOURCES := \
 	$(COMPLETION_DIR)/file_adapter.c \
 	$(COMPLETION_DIR)/file_posix.c \
 	$(COMPLETION_DIR)/bridge.c \
+	$(COMPLETION_DIR)/stop_signals.c \
 	$(COMPLETION_DIR)/linux_io_uring.c
 COMPLETION_SOURCES := $(COMPLETION_RUNTIME_SOURCES) \
 	src/backend/ordinary_values.c src/backend/ordinary_values_probe.c \
@@ -535,6 +536,7 @@ WINDOWS_LINK_SOURCES := \
 	$(COMPLETION_DIR)/file_adapter.c \
 	$(COMPLETION_DIR)/file_windows.c \
 	$(COMPLETION_DIR)/bridge.c \
+	$(COMPLETION_DIR)/stop_signals.c \
 	$(COMPLETION_DIR)/windows_iocp.c \
 	src/backend/windows_runtime.c
 WINDOWS_CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Werror -Wpedantic \

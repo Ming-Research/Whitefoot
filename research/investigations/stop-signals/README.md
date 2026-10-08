@@ -124,4 +124,4 @@ cannot restore its default when the listener closes.
 
 ## Status
 
-Proposed to the owner as Firn ledger Q222.
+Adopted: proposal A, with observation order and host merging as settled in Firn ledger Q228 and the Windows handler lifetime as settled in Q229, in specification v0.99.

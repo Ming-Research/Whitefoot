@@ -307,6 +307,10 @@ static void *wf__floor_entry(void *opaque) {
 /* Validate runtime settings before user code. Standalone emitted-module
  * probes can link the floor alone and use this weak no-op. */
 __attribute__((weak)) void wf__runtime_start(void) {}
+/* Floor-only probes have no invocation host library. A full runtime supplies
+ * the strong stop initializer, before even this joining thread creates the
+ * sized-stack entry. On Linux both must inherit blocked stop signals. */
+__attribute__((weak)) int wf__stop_initialize(void) { return 0; }
 
 /* Run on an ordinary thread with the declared stack reservation. If host
  * thread creation fails, retain the existing fallback to the original
@@ -322,6 +326,7 @@ int wf__floor_run(int argc, char **argv) {
 
     wf__floor_install();
 
+    if (wf__stop_initialize() != 0) wf__floor_setup_failed();
     wf__runtime_start();
 
     if (pthread_attr_init(&attributes) != 0) {
