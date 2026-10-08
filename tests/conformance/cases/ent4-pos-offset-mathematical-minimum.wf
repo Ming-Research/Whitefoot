@@ -1,4 +1,5 @@
 const offset_limit_low: i64 = -9223372036854775808_i64;
+
 const offset_limit_high: i64 = 9223372036854775807_i64;
 
 fn probe(x: i64) -> result: unit pure contract {
