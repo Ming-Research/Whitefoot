@@ -12,7 +12,7 @@ fn probe(left: u64, right: u64, flag: Bool) -> result: unit pure {
       return unit;
     }
     give right;
-  };
+  }
   if cursor <= 4_u64 {
     invariant tightened: cursor <= 3_u64;
   }

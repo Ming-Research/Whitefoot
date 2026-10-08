@@ -211,6 +211,8 @@ pub(crate) struct FlowEventId(pub(crate) u32);
 /// Proof-producing phase of one event in the existing ENT flow.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum FlowEventKind {
+    /// An admitted ordinary-let definition, not a signed fact source.
+    LetOrigin,
     S1,
     S4,
     S5,
@@ -310,6 +312,28 @@ pub(crate) struct PostconditionCallSubstitution {
 /// Parent IDs always precede their child in the arena.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum DerivationNode {
+    LetOrigin {
+        binding: BindingId,
+        value: GoalId,
+        event: FlowEventId,
+    },
+    OriginTransport {
+        from: GoalId,
+        goal: GoalId,
+        sign: GoalSign,
+        parent: DerivationId,
+        origins: Box<[DerivationId]>,
+    },
+    OriginEquality {
+        detail: Box<OriginEquality>,
+    },
+    /// The ordinary comparison projection of a transported entering source.
+    OriginProjection {
+        goal: GoalId,
+        sign: GoalSign,
+        relation: Relation,
+        parent: DerivationId,
+    },
     /// [ENT-5] introduction of one written relation over joined values.
     /// Each contributor proves its own complete instance; this is not an
     /// equality between mutually exclusive predecessor atoms.
@@ -761,6 +785,15 @@ pub(crate) struct IndexCaptureSubstitution {
 impl DerivationNode {
     fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
         match self {
+            Self::OriginTransport {
+                parent, origins, ..
+            } => {
+                visit(*parent);
+                origins.iter().copied().for_each(visit);
+            }
+            Self::OriginEquality { detail } => detail.origins.iter().copied().for_each(visit),
+            Self::OriginProjection { parent, .. } => visit(*parent),
+            Self::LetOrigin { .. } => {}
             Self::TransportedHeaderRelation { detail } => detail.parents().for_each(visit),
             Self::UnsignedDivisionProduct {
                 division, domain, ..
@@ -873,6 +906,10 @@ impl DerivationNode {
 
     fn parent_count(&self) -> usize {
         match self {
+            Self::OriginTransport { origins, .. } => 1 + origins.len(),
+            Self::OriginEquality { detail } => detail.origins.len(),
+            Self::OriginProjection { .. } => 1,
+            Self::LetOrigin { .. } => 0,
             Self::TransportedHeaderRelation { detail } => detail.parents().count(),
             Self::UnsignedDivisionProduct { .. }
             | Self::TransitiveBound { .. }
@@ -937,6 +974,10 @@ impl DerivationNode {
 
     fn rank(&self) -> u8 {
         match self {
+            Self::LetOrigin { .. } => 47,
+            Self::OriginTransport { .. } => 48,
+            Self::OriginEquality { .. } => 49,
+            Self::OriginProjection { .. } => 50,
             Self::TransportedHeaderRelation { .. } => 46,
             Self::ResultTransport { .. } => 42,
             Self::ResultErr { .. } => 43,
@@ -1598,6 +1639,12 @@ impl DerivationLedger {
                 .nodes
                 .iter()
                 .map(|node| match node {
+                    DerivationNode::OriginTransport { origins, .. } => {
+                        size_of_val(origins.as_ref())
+                    }
+                    DerivationNode::OriginEquality { detail } => {
+                        size_of::<OriginEquality>() + size_of_val(detail.origins.as_ref())
+                    }
                     DerivationNode::JoinBound { parents, .. }
                     | DerivationNode::JoinDistinct { parents, .. }
                     | DerivationNode::JoinGoal { parents, .. }
@@ -1747,6 +1794,35 @@ fn compare_node_ties(left: &DerivationNode, right: &DerivationNode) -> std::cmp:
 
 fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
     match node {
+        DerivationNode::LetOrigin {
+            binding,
+            value,
+            event,
+        } => [binding.0, value.0, event.0].get(index).copied(),
+        DerivationNode::OriginTransport {
+            from,
+            goal,
+            sign,
+            parent,
+            origins,
+        } => [
+            from.0,
+            goal.0,
+            u32::from(*sign == GoalSign::Negative),
+            parent.0,
+        ]
+        .get(index)
+        .copied()
+        .or_else(|| origins.get(index.checked_sub(4)?).map(|id| id.0)),
+        DerivationNode::OriginEquality { detail } => [detail.left.0, detail.right.0, detail.goal.0]
+            .get(index)
+            .copied()
+            .or_else(|| detail.origins.get(index.checked_sub(3)?).map(|id| id.0)),
+        DerivationNode::OriginProjection {
+            goal, sign, parent, ..
+        } => [goal.0, u32::from(*sign == GoalSign::Negative), parent.0]
+            .get(index)
+            .copied(),
         DerivationNode::TransportedHeaderRelation { detail } => [
             detail.template.loop_id.0,
             detail.template.source_ordinal,
@@ -1997,6 +2073,7 @@ fn tie_component(node: &DerivationNode, index: usize) -> Option<u32> {
 
 fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
     match node {
+        DerivationNode::LetOrigin { event, .. } => Some(*event),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
         | DerivationNode::SourceGoal { event, .. }
@@ -2021,6 +2098,7 @@ fn node_event(node: &DerivationNode) -> Option<FlowEventId> {
 
 fn node_event_mut(node: &mut DerivationNode) -> Option<&mut FlowEventId> {
     match node {
+        DerivationNode::LetOrigin { event, .. } => Some(event),
         DerivationNode::SourceBound { event, .. }
         | DerivationNode::SourceDistinct { event, .. }
         | DerivationNode::SourceGoal { event, .. }
@@ -2071,6 +2149,21 @@ fn remap_id(id: &mut DerivationId, remap: &[Option<DerivationId>]) {
 
 fn remap_node(node: &mut DerivationNode, remap: &[Option<DerivationId>]) {
     match node {
+        DerivationNode::OriginTransport {
+            parent, origins, ..
+        } => {
+            remap_id(parent, remap);
+            for origin in origins {
+                remap_id(origin, remap);
+            }
+        }
+        DerivationNode::OriginEquality { detail } => {
+            for origin in &mut detail.origins {
+                remap_id(origin, remap);
+            }
+        }
+        DerivationNode::OriginProjection { parent, .. } => remap_id(parent, remap),
+        DerivationNode::LetOrigin { .. } => {}
         DerivationNode::TransportedHeaderRelation { detail } => {
             for input in &mut detail.inputs {
                 for parent in input
@@ -2204,6 +2297,23 @@ pub(crate) struct GoalSupport {
     /// measure of one place has the same support, P's descriptor storage
     /// [MSR-2], so this selects the node class rather than the storage.
     pub(crate) measure: Option<CheckedMeasure>,
+}
+
+/// A live ordinary-let definition and its retained introduction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GoalOrigin {
+    pub(crate) goal: GoalId,
+    pub(crate) proof: DerivationId,
+}
+
+/// A query-local equality justified by live ordinary-let definitions.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct OriginEquality {
+    pub(crate) left: GoalId,
+    pub(crate) right: GoalId,
+    pub(crate) goal: GoalId,
+    pub(crate) relation: Relation,
+    pub(crate) origins: Box<[DerivationId]>,
 }
 
 /// Derived data attached to one exact typed expression.
@@ -2939,9 +3049,8 @@ pub(crate) struct FactState {
     /// Live exact signed whole-goal facts [ENT-2..ENT-4].
     pub(crate) opaque: WordHashSet<(GoalId, GoalSign)>,
     pub(crate) opaque_proofs: WordHashMap<(GoalId, GoalSign), DerivationId>,
-    /// Complete still-valid pure/total origin expansion of an ordinary let.
-    /// The binding's own direct value goal is intentionally separate.
-    pub(crate) goal_origins: HashMap<BindingId, GoalId>,
+    /// Still-valid admitted ordinary-let definitions and their introductions.
+    pub(crate) goal_origins: HashMap<BindingId, GoalOrigin>,
     /// Bool value initializers with two or more distinct live source goals.
     /// Such a receiver has no unique source-goal expansion.
     pub(crate) ambiguous_goal_origins: HashSet<BindingId>,
@@ -3264,6 +3373,19 @@ impl FactState {
             self.opaque_proofs.insert(fact, proof);
         }
         proof
+    }
+
+    /// A query-local derived sign. It is not another source establishment.
+    pub(crate) fn establish_derived_goal(
+        &mut self,
+        goal: GoalId,
+        sign: GoalSign,
+        proof: DerivationId,
+    ) {
+        self.keep_view_as_seed(None);
+        if !self.all_derivable && self.opaque.insert((goal, sign)) {
+            self.opaque_proofs.insert((goal, sign), proof);
+        }
     }
 
     pub(crate) fn establish_distinct_with_proof(
@@ -3679,7 +3801,7 @@ impl FactState {
         self.keep_view_as_seed(None);
         self.opaque.retain(|(goal, _)| !killed(*goal));
         self.opaque_proofs.retain(|(goal, _), _| !killed(*goal));
-        self.goal_origins.retain(|_, goal| !killed(*goal));
+        self.goal_origins.retain(|_, origin| !killed(origin.goal));
     }
 }
 

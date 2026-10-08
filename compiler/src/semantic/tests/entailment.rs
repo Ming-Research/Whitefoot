@@ -20,7 +20,7 @@ use super::super::entailment::{
     PostconditionDisposition, RangeSeparationOrdering, Relation, SourceAffineFactRef, TermId,
     TermKind, TransportedHeaderRelation, ZERO, type_range,
 };
-use super::super::goal::{GoalExpression, GoalOperation};
+use super::super::goal::{GoalDatum, GoalExpression, GoalOperation};
 use super::super::model::{
     CheckedBodyDisposition, CheckedConversionMode, CheckedExpression, CheckedIntegerOperation,
     CheckedMeasure, CheckedProgramData, CheckedStatement, CheckedValue, FunctionId, IntegerType,
@@ -203,6 +203,7 @@ fn accepted_discharge_flags(source: &[u8], function: &str) -> Vec<bool> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum DerivationConclusion {
+    Origin,
     Relation(Relation),
     Goal {
         goal: GoalId,
@@ -785,6 +786,81 @@ fn assert_source_affine_fact_resolves(summary: &FunctionEntailment, source: Sour
     }
 }
 
+/// Direct substitution oracle, independent of the checker's shared keys and
+/// representative selection. Only retained definition premises are available.
+fn retained_origin_expansion(
+    summary: &FunctionEntailment,
+    goal: GoalId,
+    origins: &[DerivationId],
+) -> GoalExpression {
+    fn expand(
+        expression: &GoalExpression,
+        definitions: &std::collections::HashMap<BindingId, GoalExpression>,
+        following: &mut std::collections::HashSet<BindingId>,
+    ) -> GoalExpression {
+        match expression {
+            GoalExpression::Datum(GoalDatum::Place {
+                root,
+                projections,
+                ty,
+            }) => {
+                let Some(definition) = definitions.get(root) else {
+                    return expression.clone();
+                };
+                assert!(following.insert(*root), "an origin proof must be acyclic");
+                let mut expanded = expand(definition, definitions, following);
+                following.remove(root);
+                for projection in projections {
+                    let Some(next) = expanded.with_projection(*projection, *ty) else {
+                        return expression.clone();
+                    };
+                    expanded = next;
+                }
+                assert_eq!(expanded.ty(), *ty);
+                expanded
+            }
+            GoalExpression::Operation {
+                row,
+                type_arguments,
+                const_arguments,
+                result,
+                arguments,
+            } => GoalExpression::Operation {
+                row: *row,
+                type_arguments: type_arguments.clone(),
+                const_arguments: const_arguments.clone(),
+                result: *result,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| expand(argument, definitions, following))
+                    .collect(),
+            },
+            GoalExpression::Datum(_) => expression.clone(),
+        }
+    }
+    let mut definitions = std::collections::HashMap::new();
+    for origin in origins {
+        let DerivationNode::LetOrigin { binding, value, .. } =
+            summary.derivations.nodes[origin.0 as usize]
+        else {
+            panic!("origin transport requires definition introductions");
+        };
+        assert!(
+            definitions
+                .insert(
+                    binding,
+                    summary.inventory.goals[value.0 as usize].expression.clone()
+                )
+                .is_none()
+        );
+    }
+    expand(
+        &summary.inventory.goals[goal.0 as usize].expression,
+        &definitions,
+        &mut std::collections::HashSet::new(),
+    )
+}
+
 pub(super) fn validate_derivations(summary: &FunctionEntailment) {
     assert_eq!(
         summary.inventory.terms.len(),
@@ -813,6 +889,118 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
         depths.push(depth);
 
         let conclusion = match node {
+            DerivationNode::LetOrigin { value, event, .. } => {
+                assert!(summary.inventory.goals.get(value.0 as usize).is_some());
+                let retained = retained_event(summary, *event);
+                assert_eq!(retained.kind, FlowEventKind::LetOrigin);
+                assert!(retained.node_path.is_some());
+                used_events[event.0 as usize] = true;
+                DerivationConclusion::Origin
+            }
+            DerivationNode::OriginTransport {
+                from,
+                goal,
+                sign,
+                parent,
+                origins,
+            } => {
+                assert_ne!(from, goal);
+                assert!(!origins.is_empty());
+                assert_eq!(
+                    retained_conclusion(&conclusions, *parent),
+                    &DerivationConclusion::Goal {
+                        goal: *from,
+                        sign: *sign
+                    }
+                );
+                for origin in origins {
+                    assert_eq!(
+                        retained_conclusion(&conclusions, *origin),
+                        &DerivationConclusion::Origin
+                    );
+                }
+                assert_eq!(
+                    retained_origin_expansion(summary, *from, origins),
+                    retained_origin_expansion(summary, *goal, origins)
+                );
+                DerivationConclusion::Goal {
+                    goal: *goal,
+                    sign: *sign,
+                }
+            }
+            DerivationNode::OriginEquality { detail } => {
+                assert!(!detail.origins.is_empty());
+                for origin in &detail.origins {
+                    assert_eq!(
+                        retained_conclusion(&conclusions, *origin),
+                        &DerivationConclusion::Origin
+                    );
+                }
+                assert_eq!(
+                    retained_origin_expansion(summary, detail.left, &detail.origins),
+                    retained_origin_expansion(summary, detail.right, &detail.origins)
+                );
+                let retained = &summary.inventory.goals[detail.goal.0 as usize];
+                let GoalExpression::Operation {
+                    row:
+                        GoalOperation::Integer {
+                            operation: CheckedIntegerOperation::Equal,
+                            operand_type,
+                        },
+                    arguments,
+                    ..
+                } = &retained.expression
+                else {
+                    panic!("an origin equality names the exact integer equality");
+                };
+                assert_eq!(
+                    arguments,
+                    &vec![
+                        summary.inventory.goals[detail.left.0 as usize]
+                            .expression
+                            .clone(),
+                        summary.inventory.goals[detail.right.0 as usize]
+                            .expression
+                            .clone()
+                    ]
+                );
+                assert!(
+                    arguments
+                        .iter()
+                        .all(|argument| argument.ty() == *operand_type)
+                );
+                assert_eq!(retained.projection.as_ref(), Some(&detail.relation));
+                assert_relation_terms_resolve(summary, &detail.relation);
+                DerivationConclusion::Relation(detail.relation.clone())
+            }
+            DerivationNode::OriginProjection {
+                goal,
+                sign,
+                relation,
+                parent,
+            } => {
+                assert_eq!(
+                    retained_conclusion(&conclusions, *parent),
+                    &DerivationConclusion::Goal {
+                        goal: *goal,
+                        sign: *sign
+                    }
+                );
+                let projection = summary.inventory.goals[goal.0 as usize]
+                    .projection
+                    .as_ref()
+                    .expect("a transported source projection exists");
+                assert_eq!(
+                    *relation,
+                    if *sign == GoalSign::Positive {
+                        projection.clone()
+                    } else {
+                        projection.negated()
+                    }
+                );
+                assert_relation_terms_resolve(summary, relation);
+                DerivationConclusion::Relation(relation.clone())
+            }
             DerivationNode::SourceBound {
                 relation,
                 left,
@@ -2085,6 +2273,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         | DerivationConclusion::RangeSeparation { .. }
                         | DerivationConclusion::IndexSeparation { .. }
                         | DerivationConclusion::PostconditionAggregate
+                        | DerivationConclusion::Origin
                         | DerivationConclusion::TransportedHeaderRelation => {
                             panic!("delivery join parent must be a relation or contradiction")
                         }
@@ -2253,6 +2442,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         | DerivationConclusion::RangeSeparation { .. }
                         | DerivationConclusion::IndexSeparation { .. }
                         | DerivationConclusion::PostconditionAggregate
+                        | DerivationConclusion::Origin
                         | DerivationConclusion::TransportedHeaderRelation => {
                             panic!("an affine-only bounds root must conclude its exact goal")
                         }
@@ -2306,6 +2496,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                         | DerivationConclusion::RangeSeparation { .. }
                         | DerivationConclusion::IndexSeparation { .. }
                         | DerivationConclusion::PostconditionAggregate
+                        | DerivationConclusion::Origin
                         | DerivationConclusion::TransportedHeaderRelation => {
                             panic!("this obligation root cannot conclude that goal")
                         }
@@ -2410,6 +2601,7 @@ pub(super) fn validate_derivations(summary: &FunctionEntailment) {
                     | DerivationConclusion::TransportedHeaderRelation
                     | DerivationConclusion::RangeSeparation { .. }
                     | DerivationConclusion::IndexSeparation { .. }
+                    | DerivationConclusion::Origin
                     | DerivationConclusion::ContractCall => {
                         panic!("a discharged call root cannot be a postcondition aggregate")
                     }
@@ -3152,6 +3344,215 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 // ---------------------------------------------------------------------
+#[test]
+fn origin_transport_retains_definitions_and_signed_parents() {
+    for source in [
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-origin-parity.wf").as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-origin-boolean.wf").as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-origin-nested.wf").as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-origin-named-conversion.wf")
+            .as_slice(),
+    ] {
+        let summary = accepted_entailment(source, "witness");
+        validate_derivations(&summary);
+        assert_eq!(
+            summary.call_goals.last().unwrap().evidence,
+            vec![CallGoalEvidence::OriginTransportPositive]
+        );
+        assert!(
+            summary
+                .derivations
+                .nodes
+                .iter()
+                .any(|node| matches!(node, DerivationNode::OriginTransport { .. }))
+        );
+        assert!(
+            summary
+                .derivations
+                .nodes
+                .iter()
+                .any(|node| matches!(node, DerivationNode::LetOrigin { .. }))
+        );
+        for corrupt_sign in [false, true] {
+            let mut broken = summary.clone();
+            let transport = broken
+                .derivations
+                .nodes
+                .iter_mut()
+                .find(|node| matches!(node, DerivationNode::OriginTransport { .. }))
+                .unwrap();
+            let DerivationNode::OriginTransport { sign, origins, .. } = transport else {
+                unreachable!()
+            };
+            if corrupt_sign {
+                *sign = GoalSign::Negative;
+            } else {
+                *origins = Box::new([]);
+            }
+            assert!(
+                std::panic::catch_unwind(|| validate_derivations(&broken)).is_err(),
+                "a wrong sign or missing definition must invalidate the retained step"
+            );
+        }
+    }
+}
+
+#[test]
+fn origin_equalities_retain_their_exact_integer_projection() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/ent4-pos-origin-equal-values.wf");
+    let summary = accepted_entailment(source, "witness");
+    validate_derivations(&summary);
+    assert!(
+        summary
+            .derivations
+            .nodes
+            .iter()
+            .any(|node| matches!(node, DerivationNode::OriginEquality { .. }))
+    );
+    let mut broken = summary.clone();
+    let node = broken
+        .derivations
+        .nodes
+        .iter_mut()
+        .find(|node| matches!(node, DerivationNode::OriginEquality { .. }))
+        .unwrap();
+    let DerivationNode::OriginEquality { detail } = node else {
+        unreachable!()
+    };
+    let Relation::Equal { difference, .. } = &mut detail.relation else {
+        unreachable!()
+    };
+    *difference += 1;
+    assert!(
+        std::panic::catch_unwind(|| validate_derivations(&broken)).is_err(),
+        "a false offset must not validate as the equality of the definitions"
+    );
+}
+
+#[test]
+fn origin_transport_projects_only_the_entering_source() {
+    let source = br#"fn need(value: u64) -> r: unit pure contract {
+  requires value < 5_u64;
+} {
+  return unit;
+}
+
+fn witness(x: u64) -> r: unit pure {
+  let masked = iand(x, 7_u64);
+  if iand(x, 7_u64) < 4_u64 {
+    need(value: masked);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let summary = accepted_entailment(source, "witness");
+    validate_derivations(&summary);
+    assert!(
+        summary
+            .derivations
+            .nodes
+            .iter()
+            .any(|node| matches!(node, DerivationNode::OriginProjection { .. }))
+    );
+    let mut broken = summary.clone();
+    let node = broken
+        .derivations
+        .nodes
+        .iter_mut()
+        .find(|node| matches!(node, DerivationNode::OriginProjection { .. }))
+        .unwrap();
+    let DerivationNode::OriginProjection { sign, .. } = node else {
+        unreachable!()
+    };
+    *sign = GoalSign::Negative;
+    assert!(std::panic::catch_unwind(|| validate_derivations(&broken)).is_err());
+}
+
+#[test]
+fn origin_transport_does_not_cross_a_killed_or_joined_definition() {
+    for source in [
+        include_bytes!("../../../../tests/conformance/cases/ent4-neg-origin-write.wf").as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/ent4-neg-origin-join.wf").as_slice(),
+    ] {
+        let summary = entailment(source, "witness");
+        validate_derivations(&summary);
+        assert_eq!(
+            summary.call_goals.last().unwrap().disposition,
+            CallGoalDisposition::Unproved
+        );
+    }
+}
+
+#[test]
+fn origin_transport_preserves_negative_signs_and_refutation() {
+    let source = include_str!("../../../../tests/conformance/cases/ent4-neg-origin-refuted.wf");
+    let refuted = entailment(source.as_bytes(), "witness");
+    validate_derivations(&refuted);
+    let call = refuted.call_goals.last().unwrap();
+    assert_eq!(call.disposition, CallGoalDisposition::Refuted);
+    assert_eq!(
+        call.evidence,
+        vec![CallGoalEvidence::OriginTransportNegative]
+    );
+
+    let negated = source.replace("requires value;", "requires bnot(value);");
+    let accepted = accepted_entailment(negated.as_bytes(), "witness");
+    validate_derivations(&accepted);
+    assert_root_contains(
+        &accepted,
+        call_root(&accepted, 0),
+        |node| {
+            matches!(
+                node,
+                DerivationNode::OriginTransport {
+                    sign: GoalSign::Negative,
+                    ..
+                }
+            )
+        },
+        "the saved Boolean's negative origin proof",
+    );
+}
+
+#[test]
+fn origin_transport_keeps_affine_negative_proofs_inside_introduction() {
+    let source =
+        include_str!("../../../../tests/conformance/cases/ent4-pos-origin-affine-child.wf");
+    let summary = accepted_entailment(source.as_bytes(), "witness");
+    validate_derivations(&summary);
+    assert_root_contains(
+        &summary,
+        call_root(&summary, 0),
+        |node| {
+            matches!(
+                node,
+                DerivationNode::OriginTransport {
+                    sign: GoalSign::Negative,
+                    ..
+                }
+            )
+        },
+        "the negative affine child transported to its Boolean datum",
+    );
+
+    let expanded = source.replace("need(value: test);", "need(value: x + y < 9_u64);");
+    validate_derivations(&accepted_entailment(expanded.as_bytes(), "witness"));
+
+    let standalone = source.replace("requires bnot(value);", "requires value;");
+    let unproved = entailment(standalone.as_bytes(), "witness");
+    validate_derivations(&unproved);
+    assert_eq!(
+        unproved.call_goals.last().unwrap().disposition,
+        CallGoalDisposition::Unproved,
+        "a negative affine child is not an independent negative root route"
+    );
+}
+
 // [ENT-3] comparison origin (b) and its path validity
 // ---------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-fn need_different(value: u64, bytes: &[u8]) -> result: unit reads(bytes.len) contract {
+fn need_different(value: u64, bytes: &[u8]) -> result: unit pure contract {
   requires value != bytes^.len;
 } {
   return unit;

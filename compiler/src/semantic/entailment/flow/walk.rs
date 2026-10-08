@@ -539,8 +539,12 @@ impl Analyzer<'_, '_> {
                     state.facts.origins.insert(*binding, relation);
                 }
                 if judgment.reached {
-                    self.reasoning()
-                        .record_goal_origin(*binding, value, &mut state.facts);
+                    self.reasoning().record_goal_origin(
+                        node_path,
+                        *binding,
+                        value,
+                        &mut state.facts,
+                    );
                 }
                 // Sources S5, S6, S7, and S9 establish at the binding, after
                 // the initializer's own kills [ENT-3, ENT-5].

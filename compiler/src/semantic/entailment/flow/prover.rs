@@ -356,6 +356,12 @@ impl Reasoning<'_, '_, '_> {
             ProofDisposition::Unknown => CallGoalDisposition::Unproved,
         };
         let evidence = match (result.disposition, result.route) {
+            (ProofDisposition::Proved, Some(ProofRoute::OriginTransport)) => {
+                vec![CallGoalEvidence::OriginTransportPositive]
+            }
+            (ProofDisposition::Refuted, Some(ProofRoute::OriginTransport)) => {
+                vec![CallGoalEvidence::OriginTransportNegative]
+            }
             (ProofDisposition::Proved, Some(ProofRoute::Contradiction)) => {
                 vec![CallGoalEvidence::AllDerivable]
             }
@@ -416,6 +422,53 @@ impl Reasoning<'_, '_, '_> {
     /// fixed ordinary closure before the fixed affine rule and constructs the
     /// selected derivation during that same query.
     pub(super) fn prove(&mut self, context: ProofContext<'_>, goal: ProofGoal<'_>) -> ProofResult {
+        let prepared = ProofContext {
+            origin_view: if context.origin_view == OriginView::Pending {
+                OriginView::Ordinary
+            } else {
+                context.origin_view
+            },
+            ..context
+        };
+        let ordinary = self.prove_prepared(prepared, goal);
+        // A proof in the entering state remains a proof in its origin view.
+        // Preserve its selected parent and diagnostic grounds; internal
+        // component queries already share their enclosing prepared view.
+        if ordinary.disposition == ProofDisposition::Proved
+            || context.origin_view != OriginView::Pending
+            || context.facts.goal_origins.is_empty()
+        {
+            return ordinary;
+        }
+        let submitted = match goal {
+            ProofGoal::Signed { expression, .. } => Some(expression.clone()),
+            ProofGoal::ConversionDomain { canonical, .. } => Some(canonical.clone()),
+            ProofGoal::IntegerDomain(domain) => domain
+                .canonical
+                .map(|id| self.vocabulary.goals.expression(id).clone()),
+            ProofGoal::BoundedRelation(bound) => bound.canonical.cloned(),
+            _ => None,
+        };
+        let view = self.origin_query_view(context, submitted.as_ref());
+        let prepared = ProofContext {
+            facts: &view,
+            affine: context.affine,
+            closed: None,
+            origin_view: OriginView::Prepared,
+        };
+        let mut result = self.prove_prepared(prepared, goal);
+        if result.disposition == ordinary.disposition {
+            return ordinary;
+        }
+        if matches!(goal, ProofGoal::Signed { .. })
+            && result.route != Some(ProofRoute::Contradiction)
+        {
+            result.route = Some(ProofRoute::OriginTransport);
+        }
+        result
+    }
+
+    fn prove_prepared(&mut self, context: ProofContext<'_>, goal: ProofGoal<'_>) -> ProofResult {
         match goal {
             ProofGoal::Affine { inequality, right } => {
                 self.prove_affine(context, inequality, right)
@@ -756,7 +809,7 @@ impl Reasoning<'_, '_, '_> {
             expression,
             GoalSign::Positive,
             &closed,
-            &mut HashSet::new(),
+            &mut HashMap::new(),
         );
         ProofResult {
             disposition: if derivation.is_some() {
@@ -814,6 +867,8 @@ impl Reasoning<'_, '_, '_> {
     /// ordering leaves. The recursion follows the closed truth table exactly:
     /// conjunction requires every positive child, disjunction every negative
     /// child, the opposite signs require one witness, and `not` flips sign.
+    /// In an origin view a Boolean datum visits its live definition under the
+    /// demanded sign; child proofs remain local to this positive introduction.
     /// It performs no premise, coefficient, or path search.
     pub(super) fn signed_goal_affine_proof(
         &mut self,
@@ -821,20 +876,25 @@ impl Reasoning<'_, '_, '_> {
         expression: &GoalExpression,
         sign: GoalSign,
         closed: &ClosedState,
-        visiting: &mut HashSet<(GoalId, GoalSign)>,
+        memo: &mut HashMap<(GoalId, GoalSign), Option<DerivationId>>,
     ) -> Option<DerivationId> {
         let goal = self.intern_goal_expression(expression.clone());
+        if let Some(proof) = memo.get(&(goal, sign)) {
+            return *proof;
+        }
         if let Some(proof) = closed.goal_proof(
             goal,
             sign,
             &self.vocabulary.goals,
             &mut self.vocabulary.derivations,
         ) {
+            memo.insert((goal, sign), Some(proof));
             return Some(proof);
         }
-        if !visiting.insert((goal, sign)) {
-            return None;
-        }
+        // A live definition only refers to older values. Memoization also
+        // guards re-entry and shares repeated children without expanding the
+        // definition DAG into a tree.
+        memo.insert((goal, sign), None);
 
         let proof = match expression {
             GoalExpression::Operation {
@@ -860,7 +920,6 @@ impl Reasoning<'_, '_, '_> {
                     (CheckedBooleanOperation::Not, GoalSign::Positive) => GoalSign::Negative,
                     (CheckedBooleanOperation::Not, GoalSign::Negative) => GoalSign::Positive,
                     (CheckedBooleanOperation::ExclusiveOr, _) => {
-                        visiting.remove(&(goal, sign));
                         return None;
                     }
                 };
@@ -874,9 +933,9 @@ impl Reasoning<'_, '_, '_> {
                     let mut parents = Vec::with_capacity(arguments.len());
                     let mut complete = true;
                     for argument in arguments {
-                        let Some(parent) = self.signed_goal_affine_proof(
-                            context, argument, child_sign, closed, visiting,
-                        ) else {
+                        let Some(parent) = self
+                            .signed_goal_affine_proof(context, argument, child_sign, closed, memo)
+                        else {
                             complete = false;
                             break;
                         };
@@ -886,9 +945,9 @@ impl Reasoning<'_, '_, '_> {
                 } else {
                     let mut best = None;
                     for argument in arguments {
-                        let Some(candidate) = self.signed_goal_affine_proof(
-                            context, argument, child_sign, closed, visiting,
-                        ) else {
+                        let Some(candidate) = self
+                            .signed_goal_affine_proof(context, argument, child_sign, closed, memo)
+                        else {
                             continue;
                         };
                         // Existential Boolean introductions use the first
@@ -913,9 +972,44 @@ impl Reasoning<'_, '_, '_> {
             GoalExpression::Operation { .. } => {
                 self.affine_signed_goal_leaf_proof(context, expression, goal, sign)
             }
+            GoalExpression::Datum(GoalDatum::Place {
+                root,
+                projections,
+                ty,
+            }) if context.origin_view == OriginView::Prepared => context
+                .facts
+                .goal_origins
+                .get(root)
+                .copied()
+                .and_then(|origin| {
+                    let mut definition = self.vocabulary.goals.expression(origin.goal).clone();
+                    for projection in projections {
+                        let result = self
+                            .input
+                            .goal_projection_type(definition.ty(), *projection)?;
+                        definition = definition.with_projection(*projection, result)?;
+                    }
+                    if definition.ty() != *ty {
+                        return None;
+                    }
+                    let from = self.intern_goal_expression(definition.clone());
+                    let parent =
+                        self.signed_goal_affine_proof(context, &definition, sign, closed, memo)?;
+                    Some(
+                        self.vocabulary
+                            .derivations
+                            .intern(DerivationNode::OriginTransport {
+                                from,
+                                goal,
+                                sign,
+                                parent,
+                                origins: Box::new([origin.proof]),
+                            }),
+                    )
+                }),
             GoalExpression::Datum(_) => None,
         };
-        visiting.remove(&(goal, sign));
+        memo.insert((goal, sign), proof);
         proof
     }
 

@@ -2,7 +2,9 @@
 //! their origins and interning, signed Boolean decompositions and the
 //! integer-domain goals of exact operations.
 
+use super::super::state::GoalOrigin;
 use super::*;
+use crate::NodePath;
 
 impl Input<'_, '_> {
     /// Converts one source expression to ENT-3's exact direct pure/total
@@ -999,7 +1001,7 @@ impl Reasoning<'_, '_, '_> {
                 if !expanding.insert(*root) {
                     return expression.clone();
                 }
-                let origin = self.vocabulary.goals.expression(origin).clone();
+                let origin = self.vocabulary.goals.expression(origin.goal).clone();
                 let mut expanded = self.expand_goal_expression_inner(
                     &origin,
                     state,
@@ -1087,6 +1089,7 @@ impl Reasoning<'_, '_, '_> {
 
     pub(super) fn record_goal_origin(
         &mut self,
+        site: &NodePath,
         binding: BindingId,
         value: &CheckedExpression,
         state: &mut FactState,
@@ -1095,7 +1098,25 @@ impl Reasoning<'_, '_, '_> {
             return;
         };
         let origin = self.intern_goal_expression(direct);
-        state.goal_origins.insert(binding, origin);
+        let event = self
+            .vocabulary
+            .derivations
+            .event(FlowEventKind::LetOrigin, Some(site.clone()));
+        let proof = self
+            .vocabulary
+            .derivations
+            .intern(DerivationNode::LetOrigin {
+                binding,
+                value: origin,
+                event,
+            });
+        state.goal_origins.insert(
+            binding,
+            GoalOrigin {
+                goal: origin,
+                proof,
+            },
+        );
         state.ambiguous_goal_origins.remove(&binding);
     }
 
@@ -1121,16 +1142,16 @@ impl Reasoning<'_, '_, '_> {
             .intern(expression, projection, normalization, support)
     }
 
-    /// [O11 candidate] The signed Boolean decomposition set of one
+    /// [ENT-3] The signed Boolean decomposition set of one
     /// established goal: `+band` and `-bor` decompose into their signed
     /// children recursively, `bnot` flips the sign, and every other root —
     /// in particular `-band` and `+bor`, whose content is genuinely
     /// disjunctive, and `bxor` on either sign — contributes nothing.
     ///
     /// Members are interned so their exact identities, projections, and
-    /// supports are retained in the inventory, but nothing establishes them
-    /// as facts in this version: v0.30 acceptance is untouched. Design:
-    /// `research/investigations/o11-composition/DESIGN.md`.
+    /// supports are retained in the inventory. Source establishment uses this
+    /// set; query-time Boolean introduction and origin transport never
+    /// decompose a derived parent into new premises.
     pub(super) fn signed_boolean_decomposition(
         &mut self,
         parent: GoalId,
@@ -1179,7 +1200,7 @@ impl Reasoning<'_, '_, '_> {
             // guard binding holds a comparison, so this settles the common case
             // without retaining the origin.
             if !matches!(
-                self.vocabulary.goals.expression(origin),
+                self.vocabulary.goals.expression(origin.goal),
                 GoalExpression::Operation {
                     row: GoalOperation::Boolean(_),
                     ..
@@ -1190,7 +1211,7 @@ impl Reasoning<'_, '_, '_> {
             if !following.insert(*root) {
                 return;
             }
-            let origin = self.vocabulary.goals.expression(origin).clone();
+            let origin = self.vocabulary.goals.expression(origin.goal).clone();
             self.collect_decomposition_members(&origin, sign, state, members, following);
             following.remove(root);
             return;
