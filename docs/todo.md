@@ -93,6 +93,24 @@ rarely insert at the same place.
   only when its elapsed share warrants another experiment. No acceptance or
   specification change is part of this work.
 
+- **Checking Halo takes about 9 seconds.** The Halo-wf session reported that
+  rewriting Halo's interpreter as plain `loop { match }` raised its source
+  check from about 7.7 s to 9.0 s, and the owner judged 9 s still too long.
+  Impact: every edit of an interpreter-sized program waits that long before
+  any diagnostic, and larger interpreters (full wasm, Lua) grow further. No
+  profile of Halo's check exists yet. The known sinks come from the v2h
+  wasm interpreter and the synthetic arm series: rebuilding the affine L0
+  index (64% of checking-thread samples in the stage-3 profile, addressed by
+  the lazy index above), join work at many-arm matches, dense single-input
+  snapshots, image formation and inventory scans. Possible directions after
+  the lazy index: a Halo profile to rank its own sinks, cheaper joins of
+  many arms that assign disjoint facts, and reuse of per-arm facts across
+  repeated checks of unchanged functions. Validate each with a same-source
+  base/twin/head timing of Halo's check on the 14900K through CI, unchanged
+  conformance and corpus verdicts, and the full-rebuild differentials.
+  Reopen when the lazy-index timing lands, or sooner if Halo's check passes
+  10 s.
+
 - **A disequality with a constant does not tighten a bound.** Under the
   header `invariant bounded: cursor <= 4_u64`, the body
   `if cursor == 4_u64 { break; }` followed by `set cursor = cursor + 1_u64;`
