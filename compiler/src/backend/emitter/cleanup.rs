@@ -1149,8 +1149,9 @@ fn emit_enum_cleanup_body(
     Ok(())
 }
 
-/// Drop initialized Paged elements in logical order, then free all allocated
-/// pages. The Box caller subsequently frees the cell, including its directory.
+/// Drop initialized Paged elements in logical order, then free every nonnull
+/// page, including pages retained by take_back. All dircap directory entries
+/// are initialized. The Box caller then frees the cell.
 fn emit_paged_drop_helper(
     program: &IrProgram,
     target: TargetLayout,
@@ -1172,7 +1173,7 @@ fn emit_paged_drop_helper(
     );
     signature.linkage = Linkage::Private;
     output.open_block("entry".to_owned());
-    writeln!(output, "  %len = load i64, ptr %value\n  %cap.ptr = getelementptr inbounds {cell}, ptr %value, i32 0, i32 1\n  %cap = load i64, ptr %cap.ptr\n  %dir = getelementptr inbounds {cell}, ptr %value, i32 0, i32 3, i64 0", cell = super::paged::CELL).map_err(|_| BackendFailure::TextEmission)?;
+    writeln!(output, "  %len = load i64, ptr %value\n  %dircap.ptr = getelementptr inbounds {cell}, ptr %value, i32 0, i32 2\n  %dircap = load i64, ptr %dircap.ptr\n  %dir = getelementptr inbounds {cell}, ptr %value, i32 0, i32 3, i64 0", cell = super::paged::CELL).map_err(|_| BackendFailure::TextEmission)?;
     if type_requires_cleanup(program, element)? {
         output.push_str("  br label %elements\n");
         output.open_block("elements".to_owned());
@@ -1197,11 +1198,18 @@ fn emit_paged_drop_helper(
         output.push_str("  br label %pages.start\n");
     }
     output.open_block("pages.start".to_owned());
-    writeln!(output, "  %quotient = lshr i64 %cap, {shift}\n  %remainder = and i64 %cap, {mask}\n  %partial = icmp ne i64 %remainder, 0\n  %carry = zext i1 %partial to i64\n  %count = add nuw i64 %quotient, %carry\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
+    output.push_str("  br label %pages\n");
     output.open_block("pages".to_owned());
-    output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.free ]\n  %allocated = icmp ult i64 %p, %count\n  br i1 %allocated, label %page.free, label %done\n");
+    output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.next ]\n  %within = icmp ult i64 %p, %dircap\n  br i1 %within, label %page.check, label %done\n");
+    output.open_block("page.check".to_owned());
+    output.push_str("  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  %allocated = icmp ne ptr %allocation, null\n  br i1 %allocated, label %page.free, label %page.next\n");
     output.open_block("page.free".to_owned());
-    output.instructions("  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  call void @free(ptr %allocation)\n  %p.next = add nuw i64 %p, 1\n  br label %pages\n", &["free"]);
+    output.instructions(
+        "  call void @free(ptr %allocation)\n  br label %page.next\n",
+        &["free"],
+    );
+    output.open_block("page.next".to_owned());
+    output.push_str("  %p.next = add nuw i64 %p, 1\n  br label %pages\n");
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     signature.references = output.references.clone();

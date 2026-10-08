@@ -1,8 +1,11 @@
 //! Address-stable paged windows and their noncontiguous run references.
 //!
 //! Growth replaces the header-first cell, copying its header and page pointers
-//! only. All size checks precede their allocation and use the selected target's
-//! element stride [STOR-6].
+//! only. Every directory entry is initialized: pages covering len are allocated,
+//! and later entries are null or retain pages emptied by take_back. Construction
+//! and growth reserve directory space; place_back allocates a missing page at
+//! its first slot. All size checks precede their allocation and use the selected
+//! target's element stride [STOR-6].
 
 use crate::IrElement;
 
@@ -162,10 +165,12 @@ impl FunctionEmitter<'_, '_> {
         let cell = self.paged_allocate(&bytes, &oom)?;
         // Four directory entries avoid cell replacement for the first small grows
         // and keep an empty run's interior pointer within the cell.
-        // Unused entries remain uninitialized.
+        // Every unused entry is null, including the spare directory capacity.
         let header = self.next_temporary()?;
         writeln!(self.output, "  %{header} = insertvalue {HEADER} zeroinitializer, i64 {dircap}, 2\n  store {HEADER} %{header}, ptr {cell}").map_err(|_| BackendFailure::TextEmission)?;
-        self.paged_allocate_pages(&cell, element, &capacity, ("0", &pages), &tag, &oom)?;
+        let directory = self.paged_directory(&cell)?;
+        self.paged_initialize_entries(&directory, "0", &dircap, &tag)?;
+        self.paged_publish_capacity(&cell, &capacity, &tag, &oom)?;
         writeln!(
             self.output,
             "  {} = getelementptr i8, ptr {cell}, i64 0",
@@ -188,10 +193,8 @@ impl FunctionEmitter<'_, '_> {
         let capacity = self.value_name(capacity);
         let old = self.next_temporary()?;
         let header = self.next_temporary()?;
-        let oldcap = self.next_temporary()?;
         let olddircap = self.next_temporary()?;
-        writeln!(self.output, "  %{old} = load ptr, ptr {owner}\n  %{header} = load {HEADER}, ptr %{old}\n  %{oldcap} = extractvalue {HEADER} %{header}, 1\n  %{olddircap} = extractvalue {HEADER} %{header}, 2").map_err(|_| BackendFailure::TextEmission)?;
-        let oldpages = self.paged_count(&format!("%{oldcap}"), element)?;
+        writeln!(self.output, "  %{old} = load ptr, ptr {owner}\n  %{header} = load {HEADER}, ptr %{old}\n  %{olddircap} = extractvalue {HEADER} %{header}, 2").map_err(|_| BackendFailure::TextEmission)?;
         let pages = self.paged_count(&capacity, element)?;
         let dircap = self.paged_directory_capacity(&format!("%{olddircap}"), &pages, &tag, &oom)?;
         writeln!(self.output, "  %{tag}.unchanged = icmp eq i64 {dircap}, %{olddircap}\n  br i1 %{tag}.unchanged, label %{tag}.existing, label %{tag}.resize").map_err(|_| BackendFailure::TextEmission)?;
@@ -211,7 +214,9 @@ impl FunctionEmitter<'_, '_> {
         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
         self.output.symbol("llvm.memmove.p0.p0.i64");
         self.output.symbol("free");
-        writeln!(self.output, "  %{tag}.copied = mul nuw i64 {oldpages}, 8\n  call void @llvm.memmove.p0.p0.i64(ptr {freshdir}, ptr {olddir}, i64 %{tag}.copied, i1 false)\n  call void @free(ptr %{old})\n  store ptr {fresh}, ptr {owner}\n  br label %{tag}.resized").map_err(|_| BackendFailure::TextEmission)?;
+        writeln!(self.output, "  %{tag}.copied = mul nuw i64 %{olddircap}, 8\n  call void @llvm.memmove.p0.p0.i64(ptr {freshdir}, ptr {olddir}, i64 %{tag}.copied, i1 false)").map_err(|_| BackendFailure::TextEmission)?;
+        self.paged_initialize_entries(&freshdir, &format!("%{olddircap}"), &dircap, &tag)?;
+        writeln!(self.output, "  call void @free(ptr %{old})\n  store ptr {fresh}, ptr {owner}\n  br label %{tag}.resized").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.resized"));
         writeln!(self.output, "  br label %{tag}.ready")
             .map_err(|_| BackendFailure::TextEmission)?;
@@ -225,7 +230,7 @@ impl FunctionEmitter<'_, '_> {
             "  {cell} = phi ptr [ {fresh}, %{tag}.resized ], [ %{old}, %{tag}.existing ]"
         )
         .map_err(|_| BackendFailure::TextEmission)?;
-        self.paged_allocate_pages(&cell, element, &capacity, (&oldpages, &pages), &tag, &oom)?;
+        self.paged_publish_capacity(&cell, &capacity, &tag, &oom)?;
         self.emit_constant(result, ty, IrConstant::Unit)
     }
 
@@ -262,44 +267,38 @@ impl FunctionEmitter<'_, '_> {
         Ok(format!("%{tag}.capacity"))
     }
 
-    /// Add only the missing pages and publish the exact requested capacity.
-    /// The caller has already sized the cell and, on growth, replaced its owner.
-    fn paged_allocate_pages(
+    /// Initialize the new directory suffix; copied entries already hold either
+    /// null or a page retained across growth and boundary removal.
+    fn paged_initialize_entries(
+        &mut self,
+        directory: &str,
+        start: &str,
+        end: &str,
+        tag: &str,
+    ) -> Result<(), BackendFailure> {
+        writeln!(self.output, "  br label %{tag}.entries.start")
+            .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(format!("{tag}.entries.start"));
+        writeln!(self.output, "  br label %{tag}.entries")
+            .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(format!("{tag}.entries"));
+        writeln!(self.output, "  %{tag}.entry = phi i64 [ {start}, %{tag}.entries.start ], [ %{tag}.next, %{tag}.entry.store ]\n  %{tag}.finished = icmp eq i64 %{tag}.entry, {end}\n  br i1 %{tag}.finished, label %{tag}.entries.done, label %{tag}.entry.store").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(format!("{tag}.entry.store"));
+        writeln!(self.output, "  %{tag}.slot = getelementptr inbounds ptr, ptr {directory}, i64 %{tag}.entry\n  store ptr null, ptr %{tag}.slot\n  %{tag}.next = add nuw i64 %{tag}.entry, 1\n  br label %{tag}.entries").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(format!("{tag}.entries.done"));
+        Ok(())
+    }
+
+    /// Publish the exact requested capacity after directory construction/growth.
+    fn paged_publish_capacity(
         &mut self,
         cell: &str,
-        element: IrType,
         capacity: &str,
-        (oldpages, pages): (&str, &str),
         tag: &str,
         oom: &str,
     ) -> Result<(), BackendFailure> {
-        let (b, stride) = crate::target::paged_geometry(self.target, self.program, element)
-            .map_err(BackendFailure::TargetLayout)?;
-        let directory = self.paged_directory(cell)?;
-        writeln!(self.output, "  %{tag}.no_pages = icmp eq i64 {oldpages}, {pages}\n  br i1 %{tag}.no_pages, label %{tag}.done, label %{tag}.page.size").map_err(|_| BackendFailure::TextEmission)?;
-        self.output.open_block(format!("{tag}.page.size"));
-        let page_bytes = self.emit_allocation_size(
-            &b.to_string(),
-            &stride.to_string(),
-            "0",
-            oom,
-            &format!("{tag}.pages.start"),
-        )?;
-        let nonzero = self.next_temporary()?;
-        writeln!(self.output, "  %{nonzero}.empty = icmp eq i64 {page_bytes}, 0\n  %{nonzero} = select i1 %{nonzero}.empty, i64 1, i64 {page_bytes}").map_err(|_| BackendFailure::TextEmission)?;
-        writeln!(self.output, "  br label %{tag}.pages")
+        writeln!(self.output, "  br label %{tag}.done")
             .map_err(|_| BackendFailure::TextEmission)?;
-        self.output.open_block(format!("{tag}.pages"));
-        writeln!(self.output, "  %{tag}.page = phi i64 [ {oldpages}, %{tag}.pages.start ], [ %{tag}.next, %{tag}.stored ]\n  %{tag}.finished = icmp eq i64 %{tag}.page, {pages}\n  br i1 %{tag}.finished, label %{tag}.done, label %{tag}.allocate").map_err(|_| BackendFailure::TextEmission)?;
-        self.output.open_block(format!("{tag}.allocate"));
-        let page = self.paged_allocate(&format!("%{nonzero}"), oom)?;
-        writeln!(self.output, "  %{tag}.slot = getelementptr inbounds ptr, ptr {directory}, i64 %{tag}.page\n  store ptr {page}, ptr %{tag}.slot\n  br label %{tag}.stored").map_err(|_| BackendFailure::TextEmission)?;
-        self.output.open_block(format!("{tag}.stored"));
-        writeln!(
-            self.output,
-            "  %{tag}.next = add nuw i64 %{tag}.page, 1\n  br label %{tag}.pages"
-        )
-        .map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(oom.to_owned());
         self.output.symbol("wf_resource_abort");
         self.output
@@ -308,6 +307,48 @@ impl FunctionEmitter<'_, '_> {
         let cap_address = self.next_temporary()?;
         writeln!(self.output, "  %{cap_address} = getelementptr inbounds {CELL}, ptr {cell}, i32 0, i32 1\n  store i64 {capacity}, ptr %{cap_address}")
             .map_err(|_| BackendFailure::TextEmission)
+    }
+
+    /// Only a page's first placement can encounter null. Interior placements
+    /// use the allocated prefix; a page retained by take_back is reused.
+    pub(super) fn paged_prepare_back(
+        &mut self,
+        result: IrValueId,
+        cell: &str,
+        length: &str,
+        element: IrType,
+    ) -> Result<(), BackendFailure> {
+        let (b, stride) = crate::target::paged_geometry(self.target, self.program, element)
+            .map_err(BackendFailure::TargetLayout)?;
+        let tag = format!("paged.back.v{}", result.ordinal());
+        let oom = format!("{tag}.oom");
+        writeln!(self.output, "  %{tag}.offset = and i64 {length}, {mask}\n  %{tag}.boundary = icmp eq i64 %{tag}.offset, 0\n  br i1 %{tag}.boundary, label %{tag}.lookup, label %{tag}.ready", mask=b-1).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(format!("{tag}.lookup"));
+        let directory = self.paged_directory(cell)?;
+        writeln!(self.output, "  %{tag}.page = lshr i64 {length}, {shift}\n  %{tag}.slot = getelementptr inbounds ptr, ptr {directory}, i64 %{tag}.page\n  %{tag}.pointer = load ptr, ptr %{tag}.slot\n  %{tag}.missing = icmp eq ptr %{tag}.pointer, null\n  br i1 %{tag}.missing, label %{tag}.size, label %{tag}.ready", shift=b.trailing_zeros()).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(format!("{tag}.size"));
+        let bytes = self.emit_allocation_size(
+            &b.to_string(),
+            &stride.to_string(),
+            "0",
+            &oom,
+            &format!("{tag}.allocate"),
+        )?;
+        // Zero-stride pages still need distinct nonnull backing allocations.
+        let nonzero = self.next_temporary()?;
+        writeln!(self.output, "  %{nonzero}.empty = icmp eq i64 {bytes}, 0\n  %{nonzero} = select i1 %{nonzero}.empty, i64 1, i64 {bytes}").map_err(|_| BackendFailure::TextEmission)?;
+        let page = self.paged_allocate(&format!("%{nonzero}"), &oom)?;
+        writeln!(
+            self.output,
+            "  store ptr {page}, ptr %{tag}.slot\n  br label %{tag}.ready"
+        )
+        .map_err(|_| BackendFailure::TextEmission)?;
+        self.output.open_block(oom);
+        self.output.symbol("wf_resource_abort");
+        self.output
+            .push_str("  call void @wf_resource_abort()\n  unreachable\n");
+        self.output.open_block(format!("{tag}.ready"));
+        Ok(())
     }
 
     pub(super) fn run_reference_pointer(

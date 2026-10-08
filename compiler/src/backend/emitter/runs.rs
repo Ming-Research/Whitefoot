@@ -450,6 +450,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let updated = self.prepare_run_update(result, run, run_type)?;
         let physical = self.boundary_slot(shape, run_type, run, row)?;
+        if shape.shape == IrWindowShape::Paged {
+            let cell = self
+                .run_storage(updated)?
+                .ok_or(BackendFailure::InvalidIr)?;
+            self.paged_prepare_back(result, &cell, &physical, shape.element_type(self.program)?)?;
+        }
         let element_pointer = self.element_pointer(result, shape, run_type, updated, &physical)?;
         self.store_value_at(value, &format!("%{element_pointer}"))?;
         self.move_run_boundary(shape, run_type, run, row)?;
