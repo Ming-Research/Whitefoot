@@ -1,0 +1,136 @@
+# TEMPORARY: serves the performance criterion of
+# research/investigations/indexed-reductions/DESIGN.md (histogram over 10^7
+# keys, 8 workers against sequential, with a twin of the sequential build) and
+# is removed before the branch is ready; the measurement's harness and record
+# stay in research/experiments/indexed-reduction-timing.
+#
+# research-boundary: manual-only
+# Explicitly requested measurement. A push to its own research branch runs it
+# with PUSH_RUNNER and PUSH_ROUNDS below, because a manual dispatch needs the
+# workflow on the default branch; no pull-request trigger. No ratio,
+# spread or elapsed time selects a pass here: the job fails only on a build
+# failure, a checksum mismatch between builds, or a missing host capability.
+name: indexed-reduction-timing
+
+on:
+  push:
+    branches: [research/indexed-reduction-timing]
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Interleaved rounds over every build and both programs (3 is a probe)
+        type: string
+        default: "3"
+      runner:
+        description: Where it runs, a GitHub runner (tests the harness only) or the owner's i9-14900K, a self-hosted virtual machine labelled 14900k
+        type: choice
+        options: [github, 14900k]
+        default: github
+
+defaults:
+  run:
+    shell: bash
+
+# One run per host at a time: the 14900K must be idle for a timing.
+concurrency:
+  group: indexed-reduction-timing-${{ (inputs.runner || 'github') }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  timing:
+    name: timing (${{ (inputs.runner || 'github') }})
+    runs-on: ${{ (inputs.runner || 'github') == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # The same clang the gate builds with; the 14900K runner provides its own
+      # /usr/bin/clang (latest-clang policy) and is not touched.
+      - name: Install the host toolchain (hosted runner)
+        if: (inputs.runner || 'github') != '14900k'
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+
+      # A runner service starts without the login shell's PATH, where rustup
+      # puts cargo; the step stops on the first missing tool and names it.
+      - name: Check the host's tools and select the pinning
+        run: |
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          missing=
+          for tool in /usr/bin/clang cargo make taskset perl python3 od git; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+          /usr/bin/clang --version
+          lscpu
+          processors=$(nproc)
+          if [ "${{ (inputs.runner || 'github') }}" = 14900k ]; then
+            if [ "$processors" -lt 8 ]; then
+              echo "the 14900k host offers $processors processors; the criterion needs 8"
+              exit 1
+            fi
+            echo "CPUS=0-7" >> "$GITHUB_ENV"
+            echo "WORKERS=8" >> "$GITHUB_ENV"
+          else
+            echo "CPUS=0-$((processors - 1))" >> "$GITHUB_ENV"
+            echo "WORKERS=$processors" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build the compiler at the checked-out commit
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          make -C compiler build
+          test -x compiler/target/gate/whitefootc
+
+      - name: Build, verify and time
+        env:
+          ROUNDS: ${{ (inputs.rounds || '3') }}
+          WHITEFOOT_CHECK_TIMEOUT: "3000"
+        run: |
+          rm -rf "$RUNNER_TEMP/timing"
+          perl .github/run-check.pl indexed-reduction-timing/measure \
+            bash research/experiments/indexed-reduction-timing/run.sh measure \
+            "$GITHUB_WORKSPACE/compiler/target/gate/whitefootc" "$RUNNER_TEMP/timing" "$ROUNDS"
+
+      - name: Publish the table
+        if: always()
+        run: |
+          {
+            echo "## indexed-reduction-timing (${{ (inputs.runner || 'github') }}, ${{ (inputs.rounds || '3') }} rounds)"
+            echo
+            echo '```text'
+            head -1 "$RUNNER_TEMP/timing/manifest.txt" 2>/dev/null || echo "the manifest was not written"
+            echo
+            cat "$RUNNER_TEMP/timing/summary.txt" 2>/dev/null || echo "the summary was not written"
+            echo
+            cat "$RUNNER_TEMP"/timing/logs/sched-report-*.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: indexed-reduction-timing-${{ (inputs.runner || 'github') }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/timing/manifest.txt
+            ${{ runner.temp }}/timing/raw.tsv
+            ${{ runner.temp }}/timing/summary.txt
+            ${{ runner.temp }}/timing/logs/
