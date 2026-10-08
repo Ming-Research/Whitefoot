@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.106: more indexed reduction forms
+
+Rules: changed PAR-2
+
+Owner-approved: On the status board on 2026-10-08, written in Chinese, after the card that presented Snowghost's count of 0 of 32 candidate loops permitted by v0.102's indexed reductions and recommended keeping the rule and admitting a len read of the indexed root, a single-assignment temporary, constant marks, integer or Bool fields of record cells and unsigned `+sat`, then recounting: "choose A" (translated), which superseded the earlier "choose A" deferring constant marks; in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: PAR-2's indexed accumulators admit measure reads of the exact indexed root (its length is already unchanged in the body); an update written through one fresh, immutable, single-use temporary in the same block (`let t = R[e] op x; set R[e] = t`); unsigned `+sat` for scalar and indexed accumulators, which is associative and commutative with identity zero, while signed `+sat` stays excluded; indexed mark families, whose every write stores one fixed integer or Bool constant, so each cell ends as that constant when some iteration wrote it and keeps its incoming value otherwise; and integer or Bool fields of record cells as independent families, each with its own operation or constant. The selection ground is the pre-registered criterion: Snowghost's 32 histogram-like denied loops were all refused under v0.102 because their spellings fell outside `set R[e] = R[e] op x` ([results](../research/investigations/indexed-reductions/DESIGN.md)).
+
 ## 2026-10-08 v0.105: memory statistics
 
 Rules: changed PRE-2
