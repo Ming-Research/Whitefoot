@@ -415,19 +415,43 @@ counts and frame sizes are observations, not pass/fail thresholds. The job
 does not link or execute these programs, so emitted artifacts alone will
 not establish their exit status.
 
-After these edits have been committed and pushed by the owner, dispatch:
+Dispatch: `gh workflow run compute-bench.yml --repo Ming-Research/Whitefoot --ref claude/inplace-lets -f experiment=inplace-lets`.
 
-```sh
-gh workflow run compute-bench.yml --repo Ming-Research/Whitefoot --ref claude/inplace-lets -f experiment=inplace-lets
-```
+**First result**
+([run 37858726701](https://github.com/Ming-Research/Whitefoot/actions/runs/37858726701),
+hosted ubuntu-24.04, `/usr/bin/clang -O2`): every one of the five witnesses
+has one raw `llvm.memmove` in the reader and none after optimization, with a
+static stack of 0 bytes. Even `let-write-before-use` keeps only the two
+scalar field loads the old value needs. The prediction that a write to the
+source on another path keeps the copy is rejected for these shapes: a may-write
+call alone does not keep it.
 
-**Current evidence:** source inspection only; the five programs are written
-to the active specification but checker acceptance, optimized code, frame
-sizes and runtime results are unverified. No build, compiler invocation,
-local check or test was run for this phase. The witnesses' `main` functions
-encode deterministic zero-exit expectations for later execution. Remove the
-temporary workflow job and option once its artifacts and conclusions are
-recorded here; retain the witnesses as the investigation's evidence.
+**Halo's shape, attributed.** A read-only reading of Halo's unsplit
+`sort_compare` disassembly against its source (Halo-wf run 37857130998,
+artifact `halo-slowsplit-disasm`) finds the whole-element `memcpy` is the
+`let local_call_5 = vm^.library_contexts.inner[context];` snapshot, but no
+later instruction reads its destination: the number path reloads the
+fields it needs from the source element. The copy is dead yet kept. Halo
+differs from the first witnesses in three ways: the element holds a
+union-laid-out payload enum (`Value`), which makes it memory-only; fields
+and operands of that enum type are passed by value, as pointers to stored
+slots, to calls that survive inlining (`slow`, `callback_values`); and
+those slots may share one `%wf.frame` allocation with the snapshot when the
+function's allocation roots do not all qualify for independent allocas
+(compiler/storage-placement), so an escaping sibling pointer can keep the
+optimizer from proving the snapshot's bytes dead. Two further witnesses
+test that mechanism and differ only in a marker struct's alignment:
+`let-union-mixed-frame` (a `u32` marker, predicted to share one frame and
+keep the copy) and `let-union-uniform-frame` (a `u64` marker, predicted to
+get independent allocas and lose it). If the mixed case loses the copy while
+its shared frame and aggregate calls survive, the frame-provenance
+hypothesis is rejected for this shape. Both contain a falsifier that must
+return the old snapshot's value after the source is written.
+
+The job does not link or execute these programs; checker acceptance is
+observed through `--emit-llvm`, runtime results remain unverified. Remove
+the temporary job and option once its conclusions are recorded here; keep
+the witnesses as evidence.
 
 ### Candidate rule, not an implementation selection
 

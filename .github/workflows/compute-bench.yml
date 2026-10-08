@@ -407,7 +407,7 @@ jobs:
       # the artifacts answer a code-generation question on this exact toolchain.
       - name: Emit the witnesses, optimized LLVM and x86-64 assembly
         run: |
-          for name in let-no-write let-write-other-path let-write-after-last-use let-write-before-use let-field-of-param; do
+          for name in let-no-write let-write-other-path let-write-after-last-use let-write-before-use let-field-of-param let-union-mixed-frame let-union-uniform-frame; do
             out="$RUNNER_TEMP/inplace-lets/$name"
             compiler/target/gate/whitefootc --emit-llvm -o "$out.ll" \
               "research/investigations/in-place-parameters/witnesses/$name.wf"
@@ -454,7 +454,8 @@ jobs:
 
           rows = ['witness\traw_memcpy\traw_memmove\topt_memcpy\topt_memmove\tstatic_stack_bytes']
           for name in ('let-no-write', 'let-write-other-path', 'let-write-after-last-use',
-                       'let-write-before-use', 'let-field-of-param'):
+                       'let-write-before-use', 'let-field-of-param',
+                       'let-union-mixed-frame', 'let-union-uniform-frame'):
               raw = body((root / f'{name}.ll').read_text())
               opt = body((root / f'{name}.opt.ll').read_text())
               stack = [line.split('\t') for line in (root / f'{name}.su').read_text().splitlines()
