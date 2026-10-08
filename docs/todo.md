@@ -2088,15 +2088,57 @@ rarely insert at the same place.
 
 - **The call-offer grain is provisional.** `--par` now offers a
   statement-group call only when its callee reaches a cyclic call component
-  or its static work reaches the 150,000 work unit
+  that offers its own calls or its static work reaches the 150,000 work unit
   ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
-  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
-  non-recursive helper whose work is large only through its runtime extents
-  loses its offer, and a cheap call into a recursive component keeps one;
-  and a callee that reaches recursion only by starting a waiting context is
-  not seen as recursive, since neither this pass nor the recursion frontier
-  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md#proposed-rule),
+  `design/compiler/parallel-lowering.md`). Known limits no measured program
+  exercises: a helper whose work is large only through its runtime extents,
+  a loop over a large argument or a long recursion that offers nothing,
+  loses its offer; a cheap call into a recursion that offers its own calls
+  keeps one; a callee that reaches recursion only by starting a waiting
+  context is not seen as recursive, since neither this pass nor the
+  recursion frontier follows a context start as a call edge; and a
+  recursion counts as offering its own calls when its group survives the
+  grain but the emitter later drops it for an oversized lane frame, so a
+  small call reaching it keeps its offer. Validate any of
+  them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
+
+- **Spinning workers may slow the main thread on a two-thread-per-core
+  host.** With the call grain's recursion fix, Snowghost-wf's edit pair on a
+  hosted runner of 2 cores with 2 threads each takes 504 microseconds
+  sequentially, 506 at two workers and 728 at four, with about six steals
+  per edit and 39 percent of samples in `wf__par_worker_main`
+  ([recursive offers, D3](../research/investigations/recursive-offer-grain/DESIGN.md#d3-result)).
+  The idle window is chosen when the lane count fits the usable CPUs, and
+  four lanes fit four CPUs that are two cores, so one spinning worker can
+  share the main thread's core. Unseparated: the cost may instead be the
+  wake-up of the six stolen tasks per edit. Impact: small `--par` work
+  between sequential phases runs about 1.4 times slower at four workers on
+  such hosts, GitHub's 4-vCPU runners among them. Change, if the 14900K
+  run shows no such cost: count physical cores, not CPUs, when choosing
+  the idle window, or spin only up to one lane per core. Validate with the
+  edit pair at W1, W2 and W4 on the hosted runner and the 14900K, and the
+  formal kernels' paired comparison. Reopen with the 14900K pair result.
+
+- **A recursion without a sequential clone offers without a budget.**
+  `--par-ledger` of Snowghost-wf's layout at `3ec4bb491` excludes
+  `publish_reference_owner_suffix`, an AVL suffix recursion whose left and
+  right calls are each in a permitted group, from the budget-carrying family
+  because it "has no sequential clone" (`compiler/src/backend/emitter/frontier.rs`),
+  so its offers nest at every depth, as a `--par-recursive-frontier off`
+  build's do. The clone set holds the entry-reachable functions that reach a
+  hand-out, so a recursion that reaches its own hand-outs is expected in it;
+  why this one is not is unexplained. Impact: an edit that publishes a
+  reference suffix may hand out a task per tree node, the cost
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)
+  measured as about nine times the sequential edit. Change: find why the
+  component has no clone and give it one, or bound the offers of a
+  clone-less component another way. Validate with a minimal program whose
+  forking recursion is reached only through the path this one is, checking
+  that it gets a budget family, and with Snowghost-wf's publishing edits at
+  one and four workers. Reopen when the publishing edits are timed under
+  `--par`, or with the next recursion-budget change.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family

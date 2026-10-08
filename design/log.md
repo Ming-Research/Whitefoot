@@ -5,6 +5,13 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 The call grain exempts only recursion that offers its own calls
+
+Nodes: compiler/parallel-lowering
+
+Owner-approved: On the status board on 2026-10-08, on the card asking whether the call grain's recursion exemption should cover only recursion whose own recursive calls are handed out, recommended option A, written in Chinese: "choose A" (translated).
+
+Summary: A statement-group call offer is kept when its callee belongs to or reaches a cyclic component one of whose remaining groups calls into it, the only recursion whose depth the recursion budget bounds, or when its static work reaches the work unit; a callee that reaches only recursion offering none of its own calls is priced like any other, and classification is repeated with pruning until a pass omits nothing. Snowghost's incremental layout had handed out a cursor read reaching a one-way page-directory descent at each of about 13,600 tree nodes per edit, 10 to 13 times slower at four workers than sequentially; with the rule the edit is 1.08 to 1.10 times sequential on the 14900K, and full layout and style show no loss ([recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)). Spending a budget level at every activation that offers and rewriting the downstream program are kept as rejected alternatives.
 ## 2026-10-08 By-value parameters read in place
 
 Nodes: compiler/storage-placement
