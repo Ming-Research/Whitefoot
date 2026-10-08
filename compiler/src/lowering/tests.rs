@@ -1897,17 +1897,23 @@ fn main() -> status: std::process::ExitStatus pure waits {
 }
 
 /// [PAR-1, STOR-6] an ignored reference into a `Box<Slots<T>>` block still
-/// promises dereferenceability at its callee's entry, so a later call that
-/// can relocate the block must not run before that call enters. Source
-/// permission does not count the borrow as a content read and stays intact;
-/// the overlap lowering must keep the two calls out of one group.
+/// promises dereferenceability at its callee's entry, and forming it loads
+/// the owner slot, so a call that can relocate the block must not run before
+/// the borrowing call enters, nor while a later member forms its borrow.
+/// Source permission does not count the borrow as a content read and stays
+/// intact; the overlap lowering must keep the two calls out of one group. Two
+/// borrows of the block's own elements, which neither relocates, still
+/// overlap.
 #[test]
 fn slots_cell_growth_preserves_borrowed_call_entry_order() {
-    for (actual, kind, wrapper) in [
-        ("&p.inner", "Slots<u64>", false),
-        ("&p.inner", "Slots<u64>", true),
-        ("&p.inner[0_u64]", "u64", false),
-        ("&p.inner[0_u64..1_u64]", "[u64]", false),
+    for (actual, kind, wrapper, borrow_first) in [
+        ("&p.inner", "Slots<u64>", false, true),
+        ("&p.inner", "Slots<u64>", true, true),
+        ("&p.inner[0_u64]", "u64", false, true),
+        ("&p.inner[0_u64..1_u64]", "[u64]", false, true),
+        ("&p.inner", "Slots<u64>", false, false),
+        ("&p.inner", "Slots<u64>", true, false),
+        ("&p.inner[0_u64..1_u64]", "[u64]", false, false),
     ] {
         let resize = if wrapper {
             r#"fn resize(cell: &Box<Slots<u64>>, capacity: u64) -> result: unit writes(cell) contract {
@@ -1922,8 +1928,15 @@ fn slots_cell_growth_preserves_borrowed_call_entry_order() {
             ""
         };
         let growth_name = if wrapper { "resize" } else { "grow" };
+        let borrow = format!("  ignore(part: {actual});\n");
+        let growth = format!("  {growth_name}(cell: &p, capacity: 1025_u64);\n");
+        let calls = if borrow_first {
+            format!("{borrow}{growth}")
+        } else {
+            format!("{growth}{borrow}")
+        };
         let source = format!(
-            "fn ignore(part: &{kind}) -> result: unit pure {{\n  return unit;\n}}\n\n{resize}fn main() -> status: std::process::ExitStatus pure {{\n  let p = box_slots_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n  ignore(part: {actual});\n  {growth_name}(cell: &p, capacity: 1025_u64);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "fn ignore(part: &{kind}) -> result: unit pure {{\n  return unit;\n}}\n\n{resize}fn main() -> status: std::process::ExitStatus pure {{\n  let p = box_slots_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n{calls}  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
             let main = function(program, "main");
@@ -1966,4 +1979,32 @@ fn slots_cell_growth_preserves_borrowed_call_entry_order() {
             );
         });
     }
+}
+
+/// [PAR-1] two calls borrowing elements of one `Box<Slots<T>>` block, neither
+/// of which can relocate it, stay in one overlap group under the box-content
+/// cut.
+#[test]
+fn borrows_inside_one_block_still_overlap() {
+    let source = br#"fn ignore(part: &[u64]) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_slots_new::<u64>(capacity: 4_u64);
+  place_back(window: &p.inner, value: 0_u64);
+  place_back(window: &p.inner, value: 0_u64);
+  ignore(part: &p.inner[0_u64..1_u64]);
+  ignore(part: &p.inner[1_u64..2_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let main = function(program, "main");
+        assert!(
+            main.overlaps().iter().any(|group| group.members.len() == 2),
+            "disjoint borrows of one block overlap: {:?}",
+            main.overlaps()
+        );
+    });
 }

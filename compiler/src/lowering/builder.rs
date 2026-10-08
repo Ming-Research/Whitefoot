@@ -948,7 +948,12 @@ impl<'program> IrBuilder<'program> {
     ///   and its join sit on one straight-line edge; and
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
-    ///   and the join, where the value does not exist yet.
+    ///   and the join, where the value does not exist yet; and
+    /// - no two members pass one place and something inside that place's Box
+    ///   content: the one taking the owner may free or relocate the content,
+    ///   while the other's argument is formed from it and promises the callee
+    ///   a dereferenceable referent at entry, so their order must hold
+    ///   [`box_content_conflict`].
     ///
     /// Each contiguous part retains the chain's every-ordered-pair proof.
     /// Finally, already-proved adjacent pairs recover opportunities across a
@@ -962,6 +967,17 @@ impl<'program> IrBuilder<'program> {
         };
         let mut overlaps = Vec::new();
         let mut claimed = HashSet::new();
+        let definitions = self
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result, operation, ..
+                } => Some((*result, operation)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
         let finish = |members: &mut Vec<IrValueId>,
                       claimed: &mut HashSet<IrValueId>,
                       overlaps: &mut Vec<IrOverlap>| {
@@ -1008,6 +1024,12 @@ impl<'program> IrBuilder<'program> {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 home = Some(block);
+                if members
+                    .iter()
+                    .any(|previous| box_content_conflict(&definitions, *previous, value))
+                {
+                    finish(&mut members, &mut claimed, &mut overlaps);
+                }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
@@ -2438,4 +2460,99 @@ const fn fixed_measure(measure: CheckedMeasure, measured: MeasuredKind) -> Optio
         | MeasureCell::Bounded
         | MeasureCell::Absent => None,
     }
+}
+
+/// Whether one call passes a place, by address or by value, and the other an
+/// argument formed through that place's Box content. Source permission counts
+/// neither a borrow nor its formation as a content read, but the call taking
+/// the owner may free or relocate the content before the other call enters or
+/// forms its argument. Element and range steps match any offset, so the
+/// comparison over-approximates.
+fn box_content_conflict(
+    definitions: &HashMap<IrValueId, &IrOperation>,
+    first: IrValueId,
+    second: IrValueId,
+) -> bool {
+    let chains = |call: IrValueId| match definitions.get(&call) {
+        Some(IrOperation::Call { arguments, .. }) => arguments
+            .iter()
+            .map(|argument| argument_chain(definitions, *argument))
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let (first, second) = (chains(first), chains(second));
+    first.iter().any(|left| {
+        second
+            .iter()
+            .any(|right| encloses_box_content(left, right) || encloses_box_content(right, left))
+    })
+}
+
+/// The root value one argument is formed from and the steps from that root,
+/// in order.
+fn argument_chain(
+    definitions: &HashMap<IrValueId, &IrOperation>,
+    argument: IrValueId,
+) -> (IrValueId, Vec<ChainStep>) {
+    let mut steps = Vec::new();
+    let mut current = argument;
+    while let Some(operation) = definitions.get(&current) {
+        let (base, step) = match operation {
+            IrOperation::ProjectAddress {
+                address,
+                projection,
+            } => (
+                *address,
+                Some(match projection {
+                    IrPlaceStep::Field { nominal, field } => ChainStep::Field(*nominal, *field),
+                    IrPlaceStep::BoxReferent { .. } => ChainStep::BoxContent,
+                    IrPlaceStep::EnumVariant {
+                        nominal,
+                        variant,
+                        field,
+                    } => ChainStep::Variant(*nominal, *variant, *field),
+                    _ => ChainStep::Element,
+                }),
+            ),
+            // A by-value argument passes the whole place it loads.
+            IrOperation::Load { address, .. } => (*address, None),
+            IrOperation::SliceFromBuffer { buffer } => (*buffer, Some(ChainStep::Element)),
+            IrOperation::SliceFromRun { run } => (*run, Some(ChainStep::Element)),
+            IrOperation::SliceRange { slice, .. } | IrOperation::SliceAddress { slice, .. } => {
+                (*slice, Some(ChainStep::Element))
+            }
+            IrOperation::SegmentSlice { segments, .. } | IrOperation::SegmentsAll { segments } => {
+                (*segments, Some(ChainStep::Element))
+            }
+            _ => break,
+        };
+        steps.extend(step);
+        current = base;
+    }
+    steps.reverse();
+    (current, steps)
+}
+
+/// One step of an argument's formation from its root value, as the overlap
+/// lowering compares two arguments [`box_content_conflict`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChainStep {
+    Field(IrNominalId, u32),
+    Variant(IrNominalId, u32, u32),
+    BoxContent,
+    /// An element or range of a run, matching every other element step.
+    Element,
+}
+
+/// Whether `outer` names a place whose Box content `inner` is formed through:
+/// one root, `outer`'s steps a prefix of `inner`'s, and a Box content step
+/// among the rest.
+fn encloses_box_content(
+    outer: &(IrValueId, Vec<ChainStep>),
+    inner: &(IrValueId, Vec<ChainStep>),
+) -> bool {
+    outer.0 == inner.0
+        && outer.1.len() < inner.1.len()
+        && outer.1.iter().zip(&inner.1).all(|(left, right)| left == right)
+        && inner.1[outer.1.len()..].contains(&ChainStep::BoxContent)
 }
