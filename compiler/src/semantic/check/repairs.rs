@@ -1207,6 +1207,36 @@ pub(super) fn local_invariant(disposition: Disposition, name: &str) -> String {
     }
 }
 
+/// [OP-4, INV-1] a loop invariant's subscript whose bound an incoming header
+/// instance does not prove.
+pub(super) fn loop_invariant_formation(name: &str) -> String {
+    format!("prove this subscript bound on every incoming instance of invariant `{name}`")
+}
+
+/// [OP-4, INV-1, RANGE-1] a counted loop's header invariant subscripted at
+/// its binder, whose element need not exist at an incoming header: the empty
+/// run's entry and the last iteration's backedge have none. The per-element
+/// fact is stated instead over the elements the body has processed, when the
+/// body establishes it, or over every element of the run, when the input
+/// guarantees it.
+pub(super) fn counted_element_invariant(
+    name: &str,
+    element: &crate::semantic::entailment::CountedElementRelation,
+    extent: &str,
+) -> String {
+    let crate::semantic::entailment::CountedElementRelation {
+        binder_name,
+        lower,
+        variable,
+        relation,
+        requirement,
+        ..
+    } = element;
+    format!(
+        "`{name}` reads the element at `{binder_name}`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall {name}({variable} in {lower}..{binder_name}): {relation}`; when the input guarantees it, require it of every element, `requires forall {requirement}({variable} in 0_u64..{extent}): {relation};`"
+    )
+}
+
 /// [INV-1] a loop invariant's base judgment on entry to the loop.
 pub(super) fn loop_invariant_base(disposition: Disposition, name: &str) -> String {
     match disposition {

@@ -184,10 +184,16 @@ impl<'unit> DeclarationInventory<'unit> {
                 kind: SemanticIssueKind::UndischargedBoundsObligation {
                     residual: failure.required.clone(),
                     disposition,
-                    mechanical_fix: format!(
-                        "prove this subscript bound on every incoming instance of invariant `{}`",
-                        outcome.name
-                    ),
+                    mechanical_fix: match &outcome.element {
+                        Some(element) if failure.offset == Some(element.binder) => {
+                            repairs::counted_element_invariant(
+                                &outcome.name,
+                                element,
+                                &failure.extent,
+                            )
+                        }
+                        _ => repairs::loop_invariant_formation(&outcome.name),
+                    },
                 },
                 request: None,
             });

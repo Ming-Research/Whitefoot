@@ -1791,7 +1791,7 @@ impl Analyzer<'_, '_> {
                     invariants,
                     &base,
                     &batches,
-                    Some(*binder),
+                    Some((*binder, lower)),
                 );
                 let step_batch = batches.iter().all(|batch| {
                     batch

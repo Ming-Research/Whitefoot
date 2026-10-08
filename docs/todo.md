@@ -115,32 +115,6 @@ rarely insert at the same place.
   existing log. This task's option A approves only the new invariant source;
   `spec/log.md` records that approval, not approval of the earlier changes.
 
-- **A current-row header failure does not identify exhaustion for a repair.**
-  The owner selected keeping the refusal of
-  `for (i in 0_u64..n, invariant fits: rows^[i].len <= 4_u64)` with
-  `n = rows^.len`: the final header would name nonexistent `rows^[n]`
-  [ENT-2, INV-1]. The repairs are a range invariant over the processed
-  prefix when the body establishes the relation, or a range requirement
-  over the input when the body consumes it [RANGE-1]. Both forms are
-  covered in `compiler/src/semantic/tests/loop_invariants.rs`.
-  The supplied witness actually fails base formation because the input
-  may be empty, with residual `i < rows^.len`. With a nonempty input and
-  a standing row relation (`len <= cap`), formation fails on the arbitrary
-  backedge with residual `(i + 1_u64) < rows^.len`; that input is not
-  restricted to exhaustion. `LoopRelationEvidence` retains the failed
-  bound and site, and `LoopInductionInput` retains fallthrough/continue
-  provenance, but neither establishes equality to the captured upper
-  endpoint. Impact: selecting a final-header-only repair from those
-  failures would guess its cause. Change: retain diagnostic evidence tying
-  the failed offset to the counted binder, its captured endpoint and the
-  current subscripted extent, and distinguish an exhaustion instance from
-  the arbitrary induction input without changing acceptance. Alternatively,
-  explicitly select a broader whole-run repair that may also cover a base
-  failure. Validate with empty-input, constant-offset, nonempty-backedge
-  and changed-extent controls and apply both rendered repairs. Reopen when
-  the intended coverage of the diagnostic is settled; its wording remains
-  unchanged meanwhile.
-
 - **The induction inventory repeats the walker's frontier structure.**
   `induction_inputs` in `compiler/src/semantic/check/obligations.rs` forms
   each loop's incoming edges, with their sites, branch labels and the

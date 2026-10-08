@@ -2829,7 +2829,18 @@ fn main() -> status: std::process::ExitStatus pure {{
     }
 }
 
-fn per_row_source(rows_type: &str, contract: &str, invariant: &str) -> String {
+const PER_ROW_READ: &str = "    let t = table^[rows^[i].len];
+    set sum = sum +sat t;";
+
+const PER_ROW_CHECK: &str = "    let m = rows^[i].len;
+    if m <= 4_u64 {
+      let t = table^[m];
+      set sum = sum +sat t;
+    } else {
+      return sum;
+    }";
+
+fn per_row_source(rows_type: &str, contract: &str, invariant: &str, body: &str) -> String {
     let header = if invariant.is_empty() {
         "for (i in 0_u64..n)".to_owned()
     } else {
@@ -2840,8 +2851,7 @@ fn per_row_source(rows_type: &str, contract: &str, invariant: &str) -> String {
   let n = rows^.len;
   let sum = 0_u64;
   {header} {{
-    let t = table^[rows^[i].len];
-    set sum = sum +sat t;
+{body}
   }}
   return sum;
 }}
@@ -2853,29 +2863,77 @@ fn main() -> status: std::process::ExitStatus pure {{
     )
 }
 
+/// The OP-4 header formation failure's residual and repair.
+fn per_row_formation_failure(source: &str) -> (String, String) {
+    let mut found = None;
+    with_semantics(source.as_bytes(), |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("the row must fail formation, not capability checking: {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Op4, "{issue:?}");
+        let SemanticIssueKind::UndischargedBoundsObligation {
+            residual,
+            mechanical_fix,
+            ..
+        } = issue.kind()
+        else {
+            panic!("expected a header bounds failure: {issue:?}");
+        };
+        found = Some((residual.clone(), mechanical_fix.clone()));
+    });
+    found.expect("the checker reported an issue")
+}
+
+fn per_row_element_repair(relation: &str, prefix: &str, extent: &str) -> String {
+    format!(
+        "`fits` reads the element at `i`, which need not exist at every loop header: when the body establishes it for each element it processes, state it over the processed elements, `invariant forall fits(k in 0_u64..{prefix}): {relation}`; when the input guarantees it, require it of every element, `requires forall fits_all(k in 0_u64..{extent}): {relation};`"
+    )
+}
+
+/// The two backquoted range forms a counted-element repair suggests.
+fn per_row_suggested_forms(repair: &str) -> (String, String) {
+    let quoted = repair.split('`').skip(1).step_by(2).collect::<Vec<_>>();
+    let [_, _, invariant, requirement] = quoted.as_slice() else {
+        panic!("the repair names the invariant, the binder and two forms: {repair}");
+    };
+    (invariant.to_string(), requirement.to_string())
+}
+
 #[test]
 fn per_row_header_formation_reports_the_actual_preheader_failure() {
     for rows_type in ["&Slots<Slots<u8, 8>, 8>", "&[Slots<u8, 8>]"] {
-        let source = per_row_source(rows_type, "", "invariant fits: rows^[i].len <= 4_u64");
-        with_semantics(source.as_bytes(), |outcome| {
-            let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-                panic!("the row must fail formation, not capability checking: {outcome:?}");
-            };
-            assert_eq!(issue.rule(), SemanticRule::Op4);
-            let SemanticIssueKind::UndischargedBoundsObligation {
-                residual,
-                mechanical_fix,
-                ..
-            } = issue.kind()
-            else {
-                panic!("expected a header bounds failure: {issue:?}");
-            };
-            assert_eq!(residual, "i < rows^.len");
-            assert_eq!(
-                mechanical_fix,
-                "prove this subscript bound on every incoming instance of invariant `fits`"
-            );
-        });
+        let source = per_row_source(
+            rows_type,
+            "",
+            "invariant fits: rows^[i].len <= 4_u64",
+            PER_ROW_READ,
+        );
+        let (residual, repair) = per_row_formation_failure(&source);
+        assert_eq!(residual, "i < rows^.len");
+        assert_eq!(
+            repair,
+            per_row_element_repair("rows^[k].len <= 4_u64", "i", "rows^.len"),
+            "{rows_type}"
+        );
+    }
+}
+
+#[test]
+fn per_row_nonempty_input_reports_the_element_repair_at_the_backedge() {
+    for rows_type in ["&Slots<Slots<u8, 8>, 8>", "&[Slots<u8, 8>]"] {
+        let source = per_row_source(
+            rows_type,
+            "contract {\n  requires 1_u64 <= rows^.len;\n} ",
+            "invariant fits: rows^[i].len <= 8_u64",
+            PER_ROW_CHECK,
+        );
+        let (residual, repair) = per_row_formation_failure(&source);
+        assert_eq!(residual, "(i + 1_u64) < rows^.len");
+        assert_eq!(
+            repair,
+            per_row_element_repair("rows^[k].len <= 8_u64", "i", "rows^.len"),
+            "{rows_type}"
+        );
     }
 }
 
@@ -2885,44 +2943,94 @@ fn per_row_constant_subscript_keeps_its_formation_repair() {
         "&Slots<Slots<u8, 8>, 8>",
         "",
         "invariant fits: rows^[0_u64].len <= 4_u64",
+        PER_ROW_READ,
     );
-    with_semantics(source.as_bytes(), |outcome| {
-        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
-            panic!("expected the constant subscript's bounds failure: {outcome:?}");
-        };
-        assert_eq!(issue.rule(), SemanticRule::Op4);
-        let SemanticIssueKind::UndischargedBoundsObligation {
-            residual,
-            mechanical_fix,
-            ..
-        } = issue.kind()
-        else {
-            panic!("expected a header bounds failure: {issue:?}");
-        };
-        assert_eq!(residual, "0_u64 < rows^.len");
-        assert_eq!(
-            mechanical_fix,
-            "prove this subscript bound on every incoming instance of invariant `fits`"
-        );
-    });
+    let (residual, repair) = per_row_formation_failure(&source);
+    assert_eq!(residual, "0_u64 < rows^.len");
+    assert_eq!(
+        repair,
+        "prove this subscript bound on every incoming instance of invariant `fits`"
+    );
 }
 
 #[test]
-fn per_row_range_requirement_and_processed_prefix_are_accepted() {
+fn per_row_outer_binder_subscript_keeps_its_formation_repair() {
+    let source = br#"fn probe(rows: &Slots<Slots<u8, 8>, 8>) -> result: unit pure {
+  for (o in 0_u64..8_u64) {
+    for (
+      i in 0_u64..4_u64,
+      invariant fits: rows^[o].len <= rows^[o].cap
+    ) {
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let source = std::str::from_utf8(source).expect("fixture is UTF-8");
+    let (residual, repair) = per_row_formation_failure(source);
+    assert_eq!(residual, "o < rows^.len");
+    assert_eq!(
+        repair,
+        "prove this subscript bound on every incoming instance of invariant `fits`"
+    );
+}
+
+#[test]
+fn per_row_element_repair_takes_a_fresh_bound_variable_and_the_counted_start() {
+    let source = br#"fn probe(rows: &Slots<Slots<u8, 8>, 8>, s: u64) -> result: unit reads(rows) {
+  let n = rows^.len;
+  let k = 0_u64;
+  for (
+    i in s..n,
+    invariant fits: rows^[i].len <= rows^[i].cap + k
+  ) {
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let source = std::str::from_utf8(source).expect("fixture is UTF-8");
+    let (residual, repair) = per_row_formation_failure(source);
+    assert_eq!(residual, "i < rows^.len");
+    assert!(
+        repair.contains(
+            "`invariant forall fits(k1 in s..i): rows^[k1].len <= (rows^[k1].cap + k)`"
+        ) && repair.contains(
+            "`requires forall fits_all(k1 in 0_u64..rows^.len): rows^[k1].len <= (rows^[k1].cap + k);`"
+        ),
+        "{repair}"
+    );
+}
+
+#[test]
+fn per_row_suggested_range_forms_are_accepted() {
     for rows_type in ["&Slots<Slots<u8, 8>, 8>", "&[Slots<u8, 8>]"] {
-        for invariant in [
+        let refused = per_row_source(
+            rows_type,
             "",
-            "invariant forall done(k in 0_u64..i): rows^[k].len <= 4_u64",
+            "invariant fits: rows^[i].len <= 4_u64",
+            PER_ROW_READ,
+        );
+        let (_, repair) = per_row_formation_failure(&refused);
+        let (invariant, requirement) = per_row_suggested_forms(&repair);
+        let contract = format!("contract {{\n  {requirement}\n}} ");
+        for (contract, invariant, body) in [
+            ("", invariant.as_str(), PER_ROW_CHECK),
+            (contract.as_str(), "", PER_ROW_READ),
+            (contract.as_str(), invariant.as_str(), PER_ROW_READ),
         ] {
-            let source = per_row_source(
-                rows_type,
-                "contract {\n  requires forall all(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;\n} ",
-                invariant,
-            );
+            let source = per_row_source(rows_type, contract, invariant, body);
             with_semantics(source.as_bytes(), |outcome| {
                 assert!(
                     matches!(outcome, SemanticOutcome::Complete(_)),
-                    "the range repair must be accepted for {rows_type}, {invariant}: {outcome:?}"
+                    "the suggested form must be accepted for {rows_type}, {contract:?}, {invariant:?}: {outcome:?}"
                 );
             });
         }
@@ -2995,8 +3103,8 @@ fn main() -> status: std::process::ExitStatus pure {{
             };
             assert_eq!(residual, "(i + 1_u64) < rows^.len");
             assert_eq!(
-                mechanical_fix,
-                "prove this subscript bound on every incoming instance of invariant `fits`"
+                *mechanical_fix,
+                per_row_element_repair("rows^[k].len <= rows^[k].cap", "i", "rows^.len")
             );
         });
     }
