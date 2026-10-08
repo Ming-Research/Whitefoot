@@ -118,6 +118,30 @@ entry:
   ret void
 }
 
+declare i32 @wf__body_open_directory_write_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.open_directory_write.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  %state = call i32 @wf__body_open_directory_write_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_open_directory_write_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.open_directory_write.finish(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  call void @wf__body_open_directory_write_finish(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret void
+}
+
 declare i32 @wf__body_directory_next_start(ptr, ptr, ptr, i64, i64, ptr)
 
 define i32 @wf_std.fs.directory_next.start(ptr %result, ptr %source, ptr %destination.data, i64 %destination.len, i64 %start, i64 %end, ptr %operation) align 64 {
@@ -706,4 +730,108 @@ entry:
   %done = call i1 @llvm.coro.done(ptr %frame)
   %answer = zext i1 %done to i32
   ret i32 %answer
+}
+
+declare i32 @wf__body_rename_file_start(ptr, ptr, ptr, ptr, i64, i64, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.rename_file.start(ptr %result, ptr %factory, ptr %root, ptr %from.data, i64 %from.len, i64 %from_start, i64 %from_end, ptr %to.data, i64 %to.len, i64 %to_start, i64 %to_end, ptr %operation) align 64 {
+entry:
+  %from.view = alloca { ptr, i64 }, align 8
+  store ptr %from.data, ptr %from.view, align 8
+  %from.view.len = getelementptr inbounds { ptr, i64 }, ptr %from.view, i32 0, i32 1
+  store i64 %from.len, ptr %from.view.len, align 8
+  %to.view = alloca { ptr, i64 }, align 8
+  store ptr %to.data, ptr %to.view, align 8
+  %to.view.len = getelementptr inbounds { ptr, i64 }, ptr %to.view, i32 0, i32 1
+  store i64 %to.len, ptr %to.view.len, align 8
+  %state = call i32 @wf__body_rename_file_start(ptr %result, ptr %factory, ptr %root, ptr %from.view, i64 %from_start, i64 %from_end, ptr %to.view, i64 %to_start, i64 %to_end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_rename_file_finish(ptr, ptr, ptr, ptr, i64, i64, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.rename_file.finish(ptr %result, ptr %factory, ptr %root, ptr %from.data, i64 %from.len, i64 %from_start, i64 %from_end, ptr %to.data, i64 %to.len, i64 %to_start, i64 %to_end, ptr %operation) align 64 {
+entry:
+  %from.view = alloca { ptr, i64 }, align 8
+  store ptr %from.data, ptr %from.view, align 8
+  %from.view.len = getelementptr inbounds { ptr, i64 }, ptr %from.view, i32 0, i32 1
+  store i64 %from.len, ptr %from.view.len, align 8
+  %to.view = alloca { ptr, i64 }, align 8
+  store ptr %to.data, ptr %to.view, align 8
+  %to.view.len = getelementptr inbounds { ptr, i64 }, ptr %to.view, i32 0, i32 1
+  store i64 %to.len, ptr %to.view.len, align 8
+  call void @wf__body_rename_file_finish(ptr %result, ptr %factory, ptr %root, ptr %from.view, i64 %from_start, i64 %from_end, ptr %to.view, i64 %to_start, i64 %to_end, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_move_file_start(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.move_file.start(ptr %result, ptr %factory, ptr %from_root, ptr %from.data, i64 %from.len, i64 %from_start, i64 %from_end, ptr %to_root, ptr %to.data, i64 %to.len, i64 %to_start, i64 %to_end, ptr %operation) align 64 {
+entry:
+  %from.view = alloca { ptr, i64 }, align 8
+  store ptr %from.data, ptr %from.view, align 8
+  %from.view.len = getelementptr inbounds { ptr, i64 }, ptr %from.view, i32 0, i32 1
+  store i64 %from.len, ptr %from.view.len, align 8
+  %to.view = alloca { ptr, i64 }, align 8
+  store ptr %to.data, ptr %to.view, align 8
+  %to.view.len = getelementptr inbounds { ptr, i64 }, ptr %to.view, i32 0, i32 1
+  store i64 %to.len, ptr %to.view.len, align 8
+  %state = call i32 @wf__body_move_file_start(ptr %result, ptr %factory, ptr %from_root, ptr %from.view, i64 %from_start, i64 %from_end, ptr %to_root, ptr %to.view, i64 %to_start, i64 %to_end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_move_file_finish(ptr, ptr, ptr, ptr, i64, i64, ptr, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.move_file.finish(ptr %result, ptr %factory, ptr %from_root, ptr %from.data, i64 %from.len, i64 %from_start, i64 %from_end, ptr %to_root, ptr %to.data, i64 %to.len, i64 %to_start, i64 %to_end, ptr %operation) align 64 {
+entry:
+  %from.view = alloca { ptr, i64 }, align 8
+  store ptr %from.data, ptr %from.view, align 8
+  %from.view.len = getelementptr inbounds { ptr, i64 }, ptr %from.view, i32 0, i32 1
+  store i64 %from.len, ptr %from.view.len, align 8
+  %to.view = alloca { ptr, i64 }, align 8
+  store ptr %to.data, ptr %to.view, align 8
+  %to.view.len = getelementptr inbounds { ptr, i64 }, ptr %to.view, i32 0, i32 1
+  store i64 %to.len, ptr %to.view.len, align 8
+  call void @wf__body_move_file_finish(ptr %result, ptr %factory, ptr %from_root, ptr %from.view, i64 %from_start, i64 %from_end, ptr %to_root, ptr %to.view, i64 %to_start, i64 %to_end, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_remove_file_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.remove_file.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  %state = call i32 @wf__body_remove_file_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_remove_file_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.remove_file.finish(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  call void @wf__body_remove_file_finish(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_sync_directory_start(ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.fs.sync_directory.start(ptr %result, ptr %factory, ptr %root, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_sync_directory_start(ptr %result, ptr %factory, ptr %root, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_sync_directory_finish(ptr, ptr, ptr, ptr)
+
+define void @wf_std.fs.sync_directory.finish(ptr %result, ptr %factory, ptr %root, ptr %operation) align 64 {
+entry:
+  call void @wf__body_sync_directory_finish(ptr %result, ptr %factory, ptr %root, ptr %operation)
+  ret void
 }

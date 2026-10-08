@@ -908,7 +908,7 @@ impl Report for SemanticIssueKind {
             AtomicGuardWrites { mechanical_fix };
             InvalidSpawn { condition };
             InvalidMusttail { condition, subject };
-            PolymorphicRecursion { cycle, mechanical_fix };
+            PolymorphicRecursion { cycle, changed_argument, mechanical_fix };
             UnreachableStatement;
             FunctionFallthrough;
             InvalidRequires;

@@ -5,6 +5,46 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Writable subdirectories, moving files and names below a root
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented opening a subdirectory's write half as Q216 option A, moving a file between two directories as Q217 option A, and refusing `.` and `..` below a root as Q221 option A, each recommended: "216 agreed, 217 agreed, ... 221 agreed" (translated).
+
+Summary: The node gains three decisions beside its unchanged ones: a program opens the write half of a directory below a write half, created when missing and reading its root as `open_append` does, instead of a separate creation or a flat layout in the program; a file moves between two directories' write halves through a second operation, since a rename writes the directories it changes and one handle cannot fill two written roots of a call, instead of a `rename_file` with two roots; and a name given with a root denotes only an entry directly below it, so `.` and `..` are refused and a write half cannot reach the directory above it ([design](../research/investigations/writable-subdirectories/README.md)).
+
+## 2026-10-07 Element loops may read the written storage's measures
+
+Nodes: language/parallelism/loop-permission
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the proposal to admit measure reads in PAR-2 element loops as the next work once FN-6 was done: "OK, continue with it once FN-6 is fine" (translated), recorded as Q138; after the completion report that presented PR #268's specification and design-tree text as Q140, approval recommended: "approve them all" (translated).
+
+Summary: A counted loop that writes proved affine elements of a root, or writes through proved range references of an origin, may also read that root's or origin's measure words, `len`, `cap` and `head`, as the certified-element family already admitted. A measure read touches descriptor storage, which MSR-2 makes disjoint from element storage, and the unchanged write rule confines every write of the body to elements, so no iteration writes a measure; a body that appends, grows or takes back still denies. Refusing those reads is kept as a rejected alternative: Snowghost's Paged port found an in-body guard such as `if s < values.len` the dominant barrier to its parallel layout loops (0 of 415 corresponding loops newly permitted; five controls all permitted once the read was hoisted).
+
+## 2026-10-07 Recursion cycles admit closed-term arguments
+
+Nodes: language/generics
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the explanation of FN-6 closed terms presented as Q137: "open a PR for FN-6 and do it" (translated); after the completion report that presented PR #266's specification and design-tree text as Q139, approval recommended: "approve them all" (translated).
+
+Summary: An instantiation cycle may now supply, at each argument position, either the caller's own parameter at that position forwarded unchanged or a closed term naming no caller parameter, instead of forwarding the whole vector unchanged. Every component of an instance key reached through a cycle then comes from the entry key or from the program's finite set of closed terms, so instantiation stays finite by a syntactic check with no search or budget, while a callback may call its own generic helper again with another written callback, which the forward-only rule refused with two instances in reach (Snowghost's `c5-changing-callback-negative` probe; firn's nested `hash_map_lookup`). Arguments built from a caller parameter, permuted forwards and kind changes still reject. The forward-only rule is kept as a rejected alternative; the deferred question of exponentially many finite instances (D7) gains one more family, recorded in `docs/todo.md`.
+
+## 2026-10-07 Files are renamed, removed and synced below a writable directory
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the card that presented renaming, removing and syncing within one writable directory as Q212 option A: "212 agreed" (translated); and after the completion report that showed the PRE-2 text and the writable-directory decision as Q214 and the merge as Q215: "approve 214 215" (translated).
+
+Summary: The node's second decision extends appending, cutting and syncing a file with renaming a file over an existing name, removing a name and syncing the directory, all through the directory's write half, with open files keeping their bytes after their name is replaced or removed. An append-only log rewrite needs a synced temporary file atomically renamed over the log, then a directory sync and the removal of obsolete parts; positioned writes would leave a partly rewritten log after an interruption, and one combined replacement operation could not remove the obsolete parts ([design](../research/investigations/file-replacement/README.md#proposal)).
+
+## 2026-10-07 Clang's forms are probed when whitefootc runs
+
+Nodes: compiler/backend-facts, compiler/match-dispatch-lowering, compiler/downstream-releases, compiler/verification
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the report that presented probing at run time as Q134 option A, recommended: "133 and 134 agreed" (translated), and later "if Q134 is green, merge it" (translated).
+
+Summary: `preserve_none` support, the no-capture spelling and `llvm.coro.end`'s result type are probed once per process, when `whitefootc` runs, against the clang it hands its modules to, instead of when the compiler is built. A compiler built against one clang runs on hosts whose clang accepts other forms: the macOS release `wf-0b7f5c5b9854`, built where clang takes the `void` `llvm.coro.end` call, emitted it to Apple clang 21, which refuses it. The split dispatch's convention follows the same run-time probe. The Linux LLVM pin for releases, their consumers and the gate stays, now because the forms probed and the code generated are then those of the one LLVM the gate tested and measured.
+
 ## 2026-10-07 Cursor edges by their step; the spill order counts every read
 
 Nodes: compiler/match-dispatch-lowering

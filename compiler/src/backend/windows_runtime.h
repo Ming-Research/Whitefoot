@@ -12,6 +12,9 @@
 extern "C" {
 #endif
 
+/* Native name bytes in one component, shared by call storage and host leaves. */
+#define WF_WINDOWS_COMPONENT_MAX_BYTES 510u
+
 #define WF_WINDOWS_DESCRIPTOR_CLASS_ANY 0u
 #define WF_WINDOWS_DESCRIPTOR_CLASS_READ_FILE 1u
 #define WF_WINDOWS_DESCRIPTOR_CLASS_DIRECTORY_ROOT 2u
@@ -169,6 +172,22 @@ int wf__windows_stderr_descriptor(void);
 int wf__windows_stdin_descriptor(void);
 int64_t wf__windows_diagnostic_write(const void *bytes, uint64_t length);
 
+/* Opens an existing component relative to root for a namespace mutation.
+ * The caller owns the returned provisional handle and closes it after the
+ * mutation; no writer-visible descriptor or factory credit is created. */
+HANDLE wf__windows_open_delete(HANDLE root, const char *path, int *error_code);
+
+/* Rename the synchronous provisional delete handle to a validated, terminated
+ * component (at most WF_WINDOWS_COMPONENT_MAX_BYTES of UTF-16). A NULL root
+ * keeps the file in its own directory; otherwise root is the destination.
+ * Returns 0, or -1 with the NT failure translated to a Win32 error. */
+int wf__windows_rename_file(
+    HANDLE file, HANDLE root, const char *path, int *error_code
+);
+
+/* Reopens root with write access for flushing; the caller closes the handle. */
+HANDLE wf__windows_open_directory_for_sync(HANDLE root, int *error_code);
+
 int wf__windows_completion_file_open_at_worker(
     HANDLE root,
     const char *path,
@@ -179,6 +198,9 @@ int wf__windows_completion_file_open_at_worker(
     unsigned descriptor_class,
     int *error_code,
     unsigned *open_outcome
+);
+int wf__windows_completion_directory_write_open_worker(
+    HANDLE root, const char *path, int *error_code, unsigned *open_outcome
 );
 int64_t wf__windows_completion_file_write_worker(
     HANDLE handle,

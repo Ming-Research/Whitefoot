@@ -43,6 +43,15 @@
 #ifndef FILE_OPEN
 #define FILE_OPEN 0x00000001UL
 #endif
+#ifndef FILE_DIRECTORY_FILE
+#define FILE_DIRECTORY_FILE 0x00000001UL
+#endif
+#ifndef FILE_OPEN_FOR_BACKUP_INTENT
+#define FILE_OPEN_FOR_BACKUP_INTENT 0x00004000UL
+#endif
+#ifndef FILE_WRITE_THROUGH
+#define FILE_WRITE_THROUGH 0x00000002UL
+#endif
 #ifndef FILE_SYNCHRONOUS_IO_NONALERT
 #define FILE_SYNCHRONOUS_IO_NONALERT 0x00000020UL
 #endif
@@ -57,6 +66,12 @@
 #endif
 #ifndef ERROR_MR_MID_NOT_FOUND
 #define ERROR_MR_MID_NOT_FOUND 317UL
+#endif
+#ifndef FILE_RENAME_REPLACE_IF_EXISTS
+#define FILE_RENAME_REPLACE_IF_EXISTS 0x00000001UL
+#endif
+#ifndef FILE_RENAME_POSIX_SEMANTICS
+#define FILE_RENAME_POSIX_SEMANTICS 0x00000002UL
 #endif
 
 #define WF_WINDOWS_NO_FOLLOW 1
@@ -76,10 +91,11 @@
 
 #define WF_WINDOWS_DIRECTORY_NATIVE_HEADER 64u
 #define WF_WINDOWS_DIRECTORY_RAW_HEADER 5u
-#define WF_WINDOWS_COMPONENT_MAX_BYTES 510u
 #define WF_WINDOWS_DIRECTORY_SCRATCH_BYTES 8192u
 #define WF_WINDOWS_FILE_DIRECTORY_INFORMATION_CLASS \
     ((FILE_INFORMATION_CLASS)1)
+#define WF_WINDOWS_FILE_RENAME_INFORMATION_EX_CLASS \
+    ((FILE_INFORMATION_CLASS)65)
 #define WF_WINDOWS_STATUS_NO_MORE_FILES \
     ((NTSTATUS)(LONG)0x80000006UL)
 #define WF_WINDOWS_STATUS_PENDING ((NTSTATUS)(LONG)0x00000103UL)
@@ -114,11 +130,30 @@ typedef NTSTATUS(NTAPI *wf_windows_nt_query_directory_file_fn)(
 
 typedef ULONG(NTAPI *wf_windows_rtl_status_to_dos_error_fn)(NTSTATUS);
 
+typedef NTSTATUS(NTAPI *wf_windows_nt_set_information_file_fn)(
+    HANDLE,
+    PIO_STATUS_BLOCK,
+    PVOID,
+    ULONG,
+    FILE_INFORMATION_CLASS
+);
+
 typedef struct wf_windows_nt_api {
     wf_windows_nt_create_file_fn create_file;
     wf_windows_nt_query_directory_file_fn query_directory_file;
+    wf_windows_nt_set_information_file_fn set_information_file;
     wf_windows_rtl_status_to_dos_error_fn status_to_dos_error;
 } wf_windows_nt_api;
+
+/* FILE_RENAME_INFORMATION_EX: the Flags form of FILE_RENAME_INFORMATION.
+ * Keep the NT layout independent of the user-mode SDK's Ex declarations.
+ * https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information */
+typedef struct wf_windows_file_rename_information_ex {
+    ULONG Flags;
+    HANDLE RootDirectory;
+    ULONG FileNameLength;
+    WCHAR FileName[1];
+} wf_windows_file_rename_information_ex;
 
 typedef struct wf_windows_file_directory_information {
     ULONG next_entry_offset;
@@ -164,6 +199,7 @@ _Static_assert(
 _Static_assert(
     sizeof(wf_windows_nt_create_file_fn) == sizeof(FARPROC)
         && sizeof(wf_windows_nt_query_directory_file_fn) == sizeof(FARPROC)
+        && sizeof(wf_windows_nt_set_information_file_fn) == sizeof(FARPROC)
         && sizeof(wf_windows_rtl_status_to_dos_error_fn) == sizeof(FARPROC),
     "GetProcAddress does not fit the native procedure pointers"
 );
@@ -663,6 +699,12 @@ static int wf_windows_resolve_nt_api(wf_windows_nt_api *api) {
            )
         && wf_windows_resolve_procedure(
                module,
+               "NtSetInformationFile",
+               &api->set_information_file,
+               sizeof(api->set_information_file)
+           )
+        && wf_windows_resolve_procedure(
+               module,
                "RtlNtStatusToDosError",
                &api->status_to_dos_error,
                sizeof(api->status_to_dos_error)
@@ -1011,7 +1053,141 @@ static void wf_windows_open_return_provisional_handle(HANDLE *handle) {
     }
 }
 
-int wf__windows_completion_file_open_at_worker(
+static HANDLE wf_windows_open_namespace_handle(
+    HANDLE root, const char *path, ACCESS_MASK access, ULONG options, int *error_code
+) {
+    const uint16_t *units = (const uint16_t *)(const void *)path;
+    wf_windows_nt_api api;
+    HANDLE opened = INVALID_HANDLE_VALUE;
+    size_t unit_count;
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES attributes;
+    IO_STATUS_BLOCK io_status;
+    NTSTATUS status;
+    *error_code = 0;
+    if (!wf_windows_handle_valid(root)) {
+        *error_code = ERROR_INVALID_HANDLE;
+        return opened;
+    }
+    if (!wf_windows_bounded_wcslen(units, &unit_count)
+        || !wf__windows_relative_path_valid(units, (uint64_t)unit_count)) {
+        *error_code = ERROR_INVALID_NAME;
+        return opened;
+    }
+    if (!wf_windows_resolve_nt_api(&api)) {
+        *error_code = (int)GetLastError();
+        if (*error_code == 0) *error_code = ERROR_PROC_NOT_FOUND;
+        return opened;
+    }
+    memset(&name, 0, sizeof(name));
+    name.Length = (USHORT)(unit_count * sizeof(uint16_t));
+    name.MaximumLength = name.Length;
+    name.Buffer = (PWSTR)(void *)units;
+    memset(&attributes, 0, sizeof(attributes));
+    attributes.Length = (ULONG)sizeof(attributes);
+    attributes.RootDirectory = root;
+    attributes.ObjectName = &name;
+    attributes.Attributes = OBJ_CASE_INSENSITIVE;
+    memset(&io_status, 0, sizeof(io_status));
+    /* FILE_OPEN never creates a missing entry. */
+    status = api.create_file(
+        &opened, access, &attributes, &io_status, NULL, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+        FILE_SYNCHRONOUS_IO_NONALERT | options,
+        NULL, 0
+    );
+    if (status == WF_WINDOWS_STATUS_PENDING) {
+        DWORD waited = WaitForSingleObject(opened, INFINITE);
+        if (waited != WAIT_OBJECT_0) {
+            *error_code = (int)(waited == WAIT_FAILED ? GetLastError() : ERROR_GEN_FAILURE);
+            wf_windows_open_return_provisional_handle(&opened);
+            return INVALID_HANDLE_VALUE;
+        }
+        status = io_status.Status;
+    }
+    if (status == WF_WINDOWS_STATUS_PENDING || !wf_windows_nt_success(status)) {
+        *error_code = (int)wf_windows_nt_error(&api, status);
+        wf_windows_open_return_provisional_handle(&opened);
+        return INVALID_HANDLE_VALUE;
+    }
+    return opened;
+}
+
+HANDLE wf__windows_open_delete(HANDLE root, const char *path, int *error_code) {
+    /* Open the entry itself without following a reparse point. Keep rename
+     * metadata write-through; POSIX removal takes effect on handle close. */
+    return wf_windows_open_namespace_handle(
+        root, path, DELETE | SYNCHRONIZE,
+        FILE_OPEN_REPARSE_POINT | FILE_NON_DIRECTORY_FILE | FILE_WRITE_THROUGH,
+        error_code
+    );
+}
+
+int wf__windows_rename_file(
+    HANDLE file, HANDLE root, const char *path, int *error_code
+) {
+    wf_windows_nt_api api;
+    IO_STATUS_BLOCK io_status;
+    NTSTATUS status;
+    const uint16_t *target = (const uint16_t *)(const void *)path;
+    size_t units = 0;
+    size_t bytes;
+    /* The call's component bound supplies a fixed, aligned request buffer;
+     * the runtime does not allocate through the program's heap [STOR-8]. */
+    union {
+        wf_windows_file_rename_information_ex alignment;
+        unsigned char bytes[sizeof(wf_windows_file_rename_information_ex)
+                            + WF_WINDOWS_COMPONENT_MAX_BYTES];
+    } storage;
+    wf_windows_file_rename_information_ex *info =
+        (wf_windows_file_rename_information_ex *)(void *)storage.bytes;
+    *error_code = 0;
+    /* The component check bounds the name; the copy below checks it again
+     * against the buffer it fills. */
+    if (!wf_windows_bounded_wcslen(target, &units)
+        || units * sizeof(WCHAR) > WF_WINDOWS_COMPONENT_MAX_BYTES) {
+        *error_code = ERROR_INVALID_NAME;
+        return -1;
+    }
+    bytes = units * sizeof(WCHAR);
+    if (!wf_windows_resolve_nt_api(&api)) {
+        *error_code = (int)GetLastError();
+        if (*error_code == 0) *error_code = ERROR_PROC_NOT_FOUND;
+        return -1;
+    }
+    memset(&storage, 0, sizeof(storage));
+    info->Flags = FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS;
+    info->RootDirectory = root;
+    info->FileNameLength = (ULONG)bytes;
+    memcpy(info->FileName, target, bytes);
+    memset(&io_status, 0, sizeof(io_status));
+    /* The provisional delete handle uses FILE_SYNCHRONOUS_IO_NONALERT, so
+     * the NT call completes before this stack buffer goes out of scope. */
+    status = api.set_information_file(
+        file, &io_status, info, (ULONG)(sizeof(*info) + bytes),
+        WF_WINDOWS_FILE_RENAME_INFORMATION_EX_CLASS
+    );
+    if (!wf_windows_nt_success(status)) {
+        *error_code = (int)wf_windows_nt_error(&api, status);
+        return -1;
+    }
+    return 0;
+}
+
+HANDLE wf__windows_open_directory_for_sync(HANDLE root, int *error_code) {
+    /* An empty name reopens root itself. The write half's original handle
+     * has only list/traverse/read-attributes/synchronize access. FlushFileBuffers
+     * requires write access, supplied here by the GENERIC_WRITE mapping:
+     * https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers
+     * NtCreateFile's directory and backup-intent options match a directory
+     * opened with CreateFileW's FILE_FLAG_BACKUP_SEMANTICS. */
+    return wf_windows_open_namespace_handle(
+        root, (const char *)(const void *)L"", FILE_GENERIC_WRITE,
+        FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT, error_code
+    );
+}
+
+static int wf_windows_open_at_worker(
     HANDLE root,
     const char *path,
     int flags,
@@ -1019,6 +1195,7 @@ int wf__windows_completion_file_open_at_worker(
     unsigned has_mode,
     unsigned expected_kind,
     unsigned descriptor_class,
+    unsigned create_directory,
     int *error_code,
     unsigned *open_outcome
 ) {
@@ -1106,6 +1283,9 @@ int wf__windows_completion_file_open_at_worker(
         desired_access |= FILE_LIST_DIRECTORY | FILE_TRAVERSE;
         create_options |= FILE_SYNCHRONOUS_IO_NONALERT;
     }
+    if (create_directory) {
+        create_options |= FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT;
+    }
     if (flags == WF_WINDOWS_NO_FOLLOW) {
         create_options |= FILE_OPEN_REPARSE_POINT;
     }
@@ -1117,7 +1297,8 @@ int wf__windows_completion_file_open_at_worker(
         NULL,
         0,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE ? FILE_OPEN_IF : FILE_OPEN,
+        (create_directory || descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE)
+            ? FILE_OPEN_IF : FILE_OPEN,
         create_options,
         NULL,
         0
@@ -1215,6 +1396,23 @@ int wf__windows_completion_file_open_at_worker(
     }
     *open_outcome = WF_WINDOWS_OPEN_SUCCEEDED;
     return descriptor;
+}
+
+int wf__windows_completion_file_open_at_worker(
+    HANDLE root, const char *path, int flags, unsigned mode, unsigned has_mode,
+    unsigned expected_kind, unsigned descriptor_class,
+    int *error_code, unsigned *open_outcome
+) {
+    return wf_windows_open_at_worker(root, path, flags, mode, has_mode,
+        expected_kind, descriptor_class, 0, error_code, open_outcome);
+}
+
+int wf__windows_completion_directory_write_open_worker(
+    HANDLE root, const char *path, int *error_code, unsigned *open_outcome
+) {
+    return wf_windows_open_at_worker(root, path, WF_WINDOWS_NO_FOLLOW, 0, 0,
+        WF_WINDOWS_EXPECT_DIRECTORY, WF_WINDOWS_DESCRIPTOR_CLASS_DIRECTORY_ROOT,
+        1, error_code, open_outcome);
 }
 
 int64_t wf__windows_completion_file_write_worker(

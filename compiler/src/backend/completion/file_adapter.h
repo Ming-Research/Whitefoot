@@ -231,8 +231,9 @@ wf_file_result wf_file_execute_timed(
  * exactly the switch of host calls its platform makes.  Interruption and
  * readiness refusal are adapter progress and are absorbed there; close is never
  * retried because one ambiguous close attempt has already consumed authority;
- * POSIX sync and truncate retry interruption, while other non-transfer
- * operations remain exactly one host attempt. A request
+ * POSIX create-if-missing directory opens, sync, truncate, rename and removal
+ * retry interruption, while other non-transfer operations remain exactly one
+ * host attempt. A request
  * kind a platform's qualified target row does not admit is reported as a failed
  * outcome with the host's own refusal code, never as a terminated process: the
  * emitter can produce a shape a target refuses, and refusing it is an outcome

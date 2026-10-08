@@ -362,19 +362,25 @@ rarely insert at the same place.
   a current workload attributes a substantial share to this path. Kill-time
   edge insertion and derivation interning for recreated cells also remain.
 
-- **Acyclic generic instantiation has no established practical bound.**
-  D7's unchanged-argument cycle rule establishes termination while acyclic
-  fan-out may still require exponentially many instances relative to written
-  source. The owner deferred this question in D7, whereas the current language
-  design rules out exponential checking work. The
+- **Finite generic instantiation has no established practical bound.**
+  FN-6 establishes finiteness while acyclic fan-out may still require
+  exponentially many instances relative to written source. The owner deferred
+  this question in D7, whereas the current language design rules out
+  exponential checking work. The
   [behavior investigation](../research/investigations/containers-and-resources/BEHAVIOR.md#shared-semantic-boundary-and-exact-deltas)
   records the accepted 1343-byte / 2047-instance witness, same-instance controls,
   stage measurements and unresolved correspondence finding. No budget, timeout, new
   source refusal, or measured asymptotic guarantee has been selected.
+  Closed-term cycles add a structural family: a function with n type
+  parameters and one recursive call per position, each replacing only that
+  position by `u64` and forwarding the rest, reaches all 2^n combinations of
+  `u8` and `u64` from an all-`u8` entry. This is a count of the admitted keys,
+  not a timing result; visiting each key once does not bound the number of keys.
   Reopen when generic container/behavior composition makes instance count or
   checking cost material. Recheck the distinct-instance and repeated-instance
-  controls on that composition, separating semantic checking, lowering and
-  emitted-code size; faster duplicate lookup alone cannot close the bound.
+  controls on that composition and the closed-term cycle family, separating
+  semantic checking, lowering and emitted-code size; faster duplicate lookup
+  alone cannot close the bound.
   The broader admission or sharing question remains deferred to an explicit
   choice supported by those controls and a complexity argument.
 
@@ -1294,6 +1300,22 @@ rarely insert at the same place.
   ([deferral](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)).
 
 ## Parallel lowering and runtime
+
+- **PAR-1 operand footprints treat a copied reference as its referent.**
+  `collect_operand_reads` in `compiler/src/semantic/permission.rs` resolves
+  every `CheckedExpression::Binding` to the storage it names, including a
+  bare reference argument. The expression checker records that copy with no
+  referent access under REF-1 and TYPE-7. A helper declaring only
+  `reads(a.len)` can therefore acquire a whole-origin operand read when
+  called with `a: r`, losing adjacency permission beside element writes.
+  This is established by source inspection; the affected adjacency verdict
+  has not been run. Keep the existing reference-holder read for rebinding
+  conflicts, but derive referent reads only from the projected callee row.
+  Validate a measure-reading helper beside an element-writing helper using
+  the same reference, with whole-root reads and holder rebinding as denial
+  controls. The corresponding PAR-2 survey is corrected with the measure-read
+  admission; defer this separate adjacency path until the next PAR-1
+  footprint change or a program encounters the lost permission.
 
 - **The concurrent map's writers wait a count of pauses, not a time.** A
   writer that finds its key locked waits 16 to 1,024 pauses
@@ -2320,17 +2342,20 @@ rarely insert at the same place.
   ships with its boundary specified and tested, or the owner records why one
   route suffices.
 - **A formal release must carry its own clang.** `clang_executable()` in
-  `compiler/src/bin/whitefootc.rs` hard-codes `/usr/bin/clang` on Linux and
-  macOS (`clang` on PATH on Windows), and `build.rs` probes that same clang
-  for `preserve_none`, the no-capture spelling and `llvm.coro.end`'s result
-  type. The probed answers are fixed into the executable. A release built
-  against one LLVM can therefore emit IR the host's clang refuses: clang
-  22.1.8 rejects the `i1` `llvm.coro.end` that compilers built against
-  clang 18 emit. A host whose clang lives elsewhere (a versioned `clang-22`,
-  Nix, Homebrew) also cannot run the driver.
+  `compiler/src/toolchain.rs` hard-codes `/usr/bin/clang` on Linux and
+  macOS (`clang` on PATH on Windows), and `toolchain::facts()` probes that
+  same clang, when `whitefootc` runs, for `preserve_none`, the no-capture
+  spelling and `llvm.coro.end`'s result type. Since those forms are probed
+  at run time, a
+  release no longer emits a form the host's clang refuses (it did: the
+  macOS release `wf-0b7f5c5b9854`, built where clang takes the `void`
+  `llvm.coro.end`, emitted it to Apple clang 21, which refuses it). A host
+  without clang, or whose clang lives elsewhere (a versioned `clang-22`,
+  Nix, Homebrew), still cannot run the driver, and code generation still
+  differs with the host's LLVM.
 
-  Until then, releases and their consumers use the gate's pinned LLVM major
-  (compiler/verification, compiler/downstream-releases). Bundling clang
+  Until then, Linux releases and their consumers use the gate's pinned LLVM
+  major (compiler/verification, compiler/downstream-releases). Bundling clang
   into every release waits: at about 100 to 200 MB per release, not
   measured, it costs too much at the current release rate. A formal release
   still needs it.
@@ -2338,12 +2363,13 @@ rarely insert at the same place.
   The change, for the first formal release:
   - each release ships the pinned LLVM's clang, lld and the files they need;
   - `whitefootc` runs that clang, next to itself, instead of `/usr/bin/clang`;
-  - the build-time probes ask the bundled clang;
+  - the run-time probes ask the bundled clang;
   - on macOS, the bundled clang uses the system SDK and linker.
 
   Validate with a release that builds and links a waiting program on a host
   with no clang installed, and on one whose system clang is another major.
-  Reopen with the first formal release, or when the release rate drops.
+  Reopen with the first formal release, when the release rate drops, or
+  when a downstream builds waiting programs with a macOS release.
 - **One rejection per compilation.** The pipeline stops at its first
   violation, so an agent with several independent defects — two unproved
   subscripts in different functions, say — meets them one compile at a time.
@@ -2550,21 +2576,27 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files can only be appended or set to a length.** `std::fs` opens a file
-  for appending, appends, sets its length, syncs and closes it [PRE-2], and
-  has no positioned write, rename, removal, directory creation, directory
-  sync, create rule other than create-if-missing, or way to descend into a
-  subdirectory for writing. A program cannot rewrite a log compactly, as
-  Redis's `BGREWRITEAOF` writes a new file, syncs it, renames it over the old
-  one and syncs the directory, nor clean up a file it made; the surface was
-  chosen as the one the persistent programs in view needed
-  (`research/investigations/io-model/TIME-AND-FILES.md`, "Writable
-  directories and append-only files"), and `truncate_file` was added for
-  cutting a log whose end did not load. Each addition is a specification
-  change to `std::fs` taking the write half. Validate with a program that
-  rewrites its log through a new file and a rename, and survives being
-  stopped between the two steps with one of the two files whole. Reopen when
-  a program must rewrite or remove what it wrote.
+- **Files have no positioned writes or exclusive creation.** `std::fs` still
+  lacks writing at an offset and create rules other than create-if-missing,
+  such as exclusive creation [PRE-2]. A program needing in-place updates or
+  exclusive creation cannot express it. Add the needed operations through the
+  write half when a program supplies that witness; compare their authority and
+  failure rules with the existing component operations, and validate with
+  that program plus conformance cases for the selected rules. Positioned
+  writes reopen when a program needs in-place updates rather than replacement.
+
+- **A path given to `open_read` can leave its root.** A name given with a
+  root denotes only an entry directly below it, so `.` and `..` are refused
+  [PRE-2], but `relative_path` keeps every component, and `open_read`
+  follows `..` as the host does (`run-syspath-dotdot-preserved`). A function
+  given only a directory's read half can therefore read files above it,
+  while one given a write half cannot write there. Uncertain: whether any
+  program relies on reading through `..`. The change would be either to
+  refuse `..` components in `open_read`'s paths, as the name operations
+  refuse it, or to state that a read half grants reading of everything the
+  host reaches from it; validate with a conformance case for the selected
+  rule on every host. Reopen when a program is given a read half that must
+  not reach its parent, or with the next change to the path library.
 
 - **A clock's readings cannot be replaced for a test.** `now` and the
   deadline heap read the host's monotonic clock, so a program's behavior at
@@ -2626,27 +2658,6 @@ rarely insert at the same place.
   saturation where a program wants it. Validate with the corpus programs and
   conformance cases that instantiate these containers. Reopen when a writer
   next changes one of these libraries.
-
-- **A container operation that takes a callback cannot be called again
-  inside its own callback with another callback.** Minimal witness: a
-  generic `apply<F, fn visit>` called as `apply::<u64, fn outer>`, where
-  `outer` calls `apply::<u64, fn inner>`. The instances end after two, but
-  the cycle `apply` to `outer` to `apply` changes the function argument, and
-  [FN-6] deliberately refuses every such cycle. firn met it as a
-  `hash_map_lookup` on the keyspace whose callback looks a field up with
-  `hash_map_lookup` in the hash the key holds; it alternates `hash_map_edit`
-  and `hash_map_lookup` instead, which works only while two distinct
-  operations fit, and a third level of nesting, or two edits, has no such
-  way out. Two repairs are open: a library entry that reaches a stored value
-  without a callback, such as a probe that returns the bucket's index for a
-  second, bounds-checked access, or an FN-6 that admits a cycle whose
-  changed arguments come from a finite set written in the program. The
-  [paged-storage design](../research/investigations/paged-storage/DESIGN.md#not-in-this-change)
-  also defers this FN-6 closed-term-cycle question after Snowghost's c5
-  witness. Validate a finite two-callback cycle and genuinely expanding
-  instantiations, retaining deterministic termination and rejecting expansion.
-  Reopen when a program needs a third level or two edits nested, or when the
-  library's container interfaces are next revised.
 
 - **The standard library has no decimal conversion of integers.** Two
   programs now write their own: firn reads its options' numbers with
@@ -2905,7 +2916,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,216 lines: the file
+  `compiler/src/backend/completion/bridge.c` has 4,276 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
@@ -3471,7 +3482,7 @@ condition under which it is taken up.
   remove the per-probe bounds compare in hash tables.
 - **Handing checker facts to the backend.** Emitted since the v0.60 port:
   `noalias` (not on `swap`), `nonnull`, `dereferenceable`,
-  `captures(none)` or `nocapture` by a build-time probe, `inbounds`, and
+  `captures(none)` or `nocapture` by a run-time probe, `inbounds`, and
   `nuw`/`nsw` on the exact family. A `&[T]` range parameter crosses calls as
   its element pointer and count, and the pointer carries the same facts
   except `dereferenceable` (`compiler/backend-facts`; the
@@ -3968,7 +3979,7 @@ condition under which it is taken up.
     the Lua work below can compose without separately committing each call.
   - Make AOF persistence usable through write/sync error handling, rewrite,
     interrupted-write recovery and orderly `SHUTDOWN`/signal handling; verify
-    a practical data migration path. File replacement and signal delivery
+    a practical data migration path. `std::fs` supplies file replacement; signal delivery
     may require Whitefoot library/runtime work; AOF presence alone is not
     durable-recovery evidence. RDB compatibility is not assumed by this item.
   - Add memory accounting, `maxmemory` and the eviction behavior the selected

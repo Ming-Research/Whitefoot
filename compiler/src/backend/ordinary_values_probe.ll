@@ -40,3 +40,22 @@ finish:
 done:
   ret void
 }
+
+declare i32 @wf_std.fs.open_directory_write.start(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
+declare void @wf_std.fs.open_directory_write.finish(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
+
+define void @wf_test_public_open_directory_write(ptr %result, ptr %factory, ptr %root, ptr %name, i64 %start, i64 %end) {
+entry:
+  %operation = alloca [1216 x i8], align 16
+  %view = load { ptr, i64 }, ptr %name
+  %data = extractvalue { ptr, i64 } %view, 0
+  %len = extractvalue { ptr, i64 } %view, 1
+  %state = call i32 @wf_std.fs.open_directory_write.start(ptr %result, ptr %factory, ptr %root, ptr %data, i64 %len, i64 %start, i64 %end, ptr %operation)
+  %answered = icmp eq i32 %state, 0
+  br i1 %answered, label %done, label %finish
+finish:
+  call void @wf_std.fs.open_directory_write.finish(ptr %result, ptr %factory, ptr %root, ptr %data, i64 %len, i64 %start, i64 %end, ptr %operation)
+  br label %done
+done:
+  ret void
+}

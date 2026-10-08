@@ -89,6 +89,15 @@ enum wf_file_operation_kind {
     WF_FILE_SLEEP = 17,
     /* Sets a file's byte length (`truncate_file` [PRE-2]). */
     WF_FILE_TRUNCATE = 18,
+    /* Namespace changes below one directory [PRE-2]. */
+    WF_FILE_RENAME = 19,
+    WF_FILE_REMOVE = 20,
+    /* Directory durability, using the close arm's descriptor. */
+    WF_FILE_SYNC_DIRECTORY = 21,
+    /* Create-if-missing directory write half, using the open_at arm. */
+    WF_FILE_OPEN_DIRECTORY_WRITE = 22,
+    /* Namespace move between two directory write halves [PRE-2]. */
+    WF_FILE_MOVE = 23,
 };
 
 /* Which direction of one connection a half-close releases (ordinary native library). */
@@ -190,6 +199,16 @@ typedef struct wf_file_request {
             int descriptor;
             uint64_t length;
         } truncate;
+        struct {
+            int directory;
+            int to_directory;
+            const char *from;
+            const char *to;
+        } rename;
+        struct {
+            int directory;
+            const char *path;
+        } remove;
 #if defined(WF_FILE_HAS_DIRECTORY_NEXT)
         struct {
             int descriptor;

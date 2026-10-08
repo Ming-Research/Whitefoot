@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Chain<T: drop> {
+  End();
+  Next(value: T, next: Box<Chain<Box<u64>>>);
+}
+
+fn retain(value: Chain<u8>) -> result: Chain<u8> pure {
+  doc "The nominal cycle supplies the closed term Box<u64>, so Chain<u8> reaches Chain<Box<u64>> and no further nominal instance.";
+  return move value;
+}
+
+fn main() -> status: ExitStatus pure {
+  let end = Chain<u8>::End();
+  let held = retain(value: move end);
+  return exit_status(code: 0_u8);
+}

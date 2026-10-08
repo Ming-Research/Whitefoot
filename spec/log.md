@@ -11,6 +11,38 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.98: writable subdirectories, moving files and names below a root
+
+Rules: changed PRE-2
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented opening a subdirectory's write half as Q216 option A, moving a file between two directories as Q217 option A, and refusing `.` and `..` below a root as Q221 option A, each recommended: "216 agreed, 217 agreed, ... 221 agreed" (translated).
+
+Summary: PRE-2 adds `open_directory_write`, which opens the write half of a directory below a write half, creating it empty when missing and reading its root as `open_append` does, and `move_file`, which renames a file from below one write half to below another with `rename_file`'s atomic replacement and open-handle rule; the open-handle sentence names `move_file`. A new sentence states that a name given with a root denotes an entry directly below it exactly when it is one nonempty path component other than `.` and `..`, any other name returning `InvalidPath`, so a function given a subdirectory's write half cannot reach the directory above it. Before them a program could write only below its working directory and rename only within one directory; firn's append-only files, kept as Redis 7.0.15 keeps them in a directory of their own, need the directory created when missing and an old single file moved into it ([design](../research/investigations/writable-subdirectories/README.md#proposal)). `rename_file` stays the one-directory form because a rename writes each directory it changes, so the host orders it [HOST-1], and one handle passed as both written roots of a call overlaps itself [EFF-5].
+
+## 2026-10-07 v0.97: element loops may read the written storage's measures
+
+Rules: changed PAR-2
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the proposal to admit measure reads in PAR-2 element loops as the next work once FN-6 was done: "OK, continue with it once FN-6 is fine" (translated), recorded as Q138; after the completion report that presented PR #268's specification and design-tree text as Q140, approval recommended: "approve them all" (translated).
+
+Summary: In PAR-2's affine-element family every read through the mapped root may now be a measure read [MSR-1] as well as a mapped element read, and in the proved-range-reference family every access overlapping a written origin may be a measure read of that origin as well as an element access below a proved range reference. The rule states the ground: descriptor storage is disjoint from element storage [MSR-2] and the write conditions confine every write of the body to elements, so no iteration writes the measures read. The certified-element family, which already admitted measure reads, is unchanged. Before the change a guard reading the written storage's `len` inside the body denied the loop although the same read before the loop was permitted.
+
+## 2026-10-07 v0.96: closed-term recursion cycles
+
+Rules: changed FN-6
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the explanation of FN-6 closed terms presented as Q137: "open a PR for FN-6 and do it" (translated); after the completion report that presented PR #266's specification and design-tree text as Q139, approval recommended: "approve them all" (translated).
+
+Summary: Within a recursive component, each argument an edge supplies at position i is either the calling declaration's own parameter at position i, of the same kind, forwarded unchanged, or a closed term in which no parameter of the caller occurs at any depth; a term built from a caller parameter, a caller parameter at another position or of another kind still rejects. FN-6 states the finiteness argument: every component of an instance key reached through a cycle comes from the entry key's component at the same position or from the finite set of closed terms written in the program. Before the change, any argument change on a cycle rejected, which refused finite nested callbacks such as `apply::<u64, fn outer>` whose `outer` calls `apply::<u64, fn inner>`. The conformance case `fn6-neg-polymorphic-recursion`, recursion at the fixed `i32`, becomes `fn6-pos-closed-type-recursion`.
+
+## 2026-10-07 v0.95: renaming, removing and syncing below a writable directory
+
+Rules: changed PRE-2
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the card that presented renaming, removing and syncing within one writable directory as Q212 option A: "212 agreed" (translated); and after the completion report that showed the PRE-2 text and the writable-directory decision as Q214 and the merge as Q215: "approve 214 215" (translated).
+
+Summary: PRE-2 adds `rename_file`, which renames a file below a `DirectoryWrite` and atomically replaces any entry at the destination; `remove_file`, which removes a name below it; and `sync_directory`, which hands the entries changed below it to the host's durability mechanism. A file open through a handle keeps its bytes and stays usable after its name is replaced or removed, and what survives a host failure stays outside the specification for directory entries as for file bytes. Before them a program could append to a file and cut it but not replace it, so an append-only log could not be rewritten without an interruption leaving it partly rewritten; the rewrite Redis performs, and firn needs, writes a synced temporary file, renames it over the log, syncs the directory and removes obsolete parts ([design](../research/investigations/file-replacement/README.md#proposal)).
+
 ## 2026-10-06 v0.94: scanning and clearing a concurrent hash map
 
 Rules: changed SHARE-1, PRE-1, WAIT-2, MSR-1

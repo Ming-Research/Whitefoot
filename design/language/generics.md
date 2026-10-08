@@ -1,6 +1,6 @@
 Decision: Generics are monomorphization-only, expanded before IR from explicit type, const and function arguments with each inhabited instance checked as concrete code, because inference and bound solving add complexity and unpredictability to the trust path while selected behavior needs direct calls, instead of inferred instantiation or dictionary-passing runtime bodies.
 
-Decision: Function and nominal instantiation cycles forward the complete argument vector unchanged in position and kind, including function arguments, because this syntactic check prevents growing recursive instantiation without search, instead of admitting finite permutations through a more precise termination analysis or imposing a depth, time or fuel limit.
+Decision: Each type, const or function argument on a function or nominal instantiation cycle is either the caller's parameter at the same position and of the same kind, forwarded unchanged, or a closed term containing none of the caller's parameters at any depth, because each instance-key component then comes from its entry position or a finite set of written closed terms without search, while Snowghost's changing-callback probe and firn's nested hash_map_lookup witness finite nested callbacks that need this choice, instead of requiring every edge to forward the complete parameter vector unchanged.
 
 Decision: Type arguments to functions, nominals and interface groups contain no reference or range reference at any depth after substitution, because the [no-stored-reference boundary](https://github.com/mbbill/Whitefoot/blob/main/design/language/ownership/no-stored-references.md) must remain closed under generic wrapping, instead of an exclusion list of special leaf types or rejecting only instances that happen to store their argument.
 
@@ -13,6 +13,9 @@ Decision: Forwarded groups, concrete argument groups and qualified member calls 
 Decision: A type argument is judged at every placement its parameter takes in the instantiated declaration, because a generic reference or shared handle preserves the storage's admitted home while a by-value parameter, result or field stores it, instead of refusing a restricted type merely because it is written as a type argument [TYPE-9, FN-2].
 
 Rejected:
+- Requiring every edge on an instantiation cycle to forward the complete parameter vector unchanged: rejected because it refused finite nested callbacks, leaving another library entry for each nesting level as the only repair that preserves the callback interface.
+- Admitting finite permutations through a more precise termination analysis: rejected because same-position forwarding and closed terms establish finiteness directly without searching for a terminating instance graph.
+- Imposing a depth, time or fuel limit on instantiation: rejected because a limit makes acceptance depend on a budget instead of the written program's structural rule.
 - Keeping the bounds `T: linear` and `T: affine`: rejected because they read backwards, a bound after a type parameter saying what the argument must be, so that `T: linear` reads as "T must be linear" while it accepted every class.
 - A word for the no-capability case, such as `T: any`: rejected because the absence of a bound already says that nothing is required of the argument.
 - Give a group import priority over an unbounded type parameter when their grammar lookahead overlaps: rejected because parser priority would change the meaning of a declaration according to an unrelated declaration and would leave `<T>` without one syntactic meaning.

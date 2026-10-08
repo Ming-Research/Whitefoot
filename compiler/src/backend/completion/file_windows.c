@@ -2,7 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0602
+#define _WIN32_WINNT 0x0A00
 #endif
 
 /*
@@ -45,6 +45,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <wchar.h>
 
 #if !defined(WF_COMPLETION_SHUTDOWN)
 #define WF_COMPLETION_SHUTDOWN shutdown
@@ -252,17 +253,22 @@ static wf_file_result wf_file_windows_open_at(const wf_file_request *request) {
         result.head.open_outcome = WF_FILE_OPEN_FAILED;
         return result;
     }
-    descriptor = wf__windows_completion_file_open_at_worker(
-        root,
-        request->operation.open_at.path,
-        request->operation.open_at.flags,
-        request->operation.open_at.mode,
-        request->operation.open_at.has_mode,
-        (unsigned)request->operation.open_at.expected_kind,
-        request->operation.open_at.descriptor_class,
-        &error_code,
-        &open_outcome
-    );
+    if (request->kind == WF_FILE_OPEN_DIRECTORY_WRITE) {
+        descriptor = wf__windows_completion_directory_write_open_worker(
+            root, request->operation.open_at.path, &error_code, &open_outcome);
+    } else {
+        descriptor = wf__windows_completion_file_open_at_worker(
+            root,
+            request->operation.open_at.path,
+            request->operation.open_at.flags,
+            request->operation.open_at.mode,
+            request->operation.open_at.has_mode,
+            (unsigned)request->operation.open_at.expected_kind,
+            request->operation.open_at.descriptor_class,
+            &error_code,
+            &open_outcome
+        );
+    }
     result.head.error_code = error_code;
     result.head.open_outcome = (enum wf_file_open_outcome)open_outcome;
     result.head.value = descriptor;
@@ -748,6 +754,78 @@ static wf_file_result wf_file_windows_truncate(const wf_file_request *request) {
     return result;
 }
 
+/* The NT rename and Win32 disposition Ex classes preserve open handles while
+ * changing a name. A host without those semantics returns its own refusal;
+ * there is no delete-then-rename replacement path. */
+static wf_file_result wf_file_windows_namespace(const wf_file_request *request) {
+    wf_file_result result;
+    HANDLE root;
+    HANDLE file;
+    int moving = request->kind == WF_FILE_MOVE;
+    int renaming = request->kind == WF_FILE_RENAME || moving;
+    int directory = renaming ? request->operation.rename.directory
+                             : request->operation.remove.directory;
+    const char *path = renaming ? request->operation.rename.from
+                                : request->operation.remove.path;
+    memset(&result, 0, sizeof(result));
+    result.head.kind = request->kind;
+    result.head.value = -1;
+    root = wf__windows_completion_descriptor_handle(directory);
+    file = wf__windows_open_delete(root, path, &result.head.error_code);
+    if (file == INVALID_HANDLE_VALUE) return result;
+    if (renaming) {
+        /* NtSetInformationFile's simple-rename case keeps a bare FileName
+         * with NULL RootDirectory in the file's own directory. Do not use
+         * kernel32's SetFileInformationByHandle: it resolves that name against
+         * the process cwd. A non-NULL RootDirectory selects the destination
+         * directory for move_file; a cross-volume move is a host refusal.
+         * https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information */
+        HANDLE destination = moving
+            ? wf__windows_completion_descriptor_handle(request->operation.rename.to_directory)
+            : NULL;
+        result.head.value = wf__windows_rename_file(
+            file, destination, request->operation.rename.to, &result.head.error_code
+        );
+    } else {
+        FILE_DISPOSITION_INFO_EX info;
+        info.Flags = FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
+        if (SetFileInformationByHandle(file, FileDispositionInfoEx, &info, sizeof(info)))
+            result.head.value = 0;
+        else
+            result.head.error_code = (int)GetLastError();
+    }
+    /* POSIX disposition removes the name when this deleting handle closes,
+     * while other handles keep the file's data alive. */
+    if (!CloseHandle(file) && result.head.value == 0) {
+        result.head.value = -1;
+        result.head.error_code = (int)GetLastError();
+    }
+    return result;
+}
+
+static wf_file_result wf_file_windows_sync_directory(const wf_file_request *request) {
+    wf_file_result result;
+    HANDLE root;
+    HANDLE directory;
+    memset(&result, 0, sizeof(result));
+    result.head.kind = request->kind;
+    result.head.value = -1;
+    root = wf__windows_completion_descriptor_handle(request->operation.close.descriptor);
+    directory = wf__windows_open_directory_for_sync(root, &result.head.error_code);
+    if (directory == INVALID_HANDLE_VALUE) return result;
+    /* Flush entries created by open_append as well as renamed/removed entries.
+     * A host refusal is returned through the ordinary IoError mapping. */
+    if (FlushFileBuffers(directory))
+        result.head.value = 0;
+    else
+        result.head.error_code = (int)GetLastError();
+    if (!CloseHandle(directory) && result.head.value == 0) {
+        result.head.value = -1;
+        result.head.error_code = (int)GetLastError();
+    }
+    return result;
+}
+
 /* Deadlines [PRE-2].  A helper inside a synchronous host call is ended by
  * `CancelSynchronousIo`, which needs a real handle to the helper's thread
  * rather than the pseudo-handle a thread has for itself. */
@@ -780,6 +858,7 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
         return result;
     }
     switch (request->kind) {
+    case WF_FILE_OPEN_DIRECTORY_WRITE:
     case WF_FILE_OPEN_AT:
         return wf_file_windows_open_at(request);
     case WF_FILE_PREAD:
@@ -789,6 +868,12 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
         return wf_file_windows_write(request);
     case WF_FILE_SYNC:
         return wf_file_windows_sync(request);
+    case WF_FILE_MOVE:
+    case WF_FILE_RENAME:
+    case WF_FILE_REMOVE:
+        return wf_file_windows_namespace(request);
+    case WF_FILE_SYNC_DIRECTORY:
+        return wf_file_windows_sync_directory(request);
     case WF_FILE_TRUNCATE:
         return wf_file_windows_truncate(request);
     case WF_FILE_CLOSE:

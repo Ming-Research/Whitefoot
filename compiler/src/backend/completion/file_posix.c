@@ -28,6 +28,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -201,10 +202,31 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
         break;
     }
 
-    /* Each pass is one qualified host attempt. No-progress interruption and
-     * readiness refusal are absorbed by wf_file_execute_direct below and
-     * never become writer-visible outcomes. */
+    /* Each case makes its host operation. Directory creation and opening
+     * absorb interruption at each step; transfer readiness and namespace
+     * interruption are handled by wf_file_execute_direct below. */
     switch (request->kind) {
+    case WF_FILE_OPEN_DIRECTORY_WRITE: {
+        int created;
+        do {
+            created = mkdirat(request->operation.open_at.directory,
+                              request->operation.open_at.path, 0777);
+        } while (created < 0 && errno == EINTR);
+        if (created < 0 && errno != EEXIST) {
+            result.head.error_code = errno;
+            result.head.open_outcome = WF_FILE_OPEN_FAILED;
+            return result;
+        }
+        do {
+            result.head.value = WF_FILE_OPENAT(
+                request->operation.open_at.directory, request->operation.open_at.path,
+                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+            );
+        } while (result.head.value < 0 && errno == EINTR);
+        result.head.open_outcome = result.head.value < 0
+            ? WF_FILE_OPEN_FAILED : WF_FILE_OPEN_SUCCEEDED;
+        break;
+    }
     case WF_FILE_OPEN_AT:
         if (request->operation.open_at.expected_kind
             > WF_FILE_EXPECT_DIRECTORY) {
@@ -292,6 +314,23 @@ static wf_file_result wf_file_execute_once(wf_file_request *request) {
             request->operation.write.buffer,
             request->operation.write.count
         );
+        break;
+    case WF_FILE_MOVE:
+    case WF_FILE_RENAME:
+        result.head.value = renameat(
+            request->operation.rename.directory, request->operation.rename.from,
+            request->kind == WF_FILE_MOVE ? request->operation.rename.to_directory
+                                          : request->operation.rename.directory,
+            request->operation.rename.to
+        );
+        break;
+    case WF_FILE_REMOVE:
+        result.head.value = unlinkat(
+            request->operation.remove.directory, request->operation.remove.path, 0
+        );
+        break;
+    case WF_FILE_SYNC_DIRECTORY:
+        result.head.value = fsync(request->operation.close.descriptor);
         break;
     case WF_FILE_TRUNCATE:
         /* Preserve the unsigned source length until the host boundary. */
@@ -552,12 +591,16 @@ wf_file_result wf_file_execute_direct(wf_file_request *request) {
             return result;
         }
         switch (request->kind) {
-        /* An append, sync or truncate of a regular file never waits for readiness,
+        /* Storage and namespace operations never wait for readiness,
          * and carries no deadline, so an interruption by some other signal
          * is retried and any other refusal is its answer. */
         case WF_FILE_APPEND:
         case WF_FILE_SYNC:
         case WF_FILE_TRUNCATE:
+        case WF_FILE_MOVE:
+        case WF_FILE_RENAME:
+        case WF_FILE_REMOVE:
+        case WF_FILE_SYNC_DIRECTORY:
             if (result.head.error_code == EINTR) {
                 continue;
             }
