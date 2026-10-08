@@ -11,13 +11,21 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
-## 2026-10-08 v0.99: stop signals
+## 2026-10-08 v0.100: stop signals
 
 Rules: changed PRE-2
 
 Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented stop signals as Q222 option A, recommended: "222 agreed" (translated); after the completion report that presented runtime-observation order with host-merged requests counted once as Q228, holding the Windows close, logoff and shutdown handlers until the listener closes as Q229, PR #273's specification text and its two design-tree nodes as Q233 and the merge order as Q234, each recommended: "Q225–Q234 all approved" (translated).
 
 Summary: PRE-2's `std::process` gains the capability `StopSignals`, carried by `Inputs.stops`, the linear handle `StopListener`, the enum `StopKind` with `Interrupt` and `Terminate`, and `stop_listen`, `stop_next` and `close_stop_listener`. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. While a listener is open, `stop_next` returns the requests in the order the runtime observed them, keeping those observed between calls and counting requests the host merged before observation once, and bounds its wait by its deadline; while none is open the host default applies, on POSIX ending the program, and a termination the host imposes after its grace period ends the program then. A stop request is an input of the execution [WAIT-2]. Before the change a program had no way to learn of a host's request to stop, so a server could not run its own orderly stop ([design](../research/investigations/stop-signals/README.md)).
+
+## 2026-10-08 v0.99: a dead linear binding is reinitialized
+
+Rules: changed SET-1, WIN-3
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the completion report that presented reinitializing a dead linear binding as Q230 option A, recommended, with PR #272's specification text, and the merge order as Q234: "Q225–Q234 all approved" (translated).
+
+Summary: SET-1 no longer requires the target type to be copy or affine. A target is writable when it satisfies the writable-root condition, unchanged from the former writability rule except that the binding need not be live, and its root is live or it is the complete own-mode value binding; the commit reinitializes a dead complete binding, and only a live target keeps its previous value until the commit. WIN-3 refuses assigning over a live owned place whose value is linear and states that a dead binding holds no old value, so its reinitialization releases nothing. Before the change the checker refused `let next = step(log: move log); set log = move next;` for a linear `log`, citing WIN-3, although SET-1's dead-binding sentence, OWN-11's loop rule and the affine-replacement decision admitted it; firn's append-only writer, a struct of nodrop handles passed through a fallible step inside a loop, needs that form. A field, index or dereference below a dead root stays unwritable.
 
 ## 2026-10-08 v0.98: writable subdirectories, moving files and names below a root
 
