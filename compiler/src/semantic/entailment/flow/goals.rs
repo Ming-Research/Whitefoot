@@ -1329,7 +1329,7 @@ impl Reasoning<'_, '_, '_> {
                 }
             };
         }
-        if let Some(value) = self.goal_integer_constant(expression) {
+        if let Some(value) = self.input.goal_integer_constant(expression) {
             return Some((None, value));
         }
         // [ENT-2] a widening conversion denotes its operand's mathematical
