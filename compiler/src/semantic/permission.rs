@@ -772,7 +772,9 @@ impl<'check> Program<'check> {
                     || guard.as_deref().is_some_and(expression)
                     || block(body, inner)
             }
-            CheckedStatement::Break { target, .. } => !inner.loops.contains(target),
+            CheckedStatement::Break { target, .. } | CheckedStatement::Continue { target, .. } => {
+                !inner.loops.contains(target)
+            }
             CheckedStatement::Give { value, .. } => inner.values == 0 || expression(value),
             // The permission judgment does not classify a statement that
             // binds a result list [CALL-4], but its one value is all it reads.
@@ -1011,11 +1013,11 @@ impl<'check> Program<'check> {
                 "a give statement",
                 Err(Refusal::Exit(ExitKind::BlockExit)),
             ),
-            CheckedStatement::Break { .. } => (
+            CheckedStatement::Break { .. } | CheckedStatement::Continue { .. } => (
                 None,
                 None,
                 None,
-                "a break statement",
+                "a loop transfer",
                 Err(Refusal::Exit(ExitKind::BlockExit)),
             ),
             // A call-rooted match can be the last actualized member: its
@@ -1382,7 +1384,7 @@ fn waiting_call(waiting: &[NodePath], statement: &CheckedStatement) -> Option<No
         CheckedStatement::Loop { body, .. } => {
             body.iter().find_map(|child| waiting_call(waiting, child))
         }
-        CheckedStatement::Break { .. } => None,
+        CheckedStatement::Break { .. } | CheckedStatement::Continue { .. } => None,
     }
 }
 
@@ -1875,7 +1877,8 @@ fn push_nested_blocks<'check>(
         | CheckedStatement::Evaluate { .. }
         | CheckedStatement::Return { .. }
         | CheckedStatement::Give { .. }
-        | CheckedStatement::Break { .. } => {}
+        | CheckedStatement::Break { .. }
+        | CheckedStatement::Continue { .. } => {}
     }
 }
 
@@ -1931,7 +1934,9 @@ fn leaf_names(statement: &CheckedStatement, binding: BindingId) -> bool {
                     .into_iter()
                     .any(|offset| expression_names(offset, binding))
         }
-        CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => false,
+        CheckedStatement::Proof(_)
+        | CheckedStatement::Break { .. }
+        | CheckedStatement::Continue { .. } => false,
         CheckedStatement::Match { .. }
         | CheckedStatement::ValueMatchLet { .. }
         | CheckedStatement::Loop { .. }

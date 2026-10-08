@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod canonical_corpus;
+mod checker_work;
 #[cfg(windows)]
 mod native_windows;
 mod support;

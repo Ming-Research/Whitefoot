@@ -2,6 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn sum_paced(limit: u64) -> total: u64 pure {
+  doc "Transport re-establishes fast <= limit at each real continuation between guarded increments, so each later increment and induction input has the written bound.";
   let fast = 0_u64;
   let n = 0_u64;
   let total = 0_u64;

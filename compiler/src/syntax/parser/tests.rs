@@ -692,6 +692,7 @@ let owned = Choice<u8>::Some(value: ordinary);
 let signed = Sign::Neg();
 return unit;
 loop @again { break @again; }
+loop @resume { continue @resume; }
 atomic state = &shared when compared { set state^ = 1_i32; }
 for @range (
 index in 0_u64..1_u64,
@@ -767,7 +768,7 @@ fn main() -> result: unit pure {}
             });
         assert!(present, "fixture omitted {production:?}");
     }
-    assert_eq!(productions().len(), 99);
+    assert_eq!(productions().len(), 100);
     assert_eq!(
         parsed
             .tree

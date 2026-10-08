@@ -1,0 +1,5 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Exercises the continue transfer.";
+  continue;
+  return std::process::exit_status(code: 0_u8);
+}

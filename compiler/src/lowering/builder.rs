@@ -1312,6 +1312,32 @@ impl<'program> IrBuilder<'program> {
                     backedge_drops,
                     give_target.clone(),
                 )?,
+                CheckedStatement::Continue { target, drops, .. } => {
+                    let position = self
+                        .loops
+                        .iter()
+                        .rposition(|candidate| candidate.id == *target)
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                    let target = self.loops[position].clone();
+                    let block = match target.backedge {
+                        Some((block, _)) => block,
+                        None => {
+                            let update = self.new_block(&target.backedge_types)?;
+                            let block = update.0;
+                            self.loops[position].backedge = Some(update);
+                            block
+                        }
+                    };
+                    let mut arguments = self.binding_values(&target.carried_bindings)?;
+                    arguments.extend(target.captures);
+                    let drops = self.lower_drops(drops)?;
+                    self.leave_atomics(target.atomic_depth)?;
+                    self.terminate(IrTerminator::Jump {
+                        target: block,
+                        arguments,
+                        drops,
+                    })?;
+                }
                 CheckedStatement::Break { target, drops, .. } => {
                     let target = self
                         .loops

@@ -754,3 +754,57 @@ fn main() -> status: std::process::ExitStatus pure {
         );
     });
 }
+
+#[test]
+fn a_call_bridge_domain_retains_one_exact_goal_and_ordered_component_parents() {
+    let source = include_bytes!(
+        "../../../../tests/conformance/cases/msr4-pos-integer-domain-call-bridge.wf"
+    );
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(checked) = outcome else {
+            panic!("the specified finite lower-bound bridge must accept: {outcome:?}");
+        };
+        let walk = named(&checked.data.functions, "walk");
+        let domains = walk
+            .entailment
+            .obligations
+            .iter()
+            .filter(|obligation| obligation.family == ObligationFamily::IntegerDomain)
+            .collect::<Vec<_>>();
+        let [domain] = domains.as_slice() else {
+            panic!("the subtraction owns one obligation, not one per component");
+        };
+        assert!(domain.discharged);
+        super::entailment::validate_derivations(&walk.entailment);
+        let root = domain.derivation.expect("the operation retains its root");
+        let DerivationNode::IntegerDomain {
+            goal: Some(goal),
+            parents,
+        } = &walk.entailment.derivations.nodes[root.0 as usize]
+        else {
+            panic!("the aggregate must retain the exact operation goal");
+        };
+        assert_eq!(
+            domain.canonical_goal.as_ref(),
+            Some(&walk.entailment.inventory.goals[goal.0 as usize].expression),
+        );
+        assert!(matches!(
+            &walk.entailment.inventory.goals[goal.0 as usize].expression,
+            GoalExpression::Operation {
+                row: GoalOperation::Integer {
+                    operation: CheckedIntegerOperation::SubtractDefined,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert_eq!(parents.len(), 2, "upper component precedes lower component");
+        assert_eq!(domain.components.len(), 2);
+        let lower = domain.components[1];
+        assert!(matches!(
+            walk.entailment.derivations.nodes[parents[1].0 as usize],
+            DerivationNode::TransitiveBound { left, right, bound, .. }
+                if Some(left) == lower.left && right == lower.right && bound == lower.bound
+        ));
+    });
+}

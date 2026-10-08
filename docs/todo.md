@@ -99,46 +99,64 @@ rarely insert at the same place.
   repeated checks of the interpreter, or another program meets the same
   growth.
 
-- **A loop invariant is lost where a guarded update joins an untouched path.**
-  Minimal witness:
+- **A disequality with a constant does not tighten a bound.** Under the
+  header `invariant bounded: cursor <= 4_u64`, the body
+  `if cursor == 4_u64 { break; }` followed by `set cursor = cursor + 1_u64;`
+  is refused [INV-1], while the guard `if 4_u64 <= cursor { break; }` is
+  accepted (compiler at 026074111). The false edge holds
+  `cursor != 4`, but [ENT-4]'s atomic disequality is `t1 != t2` between two
+  terms and a constant operand folds through Z (`a <= 7` is `a - Z <= 7`),
+  so `cursor != 4` gives L0 no fact that closure rule (2), which tightens
+  `t1 - t2 <= 0` with `t1 != t2` to `t1 - t2 <= -1`, can use. Impact: a loop
+  that stops at a sentinel tested with `==`, the form a writer reaches for
+  first, loses its bound. Change, a language decision (Q148): an L0
+  disequality may carry a constant offset, `t1 - t2 != c`, and rule (2)
+  tightens `t1 - t2 <= c` to `t1 - t2 <= c - 1` and `t2 - t1 <= -c` to
+  `t2 - t1 <= -c - 1`. Validate with the witness accepted, the same body
+  refused when the guard tests 3 instead of 4, and joins keeping a common
+  offset disequality. Reopen when the owner rules on Q148.
 
-  ```wf
-  fn walk(room: u64, t0: u64, c: u64) -> r: u64 pure {
-    let j = 0_u64;
-    loop (
-      invariant jb: j <= room
-    ) {
-      let t = t0;
-      if c == 1_u64 {
-        if t <= room {
-          set j = t;
-        } else {
-          return j;
-        }
-      } else if c == 2_u64 {
-        return j;
-      }
-    }
-    return j;
-  }
-  ```
+- **A header relation about the current element of a whole-table counted
+  loop is refused.** Over `for (i in 0_u64..n, invariant fits:
+  rows^[i].len <= 4_u64)` with `n = rows^.len`, the final header's instance
+  names `rows^[n]`, which does not exist, so it is refused with OP-4
+  `(i + 1_u64) < rows^.len` [ENT-2, INV-1]. Before the target-instance
+  terms, a nonempty table was accepted by forming that slot without a
+  bounds proof; with a possibly empty table it was refused at the base.
+  Impact: a writer who states a property of the current row as a header
+  invariant is refused at the last iteration. Change, a language decision
+  (Q154): keep the refusal and point the repair at a range fact over the
+  rows [RANGE-1], or require such a relation only at headers that enter the
+  body and export none at exhaustion. Validate with the witness and a
+  relation joining a carried value to the current row. Reopen when the
+  owner rules on Q154.
 
-  is refused with `INV-1 UndischargedLoopInvariant`, obligation `Backedge`,
-  on `jb` (compiler at 648338c31). Two paths reach the back edge, and each
-  alone re-proves `j <= room`: the update from `t <= room` with `j == t`,
-  the fallthrough from the assumed invariant. Each path alone is accepted:
-  making the fallthrough return, so that only the update reaches the back
-  edge, passes, and so does removing the update. The loss is therefore at
-  the join of the two paths, where neither path's own fact survives. The
-  program is sound; a
-  checker could accept it by proving the header batch on each input of the
-  final join, or by closing each input's facts under its value images before
-  joining. Impact: an interpreter written as `loop { match }` whose arms
-  update different loop variables needs a run-time re-check of the invariant
-  per dispatch; Halo's interpreter (Ming-Research/Halo-wf#2) is written as a
-  self-tail call instead.
-  Reopen when a loop-shaped program cannot be rewritten that way, or with
-  the INV-1 join rules.
+- **The induction inventory repeats the walker's frontier structure.**
+  `induction_inputs` in `compiler/src/semantic/check/obligations.rs` forms
+  each loop's incoming edges, with their sites, branch labels and the
+  atomic-exit rule, independently of the entailment walker's frontiers, and
+  `answer_records` matches the two by exact equality. A divergence is loud
+  (an unanswered INV-1 obligation), and it is kept as an independent
+  structural oracle, but every frontier rule must be changed in both.
+  Change: derive the inventory from the walker's recorded frontiers, or add
+  a differential test over the conformance corpus that compares them.
+  Validate with `arm_releases_preserve_each_nested_induction_input`, which
+  fails when the two disagree on release paths. Reopen when another
+  frontier rule changes.
+
+- **A rejection after a join does not name the input that failed to carry a
+  header relation.** When a join cannot carry a loop header's written
+  relation because one input does not prove it [ENT-5], a later rejection
+  that needed it (OP-4 or OP-2, for example `stack^.inner[fp]` after a
+  conditional helper call whose contract lacks the length-preserving
+  `ensures`) reports only its own residual. Impact: the writer cannot see
+  which branch lost the relation. Change: keep the failed transport's input
+  and component as explanatory data and add them to the later consumer's
+  repair, never as acceptance authority, as the
+  [join-relations design](../research/investigations/join-relations/DESIGN.md#checker-mechanisms-and-interfaces)
+  plans. Reopen when a writer trial or program stalls on such a rejection.
+  Validate with the helper witness without its `ensures`: the diagnostic
+  names the call edge.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant

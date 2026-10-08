@@ -457,7 +457,8 @@ fn collect_definitions(
             | CheckedStatement::DropExpression { .. }
             | CheckedStatement::Proof(_)
             | CheckedStatement::Return { .. }
-            | CheckedStatement::Break { .. } => {}
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => {}
         }
     }
 }
