@@ -2743,7 +2743,6 @@ fn execute(bytes: &Box<Array<u8>>, size: u64, args: &Args, files: &HandleFactory
       }
     }
   }
-  return 70_u8;
 }
 
 fn read_module(args: &Args, cwd: &DirectoryRead, files: &HandleFactory, bytes: &Box<Array<u8>>) -> size: u64 reads(args), reads(cwd), writes(files), writes(bytes) waits {

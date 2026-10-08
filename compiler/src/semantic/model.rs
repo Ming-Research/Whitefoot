@@ -2761,6 +2761,8 @@ pub(crate) enum CheckedStatement {
         invariants: Vec<CheckedLoopInvariant>,
         body: Vec<CheckedStatement>,
         backedge_drops: Vec<CheckedDrop>,
+        /// [FN-1] whether a break resolves to this loop's identity.
+        continues: bool,
     },
     CountedRange {
         id: CheckedLoopId,

@@ -1816,7 +1816,6 @@ fn a_returning_loop_with_no_break_has_a_valid_unreachable_continuation() {
     }
     set remaining = remaining - 1_u64;
   }
-  return 0_u64;
 }
 
 fn main() -> status: std::process::ExitStatus pure {

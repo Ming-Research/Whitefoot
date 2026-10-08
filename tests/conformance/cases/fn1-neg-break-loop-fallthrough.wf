@@ -1,0 +1,5 @@
+fn main() -> status: std::process::ExitStatus pure {
+  loop {
+    break;
+  }
+}

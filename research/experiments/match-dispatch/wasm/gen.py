@@ -1038,7 +1038,7 @@ aliases_end = head.index("\n\n") + 2
 helper_text = "\n".join(HELPERS).strip("\n")
 program = (head[:aliases_end] + OPS + "\n\n" + (helper_text + "\n\n" if helper_text else "")
            + head[aliases_end:].rstrip("\n") + "\n" + "\n".join(("  " + line) if line else line for line in "\n".join(arms).strip("\n").split("\n"))
-           + "\n    }\n  }\n  return trap(code: 1_u32, pc: pc);\n}\n\n" + tail_text + "\n")
+           + "\n    }\n  }\n}\n\n" + tail_text + "\n")
 if "--names" in sys.argv:
     print("\n".join(name for name, _, _ in variants))
     sys.exit(0)

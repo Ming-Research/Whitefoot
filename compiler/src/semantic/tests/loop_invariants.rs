@@ -266,7 +266,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn ordinary_loop_without_a_break_has_a_contradictory_continuation() {
+fn ordinary_loop_without_a_break_rejects_its_dead_operation() {
     let source = br#"fn repeat_forever() -> result: unit pure {
   let value = 0_u64;
   loop (
@@ -282,29 +282,11 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
-    with_semantics(source, |outcome| {
-        let SemanticOutcome::Complete(checked) = outcome else {
-            panic!("a break-free loop must retain its unreachable continuation: {outcome:?}");
-        };
-        let function = checked
-            .data
-            .functions
-            .iter()
-            .find(|function| function.name == "repeat_forever")
-            .expect("repeat_forever exists");
-        let [invariant] = function.entailment.loop_invariants.as_slice() else {
-            panic!("the loop retains one header invariant");
-        };
-        assert!(invariant.proof.base);
-        assert_eq!(invariant.proof.step, Some(true));
-        let division = function
-            .entailment
-            .obligations
-            .iter()
-            .find(|obligation| obligation.family == ObligationFamily::IntegerDomain)
-            .expect("the structurally retained continuation checks its division");
-        assert!(division.discharged);
-    });
+    super::assert_rule(
+        source,
+        SemanticRule::Fn1,
+        SemanticIssueKind::UnreachableStatement,
+    );
 }
 
 #[test]
@@ -2689,7 +2671,6 @@ fn a_body_probe_after_a_guarded_replacement_reads_the_transported_header_relatio
     }
     invariant reprove: hi <= spare;
   }
-  return hi;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2732,7 +2713,6 @@ fn a_failing_body_probe_is_reported_before_the_header_backedge() {
     }
     invariant reprove: hi <= spare;
   }
-  return hi;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
