@@ -5,6 +5,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 grow reallocates its cell
+
+Nodes: compiler/storage-representation
+
+Owner-approved: On the status board on 2026-10-08, written in Chinese, approving the item that presented the change: "Agree: approve the storage-representation change in the design tree: `grow` becomes one realloc, replacing the provisional decision of allocating a new block, copying and freeing (the old route recorded as rejected, with Halo's measurement)" (translated); in the paged session, after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: `grow` of a `Box<Slots<T>>` cell reallocates the cell at the new size instead of allocating a new block, moving the filled slots and freeing the old one, so the allocator can extend in place or remap large blocks. The provisional decision had waited for performance grounds: Halo-wf's in-place table growth measured 1.000 of its copying source with the copying `grow` and 0.860 with `realloc` on the i9-14900K (integer-table 14.0% faster, sort 2.5%, other kernels within noise; Halo-wf run 37773076340). The block keeps the alignment `malloc` gave it, STOR-7 already permits the address change, and a failed `realloc` terminates as STOR-8 states.
+
 ## 2026-10-08 Stop signals
 
 Nodes: language/system-interface/stop-signals, compiler/completion-runtime/signal-delivery
