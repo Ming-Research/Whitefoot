@@ -1895,3 +1895,140 @@ fn main() -> status: std::process::ExitStatus pure waits {
         Some("SET-1")
     );
 }
+
+/// [PAR-1, STOR-6] an ignored reference into a `Box<Slots<T>>` block still
+/// promises dereferenceability at its callee's entry, and forming it loads
+/// the owner slot, so a call that can relocate the block must not run before
+/// the borrowing call enters, nor while a later member forms its borrow.
+/// Source permission does not count the borrow as a content read and stays
+/// intact; the overlap lowering must keep the two calls out of one group. Two
+/// borrows of the block's own elements, which neither relocates, still
+/// overlap.
+#[test]
+fn slots_cell_growth_preserves_borrowed_call_entry_order() {
+    for (actual, kind, wrapper, borrow_first) in [
+        ("&p.inner", "Slots<u64>", false, true),
+        ("&p.inner", "Slots<u64>", true, true),
+        ("&p.inner[0_u64]", "u64", false, true),
+        ("&p.inner[0_u64..1_u64]", "[u64]", false, true),
+        ("&p.inner", "Slots<u64>", false, false),
+        ("&p.inner", "Slots<u64>", true, false),
+        ("&p.inner[0_u64..1_u64]", "[u64]", false, false),
+    ] {
+        let resize = if wrapper {
+            r#"fn resize(cell: &Box<Slots<u64>>, capacity: u64) -> result: unit writes(cell) contract {
+  requires capacity >= cell^.inner.cap;
+} {
+  grow(cell: cell, capacity: capacity);
+  return unit;
+}
+
+"#
+        } else {
+            ""
+        };
+        let growth_name = if wrapper { "resize" } else { "grow" };
+        let borrow = format!("  ignore(part: {actual});\n");
+        let growth = format!("  {growth_name}(cell: &p, capacity: 1025_u64);\n");
+        let calls = if borrow_first {
+            format!("{borrow}{growth}")
+        } else {
+            format!("{growth}{borrow}")
+        };
+        let source = format!(
+            "fn ignore(part: &{kind}) -> result: unit pure {{\n  return unit;\n}}\n\n{resize}fn main() -> status: std::process::ExitStatus pure {{\n  let p = box_slots_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n{calls}  return std::process::exit_status(code: 0_u8);\n}}\n"
+        );
+        with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
+            let main = function(program, "main");
+            let is_growth = |name: &str| {
+                if wrapper {
+                    name == "resize"
+                } else {
+                    name.starts_with("grow$")
+                }
+            };
+            let calls = main
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| {
+                    let IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Call { function, .. },
+                        ..
+                    } = instruction
+                    else {
+                        return None;
+                    };
+                    let name = program
+                        .functions()
+                        .get(*function as usize)
+                        .expect("call target")
+                        .name();
+                    (is_growth(name) || name == "ignore").then_some(*result)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(calls.len(), 2, "{actual}: growth and borrowed call");
+            assert!(
+                !main
+                    .overlaps()
+                    .iter()
+                    .any(|group| calls.iter().all(|call| group.members.contains(call))),
+                "{actual}: block growth must not run before the borrowed call enters: {:?}",
+                main.overlaps()
+            );
+        });
+    }
+}
+
+/// [PAR-1] two calls borrowing elements of one `Box<Slots<T>>` block, neither
+/// of which can relocate it, stay in one overlap group under the box-content
+/// cut.
+#[test]
+fn borrows_inside_one_block_still_overlap() {
+    let source = br#"fn ignore(part: &[u64]) -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let p = box_slots_new::<u64>(capacity: 4_u64);
+  place_back(window: &p.inner, value: 0_u64);
+  place_back(window: &p.inner, value: 0_u64);
+  ignore(part: &p.inner[0_u64..1_u64]);
+  ignore(part: &p.inner[1_u64..2_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let main = function(program, "main");
+        let borrows = main
+            .blocks()
+            .iter()
+            .flat_map(|block| block.instructions())
+            .filter_map(|instruction| {
+                let IrInstruction::Define {
+                    result,
+                    operation: IrOperation::Call { function, .. },
+                    ..
+                } = instruction
+                else {
+                    return None;
+                };
+                let name = program
+                    .functions()
+                    .get(*function as usize)
+                    .expect("call target")
+                    .name();
+                (name == "ignore").then_some(*result)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(borrows.len(), 2, "two borrowed calls");
+        assert!(
+            main.overlaps()
+                .iter()
+                .any(|group| borrows.iter().all(|call| group.members.contains(call))),
+            "disjoint borrows of one block overlap: {:?}",
+            main.overlaps()
+        );
+    });
+}
