@@ -225,6 +225,7 @@ fn recognize_load(
                         path: prefix.to_vec(),
                         element,
                         element_type: root.ty,
+                        proof_base: None,
                     })
                 }
                 _ => return None,

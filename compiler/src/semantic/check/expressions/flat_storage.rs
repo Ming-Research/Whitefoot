@@ -108,6 +108,7 @@ impl CheckedIndexedPlace {
                 binding,
                 path,
                 element,
+                proof_base,
                 ..
             } = buffer.root;
             return Ok(Self::Container(CheckedContainerPlace {
@@ -115,6 +116,7 @@ impl CheckedIndexedPlace {
                     root: PlaceRoot::Binding(binding),
                     path,
                     ty: CheckedType::Buffer { element },
+                    proof_base,
                 },
                 resolved: buffer.resolved,
                 declaration: Some(buffer.declaration),
@@ -136,6 +138,7 @@ impl CheckedIndexedPlace {
                     .map(CheckedPlaceStep::Field)
                     .collect(),
                 ty: array.array_type,
+                proof_base: None,
             },
             resolved: ResolvedPlaceSet::one(
                 array
@@ -293,6 +296,7 @@ impl<'unit> Checker<'_, 'unit> {
                 root: PlaceRoot::Constant(constant),
                 path,
                 ty,
+                proof_base: None,
             },
             resolved: ResolvedPlaceSet::one(resolved),
             // A place rooted in a named const [CONST-2] is immutable static
@@ -1656,7 +1660,7 @@ impl<'unit> Checker<'_, 'unit> {
                     .declarations
                     .unsupported(UnsupportedSemanticFeature::CompositeValues, node);
             }
-            let (binding, path) = self
+            let (binding, path, _) = self
                 .types
                 .declarations
                 .explicit_container_path(&place.expression, node)?;
@@ -1675,7 +1679,7 @@ impl<'unit> Checker<'_, 'unit> {
                 resolved: place.resolved,
             }));
         }
-        let (binding, mut path) = self
+        let (binding, mut path, proof_base) = self
             .types
             .declarations
             .explicit_container_path(&place.expression, node)?;
@@ -1699,6 +1703,7 @@ impl<'unit> Checker<'_, 'unit> {
                         path: path.clone(),
                         element,
                         element_type: self.types.element_type(element)?,
+                        proof_base,
                     },
                     declaration: place.declaration,
                     element_type: self.types.element_type(element)?,
@@ -1722,6 +1727,7 @@ impl<'unit> Checker<'_, 'unit> {
                         root: PlaceRoot::Binding(binding),
                         path,
                         ty,
+                        proof_base,
                     },
                     resolved: place.resolved,
                     declaration: Some(place.declaration),
@@ -1937,6 +1943,7 @@ impl<'unit> Checker<'_, 'unit> {
                     path: path.clone(),
                     element,
                     element_type: self.types.element_type(element)?,
+                    proof_base: None,
                 };
                 let resolved = ResolvedPlace::from_path(binding, root.place_path());
                 Ok(CheckedIndexedPlace::Buffer(CheckedBufferPlace {
@@ -1983,6 +1990,7 @@ impl<'unit> Checker<'_, 'unit> {
                         root: PlaceRoot::Binding(binding),
                         path,
                         ty,
+                        proof_base: None,
                     },
                     resolved: ResolvedPlaceSet::one(ResolvedPlace::from_path(
                         binding,
@@ -2122,26 +2130,40 @@ impl<'unit> TypeContext<'unit> {
     }
 }
 
+/// The binding, typed storage path and [ENT-2] proof base one checked place
+/// expression selects [`DeclarationInventory::explicit_container_path`].
+pub(in crate::semantic::check) type ExplicitContainerPath = (
+    crate::semantic::model::BindingId,
+    Vec<CheckedPlaceStep>,
+    Option<ResolvedPlace>,
+);
+
 impl<'unit> DeclarationInventory<'unit> {
     /// The binding and typed storage path one checked place expression
     /// selects, for a target or read the lowering addresses directly.
+    ///
+    /// The third member is the [ENT-2] proof base the expression's `^`
+    /// carries when its holder's description is exact there
+    /// [`CheckedContainerRoot::proof_base`].
     pub(in crate::semantic::check) fn explicit_container_path(
         &self,
         expression: &CheckedExpression,
         node: NodeId,
-    ) -> Result<(crate::semantic::model::BindingId, Vec<CheckedPlaceStep>), CheckStop> {
+    ) -> Result<ExplicitContainerPath, CheckStop> {
         match expression {
-            CheckedExpression::Binding { binding, .. }
-            | CheckedExpression::DerefAddressed { binding, .. } => Ok((*binding, Vec::new())),
+            CheckedExpression::Binding { binding, .. } => Ok((*binding, Vec::new(), None)),
+            CheckedExpression::DerefAddressed { binding, proof, .. } => {
+                Ok((*binding, Vec::new(), proof.clone()))
+            }
             CheckedExpression::BoxDeref { nominal, value, .. } => {
-                let (binding, mut path) = self.explicit_container_path(value, node)?;
+                let (binding, mut path, proof) = self.explicit_container_path(value, node)?;
                 path.push(CheckedPlaceStep::BoxReferent(*nominal));
-                Ok((binding, path))
+                Ok((binding, path, proof))
             }
             CheckedExpression::ProjectValue { value, field, .. } => {
-                let (binding, mut path) = self.explicit_container_path(value, node)?;
+                let (binding, mut path, proof) = self.explicit_container_path(value, node)?;
                 path.push(CheckedPlaceStep::Field(*field));
-                Ok((binding, path))
+                Ok((binding, path, proof))
             }
             _ => self.unsupported(UnsupportedSemanticFeature::CompositeValues, node),
         }

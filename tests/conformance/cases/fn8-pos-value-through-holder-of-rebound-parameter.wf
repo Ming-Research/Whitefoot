@@ -1,0 +1,29 @@
+fn need_value(v: u64) -> result: u64 pure contract {
+  requires v != 0_u64;
+} {
+  doc "Divides ten by v.";
+  let q = 10_u64 / v;
+  return q;
+}
+
+fn probe(p: &u64) -> result: u64 reads(p) {
+  doc "The control for fn8-neg-value-through-holder-of-rebound-parameter: the guard and the actual are both read through saved, whose spelling identifies them.";
+  let saved = &p^;
+  let one = 1_u64;
+  set p = &one;
+  if saved^ != 0_u64 {
+    let r = need_value(v: saved^);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The caller's cell holds five, so the guarded call returns two.";
+  let five = 5_u64;
+  let r = probe(p: &five);
+  if r == 2_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

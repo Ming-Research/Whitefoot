@@ -5,6 +5,38 @@ Newest first. One entry per approved change of the tree: a dated title,
 `skill/SKILL.md` owns the form. Older entries also record refused amendments,
 a mechanism since retired.
 
+## 2026-10-08 Places through exact reference variables share their target's identity
+
+Nodes: language/checks-and-proofs/proof-identity, compiler/checker-facts
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the card that presented giving a place reached through a reference the identity of the place it names as Q142 option A: "approve them all" (translated); after the report that presented PR #271's specification and design-tree text, with the rule restricted to reference variables no `set` rebinds over the per-read rule, as Q144, and fixing the v0.97 acceptance of guards on rebound parameters and `atomic` binders in the same PR as Q145: "approve 144, approve 145" (translated); after the reports that presented the exact-step rewording of ENT-2 as Q149 and the FN-9 exit state of a rebound written reference parameter as Q150: "approve them all, finish everything, then hand over" (translated).
+
+Summary: A place written through a reference variable that no `set` of its body rebinds, whose path is one exact path (no descendant cover, every index step a literal, const or binding its formation read and every range step its formation's endpoints, rooted at owned or constant storage or at a parameter or `atomic` binder no `set` rebinds), is now the term and Goal datum of that path; every other place keeps its spelling. A guard read through a payload binder or a local alias therefore proves the requirement of a call through it after `grow` and in append loops, which Snowghost's Paged port needed. Spelling-only identity, judging exactness at each read (which switched a loop-rebound variable's identity at the header and lost header invariants' entry proofs, `inv1-pos-header-invariant-through-rebound-reference`), and entry referents for rebound variables are kept as rejected alternatives. The compiler carries the exact path as a proof base on checked places, which only term and Goal formation read, and finds rebound declarations by a syntactic scan before the walk. The change also closes two unsound acceptances that v0.97 had: a reference formed from a later-rebound parameter or `atomic` binder shared that variable's spelling after the rebinding, and a postcondition on a rebound written reference parameter was proved from the local it named.
+
+## 2026-10-08 Writable subdirectories, moving files and names below a root
+
+Nodes: language/system-interface/writable-directory
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented opening a subdirectory's write half as Q216 option A, moving a file between two directories as Q217 option A, and refusing `.` and `..` below a root as Q221 option A, each recommended: "216 agreed, 217 agreed, ... 221 agreed" (translated).
+
+Summary: The node gains three decisions beside its unchanged ones: a program opens the write half of a directory below a write half, created when missing and reading its root as `open_append` does, instead of a separate creation or a flat layout in the program; a file moves between two directories' write halves through a second operation, since a rename writes the directories it changes and one handle cannot fill two written roots of a call, instead of a `rename_file` with two roots; and a name given with a root denotes only an entry directly below it, so `.` and `..` are refused and a write half cannot reach the directory above it ([design](../research/investigations/writable-subdirectories/README.md)).
+
+## 2026-10-07 Element loops may read the written storage's measures
+
+Nodes: language/parallelism/loop-permission
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the proposal to admit measure reads in PAR-2 element loops as the next work once FN-6 was done: "OK, continue with it once FN-6 is fine" (translated), recorded as Q138; after the completion report that presented PR #268's specification and design-tree text as Q140, approval recommended: "approve them all" (translated).
+
+Summary: A counted loop that writes proved affine elements of a root, or writes through proved range references of an origin, may also read that root's or origin's measure words, `len`, `cap` and `head`, as the certified-element family already admitted. A measure read touches descriptor storage, which MSR-2 makes disjoint from element storage, and the unchanged write rule confines every write of the body to elements, so no iteration writes a measure; a body that appends, grows or takes back still denies. Refusing those reads is kept as a rejected alternative: Snowghost's Paged port found an in-body guard such as `if s < values.len` the dominant barrier to its parallel layout loops (0 of 415 corresponding loops newly permitted; five controls all permitted once the read was hoisted).
+
+## 2026-10-07 Recursion cycles admit closed-term arguments
+
+Nodes: language/generics
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the explanation of FN-6 closed terms presented as Q137: "open a PR for FN-6 and do it" (translated); after the completion report that presented PR #266's specification and design-tree text as Q139, approval recommended: "approve them all" (translated).
+
+Summary: An instantiation cycle may now supply, at each argument position, either the caller's own parameter at that position forwarded unchanged or a closed term naming no caller parameter, instead of forwarding the whole vector unchanged. Every component of an instance key reached through a cycle then comes from the entry key or from the program's finite set of closed terms, so instantiation stays finite by a syntactic check with no search or budget, while a callback may call its own generic helper again with another written callback, which the forward-only rule refused with two instances in reach (Snowghost's `c5-changing-callback-negative` probe; firn's nested `hash_map_lookup`). Arguments built from a caller parameter, permuted forwards and kind changes still reject. The forward-only rule is kept as a rejected alternative; the deferred question of exponentially many finite instances (D7) gains one more family, recorded in `docs/todo.md`.
+
 ## 2026-10-07 Files are renamed, removed and synced below a writable directory
 
 Nodes: language/system-interface/writable-directory

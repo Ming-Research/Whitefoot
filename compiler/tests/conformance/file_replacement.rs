@@ -1,6 +1,6 @@
-//! The file-replacement conformance witnesses on both Windows host routes.
+//! The file-replacement and writable-subdirectory witnesses on both Windows host routes.
 //! The Unix corpus adapter already builds and runs every manifest case;
-//! programs::file_replacement covers its native-disabled route as well.
+//! programs::file_replacement also covers replacement on the native-disabled route.
 //! Windows's ordinary corpus adapter does not yet run the full corpus.
 //! Default engine selection and native-disabled execution both carry these
 //! namespace requests through the shared file adapter.
@@ -22,6 +22,15 @@ fn namespace_cases_on_both_host_routes() {
         "sysreplace-run-remove-twice",
         "sysreplace-run-open-handles",
         "sysreplace-run-sync-directory",
+        "sysubdir-run-create",
+        "sysubdir-run-existing",
+        "sysubdir-run-file-error",
+        "sysubdir-run-namespace",
+        "sysubdir-run-dot-names",
+        "sysubdir-run-move-into-directory",
+        "sysubdir-run-move-replaces",
+        "sysubdir-run-move-missing",
+        "sysubdir-run-move-open-handles",
     ] {
         let case = cases
             .iter()

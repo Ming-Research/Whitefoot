@@ -1,0 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn permute<A: drop, B: drop>() -> result: unit pure {
+  doc "Both forwarded parameters change position. FN-6 rejects this finite permutation cycle.";
+  return permute::<B, A>();
+}
+
+fn main() -> status: ExitStatus pure {
+  permute::<u8, u64>();
+  return exit_status(code: 0_u8);
+}

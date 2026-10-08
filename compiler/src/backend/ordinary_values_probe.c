@@ -166,6 +166,8 @@ static void text_probe(void) {
 typedef void (*wf_probe_open)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
 typedef void (*wf_probe_read)(wf_read_result *, wf_value *, wf_value *, wf_view *, uint64_t, uint64_t, uint64_t);
 extern void wf_test_public_open(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
+typedef void (*wf_probe_open_directory_write)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
+extern void wf_test_public_open_directory_write(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
 extern void wf_test_public_read(wf_read_result *, wf_value *, wf_value *, wf_view *, uint64_t, uint64_t, uint64_t);
 
 static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read read_at) {
@@ -815,6 +817,83 @@ static void replacement_probe(wf_inputs *inputs) {
     wf__body_close_write(&result, &inputs->handles, &replacement.ok.value); check_close(&result);
 }
 
+/* The new acquisition uses the ordinary descriptor budget and its public
+ * start/finish ABI. Refusals must restore a reserved credit and close any
+ * provisional handle; an exhausted budget must not create the directory. */
+static void subdirectory_probe(wf_inputs *inputs, wf_probe_open_directory_write open_directory_write) {
+#if defined(_WIN32)
+    static const wchar_t padded[] = L"xordinary-subdirx";
+    static const wchar_t bad[] = L"ordinary:stream";
+    static const wchar_t link[] = L"ordinary-subdir-link";
+    static const wchar_t collision[] = L"ordinary-subdir-file";
+    const uint64_t unit = sizeof(wchar_t);
+#else
+    static const char padded[] = "xordinary-subdirx";
+    static const char bad[] = "ordinary/subdir";
+    static const char link[] = "ordinary-subdir-link";
+    static const char collision[] = "ordinary-subdir-file";
+    const uint64_t unit = 1;
+#endif
+    wf_view name = { (void *)padded, sizeof(padded) - unit };
+    wf_view invalid = { (void *)bad, sizeof(bad) - unit };
+    wf_view link_name = { (void *)link, sizeof(link) - unit };
+    wf_view file_name = { (void *)collision, sizeof(collision) - unit };
+    wf_value factory = {{0, 0, 0, 0}};
+    wf_open_result opened;
+    wf_close_result closed;
+    FILE *fixture = NULL;
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, unit, name.length - unit);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_RESOURCE_EXHAUSTED);
+    assert(factory.words[0] == 0);
+    assert(wf_mkdir("ordinary-subdir") == 0);
+    assert(wf_rmdir("ordinary-subdir") == 0);
+    factory.words[0] = 1;
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, 0, 0);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_INVALID_PATH);
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &invalid, 0, invalid.length);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_INVALID_PATH);
+    assert(factory.words[0] == 1);
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, unit, name.length - unit);
+    assert(opened.tag == 0 && factory.words[0] == 0);
+    wf__body_close_directory_write(&closed, &factory, &opened.ok.value);
+    check_close(&closed);
+    assert(factory.words[0] == 1);
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &name, unit, name.length - unit);
+    assert(opened.tag == 0 && factory.words[0] == 0);
+    wf__body_close_directory_write(&closed, &factory, &opened.ok.value);
+    check_close(&closed);
+    assert(factory.words[0] == 1);
+#if defined(_WIN32)
+    assert(fopen_s(&fixture, "ordinary-subdir-file", "wb") == 0);
+#else
+    fixture = fopen("ordinary-subdir-file", "wb");
+#endif
+    assert(fixture != NULL && fclose(fixture) == 0);
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &file_name, 0, file_name.length);
+    assert(opened.tag == 1 && factory.words[0] == 1);
+    assert(wf_unlink("ordinary-subdir-file") == 0);
+#if defined(_WIN32)
+    BOOLEAN linked = CreateSymbolicLinkW(link, L"ordinary-subdir", 3u);
+    if (!linked && GetLastError() == ERROR_INVALID_PARAMETER)
+        linked = CreateSymbolicLinkW(link, L"ordinary-subdir", 1u);
+    assert(linked);
+    DWORD handles_before = 0, handles_after = 0;
+    assert(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
+#else
+    assert(symlink("ordinary-subdir", link) == 0);
+#endif
+    open_directory_write(&opened, &factory, &inputs->cwd_write, &link_name, 0, link_name.length);
+    assert(opened.tag == 1 && factory.words[0] == 1);
+#if defined(_WIN32)
+    assert(GetProcessHandleCount(GetCurrentProcess(), &handles_after));
+    assert(handles_after == handles_before);
+    assert(RemoveDirectoryW(link));
+#else
+    assert(wf_unlink(link) == 0);
+#endif
+    assert(wf_rmdir("ordinary-subdir") == 0);
+}
+
 /* [PRE-2] two reads through one clock do not go back, a sleep outside every
  * context lasts until its deadline, and every instant operation is total. */
 static void time_probe(wf_inputs *inputs) {
@@ -876,6 +955,12 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
     }
     if (files) { wf_test_guard_phase("ordinary file/credits"); file_probe(&inputs, wf__body_open_file, wf__body_read_at); file_probe(&inputs, wf_test_public_open, wf_test_public_read); puts("ordinary file/credits public+body: PASS"); }
     if (files) { wf_test_guard_phase("ordinary append/sync/truncate/clock"); append_probe(&inputs); replacement_probe(&inputs); time_probe(&inputs); puts("ordinary append/sync/truncate/clock: PASS"); }
+    if (directory) {
+        wf_test_guard_phase("ordinary subdirectory/credits public+body");
+        subdirectory_probe(&inputs, wf__body_open_directory_write);
+        subdirectory_probe(&inputs, wf_test_public_open_directory_write);
+        puts("ordinary subdirectory/credits public+body: PASS");
+    }
     if (directory) { wf_test_guard_phase("ordinary directory/cursors"); directory_probe(&inputs); puts("ordinary directory/cursors: PASS"); }
 #if defined(_WIN32)
     if (directory) {

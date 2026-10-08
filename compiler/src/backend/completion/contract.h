@@ -94,6 +94,10 @@ enum wf_file_operation_kind {
     WF_FILE_REMOVE = 20,
     /* Directory durability, using the close arm's descriptor. */
     WF_FILE_SYNC_DIRECTORY = 21,
+    /* Create-if-missing directory write half, using the open_at arm. */
+    WF_FILE_OPEN_DIRECTORY_WRITE = 22,
+    /* Namespace move between two directory write halves [PRE-2]. */
+    WF_FILE_MOVE = 23,
 };
 
 /* Which direction of one connection a half-close releases (ordinary native library). */
@@ -197,6 +201,7 @@ typedef struct wf_file_request {
         } truncate;
         struct {
             int directory;
+            int to_directory;
             const char *from;
             const char *to;
         } rename;
