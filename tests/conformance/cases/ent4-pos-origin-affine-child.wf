@@ -1,0 +1,22 @@
+fn need(value: Bool) -> r: unit pure contract {
+  requires bnot(value);
+} {
+  doc "Consume the negation of a saved comparison.";
+  return unit;
+}
+
+fn witness(x: u64, y: u64) -> r: unit pure contract {
+  requires x <= 10_u64;
+  requires y <= 10_u64;
+  requires x + y >= 9_u64;
+} {
+  doc "The negative affine child remains available through the Boolean definition.";
+  let test = x + y < 9_u64;
+  need(value: test);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check origin transport inside Boolean introduction.";
+  return std::process::exit_status(code: 0_u8);
+}

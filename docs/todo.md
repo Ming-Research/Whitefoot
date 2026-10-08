@@ -11,20 +11,6 @@ rarely insert at the same place.
 
 ## Numeric conversions and value evidence
 
-- **Validate matching operation origins across named call arguments.** With
-  `let input = 257_u16; let reduced = cvt.wrap::<u16, u8>(input);`, a guard
-  `reduced == 1_u8` keeps the direct comparison and the fully expanded
-  `cvt.wrap::<u16, u8>(257_u16) == 1_u8` origin. An ordinary call passing
-  `input` to a requirement about `cvt.wrap::<u16, u8>(input)` has a different
-  typed tree. Current ENT-3 grants no partial origin expansion; forwarding
-  through a parameter or passing the matching literal avoids this boundary.
-  Assess whether consistent call-side origin normalization would recover
-  useful proofs without enumerating intermediate expansion combinations.
-  Require matching aliases, replaced inputs, joins and bounded proof cost;
-  any additional accepted route needs its own specification decision. Defer
-  from the modular conversion operation, which adds no proof family; reopen
-  when a real caller needs this named-value form.
-
 - **Select a total float-to-integer conversion policy.** The
   [conversion study](../research/investigations/numeric-conversions/DESIGN.md#companion-operations-and-explicit-deferrals)
   identifies cumbersome total float-to-integer compositions; rounding into a
@@ -2713,12 +2699,11 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 9,574 lines, including a
-  2,136-line inline test module (the compile-speed work added its slot
-  layouts, dormant components and implicit structure), and the tests in
-  `compiler/src/semantic/tests/entailment.rs` have 11,238 lines and 162
-  tests. The flow itself is divided into its sub-contexts and component
-  modules (`design/compiler/engine-components.md`), none over 3,200 lines.
+  `compiler/src/semantic/entailment/state.rs` and
+  `compiler/src/semantic/tests/entailment.rs` each exceed the 4,000-line
+  threshold. The state module combines the fact state, ledger, dense closure
+  and a large inline test module. The flow itself is divided into its
+  sub-contexts and component modules (`design/compiler/engine-components.md`).
   `state.rs` can move its test module to its own file and its dense-closure
   algorithms apart from the fact state and ledger types; the tests can group
   by the flow component they exercise. Validate that each move changes no

@@ -36,6 +36,7 @@ mod invariants;
 mod judge;
 mod loop_summary;
 mod operation_facts;
+mod origin_transport;
 mod postconditions;
 mod prover;
 mod relations;
@@ -100,12 +101,12 @@ use super::polynomial::{CertificatePolynomial, PolynomialError};
 use super::state::{
     AffinePremiseUse, ClosedState, CountedRootAtom, DerivationId, DerivationInventory,
     DerivationLedger, DerivationNode, DerivationRootKind, FactState, FlowEventId, FlowEventKind,
-    GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
-    IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
-    RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
-    contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
-    materialize_counted_preheader_at,
+    GoalId, GoalNormalization, GoalOrigin, GoalSign, GoalSupport, GoalTable,
+    IndexCaptureSubstitution, IndexSeparationDetail, JoinParent, KilledCell,
+    PostconditionCallSubstitution, RangeSeparationDetail, RangeSeparationOrdering, Relation,
+    SourceAffineFactRef, SourceLoopInvariantRef, WordHashMap, close, close_excluding_term,
+    closure_is_seeded, contradiction_without_proofs, join_at, materialize_closure_at,
+    materialize_closure_before_kill, materialize_counted_preheader_at,
 };
 use super::term::{
     CountedCaptureSide, MeasureBound, MeasurePlacement, PlaceRoot, TermId, TermKind, TermTable,
@@ -465,12 +466,22 @@ struct CountedValueImage {
     base: AffineForm,
 }
 
+/// Whether an outer query still needs its ordinary-first origin view.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum OriginView {
+    Pending,
+    Ordinary,
+    Prepared,
+}
+
 /// The numeric/logical proof state at one exact control-flow point.
 #[derive(Clone, Copy)]
 struct ProofContext<'a> {
     facts: &'a FactState,
     affine: &'a AffineFlowState,
     closed: Option<&'a ProofClosure>,
+    /// Internal components share their enclosing query's finite origin view.
+    origin_view: OriginView,
 }
 
 impl<'a> ProofContext<'a> {
@@ -479,6 +490,7 @@ impl<'a> ProofContext<'a> {
             facts,
             affine,
             closed: None,
+            origin_view: OriginView::Pending,
         }
     }
 
@@ -544,6 +556,7 @@ impl ProofClosure {
 /// postcondition. Either consumer may additionally provide the unique affine
 /// inequality for a direct-root proposition; the proof entry never invents
 /// another formula.
+#[derive(Clone, Copy)]
 enum ProofGoal<'a> {
     /// One canonical affine target with the right operand retained by its
     /// source normalization for the complete MSR-4 disposition.
@@ -608,6 +621,7 @@ struct NumericAffineTarget {
     right: Option<TermId>,
 }
 
+#[derive(Clone, Copy)]
 struct IntegerDomainGoal<'a> {
     canonical: Option<GoalId>,
     operation: CheckedIntegerOperation,
@@ -639,6 +653,7 @@ enum TargetDisposition {
 /// query.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProofRoute {
+    OriginTransport,
     Contradiction,
     SignedOrdinary {
         opaque: bool,
@@ -1862,6 +1877,7 @@ mod proof_closure_tests {
             facts: &facts,
             affine: &affine,
             closed: Some(&closed),
+            origin_view: OriginView::Pending,
         };
         for _ in 0..3 {
             let view = context.close(&terms, &goals, &mut ledger);
@@ -1891,6 +1907,7 @@ mod proof_closure_tests {
             facts: &facts,
             affine: &affine,
             closed: Some(&closed),
+            origin_view: OriginView::Pending,
         };
         assert!(closed.affine_index(&terms, &goals).is_none());
         assert!(!Rc::ptr_eq(
@@ -1908,6 +1925,7 @@ mod proof_closure_tests {
             facts: &facts,
             affine: &affine,
             closed: Some(&closed),
+            origin_view: OriginView::Pending,
         };
         let view = context.close(&terms, &goals, &mut ledger);
         assert!(!Rc::ptr_eq(&view, &closed.state));
@@ -1944,6 +1962,7 @@ mod proof_closure_tests {
             facts: &facts,
             affine: &affine,
             closed: Some(&closed),
+            origin_view: OriginView::Pending,
         };
         assert!(!Rc::ptr_eq(
             &context.close(&terms, &goals, &mut ledger),
@@ -2372,7 +2391,13 @@ mod goal_origin_kill_tests {
     fn a_projected_set_invalidates_the_aggregate_ordinary_let_origin() {
         let binding = BindingId(0);
         let mut state = FactState::default();
-        state.goal_origins.insert(binding, GoalId(0));
+        state.goal_origins.insert(
+            binding,
+            GoalOrigin {
+                goal: GoalId(0),
+                proof: DerivationId(0),
+            },
+        );
         let target = CheckedSetTarget::Place(CheckedWritablePlace {
             binding,
             fields: vec![1],

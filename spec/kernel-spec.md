@@ -1373,7 +1373,8 @@ A clause side's `+`, `-`, and `*` form that template's own operation nodes over 
 A formal datum keeps its zero-based parameter ordinal and its field, `^`, subscript, measure, and payload projections; named consts, literals, selected operation rows, written arguments after substitution, result types, and operand order retain their existing identities.
 Definition spelling, sharing, and NodePaths are absent after expansion.
 The requirement occurrence is `(concrete function instance, requires_clause NodePath)` and is outside predicate equality.
-Two predicates are equal only by exact typed-tree equality: there is no commutation, folding, reassociation, inversion, or De Morgan rewrite.
+Predicate identity is exact typed-tree equality: there is no commutation, folding, reassociation, inversion, or De Morgan rewrite.
+Disposition additionally uses the current origin equivalence of [ENT-4.OT].
 Signed decomposition, exact comparison-root L0 projection, and the fixed query-time Boolean introduction over independently proved children remain exactly [ENT-3, ENT-4, ENT-6].
 
 At an ordinary source call, resolution, concrete instantiation, named arguments, exact types, borrow feasibility, and all actual-expression obligations complete first.
@@ -1386,7 +1387,7 @@ admitted tree, it uses [ENT-2]'s occurrence-local call-argument
 evaluated-value identity instead. No
 exact operation or index identity is admitted before all of its nested domain
 obligations succeed.
-Every instantiated goal is judged independently in that unchanged state; a discharged clause adds no fact for a later clause.
+Every instantiated goal is submitted independently to [MSR-4] in that unchanged state; a discharged clause adds no fact for a later clause.
 The first refuted or unproved clause is the FN-8 call-site rejection and forms no checked program.
 Only total success reaches ordinary transfer, effects, and normal return; no call receives a runtime fallback, alternate entry, or body clone.
 
@@ -2933,7 +2934,7 @@ FN-8's call-argument form is identified by `(concrete caller instance, call Node
 An [ENT-6] obligation-operand form is identified by `(concrete function instance, owning obligation NodePath, operand ordinal, exact captured type, ordered projections, final result type)` and may occur only in the canonical Goal queried for that one obligation.
 Both forms are neither places nor L0 terms, have no direct or complete ordinary source goal origin, add no flow fact or place support, and cannot be established by naming or reevaluating their source expression.
 Goal equality is exact typed tree equality, including every selected row and datum field, and therefore may hold across two source occurrences or concrete callee instances only when their complete typed trees are identical.
-The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit.
+The finite goal universe of one concrete function is exactly the goals formed from its admitted Bool origins, requirement S4 sources, instantiated ordinary-call requirements, and the canonical OP-2 and OP-6 operation obligations, together with the finite parent and child trees their fixed decomposition and reconstruction rules visit and the query-local term views of [ENT-4.OT].
 Invariant targets and `proof_use` sources are affine inequalities rather than opaque Goals [INV-1, PRF-1]; an OP-4 bounds obligation remains an L0/affine relation and has no opaque Goal of its own.
 Goal construction may intern only written subexpressions and the exact normalized components fixed by their owning rules; it synthesizes no arbitrary formula or unbounded algebraic search.
 
@@ -3155,7 +3156,10 @@ A Bool expression has an ordinary goal origin G when, after its ordinary express
 Construction, an ordinary function call, a move or borrow, an undischarged partial operation, an expression requiring occurrence-local evaluated-value identity, and every other expression shape has no goal origin.
 A checked exact integer operation or subscript may therefore occur only below that total root and only through the admitted structure above; it never establishes its own safety merely by occurring in G.
 The unexpanded tree G is the direct goal.
-Starting from that direct goal, its complete origin expansion recursively replaces an ordinary-let datum by that binding's unique defining right-hand side exactly when the right-hand side itself has an admitted value expression formed after its own nested obligations succeeded, the binding is no `set` target on any path from that initializer to this use, and no [ENT-5] kill event applies to the replacement's support on any such path.
+A live ordinary-let origin link pairs the binding's datum with its unique defining right-hand side after that right-hand side has an admitted value expression and all its nested obligations have succeeded.
+The link remains live while the binding is no `set` target and no [ENT-5] kill applies to either the binding or the right-hand side's support on any contributing path from that initializer to the use.
+A join retains a link exactly when every non-contradictory contributing input retains the same definition, and loop heads apply [ENT-5]'s continuing kills to links before the body judgment.
+Starting from a direct goal, its complete origin expansion recursively replaces each datum having a live link with that link's right-hand side, retaining a projected datum when the replacement cannot carry its typed projections.
 Expansion continues to a fixed point and is all-or-nothing for every eligible leaf; it never performs an algebraic rewrite.
 The goal-origin set is the direct goal plus that one complete valid expansion when it differs.
 Thus a condition binding's own Bool value and its still-valid computation origin are both retained: a later write to an origin place kills the expanded goal but not the already-computed binding goal, while a write to the binding kills the latter normally.
@@ -3336,12 +3340,29 @@ One retained proof never uses a parent-to-child source derivation and then that 
 
 The combined state is contradictory when L0 derives `t - t <= -1` for any t or when both signs of one exact goal are derivable.
 At a contradictory point every L0 relation and both signs of every goal in the finite universe are derivable and every ordinary obligation, call goal, and FN-9 selected-return relation is discharged.
-At a non-contradictory query point, an instantiated goal G is `discharged` when `+G` is derivable, `refuted` when `+G` is absent and `-G` is derivable, and `unproved` otherwise.
+At a non-contradictory query point, an instantiated goal G is `discharged` when `+G` is derivable in the [ENT-4.OT] view, `refuted` when `+G` is absent and `-G` is derivable there, and `unproved` otherwise.
 An instantiated L0 relation R is `discharged` when every normalized conjunct of R is derivable, `refuted` when R is not discharged and R's exact negation is derivable, and `unproved` otherwise.
 A one-bound negation is S1's reversed strict bound, an equality relation's negation is its disequality, and a disequality's negation is the equality's two-bound relation.
 These three dispositions are complete and exclusive [FN-8, FN-9].
 The least closure is unique and finite up to L0 subsumption because only the finite terms and goals [ENT-2] participate and the rules are monotone.
 Implementations may compute lazily or incrementally, but every derivability and disposition answer must equal this least-closure answer.
+
+[ENT-4.OT] Origin transport forms one query-local view of the entering fact state for [MSR-4].
+Two admitted value expressions are origin-equivalent at that point exactly when their complete valid [ENT-3] origin expansions have identical typed trees.
+The collection consists, in order, of each live origin link's binding datum and right-hand side in binding-declaration order, the entering signed goals in source-allocation order with positive sign first, and the submitted signed goal when present, each followed by its value subtrees in preorder and with exact duplicate trees retained only at their first occurrence.
+Each origin class containing fragment-integer expressions with an L0 term-plus-constant representation selects its first such expression as representative and supplies the equality of every other such member to that representative.
+Each collected Boolean tree supplies one term view obtained by simultaneously replacing its proper integer subtrees having such representatives with those representatives, stopping traversal at a replacement.
+The Boolean inventory contains the collected Boolean trees, their term views and the Boolean subtrees of those views, partitioned by origin equivalence.
+Each entering signed fact supplies its sign to every member of its Boolean class and supplies each member's exact signed comparison projection when that projection exists.
+These equalities and projections augment the entering L0 state for this query, closed by [ENT-4].
+Over this fixed numeric state, the existing signed-goal derivation rules and transport of either proved sign to every member of its Boolean class are iterated to their least fixed point.
+Within [ENT-6]'s positive Boolean-introduction traversal, a visited Boolean datum also visits its live definition under the demanded sign and transports a successful child proof back to that datum.
+Each such child proof remains a premise of that introduction, including a negative affine ordering proof, and supplies no independently derivable signed fact.
+A transported proof retains its signed premise and the live definition introductions establishing origin equivalence.
+A derived sign supplies only a signed fact in this view, with Boolean introduction governed by [ENT-4] and decomposition confined to the [ENT-3] source establishments.
+The view's contradiction and disposition are [ENT-4]'s judgments over that fixed point.
+The view adds no ordinary flow fact, affine premise, source establishment or runtime evaluation and is discarded after this query.
+Its finite shared expression identities, one term view per collected Boolean tree, represented-value equalities and two signs per Boolean member fix its entire candidate set independently of any search order or work budget.
 
 [ENT-5] The support of an L0 fact is every tracked place occurring in its terms; every compiler-owned counted capture term occurring in its terms; for each [ENT-2] clause (b) term, the storage of the readonly field its final step selects — for a measure term over P, P's descriptor storage but not P's element storage [MSR-2] — and the support of every offset occurring in its place; and every reference variable [REF-1] and every `Box` binding [TYPE-7] any of its places reads through, a bound call-result binding included — its resolved place is the candidate actual's complete resolved place, so a `set` commit or projected callee write through the chain kills exactly the facts supported by that storage.
 Z, literals, named const values, and every measure datum of [MSR-3] — a call datum, an entry datum, and a placement datum alike — have empty support and never die.
@@ -3581,6 +3602,7 @@ Consequently an author can determine from this rule alone whether a target is au
 
 An [FN-8] Signed Goal query first applies the ordinary positive and negative [ENT-4] disposition to its complete root.
 When neither sign is ordinarily derivable, its one remaining positive-proof route recursively follows exactly [ENT-4]'s fixed Boolean introduction table over the already-written goal tree: positive `band` and negative `bor` require every child in source order; negative `band` and positive `bor` visit every child in source order and retain the first successful witness; and `bnot` checks its sole child under the opposite sign.
+Visits use [ENT-4.OT]'s live definition links in the same query view.
 `bxor` has no introduction route.
 At each visited child, when the child root is `<=`, `<`, `>=`, or `>` over values having current affine images or measure terms, the checker normalizes that exact truth sign to one affine inequality; the child is then submitted to [MSR-4]'s disposition in the same ProofContext, which takes the ordinary [ENT-4] proof first and the normalized inequality at its affine steps.
 Successful children are joined only by the stated Boolean introduction node; they publish no child, parent, L0, or affine fact, and an unsuccessful candidate changes no later candidate or acceptance result.
@@ -3588,6 +3610,8 @@ This structural traversal invents no proposition, connective, rewrite, premise, 
 
 [MSR-4] One numeric goal disposition, shared by every consumer.
 This rule states once the complete ordered derivation of a numeric goal, and every consumer submits a goal and receives that disposition:
+
+Every step reads the origin-transport query view formed by [ENT-4.OT].
 
 ```text
 1  contradiction in the current combined state                                  [ENT-4]
