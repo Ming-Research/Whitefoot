@@ -106,7 +106,7 @@ jobs:
 
       - name: Build, verify and time
         env:
-          ROUNDS: ${{ (inputs.rounds || '3') }}
+          ROUNDS: ${{ (inputs.rounds || '10') }}
           REPS: ${{ (inputs.reps || '20') }}
           WHITEFOOT_CHECK_TIMEOUT: "3000"
         run: |
@@ -119,7 +119,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## indexed-reduction-timing (${{ (inputs.runner || '14900k') }}, ${{ (inputs.rounds || '3') }} rounds, ${{ (inputs.reps || '20') }} repetitions)"
+            echo "## indexed-reduction-timing (${{ (inputs.runner || '14900k') }}, ${{ (inputs.rounds || '10') }} rounds, ${{ (inputs.reps || '20') }} repetitions)"
             echo
             echo '```text'
             head -1 "$RUNNER_TEMP/timing/manifest.txt" 2>/dev/null || echo "the manifest was not written"
