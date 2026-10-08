@@ -417,7 +417,7 @@ fn main() -> status: std::process::ExitStatus pure {
 fn loop_measure_formation_uses_the_exact_reference_proof_path() {
     for root in ["rows", "q"] {
         let source = format!(
-            r#"fn probe(rows: &Slots<Slots<u8, 2>, 2>) -> result: unit reads(rows) contract {{
+            r#"fn probe(rows: &Slots<Slots<u8, 2>, 2>) -> result: unit pure contract {{
   requires 0_u64 < rows^.len;
 }} {{
   let q = &rows^;
