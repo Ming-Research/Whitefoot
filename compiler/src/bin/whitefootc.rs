@@ -1865,6 +1865,33 @@ mod tests {
         }
     }
 
+    /// Shared scalar storage comes wholly from the runtime pool. Its drop
+    /// helper must not introduce declarations that select the allocator unit.
+    #[test]
+    fn a_shared_scalar_links_without_the_heap_unit() {
+        let source = b"fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u64>(value: 0_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+";
+        let module = whitefoot::compile(
+            &[whitefoot::SourceInput::new("shared.wf", source)],
+            whitefoot::CompilerLimits::default(),
+        )
+        .expect("the shared scalar program checks");
+        assert!(module.contains("call ptr @wf__shared_new("));
+        assert!(module.contains("call i32 @wf__shared_release("));
+        assert!(module.contains("call void @wf__shared_free("));
+        for symbol in ["@wf__heap_take", "@wf__heap_give", "@malloc", "@free"] {
+            assert!(
+                !module.contains(symbol),
+                "unexpected allocator reference: {symbol}"
+            );
+        }
+        let (_, compiled) = runtime_units(&module);
+        assert!(!compiled.contains(&"heap.c"));
+    }
+
     /// The driver stages the embedded sources with the same relative topology
     /// they have under `backend/`. Every quoted compiler-owned include must
     /// therefore resolve either beside the including file or from the one `-I`

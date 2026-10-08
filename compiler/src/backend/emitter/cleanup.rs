@@ -621,18 +621,6 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
     Ok(types)
 }
 
-/// Whether any type of this program is a run taken from a general store
-/// [PROV-1]. Such a run's backing release is a free, so the module declares
-/// the two allocator symbols even where nothing else allocates.
-pub(super) fn program_has_general_run(program: &IrProgram) -> Result<bool, BackendFailure> {
-    Ok(program_types(program)?.into_iter().any(|ty| {
-        matches!(
-            ty,
-            IrType::Buffer { .. } | IrType::Window { capacity: None, .. }
-        )
-    }))
-}
-
 pub(super) fn type_requires_cleanup(
     program: &IrProgram,
     ty: IrType,
