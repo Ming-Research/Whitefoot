@@ -825,10 +825,15 @@ impl Checker<'_, '_> {
             .tree
             .first_child_with(place, Production::Pbase)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if !self.types.declarations.tree.children(pbase)?.is_empty() {
+        if self
+            .types
+            .declarations
+            .tree
+            .has_fixed(pbase, FixedTerminal::Entry)?
+        {
             return self.invalid_range(
                 SemanticRule::Range1,
-                place,
+                pbase,
                 "a range term reads an entry image",
                 "read the current value; a range clause states one state",
             );
