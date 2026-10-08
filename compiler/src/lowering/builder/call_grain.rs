@@ -114,46 +114,60 @@ fn reaches_recursion(functions: &[IrFunction], edges: &[Vec<usize>]) -> Vec<Reac
 
 /// Removes every published call offer below the grain, naming each in the
 /// actualization ledger with its callee's static work.
+///
+/// Whether a component offers its own calls is read from the groups that
+/// remain, so it is decided again after every pass: omitting a small member
+/// can dissolve the group that made a recursion count as offering, and the
+/// budget spends nothing in a recursion whose groups are gone. Passes repeat
+/// until one omits nothing, which comes because each pass only removes.
 pub(super) fn prune(functions: &mut [IrFunction], weights: &[u64], ledger: &mut Vec<String>) {
     let edges: Vec<_> = functions.iter().map(callees).collect();
-    let recursive = reaches_recursion(functions, &edges);
     let names: Vec<_> = functions
         .iter()
         .map(|function| function.name.clone())
         .collect();
-    for function in functions.iter_mut() {
-        let callee_of = member_callees(function);
-        let mut omitted = Vec::new();
-        for overlap in &mut function.overlaps {
-            let join = overlap.join_site();
-            overlap.members.retain(|member| {
-                // The source-last member is the join site, which is never
-                // published; a member that is no call keeps its offer.
-                let Some(&callee) = callee_of.get(member).filter(|_| Some(*member) != join) else {
-                    return true;
+    loop {
+        let recursive = reaches_recursion(functions, &edges);
+        let mut omitted_any = false;
+        for function in functions.iter_mut() {
+            let callee_of = member_callees(function);
+            let mut omitted = Vec::new();
+            for overlap in &mut function.overlaps {
+                let join = overlap.join_site();
+                overlap.members.retain(|member| {
+                    // The source-last member is the join site, which is never
+                    // published; a member that is no call keeps its offer.
+                    let Some(&callee) = callee_of.get(member).filter(|_| Some(*member) != join)
+                    else {
+                        return true;
+                    };
+                    let weight = weights.get(callee).copied().unwrap_or(u64::MAX);
+                    let reach = recursive.get(callee).copied().unwrap_or(Reach::Offered);
+                    let keep = reach == Reach::Offered || weight >= CALL_OFFER_WORK_UNIT;
+                    if !keep {
+                        omitted.push((callee, weight, reach));
+                    }
+                    keep
+                });
+            }
+            function
+                .overlaps
+                .retain(|overlap| overlap.members.len() >= 2);
+            omitted_any |= !omitted.is_empty();
+            for (callee, weight, reach) in omitted {
+                let recursion = if reach == Reach::Unoffered {
+                    "reaches only recursion that offers none of its own calls"
+                } else {
+                    "no recursion"
                 };
-                let weight = weights.get(callee).copied().unwrap_or(u64::MAX);
-                let reach = recursive.get(callee).copied().unwrap_or(Reach::Offered);
-                let keep = reach == Reach::Offered || weight >= CALL_OFFER_WORK_UNIT;
-                if !keep {
-                    omitted.push((callee, weight, reach));
-                }
-                keep
-            });
+                ledger.push(format!(
+                    "PAR actualization  {}  call grain: omitted offer of {} (static work {weight} below {CALL_OFFER_WORK_UNIT}, {recursion})",
+                    function.name, names[callee]
+                ));
+            }
         }
-        function
-            .overlaps
-            .retain(|overlap| overlap.members.len() >= 2);
-        for (callee, weight, reach) in omitted {
-            let recursion = if reach == Reach::Unoffered {
-                "reaches only recursion that offers none of its own calls"
-            } else {
-                "no recursion"
-            };
-            ledger.push(format!(
-                "PAR actualization  {}  call grain: omitted offer of {} (static work {weight} below {CALL_OFFER_WORK_UNIT}, {recursion})",
-                function.name, names[callee]
-            ));
+        if !omitted_any {
+            return;
         }
     }
 }

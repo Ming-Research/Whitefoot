@@ -199,6 +199,32 @@ Validation, recorded before the measurement:
 4. Snowghost's full-layout timing of html5 and ecma262 at four workers is no
    slower than the base compiler's (Snowghost-wf runs it on the 14900K).
 
+## Alternatives considered
+
+The owner chose the proposed rule on 2026-10-08 over two alternatives:
+
+- **Keep the exemption and spend a budget level at every activation that
+  makes an offer.** The cursor reads would then stop below the budget's cut,
+  but every entry into such a component would still hand out an offer at
+  each activation above it, up to about 2^8 of them at four workers (the
+  default budget of eight levels, with both recursive calls passing the
+  budget down), each a few loads, against an edit whose whole sequential
+  work is a few hundred microseconds. It would also change when the budget is
+  spent in recursions that do offer their own calls, which the
+  [recursion budget at splits](../call-offer-grain/DESIGN.md#the-recursion-budget-at-splits)
+  set for Snowghost's style shape B.
+- **Leave the rule and rewrite the program** so it reads no cursor pair in
+  parallel. This routes around a compiler defect in the program that
+  exposed it; any program calling a lookup per node of a recursion would
+  meet it again.
+
+The rule is applied to the groups that remain after pruning, decided again
+after each pass until a pass omits nothing: omitting a small member can
+dissolve the only group that made a recursion count as offering its own
+calls, and the budget spends nothing in such a recursion
+(`call_grain_prices_callees_reaching_only_unoffered_recursion` holds that
+case).
+
 ## Emission comparison (validation 2)
 
 A temporary workflow on this branch (run

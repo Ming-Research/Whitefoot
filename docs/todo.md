@@ -2066,9 +2066,12 @@ rarely insert at the same place.
   exercises: a helper whose work is large only through its runtime extents,
   a loop over a large argument or a long recursion that offers nothing,
   loses its offer; a cheap call into a recursion that offers its own calls
-  keeps one; and a callee that reaches recursion only by starting a waiting
+  keeps one; a callee that reaches recursion only by starting a waiting
   context is not seen as recursive, since neither this pass nor the
-  recursion frontier follows a context start as a call edge. Validate any of
+  recursion frontier follows a context start as a call edge; and a
+  recursion counts as offering its own calls when its group survives the
+  grain but the emitter later drops it for an oversized lane frame, so a
+  small call reaching it keeps its offer. Validate any of
   them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
 

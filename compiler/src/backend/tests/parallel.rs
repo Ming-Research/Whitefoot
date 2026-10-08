@@ -2511,7 +2511,35 @@ fn main() -> status: std::process::ExitStatus pure {
         function_body(&kept, "@wf_main").contains("call void @wf__par_publish("),
         "a lookup reaching a recursion that offers its own calls keeps its offer"
     );
-    for module in [&filtered, &kept] {
+    // A recursion whose only group pairs its own call with a small read
+    // offers nothing once the read loses its offer, so its callers' offers go
+    // too: the classification follows the groups that remain.
+    let dissolved = String::from_utf8(linear.to_vec())
+        .unwrap()
+        .replace(
+            "fn descend(n: u64)",
+            "fn field(n: u64) -> result: u64 pure {\n  return n +wrap 1_u64;\n}\n\nfn descend(n: u64)",
+        )
+        .replace(
+            "  let below = descend(n: m);\n  return below +wrap 1_u64;",
+            "  let k = field(n: n);\n  let below = descend(n: m);\n  return below +wrap k;",
+        )
+        .replace("value == 9_u64", "value == 25_u64");
+    let every_dissolved = super::emit_lowered(dissolved.as_bytes(), crate::OverlapLowering::On);
+    assert!(
+        function_body(&every_dissolved, "@wf_main").contains("call void @wf__par_publish("),
+        "the lookup pair is permitted and handed out when every offer is kept"
+    );
+    let pruned = super::emit_lowered(
+        dissolved.as_bytes(),
+        crate::OverlapLowering::OnWithCallGrain,
+    );
+    assert_eq!(
+        pruned,
+        super::emit_lowered(dissolved.as_bytes(), crate::OverlapLowering::Off),
+        "dissolving the recursion's only group removes the lookup's offer too"
+    );
+    for module in [&filtered, &kept, &pruned] {
         let output = compile_and_run(module);
         assert!(output.status.success(), "{output:?}");
     }
