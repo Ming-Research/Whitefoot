@@ -11,6 +11,14 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.104: a Bool binding's origin ends at every write that reaches it
+
+Rules: changed ENT-3
+
+Owner-approved: On the shared status board of 2026-10-08, after the card asking when a Bool binding that saves a comparison, `let inside = x < 4_u64;`, stops meaning that comparison (written in Chinese), the owner chose option A, recommended: at every write that reaches the binding's storage, direct or through a reference, a `swap` or update, and a call whose projected writes cover it, the ENT-5 write events, as the checker already ends other facts; the PR's description presented the ENT-3 text rule by rule.
+
+Summary: ENT-3 gains one definition, an ordinary-let binding holding its initializer right-hand side at a use, which the comparison origin (b), the operation-domain-predicate origin (b) and the goal-origin expansion now cite. The comparison origin (b) previously ended only at a `set` naming the binding, so `set writer^ = True()` with `writer = &inside`, or a callee writing `&inside`, kept `inside` meaning `x < 4_u64`, and main accepted `if inside { return table^[x]; }`, an out-of-bounds read at `x = 7`. Ending the hold at every ENT-5 write event that reaches the binding or the places its initializer reads closes that; paths that execute the initializer again are excluded, so a binding declared in a loop body still holds within its iteration. Ending the origin at any reference taken to the binding was not selected: it refuses programs that only read through the reference and differs from how every other fact ends.
+
 ## 2026-10-08 v0.103: stop signals
 
 Rules: changed PRE-2
