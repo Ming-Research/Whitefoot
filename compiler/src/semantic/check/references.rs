@@ -1885,10 +1885,7 @@ impl Exactness<'_> {
 
     /// The path an exact `&T` reference variable names at this point
     /// [REF-1, ENT-2]: one exact path of a variable no `set` rebinds.
-    pub(super) fn exact_path<'local>(
-        self,
-        local: &'local LocalBinding,
-    ) -> Option<&'local ResolvedPlace> {
+    pub(super) fn exact_path(self, local: &LocalBinding) -> Option<&ResolvedPlace> {
         let reference = local.reference.as_ref()?;
         let [path] = reference.paths.as_slice() else {
             return None;

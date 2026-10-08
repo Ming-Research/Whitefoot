@@ -1945,20 +1945,6 @@ impl CheckedContainerRoot {
         })
     }
 
-    /// The same path as [ENT-2] goal projections.
-    pub(crate) fn goal_projections(&self) -> Vec<super::goal::GoalProjection> {
-        self.path
-            .iter()
-            .map(|step| match step {
-                CheckedPlaceStep::Field(field) => super::goal::GoalProjection::Field(*field),
-                CheckedPlaceStep::BoxReferent(_) => super::goal::GoalProjection::Deref,
-                CheckedPlaceStep::Subscript(subscript) => {
-                    super::goal::GoalProjection::Subscript(subscript.captured.goal_identity())
-                }
-            })
-            .collect()
-    }
-
     /// The measure-table row this place selects [MSR-1].
     pub(crate) const fn measured(&self) -> Option<MeasuredKind> {
         self.ty.measured()
