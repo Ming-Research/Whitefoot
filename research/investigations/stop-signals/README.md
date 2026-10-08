@@ -124,6 +124,27 @@ The proposal would be rejected if a host cannot deliver a request to a
 waiting context without running program code in a signal handler, or
 cannot restore its default when the listener closes.
 
+## Startup cost on AMD hosts
+
+compute-regression compares this branch's images with its merge base's on a
+hosted runner. On three runs whose host was AMD (EPYC 7763 twice, EPYC 9V74
+once) stencil was slower at two or three widths (wall ratio 0.85 to 0.93,
+every pair lower), while each host's identical-image and placement controls
+passed; the runs on Intel Xeon hosts and the interleaved comparison on the
+i9-14900K (Whitefoot run 37748947950: 0.994, 1.004, 1.011) showed no
+slowdown. On Linux the branch starts a receiver thread in every program at
+launch, before the entry, whether or not the program ever listens.
+
+Question, stated before measuring: is the receiver thread the cause? The
+comparison builds three image sets from one compiler pair: the merge base
+(B), this branch (S), and this branch with `wf__stop_initialize` returning
+before it starts the receiver (N); it runs `tests/performance/compare.sh`
+for B against S and S against N on several hosted jobs and keeps the jobs
+whose host is AMD. If the thread is the cause, B against S fails as before
+and S against N shows N faster by about as much; if S against N shows no
+difference while B against S still fails, the thread is not the cause and
+the next suspect is the placement of data the launch allocates.
+
 ## Status
 
 Adopted by the owner: proposal A, with requests returned in runtime observation order and requests the host merged before observation counted once, and the Windows close, logoff and shutdown handlers held until their listener closes; specified in PRE-2, whose approval [`spec/log.md`](../../../spec/log.md) records.
