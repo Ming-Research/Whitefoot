@@ -1762,10 +1762,17 @@ rarely insert at the same place.
   beside `let all = &data.inner[0_u64..2000000_u64];`
   (`research/experiments/par-quicksort/quicksort.wf:73`) although forming the
   range loads the Box's pointer, which the first statement writes. No
-  program observes it: the lowering hands out only calls, and a member that
-  is not a call ends every overlap group (`overlaps` in
-  `compiler/src/lowering/builder.rs`). Forming a reference to storage held
-  in place needs only its address, so only a path through a Box's `inner`
+  program observes that non-call pair: the lowering hands out only calls,
+  and a member that is not a call ends every overlap group (`overlaps` in
+  `compiler/src/lowering/builder.rs`). Call argument formation is protected
+  separately: no two distinct group members combine a release (owned heap
+  argument, written heap-owning referent, or checked argument cleanup) with
+  a borrow (reference argument or reference formation). A conflict ends the
+  group before the new member's arguments form; that member may start a
+  new group. Disjoint owned transfers retain overlap eligibility. The
+  permission judgment still lacks the owner-slot read described here.
+  Forming a reference to storage held in place needs only its address, so
+  only a path through a Box's `inner`
   reads its owner. Record a read of the owner above each `inner` step a
   formed path passes; validate with that pair denied, the rest of the
   quicksort ledger unchanged, and `let larger = &v^[after..n];` still

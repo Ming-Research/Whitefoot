@@ -1919,6 +1919,7 @@ fn slots_cell_growth_preserves_borrowed_call_entry_order() {
             r#"fn resize(cell: &Box<Slots<u64>>, capacity: u64) -> result: unit writes(cell) contract {
   requires capacity >= cell^.inner.cap;
 } {
+  doc "Grows the borrowed owner.";
   grow(cell: cell, capacity: capacity);
   return unit;
 }
@@ -1936,7 +1937,7 @@ fn slots_cell_growth_preserves_borrowed_call_entry_order() {
             format!("{growth}{borrow}")
         };
         let source = format!(
-            "fn ignore(part: &{kind}) -> result: unit pure {{\n  return unit;\n}}\n\n{resize}fn main() -> status: std::process::ExitStatus pure {{\n  let p = box_slots_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n{calls}  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "fn ignore(part: &{kind}) -> result: unit pure {{\n  doc \"Borrows without reading.\";\n  return unit;\n}}\n\n{resize}fn main() -> status: std::process::ExitStatus pure {{\n  doc \"Keeps growth ordered against borrowed call entry.\";\n  let p = box_slots_new::<u64>(capacity: 1_u64);\n  place_back(window: &p.inner, value: 0_u64);\n{calls}  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
             let main = function(program, "main");
@@ -1982,15 +1983,17 @@ fn slots_cell_growth_preserves_borrowed_call_entry_order() {
 }
 
 /// [PAR-1] two calls borrowing elements of one `Box<Slots<T>>` block, neither
-/// of which can relocate it, stay in one overlap group under the box-content
-/// cut.
+/// of which can relocate it, stay in one overlap group under the releasing-call
+/// boundary.
 #[test]
 fn borrows_inside_one_block_still_overlap() {
     let source = br#"fn ignore(part: &[u64]) -> result: unit pure {
+  doc "Borrows without reading.";
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
+  doc "Keeps independent borrows eligible for overlap.";
   let p = box_slots_new::<u64>(capacity: 4_u64);
   place_back(window: &p.inner, value: 0_u64);
   place_back(window: &p.inner, value: 0_u64);
@@ -2031,4 +2034,407 @@ fn main() -> status: std::process::ExitStatus pure {
             main.overlaps()
         );
     });
+}
+
+/// The review's join witness: the owner and reference have distinct block
+/// parameters, so definition tracing cannot recover their common storage.
+#[test]
+fn joined_reference_preserves_borrowed_call_entry_order() {
+    let source = br#"fn ignore(part: &u64) -> result: unit pure {
+  doc "Borrows without reading.";
+  return unit;
+}
+
+fn consume(value: Box<u64>) -> result: unit pure {
+  doc "Releases the owned box on return.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Keeps an owner alive until a joined reference enters its call.";
+  let p = box_new::<u64>(value: 0_u64);
+  let pick = 1_u64;
+  let q = if pick == 1_u64 {
+    give &p.inner;
+  } else {
+    give &p.inner;
+  }
+  ignore(part: &q^);
+  consume(value: move p);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_release_and_borrow_are_separate(source, "consume");
+}
+
+/// The review's range witness: range formation and direct indexing produce
+/// different IR path depths for the same owned Box slot.
+#[test]
+fn range_replacement_preserves_borrowed_call_entry_order() {
+    let source = br#"fn ignore(part: &u64) -> result: unit pure {
+  doc "Borrows without reading.";
+  return unit;
+}
+
+fn replace(cell: &Box<u64>) -> result: unit writes(cell) {
+  doc "Replaces and releases the borrowed owner.";
+  let next = box_new::<u64>(value: 1_u64);
+  set cell^ = move next;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Orders replacement through a range after borrowed call entry.";
+  let slots = slots_new::<Box<u64>, 1>();
+  let child = box_new::<u64>(value: 0_u64);
+  place_back(window: &slots, value: move child);
+  let run = &slots[0_u64..1_u64];
+  ignore(part: &slots[0_u64].inner);
+  replace(cell: &run^[0_u64]);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_release_and_borrow_are_separate(source, "replace");
+}
+
+/// The review's selected-field witness: ProjectStruct does not retain the
+/// root reached by the borrowed field's address chain.
+#[test]
+fn field_consumption_preserves_borrowed_call_entry_order() {
+    let source = br#"struct Holder {
+  doc "Owns one heap cell.";
+  cell: Box<u64>;
+}
+
+fn ignore(part: &u64) -> result: unit pure {
+  doc "Borrows without reading.";
+  return unit;
+}
+
+fn consume(value: Box<u64>) -> result: unit pure {
+  doc "Releases the owned box on return.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Orders field consumption after borrowed call entry.";
+  let cell = box_new::<u64>(value: 0_u64);
+  let holder = Holder(cell: move cell);
+  ignore(part: &holder.cell.inner);
+  consume(value: move holder.cell);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_release_and_borrow_are_separate(source, "consume");
+}
+
+/// The review's sibling witness: selecting kept releases discarded while
+/// forming the argument, before the consuming call itself begins.
+#[test]
+fn sibling_cleanup_preserves_borrowed_call_entry_order() {
+    let source = br#"struct Holder {
+  doc "Owns a selected cell and a sibling released with the holder.";
+  kept: Box<u64>;
+  discarded: Box<u64>;
+}
+
+fn ignore(part: &u64) -> result: unit pure {
+  doc "Borrows without reading.";
+  return unit;
+}
+
+fn consume(value: Box<u64>) -> result: unit pure {
+  doc "Releases the selected box on return.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Orders sibling cleanup after borrowed call entry.";
+  let kept = box_new::<u64>(value: 0_u64);
+  let discarded = box_new::<u64>(value: 1_u64);
+  let holder = Holder(kept: move kept, discarded: move discarded);
+  ignore(part: &holder.discarded.inner);
+  consume(value: move holder.kept);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_release_and_borrow_are_separate(source, "consume");
+}
+
+/// Isolate argument cleanup from ownership of heap storage by the callee:
+/// Kept is affine but has an empty release. Both a residual sibling and an
+/// enclosing Box shell must cut the group before argument formation.
+#[test]
+fn argument_cleanup_without_heap_argument_prevents_overlap() {
+    for (owner, borrowed, selected) in [
+        (
+            "let holder = Holder(kept: move kept, discarded: move discarded);",
+            "holder.discarded.inner",
+            "holder.kept",
+        ),
+        (
+            "let content = Holder(kept: move kept, discarded: move discarded);\n  let holder = box_new::<Holder>(value: move content);",
+            "holder.inner.discarded.inner",
+            "holder.inner.kept",
+        ),
+    ] {
+        let source = format!(
+            r#"nocopy struct Kept {{
+  doc "Carries no heap storage but requires an explicit move.";
+  value: u64;
+}}
+
+struct Holder {{
+  doc "Owns a nonheap selection and a heap sibling.";
+  kept: Kept;
+  discarded: Box<u64>;
+}}
+
+fn ignore(part: &u64) -> result: unit pure {{
+  doc "Borrows without reading.";
+  return unit;
+}}
+
+fn consume(value: Kept) -> result: unit pure {{
+  doc "Consumes a value whose release is empty.";
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  doc "Orders argument cleanup independently of the selected type.";
+  let kept = Kept(value: 0_u64);
+  let discarded = box_new::<u64>(value: 1_u64);
+  {owner}
+  ignore(part: &{borrowed});
+  consume(value: move {selected});
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        assert_release_and_borrow_are_separate(source.as_bytes(), "consume");
+    }
+}
+
+fn assert_release_and_borrow_are_separate(source: &[u8], releasing: &str) {
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let main = function(program, "main");
+        let calls_named = |name: &str| {
+            main.blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Call { function, .. },
+                        ..
+                    } if program.functions()[*function as usize].name() == name => Some(*result),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let borrows = calls_named("ignore");
+        let releases = calls_named(releasing);
+        assert_eq!(borrows.len(), 1, "one borrowing call");
+        assert_eq!(releases.len(), 1, "one releasing call");
+        assert!(
+            main.overlaps()
+                .iter()
+                .all(|group| !(group.members.contains(&releases[0])
+                    && group.members.contains(&borrows[0]))),
+            "{releasing} and the borrowing call must share no group: {:?}",
+            main.overlaps()
+        );
+    });
+}
+
+/// A pure owner borrow does not release anything. Neither a blanket ban on
+/// Box arguments nor the old owner/content prefix comparison preserves this.
+#[test]
+fn pure_owner_and_content_borrows_still_overlap() {
+    let source = br#"fn ignore_owner(cell: &Box<u64>) -> result: unit pure {
+  doc "Borrows an owner without reading or replacing it.";
+  return unit;
+}
+
+fn ignore_content(part: &u64) -> result: unit pure {
+  doc "Borrows the content without reading it.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Keeps pure owner and content borrows eligible for overlap.";
+  let p = box_new::<u64>(value: 0_u64);
+  ignore_owner(cell: &p);
+  ignore_content(part: &p.inner);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let main = function(program, "main");
+        let borrows = main
+            .blocks()
+            .iter()
+            .flat_map(IrBlock::instructions)
+            .filter_map(|instruction| match instruction {
+                IrInstruction::Define {
+                    result,
+                    operation: IrOperation::Call { function, .. },
+                    ..
+                } if matches!(
+                    program.functions()[*function as usize].name(),
+                    "ignore_owner" | "ignore_content"
+                ) =>
+                {
+                    Some(*result)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(borrows.len(), 2, "owner and content borrows");
+        assert!(
+            main.overlaps()
+                .iter()
+                .any(|group| borrows.iter().all(|call| group.members.contains(call))),
+            "pure owner and content borrows must overlap: {:?}",
+            main.overlaps()
+        );
+    });
+}
+
+/// Ownership writes for distinct Boxes are already separated by [PAR-1].
+/// A blanket releasing-call cut would serialize these pure consumers.
+#[test]
+fn disjoint_owned_box_consumers_still_overlap() {
+    let source = br#"fn fold(tree: Box<u64>) -> result: u64 pure {
+  doc "Reads the owned tree and releases it on return.";
+  return tree.inner;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Uses both results after disjoint ownership transfers.";
+  let left = box_new::<u64>(value: 17_u64);
+  let right = box_new::<u64>(value: 29_u64);
+  let a = fold(tree: move left);
+  let b = fold(tree: move right);
+  if a != 17_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if b != 29_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let main = function(program, "main");
+        let consumers = calls_to(program, main, &["fold"]);
+        assert_eq!(consumers.len(), 2, "two owned Box consumers");
+        assert!(
+            main.overlaps()
+                .iter()
+                .any(|group| consumers.iter().all(|call| group.members.contains(call))),
+            "disjoint owned Box consumers must overlap: {:?}",
+            main.overlaps()
+        );
+    });
+}
+
+/// A neutral call must neither hide an earlier conflict nor prevent a new
+/// group after it. A call that both releases and borrows can group with that
+/// neutral call, but not with another releasing or borrowing member.
+#[test]
+fn release_borrow_conflicts_check_every_member_and_restart_groups() {
+    for (first, last) in [
+        ("fold(tree: move left)", "ignore(part: &view^)"),
+        ("ignore(part: &view^)", "fold(tree: move right)"),
+        (
+            "both(tree: move left, part: &view^)",
+            "both(tree: move right, part: &view^)",
+        ),
+        (
+            "both(tree: move left, part: &view^)",
+            "fold(tree: move right)",
+        ),
+    ] {
+        let source = format!(
+            r#"fn fold(tree: Box<u64>) -> result: u64 pure {{
+  doc "Reads the owned tree and releases it on return.";
+  return tree.inner;
+}}
+
+fn ignore(part: &u64) -> result: u64 pure {{
+  doc "Borrows without reading.";
+  return 0_u64;
+}}
+
+fn both(tree: Box<u64>, part: &u64) -> result: u64 pure {{
+  doc "Consumes an owner while borrowing unrelated storage.";
+  return tree.inner;
+}}
+
+fn plain(value: u64) -> result: u64 pure {{
+  doc "Passes through a scalar without borrowing or releasing.";
+  return value;
+}}
+
+fn grouped(left: Box<u64>, right: Box<u64>, view: &u64) -> result: u64 pure {{
+  doc "Keeps neutral members on each side of a storage conflict.";
+  let a = {first};
+  let b = plain(value: 0_u64);
+  let c = {last};
+  let d = plain(value: 0_u64);
+  if a != b {{
+    return 1_u64;
+  }}
+  if c != d {{
+    return 1_u64;
+  }}
+  return 0_u64;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  doc "Exercises both groups and observes their results.";
+  let left = box_new::<u64>(value: 0_u64);
+  let right = box_new::<u64>(value: 0_u64);
+  let value = 0_u64;
+  let outcome = grouped(left: move left, right: move right, view: &value);
+  if outcome != 0_u64 {{
+    return std::process::exit_status(code: 1_u8);
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
+            let grouped = function(program, "grouped");
+            let calls = calls_to(program, grouped, &["fold", "ignore", "both", "plain"]);
+            assert_eq!(calls.len(), 4, "{first}; plain; {last}; plain");
+            let groups = grouped
+                .overlaps()
+                .iter()
+                .map(|group| group.members.as_slice())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                groups,
+                vec![&calls[..2], &calls[2..]],
+                "{first}; plain; {last}; plain must form two ordered groups"
+            );
+        });
+    }
+}
+
+fn calls_to(program: &IrProgram, caller: &IrFunction, names: &[&str]) -> Vec<IrValueId> {
+    caller
+        .blocks()
+        .iter()
+        .flat_map(IrBlock::instructions)
+        .filter_map(|instruction| match instruction {
+            IrInstruction::Define {
+                result,
+                operation: IrOperation::Call { function, .. },
+                ..
+            } if names.contains(&program.functions()[*function as usize].name()) => Some(*result),
+            _ => None,
+        })
+        .collect()
 }

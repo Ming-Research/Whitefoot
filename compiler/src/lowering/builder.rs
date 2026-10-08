@@ -180,6 +180,7 @@ pub(crate) fn lower_checked_from(
                 elements: &elements,
                 constants: &constants,
                 function_results: &function_results,
+                checked_functions: &checked.data.functions,
                 synthesis: &synthesis,
             };
             lower_function(
@@ -231,6 +232,8 @@ struct LoweringContext<'program> {
     constants: &'program [IrGlobalConstant],
     /// Every physical function's declared IR result, indexed by its IR ordinal.
     function_results: &'program [IrType],
+    /// Source parameter modes, referent types and authoritative effect rows.
+    checked_functions: &'program [crate::semantic::CheckedFunction],
     synthesis: &'program SynthesisCell,
 }
 
@@ -654,6 +657,20 @@ struct BuildingBlock {
     terminator: Option<IrTerminator>,
 }
 
+/// Storage lifetime effects of a call and its argument formation, beyond
+/// the reads and writes already separated by [PAR-1].
+#[derive(Clone, Copy, Default)]
+struct CallStorageEffects {
+    releasing: bool,
+    borrowing: bool,
+}
+
+impl CallStorageEffects {
+    fn conflicts(self, other: Self) -> bool {
+        (self.releasing && other.borrowing) || (self.borrowing && other.releasing)
+    }
+}
+
 struct IrBuilder<'program> {
     target: TargetLayout,
     /// The IR nominal and element each checked nominal and element lowers to.
@@ -680,13 +697,15 @@ struct IrBuilder<'program> {
     /// call defines exactly the callee's declared result type — an address
     /// for a borrow of addressed content [REF-1, TYPE-7].
     function_results: &'program [IrType],
+    checked_functions: &'program [crate::semantic::CheckedFunction],
     /// For each statement holding exactly one named-function call in call
     /// position — a `let` right-hand side or a `match` scrutinee — the block
-    /// the call's definition landed in and the value it defined. The
+    /// the call's definition landed in, the value it defined and its storage
+    /// lifetime effects. The
     /// permission table names its sites by call occurrence, which is the one
     /// identity every written call position has, so this is how a permitted
     /// group is found in the IR.
-    call_results: HashMap<NodePath, (IrBlockId, IrValueId)>,
+    call_results: HashMap<NodePath, (IrBlockId, IrValueId, CallStorageEffects)>,
     /// The permission table of the source function this body belongs to: the
     /// [PAR-1] groups its statements may overlap and the [PAR-2] verdict of
     /// each of its counted loops.
@@ -753,6 +772,7 @@ impl<'program> IrBuilder<'program> {
             elements,
             constants,
             function_results,
+            checked_functions,
             synthesis,
         } = context;
         let mut builder = Self {
@@ -776,6 +796,7 @@ impl<'program> IrBuilder<'program> {
             result,
             addressed_bindings,
             function_results,
+            checked_functions,
             call_results: HashMap::new(),
             permissions,
             overlap,
@@ -812,6 +833,7 @@ impl<'program> IrBuilder<'program> {
             elements: self.elements,
             constants: self.constants,
             function_results: self.function_results,
+            checked_functions: self.checked_functions,
             synthesis: self.synthesis,
         }
     }
@@ -949,11 +971,12 @@ impl<'program> IrBuilder<'program> {
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
     ///   and the join, where the value does not exist yet; and
-    /// - no two members pass one place and something inside that place's Box
-    ///   content: the one taking the owner may free or relocate the content,
-    ///   while the other's argument is formed from it and promises the callee
-    ///   a dereferenceable referent at entry, so their order must hold
-    ///   [`box_content_conflict`].
+    /// - no two distinct members combine release with borrowing. A conflict
+    ///   ends the group before the new member's argument formation, after
+    ///   every earlier member has joined; the new member can start a group.
+    ///   A member that both releases and borrows can share only with members
+    ///   that do neither. Disjoint owned transfers remain eligible together,
+    ///   because [PAR-1] already separates their ownership.
     ///
     /// Each contiguous part retains the chain's every-ordered-pair proof.
     /// Finally, already-proved adjacent pairs recover opportunities across a
@@ -967,22 +990,12 @@ impl<'program> IrBuilder<'program> {
         };
         let mut overlaps = Vec::new();
         let mut claimed = HashSet::new();
-        let definitions = self
-            .blocks
-            .iter()
-            .flat_map(|block| &block.instructions)
-            .filter_map(|instruction| match instruction {
-                IrInstruction::Define {
-                    result, operation, ..
-                } => Some((*result, operation)),
-                _ => None,
-            })
-            .collect::<HashMap<_, _>>();
-        let finish = |members: &mut Vec<IrValueId>,
+        let finish = |members: &mut Vec<(IrValueId, CallStorageEffects)>,
                       claimed: &mut HashSet<IrValueId>,
                       overlaps: &mut Vec<IrOverlap>| {
             let members = std::mem::take(members);
             if members.len() >= 2 {
+                let members: Vec<_> = members.into_iter().map(|(value, _)| value).collect();
                 claimed.extend(members.iter().copied());
                 overlaps.push(IrOverlap { members });
             }
@@ -1010,7 +1023,7 @@ impl<'program> IrBuilder<'program> {
                     home = None;
                     continue;
                 };
-                let Some((block, value)) = self.call_results.get(call).copied() else {
+                let Some((block, value, effects)) = self.call_results.get(call).copied() else {
                     finish(&mut members, &mut claimed, &mut overlaps);
                     home = None;
                     continue;
@@ -1026,14 +1039,14 @@ impl<'program> IrBuilder<'program> {
                 home = Some(block);
                 if members
                     .iter()
-                    .any(|previous| box_content_conflict(&definitions, *previous, value))
+                    .any(|(_, previous)| effects.conflicts(*previous))
                 {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
-                members.push(value);
+                members.push((value, effects));
                 if addressed {
                     // This member must be the group's last, so it ends it.
                     finish(&mut members, &mut claimed, &mut overlaps);
@@ -1045,13 +1058,13 @@ impl<'program> IrBuilder<'program> {
         overlaps
     }
 
-    /// Records where a named-function call in call position landed, whatever
-    /// written position it was in.
+    /// Records where a named-function call in call position landed and its
+    /// storage lifetime effects, whatever written position it was in.
     ///
     /// The permission judgment reaches a call as a `let` right-hand side, as an
     /// expression statement, and as a `match` scrutinee alike, and all are
     /// named by their call occurrence, so one recording serves them all. Which
-    /// of them a group can actually keep is decided later and by the IR alone:
+    /// of them a group can keep also depends on storage classification below:
     /// every member of a group must be defined in one block, and a scrutinee's
     /// own dispatch terminates its block, so a scrutinee call is only ever a
     /// group's last member.
@@ -1063,11 +1076,83 @@ impl<'program> IrBuilder<'program> {
         let CheckedExpression::UserCall { call, .. } = expression else {
             return Ok(());
         };
+        let effects = if self.overlap == OverlapLowering::On {
+            self.call_storage_effects(expression)?
+        } else {
+            CallStorageEffects::default()
+        };
         // The block the call's own definition landed in, which is the block
         // current after the arguments are lowered.
         let block = self.current.ok_or(LoweringFailure::InvalidCheckedProgram)?;
-        self.call_results.insert(call.clone(), (block, value));
+        self.call_results
+            .insert(call.clone(), (block, value, effects));
         Ok(())
+    }
+
+    /// Call-entry classification independent of aliases and IR value origins.
+    /// Owned heap storage can be released by the callee; a written reference
+    /// can replace or relocate any owning part of its referent. Passing a
+    /// reference or forming one (including owner-slot loads along its path)
+    /// makes a call borrowing even when the callee reads no content.
+    ///
+    /// [STOR-3, WIN-3] argument formation can itself release a consumed
+    /// aggregate's siblings or enclosing Box shells, even when the selected
+    /// argument owns no heap storage. Read those checked cleanup records,
+    /// including nested expressions, rather than tracing only argument values.
+    fn call_storage_effects(
+        &self,
+        expression: &CheckedExpression,
+    ) -> Result<CallStorageEffects, LoweringFailure> {
+        let mut effects = CallStorageEffects::default();
+        let mut pending = vec![expression];
+        while let Some(expression) = pending.pop() {
+            match expression {
+                CheckedExpression::UserCall {
+                    function,
+                    formal_effects,
+                    ..
+                } => {
+                    let callee = self
+                        .checked_functions
+                        .get(function.0 as usize)
+                        .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                    let writes = formal_effects
+                        .as_ref()
+                        .map_or(&callee.declared_state_writes, |effects| &effects.writes);
+                    for parameter in &callee.parameters {
+                        effects.borrowing |= parameter.mode.is_reference();
+                        // A range parameter's checked type is its element,
+                        // so a write through &[Box<T>] can also release storage.
+                        // Any written subpath suffices; no alias tracing or
+                        // effect-path prefix comparison is needed.
+                        if (parameter.mode == CheckedMode::Own
+                            || writes.iter().any(|path| path.root == parameter.declaration))
+                            && type_derives_release(
+                                self.nominals,
+                                self.elements,
+                                lower_type(self.erasure, parameter.ty)?,
+                            )
+                            .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                        {
+                            effects.releasing = true;
+                        }
+                    }
+                }
+                CheckedExpression::Project { residual_drops, .. } if !residual_drops.is_empty() => {
+                    effects.releasing = true;
+                }
+                CheckedExpression::BoxTake { cleanup, .. } if !cleanup.is_empty() => {
+                    effects.releasing = true;
+                }
+                CheckedExpression::BorrowAddressed { .. }
+                | CheckedExpression::BorrowRangeIndex { .. }
+                | CheckedExpression::BorrowSegment { .. }
+                | CheckedExpression::RangeOf { .. } => effects.borrowing = true,
+                _ => {}
+            }
+            pending.extend(crate::semantic::model::expression_children(expression));
+        }
+        Ok(effects)
     }
 
     fn lower_statements(
@@ -2460,99 +2545,4 @@ const fn fixed_measure(measure: CheckedMeasure, measured: MeasuredKind) -> Optio
         | MeasureCell::Bounded
         | MeasureCell::Absent => None,
     }
-}
-
-/// Whether one call passes a place, by address or by value, and the other an
-/// argument formed through that place's Box content. Source permission counts
-/// neither a borrow nor its formation as a content read, but the call taking
-/// the owner may free or relocate the content before the other call enters or
-/// forms its argument. Element and range steps match any offset, so the
-/// comparison over-approximates.
-fn box_content_conflict(
-    definitions: &HashMap<IrValueId, &IrOperation>,
-    first: IrValueId,
-    second: IrValueId,
-) -> bool {
-    let chains = |call: IrValueId| match definitions.get(&call) {
-        Some(IrOperation::Call { arguments, .. }) => arguments
-            .iter()
-            .map(|argument| argument_chain(definitions, *argument))
-            .collect::<Vec<_>>(),
-        _ => Vec::new(),
-    };
-    let (first, second) = (chains(first), chains(second));
-    first.iter().any(|left| {
-        second
-            .iter()
-            .any(|right| encloses_box_content(left, right) || encloses_box_content(right, left))
-    })
-}
-
-/// The root value one argument is formed from and the steps from that root,
-/// in order.
-fn argument_chain(
-    definitions: &HashMap<IrValueId, &IrOperation>,
-    argument: IrValueId,
-) -> (IrValueId, Vec<ChainStep>) {
-    let mut steps = Vec::new();
-    let mut current = argument;
-    while let Some(operation) = definitions.get(&current) {
-        let (base, step) = match operation {
-            IrOperation::ProjectAddress {
-                address,
-                projection,
-            } => (
-                *address,
-                Some(match projection {
-                    IrPlaceStep::Field { nominal, field } => ChainStep::Field(*nominal, *field),
-                    IrPlaceStep::BoxReferent { .. } => ChainStep::BoxContent,
-                    IrPlaceStep::EnumVariant {
-                        nominal,
-                        variant,
-                        field,
-                    } => ChainStep::Variant(*nominal, *variant, *field),
-                    _ => ChainStep::Element,
-                }),
-            ),
-            // A by-value argument passes the whole place it loads.
-            IrOperation::Load { address, .. } => (*address, None),
-            IrOperation::SliceFromBuffer { buffer } => (*buffer, Some(ChainStep::Element)),
-            IrOperation::SliceFromRun { run } => (*run, Some(ChainStep::Element)),
-            IrOperation::SliceRange { slice, .. } | IrOperation::SliceAddress { slice, .. } => {
-                (*slice, Some(ChainStep::Element))
-            }
-            IrOperation::SegmentSlice { segments, .. } | IrOperation::SegmentsAll { segments } => {
-                (*segments, Some(ChainStep::Element))
-            }
-            _ => break,
-        };
-        steps.extend(step);
-        current = base;
-    }
-    steps.reverse();
-    (current, steps)
-}
-
-/// One step of an argument's formation from its root value, as the overlap
-/// lowering compares two arguments [`box_content_conflict`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ChainStep {
-    Field(IrNominalId, u32),
-    Variant(IrNominalId, u32, u32),
-    BoxContent,
-    /// An element or range of a run, matching every other element step.
-    Element,
-}
-
-/// Whether `outer` names a place whose Box content `inner` is formed through:
-/// one root, `outer`'s steps a prefix of `inner`'s, and a Box content step
-/// among the rest.
-fn encloses_box_content(
-    outer: &(IrValueId, Vec<ChainStep>),
-    inner: &(IrValueId, Vec<ChainStep>),
-) -> bool {
-    outer.0 == inner.0
-        && outer.1.len() < inner.1.len()
-        && outer.1.iter().zip(&inner.1).all(|(left, right)| left == right)
-        && inner.1[outer.1.len()..].contains(&ChainStep::BoxContent)
 }
