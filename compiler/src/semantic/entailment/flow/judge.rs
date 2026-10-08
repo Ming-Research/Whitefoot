@@ -946,11 +946,7 @@ impl Analyzer<'_, '_> {
                 let place = match root {
                     crate::semantic::CheckedSegmentSource::Storage(root) => judged_place(root),
                     crate::semantic::CheckedSegmentSource::Element(place) => {
-                        ResolvedPlace::spelled(
-                            PlaceRoot::Binding(place.root.binding),
-                            is_holder(place.root.binding),
-                            place.place_path(),
-                        )
+                        ResolvedPlace::from_path(place.root.binding, place.place_path())
                     }
                 };
                 if let crate::semantic::CheckedSegmentSelect::One(index)

@@ -21,6 +21,7 @@ mod work;
 use crate::CheckedProgram;
 use crate::NodePath;
 use crate::semantic::CheckedSetTarget;
+use crate::semantic::permission::CallStorageEffects;
 use crate::semantic::{
     BindingId, CheckedArrayRoot, CheckedDrop, CheckedEffectStep, CheckedExpression,
     CheckedMatchArm, CheckedMeasure, CheckedMode, CheckedNominalKind, CheckedParameter,
@@ -968,15 +969,12 @@ impl<'program> IrBuilder<'program> {
     /// - no member but the last is an addressed binding, because promoting one
     ///   reads the call's value at the definition site — between the hand-out
     ///   and the join, where the value does not exist yet; and
-    /// - later arguments do not form an address through a Paged cell or directory
-    ///   while an earlier member is running. Source permission does not count
-    ///   a borrow as a content read, but this representation loads the owner
-    ///   pointer or directory words that growth can replace even when the callee
-    ///   ignores its borrow; and
-    /// - a call taking a Paged cell reference is the last member, so it enters
-    ///   and finishes before a later call can replace that cell. An ignored
-    ///   reference still promises dereferenceability at the callee's entry,
-    ///   including when a refused hand-out runs at the join.
+    /// - no member releases a place that overlaps a place another member
+    ///   borrows at entry or loads through during argument formation. These
+    ///   places come from the checker; a conflict ends the group before the
+    ///   new member's argument formation, after earlier members have joined.
+    ///   The new member can start another group, and disjoint written Box
+    ///   references remain eligible together.
     ///
     /// Each contiguous part retains the chain's every-ordered-pair proof.
     /// Finally, already-proved adjacent pairs recover opportunities across a
@@ -990,11 +988,12 @@ impl<'program> IrBuilder<'program> {
         };
         let mut overlaps = Vec::new();
         let mut claimed = HashSet::new();
-        let finish = |members: &mut Vec<IrValueId>,
+        let finish = |members: &mut Vec<(IrValueId, &CallStorageEffects)>,
                       claimed: &mut HashSet<IrValueId>,
                       overlaps: &mut Vec<IrOverlap>| {
             let members = std::mem::take(members);
             if members.len() >= 2 {
+                let members: Vec<_> = members.into_iter().map(|(value, _)| value).collect();
                 claimed.extend(members.iter().copied());
                 overlaps.push(IrOverlap { members });
             }
@@ -1036,17 +1035,18 @@ impl<'program> IrBuilder<'program> {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 home = Some(block);
+                let effects = &site.storage_effects;
                 if members
-                    .last()
-                    .is_some_and(|previous| self.paged_formation_between(block, *previous, value))
+                    .iter()
+                    .any(|(_, previous)| effects.conflicts(previous))
                 {
                     finish(&mut members, &mut claimed, &mut overlaps);
                 }
                 let addressed = site
                     .binding
                     .is_some_and(|binding| self.addressed_bindings.contains(&binding));
-                members.push(value);
-                if addressed || self.call_borrows_paged_cell(block, value) {
+                members.push((value, effects));
+                if addressed {
                     // This member must be the group's last, so it ends it.
                     finish(&mut members, &mut claimed, &mut overlaps);
                     home = None;
@@ -1057,101 +1057,13 @@ impl<'program> IrBuilder<'program> {
         overlaps
     }
 
-    /// A later call, including an ordinary wrapper around growth, can replace
-    /// the cell an otherwise pure member ignores. Ending at this member keeps
-    /// its reference valid at entry without changing source permission or
-    /// guessing which later callee reallocates storage.
-    fn call_borrows_paged_cell(&self, block: IrBlockId, call: IrValueId) -> bool {
-        self.blocks[block.index()]
-            .instructions
-            .iter()
-            .any(|instruction| {
-                let IrInstruction::Define {
-                    result,
-                    operation: IrOperation::Call { arguments, .. },
-                    ..
-                } = instruction
-                else {
-                    return false;
-                };
-                *result == call
-                    && arguments.iter().any(|argument| {
-                        matches!(
-                            self.values.get(argument.index()),
-                            Some(IrType::Address(IrAddressed::Window {
-                                shape: IrWindowShape::Paged,
-                                ..
-                            }))
-                        )
-                    })
-            })
-    }
-
-    /// Narrow actualization, leaving the source permission judgment intact.
-    /// Each projection in a nested path is explicit IR, so this also covers
-    /// a Paged reached through an element, field or Box, and a run element.
-    fn paged_formation_between(
-        &self,
-        block: IrBlockId,
-        previous: IrValueId,
-        next: IrValueId,
-    ) -> bool {
-        let is_paged = |value: IrValueId| {
-            matches!(
-                self.values.get(value.index()),
-                Some(IrType::Address(IrAddressed::Window {
-                    shape: IrWindowShape::Paged,
-                    ..
-                }))
-            )
-        };
-        let mut after_previous = false;
-        for instruction in &self.blocks[block.index()].instructions {
-            let IrInstruction::Define {
-                result, operation, ..
-            } = instruction
-            else {
-                continue;
-            };
-            if *result == next {
-                break;
-            }
-            if *result == previous {
-                after_previous = true;
-                continue;
-            }
-            if !after_previous {
-                continue;
-            }
-            let reads_paged_storage = match operation {
-                // Even `&p.inner` loads the owner slot. Growth can replace
-                // that cell before a later projection or run formation.
-                IrOperation::ProjectAddress { .. } if is_paged(*result) => true,
-                IrOperation::PagedPage { .. } => true,
-                IrOperation::SliceFromRun { run } => is_paged(*run),
-                IrOperation::ProjectAddress {
-                    address,
-                    projection: IrPlaceStep::RunElement { .. },
-                } => is_paged(*address),
-                IrOperation::SliceAddress { slice, .. } => {
-                    matches!(self.values.get(slice.index()), Some(IrType::Run { .. }))
-                }
-                _ => false,
-            };
-            if reads_paged_storage {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Records where a named-function call in call position landed, whatever
-    /// written position it was in.
+    /// Records where a named-function call in call position landed,
+    /// whatever written position it was in.
     ///
     /// The permission judgment reaches a call as a `let` right-hand side, as an
     /// expression statement, and as a `match` scrutinee alike, and all are
     /// named by their call occurrence, so one recording serves them all. Which
-    /// of them a group can actually keep is decided later and by the IR alone:
+    /// of them a group can keep also depends on the emitted storage shape:
     /// every member of a group must be defined in one block, and a scrutinee's
     /// own dispatch terminates its block, so a scrutinee call is only ever a
     /// group's last member.

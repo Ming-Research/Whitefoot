@@ -1195,22 +1195,31 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             .types
             .signatures
             .iter()
-            .map(|signature| PermissionSignature {
-                name: signature.name.clone(),
-                parameter_declarations: signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.declaration)
-                    .collect(),
-                parameter_modes: signature
-                    .parameters
-                    .iter()
-                    .map(|parameter| parameter.mode)
-                    .collect(),
-                reads: signature.declared_effects.reads.clone(),
-                writes: signature.declared_effects.writes.clone(),
+            .map(|signature| {
+                Ok(PermissionSignature {
+                    name: signature.name.clone(),
+                    parameter_declarations: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.declaration)
+                        .collect(),
+                    parameter_modes: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.mode)
+                        .collect(),
+                    parameter_releases: signature
+                        .parameters
+                        .iter()
+                        .map(|parameter| {
+                            self.types.may_release_storage(parameter.ty, parameter.mode)
+                        })
+                        .collect::<Result<Vec<_>, CheckStop>>()?,
+                    reads: signature.declared_effects.reads.clone(),
+                    writes: signature.declared_effects.writes.clone(),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, CheckStop>>()?;
         for checked in &mut function_inventory {
             if !ordinary[checked.function.id.0 as usize] {
                 continue;

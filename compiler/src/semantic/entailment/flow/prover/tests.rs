@@ -22,6 +22,7 @@ fn with_analyzer(check: impl FnOnce(&mut Analyzer<'_, '_>)) {
     };
     let function = CheckedFunction {
         formal_hypothesis: false,
+        prelude_element: None,
         id: crate::semantic::model::FunctionId(0),
         declaration: crate::DeclarationId::from_index(0).unwrap(),
         module: crate::ModuleId::BUNDLE_ROOT,
