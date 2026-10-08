@@ -2416,15 +2416,27 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files have no positioned writes or directory creation.** `std::fs` still
-  lacks writing at an offset, creating a directory, descending into a
-  subdirectory for writing, and create rules other than create-if-missing
-  [PRE-2]. A program needing a writable directory hierarchy or exclusive
-  creation cannot express it. Add the needed operations through the write
-  half when a program supplies that witness; compare their authority and
+- **Files have no positioned writes or exclusive creation.** `std::fs` still
+  lacks writing at an offset and create rules other than create-if-missing,
+  such as exclusive creation [PRE-2]. A program needing in-place updates or
+  exclusive creation cannot express it. Add the needed operations through the
+  write half when a program supplies that witness; compare their authority and
   failure rules with the existing component operations, and validate with
   that program plus conformance cases for the selected rules. Positioned
   writes reopen when a program needs in-place updates rather than replacement.
+
+- **A path given to `open_read` can leave its root.** A name given with a
+  root denotes only an entry directly below it, so `.` and `..` are refused
+  [PRE-2], but `relative_path` keeps every component, and `open_read`
+  follows `..` as the host does (`run-syspath-dotdot-preserved`). A function
+  given only a directory's read half can therefore read files above it,
+  while one given a write half cannot write there. Uncertain: whether any
+  program relies on reading through `..`. The change would be either to
+  refuse `..` components in `open_read`'s paths, as the name operations
+  refuse it, or to state that a read half grants reading of everything the
+  host reaches from it; validate with a conformance case for the selected
+  rule on every host. Reopen when a program is given a read half that must
+  not reach its parent, or with the next change to the path library.
 
 - **A clock's readings cannot be replaced for a test.** `now` and the
   deadline heap read the host's monotonic clock, so a program's behavior at
@@ -2744,7 +2756,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,254 lines: the file
+  `compiler/src/backend/completion/bridge.c` has 4,276 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
