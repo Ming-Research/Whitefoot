@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(rows: &[Slots<u8, 8>], table: &Array<u64, 5>) -> result: unit reads(rows), reads(table) contract {
+  requires forall all(k in 0_u64..rows^.len): rows^[k].len <= 5_u64;
+} {
+  doc "Subscripts a five-entry table by the length of each row.";
+  for (i in 0_u64..rows^.len) {
+    let t = table^[rows^[i].len];
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

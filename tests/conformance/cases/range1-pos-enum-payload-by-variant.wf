@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Flow {
+  Open(block: u32);
+  Close(block: u32);
+}
+
+fn need_small(order: &[Flow]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..order^.len): order^[k].Open.block <= 7_u32;
+} {
+  doc "Owes nothing; its requirement names the payload of the Open variant.";
+  return unit;
+}
+
+fn forward(order: &[Flow]) -> result: unit pure contract {
+  requires forall held(k in 0_u64..order^.len): order^[k].Open.block <= 7_u32;
+} {
+  doc "The held fact over the Open payload discharges the callee's requirement.";
+  need_small(order: order);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

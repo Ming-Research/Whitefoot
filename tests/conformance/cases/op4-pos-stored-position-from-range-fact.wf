@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(slots: &[u64], blocks: &[u64]) -> result: unit reads(slots), reads(blocks) contract {
+  requires forall bounded(j in 0_u64..slots^.len): slots^[j] < blocks^.len;
+} {
+  doc "Reads each stored position and subscripts the block window with it.";
+  for (k in 0_u64..slots^.len) {
+    let at = slots^[k];
+    let b = blocks^[at];
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
