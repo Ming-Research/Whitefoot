@@ -193,7 +193,9 @@ build time apart from test and program execution.
 
 ## Checks
 
-- `make static`, before every push and in `gate.yml` on every push:
+Every check runs in CI; agents run none of them on the owner's computer.
+
+- `make static`, in `gate.yml` on every push:
   repository invariants, the specification archives, the README and its
   translation changed together, prose integrity, guidance references,
   compiler sources over 4,000 lines named in `docs/todo.md`, and the design
@@ -220,7 +222,8 @@ build time apart from test and program execution.
 - `make install-hooks` optionally reports an edit of a released archive at
   commit.
 
-Focused commands for a compiler change, before `make static`:
+Focused commands, for a temporary workflow that checks part of a compiler
+change before the full gate:
 
 ```sh
 make -C compiler format lint
@@ -230,15 +233,15 @@ perl .github/run-check.pl <label> cargo test --manifest-path compiler/Cargo.toml
 ```
 
 Heavy commands run under `perl .github/run-check.pl <label> <command> ...`,
-as the `make` targets do, from any worktree. It holds one host-wide lock,
-leaves Cargo and the test harness at every available processor unless
-`CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` names fewer, prints wall, user and
-system time every 30 seconds, and stops a command after 30 minutes unless
-`WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
-labeled stage with its budget in `.github/time-budgets.txt` without changing
-the command's status: CI fails the job in a final verdict step, a local run
-only prints the comparison. Inspect an existing lock owner's PID instead of
-starting another heavy command, and after an uncatchable stop inspect the
+as the `make` targets do. It holds one host-wide lock, leaves Cargo and the
+test harness at every available processor unless `CARGO_BUILD_JOBS` or
+`RUST_TEST_THREADS` names fewer, prints wall, user and system time every 30
+seconds, and stops a command after 30 minutes unless `WHITEFOOT_CHECK_TIMEOUT`
+gives another limit in seconds. It compares each labeled stage with its
+budget in `.github/time-budgets.txt` without changing the command's status:
+CI fails the job in a final verdict step, a run outside CI only prints the
+comparison. Inspect an existing lock owner's PID instead
+of starting another heavy command, and after an uncatchable stop inspect the
 recorded PID and command before removing a stale lock.
 
 When a stage exceeds its budget, look at what the change adds to it and at the

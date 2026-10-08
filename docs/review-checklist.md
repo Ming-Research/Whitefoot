@@ -102,10 +102,10 @@ Source: [branch and main boundary](../AGENTS.md#branch-and-main-boundary).
   owner's approval of every specification change it carries, recorded in
   `spec/log.md`.
 
-Existing checks: `git diff --check` for patch whitespace; `make static` for
-repository invariants, specification archives (immutability and amendment
-shape), live spec references, cited review items, entry-document paths and
-design-tree form; `make -C compiler format lint` and the
-[focused compiler commands](../AGENTS.md#checks) for code. `make static`
+Existing checks, read from their CI runs: `git diff --check` for patch
+whitespace; `make static` for repository invariants, specification archives
+(immutability and amendment shape), live spec references, cited review items,
+entry-document paths and design-tree form; `make -C compiler format lint`
+and the [focused compiler commands](../AGENTS.md#checks) for code. `make static`
 does not check document purpose, anchors or the truth of a claim. The root
 [Makefile](../Makefile) owns the full gate inventory.
