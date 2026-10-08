@@ -488,6 +488,13 @@ impl Analyzer<'_, '_> {
                 scrutinee: CheckedExpression::UserCall { call, .. },
                 ..
             } => Some(call),
+            // A conditional member is named by its inner call, but PAR-1
+            // needs the state before the entire statement, not the arm's
+            // stronger condition. The inner Evaluate has a different site.
+            CheckedStatement::Match { .. } => {
+                crate::semantic::permission::conditional_call(statement)
+                    .map(|conditional| conditional.site)
+            }
             _ => None,
         };
         if let Some(site) = permission_site {

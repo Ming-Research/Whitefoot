@@ -1030,7 +1030,7 @@ impl<'program> IrBuilder<'program> {
     /// written position it was in.
     ///
     /// The permission judgment reaches a call as a `let` right-hand side, as an
-    /// expression statement, and as a `match` scrutinee alike, and all are
+    /// expression statement, a conditional call, and a `match` scrutinee alike, and all are
     /// named by their call occurrence, so one recording serves them all. Which
     /// of them a group can actually keep is decided later and by the IR alone:
     /// every member of a group must be defined in one block, and a scrutinee's
@@ -1049,6 +1049,115 @@ impl<'program> IrBuilder<'program> {
         let block = self.current.ok_or(LoweringFailure::InvalidCheckedProgram)?;
         self.call_results.insert(call.clone(), (block, value));
         Ok(())
+    }
+
+    /// Keep a permitted conditional member's call definition in its group's
+    /// block. Only the shared shape check licenses evaluating arguments before
+    /// dispatch; the permission table still owns independence and waiting.
+    fn lower_conditional_call(
+        &mut self,
+        statement: &CheckedStatement,
+    ) -> Result<bool, LoweringFailure> {
+        if self.overlap != OverlapLowering::On {
+            return Ok(false);
+        }
+        let Some(conditional) = crate::semantic::permission::conditional_call(statement) else {
+            return Ok(false);
+        };
+        let Some(permissions) = self.permissions else {
+            return Ok(false);
+        };
+        let member = |site: &crate::semantic::permission::PermissionSite| {
+            site.call.as_ref() == Some(conditional.site)
+        };
+        let permitted = permissions
+            .runs
+            .iter()
+            .any(|run| run.sites.len() >= 2 && run.sites.iter().any(member))
+            || permissions.pairs.iter().any(|pair| {
+                pair.verdict.is_eligible() && (member(&pair.first) || member(&pair.second))
+            });
+        if !permitted {
+            return Ok(false);
+        }
+        let CheckedExpression::UserCall { arguments, .. } = conditional.value else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
+        };
+        let function = self
+            .physical_calls
+            .iter()
+            .find_map(|(site, target)| (site == conditional.site).then_some(*target))
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        let result_type = *self
+            .function_results
+            .get(function as usize)
+            .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        let condition = self.expression(conditional.scrutinee)?;
+        let mut values = vec![condition];
+        for argument in arguments {
+            values.push(self.expression(argument)?);
+        }
+        let mut guard = Self::new(
+            self.context(),
+            IrType::Unit,
+            HashSet::new(),
+            None,
+            self.overlap,
+            self.function_name,
+        )?;
+        let parameters = values
+            .iter()
+            .map(|value| guard.new_parameter(self.values[value.index()]))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (invoke, _) = guard.new_block(&[])?;
+        let (done, _) = guard.new_block(&[])?;
+        guard.terminate(IrTerminator::Match {
+            scrutinee: parameters[0],
+            enum_type: IrEnumType::Bool,
+            targets: vec![
+                IrMatchTarget {
+                    tag: conditional.tag,
+                    block: invoke,
+                },
+                IrMatchTarget {
+                    tag: 1 - conditional.tag,
+                    block: done,
+                },
+            ],
+        })?;
+        guard.current = Some(invoke);
+        guard.define(
+            result_type,
+            IrOperation::Call {
+                function,
+                arguments: parameters[1..].to_vec(),
+            },
+        )?;
+        guard.terminate(IrTerminator::Jump {
+            target: done,
+            arguments: Vec::new(),
+            drops: Vec::new(),
+        })?;
+        guard.current = Some(done);
+        let unit = guard.define(IrType::Unit, IrOperation::Constant(IrConstant::Unit))?;
+        guard.terminate(IrTerminator::Return {
+            value: unit,
+            drops: Vec::new(),
+        })?;
+        let (ordinal, name) = self.synthesis.borrow_mut().reserve(self.function_name)?;
+        // Unlike a split half, this helper is an ordinary call in both worlds.
+        // Its call graph determines clones, call grain and recursive budgets.
+        let guard = guard.finish(format!("_par_cond_{name}"), Vec::new(), None)?;
+        self.synthesis.borrow_mut().file(ordinal, guard)?;
+        let result = self.define(
+            IrType::Unit,
+            IrOperation::Call {
+                function: ordinal,
+                arguments: values,
+            },
+        )?;
+        self.note_call_result(conditional.value, result)?;
+        Ok(true)
     }
 
     fn lower_statements(
@@ -1361,14 +1470,18 @@ impl<'program> IrBuilder<'program> {
                     enum_type,
                     arms,
                     continues,
-                } => self.lower_match(
-                    scrutinee,
-                    *enum_type,
-                    arms,
-                    *continues,
-                    None,
-                    give_target.clone(),
-                )?,
+                } => {
+                    if !self.lower_conditional_call(statement)? {
+                        self.lower_match(
+                            scrutinee,
+                            *enum_type,
+                            arms,
+                            *continues,
+                            None,
+                            give_target.clone(),
+                        )?;
+                    }
+                }
                 CheckedStatement::ValueMatchLet {
                     binding,
                     result_type,

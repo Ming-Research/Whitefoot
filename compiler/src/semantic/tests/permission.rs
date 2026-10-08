@@ -32,6 +32,156 @@ use super::super::places::ResolvedPlace;
 use super::{assert_rule_kind, with_semantics};
 
 #[test]
+fn conditional_call_permission_includes_the_condition_and_call() {
+    let source = br#"fn fill(v: &[u64]) -> result: unit writes(v) {
+  let n = v^.len;
+  for @items (i in 0_u64..n) {
+    set v^[i] = 7_u64;
+  }
+  return unit;
+}
+
+fn both(a: &[u64], b: &[u64], go: Bool) -> result: unit writes(a), writes(b) {
+  if go {
+    fill(v: a);
+  }
+  fill(v: b);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let table = permission_of(source);
+    let pair = pair_of(&table, "both", "a conditional call", "fill");
+    assert!(pair.verdict.is_eligible(), "{pair:?}");
+    assert!(pair.first.call.is_some());
+    run_of(&table, "both", &["a conditional call", "fill"]);
+}
+
+#[test]
+fn conditional_call_separation_uses_the_state_before_the_condition() {
+    let source = br#"fn fill(v: &[u64]) -> result: unit writes(v) {
+  let n = v^.len;
+  if n > 0_u64 {
+    set v^[0_u64] = 1_u64;
+  }
+  return unit;
+}
+
+fn both(t: &[u64], m: u64, k: u64) -> result: unit writes(t) {
+  let n = t^.len;
+  if m <= n {
+    if k <= n {
+      let a = &t^[0_u64..m];
+      let b = &t^[k..n];
+      if m <= k {
+        fill(v: a);
+      }
+      fill(v: b);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let table = permission_of(source);
+    let pair = pair_of(&table, "both", "a conditional call", "fill");
+    assert!(
+        matches!(
+            pair.verdict,
+            PermissionVerdict::Denied(Denial::Footprint { .. })
+        ),
+        "{pair:?}"
+    );
+    // The same ranges are separable when their common endpoint is already
+    // known before dispatch. Retained evidence must name that exact pair.
+    let separated = String::from_utf8(source.to_vec())
+        .unwrap()
+        .replace("&t^[k..n]", "&t^[m..n]");
+    let table = permission_of_with_discharged_query(
+        separated.as_bytes(),
+        &[("both", RangeSeparationOrdering::LeftBeforeRight)],
+    );
+    assert!(
+        pair_of(&table, "both", "a conditional call", "fill")
+            .verdict
+            .is_eligible()
+    );
+}
+
+#[test]
+fn conditional_call_shape_rejects_a_noncopy_move() {
+    use crate::semantic::{CheckedExpression, CheckedStatement};
+    let source = r#"nocopy struct Payload {
+  value: u64;
+}
+
+fn consume(x: Payload) -> result: unit pure {
+  return unit;
+}
+
+fn both(go: Bool, payload: Payload) -> result: unit pure {
+  if go {
+    consume(x: move payload);
+  } else {
+    consume(x: move payload);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    for copy in [false, true] {
+        let source = if copy {
+            source
+                .replace("nocopy struct", "struct")
+                .replace("move payload", "payload")
+        } else {
+            source.to_owned()
+        };
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("{outcome:?}");
+            };
+            let function = program
+                .data
+                .functions
+                .iter()
+                .find(|function| function.name == "both")
+                .unwrap();
+            let mut conditional = function.body.as_ref().unwrap()[0].clone();
+            let CheckedStatement::Match { arms, .. } = &mut conditional else {
+                panic!("if lowers to match");
+            };
+            // LIV-1 rejects a source join that moves on only one path. Remove
+            // one checked arm solely to isolate the speculation shape test.
+            arms[1].body.clear();
+            let CheckedStatement::Evaluate {
+                value: CheckedExpression::UserCall { arguments, .. },
+                ..
+            } = &arms[0].body[0]
+            else {
+                panic!("unit call");
+            };
+            assert!(
+                matches!(arguments[0], CheckedExpression::Binding { consume_root, .. } if consume_root != copy)
+            );
+            assert_eq!(
+                super::super::permission::conditional_call(&conditional).is_some(),
+                copy
+            );
+        });
+    }
+}
+
+#[test]
 fn a_condition_call_cannot_hide_an_arm_read_of_the_previous_result() {
     let source = br#"fn predicate(value: u64) -> result: Bool pure {
   return value == 0_u64;
