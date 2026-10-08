@@ -99,26 +99,21 @@ rarely insert at the same place.
   future extension against the finite candidate boundary conformance cases,
   large gaps, later strengthening, delivery, kills and retained derivations.
 
-- **Equality-sentinel loop needs an invariant/L0 composition decision.**
-  `ent4-pos-offset-loop` retains its required accept verdict: a header
-  `cursor <= 4_u64`, followed by `if cursor == 4_u64 { break; }` and
-  `set cursor = cursor + 1_u64;`, should preserve that bound. Source
-  inspection of the v0.102 integration finds that S1 stores `cursor - Z != 4`
-  and ENT-4 implements constant-offset tightening, but
-  `activate_loop_invariant_batch` installs the header only in the affine
-  premise sequence. L0 never receives the weak bound to tighten. After the
-  assignment kills the disequality, AUTO has the old header theorem and the
-  exact increment image but cannot prove the next target. ENT-6's finite
-  AUTO families and MSR-4's one-way affine-left/L0-right bridge do not
-  project affine premises back into L0. The offset amendment alone therefore
-  does not establish its motivating witness. Owner decision needed: specify
-  exact difference-bound projections of proved invariant conclusions with
-  ordinary support and kills, or select a query-local composition rule.
-  Do not add either as an implementation-only route or weaken the verdict.
-  Reopen on that decision; CI must exercise the existing positive witness,
-  its wrong-guard negative twin, replacement kills, equality invariants,
-  non-L0 affine invariants, and retained derivations. This diagnosis is from
-  source inspection; no local validation was run.
+- **Invariant/L0 publication awaits CI confirmation.** The owner selected
+  ordinary source-fact publication of proved invariant difference bounds
+  (option A), now specified by ENT-3.S16 and installed at successful header
+  and local invariant activation. General affine conclusions remain affine
+  premises. CI must confirm the equality-sentinel witness
+  `ent4-pos-offset-loop`, its existing wrong-guard twin, two-term bounds,
+  local publication and joins, replacement kills, equality's two directions, excluded
+  three-term and scaled conclusions, and retained derivations. No local
+  build or check was run; remove this entry after those CI results confirm
+  the implementation, or reopen the implementation against any failure.
+  Before branch readiness, consolidate the design log against its review
+  base after approval of every branch decision: the current branch also
+  adds the origin-transport node, whose approval is not recorded in the
+  existing log. This task's option A approves only the new invariant source;
+  `spec/log.md` records that approval, not approval of the earlier changes.
 
 - **A header relation about the current element of a whole-table counted
   loop is refused.** Over `for (i in 0_u64..n, invariant fits:

@@ -417,6 +417,7 @@ fn assert_source_event(summary: &FunctionEntailment, id: FlowEventId, used: &mut
             | FlowEventKind::S9
             | FlowEventKind::S11
             | FlowEventKind::S13
+            | FlowEventKind::S16
     ));
 }
 
@@ -3143,6 +3144,36 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 // ---------------------------------------------------------------------
+// [ENT-3.S16] invariant conclusions use ordinary retained L0 sources.
+
+#[test]
+fn invariant_l0_equality_retains_both_source_bounds() {
+    let source = include_bytes!("../../../../tests/conformance/cases/inv1-pos-l0-equality.wf");
+    let summary = accepted_entailment(source, "probe");
+    validate_derivations(&summary);
+    let bounds = summary
+        .derivations
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            DerivationNode::SourceBound {
+                relation: Relation::Equal { .. },
+                left,
+                right,
+                bound,
+                event,
+            } if retained_event(&summary, *event).kind == FlowEventKind::S16 => {
+                assert!(retained_event(&summary, *event).node_path.is_some());
+                Some((*left, *right, *bound, *event))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bounds.len(), 2, "the contradiction needs both equality bounds");
+    let (left, right, bound, event) = bounds[0];
+    assert_eq!(bounds[1], (right, left, -bound, event));
+}
+
 // [ENT-3] S1 branch facts and their exact negation
 // ---------------------------------------------------------------------
 

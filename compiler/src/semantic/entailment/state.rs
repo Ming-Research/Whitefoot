@@ -222,6 +222,8 @@ pub(crate) enum FlowEventKind {
     S11,
     /// [ENT-3.S13] one declared relation instantiated at its call.
     S13,
+    /// [ENT-3.S16] a proved header or local invariant's exact L0 conclusion.
+    S16,
     /// [MSR-3] one entry datum minted at body entry, per parameter measure a
     /// declared relation names.
     Entry,
