@@ -1440,10 +1440,13 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
   let n = code^.inner.len;
   let pc = 0_u64;
   let acc = 0_u32;
-  loop (invariant bound: pc < n) {
+  loop (
+    invariant bound: pc < n
+  ) {
     match code^.inner[pc] {
       Add(value: v, extra: e) => {
-        let amount = v^ +wrap cvt::<u8, u32>(e^);
+        let extra = cvt::<u8, u32>(e^);
+        let amount = v^ +wrap extra;
         set acc = acc +wrap amount;
         let next = pc + 1_u64;
         if next < n {
@@ -1453,7 +1456,8 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
         return 0_u32;
       }
       Sub(value: v, extra: e) => {
-        let amount = v^ +wrap cvt::<u8, u32>(e^);
+        let extra = cvt::<u8, u32>(e^);
+        let amount = v^ +wrap extra;
         set acc = acc -wrap amount;
         let next = pc + 1_u64;
         if next < n {
@@ -1463,7 +1467,8 @@ fn run(code: &Box<Slots<Cell>>) -> result: u32 reads(code) contract {
         return 0_u32;
       }
       Halt(value: v, extra: e) => {
-        let amount = v^ +wrap cvt::<u8, u32>(e^);
+        let extra = cvt::<u8, u32>(e^);
+        let amount = v^ +wrap extra;
         return acc +wrap amount;
       }
     }
@@ -1481,9 +1486,15 @@ fn copy_cell(cell: &Cell) -> result: Cell reads(cell) {
 
 fn tag(cell: &Cell) -> result: u32 reads(cell) {
   match cell^ {
-    Add(value: v, extra: e) => { return 1_u32; }
-    Sub(value: v, extra: e) => { return 2_u32; }
-    Halt(value: v, extra: e) => { return 3_u32; }
+    Add(value: v, extra: e) => {
+      return 1_u32;
+    }
+    Sub(value: v, extra: e) => {
+      return 2_u32;
+    }
+    Halt(value: v, extra: e) => {
+      return 3_u32;
+    }
   }
 }
 
@@ -1507,8 +1518,10 @@ fn main() -> status: ExitStatus pure {
     set code.inner[1_u64] = replacement;
     let kind = tag(cell: &code.inner[1_u64]);
     let result = run(code: &code);
-    if result == 18_u32 && kind == 2_u32 {
-      return exit_status(code: 0_u8);
+    if result == 18_u32 {
+      if kind == 2_u32 {
+        return exit_status(code: 0_u8);
+      }
     }
     return exit_status(code: 1_u8);
   }
@@ -1683,7 +1696,9 @@ fn walk(op: &Outer, count: u64) -> result: u64 reads(op) {
         }
         return 1_u64;
       }
-      Right(inner: v) => { return 2_u64; }
+      Right(inner: v) => {
+        return 2_u64;
+      }
     }
   }
   return 0_u64;
