@@ -886,9 +886,10 @@ each of the following?
   - On the M5 they never cost anything.
   - A language mechanism that removes them would not be justified by
     performance on this interpreter.
-- **Per-handler attribution concentrates the remaining measured gap in
-  `I32AddD` and calls, whose extra instructions reflect the interpreter's
-  frame and accumulator design.**
+- **On the M5, the per-execution costs of `I32AddD` and of calls differ
+  most from wasmi's, and their extra instructions reflect the interpreter's
+  frame and accumulator design.** These are per-execution costs, not a
+  weighted share of the total gap.
   - A value read from a frame slot that the operation before it has just
     written: `I32AddD` takes 4.7 cycles where `I32AddAD`, reading the
     accumulator, takes 1.85.
@@ -1692,4 +1693,6 @@ CI must run these backend cases, existing integer/conversion and payload-enum
 coverage, the full project gate and platform I/O/runtime checks. It must also
 confirm Rust formatting/lints and the retained split families on supported
 host conventions. This repair changes no specification rule, conformance
-verdict, runtime map initialization or dispatch instruction sequence.
+verdict or runtime map initialization, and leaves the implementations of
+the existing dispatch forms unchanged; it changes which form the affected
+enums receive, from handler-word addressing to tag-and-table dispatch.
