@@ -118,6 +118,42 @@ rarely insert at the same place.
   main and Halo's check is timed with it, or sooner if Halo's check passes
   10 s.
 
+- **RANGE-2's unplaced write forgets every location, the range walk only
+  every exposed one.** "An `atomic_stmt` and every write the walk cannot
+  place forget every location" [RANGE-2]. Read with a binding as a
+  location, that also forgets the value of a scalar binding no reference
+  has reached, which the walk keeps: such a binding can change only through
+  a `set` the walk places. The walk is therefore more precise than the text
+  for a value read after an `atomic` or an unplaced write, so it can accept
+  a range obligation the text leaves unproved. Change: state the rule as
+  forgetting every location the write can reach, with a binding reachable
+  once a reference to it is formed (`design/compiler/range-judgment.md`,
+  the exposed-binding decision). Validate with a range requirement over a
+  binding read after an `atomic` with and without a reference to it.
+  Reopen with the next RANGE-2 amendment.
+
+- **Checking one function grows faster than its size.** The stage-3 wasm
+  interpreter's interpreter function, a `match` whose arms each hold their
+  handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s
+  with 20 and 144.6 s with 40 (M1 Pro, `whitefootc --check`), and the full
+  178-arm form had not finished after several minutes at 5 GB. A
+  15-second profile of the 20-arm check spends most of its samples in the
+  entailment closure (`close_with_row_pruning` and `DerivationLedger::intern`
+  in `compiler/src/semantic/entailment/state.rs`). Moving each handler's
+  body into its own function, the arm keeping only the stack-depth test and
+  the tail call, checks 20 arms in 3.7 s and 40 in 7.2 s, but the full
+  interpreter (8,500 lines, one 178-arm function) still takes about 100 s.
+  These measurements predate the narrower closures of
+  compiler/incremental-closure and were not repeated with them.
+  Impact: a writer of a large dispatch function, the shape an interpreter
+  has, must split it to check it at all, and each change costs minutes.
+  Change: find what the closure's cost scales with (the function's term
+  count against the facts live on the path being checked) and bound it by
+  the latter. Validate with the 10/20/40-arm series growing linearly and the
+  interpreter's verdicts unchanged. Reopen when the next stage-3 step needs
+  repeated checks of the interpreter, or another program meets the same
+  growth.
+
 - **A disequality with a constant does not tighten a bound.** Under the
   header `invariant bounded: cursor <= 4_u64`, the body
   `if cursor == 4_u64 { break; }` followed by `set cursor = cursor + 1_u64;`
@@ -2107,15 +2143,57 @@ rarely insert at the same place.
 
 - **The call-offer grain is provisional.** `--par` now offers a
   statement-group call only when its callee reaches a cyclic call component
-  or its static work reaches the 150,000 work unit
+  that offers its own calls or its static work reaches the 150,000 work unit
   ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
-  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
-  non-recursive helper whose work is large only through its runtime extents
-  loses its offer, and a cheap call into a recursive component keeps one;
-  and a callee that reaches recursion only by starting a waiting context is
-  not seen as recursive, since neither this pass nor the recursion frontier
-  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md#proposed-rule),
+  `design/compiler/parallel-lowering.md`). Known limits no measured program
+  exercises: a helper whose work is large only through its runtime extents,
+  a loop over a large argument or a long recursion that offers nothing,
+  loses its offer; a cheap call into a recursion that offers its own calls
+  keeps one; a callee that reaches recursion only by starting a waiting
+  context is not seen as recursive, since neither this pass nor the
+  recursion frontier follows a context start as a call edge; and a
+  recursion counts as offering its own calls when its group survives the
+  grain but the emitter later drops it for an oversized lane frame, so a
+  small call reaching it keeps its offer. Validate any of
+  them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
+
+- **Spinning workers may slow the main thread on a two-thread-per-core
+  host.** With the call grain's recursion fix, Snowghost-wf's edit pair on a
+  hosted runner of 2 cores with 2 threads each takes 504 microseconds
+  sequentially, 506 at two workers and 728 at four, with about six steals
+  per edit and 39 percent of samples in `wf__par_worker_main`
+  ([recursive offers, D3](../research/investigations/recursive-offer-grain/DESIGN.md#d3-result)).
+  The idle window is chosen when the lane count fits the usable CPUs, and
+  four lanes fit four CPUs that are two cores, so one spinning worker can
+  share the main thread's core. Unseparated: the cost may instead be the
+  wake-up of the six stolen tasks per edit. Impact: small `--par` work
+  between sequential phases runs about 1.4 times slower at four workers on
+  such hosts, GitHub's 4-vCPU runners among them. Change, if the 14900K
+  run shows no such cost: count physical cores, not CPUs, when choosing
+  the idle window, or spin only up to one lane per core. Validate with the
+  edit pair at W1, W2 and W4 on the hosted runner and the 14900K, and the
+  formal kernels' paired comparison. Reopen with the 14900K pair result.
+
+- **A recursion without a sequential clone offers without a budget.**
+  `--par-ledger` of Snowghost-wf's layout at `3ec4bb491` excludes
+  `publish_reference_owner_suffix`, an AVL suffix recursion whose left and
+  right calls are each in a permitted group, from the budget-carrying family
+  because it "has no sequential clone" (`compiler/src/backend/emitter/frontier.rs`),
+  so its offers nest at every depth, as a `--par-recursive-frontier off`
+  build's do. The clone set holds the entry-reachable functions that reach a
+  hand-out, so a recursion that reaches its own hand-outs is expected in it;
+  why this one is not is unexplained. Impact: an edit that publishes a
+  reference suffix may hand out a task per tree node, the cost
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)
+  measured as about nine times the sequential edit. Change: find why the
+  component has no clone and give it one, or bound the offers of a
+  clone-less component another way. Validate with a minimal program whose
+  forking recursion is reached only through the path this one is, checking
+  that it gets a budget family, and with Snowghost-wf's publishing edits at
+  one and four workers. Reopen when the publishing edits are timed under
+  `--par`, or with the next recursion-budget change.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family
@@ -2761,6 +2839,19 @@ rarely insert at the same place.
   convention cannot hold, or when a target without `preserve_none` matters.
 
 ## Code structure
+
+- **Comparison origins are removed twice, and one origin map is never
+  read.** Since comparison origins end at every kill event that reaches
+  their binding (`apply_kills_one` in
+  `compiler/src/semantic/entailment/flow/events.rs`, and the loop-head kill
+  in `loop_summary.rs`), two older removals duplicate it: the whole-binding
+  removal in `collect_target_kill` and the loop's `set_bindings` retain.
+  `FactState::ambiguous_goal_origins` is inserted, removed, joined and
+  cloned but read by no decision. Change: delete the two removals, then
+  `set_bindings` if nothing else needs it, and the unread map. Validate with
+  the direct-`set`, loop and Bool-origin tests in
+  `compiler/src/semantic/tests/entailment.rs` and the `ent3-*-bool-origin-*`
+  conformance cases. Reopen with the next change to origin bookkeeping.
 
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's

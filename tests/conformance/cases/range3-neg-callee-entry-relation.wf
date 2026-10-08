@@ -1,0 +1,20 @@
+fn need_sevens(xs: &Slots<u64, 8>) -> result: unit pure contract {
+  requires forall seven(k in 0_u64..xs^.len): xs^[k] == 7_u64;
+} {
+  return unit;
+}
+
+fn extend_by_five(xs: &Slots<u64, 8>) -> result: unit writes(xs) contract {
+  requires forall small(k in 0_u64..xs^.len): xs^[k] < 100_u64;
+} {
+  doc "place_back's relation over the entry length is no range fact, so the caller does not prove that every element is seven.";
+  if xs^.len < xs^.cap {
+    place_back(window: xs, value: 5_u64);
+    need_sevens(xs: xs);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

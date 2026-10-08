@@ -221,6 +221,12 @@ impl Reasoning<'_, '_, '_> {
                 .iter()
                 .any(|event| self.event_kills_goal(separations, goal, event))
         });
+        state.origins.retain(|binding, _| {
+            !kills.events.iter().any(|event| {
+                self.input
+                    .event_kills_goal_origin_binding(separations, *binding, event)
+            })
+        });
         state.goal_origins.retain(|binding, _| {
             !kills.events.iter().any(|event| {
                 self.input
