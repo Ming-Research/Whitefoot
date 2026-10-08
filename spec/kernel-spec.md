@@ -2521,7 +2521,6 @@ public fn sleep_until(deadline: Instant) -> result: unit pure waits doc "Complet
 
 public fn unix_nanoseconds(clock: &WallClock) -> result: i64 reads(clock) doc "Returns the calendar time as nanoseconds since 1970-01-01T00:00:00Z.";
 
-// Prototype: reference-counted cancellation handles, moved between contexts.
 public opaque nodrop struct CancelSource {
 }
 
