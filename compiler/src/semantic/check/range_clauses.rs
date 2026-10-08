@@ -833,7 +833,7 @@ impl Checker<'_, '_> {
         {
             return self.invalid_range(
                 SemanticRule::Range1,
-                place,
+                pbase,
                 "a range term reads an entry image",
                 "read the current value; a range clause states one state",
             );
