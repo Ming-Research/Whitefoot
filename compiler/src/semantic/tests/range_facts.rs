@@ -242,6 +242,48 @@ fn main() -> status: std::process::ExitStatus pure {{
 }
 
 #[test]
+fn a_callee_relation_over_an_entry_image_is_not_taken_as_a_range_fact() {
+    // `place_back`'s relation `window^.len == entry(window)^.len + 1` names
+    // an entry image, which no range term reads [RANGE-1]. Read as a range
+    // fact over the current length it is `len == len + 1`, a contradiction
+    // after which the caller proved every owed range fact, including this
+    // false one.
+    let source = b"fn need_sevens(xs: &Slots<u64, 8>) -> result: unit pure contract {
+  requires forall seven(k in 0_u64..xs^.len): xs^[k] == 7_u64;
+} {
+  return unit;
+}
+
+fn extend_by_five(xs: &Slots<u64, 8>) -> result: unit writes(xs) contract {
+  requires forall small(k in 0_u64..xs^.len): xs^[k] < 100_u64;
+} {
+  if xs^.len < xs^.cap {
+    place_back(window: xs, value: 5_u64);
+    need_sevens(xs: xs);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+        let SemanticIssueKind::UndischargedRangeFact { fact, .. } = issue.kind() else {
+            panic!(
+                "expected an undischarged range fact, got {:?}",
+                issue.kind()
+            );
+        };
+        assert_eq!(fact, "seven");
+    });
+}
+
+#[test]
 fn a_certificate_places_an_affine_write_beside_a_scattered_one() {
     // The certificate holds: writes at k are apart from each other, and the
     // writes at order^[k] lie at or above order^.len, above every k, and
@@ -867,6 +909,149 @@ fn an_unproved_postcondition_names_the_exit_that_owes_it() {
             assert!(missing.contains("out^[k] == 0_u64"), "{missing}");
         });
     }
+}
+
+/// A callee owing `small` over its first `n` elements, and a caller with
+/// `parameters` and `body` that passes it a bound written through a
+/// reference.
+fn bound_through_reference(parameters: &str, effects: &str, body: &str) -> Vec<u8> {
+    format!(
+        "struct Holder {{
+  value: u64;
+}}
+
+fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {{
+  requires forall small(k in 0_u64..n): xs^[k] < 4_u64;
+}} {{
+  return unit;
+}}
+
+fn caller(xs: &Array<u64, 4>{parameters}) -> result: unit {effects} {{
+{body}  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  return std::process::exit_status(code: 0_u8);
+}}
+"
+    )
+    .into_bytes()
+}
+
+/// Asserts that `source` is refused because `small` is not proved.
+fn small_is_undischarged(source: &[u8]) {
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+        let SemanticIssueKind::UndischargedRangeFact { fact, .. } = issue.kind() else {
+            panic!(
+                "expected an undischarged range fact, got {:?}",
+                issue.kind()
+            );
+        };
+        assert_eq!(fact, "small");
+    });
+}
+
+#[test]
+fn a_bound_written_by_a_call_through_its_reference_is_forgotten() {
+    // The callee writes `n` through the reference argument; the walk
+    // cannot place that write in `n`, so it must forget `n` = 0, under
+    // which `small` would hold vacuously.
+    small_is_undischarged(
+        b"fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {
+  requires forall small(k in 0_u64..n): xs^[k] < 4_u64;
+} {
+  return unit;
+}
+
+fn bump(x: &u64) -> result: unit writes(x) {
+  set x^ = 4_u64;
+  return unit;
+}
+
+fn caller(xs: &Array<u64, 4>) -> result: unit pure {
+  let n = 0_u64;
+  bump(x: &n);
+  need(xs: xs, n: n);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+",
+    );
+}
+
+#[test]
+fn a_bound_written_through_a_reference_the_loop_body_takes() {
+    // The first iteration sees `n` = 0, a later one what the previous one
+    // wrote through `w`.
+    small_is_undischarged(&bound_through_reference(
+        "",
+        "pure",
+        "  let n = 0_u64;
+  for (i in 0_u64..2_u64) {
+    need(xs: xs, n: n);
+    let w = &n;
+    set w^ = 4_u64;
+  }
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_reference_rebound_to_it_in_the_loop() {
+    // `w` reaches `n` only from the second iteration on.
+    small_is_undischarged(&bound_through_reference(
+        "",
+        "pure",
+        "  let n = 0_u64;
+  let other = 0_u64;
+  let w = &other;
+  for (i in 0_u64..2_u64) {
+    need(xs: xs, n: n);
+    set w^ = 4_u64;
+    set w = &n;
+  }
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_joined_reference() {
+    small_is_undischarged(&bound_through_reference(
+        ", flag: Bool",
+        "pure",
+        "  let other = 0_u64;
+  let n = 0_u64;
+  let p = if flag {
+    give &other;
+  } else {
+    give &n;
+  }
+  set p^ = 4_u64;
+  need(xs: xs, n: n);
+",
+    ));
+}
+
+#[test]
+fn a_bound_written_through_a_reference_inside_an_atomic_statement() {
+    small_is_undischarged(&bound_through_reference(
+        ", state: Shared<Holder>",
+        "pure waits",
+        "  let n = 0_u64;
+  let w = &n;
+  atomic held = &state {
+    set w^ = held^.value;
+  }
+  need(xs: xs, n: n);
+",
+    ));
 }
 
 #[test]

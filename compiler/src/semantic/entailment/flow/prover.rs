@@ -60,154 +60,6 @@ impl Vocabulary {
             })
     }
 
-    pub(super) fn prove_integer_domain_finite(
-        &mut self,
-        context: ProofContext<'_>,
-        goal: &IntegerDomainGoal<'_>,
-    ) -> ProofResult {
-        let closed = close(
-            context.facts,
-            &self.terms,
-            &self.goals,
-            &mut self.derivations,
-        );
-        let contradictory = closed.contradictory();
-        let signed_division = matches!(
-            goal.operation,
-            CheckedIntegerOperation::DivideExact | CheckedIntegerOperation::RemainderExact
-        ) && fragment_type(goal.operand_type)
-            .is_some_and(IntegerType::signed);
-        let component_proof =
-            |index: usize, derivations: &mut DerivationLedger| -> Option<DerivationId> {
-                request_relation(goal.components.get(index)?)
-                    .and_then(|relation| closed.relation_proof(&relation, derivations))
-            };
-        if contradictory {
-            let parents = closed.contradiction_proof().map(|proof| vec![proof]);
-            let Some(parents) = parents else {
-                unreachable!("a contradictory closure retains its proof");
-            };
-            let derivation = self.derivations.intern(DerivationNode::IntegerDomain {
-                goal: goal.canonical,
-                parents,
-            });
-            return ProofResult {
-                disposition: ProofDisposition::Proved,
-                route: Some(ProofRoute::Contradiction),
-                derivation: Some(derivation),
-                product_interval: None,
-            };
-        }
-
-        if let Some(canonical) = goal.canonical {
-            if closed.holds_opaque(canonical, GoalSign::Positive) {
-                let parent = closed
-                    .opaque_proof(canonical, GoalSign::Positive)
-                    .expect("an opaque goal fact retains its proof");
-                let derivation = self.derivations.intern(DerivationNode::IntegerDomain {
-                    goal: Some(canonical),
-                    parents: vec![parent],
-                });
-                return ProofResult {
-                    disposition: ProofDisposition::Proved,
-                    route: Some(ProofRoute::FiniteGoal),
-                    derivation: Some(derivation),
-                    product_interval: None,
-                };
-            }
-            if closed.holds_opaque(canonical, GoalSign::Negative) {
-                return ProofResult {
-                    disposition: ProofDisposition::Refuted,
-                    route: Some(ProofRoute::FiniteGoal),
-                    derivation: None,
-                    product_interval: None,
-                };
-            }
-        }
-
-        let normalization_parents = if signed_division && goal.components.len() == 3 {
-            component_proof(0, &mut self.derivations).and_then(|nonzero| {
-                component_proof(1, &mut self.derivations)
-                    .or_else(|| component_proof(2, &mut self.derivations))
-                    .map(|witness| vec![nonzero, witness])
-            })
-        } else if !goal.components.is_empty() {
-            goal.components
-                .iter()
-                .map(|request| {
-                    request_relation(request).and_then(|relation| {
-                        closed.relation_proof(&relation, &mut self.derivations)
-                    })
-                })
-                .collect::<Option<Vec<_>>>()
-        } else {
-            None
-        };
-        if let Some(parents) = normalization_parents {
-            let parents = if let Some(canonical) = goal.canonical {
-                if let Some(normalization) = closed.normalization_proof(
-                    canonical,
-                    GoalSign::Positive,
-                    &self.goals,
-                    &mut self.derivations,
-                ) {
-                    vec![normalization]
-                } else {
-                    // A complete admitted Goal may expand an ordinary-let
-                    // operand into an exact operation that is not an L0 term.
-                    // Its source occurrence can still have fixed L0
-                    // components over the already evaluated alias. Those
-                    // occurrence-local parents prove this IntegerDomain
-                    // judgment directly; they must not become a normalization
-                    // on the globally interned complete Goal identity.
-                    parents
-                }
-            } else {
-                parents
-            };
-            let derivation = self.derivations.intern(DerivationNode::IntegerDomain {
-                goal: goal.canonical,
-                parents,
-            });
-            return ProofResult {
-                disposition: ProofDisposition::Proved,
-                route: Some(ProofRoute::L0),
-                derivation: Some(derivation),
-                product_interval: None,
-            };
-        }
-
-        let component_false = |index: usize| {
-            goal.components
-                .get(index)
-                .and_then(request_relation)
-                .is_some_and(|relation| closed.derives(&relation.negated()))
-        };
-        let normalization_refuted = if signed_division && goal.components.len() == 3 {
-            component_false(0) || (component_false(1) && component_false(2))
-        } else {
-            goal.components
-                .iter()
-                .filter_map(request_relation)
-                .any(|relation| closed.derives(&relation.negated()))
-        };
-        if normalization_refuted {
-            return ProofResult {
-                disposition: ProofDisposition::Refuted,
-                route: Some(ProofRoute::L0),
-                derivation: None,
-                product_interval: None,
-            };
-        }
-
-        ProofResult {
-            disposition: ProofDisposition::Unknown,
-            route: None,
-            derivation: None,
-            product_interval: None,
-        }
-    }
-
     /// Builds the fixed L0 vocabulary before closure. Each live integer
     /// binding contributes its ordinary term and its exact current affine
     /// value; Z is the fixed zero candidate. Later matching never invents a
@@ -337,6 +189,7 @@ impl Vocabulary {
             if matches!(
                 self.terms.kind(id),
                 TermKind::Measure(..)
+                    | TermKind::TargetMeasure { .. }
                     | TermKind::CallDatum {
                         measure: Some(_),
                         ..
@@ -370,7 +223,15 @@ impl Vocabulary {
         state: &AffineFlowState,
     ) -> WordHashMap<AffineTermId, Vec<TermId>> {
         let mut grouped: WordHashMap<AffineTermId, Vec<TermId>> = WordHashMap::default();
-        for term in self.measure_terms() {
+        for term in self
+            .measure_terms()
+            .into_iter()
+            .filter(|term| {
+                !matches!(self.terms.kind(*term), TermKind::TargetMeasure { .. })
+                    || state.measure_atoms.borrow().contains_key(term)
+            })
+            .collect::<Vec<_>>()
+        {
             if let Some(atom) = self.measure_atom(term, state).unit_term() {
                 grouped.entry(atom).or_default().push(term);
             }
@@ -1397,7 +1258,18 @@ impl Reasoning<'_, '_, '_> {
         affine: &AffineFlowState,
     ) -> Vec<AffineL0Candidate> {
         let mut candidates = Vec::new();
-        for term in self.vocabulary.measure_terms() {
+        for term in self
+            .vocabulary
+            .measure_terms()
+            .into_iter()
+            .filter(|term| {
+                !matches!(
+                    self.vocabulary.terms.kind(*term),
+                    TermKind::TargetMeasure { .. }
+                ) || affine.measure_atoms.borrow().contains_key(term)
+            })
+            .collect::<Vec<_>>()
+        {
             let mut anchor = term;
             let mut fixed = None;
             for _ in 0..4 {
@@ -1964,12 +1836,215 @@ impl Reasoning<'_, '_, '_> {
         self.prove_range_separation(query.left, query.right, &state.facts, &affine)
     }
 
+    /// Submit a finite normalization component to the ordinary numeric
+    /// disposition, preserving its actual right term (including Z). `None`
+    /// means an unavailable left term, never the mathematical constant zero.
+    /// These internal relations have no separate opaque Goal identity; the
+    /// aggregate retains the operation's exact canonical Goal.
+    pub(super) fn prove_finite_component(
+        &mut self,
+        context: ProofContext<'_>,
+        request: BoundsRequest,
+    ) -> ProofResult {
+        let left = (!request.distinct)
+            .then(|| {
+                request
+                    .left
+                    .and_then(|term| self.vocabulary.affine_term_value(term, context.affine))
+            })
+            .flatten();
+        let target = left.as_ref().and_then(|left| {
+            let right = self
+                .vocabulary
+                .affine_term_value(request.right, context.affine)?;
+            AffineInequality::from_bounded_forms(
+                left,
+                &right,
+                request.bound,
+                &mut AffineCheckState::new(),
+            )
+            .ok()
+        });
+        self.prove_bounded_relation(
+            context,
+            BoundedRelationGoal {
+                canonical: None,
+                request: Some(request),
+                direct_affine: target.as_ref(),
+                fixed_affine_bridge: None,
+                affine_left: left.as_ref(),
+            },
+        )
+    }
+
+    pub(super) fn prove_integer_domain_finite(
+        &mut self,
+        context: ProofContext<'_>,
+        goal: &IntegerDomainGoal<'_>,
+    ) -> ProofResult {
+        let closed = close(
+            context.facts,
+            &self.vocabulary.terms,
+            &self.vocabulary.goals,
+            &mut self.vocabulary.derivations,
+        );
+        let contradictory = closed.contradictory();
+        let signed_division = matches!(
+            goal.operation,
+            CheckedIntegerOperation::DivideExact | CheckedIntegerOperation::RemainderExact
+        ) && fragment_type(goal.operand_type)
+            .is_some_and(IntegerType::signed);
+        if contradictory {
+            let parents = closed.contradiction_proof().map(|proof| vec![proof]);
+            let Some(parents) = parents else {
+                unreachable!("a contradictory closure retains its proof");
+            };
+            let derivation = self
+                .vocabulary
+                .derivations
+                .intern(DerivationNode::IntegerDomain {
+                    goal: goal.canonical,
+                    parents,
+                });
+            return ProofResult {
+                disposition: ProofDisposition::Proved,
+                route: Some(ProofRoute::Contradiction),
+                derivation: Some(derivation),
+                product_interval: None,
+            };
+        }
+
+        if let Some(canonical) = goal.canonical {
+            if closed.holds_opaque(canonical, GoalSign::Positive) {
+                let parent = closed
+                    .opaque_proof(canonical, GoalSign::Positive)
+                    .expect("an opaque goal fact retains its proof");
+                let derivation =
+                    self.vocabulary
+                        .derivations
+                        .intern(DerivationNode::IntegerDomain {
+                            goal: Some(canonical),
+                            parents: vec![parent],
+                        });
+                return ProofResult {
+                    disposition: ProofDisposition::Proved,
+                    route: Some(ProofRoute::FiniteGoal),
+                    derivation: Some(derivation),
+                    product_interval: None,
+                };
+            }
+            if closed.holds_opaque(canonical, GoalSign::Negative) {
+                return ProofResult {
+                    disposition: ProofDisposition::Refuted,
+                    route: Some(ProofRoute::FiniteGoal),
+                    derivation: None,
+                    product_interval: None,
+                };
+            }
+        }
+
+        // Components are internal propositions over the evaluated operands,
+        // not recursive queries of this operation's canonical `.defined` goal.
+        // Keep the same frozen context for all of them: a successful component
+        // contributes a parent only, never a premise for a later component.
+        let mut route = ProofRoute::L0;
+        let mut component_proof = |index: usize| -> Option<DerivationId> {
+            let request = *goal.components.get(index)?;
+            let result = self.prove_finite_component(context, request);
+            if result.route == Some(ProofRoute::Affine) {
+                route = ProofRoute::Affine;
+            }
+            (result.disposition == ProofDisposition::Proved)
+                .then_some(result.derivation)
+                .flatten()
+        };
+        let normalization_parents = if signed_division && goal.components.len() == 3 {
+            component_proof(0).and_then(|nonzero| {
+                component_proof(1)
+                    .or_else(|| component_proof(2))
+                    .map(|witness| vec![nonzero, witness])
+            })
+        } else if !goal.components.is_empty() {
+            (0..goal.components.len())
+                .map(&mut component_proof)
+                .collect::<Option<Vec<_>>>()
+        } else {
+            None
+        };
+        if let Some(parents) = normalization_parents {
+            let parents = if let Some(canonical) = goal.canonical {
+                if let Some(normalization) = closed.normalization_proof(
+                    canonical,
+                    GoalSign::Positive,
+                    &self.vocabulary.goals,
+                    &mut self.vocabulary.derivations,
+                ) {
+                    vec![normalization]
+                } else {
+                    // A complete admitted Goal may expand an ordinary-let
+                    // operand into an exact operation that is not an L0 term.
+                    // Its source occurrence can still have fixed L0
+                    // components over the already evaluated alias. Those
+                    // occurrence-local parents prove this IntegerDomain
+                    // judgment directly; they must not become a normalization
+                    // on the globally interned complete Goal identity.
+                    parents
+                }
+            } else {
+                parents
+            };
+            let derivation = self
+                .vocabulary
+                .derivations
+                .intern(DerivationNode::IntegerDomain {
+                    goal: goal.canonical,
+                    parents,
+                });
+            return ProofResult {
+                disposition: ProofDisposition::Proved,
+                route: Some(route),
+                derivation: Some(derivation),
+                product_interval: None,
+            };
+        }
+
+        let component_false = |index: usize| {
+            goal.components
+                .get(index)
+                .and_then(request_relation)
+                .is_some_and(|relation| closed.derives(&relation.negated()))
+        };
+        let normalization_refuted = if signed_division && goal.components.len() == 3 {
+            component_false(0) || (component_false(1) && component_false(2))
+        } else {
+            goal.components
+                .iter()
+                .filter_map(request_relation)
+                .any(|relation| closed.derives(&relation.negated()))
+        };
+        if normalization_refuted {
+            return ProofResult {
+                disposition: ProofDisposition::Refuted,
+                route: Some(ProofRoute::L0),
+                derivation: None,
+                product_interval: None,
+            };
+        }
+
+        ProofResult {
+            disposition: ProofDisposition::Unknown,
+            route: None,
+            derivation: None,
+            product_interval: None,
+        }
+    }
+
     pub(super) fn prove_integer_domain(
         &mut self,
         context: ProofContext<'_>,
         goal: IntegerDomainGoal<'_>,
     ) -> ProofResult {
-        let finite = self.vocabulary.prove_integer_domain_finite(context, &goal);
+        let finite = self.prove_integer_domain_finite(context, &goal);
         if finite.disposition != ProofDisposition::Unknown {
             return finite;
         }
@@ -2702,7 +2777,18 @@ impl Reasoning<'_, '_, '_> {
         // [MSR-4] step 6 ranges over every live measure term as well as every
         // own integer binding with an image, so a measure participates in the
         // affine domain through its own atom.
-        for term in self.vocabulary.measure_terms() {
+        for term in self
+            .vocabulary
+            .measure_terms()
+            .into_iter()
+            .filter(|term| {
+                !matches!(
+                    self.vocabulary.terms.kind(*term),
+                    TermKind::TargetMeasure { .. }
+                ) || values.measure_atoms.borrow().contains_key(term)
+            })
+            .collect::<Vec<_>>()
+        {
             let value = self.vocabulary.measure_atom(term, values);
             // A measure whose image is a constant is Z displaced by that
             // constant, and Z is already the fixed zero candidate, so its
@@ -3181,3 +3267,6 @@ pub(super) fn request_relation(request: &BoundsRequest) -> Option<Relation> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests;

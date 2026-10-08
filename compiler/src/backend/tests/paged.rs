@@ -49,8 +49,8 @@ fn paged_growth_preserves_page_owners_and_releases_every_allocation() {
     assert!(growth.contains(".copied = mul nuw i64"), "{growth}");
     assert!(!growth.contains("load i64, ptr %element"), "{growth}");
     let mut observed = llvm
-        .replace("@malloc(", "@wf_paged_allocate(")
-        .replace("@free(", "@wf_paged_release(")
+        .replace("@wf__heap_take(", "@wf_paged_allocate(")
+        .replace("@wf__heap_give(", "@wf_paged_release(")
         .replace(
             "call void @llvm.memmove.p0.p0.i64(",
             "call void @wf_paged_move(",
@@ -83,9 +83,12 @@ void wf_paged_move(void *destination, const void *source, uint64_t bytes, _Bool 
   ++copies;
   memmove(destination, source, (size_t)bytes);
 }
-void wf_paged_release(void *p) {
+void wf_paged_release(void *p, uint64_t bytes) {
   static const size_t order[] = {0, 2, 4, 1, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 6};
   require(releases < 21 && p == owners[order[releases]]);
+  static const uint64_t first[] = {32, 4096, 40, 4096, 56, 4096, 280};
+  size_t owner = order[releases];
+  require(bytes == (owner < 7 ? first[owner] : 4096));
   ++releases;
   /* Quarantine allocations so reuse cannot conceal an identity change. */
 }
@@ -262,8 +265,8 @@ fn paged_release_drops_only_initialized_owners_in_logical_order() {
 }
 "#;
     let observed = compile(source)
-        .replace("@malloc(", "@wf_paged_allocate(")
-        .replace("@free(", "@wf_paged_release(")
+        .replace("@wf__heap_take(", "@wf_paged_allocate(")
+        .replace("@wf__heap_give(", "@wf_paged_release(")
         .replace("@main(", "@wf_fixture_main(");
     let host = r#"#include <stdint.h>
 #include <stdlib.h>
@@ -279,7 +282,7 @@ void *wf_paged_allocate(uint64_t bytes) {
   owners[allocations++] = p;
   return p;
 }
-void wf_paged_release(void *p) {
+void wf_paged_release(void *p, uint64_t bytes) {
   size_t expected;
   if (releases == 0) expected = 515; /* Taken tail's local owner. */
   else if (releases < 513) expected = releases + 2; /* Slots 0..511. */
@@ -289,6 +292,7 @@ void wf_paged_release(void *p) {
     expected = backing[releases - 513];
   }
   require(p == owners[expected]);
+  require(bytes == (expected == 0 ? 40 : expected < 3 ? 4096 : 8));
   if (expected >= 3) require(*(uint64_t *)p == expected - 3);
   ++releases;
 }
@@ -350,8 +354,8 @@ fn paged_page_and_cell_size_failures_precede_their_allocator() {
             llvm
         });
         let observed = module
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let observer = format!(
             "{}\n__attribute__((constructor)) static void unbuffer(void) {{ setvbuf(stdout, NULL, _IONBF, 0); }}\n",
             super::owned_places::allocation_observer(4, 0)

@@ -38,6 +38,7 @@ fn obligation_records(
         loops: Vec::new(),
         gives: 0,
         atomic: None,
+        branches: Vec::new(),
     };
     // [ENT-2, FN-8] the places a requirement forms owe their subscripts'
     // obligations at body entry.
@@ -110,6 +111,7 @@ struct Records<'rows> {
     /// [TYPE-11] the atomic block around it: its invariants, and the loop
     /// and value-initializer depths where it began.
     atomic: Option<(Vec<CheckedCallRequirement>, usize, usize)>,
+    branches: Vec<String>,
 }
 
 impl Records<'_> {
@@ -228,7 +230,9 @@ impl Records<'_> {
             } => {
                 self.expression(scrutinee);
                 for arm in arms {
+                    self.branches.push(arm.label.clone());
                     self.statements(&arm.body);
+                    self.branches.pop();
                 }
             }
             CheckedStatement::ValueMatchLet {
@@ -237,23 +241,27 @@ impl Records<'_> {
                 self.expression(scrutinee);
                 self.gives += 1;
                 for arm in arms {
+                    self.branches.push(arm.label.clone());
                     self.statements(&arm.body);
+                    self.branches.pop();
                 }
                 self.gives -= 1;
             }
             CheckedStatement::Loop {
                 id,
+                node_path,
                 invariants,
                 body,
                 ..
             } => {
-                self.loop_invariants(invariants);
+                self.loop_invariants(invariants, *id, node_path, body);
                 self.loops.push(*id);
                 self.statements(body);
                 self.loops.pop();
             }
             CheckedStatement::CountedRange {
                 id,
+                node_path,
                 lower,
                 upper,
                 invariants,
@@ -262,13 +270,16 @@ impl Records<'_> {
             } => {
                 self.expression(lower);
                 self.expression(upper);
-                self.loop_invariants(invariants);
+                self.loop_invariants(invariants, *id, node_path, body);
                 self.loops.push(*id);
                 self.statements(body);
                 self.loops.pop();
             }
             // [TYPE-11] a break of a loop around an atomic block leaves it.
             CheckedStatement::Break {
+                node_path, target, ..
+            }
+            | CheckedStatement::Continue {
                 node_path, target, ..
             } => {
                 if let Some((_, loops, _)) = &self.atomic
@@ -314,13 +325,22 @@ impl Records<'_> {
         }
     }
 
-    fn loop_invariants(&mut self, invariants: &[CheckedLoopInvariant]) {
+    fn loop_invariants(
+        &mut self,
+        invariants: &[CheckedLoopInvariant],
+        loop_id: CheckedLoopId,
+        site: &NodePath,
+        body: &[CheckedStatement],
+    ) {
+        let inputs = induction_inputs(loop_id, site, body, &self.branches);
         for invariant in invariants {
             self.affine_relation(&invariant.relation);
             self.push(
                 SemanticRule::Inv1,
                 invariant.relation.node_path.clone(),
-                ObligationSubject::LoopInvariant,
+                ObligationSubject::LoopInvariant {
+                    inputs: inputs.clone(),
+                },
             );
         }
     }
@@ -608,4 +628,118 @@ impl<'unit> TypeContext<'unit> {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(move |function: FunctionId| rows.get(function.0 as usize).copied().unwrap_or(false))
     }
+}
+
+/// The structural induction inventory, formed independently of the proof
+/// walker. Consecutive tail merges contribute their leaves; the next source
+/// action consumes one state. No numeric reachability selects these edges.
+/// Compiler-derived arm releases preserve the leaves, as in `walk_arm`.
+fn induction_inputs(
+    loop_id: CheckedLoopId,
+    site: &NodePath,
+    body: &[CheckedStatement],
+    branches: &[String],
+) -> Vec<super::super::entailment::LoopInductionInput> {
+    use super::super::entailment::{LoopInductionInput, LoopInductionRoute};
+    fn walk(
+        statements: &[CheckedStatement],
+        fallback: &NodePath,
+        target: CheckedLoopId,
+        branches: &[String],
+        atomic: bool,
+        explicit: &mut Vec<LoopInductionInput>,
+    ) -> Vec<LoopInductionInput> {
+        let ordinary = || LoopInductionInput {
+            site: fallback.clone(),
+            branch: branches.join(" / "),
+            route: LoopInductionRoute::Fallthrough,
+        };
+        let mut frontier = vec![ordinary()];
+        for statement in statements {
+            if frontier.is_empty() {
+                break;
+            }
+            frontier = match statement {
+                CheckedStatement::Match { arms, .. } => {
+                    let mut exits = Vec::new();
+                    for arm in arms {
+                        let mut route = branches.to_vec();
+                        route.push(arm.label.clone());
+                        let incoming =
+                            walk(&arm.body, &arm.node_path, target, &route, atomic, explicit);
+                        exits.extend(incoming);
+                    }
+                    exits
+                }
+                CheckedStatement::Continue {
+                    node_path,
+                    target: destination,
+                    ..
+                } => {
+                    if *destination == target {
+                        if atomic || (frontier.len() == 1 && frontier[0] == ordinary()) {
+                            frontier = vec![LoopInductionInput {
+                                site: node_path.clone(),
+                                branch: branches.join(" / "),
+                                route: LoopInductionRoute::Fallthrough,
+                            }];
+                        }
+                        for mut edge in frontier {
+                            edge.route = LoopInductionRoute::Continue {
+                                statement: node_path.clone(),
+                            };
+                            explicit.push(edge);
+                        }
+                    }
+                    Vec::new()
+                }
+                CheckedStatement::Return { .. }
+                | CheckedStatement::Give { .. }
+                | CheckedStatement::Break { .. } => Vec::new(),
+                CheckedStatement::Loop {
+                    node_path, body, ..
+                }
+                | CheckedStatement::CountedRange {
+                    node_path, body, ..
+                } => {
+                    walk(body, node_path, target, branches, atomic, explicit);
+                    vec![ordinary()]
+                }
+                CheckedStatement::Atomic {
+                    node_path,
+                    body,
+                    continues,
+                    ..
+                } => {
+                    walk(body, node_path, target, branches, true, explicit);
+                    if *continues {
+                        vec![ordinary()]
+                    } else {
+                        Vec::new()
+                    }
+                }
+                CheckedStatement::ValueMatchLet {
+                    arms, continues, ..
+                } => {
+                    for arm in arms {
+                        let mut route = branches.to_vec();
+                        route.push(arm.label.clone());
+                        walk(&arm.body, &arm.node_path, target, &route, atomic, explicit);
+                    }
+                    if *continues {
+                        vec![ordinary()]
+                    } else {
+                        Vec::new()
+                    }
+                }
+                _ => vec![ordinary()],
+            };
+        }
+        frontier
+    }
+    let mut inputs = Vec::new();
+    let normal = walk(body, site, loop_id, branches, false, &mut inputs);
+    inputs.extend(normal);
+    inputs.sort_by(|left, right| left.site.components().cmp(right.site.components()));
+    inputs
 }

@@ -1019,10 +1019,14 @@ pub enum SemanticIssueKind {
         /// The exact restructuring required by ENT-2.
         mechanical_fix: &'static str,
     },
-    /// An unlabeled break has no enclosing structural loop target [GRAM-4,
-    /// FN-1].
+    /// An unlabeled continue has no enclosing structural loop target [TYPE-6].
+    ContinueOutsideLoop {
+        /// The source-level repair for the missing target.
+        mechanical_fix: &'static str,
+    },
+    /// An unlabeled break has no enclosing structural loop target [TYPE-6].
     BreakOutsideLoop {
-        /// The exact source-level restructuring required by GRAM-4.
+        /// The source-level repair for the missing target.
         mechanical_fix: &'static str,
     },
     /// A range clause, a `use` step or a cross-iteration certificate outside
@@ -1088,6 +1092,8 @@ pub enum SemanticIssueKind {
         name: String,
         /// The failed induction obligation, selected in proof order.
         obligation: LoopInvariantProofObligation,
+        /// Source route and line of the failing incoming edge.
+        incoming_edge: String,
         /// The exact source-language relation the failed incoming edge had to
         /// establish. A counted-loop backedge renders the hidden next binder
         /// as `i + 1_u64`; no checker-private term identity is exposed.

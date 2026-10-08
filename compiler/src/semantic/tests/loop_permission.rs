@@ -956,8 +956,8 @@ fn a_nested_map_is_granted_only_to_the_binder_in_its_retained_image() {
         Some(LoopActualization::IndependentMap)
     );
     assert!(matches!(
-        denial(judged[1], 2),
-        LoopDenial::SharedWrite { .. }
+        denial(judged[1], 1),
+        LoopDenial::IndexedReduction { .. }
     ));
 }
 
@@ -1420,7 +1420,7 @@ fn op4_retains_the_affine_index_map_consumed_by_parallel_permission() {
 }
 
 /// A constant image has coefficient zero and is not injective. OP-4 proves
-/// the element access itself, but PAR-2 correctly keeps the whole-root write.
+/// the element access itself; the indexed family still denies a plain store.
 #[test]
 fn a_zero_coefficient_element_map_is_denied() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {
@@ -1433,8 +1433,8 @@ fn a_zero_coefficient_element_map_is_denied() {
 }
 ";
     assert!(matches!(
-        denied(source, "main", 2),
-        LoopDenial::SharedWrite { .. }
+        denied(source, "main", 1),
+        LoopDenial::IndexedReduction { .. }
     ));
 }
 
@@ -1495,8 +1495,8 @@ fn two_different_affine_maps_of_one_root_are_denied() {
 }
 ";
     assert!(matches!(
-        denied(source, "main", 2),
-        LoopDenial::SharedWrite { .. }
+        denied(source, "main", 1),
+        LoopDenial::IndexedReduction { .. }
     ));
 }
 
@@ -1560,6 +1560,7 @@ fn mapped_root_measure_reads_are_permitted() {
             Some(LoopActualization::IndependentMap),
             "{function}"
         );
+        assert!(judged.indexed.is_empty(), "{function}: {judged:?}");
     }
 }
 
@@ -1567,10 +1568,9 @@ fn mapped_root_measure_reads_are_permitted() {
 /// helper's implementation happens to read only len.
 #[test]
 fn a_whole_root_helper_row_still_denies_a_mapped_write() {
-    let source = include_str!(
-        "../../../../tests/conformance/cases/par2-pos-affine-element-measure-read.wf"
-    )
-    .replace("reads(a.len)", "reads(a)");
+    let source =
+        include_str!("../../../../tests/conformance/cases/par2-pos-affine-element-measure-read.wf")
+            .replace("reads(a.len)", "reads(a)");
     assert!(matches!(
         denied(source.as_bytes(), "helper_slots", 2),
         LoopDenial::SharedWrite { .. }
@@ -1579,9 +1579,8 @@ fn a_whole_root_helper_row_still_denies_a_mapped_write() {
 
 #[test]
 fn a_written_range_origin_may_be_measured_inside_the_body() {
-    let source = include_bytes!(
-        "../../../../tests/conformance/cases/par2-pos-range-origin-measure-read.wf"
-    );
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-range-origin-measure-read.wf");
     let judged = permitted(source, "partition");
     assert_eq!(
         judged.actualization,
@@ -1919,17 +1918,17 @@ fn an_unproved_counted_binder_element_map_remains_denied() {
 ";
     let table = dark_permission_of(source);
     assert!(matches!(
-        denial(only_loop(&table, "main"), 2),
-        LoopDenial::SharedWrite { .. }
+        denial(only_loop(&table, "main"), 1),
+        LoopDenial::IndexedReduction { reason, .. } if reason.contains("OP-4")
     ));
     assert_eq!(only_loop(&table, "main").actualization, None);
 }
 
-/// A non-injective index map is refused for the same reason and by the same
-/// condition, so nothing about the refusal depends on the index expression
-/// being distinguishable.
+/// An unavailable affine map now consults the indexed family. A plain store
+/// still denies, under its update-only condition rather than the old
+/// shared-write classification; no source acceptance or permission widens.
 #[test]
-fn a_non_injective_element_write_is_denied_by_condition_two() {
+fn a_non_injective_store_is_denied_by_the_indexed_update_condition() {
     let source = b"fn main() -> status: std::process::ExitStatus pure {
   let out = array_filled::<u64, 64>(value: 0_u64);
   for @fill (i in 0_u64..64_u64) {
@@ -1941,7 +1940,10 @@ fn a_non_injective_element_write_is_denied_by_condition_two() {
 ";
     let table = permission_of(source);
     let judged = only_loop(&table, "main");
-    assert!(matches!(denial(judged, 2), LoopDenial::SharedWrite { .. }));
+    assert!(matches!(
+        denial(judged, 1),
+        LoopDenial::IndexedReduction { .. }
+    ));
     assert_eq!(judged.actualization, None);
 }
 
@@ -3108,6 +3110,244 @@ fn a_segment_loop_denies_the_whole_run_another_map_and_an_unmapped_offset() {
             "{function}: {refused:?}"
         );
     }
+}
+
+// Indexed rule fixtures live in conformance; these assertions observe the
+// non-source permission verdict, which an accepted/run case cannot observe.
+#[test]
+fn indexed_operations_and_scalar_composition_are_permitted() {
+    for (source, combine) in [
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-add-wrap.wf")
+                .as_slice(),
+            "+wrap",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-multiply-wrap.wf")
+                .as_slice(),
+            "*wrap",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-iand.wf")
+                .as_slice(),
+            "iand",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-ior.wf")
+                .as_slice(),
+            "ior",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-ixor.wf")
+                .as_slice(),
+            "ixor",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-imin.wf")
+                .as_slice(),
+            "imin",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-imax.wf")
+                .as_slice(),
+            "imax",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-band.wf")
+                .as_slice(),
+            "band",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-bor.wf")
+                .as_slice(),
+            "bor",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-bxor.wf")
+                .as_slice(),
+            "bxor",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-scalar.wf")
+                .as_slice(),
+            "+wrap",
+        ),
+    ] {
+        let judged = permitted(source, "reduce");
+        assert_eq!(judged.combines, vec![combine]);
+        assert!(!judged.advises_split);
+        assert!(judged.actualization.is_some());
+        assert_eq!(judged.indexed.len(), 1);
+        assert_eq!(judged.indexed[0].combine.spelling(), combine);
+    }
+}
+
+#[test]
+fn indexed_storage_shapes_and_repeated_updates_share_the_rule() {
+    let source = include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-shapes.wf");
+    let table = permission_of(source);
+    for name in [
+        "slots",
+        "inline_array",
+        "branches",
+        "several_roots",
+        "overlapping_maps",
+        "referenced",
+        "measured_index",
+        "borrowed_index",
+    ] {
+        let judged = only_loop(&table, name);
+        assert_eq!(
+            judged.verdict,
+            LoopVerdict::PermittedEligible,
+            "{name}: {judged:?}"
+        );
+        assert!(judged.actualization.is_some());
+        assert!(!judged.indexed.is_empty());
+    }
+    assert_eq!(
+        only_loop(&table, "several_roots").combines,
+        vec!["+wrap", "imin"]
+    );
+}
+
+#[test]
+fn indexed_denials_name_the_failed_condition_after_ordinary_checking() {
+    for (source, reason_fragment) in [
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-prefix-read.wf")
+                .as_slice(),
+            "every occurrence",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-check-before-update.wf"
+            )
+            .as_slice(),
+            "every occurrence",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-subscript-read.wf"
+            )
+            .as_slice(),
+            "every occurrence",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-contribution-read.wf"
+            )
+            .as_slice(),
+            "contribution",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-mixed-operations.wf"
+            )
+            .as_slice(),
+            "one fixed operation",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-mixed-write.wf")
+                .as_slice(),
+            "each indexed write",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-constant-mark.wf")
+                .as_slice(),
+            "constant mark",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-length-change.wf")
+                .as_slice(),
+            "length changes",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-wrong-cell.wf")
+                .as_slice(),
+            "target's subscripted place",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-wrong-operation.wf"
+            )
+            .as_slice(),
+            "admitted set",
+        ),
+        (
+            include_bytes!(
+                "../../../../tests/conformance/cases/par2-neg-indexed-range-formation.wf"
+            )
+            .as_slice(),
+            "every occurrence",
+        ),
+    ] {
+        let refused = denied(source, "reduce", 1);
+        let LoopDenial::IndexedReduction { reason, .. } = refused else {
+            panic!("expected the indexed condition, got {refused:?}");
+        };
+        assert!(
+            reason.contains(reason_fragment),
+            "{reason_fragment}: {reason}"
+        );
+    }
+}
+
+#[test]
+fn indexed_histogram_and_extrema_carry_private_root_contracts() {
+    let source = include_bytes!("../../../../tests/programs/parallel/indexed_reductions.wf");
+    let table = with_semantics(source, |outcome| {
+        let SemanticOutcome::Complete(program) = outcome else {
+            panic!("the indexed program must check: {outcome:?}");
+        };
+        program.data.permission.clone()
+    });
+    for name in ["histogram", "extrema"] {
+        let judged = only_loop(&table, name);
+        assert_eq!(
+            judged.verdict,
+            LoopVerdict::PermittedEligible,
+            "{name}: {judged:?}"
+        );
+        assert!(judged.actualization.is_some());
+        assert_eq!(
+            judged.indexed.len(),
+            if name == "histogram" { 1 } else { 2 }
+        );
+    }
+    assert_eq!(only_loop(&table, "extrema").combines, vec!["imin", "imax"]);
+}
+
+#[test]
+fn continue_keeps_the_counted_update_but_an_outer_continue_leaves_the_range() {
+    let local = br#"fn main() -> status: std::process::ExitStatus pure {
+  doc "A self continue still executes each counted iteration.";
+  let total = 0_u64;
+  for @sum (i in 0_u64..16_u64) {
+    set total = total +wrap i;
+    continue @sum;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    permitted(local, "main");
+    let outward = br#"fn main() -> status: std::process::ExitStatus pure {
+  doc "An outer continue skips the remaining counted iterations.";
+  let total = 0_u64;
+  loop @outer {
+    for (i in 0_u64..16_u64) {
+      set total = total +wrap i;
+      continue @outer;
+    }
+    break;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let LoopDenial::Exit { edge } = denied(outward, "main", 4) else {
+        panic!("expected the counted-loop exit denial");
+    };
+    assert_eq!(edge, "a continue to an enclosing loop");
 }
 
 const PAGED_SOURCE: &str = r#"fn fill(page: &[u64]) -> result: unit writes(page) {

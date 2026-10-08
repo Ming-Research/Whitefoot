@@ -885,6 +885,7 @@ impl Report for SemanticIssueKind {
             UndischargedCallRequirement[detail];
             InvalidCountedEndpoint { mechanical_fix };
             BreakOutsideLoop { mechanical_fix };
+            ContinueOutsideLoop { mechanical_fix };
             InvalidRangeClause { reason, mechanical_fix };
             UndischargedRangeFact { fact, site, missing, mechanical_fix };
             UndischargedApart { pair, mechanical_fix };
@@ -892,7 +893,7 @@ impl Report for SemanticIssueKind {
             InvalidTypeInvariant { reason, mechanical_fix };
             TypeInvariantWritableField { field, mechanical_fix };
             UndischargedTypeInvariant { type_invariant, instantiated_goal, disposition, mechanical_fix };
-            UndischargedLoopInvariant { name, obligation, required_relation, disposition, mechanical_fix };
+            UndischargedLoopInvariant { name, obligation, incoming_edge, required_relation, disposition, mechanical_fix };
             UndischargedLocalInvariant { name, disposition, mechanical_fix };
             InvalidSourceProof { reason, mechanical_fix };
             UndischargedSourceProof { name, obligation, mechanical_fix };

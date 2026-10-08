@@ -1460,7 +1460,8 @@ pub enum IrOperation {
     /// the first argument and result for its accumulator. An independent map
     /// uses `Unit` in both positions as a synchronization token; its observable
     /// result is the disjoint stores completed before the call returns. The
-    /// site therefore has nothing to recombine in either form.
+    /// site additionally owns any indexed private ranges through the join and
+    /// combines their cells in leaf order independently of the scalar result.
     ///
     /// `splitter` and `chunk` are ordinary synthesized [`IrFunction`]s: the
     /// splitter's two recursive calls are one ordinary overlap group, so the
@@ -1484,7 +1485,20 @@ pub enum IrOperation {
         weight: u64,
         /// An available runtime extent estimate; absence keeps `weight`.
         work: Option<IrWorkEstimate>,
+        indexed: Vec<IrIndexedReduction>,
     },
+}
+
+/// One indexed accumulator in a LoopSplit capture list. `capture` is a range
+/// descriptor and `count` its entry length. The site owns identity-filled
+/// private ranges through all leaf joins, combines in leaf order, then frees.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IrIndexedReduction {
+    pub capture: usize,
+    pub count: usize,
+    pub element_type: IrType,
+    pub identity: IrConstant,
+    pub operation: Result<IrIntegerOperation, IrBooleanOperation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

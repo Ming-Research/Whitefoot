@@ -641,18 +641,6 @@ fn reachable_types(program: &IrProgram, seeds: Vec<IrType>) -> Result<Vec<IrType
     Ok(types)
 }
 
-/// Whether any type of this program is a run taken from a general store
-/// [PROV-1]. Such a run's backing release is a free, so the module declares
-/// the two allocator symbols even where nothing else allocates.
-pub(super) fn program_has_general_run(program: &IrProgram) -> Result<bool, BackendFailure> {
-    Ok(program_types(program)?.into_iter().any(|ty| {
-        matches!(
-            ty,
-            IrType::Buffer { .. } | IrType::Window { capacity: None, .. }
-        )
-    }))
-}
-
 pub(super) fn type_requires_cleanup(
     program: &IrProgram,
     ty: IrType,
@@ -706,7 +694,10 @@ enum CleanupJob {
         field: u32,
         field_ty: IrType,
     },
-    FreePointer(String),
+    FreePointer {
+        pointer: String,
+        referent: IrType,
+    },
 }
 
 pub(super) fn emit_cleanup(
@@ -731,11 +722,14 @@ fn emit_cleanup_jobs(
 ) -> Result<(), BackendFailure> {
     while let Some(job) = jobs.pop() {
         match job {
-            CleanupJob::FreePointer(pointer) => {
-                output.symbol("free");
+            CleanupJob::FreePointer { pointer, referent } => {
+                let bytes = allocation_bytes(program, output, temporary, referent, &pointer)?;
                 {
-                    output.symbol("free");
-                    writeln!(output, "  call void @free(ptr {pointer})")
+                    output.symbol("wf__heap_give");
+                    writeln!(
+                        output,
+                        "  call void @wf__heap_give(ptr {pointer}, i64 {bytes})"
+                    )
                 }
                 .map_err(|_| BackendFailure::TextEmission)?;
             }
@@ -956,7 +950,10 @@ fn emit_cleanup_jobs(
                             // [OP-13], so its release is the free alone.
                             if matches!(referent, IrType::Segments { .. }) {
                                 if *release == IrReleaseClass::General {
-                                    jobs.push(CleanupJob::FreePointer(operand.clone()));
+                                    jobs.push(CleanupJob::FreePointer {
+                                        pointer: operand.clone(),
+                                        referent: *referent,
+                                    });
                                 }
                                 continue;
                             }
@@ -965,7 +962,10 @@ fn emit_cleanup_jobs(
                                 IrType::Window { capacity: None, .. } | IrType::Buffer { .. }
                             ) {
                                 if *release == IrReleaseClass::General {
-                                    jobs.push(CleanupJob::FreePointer(operand.clone()));
+                                    jobs.push(CleanupJob::FreePointer {
+                                        pointer: operand.clone(),
+                                        referent: *referent,
+                                    });
                                 }
                                 match referent {
                                     IrType::Window { element, .. } | IrType::Buffer { element } => {
@@ -1001,7 +1001,10 @@ fn emit_cleanup_jobs(
                             // cell before the cell itself.
                             if is_memory_only(program, *referent)? {
                                 if *release == IrReleaseClass::General {
-                                    jobs.push(CleanupJob::FreePointer(operand.clone()));
+                                    jobs.push(CleanupJob::FreePointer {
+                                        pointer: operand.clone(),
+                                        referent: *referent,
+                                    });
                                 }
                                 jobs.push(CleanupJob::Place {
                                     ty: *referent,
@@ -1020,7 +1023,10 @@ fn emit_cleanup_jobs(
                             }
                             .map_err(|_| BackendFailure::TextEmission)?;
                             if *release == IrReleaseClass::General {
-                                jobs.push(CleanupJob::FreePointer(operand));
+                                jobs.push(CleanupJob::FreePointer {
+                                    pointer: operand,
+                                    referent: *referent,
+                                });
                             }
                             jobs.push(CleanupJob::Value {
                                 ty: *referent,
@@ -1201,11 +1207,99 @@ fn emit_paged_drop_helper(
     output.open_block("pages".to_owned());
     output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.free ]\n  %allocated = icmp ult i64 %p, %count\n  br i1 %allocated, label %page.free, label %done\n");
     output.open_block("page.free".to_owned());
-    output.instructions("  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  call void @free(ptr %allocation)\n  %p.next = add nuw i64 %p, 1\n  br label %pages\n", &["free"]);
+    let page_bytes = b
+        .checked_mul(stride)
+        .ok_or(BackendFailure::InvalidIr)?
+        .max(1);
+    output.symbol("wf__heap_give");
+    writeln!(output, "  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  call void @wf__heap_give(ptr %allocation, i64 {page_bytes})\n  %p.next = add nuw i64 %p, 1\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("done".to_owned());
     output.push_str("  ret void\n");
     signature.references = output.references.clone();
     module.define(signature.define(output, "")?);
     module.text("\n");
     Ok(())
+}
+
+/// Reconstruct the exact allocation request from its type and immutable
+/// extent metadata. No allocator-specific usable-size query participates.
+pub(super) fn allocation_bytes(
+    program: &IrProgram,
+    output: &mut FunctionBody,
+    temporary: &mut u32,
+    referent: IrType,
+    pointer: &str,
+) -> Result<String, BackendFailure> {
+    let block = output.type_name(program, referent)?;
+    let (element, count_field, elements_field) = match referent {
+        IrType::Buffer { element } => (element, 0, 1),
+        IrType::Window {
+            shape: IrWindowShape::Paged,
+            capacity: None,
+            ..
+        } => {
+            let capacity_address = next_temporary(temporary)?;
+            let capacity = next_temporary(temporary)?;
+            let directory_bytes = next_temporary(temporary)?;
+            let bytes = next_temporary(temporary)?;
+            writeln!(output,
+                "  %{capacity_address} = getelementptr inbounds {block}, ptr {pointer}, i32 0, i32 2\n  %{capacity} = load i64, ptr %{capacity_address}\n  %{directory_bytes} = mul nuw i64 %{capacity}, 8\n  %{bytes} = add nuw i64 %{directory_bytes}, {}",
+                crate::target::PAGED_HEADER_BYTES,
+            ).map_err(|_| BackendFailure::TextEmission)?;
+            return Ok(format!("%{bytes}"));
+        }
+        IrType::Window {
+            shape,
+            element,
+            capacity: None,
+        } => {
+            let elements = match shape {
+                crate::IrWindowShape::Slots => 2,
+                crate::IrWindowShape::Ring => 3,
+                crate::IrWindowShape::Paged => return Err(BackendFailure::InvalidIr),
+            };
+            (element, 1, elements)
+        }
+        IrType::Segments { element } => {
+            let element_type = output.type_name(
+                program,
+                program.element(element).ok_or(BackendFailure::InvalidIr)?,
+            )?;
+            let count = next_temporary(temporary)?;
+            let last = next_temporary(temporary)?;
+            let total = next_temporary(temporary)?;
+            let words = next_temporary(temporary)?;
+            let raw_header = next_temporary(temporary)?;
+            let slack = next_temporary(temporary)?;
+            let mask = next_temporary(temporary)?;
+            let padded = next_temporary(temporary)?;
+            let header = next_temporary(temporary)?;
+            let data = next_temporary(temporary)?;
+            let bytes = next_temporary(temporary)?;
+            let align = format!(
+                "ptrtoint (ptr getelementptr ({{ i1, {element_type} }}, ptr null, i32 0, i32 1) to i64)"
+            );
+            writeln!(output,
+                "  %{count} = load i64, ptr {pointer}\n  %{last} = getelementptr inbounds {{ i64, [0 x i64] }}, ptr {pointer}, i64 0, i32 1, i64 %{count}\n  %{total} = load i64, ptr %{last}\n  %{words} = add nuw i64 %{count}, 2\n  %{raw_header} = shl nuw i64 %{words}, 3\n  %{slack} = sub i64 {align}, 1\n  %{mask} = sub i64 0, {align}\n  %{padded} = add nuw i64 %{raw_header}, %{slack}\n  %{header} = and i64 %{padded}, %{mask}\n  %{data} = mul nuw i64 %{total}, ptrtoint (ptr getelementptr ({element_type}, ptr null, i64 1) to i64)\n  %{bytes} = add nuw i64 %{header}, %{data}"
+            ).map_err(|_| BackendFailure::TextEmission)?;
+            return Ok(format!("%{bytes}"));
+        }
+        _ => {
+            return Ok(format!(
+                "ptrtoint (ptr getelementptr ({block}, ptr null, i64 1) to i64)"
+            ));
+        }
+    };
+    let element_type = output.type_name(
+        program,
+        program.element(element).ok_or(BackendFailure::InvalidIr)?,
+    )?;
+    let count_address = next_temporary(temporary)?;
+    let count = next_temporary(temporary)?;
+    let data = next_temporary(temporary)?;
+    let bytes = next_temporary(temporary)?;
+    writeln!(output,
+        "  %{count_address} = getelementptr inbounds {block}, ptr {pointer}, i64 0, i32 {count_field}\n  %{count} = load i64, ptr %{count_address}\n  %{data} = mul nuw i64 %{count}, ptrtoint (ptr getelementptr ({element_type}, ptr null, i64 1) to i64)\n  %{bytes} = add nuw i64 %{data}, ptrtoint (ptr getelementptr ({block}, ptr null, i64 0, i32 {elements_field}) to i64)"
+    ).map_err(|_| BackendFailure::TextEmission)?;
+    Ok(format!("%{bytes}"))
 }

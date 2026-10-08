@@ -343,8 +343,13 @@ impl<'unit> Checker<'_, 'unit> {
             false,
             fields.clone(),
         );
-        self.types
-            .check_mutation_target_class(check_context, node, ty)?;
+        // A dead root reached here has no suffixes and no old value to
+        // release [SET-1]. Leave its reinitialization to the commit's
+        // liveness judgment; a live target still owes [WIN-3] at entry.
+        if local.live {
+            self.types
+                .check_mutation_target_class(check_context, node, ty)?;
+        }
         let mut effects = EffectSet::NONE;
         for path in self.effect_paths_for_place(node, &resolved, bindings)? {
             effects.add_write(path);
@@ -1277,7 +1282,7 @@ impl<'unit> Checker<'_, 'unit> {
                 effects.add_write(path);
             }
         }
-        let (binding, path) = self
+        let (binding, path, proof_base) = self
             .types
             .declarations
             .explicit_container_path(&place.expression, node)?;
@@ -1290,6 +1295,7 @@ impl<'unit> Checker<'_, 'unit> {
                 root: crate::semantic::places::PlaceRoot::Binding(binding),
                 path,
                 ty: place.ty,
+                proof_base,
             }),
             effects,
             unsupported: None,
@@ -2018,9 +2024,10 @@ impl<'unit> DeclarationInventory<'unit> {
 impl<'unit> TypeContext<'unit> {
     /// [WIN-3] the final selected type's class judgment at a `set` target.
     ///
-    /// Assigning over any owned place releases the old value when it is
+    /// Assigning over a live owned place releases the old value when it is
     /// affine and is a hard error when it is linear: a linear value has no
-    /// release, so the writer takes it out and consumes it first. v0.59's
+    /// release. A complete binding already dead at statement entry bypasses
+    /// this judgment: its [SET-1] reinitialization releases nothing. v0.59's
     /// copy-only demand and its region-free companion were [SET-2]'s and went
     /// with `replace`.
     fn check_mutation_target_class(

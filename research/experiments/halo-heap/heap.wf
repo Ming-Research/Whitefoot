@@ -355,7 +355,7 @@ fn run(n: u64, factory: &HandleFactory, output: &OutputStream) -> result: Bool w
 }
 
 fn main(inputs: Inputs) -> result: ExitStatus pure waits {
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock) = move inputs;
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: factory, stdin: input, clock: clock, wall_clock: wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: directory, write: directory_write) = move cwd;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory);

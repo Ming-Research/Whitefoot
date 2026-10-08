@@ -48,7 +48,9 @@ pub(crate) enum ObligationSubject {
         subject: Option<u32>,
     },
     /// One source-written loop invariant's induction [INV-1].
-    LoopInvariant,
+    LoopInvariant {
+        inputs: Vec<super::entailment::LoopInductionInput>,
+    },
     /// One local invariant, proved by AUTO or by its written certificate
     /// [INV-1, PRF-1].
     SourceProof,
@@ -82,10 +84,15 @@ impl RecordAnswer {
             Self::CallGoal(index) => entailment.call_goals.get(index).is_some_and(|outcome| {
                 outcome.disposition == super::entailment::CallGoalDisposition::Discharged
             }),
-            Self::LoopInvariant(index) => entailment
-                .loop_invariants
-                .get(index)
-                .is_some_and(|outcome| outcome.proof.discharged()),
+            Self::LoopInvariant(index) => {
+                entailment
+                    .loop_invariants
+                    .get(index)
+                    .is_some_and(|outcome| {
+                        outcome.proof.discharged()
+                            && outcome.inputs.iter().all(|input| input.discharged)
+                    })
+            }
             Self::SourceProof(index) => entailment
                 .source_proofs
                 .get(index)

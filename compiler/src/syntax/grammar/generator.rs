@@ -51,6 +51,7 @@ const ENUM_ORDER: &[&str] = &[
     "return_stmt",
     "loop_stmt",
     "break_stmt",
+    "continue_stmt",
     "contract_define",
     "give_stmt",
     "match_stmt",

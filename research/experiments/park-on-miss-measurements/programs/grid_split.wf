@@ -73,7 +73,7 @@ fn spell(destination: &uniq buffer<u8>, at: own u64, value: own u64) -> result: 
 }
 
 fn main(inputs: own Inputs) -> status: own ExitStatus pure {
-  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin) = move inputs;
+  let Inputs(args: unused_args, cwd: unused_cwd, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, ..) = move inputs;
   region {
     close_directory(factory: &uniq entry_factory, directory: move unused_cwd);
   }

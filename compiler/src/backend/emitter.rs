@@ -16,6 +16,7 @@ mod floating;
 mod floor;
 mod frames;
 mod frontier;
+mod indexed;
 mod integer;
 mod operations;
 mod paged;
@@ -398,18 +399,6 @@ pub(super) fn emit_llvm_with_window_address_facts(
         abort.suffix = " noreturn".to_owned();
         text.declare(abort);
     }
-    if has_heap_storage || cleanup::program_has_general_run(program)? {
-        text.declare(Signature::new(
-            "malloc",
-            "ptr",
-            vec![Parameter::unnamed("i64")],
-        ));
-        text.declare(Signature::new(
-            "free",
-            "void",
-            vec![Parameter::unnamed("ptr")],
-        ));
-    }
     if latched_resource_record {
         text.append(resource_record_latch_fallback()?);
         text.append(if windows {
@@ -554,6 +543,25 @@ pub(super) fn emit_llvm_with_window_address_facts(
     text.text("\n");
     text.append(floor_runtime_fallback()?);
     text.text("\n");
+    // A declaration selects the allocator unit for text-only linkers. Use
+    // emitted references, including cleanup helpers and parallel thunks,
+    // rather than resource types: Shared storage comes from the runtime pool.
+    for signature in [
+        Signature::new("wf__heap_take", "ptr", vec![Parameter::unnamed("i64")]),
+        Signature::new(
+            "wf__heap_give",
+            "void",
+            vec![Parameter::unnamed("ptr"), Parameter::unnamed("i64")],
+        ),
+    ] {
+        if text
+            .entities
+            .iter()
+            .any(|entity| entity.references.symbols.contains(&signature.name))
+        {
+            text.declare(signature);
+        }
+    }
     text.attribute_group(0, format!("\"probe-stack\"=\"{}\"", target.stack_probe()));
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
@@ -1412,6 +1420,9 @@ struct FunctionEmitter<'program, 'state> {
     frame: FunctionFramePlan,
     storage: FunctionStoragePlan,
     result_slot: Option<usize>,
+    /// Slots of by-value parameters read in place through the pointer the
+    /// caller passed, with no entry copy (compiler/storage-placement).
+    incoming_places: HashMap<usize, String>,
     /// Per-operation snapshots for legacy value consumers. Place operations
     /// read their actual storage directly; a snapshot never becomes an alias.
     materialized: HashMap<IrValueId, String>,
@@ -1561,6 +1572,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             frame,
             storage,
             result_slot,
+            incoming_places: HashMap::new(),
             materialized: HashMap::new(),
             pin_names: HashMap::new(),
             temporary: 0,
@@ -1853,6 +1865,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         let reachable = self.enclosing_blocks(&reachable);
         self.incoming = self.collect_incoming(&reachable)?;
+        if !declaration {
+            self.select_incoming_places(&public, &abi, waiting);
+        }
         if abi.result().uses_destination() && (declaration || !waiting) {
             parameters.insert(0, Parameter::named("ptr", RESULT_POINTER));
         }
@@ -1926,7 +1941,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 // A result can alias any consumed caller input. Snapshot
                 // every other indirect input first, then initialize the one
                 // entry group using the result. Scalar/address parameters
-                // already arrived as SSA values before either pass.
+                // already arrived as SSA values before either pass, and an
+                // input read in place (`select_incoming_places`) is not
+                // copied.
                 for writes_result in [false, true] {
                     for ((value, _), parameter) in
                         self.function.parameters().iter().zip(abi.parameters())
@@ -1936,7 +1953,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                                 self.storage.allocation_root(slot) == result_slot
                             })
                         });
-                        if !parameter.is_indirect() || uses_result != writes_result {
+                        let in_place = self
+                            .storage
+                            .slot(*value)
+                            .is_some_and(|slot| self.incoming_places.contains_key(&slot));
+                        if !parameter.is_indirect() || in_place || uses_result != writes_result {
                             continue;
                         }
                         let destination = self.value_place(*value)?;
@@ -1977,6 +1998,40 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             module.text(format!("{DISPATCH_LEDGER_PREFIX}{line}\n"));
         }
         Ok(module)
+    }
+
+    /// Selects the by-value parameters this definition reads in place
+    /// through the pointer its caller passed, with no entry copy
+    /// (compiler/storage-placement). A caller hands over the storage of the
+    /// value it consumes, which stays untouched for the whole synchronous
+    /// call when the definition has no result destination that the caller
+    /// could have placed in that storage, no frame that outlives the call,
+    /// no deferred hand-out, and no split part, and when the parameter's
+    /// slot is a complete, unexposed allocation holding only the parameter
+    /// and block parameters carrying it unchanged on every incoming edge.
+    /// Transfers into a selected slot are elided by `emit_place_edge`;
+    /// updates, reinitializations and other definitions keep the entry copy.
+    fn select_incoming_places(&mut self, public: &FunctionAbi, abi: &FunctionAbi, waiting: bool) {
+        if waiting
+            || public.result().uses_destination()
+            || !self.function.overlaps().is_empty()
+            || self.dispatch.is_some()
+        {
+            return;
+        }
+        for ((value, _), parameter) in self.function.parameters().iter().zip(abi.parameters()) {
+            if !parameter.is_indirect() || !self.storage.holds_only(*value) {
+                continue;
+            }
+            let Some(slot) = self.storage.slot(*value) else {
+                continue;
+            };
+            if Some(slot) == self.result_slot {
+                continue;
+            }
+            self.incoming_places
+                .insert(slot, format!("%wf.arg.v{}", value.ordinal()));
+        }
     }
 
     /// Every parameter of this definition's signature, with the facts the
@@ -2327,6 +2382,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 captures,
                 weight,
                 work,
+                indexed,
             } => self.emit_loop_split(
                 result,
                 ty,
@@ -2339,6 +2395,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     captures,
                     weight: *weight,
                     work: work.as_ref(),
+                    indexed,
                 },
             ),
             IrOperation::Integer {

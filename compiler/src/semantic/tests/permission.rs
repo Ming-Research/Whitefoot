@@ -2530,7 +2530,7 @@ fn bound_await(body: &str) -> Option<u32> {
          fn weigh(factory: std::io::HandleFactory, directory: std::fs::DirectoryRead, weight: u64) -> result: u64 pure waits {{\n  \
          std::fs::close_directory(factory: &factory, directory: move directory);\n  return weight;\n}}\n\n\
          fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{\n  \
-         let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;\n  \
+         let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;\n  \
          let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;\n  \
          std::fs::close_directory_write(factory: &handles, directory: move cwd_write);\n  \
          let factory = std::io::factory_share(factory: &handles);\n  \
@@ -2838,7 +2838,7 @@ fn a_bound_context_unused_in_its_block_is_joined_at_the_block_end() {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock) = move inputs;
+  let std::process::Inputs(args: unused_args, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   let factory = std::io::factory_share(factory: &handles);

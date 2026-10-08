@@ -743,6 +743,30 @@ impl ResolvedPlace {
             .any(|step| matches!(step, PlaceStep::Descendant(_)))
     }
 
+    /// Whether this path names one place at every evaluation that reads it
+    /// [REF-1, ENT-2]: no `R.**` cover, and every captured selector is a
+    /// formation's own evaluation rather than a loop-header target identity,
+    /// which stands for a different selection in each iteration, or the
+    /// unknown-offset marker every such offset shares.
+    pub(crate) fn is_exact_path(&self) -> bool {
+        let identified = |value: &CapturedValue| {
+            !matches!(
+                value.capture,
+                CaptureId::LoopHeader { .. } | CaptureId::Unknown
+            )
+        };
+        self.path.iter().all(|step| match step {
+            PlaceStep::Descendant(_) => false,
+            PlaceStep::Index(index) | PlaceStep::Page(index) => identified(index),
+            PlaceStep::Range(range) => identified(&range.start) && identified(&range.end),
+            PlaceStep::Field(_)
+            | PlaceStep::Deref
+            | PlaceStep::Payload { .. }
+            | PlaceStep::Part(_)
+            | PlaceStep::Measure(_) => true,
+        })
+    }
+
     /// Exchange may tolerate equality, never possible proper ancestry.
     /// Positions in one fixed slot shape are equal or disjoint even when
     /// their index values are unknown. Unknown targets need actual identity.
@@ -1539,10 +1563,10 @@ impl PlaceMap {
 #[cfg(test)]
 mod tests {
     use super::{
-        CaptureId, CapturedRange, CapturedTerm, CapturedValue, PlaceMap, PlaceRoot, PlaceStep,
-        ResolvedPlace, SeparationOracle, UnprovedSeparations, WindowPart,
+        CaptureId, CapturedRange, CapturedTerm, CapturedValue, DescendantTarget, PlaceMap,
+        PlaceRoot, PlaceStep, ResolvedPlace, SeparationOracle, UnprovedSeparations, WindowPart,
     };
-    use crate::semantic::model::{BindingId, CheckedLoopId, CheckedMeasure};
+    use crate::semantic::model::{BindingId, CheckedLoopId, CheckedMeasure, CheckedType};
 
     fn literal(capture: u32, value: u64) -> CapturedValue {
         CapturedValue::new(CaptureId::source(capture), CapturedTerm::Literal(value))
@@ -1608,6 +1632,67 @@ mod tests {
         assert_eq!(carried_range.start.term, CapturedTerm::Opaque);
         assert_eq!(carried_range.end.term, CapturedTerm::Opaque);
         assert_ne!(carried_range.start.capture, carried_range.end.capture);
+    }
+
+    /// [ENT-2] a path is exact only where each evaluation reading it names
+    /// one place: a formation's own captures qualify, while a loop-header
+    /// target identity, the shared unknown-offset marker and an `R.**` cover
+    /// each stand for more than one place.
+    #[test]
+    fn an_exact_path_has_no_cover_and_only_formation_captures() {
+        let formed = place(
+            7,
+            &[
+                PlaceStep::Payload {
+                    variant: 1,
+                    field: 0,
+                },
+                PlaceStep::Deref,
+                PlaceStep::Index(binding(11, 4)),
+                PlaceStep::Range(CapturedRange {
+                    start: literal(12, 0),
+                    end: opaque(13),
+                }),
+            ],
+        );
+        assert!(formed.is_exact_path());
+        let mut superseded = formed.clone();
+        superseded.supersede_binding(BindingId(4));
+        assert!(superseded.is_exact_path());
+
+        let carried = formed
+            .loop_carried(CheckedLoopId(3), BindingId(9), 0)
+            .expect("small carried identity");
+        assert!(!carried.is_exact_path());
+        assert!(!place(7, &[PlaceStep::Index(CapturedValue::unknown())]).is_exact_path());
+        let unknown_end = place(
+            7,
+            &[PlaceStep::Range(CapturedRange {
+                start: literal(12, 0),
+                end: CapturedValue::unknown(),
+            })],
+        );
+        assert!(!unknown_end.is_exact_path());
+        let page = place(7, &[PlaceStep::Page(literal(14, 0))]);
+        assert!(page.is_exact_path());
+        assert!(!place(7, &[PlaceStep::Page(CapturedValue::unknown())]).is_exact_path());
+        assert!(
+            !page
+                .loop_carried(CheckedLoopId(3), BindingId(9), 0)
+                .expect("small carried page identity")
+                .is_exact_path()
+        );
+        let cover = place(
+            7,
+            &[PlaceStep::Descendant(DescendantTarget {
+                loop_id: CheckedLoopId(3),
+                holder: BindingId(9),
+                ty: CheckedType::Unit,
+                range: false,
+                readonly: false,
+            })],
+        );
+        assert!(!cover.is_exact_path());
     }
 
     /// Payload construction is covered through checked source by

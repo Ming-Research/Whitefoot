@@ -1,0 +1,29 @@
+fn need(x: &u64) -> result: u64 reads(x) contract {
+  requires x^ != 0_u64;
+} {
+  doc "Divides ten by the value x names.";
+  let v = 10_u64 / x^;
+  return v;
+}
+
+fn pick(a: &u64, b: &u64) -> result: u64 reads(a), reads(b) {
+  doc "The guard reads a's cell through q; after set q = &b^, q names b's cell, so the call through q is not proved by the earlier guard.";
+  let q = &a^;
+  if q^ != 0_u64 {
+    set q = &b^;
+    let r = need(x: q);
+    return r;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "a is nonzero and b is zero.";
+  let a = 5_u64;
+  let b = 0_u64;
+  let r = pick(a: &a, b: &b);
+  if r == 2_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

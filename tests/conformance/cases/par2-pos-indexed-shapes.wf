@@ -1,0 +1,124 @@
+fn slots() -> result: u64 pure {
+  doc "Slots use their current initialized length, captured before the loop.";
+  let initial = array_filled::<u64, 4>(value: 3_u64);
+  let cells = slots_from_array::<u64, 4>(values: initial);
+  let count = cells.len;
+  if 0_u64 < count {
+    for (i in 0_u64..8_u64) {
+      let bucket = i % count;
+      set cells[bucket] = cells[bucket] +wrap 1_u64;
+    }
+    return cells[0_u64];
+  } else {
+    return 0_u64;
+  }
+}
+
+fn inline_array() -> result: u64 pure {
+  let cells = array_filled::<u64, 4>(value: 3_u64);
+  for (i in 0_u64..8_u64) {
+    let bucket = i % 4_u64;
+    set cells[bucket] = 1_u64 +wrap cells[bucket];
+  }
+  return cells[0_u64];
+}
+
+fn branches() -> result: u64 pure {
+  doc "Several updates in different branches retain one operation per root.";
+  let cells = array_filled::<u64, 4>(value: 3_u64);
+  for (i in 0_u64..4_u64) {
+    if i < 2_u64 {
+      set cells[0_u64] = cells[0_u64] +wrap 1_u64;
+    } else {
+      set cells[0_u64] = 2_u64 +wrap cells[0_u64];
+    }
+  }
+  return cells[0_u64];
+}
+
+fn several_roots() -> result: u64 pure {
+  let first = array_filled::<u64, 4>(value: 2_u64);
+  let second = box_array_filled::<u64>(count: 4_u64, value: 100_u64);
+  for (i in 0_u64..4_u64) {
+    set first[0_u64] = first[0_u64] +wrap 1_u64;
+    set second.inner[0_u64] = imin(second.inner[0_u64], 6_u64);
+  }
+  return first[0_u64] +wrap second.inner[0_u64];
+}
+
+fn overlapping_maps() -> result: u64 pure {
+  doc "Two affine maps overlap between iterations but both writes are indexed updates.";
+  let cells = array_filled::<u64, 5>(value: 0_u64);
+  for (i in 0_u64..4_u64) {
+    let next = i + 1_u64;
+    set cells[i] = cells[i] +wrap 1_u64;
+    set cells[next] = cells[next] +wrap 1_u64;
+  }
+  return cells[1_u64];
+}
+
+fn referenced(cells: &Array<u64, 4>) -> result: unit writes(cells) {
+  for (i in 0_u64..8_u64) {
+    let bucket = i % 4_u64;
+    set cells^[bucket] = cells^[bucket] +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn measured_index(offsets: &Slots<u8, 4>) -> result: u64 reads(offsets.len) {
+  doc "The root-independent index is a measure atom, not a local integer binding.";
+  let cells = array_filled::<u64, 5>(value: 0_u64);
+  for (i in 0_u64..4_u64) {
+    set cells[offsets^.len] = cells[offsets^.len] +wrap 1_u64;
+  }
+  return cells[offsets^.len];
+}
+
+fn borrowed_index(index: &u64) -> result: u64 reads(index) contract {
+  requires index^ < 4_u64;
+} {
+  let cells = array_filled::<u64, 4>(value: 0_u64);
+  for (i in 0_u64..4_u64) {
+    set cells[index^] = cells[index^] +wrap 1_u64;
+  }
+  return cells[index^];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = slots();
+  let b = inline_array();
+  let c = branches();
+  let d = several_roots();
+  let e = overlapping_maps();
+  let cells = array_filled::<u64, 4>(value: 0_u64);
+  referenced(cells: &cells);
+  let offsets = slots_new::<u8, 4>();
+  let f = measured_index(offsets: &offsets);
+  let index = 1_u64;
+  let g = borrowed_index(index: &index);
+  if a != 5_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if b != 5_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if c != 9_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if d != 12_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if e != 2_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if cells[0_u64] != 2_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  if f != 4_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  if g != 4_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

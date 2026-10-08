@@ -448,6 +448,7 @@ impl<'unit> Checker<'_, 'unit> {
                     _ => None,
                 },
                 bindings,
+                self.body.exactness(),
             )?);
             argument_nodes.push(self.types.declarations.tree.path(atom)?.clone());
             argument_atoms.push(atom);
@@ -1156,7 +1157,32 @@ impl<'unit> TypeContext<'unit> {
         argument: &super::super::super::TypedExpression,
         passed_place: Option<&ResolvedPlace>,
         bindings: &HashMap<DeclarationId, LocalBinding>,
+        exactness: super::super::super::references::Exactness<'_>,
     ) -> Result<GoalExpression, CheckStop> {
+        // [ENT-2] the actual is identified by the proof path of the place it
+        // names: the resolved path where that path is exact and the place is
+        // not written through a reference variable that is not exact, and
+        // otherwise the place as written through that variable.
+        let spelled =
+            crate::semantic::places::named_place(&argument.expression).and_then(|named| {
+                let PlaceRoot::Binding(root) = named.root else {
+                    return None;
+                };
+                let local = bindings.values().find(|local| local.binding == root)?;
+                (local.reference.is_some() && exactness.exact_path(local).is_none()).then(|| {
+                    let mut place = ResolvedPlace {
+                        atomic_aliases: Vec::new(),
+                        root: named.root,
+                        path: named.steps,
+                    };
+                    place.path.extend(named.suffix);
+                    place
+                })
+            });
+        let passed_place = match &spelled {
+            Some(place) => Some(place),
+            None => passed_place.filter(|place| exactness.is_exact_path(place)),
+        };
         if expected_mode.is_range() {
             // [REF-4, MSR-1] a range reference's one measure is `len`, equal
             // to `hi - lo`, and that is no measure of the storage the range
@@ -1183,7 +1209,7 @@ impl<'unit> TypeContext<'unit> {
                         ty: expected_type,
                     })
                 }
-                _ => match passed_place.filter(|place| !place.has_descendant()) {
+                _ => match passed_place {
                     Some(place) => self.goal_referent_image(place, expected_type, atom)?,
                     None => GoalExpression::Datum(GoalDatum::EvaluatedValue {
                         function: caller,
@@ -1199,7 +1225,7 @@ impl<'unit> TypeContext<'unit> {
             });
         }
         if expected_mode != CheckedMode::Own {
-            if let Some(place) = passed_place.filter(|place| !place.has_descendant()) {
+            if let Some(place) = passed_place {
                 return self.goal_referent_image(place, expected_type, atom);
             }
             // FN-1's candidate protects every mutable origin a returned
@@ -1231,7 +1257,8 @@ impl<'unit> TypeContext<'unit> {
                     ty: expected_type,
                 }));
             }
-            let (image, _) = self.call_goal_place_inner(check_context, place, bindings)?;
+            let (image, _) =
+                self.call_goal_place_inner(check_context, place, bindings, exactness)?;
             if image.ty() != expected_type {
                 return Err(SemanticCompilerFailure::InvalidResolution.into());
             }
@@ -1280,15 +1307,7 @@ impl<'unit> TypeContext<'unit> {
                     element: root.element(),
                     constant: root.type_constant(),
                 },
-                self.goal_referent_image(
-                    &ResolvedPlace {
-                        atomic_aliases: Vec::new(),
-                        root: root.root,
-                        path: root.place_path(),
-                    },
-                    root.ty,
-                    atom,
-                )?,
+                self.goal_referent_image(&root.proof_place(), root.ty, atom)?,
             )),
             CheckedExpression::RangeMeasure { measure, root } => Some((
                 GoalOperation::ContainerMeasure {
@@ -1329,7 +1348,8 @@ impl<'unit> TypeContext<'unit> {
                 arguments: vec![measured],
             });
         }
-        let (image, holder_pending) = self.call_goal_place_inner(check_context, place, bindings)?;
+        let (image, holder_pending) =
+            self.call_goal_place_inner(check_context, place, bindings, exactness)?;
         if holder_pending || image.ty() != expected_type {
             return Err(SemanticCompilerFailure::InvalidResolution.into());
         }
@@ -1412,6 +1432,7 @@ impl<'unit> TypeContext<'unit> {
         check_context: &CheckContext<'_>,
         place: NodeId,
         bindings: &HashMap<DeclarationId, LocalBinding>,
+        exactness: super::super::super::references::Exactness<'_>,
     ) -> Result<(GoalExpression, bool), CheckStop> {
         let pbase = self
             .declarations
@@ -1430,18 +1451,18 @@ impl<'unit> TypeContext<'unit> {
                     let local = bindings
                         .get(&declaration)
                         .ok_or(SemanticCompilerFailure::InvalidResolution)?;
-                    if let Some(reference) = &local.reference {
+                    if local.reference.is_some() {
                         (
-                            match reference.paths.as_slice() {
-                                [path] if !path.has_descendant() => {
-                                    self.goal_referent_image(path, local.ty, place)?
-                                }
-                                // [REF-1] a joined reference still denotes
-                                // one selected referent, but no member of its
-                                // possible-target set is its unconditional
-                                // value. Keep the reference's identity so
-                                // proof kills can resolve every candidate.
-                                _ => GoalExpression::Datum(GoalDatum::Place {
+                            match exactness.exact_path(local) {
+                                Some(path) => self.goal_referent_image(path, local.ty, place)?,
+                                // [REF-1, ENT-2] a joined reference still
+                                // denotes one selected referent, but no member
+                                // of its possible-target set is its
+                                // unconditional value, and a description that
+                                // is not exact identifies no one place. Keep
+                                // the reference's identity so proof kills can
+                                // resolve every candidate.
+                                None => GoalExpression::Datum(GoalDatum::Place {
                                     root: local.binding,
                                     projections: Vec::new(),
                                     ty: local.ty,

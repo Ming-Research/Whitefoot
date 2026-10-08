@@ -835,3 +835,67 @@ entry:
   call void @wf__body_sync_directory_finish(ptr %result, ptr %factory, ptr %root, ptr %operation)
   ret void
 }
+
+declare void @wf__body_stop_listen(ptr, ptr, ptr)
+
+define void @wf_std.process.stop_listen(ptr %result, ptr %factory, ptr %stops) align 64 {
+entry:
+  call void @wf__body_stop_listen(ptr %result, ptr %factory, ptr %stops)
+  ret void
+}
+
+declare i32 @wf__body_stop_next_start(ptr, ptr, ptr, ptr, ptr)
+declare void @wf__body_stop_next_finish(ptr, ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.process.stop_next.start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_stop_next_start(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  ret i32 %state
+}
+
+define void @wf_std.process.stop_next.finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation) align 64 {
+entry:
+  call void @wf__body_stop_next_finish(ptr %result, ptr %factory, ptr %listener, ptr %deadline, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_close_stop_listener_start(ptr, ptr, ptr, ptr)
+declare void @wf__body_close_stop_listener_finish(ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.process.close_stop_listener.start(ptr %result, ptr %factory, ptr %listener, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_close_stop_listener_start(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  ret i32 %state
+}
+
+define void @wf_std.process.close_stop_listener.finish(ptr %result, ptr %factory, ptr %listener, ptr %operation) align 64 {
+entry:
+  call void @wf__body_close_stop_listener_finish(ptr %result, ptr %factory, ptr %listener, ptr %operation)
+  ret void
+}
+
+declare void @wf__body_meter_share(ptr, ptr)
+
+define void @wf_std.process.meter_share(ptr %result, ptr %meter) align 64 {
+entry:
+  call void @wf__body_meter_share(ptr %result, ptr %meter)
+  ret void
+}
+
+declare i64 @wf__body_heap_in_use(ptr)
+
+define i64 @wf_std.process.heap_in_use(ptr %meter) align 64 {
+entry:
+  %bytes = call i64 @wf__body_heap_in_use(ptr %meter)
+  ret i64 %bytes
+}
+
+declare void @wf__body_resident_bytes(ptr, ptr)
+
+define { i32, i64 } @wf_std.process.resident_bytes(ptr %meter) align 64 {
+entry:
+  %result = alloca { i32, i64 }, align 8
+  call void @wf__body_resident_bytes(ptr %result, ptr %meter)
+  %bytes = load { i32, i64 }, ptr %result, align 8
+  ret { i32, i64 } %bytes
+}

@@ -108,11 +108,11 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(helper.contains("switch i32 %tag"));
     assert!(helper.contains("i32 0, label %variant.0"));
     assert!(helper.contains("i32 1, label %variant.1"));
-    assert_eq!(helper.matches("call void @free").count(), 2);
+    assert_eq!(helper.matches("call void @wf__heap_give").count(), 2);
     assert_eq!(abandon.matches(&format!("call void @{cleanup}")).count(), 1);
     let consume = emitted_function(&llvm, "consume");
     assert!(!consume.contains(&format!("call void @{cleanup}")));
-    assert_eq!(consume.matches("call void @free").count(), 2);
+    assert_eq!(consume.matches("call void @wf__heap_give").count(), 2);
 
     // A linked implementation of the same ordinary signature sets only the
     // active tag and returns deliberately dirty bits for the inactive Box
@@ -143,8 +143,8 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     for module in [&llvm, &linked_constructor] {
         let observed = super::owned_places::retain_calls(module)
-            .replace("@malloc(", "@wf_test_allocate(")
-            .replace("@free(", "@wf_test_release(");
+            .replace("@wf__heap_take(", "@wf_test_allocate(")
+            .replace("@wf__heap_give(", "@wf_test_release(");
         let host = super::owned_places::allocation_observer(4, 0);
         let output = compile_link_and_run(&observed, Some(&host), &[]);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -176,8 +176,8 @@ fn result_run_transfer_error_and_abandonment_execute() {
         !llvm.contains("define private void @wf.drop."),
         "a Result over an inline run owns no storage and needs no drop helper"
     );
-    assert!(!llvm.contains("call ptr @malloc"));
-    assert!(!llvm.contains("call void @free"));
+    assert!(!llvm.contains("call ptr @wf__heap_take"));
+    assert!(!llvm.contains("call void @wf__heap_give"));
     let transforms: Vec<_> = llvm
         .lines()
         .filter(|line| line.starts_with("define ") && line.contains("@wf_transform$instance$"))
@@ -269,7 +269,7 @@ fn main() -> status: std::process::ExitStatus pure {
         .map(|offset| helper_start + offset + 3)
         .expect("drop helper must close");
     let helper = &llvm[helper_start..helper_end];
-    assert_eq!(helper.matches("call void @free").count(), 1);
+    assert_eq!(helper.matches("call void @wf__heap_give").count(), 1);
     // compiler/backend-facts: the helper's tag switch defaults to
     // unreachable, since every enum value carries a declared tag.
     let (_, default) = helper
@@ -289,7 +289,7 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     let consume = emitted_function(&llvm, "consume");
     assert!(!consume.contains("call void @wf.drop."));
-    assert_eq!(consume.matches("call void @free").count(), 1);
+    assert_eq!(consume.matches("call void @wf__heap_give").count(), 1);
 
     let output = compile_and_run(&llvm);
     assert!(

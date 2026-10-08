@@ -134,8 +134,8 @@ impl FunctionEmitter<'_, '_> {
         let pointer = self.next_temporary()?;
         let valid = self.next_temporary()?;
         let ready = format!("paged.alloc.{pointer}");
-        self.output.symbol("malloc");
-        writeln!(self.output, "  %{pointer} = call ptr @malloc(i64 {bytes})\n  %{valid} = icmp ne ptr %{pointer}, null\n  br i1 %{valid}, label %{ready}, label %{oom}").map_err(|_| BackendFailure::TextEmission)?;
+        self.output.symbol("wf__heap_take");
+        writeln!(self.output, "  %{pointer} = call ptr @wf__heap_take(i64 {bytes})\n  %{valid} = icmp ne ptr %{pointer}, null\n  br i1 %{valid}, label %{ready}, label %{oom}").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(ready);
         Ok(format!("%{pointer}"))
     }
@@ -209,8 +209,14 @@ impl FunctionEmitter<'_, '_> {
         let freshdir = self.paged_directory(&fresh)?;
         self.intrinsics.insert(IntrinsicDeclaration::MemoryMove);
         self.output.symbol("llvm.memmove.p0.p0.i64");
-        self.output.symbol("free");
-        writeln!(self.output, "  %{tag}.copied = mul nuw i64 {oldpages}, 8\n  call void @llvm.memmove.p0.p0.i64(ptr {freshdir}, ptr {olddir}, i64 %{tag}.copied, i1 false)\n  call void @free(ptr %{old})\n  store ptr {fresh}, ptr {owner}\n  br label %{tag}.resized").map_err(|_| BackendFailure::TextEmission)?;
+        let old_directory_bytes = self.next_temporary()?;
+        let old_bytes = self.next_temporary()?;
+        writeln!(self.output,
+            "  %{old_directory_bytes} = mul nuw i64 %{olddircap}, 8\n  %{old_bytes} = add nuw i64 %{old_directory_bytes}, {}",
+            crate::target::PAGED_HEADER_BYTES,
+        ).map_err(|_| BackendFailure::TextEmission)?;
+        self.output.symbol("wf__heap_give");
+        writeln!(self.output, "  %{tag}.copied = mul nuw i64 {oldpages}, 8\n  call void @llvm.memmove.p0.p0.i64(ptr {freshdir}, ptr {olddir}, i64 %{tag}.copied, i1 false)\n  call void @wf__heap_give(ptr %{old}, i64 %{old_bytes})\n  store ptr {fresh}, ptr {owner}\n  br label %{tag}.resized").map_err(|_| BackendFailure::TextEmission)?;
         self.output.open_block(format!("{tag}.resized"));
         writeln!(self.output, "  br label %{tag}.ready")
             .map_err(|_| BackendFailure::TextEmission)?;

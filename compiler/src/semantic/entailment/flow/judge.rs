@@ -770,7 +770,7 @@ impl Analyzer<'_, '_> {
                     self.judge_children_reach_parent(std::iter::once(offset.as_ref()), states);
                 let obligation_start = self.output.obligations.len();
                 if reaches_index {
-                    let base = ResolvedPlace::from_path(root.binding, root.place_path());
+                    let base = root.proof_place();
                     self.judge_obligation(
                         base,
                         MeasuredKind::RuntimeArray,
@@ -943,14 +943,15 @@ impl Analyzer<'_, '_> {
                         self.judge_range_element_place(place, states)
                     }
                 };
-                let (spelling, mut path) = root.place();
-                if root.binding().is_some_and(is_holder) {
-                    path.insert(0, PlaceStep::Deref);
-                }
-                let place = ResolvedPlace {
-                    atomic_aliases: Vec::new(),
-                    root: spelling,
-                    path,
+                let place = match root {
+                    crate::semantic::CheckedSegmentSource::Storage(root) => judged_place(root),
+                    crate::semantic::CheckedSegmentSource::Element(place) => {
+                        ResolvedPlace::spelled(
+                            PlaceRoot::Binding(place.root.binding),
+                            is_holder(place.root.binding),
+                            place.place_path(),
+                        )
+                    }
                 };
                 if let crate::semantic::CheckedSegmentSelect::One(index)
                 | crate::semantic::CheckedSegmentSelect::Page(index) = segment
@@ -1197,18 +1198,17 @@ impl Analyzer<'_, '_> {
         root: &CheckedContainerRoot,
         states: &mut ProofFlowState,
     ) -> bool {
-        let mut projections = Vec::new();
-        if root.binding().is_some_and(is_holder) {
-            projections.push(PlaceStep::Deref);
-        }
+        // [ENT-2] each subscript's bound is stated over the place's proof
+        // path, as the guard that proves it is.
+        let mut base = root.proof_prefix();
         let mut reached = true;
         for step in &root.path {
             match step {
                 CheckedPlaceStep::Field(field) => {
-                    projections.push(PlaceStep::Field(*field));
+                    base.path.push(PlaceStep::Field(*field));
                 }
                 CheckedPlaceStep::BoxReferent(_) => {
-                    projections.push(PlaceStep::Deref);
+                    base.path.push(PlaceStep::Deref);
                 }
                 CheckedPlaceStep::Subscript(subscript) => {
                     if matches!(subscript.base_type, CheckedType::Nominal(_)) {
@@ -1217,16 +1217,11 @@ impl Analyzer<'_, '_> {
                                 std::iter::once(&subscript.offset),
                                 states,
                             );
-                        projections.push(PlaceStep::Index(subscript.captured));
+                        base.path.push(PlaceStep::Index(subscript.captured));
                         continue;
                     }
                     let Some(measured) = measured_kind(subscript.base_type) else {
                         return false;
-                    };
-                    let base = ResolvedPlace {
-                        atomic_aliases: Vec::new(),
-                        root: root.root,
-                        path: projections.clone(),
                     };
                     let reaches_offset = self
                         .judge_children_reach_parent(std::iter::once(&subscript.offset), states);
@@ -1238,7 +1233,7 @@ impl Analyzer<'_, '_> {
                             states,
                         );
                         self.judge_obligation(
-                            base,
+                            base.clone(),
                             measured,
                             type_constant(subscript.base_type),
                             &subscript.offset,
@@ -1251,7 +1246,7 @@ impl Analyzer<'_, '_> {
                         && self
                             .judging()
                             .obligations_since_discharged(obligation_start);
-                    projections.push(PlaceStep::Index(subscript.captured));
+                    base.path.push(PlaceStep::Index(subscript.captured));
                 }
             }
         }
@@ -1786,14 +1781,12 @@ pub(super) fn array_root_place(root: &CheckedArrayRoot) -> ResolvedPlace {
 /// A run's path may carry subscripts of its own — `len_of(table[i])` is a
 /// term [MSR-1] — so it is a source-order projection path and never a
 /// field list.
+///
+/// The place is its [ENT-2] proof path, so a place written through a
+/// reference variable whose description is exact there is the term every
+/// other spelling of that storage forms.
 pub(super) fn container_root_path(root: &CheckedContainerRoot) -> ResolvedPlace {
-    let mut place = ResolvedPlace {
-        atomic_aliases: Vec::new(),
-        root: root.root,
-        path: Vec::new(),
-    };
-    place.path.extend(root.place_path());
-    place
+    root.proof_place()
 }
 
 /// The place one [SET-1] commit writes, as every measure term over it is
@@ -1835,4 +1828,11 @@ pub(super) fn set_target_place(target: &CheckedSetTarget) -> Option<ResolvedPlac
             Some(place)
         }
     }
+}
+
+/// The place one checked storage root names, as [`Analyzer::judge_place_subscripts`]
+/// walks it: its [ENT-2] proof base, each field, each `Box` content and each
+/// subscript by its captured offset [REF-1].
+fn judged_place(root: &CheckedContainerRoot) -> ResolvedPlace {
+    root.proof_place()
 }

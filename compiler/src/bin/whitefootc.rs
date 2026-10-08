@@ -8,8 +8,8 @@ use whitefoot::{
     Architecture, BuildCache, COMPLETION_BRIDGE_HEADER, COMPLETION_BRIDGE_SOURCE,
     COMPLETION_CONTRACT_HEADER, COMPLETION_FILE_ADAPTER_HEADER, COMPLETION_FILE_ADAPTER_SOURCE,
     COMPLETION_FILE_POSIX_HEADER, COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE,
-    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER,
-    CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
+    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER,
+    CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
     CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat, FLOOR_STACK_BYTES,
     FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry,
     ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
@@ -144,6 +144,7 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("completion/runtime.c", COMPLETION_RUNTIME_SOURCE),
     unit("completion/file_adapter.c", COMPLETION_FILE_ADAPTER_SOURCE),
     unit("completion/bridge.c", COMPLETION_BRIDGE_SOURCE),
+    unit("completion/stop_signals.c", COMPLETION_STOP_SIGNALS_SOURCE),
     unit("concurrent_map.h", CONCURRENT_MAP_HEADER),
     unit("concurrent_map.c", CONCURRENT_MAP_SOURCE),
     unit("keyed_table.c", KEYED_TABLE_SOURCE),
@@ -165,6 +166,7 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_posix.c",
     "completion/bridge.c",
+    "completion/stop_signals.c",
     "completion/linux_io_uring.c",
     "keyed_table.c",
 ];
@@ -182,6 +184,7 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_windows.c",
     "completion/bridge.c",
+    "completion/stop_signals.c",
     "completion/windows_iocp.c",
     "keyed_table.c",
 ];
@@ -865,10 +868,12 @@ fn print_stack_ledger(llvm: &str) -> Result<Vec<String>, String> {
 ///
 /// Every module links the complete ordinary library, including its floor,
 /// scheduler and completion dependencies. Each group combines shared units
-/// with this platform's leaves; source-call classifications select no units.
-fn runtime_units() -> (Vec<RuntimeUnit>, Vec<&'static str>) {
+/// with this platform's leaves. Only emitted heap references add the separate
+/// allocator unit; ordinary source-call classifications select no units.
+fn runtime_units(llvm: &str) -> (Vec<RuntimeUnit>, Vec<&'static str>) {
     let mut staged: Vec<RuntimeUnit> = FLOOR_SHARED_UNITS.to_vec();
     staged.extend([
+        unit("heap.c", whitefoot::HEAP_SOURCE),
         unit("ordinary_values.h", ORDINARY_VALUES_HEADER),
         unit("ordinary_values.c", ORDINARY_VALUES_SOURCE),
         unit("ordinary_values.ll", ORDINARY_VALUES_LLVM),
@@ -876,6 +881,11 @@ fn runtime_units() -> (Vec<RuntimeUnit>, Vec<&'static str>) {
     staged.extend_from_slice(FLOOR_PLATFORM_UNITS);
     let mut compiled: Vec<&'static str> = FLOOR_COMPILE_UNITS.to_vec();
     compiled.extend(["ordinary_values.c", "ordinary_values.ll"]);
+    // The allocator unit is a dependency of emitted storage alone. The
+    // reading and all counter storage stay in the unconditional library.
+    if llvm.contains("@wf__heap_take(") || llvm.contains("@wf__heap_give(") {
+        compiled.push("heap.c");
+    }
     {
         staged.extend_from_slice(CORE_SHARED_UNITS);
         staged.extend_from_slice(CORE_PLATFORM_UNITS);
@@ -895,7 +905,8 @@ fn runtime_units() -> (Vec<RuntimeUnit>, Vec<&'static str>) {
 /// The lists above supply each platform's complete ordinary library. Compute
 /// joins help on the current stack; completion joins wait through their native
 /// backend. Neither source-call classification nor effect rows select a
-/// different set of link inputs.
+/// different ordinary library. Emitted heap references add only the allocator
+/// wrapper unit.
 ///
 /// Every one of those bytes travels inside this executable, so no installed
 /// path, no build directory, and no environment decides which runtime a
@@ -915,7 +926,7 @@ fn compile_executable(
     let build = BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!("whitefootc-{}-{build}", std::process::id()));
     let result = (|| {
-        let (staged, compiled) = runtime_units();
+        let (staged, compiled) = runtime_units(llvm);
         std::fs::create_dir_all(&directory)
             .map_err(|error| format!("cannot create the runtime directory: {error}"))?;
         for unit in &staged {
@@ -1828,13 +1839,23 @@ mod tests {
     /// receive its transitive headers and native implementation units.
     #[test]
     fn the_ordinary_library_links_the_same_units_for_every_source_module() {
-        let (staged, compiled) = runtime_units();
+        let (staged, compiled) = runtime_units("declare i64 @wf__heap_in_use()");
+        assert!(!compiled.contains(&"heap.c"));
+        assert!(staged.iter().any(|unit| unit.relative_path == "heap.c"));
+        for dependency in [
+            "declare ptr @wf__heap_take(i64)",
+            "declare void @wf__heap_give(ptr, i64)",
+        ] {
+            let (_, with_heap) = runtime_units(dependency);
+            assert!(with_heap.contains(&"heap.c"));
+        }
         for required in [
             "ordinary_values.c",
             "ordinary_values.ll",
             "sched/core.c",
             "sched/entry.c",
             "completion/bridge.c",
+            "completion/stop_signals.c",
         ] {
             assert!(
                 compiled.contains(&required),
@@ -1842,6 +1863,33 @@ mod tests {
             );
             assert!(staged.iter().any(|unit| unit.relative_path == required));
         }
+    }
+
+    /// Shared scalar storage comes wholly from the runtime pool. Its drop
+    /// helper must not introduce declarations that select the allocator unit.
+    #[test]
+    fn a_shared_scalar_links_without_the_heap_unit() {
+        let source = b"fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = shared_new::<u64>(value: 0_u64);
+  return std::process::exit_status(code: 0_u8);
+}
+";
+        let module = whitefoot::compile(
+            &[whitefoot::SourceInput::new("shared.wf", source)],
+            whitefoot::CompilerLimits::default(),
+        )
+        .expect("the shared scalar program checks");
+        assert!(module.contains("call ptr @wf__shared_new("));
+        assert!(module.contains("call i32 @wf__shared_release("));
+        assert!(module.contains("call void @wf__shared_free("));
+        for symbol in ["@wf__heap_take", "@wf__heap_give", "@malloc", "@free"] {
+            assert!(
+                !module.contains(symbol),
+                "unexpected allocator reference: {symbol}"
+            );
+        }
+        let (_, compiled) = runtime_units(&module);
+        assert!(!compiled.contains(&"heap.c"));
     }
 
     /// The driver stages the embedded sources with the same relative topology
@@ -1873,7 +1921,7 @@ mod tests {
             Some(result)
         }
 
-        let (units, compiled) = runtime_units();
+        let (units, compiled) = runtime_units("declare ptr @wf__heap_take(i64)");
         let staged: HashSet<PathBuf> = units
             .iter()
             .map(|unit| PathBuf::from(unit.relative_path))

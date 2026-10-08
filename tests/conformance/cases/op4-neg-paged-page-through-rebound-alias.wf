@@ -1,0 +1,14 @@
+fn first_page_length(p: &Paged<u64>, q: &Paged<u64>) -> result: u64 reads(p, q) {
+  doc "Rebinding the alias loses the first window's page bound before forming a page of the second.";
+  let view = &p^;
+  if view^.pages.len > 0_u64 {
+    set view = &q^;
+    let page = &view^.pages[0_u64];
+    return page^.len;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

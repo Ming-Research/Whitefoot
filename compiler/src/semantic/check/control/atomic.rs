@@ -294,7 +294,7 @@ impl Checker<'_, '_> {
         Checker::invalidate_control_exits(
             &mut block_bindings,
             &mut checked.give_states,
-            &mut checked.break_states,
+            &mut checked.loop_transfers,
             scope.give_context,
             &leaving,
         );
@@ -327,7 +327,7 @@ impl Checker<'_, '_> {
             all_paths_deliver: !checked.can_continue && checked.all_paths_deliver,
             direct_give: false,
             give_states: checked.give_states,
-            break_states: checked.break_states,
+            loop_transfers: checked.loop_transfers,
         })
     }
     fn bind_atomic_reference(
@@ -346,6 +346,7 @@ impl Checker<'_, '_> {
             ReferenceInfo::formed(ReferenceKind::Single, ResolvedPlace::binding(binding));
         self.body
             .record_reference_origins(binding, &reference.paths);
+        self.body.note_anchor(binding, declaration.id());
         bindings.insert(
             declaration.id(),
             LocalBinding {
@@ -691,7 +692,9 @@ fn statement_mentions(statement: &CheckedStatement, binding: BindingId) -> bool 
                 || guard.as_deref().is_some_and(expression)
                 || block(body)
         }
-        CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => false,
+        CheckedStatement::Proof(_)
+        | CheckedStatement::Break { .. }
+        | CheckedStatement::Continue { .. } => false,
     }
 }
 
