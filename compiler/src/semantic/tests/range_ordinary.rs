@@ -493,3 +493,273 @@ fn written_enclosing_loop_fact() {
   return unit;
 }", None);
 }
+
+/// A callee whose range postcondition makes its caller take part, a callee
+/// whose affine requirement the caller defers, and a writer through a
+/// reference: a deferred requirement on a value the walk must have forgotten.
+fn stale(body: &str) -> String {
+    format!(
+        "struct Holder {{
+  value: u64;
+}}
+
+struct Owner {{
+  value: u64;
+  spare: Box<u64>;
+}}
+
+fn observe(value: u64) -> result: u64 pure contract {{
+  ensures result == value;
+}} {{
+  return value;
+}}
+
+fn guard(left: u64, right: u64) -> result: unit pure contract {{
+  requires left == right;
+}} {{
+  return unit;
+}}
+
+fn bump(target: &u64) -> result: unit writes(target) {{
+  set target^ = 9_u64;
+  return unit;
+}}
+
+{body}"
+    )
+}
+
+#[test]
+fn scalar_written_by_a_call_through_its_reference() {
+    check(
+        &stale(
+            "fn caller() -> result: unit pure {
+  let source = 1_u64;
+  let observed = observe(value: source);
+  bump(target: &source);
+  guard(left: observed, right: source);
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn reference_parameter_written_by_a_call() {
+    check(
+        &stale(
+            "fn caller(source: &u64) -> result: unit writes(source) {
+  let observed = observe(value: source^);
+  bump(target: source);
+  guard(left: observed, right: source^);
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn reference_parameter_written_through_a_reborrow() {
+    check(
+        &stale(
+            "fn caller(source: &u64) -> result: unit writes(source) {
+  let observed = observe(value: source^);
+  let again = &source^;
+  set again^ = 9_u64;
+  guard(left: observed, right: source^);
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn owned_locals_exchanged_by_swap() {
+    check(
+        &stale(
+            "fn caller() -> result: unit pure {
+  let first_box = box_new::<u64>(value: 0_u64);
+  let second_box = box_new::<u64>(value: 0_u64);
+  let left = Owner(value: 1_u64, spare: move first_box);
+  let right = Owner(value: 2_u64, spare: move second_box);
+  let observed = observe(value: left.value);
+  swap(first: &left, second: &right);
+  guard(left: observed, right: left.value);
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn scalar_written_through_a_reference_the_loop_body_takes() {
+    check(
+        &stale(
+            "fn caller() -> result: unit pure {
+  let source = 1_u64;
+  let observed = observe(value: source);
+  for (i in 0_u64..2_u64) {
+    guard(left: observed, right: source);
+    let writer = &source;
+    set writer^ = 2_u64;
+  }
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn scalar_written_through_a_reference_rebound_to_it_in_the_loop() {
+    check(
+        &stale(
+            "fn caller() -> result: unit pure {
+  let source = 1_u64;
+  let other = 1_u64;
+  let observed = observe(value: source);
+  let writer = &other;
+  for (i in 0_u64..2_u64) {
+    guard(left: observed, right: source);
+    set writer^ = 2_u64;
+    set writer = &source;
+  }
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn scalar_written_through_a_joined_reference() {
+    check(
+        &stale(
+            "fn caller(flag: Bool) -> result: unit pure {
+  let a = 1_u64;
+  let b = 1_u64;
+  let observed = observe(value: b);
+  let p = if flag {
+    give &a;
+  } else {
+    give &b;
+  }
+  set p^ = 2_u64;
+  guard(left: observed, right: b);
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn scalar_written_through_a_reference_inside_an_atomic_statement() {
+    check(
+        &stale(
+            "fn caller(state: Shared<Holder>) -> result: unit pure waits {
+  let source = 1_u64;
+  let observed = observe(value: source);
+  let writer = &source;
+  atomic held = &state {
+    set writer^ = held^.value;
+  }
+  guard(left: observed, right: source);
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn struct_written_after_a_copy_of_it() {
+    check(
+        &stale(
+            "fn caller() -> result: unit pure {
+  let held = Holder(value: 1_u64);
+  let twin = held;
+  let observed = observe(value: twin.value);
+  set held.value = 2_u64;
+  guard(left: observed, right: held.value);
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+#[test]
+fn struct_field_written_through_a_reference() {
+    check(
+        &stale(
+            "fn caller() -> result: unit pure {
+  let held = Holder(value: 1_u64);
+  let observed = observe(value: held.value);
+  let writer = &held;
+  set writer^.value = 2_u64;
+  guard(left: observed, right: held.value);
+  return unit;
+}",
+        ),
+        Some(SemanticRule::Fn8),
+    );
+}
+
+/// A condition the ordinary checker keeps no origin for, because one path
+/// sets it, and the walk still knows as a comparison.
+fn condition(write: &str) -> String {
+    format!(
+        "fn probe(xs: &[u64], table: &Array<u64, 4>, x: u64, flag: Bool) -> result: unit reads(table) contract {{
+  requires forall small(k in 0_u64..xs^.len): xs^[k] < 4_u64;
+}} {{
+  let inside = x < 4_u64;
+  if flag {{
+    set inside = x < 4_u64;
+  }}
+{write}  if inside {{
+    let v = table^[x];
+  }}
+  return unit;
+}}"
+    )
+}
+
+#[test]
+fn condition_kept_across_a_join() {
+    check(&condition(""), None);
+}
+
+#[test]
+fn condition_written_through_a_reference() {
+    check(
+        &condition("  let writer = &inside;\n  set writer^ = True();\n"),
+        Some(SemanticRule::Op4),
+    );
+}
+
+/// [RANGE-3] the same staleness, without deferral, at a range requirement.
+#[test]
+fn range_requirement_bound_written_through_a_reference() {
+    check(
+        "fn need(xs: &Array<u64, 4>, n: u64) -> result: unit pure contract {
+  requires forall small(k in 0_u64..n): xs^[k] < 4_u64;
+} {
+  return unit;
+}
+
+fn caller(xs: &Array<u64, 4>) -> result: unit writes(xs) {
+  let n = 1_u64;
+  let w = &n;
+  set w^ = 4_u64;
+  set xs^[0_u64] = 0_u64;
+  need(xs: xs, n: n);
+  return unit;
+}",
+        Some(SemanticRule::Range3),
+    );
+}

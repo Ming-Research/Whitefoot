@@ -7,8 +7,8 @@
 //! requirements, forgets what the callee writes and takes its
 //! postconditions; an exit discharges the function's own. Every expression
 //! the walk does not model evaluates to a fresh opaque value, and every
-//! write it cannot place forgets every container, so what the walk does not
-//! know it never assumes.
+//! write it cannot place forgets every container and every scalar binding a
+//! reference was taken to, so what the walk does not know it never assumes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -903,14 +903,15 @@ impl<'program> Walker<'program> {
             _ => {}
         }
         if let Some(source) = state.read_source(&location)
-            && let CheckedType::Integer(integer) = ty {
-                return Value::Int(self.world.read(
-                    source.version,
-                    source.indices,
-                    source.projection,
-                    Some(integer),
-                ));
-            }
+            && let CheckedType::Integer(integer) = ty
+        {
+            return Value::Int(self.world.read(
+                source.version,
+                source.indices,
+                source.projection,
+                Some(integer),
+            ));
+        }
         match ty {
             CheckedType::Integer(integer) => {
                 // One unknown field reads as one value until it is written.
@@ -1392,9 +1393,10 @@ impl<'program> Walker<'program> {
 
     fn variant_count(&self, ty: CheckedType) -> u32 {
         if let CheckedType::Nominal(nominal) = ty
-            && let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind {
-                return variants.len() as u32;
-            }
+            && let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind
+        {
+            return variants.len() as u32;
+        }
         0
     }
 
@@ -1796,6 +1798,15 @@ impl<'program> Walker<'program> {
                 }
             }
             CheckedExpression::BorrowAddressed { root, .. } => {
+                if let PlaceRoot::Binding(binding) = root.root
+                    && matches!(
+                        state.values.get(&binding),
+                        Some(Value::Int(_) | Value::Bool(_))
+                    )
+                {
+                    let ty = self.binding_types.get(&binding).copied();
+                    state.expose(&mut self.world, binding, ty);
+                }
                 Value::Ref(self.view_of(state, root.root, &root.path))
             }
             CheckedExpression::BorrowSegment { root, segment, .. } => {
@@ -2392,6 +2403,9 @@ impl<'program> Walker<'program> {
             }
             outer.bindings.extend(total.bindings.iter().copied());
             outer.slots.extend(total.slots.iter().cloned());
+            outer
+                .exposed
+                .extend(total.exposed.iter().map(|(binding, ty)| (*binding, *ty)));
             outer.everything |= total.everything;
         }
         self.recording = saved_recording;
@@ -2443,6 +2457,11 @@ impl<'program> Walker<'program> {
                 deciding = true;
             }
         }
+        for (binding, ty) in log.exposed {
+            if total.exposed.insert(binding, ty).is_none() && entry.values.contains_key(&binding) {
+                deciding = true;
+            }
+        }
         deciding
     }
 
@@ -2450,6 +2469,11 @@ impl<'program> Walker<'program> {
     /// and the variants of every written enum.
     fn header(&mut self, entry: &State, modified: &Modified) -> State {
         let mut header = entry.clone();
+        // A reference the body takes to a scalar binding can reach it on a
+        // later iteration.
+        header
+            .exposed
+            .extend(modified.exposed.iter().map(|(binding, ty)| (*binding, *ty)));
         if modified.everything {
             header.havoc_everything(&mut self.world);
         }
