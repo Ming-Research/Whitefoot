@@ -25,8 +25,8 @@ use super::super::model::{
 };
 use super::super::places::PlaceRoot;
 use super::super::range_facts::{
-    CheckedRangeClause, CheckedRangePlace, CheckedRangeRoot, CheckedRangeShape, CheckedRangeStep,
-    CheckedRangeTerm,
+    CheckedRangeClause, CheckedRangePlace, CheckedRangeProjection, CheckedRangeRoot,
+    CheckedRangeShape, CheckedRangeStep, CheckedRangeTerm,
 };
 use super::facts::{self, Fact, Frame, PlaceView, Query};
 use super::solver::{Capacity, Linear, Literal, Relation, Verdict};
@@ -854,10 +854,6 @@ impl<'program> Walker<'program> {
     // ----- writes -----
 
     fn set(&mut self, state: &mut State, target: &CheckedSetTarget, value: Value, node: &NodePath) {
-        let stored = match &value {
-            Value::Int(value) => Some(value.clone()),
-            _ => None,
-        };
         match target {
             CheckedSetTarget::Place(place) => {
                 if place.fields.is_empty() {
@@ -889,14 +885,8 @@ impl<'program> Walker<'program> {
                 self.store(state, &location, place.ty, value, node);
             }
             CheckedSetTarget::RangeIndex(place) => match self.range_element(state, place) {
-                Some((container, indices, whole)) => {
-                    self.access(container, &indices, true, node, state);
-                    state.write_element(
-                        &mut self.world,
-                        container,
-                        indices,
-                        if whole { stored } else { None },
-                    );
+                Some((container, indices, projection)) => {
+                    self.write_element(state, container, indices, projection, &value, node);
                 }
                 None => self.forget_all(state, node),
             },
@@ -905,15 +895,9 @@ impl<'program> Walker<'program> {
                     Target::Element {
                         container,
                         indices,
-                        below,
+                        projection,
                     } => {
-                        self.access(container, &indices, true, node, state);
-                        state.write_element(
-                            &mut self.world,
-                            container,
-                            indices,
-                            if below { None } else { stored },
-                        );
+                        self.write_element(state, container, indices, projection, &value, node);
                     }
                     Target::Location(location) => {
                         self.store(state, &location, root.ty, value, node);
@@ -925,6 +909,97 @@ impl<'program> Walker<'program> {
                     Target::Unknown => self.forget_all(state, node),
                 }
             }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_element(
+        &mut self,
+        state: &mut State,
+        container: ContainerId,
+        indices: Vec<Linear>,
+        projection: Option<Vec<CheckedRangeProjection>>,
+        value: &Value,
+        node: &NodePath,
+    ) {
+        self.access(container, &indices, true, node, state);
+        let mut values = BTreeMap::new();
+        if projection.is_some() {
+            self.stored_projections(state, value, &mut Vec::new(), &mut values);
+        }
+        state.write_element(
+            &mut self.world,
+            container,
+            indices,
+            projection.unwrap_or_default(),
+            values,
+        );
+    }
+
+    fn stored_projections(
+        &mut self,
+        state: &State,
+        value: &Value,
+        path: &mut Vec<CheckedRangeProjection>,
+        values: &mut BTreeMap<Vec<CheckedRangeProjection>, Linear>,
+    ) {
+        match value {
+            Value::Int(value) => {
+                values.insert(path.clone(), value.clone());
+            }
+            Value::Struct(fields) => {
+                for (ordinal, field) in fields.iter().enumerate() {
+                    path.push(CheckedRangeProjection::Field(ordinal as u32));
+                    self.stored_projections(state, field, path, values);
+                    path.pop();
+                }
+            }
+            Value::Owned(location) => {
+                let location = state.resolve(location);
+                // Snapshot named scalar contents before the destination write.
+                // Copies have already become new, empty storage in stored_value.
+                for (slot, value) in &state.slots {
+                    if !slot.starts_with(&location) {
+                        continue;
+                    }
+                    let Some(suffix) = owned_projection(&slot.steps[location.steps.len()..]) else {
+                        continue;
+                    };
+                    let length = path.len();
+                    path.extend(suffix);
+                    match value {
+                        Slot::Int(value) => {
+                            values.insert(path.clone(), value.clone());
+                        }
+                        Slot::Alias(source) => self.stored_projections(
+                            state,
+                            &Value::Owned(source.clone()),
+                            path,
+                            values,
+                        ),
+                        Slot::Ref(_) => {}
+                    }
+                    path.truncate(length);
+                }
+                for container in self.world.containers_under(&location) {
+                    let at = &self.world.containers[container as usize].location;
+                    let Some(suffix) = owned_projection(&at.steps[location.steps.len()..]) else {
+                        continue;
+                    };
+                    let length = path.len();
+                    path.extend(suffix);
+                    for measure in [CheckedMeasure::Length, CheckedMeasure::Capacity] {
+                        path.push(CheckedRangeProjection::Measure(measure));
+                        let value =
+                            self.world
+                                .measure(container, state.generation(container), measure);
+                        values.insert(path.clone(), value);
+                        path.pop();
+                    }
+                    path.truncate(length);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -988,10 +1063,14 @@ impl<'program> Walker<'program> {
                 prefix,
                 offset,
             },
-            Some(Value::Ref(View::Element { container, indices })) => Target::Element {
+            Some(Value::Ref(View::Element {
                 container,
                 indices,
-                below: false,
+                projection,
+            })) => Target::Element {
+                container,
+                indices,
+                projection,
             },
             _ => Target::Unknown,
         };
@@ -1019,7 +1098,7 @@ impl<'program> Walker<'program> {
                             Some(container) => Target::Element {
                                 container,
                                 indices: vec![index],
-                                below: false,
+                                projection: Some(Vec::new()),
                             },
                             None => Target::Unknown,
                         }
@@ -1030,7 +1109,7 @@ impl<'program> Walker<'program> {
                     Target::Element {
                         container,
                         indices: vec![row, index],
-                        below: false,
+                        projection: Some(Vec::new()),
                     }
                 }
                 (
@@ -1049,7 +1128,7 @@ impl<'program> Walker<'program> {
                             Target::Element {
                                 container,
                                 indices,
-                                below: false,
+                                projection: Some(Vec::new()),
                             }
                         }
                         None => Target::Unknown,
@@ -1057,14 +1136,19 @@ impl<'program> Walker<'program> {
                 }
                 (
                     Target::Element {
-                        container, indices, ..
+                        container,
+                        indices,
+                        mut projection,
                     },
-                    _,
-                ) => Target::Element {
-                    container,
-                    indices,
-                    below: true,
-                },
+                    step,
+                ) => {
+                    self.project_element(state, &mut projection, step);
+                    Target::Element {
+                        container,
+                        indices,
+                        projection,
+                    }
+                }
                 (_, CheckedPlaceStep::Subscript(subscript)) => {
                     let _ = self.int(state, &subscript.offset);
                     Target::Unknown
@@ -1075,13 +1159,43 @@ impl<'program> Walker<'program> {
         target
     }
 
+    /// Unsupported descendants still access their outer element, but cannot
+    /// supply a projected scalar or a narrower write footprint.
+    fn project_element(
+        &mut self,
+        state: &mut State,
+        projection: &mut Option<Vec<CheckedRangeProjection>>,
+        step: &CheckedPlaceStep,
+    ) {
+        match step {
+            CheckedPlaceStep::Field(field) => {
+                if let Some(path) = projection {
+                    path.push(CheckedRangeProjection::Field(*field));
+                }
+            }
+            CheckedPlaceStep::BoxReferent(_) => {
+                if let Some(path) = projection {
+                    path.push(CheckedRangeProjection::BoxContent);
+                }
+            }
+            CheckedPlaceStep::Subscript(subscript) => {
+                let _ = self.int(state, &subscript.offset);
+                *projection = None;
+            }
+        }
+    }
+
     /// The element one range element place selects: its container, its
-    /// index tuple, and whether it is the whole element.
+    /// index tuple, and its owned projection (None for unsupported suffixes).
     fn range_element(
         &mut self,
         state: &mut State,
         place: &CheckedRangeElementPlace,
-    ) -> Option<(ContainerId, Vec<Linear>, bool)> {
+    ) -> Option<(
+        ContainerId,
+        Vec<Linear>,
+        Option<Vec<CheckedRangeProjection>>,
+    )> {
         let index = self.int(state, &place.offset);
         let Some(Value::Ref(View::Run {
             container,
@@ -1094,7 +1208,11 @@ impl<'program> Walker<'program> {
         };
         let mut indices = prefix;
         indices.push(offset.plus(&index)?);
-        Some((container, indices, place.path.is_empty()))
+        let mut projection = Some(Vec::new());
+        for step in &place.path {
+            self.project_element(state, &mut projection, step);
+        }
+        Some((container, indices, projection))
     }
 
     fn view_of(&mut self, state: &mut State, root: PlaceRoot, path: &[CheckedPlaceStep]) -> View {
@@ -1103,8 +1221,12 @@ impl<'program> Walker<'program> {
             Target::Element {
                 container,
                 indices,
-                below: false,
-            } => View::Element { container, indices },
+                projection,
+            } => View::Element {
+                container,
+                indices,
+                projection,
+            },
             Target::Row { container, row } => {
                 let generation = state.generation(container);
                 let length = self
@@ -1200,7 +1322,9 @@ impl<'program> Walker<'program> {
     fn unplaced_view(&mut self, view: &View, write: bool, node: &NodePath, state: &State) {
         match view {
             View::Run { container, .. } => self.unplaced(Some(*container), write, false),
-            View::Element { container, indices } => {
+            View::Element {
+                container, indices, ..
+            } => {
                 self.access(*container, indices, write, node, state);
             }
             View::Place(location) => {
@@ -1424,15 +1548,9 @@ impl<'program> Walker<'program> {
                     Target::Element {
                         container,
                         indices,
-                        below,
-                    } => {
-                        if below {
-                            self.access(container, &indices, false, carrier, state);
-                            self.opaque_of(root.ty)
-                        } else {
-                            self.read_element(state, container, indices, root.ty, carrier)
-                        }
-                    }
+                        projection,
+                    } => self
+                        .read_projection(state, container, indices, projection, root.ty, carrier),
                     Target::Location(location) => self.read_location(state, &location, root.ty),
                     _ => self.opaque_of(root.ty),
                 }
@@ -1454,6 +1572,24 @@ impl<'program> Walker<'program> {
                             None => self.opaque_of(expression.ty()),
                         }
                     }
+                    Target::Element {
+                        container,
+                        indices,
+                        mut projection,
+                    } => {
+                        if let Some(path) = &mut projection {
+                            path.push(CheckedRangeProjection::Measure(*measure));
+                        }
+                        let cite = self.cite.clone();
+                        self.read_projection(
+                            state,
+                            container,
+                            indices,
+                            projection,
+                            expression.ty(),
+                            &cite,
+                        )
+                    }
                     Target::Row { container, row } if *measure == CheckedMeasure::Length => {
                         let generation = state.generation(container);
                         Value::Int(self.world.segment_length(container, generation, row))
@@ -1471,27 +1607,38 @@ impl<'program> Walker<'program> {
             }
             CheckedExpression::RangeIndex { carrier, place } => {
                 match self.range_element(state, place) {
-                    Some((container, indices, true)) => {
-                        self.read_element(state, container, indices, place.ty, carrier)
-                    }
-                    Some((container, indices, false)) => {
-                        self.access(container, &indices, false, carrier, state);
-                        self.opaque_of(place.ty)
-                    }
+                    Some((container, indices, projection)) => self
+                        .read_projection(state, container, indices, projection, place.ty, carrier),
                     None => self.opaque_of(place.ty),
                 }
             }
-            CheckedExpression::RangeElementMeasure { carrier, place, .. } => {
-                if let Some((container, indices, _)) = self.range_element(state, place) {
-                    self.access(container, &indices, false, carrier, state);
+            CheckedExpression::RangeElementMeasure {
+                carrier,
+                place,
+                measure,
+            } => match self.range_element(state, place) {
+                Some((container, indices, mut projection)) => {
+                    if let Some(path) = &mut projection {
+                        path.push(CheckedRangeProjection::Measure(*measure));
+                    }
+                    self.read_projection(
+                        state,
+                        container,
+                        indices,
+                        projection,
+                        expression.ty(),
+                        carrier,
+                    )
                 }
-                self.opaque_of(expression.ty())
-            }
+                None => self.opaque_of(expression.ty()),
+            },
             CheckedExpression::BorrowRangeIndex { place, .. } => {
                 match self.range_element(state, place) {
-                    Some((container, indices, true)) => {
-                        Value::Ref(View::Element { container, indices })
-                    }
+                    Some((container, indices, projection)) => Value::Ref(View::Element {
+                        container,
+                        indices,
+                        projection,
+                    }),
                     _ => Value::Ref(View::Unknown),
                 }
             }
@@ -1570,9 +1717,11 @@ impl<'program> Walker<'program> {
                 Some(Value::Ref(View::Place(location))) => {
                     self.read_location(state, &location, *ty)
                 }
-                Some(Value::Ref(View::Element { container, indices })) => {
-                    self.read_element(state, container, indices, *ty, carrier)
-                }
+                Some(Value::Ref(View::Element {
+                    container,
+                    indices,
+                    projection,
+                })) => self.read_projection(state, container, indices, projection, *ty, carrier),
                 _ => self.opaque_of(*ty),
             },
             CheckedExpression::Project {
@@ -1635,13 +1784,26 @@ impl<'program> Walker<'program> {
         ty: CheckedType,
         carrier: &NodePath,
     ) -> Value {
+        self.read_projection(state, container, indices, Some(Vec::new()), ty, carrier)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn read_projection(
+        &mut self,
+        state: &mut State,
+        container: ContainerId,
+        indices: Vec<Linear>,
+        projection: Option<Vec<CheckedRangeProjection>>,
+        ty: CheckedType,
+        carrier: &NodePath,
+    ) -> Value {
         self.access(container, &indices, false, carrier, state);
-        match ty {
-            CheckedType::Integer(integer) => {
+        match (ty, projection) {
+            (CheckedType::Integer(integer), Some(projection)) => {
                 let version = state.version(&mut self.world, container);
-                Value::Int(self.world.read(version, indices, Some(integer)))
+                Value::Int(self.world.read(version, indices, projection, Some(integer)))
             }
-            other => self.opaque_of(other),
+            (other, _) => self.opaque_of(other),
         }
     }
 
@@ -1782,8 +1944,18 @@ impl<'program> Walker<'program> {
                 View::Run { container, .. } => {
                     state.havoc_container(&mut self.world, container, false)
                 }
-                View::Element { container, indices } => {
-                    state.write_element(&mut self.world, container, indices, None);
+                View::Element {
+                    container,
+                    indices,
+                    projection,
+                } => {
+                    state.write_element(
+                        &mut self.world,
+                        container,
+                        indices,
+                        projection.unwrap_or_default(),
+                        BTreeMap::new(),
+                    );
                 }
                 View::Place(location) => state.havoc_location(&mut self.world, &location),
                 View::Unknown => state.havoc_everything(&mut self.world),
@@ -2647,11 +2819,11 @@ enum Target {
         prefix: Vec<Linear>,
         offset: Linear,
     },
-    /// One element; `below` when the path continues inside it.
+    /// The outermost element and the owned selection below it.
     Element {
         container: ContainerId,
         indices: Vec<Linear>,
-        below: bool,
+        projection: Option<Vec<CheckedRangeProjection>>,
     },
     /// One segment of a `Segments`, before its element subscript.
     Row {
@@ -2659,6 +2831,18 @@ enum Target {
         row: Linear,
     },
     Unknown,
+}
+
+/// Only owned struct/Box paths can name the stored projections of a value.
+fn owned_projection(steps: &[Step]) -> Option<Vec<CheckedRangeProjection>> {
+    steps
+        .iter()
+        .map(|step| match step {
+            Step::Field(field) => Some(CheckedRangeProjection::Field(*field)),
+            Step::BoxContent => Some(CheckedRangeProjection::BoxContent),
+            Step::Payload { .. } => None,
+        })
+        .collect()
 }
 
 fn binding_value(state: &State, root: CheckedRangeRoot) -> Option<Value> {

@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::model::CheckedMeasure;
 use super::super::range_facts::{
-    CheckedRangeClause, CheckedRangePlace, CheckedRangeRelation, CheckedRangeRoot,
-    CheckedRangeShape, CheckedRangeTerm, RangeComparison,
+    CheckedRangeClause, CheckedRangePlace, CheckedRangeProjection, CheckedRangeRelation,
+    CheckedRangeRoot, CheckedRangeShape, CheckedRangeTerm, RangeComparison,
 };
 use super::solver::{
     AtomId, AtomKind, Capacity, Linear, Literal, Problem, Relation, Rule, Verdict,
@@ -125,6 +125,7 @@ impl Former<'_> {
                 place,
                 shape,
                 indices,
+                projection,
                 element,
             } => {
                 let mut values = Vec::with_capacity(indices.len());
@@ -148,7 +149,10 @@ impl Former<'_> {
                         self.within(index, &length);
                         let mut selected = prefix;
                         selected.push(offset.plus(index)?);
-                        Some(self.world.read(version, selected, Some(*element)))
+                        Some(
+                            self.world
+                                .read(version, selected, projection.clone(), Some(*element)),
+                        )
                     }
                     (
                         PlaceView::Segments {
@@ -167,7 +171,10 @@ impl Former<'_> {
                             .world
                             .segment_length(container, generation, row.clone());
                         self.within(index, &length);
-                        Some(self.world.read(version, values, Some(*element)))
+                        Some(
+                            self.world
+                                .read(version, values, projection.clone(), Some(*element)),
+                        )
                     }
                     _ => None,
                 }
@@ -253,11 +260,17 @@ struct Trigger {
     place: CheckedRangePlace,
     /// Per index position: the bound variable it names, or `None`.
     positions: Vec<Option<u32>>,
+    projection: Vec<CheckedRangeProjection>,
 }
 
 fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>) {
     match term {
-        CheckedRangeTerm::Read { place, indices, .. } => {
+        CheckedRangeTerm::Read {
+            place,
+            indices,
+            projection,
+            ..
+        } => {
             let positions: Vec<Option<u32>> = indices
                 .iter()
                 .map(|index| match index {
@@ -269,6 +282,7 @@ fn collect_triggers(term: &CheckedRangeTerm, out: &mut Vec<Trigger>) {
                 out.push(Trigger {
                     place: place.clone(),
                     positions,
+                    projection: projection.clone(),
                 });
             }
             for index in indices {
@@ -328,10 +342,14 @@ pub(super) fn judge(
     }
     expand(world, &mut atoms, &mut expanded, &mut query)?;
     // Triggered instances, from the reads the problem holds now.
-    let ground: Vec<(VersionId, Vec<Linear>)> = atoms
+    let ground: Vec<(VersionId, Vec<Linear>, Vec<CheckedRangeProjection>)> = atoms
         .iter()
         .filter_map(|atom| match &world.atoms[*atom as usize].def {
-            AtomDef::Read { version, indices } => Some((*version, indices.clone())),
+            AtomDef::Read {
+                version,
+                indices,
+                projection,
+            } => Some((*version, indices.clone(), projection.clone())),
             _ => None,
         })
         .collect();
@@ -349,8 +367,10 @@ pub(super) fn judge(
             let Some(view) = fact.frame.places.get(&trigger.place) else {
                 continue;
             };
-            for (version, indices) in &ground {
-                match_trigger(view, trigger, *version, indices, &mut candidates);
+            for (version, indices, projection) in &ground {
+                if trigger.projection == *projection {
+                    match_trigger(view, trigger, *version, indices, &mut candidates);
+                }
             }
         }
         // [RANGE-3] the ceiling counts the instances the fact forms: the
@@ -488,7 +508,11 @@ fn expand(
         match def {
             AtomDef::Opaque | AtomDef::Measure => {}
             AtomDef::SegmentLength { row, .. } => collect_linear(&row, atoms),
-            AtomDef::Read { version, indices } => {
+            AtomDef::Read {
+                version,
+                indices,
+                projection,
+            } => {
                 for index in &indices {
                     collect_linear(index, atoms);
                 }
@@ -497,9 +521,10 @@ fn expand(
                     VersionDef::Write {
                         previous,
                         indices: written,
-                        value: stored,
+                        projection: footprint,
+                        values: stored,
                     } => {
-                        let old = world.read(previous, indices.clone(), ty);
+                        let old = world.read(previous, indices.clone(), projection.clone(), ty);
                         let mut hit: Vec<Literal> = indices
                             .iter()
                             .zip(&written)
@@ -507,8 +532,21 @@ fn expand(
                                 Literal::new(index.clone(), Relation::Equal, at.clone())
                             })
                             .collect();
-                        if let Some(stored) = stored {
-                            hit.push(Literal::new(value.clone(), Relation::Equal, stored));
+                        // Different declared fields are disjoint. An ancestor
+                        // replacement overlaps every descendant, measures included.
+                        if !projection.starts_with(&footprint)
+                            && !footprint.starts_with(&projection)
+                        {
+                            hit.push(Literal::new(value.clone(), Relation::Equal, old.clone()));
+                        } else if let Some(relative) = projection.strip_prefix(footprint.as_slice())
+                        {
+                            if let Some(stored) = stored.get(relative) {
+                                hit.push(Literal::new(
+                                    value.clone(),
+                                    Relation::Equal,
+                                    stored.clone(),
+                                ));
+                            }
                         }
                         alternatives.push(hit);
                         for (index, at) in indices.iter().zip(&written) {
@@ -521,7 +559,8 @@ fn expand(
                     VersionDef::Join { join, versions } => {
                         let arms = world.joins[join as usize].clone();
                         for (arm, version) in arms.iter().zip(versions) {
-                            let selected = world.read(version, indices.clone(), ty);
+                            let selected =
+                                world.read(version, indices.clone(), projection.clone(), ty);
                             let mut alternative = arm.clone();
                             alternative.push(Literal::new(
                                 value.clone(),
@@ -579,14 +618,23 @@ fn localize(world: &World, atoms: &BTreeSet<AtomId>, query: Query) -> Problem {
             map_linear(&literal.right),
         )
     };
+    let mut reads: BTreeMap<(VersionId, Vec<CheckedRangeProjection>), u32> = BTreeMap::new();
     let mut descriptors: BTreeMap<(ContainerId, u32), u32> = BTreeMap::new();
     let mut kinds = Vec::with_capacity(atoms.len());
     for atom in atoms {
         let kind = match &world.atoms[*atom as usize].def {
-            AtomDef::Read { version, indices } => AtomKind::Read {
-                place: *version,
-                indices: indices.iter().map(&map_linear).collect(),
-            },
+            AtomDef::Read {
+                version,
+                indices,
+                projection,
+            } => {
+                let next = reads.len() as u32;
+                let place = *reads.entry((*version, projection.clone())).or_insert(next);
+                AtomKind::Read {
+                    place,
+                    indices: indices.iter().map(&map_linear).collect(),
+                }
+            }
             AtomDef::SegmentLength {
                 container,
                 generation,
