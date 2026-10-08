@@ -1,8 +1,9 @@
 # Indexed reductions in counted loops
 
-Status: question and proposal, 2026-10-08. Nothing here is a rule yet; the
-owner approved investigating it as the next PAR-2 extension (ledger Q148 of
-the Paged work session). The open choices are listed at the end.
+Status: the owner selected the Proposal, lowering A (private copies combined
+in leaf order), and choice 3 (scalar and indexed accumulators in one body).
+Choice 2 (constant idempotent marks) is deferred. Implementation and CI
+verification are pending; the Criterion below is unchanged.
 
 ## Question
 
@@ -23,7 +24,7 @@ fn histogram(keys: &[u8]) -> made: Box<Array<u64>> reads(keys) {
 }
 ```
 
-PAR-2 denies this loop today: the write to `counts.inner[bucket]` is neither
+Before this extension, PAR-2 denied this loop: the write to `counts.inner[bucket]` is neither
 iteration-own storage, the scalar accumulator, a proved affine element, a
 proved range reference nor a certified element, and two iterations may
 write the same cell.
@@ -111,12 +112,11 @@ Recorded before any implementation or measurement:
   (denied), and a mixed affine element and indexed reduction on one root
   (denied).
 
-## Open choices for the owner
+## Owner selections
 
-1. Lowering strategy: A, B or C (recommended A).
-2. Whether constant idempotent marks (`set flags[e] = True()`) are admitted
-   by normalizing them to `bor` with a proved-`True` contribution, or left
-   to a later change (recommended later; they need a rule about stores that
-   are not written as an operation).
-3. Whether the loop may also carry a scalar accumulator in the same body
-   (recommended yes: the two recombine independently).
+1. Lowering strategy: A selected. B and C remain comparison alternatives.
+2. Constant idempotent marks (`set flags[e] = True()`) are deferred;
+   normalizing them to `bor` with a proved-`True` contribution needs a rule
+   about stores that are not written as an operation.
+3. A loop may also carry a scalar accumulator in the same body; the two
+   recombine independently.

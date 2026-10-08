@@ -277,6 +277,10 @@ fn loop_detail<Source: LedgerSource>(
     // silence.
     let carried = match judged.combines.as_slice() {
         [] => "no accumulator".to_owned(),
+        combines if judged.actualization.is_none() && judged.verdict.is_permitted() => format!(
+            "indexed reductions under {}; lowering unavailable: the split contract carries only one scalar seed/result",
+            combines.join(", ")
+        ),
         combines => format!("one accumulator under {}", combines.join(", ")),
     };
     Ok(match &judged.verdict {
@@ -302,6 +306,10 @@ pub(crate) fn loop_denied_detail<Source: LedgerSource>(
         }
         LoopDenial::AccumulatorRead { statement, reads } => format!(
             "the accumulator is read {reads} times in the body and a reduction reads it once, at {}",
+            source.spelling(statement)?
+        ),
+        LoopDenial::IndexedReduction { statement, reason } => format!(
+            "PAR-2 indexed accumulator: {reason}, at {}",
             source.spelling(statement)?
         ),
         LoopDenial::SharedWrite { argument } => format!(

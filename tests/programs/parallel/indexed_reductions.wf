@@ -1,0 +1,66 @@
+fn histogram(keys: &[u8]) -> made: Box<Array<u64>> reads(keys) {
+  doc "Colliding keys contribute to one of 256 counters.";
+  let counts = box_array_filled::<u64>(count: 256_u64, value: 0_u64);
+  let count = keys^.len;
+  for (i in 0_u64..count) {
+    let bucket = cvt::<u8, u64>(keys^[i]);
+    set counts.inner[bucket] = counts.inner[bucket] +wrap 1_u64;
+  }
+  return move counts;
+}
+
+fn extrema(keys: &[u8]) -> (lowest: Box<Array<i64>>, highest: Box<Array<i64>>) reads(keys) {
+  doc "Positive minima and negative maxima expose zero as a wrong private identity; untouched cells retain their seeds.";
+  let low = box_array_filled::<i64>(count: 256_u64, value: 100_i64);
+  let high = box_array_filled::<i64>(count: 256_u64, value: -100_i64);
+  let count = keys^.len;
+  for (i in 0_u64..count) {
+    let bucket = cvt::<u8, u64>(keys^[i]);
+    set low.inner[bucket] = imin(low.inner[bucket], 7_i64);
+    set high.inner[bucket] = imax(high.inner[bucket], -7_i64);
+  }
+  return move low, move high;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "All keys are seven: the arithmetic oracle checks collisions and every untouched cell independently of another compilation.";
+  let keys = box_array_filled::<u8>(count: 262144_u64, value: 7_u8);
+  let counts = histogram(keys: &keys.inner[0_u64..262144_u64]);
+  let (low, high) = extrema(keys: &keys.inner[0_u64..262144_u64]);
+  let count = counts.inner.len;
+  let low_count = low.inner.len;
+  let high_count = high.inner.len;
+  if count != 256_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if low_count != 256_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if high_count != 256_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  for (i in 0_u64..256_u64) {
+    if i == 7_u64 {
+      if counts.inner[i] != 262144_u64 {
+        return std::process::exit_status(code: 4_u8);
+      }
+      if low.inner[i] != 7_i64 {
+        return std::process::exit_status(code: 5_u8);
+      }
+      if high.inner[i] != -7_i64 {
+        return std::process::exit_status(code: 6_u8);
+      }
+    } else {
+      if counts.inner[i] != 0_u64 {
+        return std::process::exit_status(code: 7_u8);
+      }
+      if low.inner[i] != 100_i64 {
+        return std::process::exit_status(code: 8_u8);
+      }
+      if high.inner[i] != -100_i64 {
+        return std::process::exit_status(code: 9_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

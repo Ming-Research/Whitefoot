@@ -45,27 +45,32 @@ const APART: &str = "\n    k in 0_u64..count,\n    apart(i, j) {\n    }\n  ";
 
 #[test]
 fn a_holding_certificate_admits_its_write_to_the_counted_judgment() {
-    let source = scatter(APART, "");
-    with_semantics(&source, |outcome| {
-        let SemanticOutcome::Complete(program) = outcome else {
-            panic!("the certified scatter must check: {outcome:?}");
-        };
-        let function = program
-            .data
-            .executable_functions()
-            .find(|function| function.name == "scatter")
-            .expect("scatter is checked");
-        let certified = &function.range_facts.certified;
-        assert_eq!(certified.len(), 1, "{certified:?}");
-        assert_eq!(certified[0].writes.len(), 1, "{certified:?}");
-        let table = program
-            .data
-            .permission
-            .named("scatter")
-            .expect("scatter's permissions");
-        assert_eq!(table.loops.len(), 1);
-        assert_eq!(table.loops[0].verdict, LoopVerdict::PermittedEligible);
-    });
+    let source = String::from_utf8(scatter(APART, "")).unwrap();
+    // Concrete storage targets also retain certified-map permission: the
+    // indexed reduction family must not intercept their ordinary stores.
+    for storage in ["&[u64]", "&Array<u64, 4>", "&Slots<u64, 4>"] {
+        let source = source.replace("out: &[u64]", &format!("out: {storage}"));
+        with_semantics(source.as_bytes(), |outcome| {
+            let SemanticOutcome::Complete(program) = outcome else {
+                panic!("the certified scatter must check: {outcome:?}");
+            };
+            let function = program
+                .data
+                .executable_functions()
+                .find(|function| function.name == "scatter")
+                .expect("scatter is checked");
+            let certified = &function.range_facts.certified;
+            assert_eq!(certified.len(), 1, "{certified:?}");
+            assert_eq!(certified[0].writes.len(), 1, "{certified:?}");
+            let table = program
+                .data
+                .permission
+                .named("scatter")
+                .expect("scatter's permissions");
+            assert_eq!(table.loops.len(), 1);
+            assert_eq!(table.loops[0].verdict, LoopVerdict::PermittedEligible);
+        });
+    }
 }
 
 #[test]
