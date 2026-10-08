@@ -262,10 +262,10 @@ writeln!(self.output, "  %{pointer} = getelementptr inbounds {}, ptr {address}, 
         {
             let bytes = self.emit_allocation_size(&count, &stride, &header, &oom, &allocate)?;
             {
-                self.output.symbol("malloc");
+                self.output.symbol("wf__heap_take");
                 write!(
                     self.output,
-                    "  {address} = call ptr @malloc(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}\n"
+                    "  {address} = call ptr @wf__heap_take(i64 {bytes})\n  %{nonnull} = icmp ne ptr {address}, null\n  br i1 %{nonnull}, label %{init}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());

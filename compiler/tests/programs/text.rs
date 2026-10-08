@@ -64,8 +64,8 @@ fn recursive_prefix_parser_builds_evaluates_and_drops_its_ast() {
     let parser = emitted_function(&llvm, "parse_expression");
     assert!(parser.contains("call"));
     assert!(parser.contains("@wf_parse_expression"));
-    assert!(llvm.contains("call ptr @malloc"));
-    assert!(llvm.contains("call void @free"));
+    assert!(llvm.contains("call ptr @wf__heap_take"));
+    assert!(llvm.contains("call void @wf__heap_give"));
 
     let output = compile_and_run(&llvm);
     assert!(output.status.success());
