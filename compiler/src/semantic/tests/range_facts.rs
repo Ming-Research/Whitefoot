@@ -228,6 +228,48 @@ fn main() -> status: std::process::ExitStatus pure {{
 }
 
 #[test]
+fn a_callee_relation_over_an_entry_image_is_not_taken_as_a_range_fact() {
+    // `place_back`'s relation `window^.len == entry(window)^.len + 1` names
+    // an entry image, which no range term reads [RANGE-1]. Read as a range
+    // fact over the current length it is `len == len + 1`, a contradiction
+    // after which the caller proved every owed range fact, including this
+    // false one.
+    let source = b"fn need_sevens(xs: &Slots<u64, 8>) -> result: unit pure contract {
+  requires forall seven(k in 0_u64..xs^.len): xs^[k] == 7_u64;
+} {
+  return unit;
+}
+
+fn extend_by_five(xs: &Slots<u64, 8>) -> result: unit writes(xs) contract {
+  requires forall small(k in 0_u64..xs^.len): xs^[k] < 100_u64;
+} {
+  if xs^.len < xs^.cap {
+    place_back(window: xs, value: 5_u64);
+    need_sevens(xs: xs);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+";
+    with_semantics(source, |outcome| {
+        let SemanticOutcome::SourceIssue { issue, .. } = outcome else {
+            panic!("expected a RANGE-3 rejection, got {outcome:?}");
+        };
+        assert_eq!(issue.rule(), SemanticRule::Range3);
+        let SemanticIssueKind::UndischargedRangeFact { fact, .. } = issue.kind() else {
+            panic!(
+                "expected an undischarged range fact, got {:?}",
+                issue.kind()
+            );
+        };
+        assert_eq!(fact, "seven");
+    });
+}
+
+#[test]
 fn a_certificate_places_an_affine_write_beside_a_scattered_one() {
     // The certificate holds: writes at k are apart from each other, and the
     // writes at order^[k] lie at or above order^.len, above every k, and
