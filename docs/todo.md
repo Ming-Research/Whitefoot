@@ -77,24 +77,21 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **Wide-match checking still has unresolved scaling costs.** Q140's
-  [stage-3 profile](../research/investigations/check-time/DESIGN.md#profile-of-the-stage-3-interpreters-check)
-  attributes 64% of checking-thread samples to rebuilding the complete affine
-  L0 index, which ordinary queries do not reuse; joins are not among the
-  leaders. Impact: large dispatch functions make source-check iteration
-  costly. The Q155 prototype shares the most recent index only when its
-  retained closure and complete ordered candidate images match; correctness
-  and speed remain unverified. The implicit-singleton join prototype was
-  removed because the real arms do not supply the synthetic series' constants
-  and it cannot reach this measured hotspot. Validate the affine memo with
-  full-rebuild differentials, valid retained derivations, unchanged corpus
-  and conformance verdicts, then requester-run M5 timings of CI-built base
-  13bb0d572 and prototype on the same 40-to-640-arm series and `nat.wf`.
-  Reopen on that evidence and Q155. Defer target-directed or event-incremental
-  indexes until misses are shown material; they need complete final-L0-image
-  traversal and invalidation arguments. Dense single-input snapshots, image
-  formation, inventory scans and the series' cubic join work also remain;
-  revisit each only when its elapsed share warrants another experiment.
+- **Wide-match checking still has unresolved scaling costs.** The
+  [C3 investigation](../research/investigations/check-time/DESIGN.md#direction-a2-demand-the-affine-index)
+  implements the owner's selected unchanged-state reuse plus lazy affine L0
+  index. Historical M5 reuse timings improve the natural interpreter by about
+  10% but leave the synthetic series around 9–10× per doubling. The lazy path
+  needs full-rebuild entry/parent differentials, retained-derivation validation,
+  the complete gate and paired CI timing on the 14900K. It avoids unused pair
+  images for DIRECT/residual queries, but an exhausted final AUTO family can
+  still demand quadratically many vectors, each scanning the candidate list;
+  that possible cubic cost must be measured before claiming improvement.
+  Reopen representation if the same-source base/twin/head panel regresses or
+  fails to separate from noise. Dense single-input snapshots, image formation,
+  inventory scans and the series' cubic join work remain deferred; revisit each
+  only when its elapsed share warrants another experiment. No acceptance or
+  specification change is part of this work.
 
 - **A disequality with a constant does not tighten a bound.** Under the
   header `invariant bounded: cursor <= 4_u64`, the body

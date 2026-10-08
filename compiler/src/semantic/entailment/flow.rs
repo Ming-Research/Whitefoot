@@ -103,7 +103,7 @@ use super::state::{
     GoalId, GoalNormalization, GoalSign, GoalSupport, GoalTable, IndexCaptureSubstitution,
     IndexSeparationDetail, JoinParent, KilledCell, PostconditionCallSubstitution,
     RangeSeparationDetail, RangeSeparationOrdering, Relation, SourceAffineFactRef,
-    SourceLoopInvariantRef, WordHashMap, close, close_excluding_term, closure_is_seeded,
+    SourceLoopInvariantRef, WordHashMap, WordHashSet, close, close_excluding_term, closure_is_seeded,
     contradiction_without_proofs, join_at, materialize_closure_at, materialize_closure_before_kill,
     materialize_counted_preheader_at,
 };
@@ -718,7 +718,7 @@ struct AffineL0Candidate {
     value: AffineForm,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct AffineL0Entry {
     inequality: AffineInequality,
     left: TermId,
@@ -726,6 +726,7 @@ struct AffineL0Entry {
     bound: i128,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct AffineL0Index {
     entries: Vec<AffineL0Entry>,
@@ -739,14 +740,25 @@ struct AffineL0Index {
 /// view and the vocabulary's one ledger at the point of the query.
 struct AffineL0Cache {
     closed: Rc<ClosedState>,
-    candidates: Vec<AffineL0Candidate>,
-    index: Rc<AffineL0Index>,
+    index: Rc<LazyAffineL0Index>,
 }
 
-impl AffineL0Index {
-    fn entry(&self, terms: &[AffineCoefficient]) -> Option<&AffineL0Entry> {
-        self.by_terms.get(terms).map(|index| &self.entries[*index])
-    }
+/// Candidate grouping is linear in the inventory. Exact DIRECT lookups and
+/// the ordered final AUTO family fill independent memos: querying a vector
+/// early must not move its first occurrence in the final family's order.
+struct LazyAffineL0Index {
+    candidates: Vec<AffineL0Candidate>,
+    by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>>,
+    exact: RefCell<WordHashMap<Box<[AffineCoefficient]>, Option<AffineL0Entry>>>,
+    ordered: RefCell<AffineL0Order>,
+}
+
+#[derive(Default)]
+struct AffineL0Order {
+    left: usize,
+    right: usize,
+    terms: Vec<Box<[AffineCoefficient]>>,
+    seen: WordHashSet<Box<[AffineCoefficient]>>,
 }
 
 /// Immutable endpoint information for one atom in a single DIRECT/AUTO
@@ -762,7 +774,7 @@ struct AffineAtomInterval {
 /// program points. Only requested atom endpoints are memoized; every residual
 /// still executes the same checked arithmetic and ordered proof rules.
 struct AffineDirectQuery<'a> {
-    l0: &'a AffineL0Index,
+    l0: &'a LazyAffineL0Index,
     values: &'a AffineFlowState,
     closed: &'a ClosedState,
     intervals: WordHashMap<AffineTermId, AffineAtomInterval>,
@@ -770,7 +782,11 @@ struct AffineDirectQuery<'a> {
 }
 
 impl<'a> AffineDirectQuery<'a> {
-    fn new(l0: &'a AffineL0Index, values: &'a AffineFlowState, closed: &'a ClosedState) -> Self {
+    fn new(
+        l0: &'a LazyAffineL0Index,
+        values: &'a AffineFlowState,
+        closed: &'a ClosedState,
+    ) -> Self {
         Self {
             l0,
             values,

@@ -75,7 +75,7 @@ fn with_integer_parameters(types: &[IntegerType], check: impl FnOnce(&mut Analyz
 fn assert_affine_index_matches_rebuild(
     analyzer: &mut Analyzer<'_, '_>,
     context: ProofContext<'_>,
-) -> (Rc<ClosedState>, Rc<AffineL0Index>) {
+) -> (Rc<ClosedState>, Rc<LazyAffineL0Index>) {
     let candidates = analyzer.reasoning().affine_l0_candidates(context.affine);
     let closed = context.close(
         &analyzer.vocabulary.terms,
@@ -83,15 +83,32 @@ fn assert_affine_index_matches_rebuild(
         &mut analyzer.vocabulary.derivations,
     );
     let full = affine_l0_index(&candidates, &closed, &mut AffineCheckState::new());
-    let (actual_closed, actual) = analyzer
-        .reasoning()
-        .affine_query_view(context, &mut AffineCheckState::new());
+    let (actual_closed, actual) = analyzer.reasoning().affine_query_view(context);
     assert!(Rc::ptr_eq(&closed, &actual_closed));
-    assert_eq!(actual.entries, full.entries);
-    assert_eq!(actual.by_terms, full.by_terms);
-    let (_, repeated) = analyzer
-        .reasoning()
-        .affine_query_view(context, &mut AffineCheckState::new());
+    // Demand exact vectors in reverse order first. The final family's order
+    // must still be the full builder's first-occurrence order, not demand order.
+    let mut check = AffineCheckState::new();
+    for entry in full.entries.iter().rev() {
+        assert_eq!(
+            actual
+                .entry(entry.inequality.terms(), &closed, &mut check)
+                .as_ref(),
+            Some(entry)
+        );
+    }
+    let mut entries = Vec::new();
+    while let Some(entry) = actual.ordered_entry(entries.len(), &closed, &mut check) {
+        entries.push(entry);
+    }
+    assert_eq!(entries, full.entries);
+    let by_terms: WordHashMap<Box<[AffineCoefficient]>, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(ordinal, entry)| (entry.inequality.terms().into(), ordinal))
+        .collect();
+    assert_eq!(by_terms, full.by_terms);
+    let oracle = full_affine_query_index(candidates, &full);
+    let (_, repeated) = analyzer.reasoning().affine_query_view(context);
     assert!(
         Rc::ptr_eq(&actual, &repeated),
         "unchanged queries must reuse"
@@ -110,15 +127,47 @@ fn assert_affine_index_matches_rebuild(
             let target =
                 AffineInequality::from_terms(&coefficients, upper, &mut AffineCheckState::new())
                     .unwrap();
-            let expected = analyzer.vocabulary.affine_l0_proof(&target, &full, &closed);
+            let expected = analyzer
+                .vocabulary
+                .affine_l0_proof(&target, &oracle, &closed, &mut check);
             let observed = analyzer
                 .vocabulary
-                .affine_l0_proof(&target, &actual, &closed);
+                .affine_l0_proof(&target, &actual, &closed, &mut check);
             assert_eq!(observed, expected, "{target:?}");
             assert_eq!(observed.unwrap().is_some(), delta >= 0, "{target:?}");
         }
     }
     (closed, actual)
+}
+
+/// Inject the original full rebuild into the same proof-family traversal.
+/// All lookups (including absent vectors) use that complete result; no lazy
+/// pair search is allowed to repair a missing oracle entry.
+fn full_affine_query_index(
+    candidates: Vec<AffineL0Candidate>,
+    full: &AffineL0Index,
+) -> LazyAffineL0Index {
+    let count = candidates.len();
+    LazyAffineL0Index {
+        candidates,
+        by_image: WordHashMap::default(),
+        exact: RefCell::new(
+            full.entries
+                .iter()
+                .map(|entry| (entry.inequality.terms().into(), Some(entry.clone())))
+                .collect(),
+        ),
+        ordered: RefCell::new(AffineL0Order {
+            left: count,
+            right: 0,
+            terms: full
+                .entries
+                .iter()
+                .map(|entry| entry.inequality.terms().into())
+                .collect(),
+            seen: WordHashSet::default(),
+        }),
+    }
 }
 
 fn cache_measure(analyzer: &mut Analyzer<'_, '_>, binding: u32) -> TermId {
@@ -172,19 +221,19 @@ fn affine_index_cache_matches_full_rebuild_for_ordered_images() {
         let mut facts = FactState::new();
         cache_bound(analyzer, &mut facts, x, ZERO, 9);
         cache_bound(analyzer, &mut facts, alias, ZERO, 11);
-        let (_, index) =
+        let (closed, index) =
             assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&facts, &affine));
-        let selected = index.entry(a.terms()).unwrap();
+        let selected = index.entry(a.terms(), &closed, &mut check).unwrap();
         assert_eq!(selected.inequality.upper(), 6);
         assert_eq!(
             selected.left, alias,
             "later strictly stronger image replaces the first"
         );
         cache_bound(analyzer, &mut facts, x, ZERO, 6);
-        let (_, tied) =
+        let (closed, tied) =
             assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&facts, &affine));
         assert_eq!(
-            tied.entry(a.terms()).unwrap().left,
+            tied.entry(a.terms(), &closed, &mut check).unwrap().left,
             x,
             "first equal image wins"
         );
@@ -195,9 +244,16 @@ fn affine_index_cache_matches_full_rebuild_for_ordered_images() {
         affine
             .values
             .insert(BindingId(0), a.scale(i128::MIN, &mut check).unwrap());
-        let (_, overflow) =
+        let (closed, overflow) =
             assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&facts, &affine));
-        assert!(overflow.entry(b.terms()).is_some());
+        assert!(overflow.entry(b.terms(), &closed, &mut check).is_some());
+        // A constant difference of MIN cannot be negated; another shifted
+        // alias of the same coefficient vector must still be considered.
+        affine.values.insert(
+            BindingId(0),
+            a.add(&AffineForm::constant(i128::MIN), &mut check).unwrap(),
+        );
+        assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&facts, &affine));
     });
 }
 
@@ -337,7 +393,11 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         assert!(!Rc::ptr_eq(&old_closed, &view));
         assert!(!Rc::ptr_eq(&old, &grown));
         let image = analyzer.vocabulary.measure_atom(fresh, &affine);
-        assert!(grown.entry(image.terms()).is_some());
+        assert!(
+            grown
+                .entry(image.terms(), &view, &mut AffineCheckState::new())
+                .is_some()
+        );
         let count = analyzer.vocabulary.terms.ids().count();
         analyzer
             .vocabulary
@@ -380,7 +440,12 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         assert_eq!(count, analyzer.vocabulary.goals.ids().count());
         let (view, projected) =
             assert_affine_index_matches_rebuild(analyzer, ProofContext::new(&facts, &affine));
-        assert_eq!(view.tight_bound(fresh, ZERO), Some(2));
+        // A projection lets L0 prove a signed goal, not the reverse. S1
+        // publishes a comparison's relation separately; attaching metadata
+        // to an already-established opaque goal cannot establish fresh <= 2.
+        assert_eq!(view.tight_bound(fresh, ZERO), Some(i128::from(u64::MAX)));
+        assert!(!view.derives_bound(fresh, ZERO, 2));
+        assert!(view.derives_goal(goal, GoalSign::Positive, &analyzer.vocabulary.goals));
         assert!(!Rc::ptr_eq(&before, &projected));
         facts.establish_goal(
             goal,
@@ -390,10 +455,9 @@ fn affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction() {
         );
         // Contradiction bypasses exact-vector lookup in DIRECT; compare the
         // selected contradiction proof with and without the memo below.
-        let (view, index) = analyzer.reasoning().affine_query_view(
-            ProofContext::new(&facts, &affine),
-            &mut AffineCheckState::new(),
-        );
+        let (view, index) = analyzer
+            .reasoning()
+            .affine_query_view(ProofContext::new(&facts, &affine));
         assert!(view.contradictory());
         assert!(!Rc::ptr_eq(&projected, &index));
         let impossible =
@@ -471,7 +535,10 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
         ];
         for (target, assumptions, expected) in cases {
             let context = ProofContext::new(&facts, &affine);
-            let (_, primed) = assert_affine_index_matches_rebuild(analyzer, context);
+            analyzer.vocabulary.affine_l0_cache = None;
+            let (closed, primed) = analyzer.reasoning().affine_query_view(context);
+            assert!(primed.exact.borrow().is_empty());
+            assert!(primed.ordered.borrow().terms.is_empty());
             let observed = analyzer
                 .reasoning()
                 .affine_target_proof(&target, &assumptions, context)
@@ -483,7 +550,11 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
             // Force the unchanged full builder, not a second lookup of the
             // same memo. Compare the selected source and L0 parents as well
             // as success; an incomplete final-image family must fail here.
-            analyzer.vocabulary.affine_l0_cache = None;
+            let full = affine_l0_index(&primed.candidates, &closed, &mut check);
+            analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
+                closed: Rc::clone(&closed),
+                index: Rc::new(full_affine_query_index(primed.candidates.clone(), &full)),
+            });
             let rebuilt = analyzer
                 .reasoning()
                 .affine_target_proof(&target, &assumptions, context)
@@ -491,6 +562,111 @@ fn affine_index_cache_preserves_direct_auto_families_and_selected_parents() {
             assert_eq!(observed, rebuilt, "{target:?}");
             assert_eq!(observed.is_some(), expected, "{target:?}");
         }
+    });
+}
+
+#[test]
+fn affine_index_cache_demands_only_requested_vectors_and_memoizes_absence() {
+    with_analyzer(|analyzer| {
+        let affine = AffineFlowState::default();
+        let mut facts = FactState::new();
+        let x = cache_measure(analyzer, 0);
+        for binding in 1..16 {
+            cache_measure(analyzer, binding);
+        }
+        cache_bound(analyzer, &mut facts, x, ZERO, 7);
+        let a = analyzer.vocabulary.measure_atom(x, &affine);
+        let target = AffineInequality::from_bounded_forms(
+            &a,
+            &AffineForm::constant(0),
+            7,
+            &mut AffineCheckState::new(),
+        )
+        .unwrap();
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, index) = analyzer.reasoning().affine_query_view(context);
+        assert!(index.exact.borrow().is_empty());
+        assert!(
+            analyzer
+                .reasoning()
+                .affine_target_proof(&target, &[], context)
+                .is_some()
+        );
+        assert_eq!(index.exact.borrow().len(), 1);
+        let order = index.ordered.borrow();
+        assert_eq!((order.left, order.right), (0, 0));
+        assert!(order.terms.is_empty());
+        drop(order);
+        let absent = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        for _ in 0..2 {
+            assert!(
+                index
+                    .entry(absent.terms(), &closed, &mut AffineCheckState::new())
+                    .is_none()
+            );
+            assert_eq!(index.exact.borrow().len(), 2);
+            assert!(matches!(index.exact.borrow().get(absent.terms()), Some(None)));
+        }
+        let (_, repeated) = analyzer.reasoning().affine_query_view(context);
+        assert!(Rc::ptr_eq(&index, &repeated));
+    });
+}
+
+#[test]
+fn affine_index_cache_lazy_final_family_keeps_disjoint_images_and_late_winners() {
+    with_integer_parameters(&[IntegerType::I32; 3], |analyzer| {
+        let mut affine = AffineFlowState::default();
+        let a = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let b = analyzer.vocabulary.new_affine_atom(IntegerType::I32);
+        let mut check = AffineCheckState::new();
+        affine.values.insert(BindingId(0), b.clone());
+        affine
+            .values
+            .insert(BindingId(1), a.subtract(&b, &mut check).unwrap());
+        affine.values.insert(
+            BindingId(2),
+            b.add(&AffineForm::constant(5), &mut check).unwrap(),
+        );
+        let candidates = analyzer.reasoning().affine_l0_candidates(&affine);
+        let mut facts = FactState::new();
+        cache_bound(analyzer, &mut facts, candidates[1].term, ZERO, 0);
+        cache_bound(analyzer, &mut facts, candidates[2].term, ZERO, 1);
+        // The later alias supplies b <= -1; b <= 0 cannot prove a <= 0.
+        cache_bound(analyzer, &mut facts, candidates[3].term, ZERO, 4);
+        let context = ProofContext::new(&facts, &affine);
+        let (closed, lazy) = analyzer.reasoning().affine_query_view(context);
+        let full = affine_l0_index(&candidates, &closed, &mut check);
+        for upper in [0, -1] {
+            analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
+                closed: Rc::clone(&closed),
+                index: Rc::clone(&lazy),
+            });
+            let target = AffineInequality::from_bounded_forms(
+                &a,
+                &AffineForm::constant(0),
+                upper,
+                &mut check,
+            )
+            .unwrap();
+            let observed = analyzer
+                .reasoning()
+                .affine_target_proof(&target, &[], context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(observed.is_some(), upper == 0);
+            analyzer.vocabulary.affine_l0_cache = Some(AffineL0Cache {
+                closed: Rc::clone(&closed),
+                index: Rc::new(full_affine_query_index(candidates.clone(), &full)),
+            });
+            let expected = analyzer
+                .reasoning()
+                .affine_target_proof(&target, &[], context)
+                .map(|proof| (proof.premises, proof.parents));
+            assert_eq!(observed, expected);
+        }
+        assert_eq!(
+            lazy.entry(b.terms(), &closed, &mut check).unwrap().left,
+            candidates[3].term
+        );
     });
 }
 

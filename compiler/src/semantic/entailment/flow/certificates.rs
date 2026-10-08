@@ -199,7 +199,7 @@ impl Reasoning<'_, '_, '_> {
                 AffineCheckError::CoefficientMismatch | AffineCheckError::InvalidCertificateFactor,
             ) => return Ok(false),
         }
-        let (closed, l0) = self.affine_query_view(ProofContext::new(facts, values), &mut check);
+        let (closed, l0) = self.affine_query_view(ProofContext::new(facts, values));
         let mut query = AffineDirectQuery::new(&l0, values, &closed);
         Ok(self
             .affine_candidate_residual_proof(target, sum, &mut query, &mut check)

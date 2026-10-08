@@ -34,10 +34,28 @@ on:
     # nothing, but marks its table the same way.
     inputs:
       experiment:
-        description: The compute scoreboard, or the code-placement experiment
+        description: The compute scoreboard, code placement, or temporary C3 checking-time experiment
         type: choice
-        options: [scoreboard, placement]
+        options: [scoreboard, placement, check-time]
         default: scoreboard
+      check_time_runner:
+        description: C3 runner reserved through the coordinator before dispatch
+        type: choice
+        options: [14900k]
+        default: 14900k
+      check_time_max_arms:
+        description: C3 starts with 40; inspect spread before choosing a larger panel
+        type: choice
+        options: ['40', '80', '160', '320', '640']
+        default: '40'
+      check_time_natural:
+        description: C3 also checks the generated natural wasm interpreter
+        type: boolean
+        default: false
+      check_time_rounds:
+        description: C3 rotating base/twin/head rounds (positive multiple of 3)
+        type: string
+        default: '3'
       placement_runner:
         description: Where the placement experiment runs, a GitHub runner or the owner's i9-14900K, a self-hosted Hyper-V virtual machine labelled 14900k
         type: choice
@@ -97,7 +115,7 @@ defaults:
 # per group, so a third dispatch replaces the waiting one.
 concurrency:
   group: compute-bench-${{ github.ref }}-${{ inputs.experiment }}-${{ inputs.placement_runner }}${{ inputs.experiment == 'placement' && inputs.placement_runner == 'github' && format('-{0}', github.run_id) || '' }}
-  cancel-in-progress: ${{ inputs.experiment != 'placement' }}
+  cancel-in-progress: ${{ inputs.experiment != 'placement' && inputs.experiment != 'check-time' }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -107,7 +125,7 @@ env:
 jobs:
   bench:
     name: bench (${{ matrix.os }})
-    if: inputs.experiment != 'placement'
+    if: inputs.experiment == 'scoreboard'
     runs-on: ${{ matrix.os }}
     # Against a stated 15-minute target for a cold leg. It bounds a stuck
     # runner and nothing else.
@@ -356,3 +374,137 @@ jobs:
             ${{ runner.temp }}/placement/summary.txt
             ${{ runner.temp }}/placement/logs/
             ${{ runner.temp }}/placement/event/
+
+  # Temporary C3 artifact and checking-time jobs. Kept in this existing manual
+  # workflow so the work branch can be dispatched without installing a new
+  # default-branch workflow. Remove these jobs/inputs after retaining results.
+  check-time-build:
+    if: inputs.experiment == 'check-time'
+    permissions:
+      contents: read
+    env:
+      CARGO_PROFILE_GATE_DEBUG: 1
+      RUSTUP_TOOLCHAIN: stable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Resolve the same-source base and record build inputs
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base=$(git merge-base origin/main HEAD)
+          work=$(mktemp -d "$RUNNER_TEMP/c3.XXXXXX")
+          echo "C3_WORK=$work" >> "$GITHUB_ENV"
+          echo "C3_BASE=$base" >> "$GITHUB_ENV"
+          mkdir -p "$work/package/bin"
+          git diff --name-only "$base" HEAD -- compiler/ spec/ lib/ tests/ > "$work/package/input-changes.txt"
+          test -s "$work/package/input-changes.txt"
+          while IFS= read -r changed; do
+            case "$changed" in
+              compiler/src/semantic/entailment/flow.rs|compiler/src/semantic/entailment/flow/prover.rs|compiler/src/semantic/entailment/flow/prover/tests.rs|compiler/src/semantic/entailment/flow/certificates.rs) ;;
+              *) echo "Unpaired experiment input: $changed" >&2; exit 1 ;;
+            esac
+          done < "$work/package/input-changes.txt"
+          git worktree add --detach "$work/base" "$base"
+          {
+            printf 'base=%s\nhead=%s\nmain=%s\n' "$base" "$(git rev-parse HEAD)" "$(git rev-parse origin/main)"
+            printf 'base-tree=%s\nhead-tree=%s\n' "$(git rev-parse "$base^{tree}")" "$(git rev-parse HEAD^{tree})"
+            echo 'profile=gate; debug=1; incremental=0; twin=byte-copy-of-base'
+            rustc -vV
+            cargo -vV
+            uname -a
+          } > "$work/package/build-identity.txt"
+          git diff --binary "$base" HEAD -- compiler/ > "$work/package/compiler.diff"
+          sha256sum spec/kernel-spec.md compiler/Cargo.lock .github/run-check.pl > "$work/package/source-sha256.txt"
+          cargo fetch --manifest-path compiler/Cargo.toml --locked
+
+      - name: Build base and head separately from measurement
+        run: |
+          set -euo pipefail
+          CARGO_TARGET_DIR="$C3_WORK/base-target" make -C "$C3_WORK/base/compiler" build
+          CARGO_TARGET_DIR="$C3_WORK/head-target" make -C compiler build
+          cp "$C3_WORK/base-target/gate/whitefootc" "$C3_WORK/package/bin/base"
+          cp "$C3_WORK/package/bin/base" "$C3_WORK/package/bin/twin"
+          cp "$C3_WORK/head-target/gate/whitefootc" "$C3_WORK/package/bin/head"
+          cd "$C3_WORK/package"
+          sha256sum bin/* build-identity.txt compiler.diff input-changes.txt source-sha256.txt > SHA256SUMS
+          tar -czf "$RUNNER_TEMP/c3-linux.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c3-linux
+          path: ${{ runner.temp }}/c3-linux.tar.gz
+          if-no-files-found: error
+
+  check-time-timing:
+    if: inputs.experiment == 'check-time'
+    needs: check-time-build
+    permissions:
+      contents: read
+    concurrency:
+      group: check-time-14900k
+      cancel-in-progress: false
+    runs-on: [self-hosted, '${{ inputs.check_time_runner }}']
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: c3-linux
+          path: ${{ runner.temp }}/c3-download-${{ github.run_id }}
+
+      - name: Verify binaries and record the unchanged timing host
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d "$RUNNER_TEMP/c3-time.XXXXXX")
+          echo "C3_WORK=$work" >> "$GITHUB_ENV"
+          tar -xzf "$RUNNER_TEMP/c3-download-$GITHUB_RUN_ID/c3-linux.tar.gz" -C "$work"
+          (cd "$work" && sha256sum -c SHA256SUMS)
+          grep -Fx "head=$(git rev-parse HEAD)" "$work/build-identity.txt"
+          cmp "$work/bin/base" "$work/bin/twin"
+          # The shared host lock refuses a busy checker; never remove it.
+          lock="/tmp/whitefoot-check-$(id -u).lock"
+          if [ -d "$lock" ]; then
+            cat "$lock/pid" "$lock/command"
+            exit 75
+          fi
+          {
+            uname -a
+            lscpu
+            cat /etc/os-release
+            /usr/bin/time --version
+            python3 --version
+            echo 'serial --check; no disk cache; counters unset; no affinity or host setting changes'
+          } > "$work/timing-identity.txt"
+          # Experiment limits are not gate budgets or acceptance criteria.
+          printf 'label linux macos windows\nc3-timing 1800 - -\n' > "$work/time-budgets.txt"
+
+      - name: Generate shared inputs and run the interleaved panel
+        env:
+          C3_MAX_ARMS: ${{ inputs.check_time_max_arms }}
+          C3_ROUNDS: ${{ inputs.check_time_rounds }}
+          C3_NATURAL: ${{ inputs.check_time_natural }}
+          WHITEFOOT_CHECK_TIMEOUT: '1800'
+        run: |
+          set -euo pipefail
+          export WHITEFOOT_TIME_BUDGET_FILE="$C3_WORK/time-budgets.txt"
+          perl .github/run-check.pl c3-timing python3 research/investigations/check-time/measure.py "$C3_WORK"
+
+      - name: Publish observations including incomplete panels
+        if: always()
+        run: |
+          if [ -n "${C3_WORK:-}" ] && [ -f "$C3_WORK/results/summary.txt" ]; then
+            cat "$C3_WORK/results/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: c3-timing-14900k
+          path: ${{ env.C3_WORK }}
+          if-no-files-found: warn

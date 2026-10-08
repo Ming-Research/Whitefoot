@@ -2,17 +2,13 @@
 
 ## Question and prior criterion
 
-Q140 authorizes investigating the cost of checking a wide `match`; Q155
-will select the implementation direction. The requested measurement base is
-`13bb0d572522c4c52342e87d90e50db7ffe90a79`, including C1, `continue`, C2's
-per-edge join induction, its completion repairs, and the temporary
-`WHITEFOOT_CHECK_WORK` counters. This uncommitted worktree is still based on
-its parent `8e33ca2987af9e62fa5eb3efa2959e157d91fdc7`. Before CI, the requester
-must place the C3 diff on the requested base and record the resulting exact
-prototype revision; comparing this older parent directly would mix C2 repairs
-and specification bytes into C3. The artifact workflow rejects that pairing.
-The constitutional aim is practical verification at real-project scale
-without changing acceptance or weakening required proofs.
+Q140 authorizes investigating the cost of checking a wide `match`. The owner
+has selected Q155 direction A2: retain unchanged-state reuse and make index
+construction demand-driven. The previous full-index prototype's M5 results
+below motivate this change. The next CI comparison uses the merge base of the
+measured head with current main, a byte-identical base twin, and head. Builds
+are separate from checks, and all performance measurement runs on the
+self-hosted 14900K through CI. No machine settings are changed.
 
 Prior criterion for the next timing experiment, retained from the resumed draft
 and recorded before running that experiment: for the same source
@@ -29,17 +25,15 @@ Compare unchanged base, a byte-identical base twin as a noise control, and
 the prototype on identical inputs, interleaving their order and repeating
 short runs. Start with the smallest sample and inspect its duration before
 scaling. Measure builds separately. Time ordinary `--check` with counters
-unset; run paired instrumented checks to attribute work and observation
-overhead. Include the owner's 318-arm stage-3 interpreter (`nat.wf`) and
-the optional loop-wrapped series. Record machine, compiler and settings,
-all exit statuses, run order, spread, and limits of attribution.
+unset. Include the maintained generator's natural stage-3 interpreter and the
+plain arm series. Historical M5 `nat.wf` and optional loop-wrapped inputs are
+separate panels, not implicitly pooled with these current inputs. Record
+machine, compiler and settings, all exit statuses, run order, spread, and
+limits of attribution.
 
-This session runs no local build, test, compiler invocation or measurement.
-Only source inspection, editing and the expressly permitted `rustfmt` are
-used. Earlier local executions supply no validation for this prototype.
-CI builds and validates; the requester downloads the two macOS arm64 binaries
-and alone runs timing on the M5 under the host-wide lock. No prototype speedup
-has been measured. No commit, push or CI dispatch is performed in this task.
+This task permits source reads and edits only: no local builds, checks,
+formatting, tests or timing, no git staging or commits, and no approval-log or
+specification edits. All executable validation listed below remains for CI.
 
 ## Scope and alternatives
 
@@ -51,22 +45,18 @@ None of the proposed directions changes those rules.
 1. A1, reduce join materialization: compute per-term information first and
    retain only rows or pairs whose joined result cannot be rederived.
    Keep forward flow, ordinary closure, affine queries, kills and snapshots.
-2. A2, reuse the complete affine index for unchanged closed facts and ordered
-   candidate images, including ordinary queries as well as certificates.
-   Target-directed construction and event-incremental maintenance are
-   alternatives within this direction, considered below.
+2. A2, reuse demanded affine index entries for unchanged closed facts and
+   ordered candidate images, including ordinary queries and certificates.
+   Exact-vector lookup and lazy final-family traversal implement this direction.
 3. B, demand-driven proof states: retain point/edge predecessors and answer
    obligations backward, memoizing bound queries; give affine queries and
    every MSR-4 step the same demand-driven treatment.
 
-The prototype implements A2. The new real-program profile supersedes the
-join-focused recommendation: A1's implicit-singleton reduction is removed
-from production code and its three tests are removed with it. Its algebra
-remains an option, but real arms do not assign the series' constants and its
-join-local change cannot reach the measured index hotspot. Keeping both
-changes would also prevent attributing the paired timing to A2. Q155 remains
-open for owner selection; the requested prototype is authorized, and neither
-owner approval of the final design nor a specification amendment is implied.
+The prototype implements A2. A1's implicit-singleton join reduction remains
+removed: real arms do not assign the series' constants and a join-local change
+cannot reach the measured index hotspot. B remains a broader alternative.
+Neither the selected implementation direction nor timing authorizes a change
+to acceptance or selected derivation parents.
 
 ## Supplied evidence
 
@@ -173,10 +163,10 @@ has U proportional to A because assignments introduce distinct literals.
 
 Thus predecessor scans and parent work have cubic constructions; pair
 enumeration alone does not. No supplied measurement ranks those phases in
-seconds. The timing and counter panels below compare total checking cost and
-existing work counts, not phase durations or affine-cache hit rates. A split
-of these costs would need a separately authorized profile or new counters;
-this protocol includes neither.
+seconds. The current timing panel compares total checking cost; the historical work
+counts above do not establish phase durations or affine-cache hit rates. A
+split of these costs would need a separately authorized profile or new
+counters; the current protocol includes neither.
 
 ## Direction A1: reduce or demand the join locally
 
@@ -238,83 +228,69 @@ changes plus transition differentials. The existing design's rejection of
 omitting arbitrary implied cells still applies until those consumers have
 complete preservation arguments.
 
-## Direction A2: reuse the complete affine index
+## Direction A2: demand the affine index
 
-**Recommendation: one function-local memo of the most recent full index.**
-The existing `compiler/proof-query-context` decision already calls for reuse;
-the implementation had confined it to a certificate's explicit `ProofClosure`.
-Ordinary `ProofContext::new` queries already share an immutable `Rc<ClosedState>`
-through `FactState::close`, but did not share their affine index.
+The owner selected unchanged-state reuse plus lazy construction after the M5
+results showed that most states change between queries. `affine_query_view`
+still forms the complete ordered candidate vector before closing, then keys
+one function-local memo by retained closed-Rc identity and exact equality of
+candidate terms and images, including constants, coefficients and atom IDs.
+Candidate formation may intern terms or mint images; it must precede matching.
+No new mutation/revision protocol is introduced. Facts, signed goals, standing
+measure metadata, snapshots, kills and joins retain the closure's existing
+invalidation; image changes are covered by the complete vector comparison.
 
-`Reasoning::affine_query_view` forms the complete ordered candidate vector
-first, obtains the current closure, and reuses the index exactly when:
+On a miss, `LazyAffineL0Index` groups candidates by coefficient vector in
+candidate order. It builds no pair entries. DIRECT and every AUTO or bridge
+residual request only their exact coefficient vector. For each left candidate
+L and requested vector T, the lookup computes the possible right vector L-T
+and probes the grouping. It visits only matching right candidates, in their
+original order. Constants do not enter that grouping: each matching pair still
+passes `tight_bound` and the original `from_bounded_forms` constructor, so
+constant shifts, intermediate overflow and formation ceilings remain exact.
+The smallest upper bound wins; only a strict improvement replaces the prior
+witness. Both present and absent answers are memoized, without proof IDs.
 
-- the retained `Rc<ClosedState>` is the same allocation; and
-- the ordered `(TermId, AffineForm)` vector is exactly equal, including every
-  coefficient, constant and atom identity.
+The inverse coefficient subtraction is lookup arithmetic, not a new affine
+rule. It uses checked subtraction directly: MIN-MIN=0 is representable even
+though negating MIN first is not. If an inverse coefficient is out of i128,
+no candidate can have it. Every successful inverse match is rechecked by the
+original affine constructor, which may still reject a negation, constant or
+bound intermediate. Thus this lookup neither adds nor loses representable
+full-builder entries.
 
-The memo lives in the function's `Vocabulary`, next to its one derivation
-ledger. It holds the Rc itself, not a raw address that could be recycled.
-`FactState::close` invalidates its remembered closure when facts, selected
-proofs, signed goals or contradiction change, and keys the view by term,
-goal and ledger identity and their relevant revisions. Thus equal numeric
-matrices from distinct proof points are not a hit. Clones of unchanged facts
-may safely share a hit. A kill, snapshot, join, changed standing measure or
-new goal projection reuses only if the existing closure contract permits it.
+The final AUTO family can use every strongest canonical image, including an
+image with no target atom. It has an independent row-major candidate-pair
+cursor and seen-vector set. On demand for the next ordinal it scans until the
+next first representable occurrence, then resolves that vector's strongest
+witness across *all* matching pairs before returning it. Earlier DIRECT
+lookups never change final-family order. The cursor pauses on success and
+resumes on later queries of the same state. No target-overlap filter, interval
+heuristic, recursive derivation or search budget omits a family member. The
+two tightenings and MSR-4 bridge retain their existing loops. Contradiction
+still precedes any exact lookup, and proof parents still come from the same
+closed view and vocabulary ledger.
 
-Value images require the second part of the key: a measure can receive a
-fresh current atom or a binding can change image while L0 and both inventory
-revisions stay the same. Candidate formation can itself mint an image or
-intern a binding term, so comparing before formation would be too early.
-Exact vector equality avoids both collision assumptions and a second,
-distributed revision protocol for mutable value maps. Target, affine premises
-and DIRECT's interval memo are not cached: they do not enter index construction
-and are read again for each query. One entry caps retained storage rather than
-keeping a quadratic index at every program point; alternating states can miss.
+Equivalence follows separately for lookup and traversal: equality of L-R and
+T selects exactly the full builder's pairs for T; the unchanged constructor,
+matching-pair order and strict replacement select its identical endpoints and
+bound. The cursor orders vectors by the same first representable occurrence
+as the full builder, independently of where their final winners occur. Hence
+every proof-family iteration receives the same inequalities in the same order
+and calls `bound_proof` on the same endpoints and bound. No index operation
+interns a derivation. The original full builder remains unchanged as a
+test-only oracle, injected into the same proof traversal for parent comparison.
 
-Every miss calls the unchanged `affine_l0_index`. Its full pair enumeration,
-strictly strongest replacement, first equal witness and per-image checked
-i128 skip are untouched. Every hit returns that exact ordered index, with
-L0 endpoint/bound records rather than cached proof IDs. `bound_proof` still
-gets selected parents from the current closed view and the same ledger.
-DIRECT, all AUTO families and tightenings, the step-6 bridge and PRF-1's final
-residual retain their existing traversal. No successful query publishes a
-fact. The old certificate-only index cell is replaced by this shared memo;
-its closure view remains. This changes evaluation cost, not the specification.
-
-For N candidates of total image size S and K successive queries against one
-unchanged key, the quadratic pair build occurs once instead of K times.
-Each query still forms candidates (including sorted bindings), compares O(S)
-image data and obtains a closure; AUTO traversal costs are unchanged. This is
-not a linear-time whole-check claim. The measured 64% is inclusive sampled
-time for one supplied program/revision, not a prediction of savings or a hit
-rate. Rebuilds after each changed point, comparison costs and one retained
-closure can limit speed and memory improvements. M5 timing decides the effect.
-
-Alternatives examined:
-
-- **Construct only target/residual vectors.** DIRECT could avoid many pairs,
-  but AUTO's final family still contains every strongest L0 image in order.
-  Merely requiring an image to mention a target atom is insufficient: with
-  current images `b` and `a-b`, the L0 images `b<=-1` and `a-b<=1` can jointly
-  prove `a<=0`; the first final-family candidate mentions no target atom.
-  Lazy exact lookup would need a complete ordered enumeration for that final
-  family and both tightenings. Defer until reuse measurements show substantial
-  misses; an overlap filter alone is not a semantics-preserving design.
-- **Incremental maintenance across events.** A bound insertion can change
-  many closed pairs; a kill or ordinary-fallback selection can weaken a
-  strongest image, expose an older equal witness or change its proof support.
-  Changed images can regroup all pairs incident to a binding. This requires
-  dependency tracking for every ordered candidate pair and canonical winner,
-  including deletions and deterministic ties. It may help when keys change on
-  almost every query, but the present profile identifies repeated preparation,
-  not that miss pattern. Defer; use the same differential before adopting it.
-
-These are representation choices, not acceptance fallbacks. Any mismatch
-rejects the prototype. No new budget, traversal truncation or candidate cap
-selects acceptance. `AffineCheckState::charge` counts work and imposes no
-aggregate acceptance budget, so avoiding repeated construction charges changes
-no formation limit.
+For N candidates and total image size S, initial preparation is O(S). A new
+exact query scans N left images and only matching pairs; aliases can still
+make one lookup quadratic. Across K distinct requests the scan cost is O(KN)
+plus coefficient arithmetic and matching pairs. An exhausted final family
+also scans N² pairs and may request N² vectors, so worst-case lookup work can
+be cubic. This is a material performance uncertainty: the synthetic series,
+natural interpreter and rejected-boundary cases must expose regressions. No
+whole-check scaling improvement is claimed. Incremental per-event maintenance
+remains deferred because it would require winner dependencies and deletion/tie
+repair across closure and image changes; laziness preserves those interfaces.
 
 ## Direction B: backward demand throughout the proof state
 
@@ -390,298 +366,121 @@ been established.
 
 ## Q155: the direction decision
 
----
-
-**Q155 — Select A1 (join reduction), A2 (affine-index reuse), or B (backward evaluation) for C3?**
-
-- **Background.** The constant-assignment series has reported 6.46× and 9.74×
-  doubling ratios, and its join has cubic predecessor/parent work. But the
-  supplied stage-3 profile attributes 3,098/4,842 checking-thread samples (64%)
-  to `affine_l0_index`, rebuilt at each ordinary `affine_target_proof`.
-  Join construction is not a leader; real arms do not assign the series'
-  constants. The existing reuse decision is implemented only for explicit
-  certificate views. ENT-6/MSR-4 require every strongest canonical image and
-  the exact DIRECT/AUTO/bridge families; the specification stays unchanged.
-- **Options.** **A1:** restore and measure the implicit-singleton join
-  reduction. It removes a cubic construction on the synthetic series while
-  retaining a quadratic store, but misses the real program's measured
-  hotspot; retain it as a deferred option, not in this comparison.
-  **A2 (recommended):** reuse the full ordered index when the retained
-  closure and complete ordered candidate images match. It targets the
-  measured rebuild through one shared query preparation path; every miss
-  preserves the existing algorithm. Costs: O(image-size) comparison, one
-  retained closure/index, and no savings across changed keys. Target-lazy
-  and event-incremental variants await evidence that misses matter.
-  **B:** replace forward states with persistent proof points and backward
-  L0/affine queries. It may avoid more unused work, but must still implement
-  complete contradiction, survivor snapshots, ordinary fallbacks and the
-  exact MSR-4 families. Its complete preservation argument and measured
-  advantage remain open.
-- **Confidence 4/5.** The profile identifies the hotspot and the unchanged
-  full rebuild supplies a direct oracle. Cache hit rate and wall-time savings
-  are unmeasured. A mismatch rejects A2; little reuse or no improvement beyond
-  base/twin variation reopens its representation. Super-2.5× series scaling
-  rejects the existing scaling claim even if `nat.wf` improves, and may
-  justify A1 or B as further work. Owner selection remains open.
-
----
+**Ruled by the owner in this task:** keep the prototype's reuse across queries
+on unchanged state and make the index demand-driven or incremental, rather
+than rebuilding every candidate pair on each miss. The implementation uses
+exact-vector lookup and lazy ordered final-family traversal as described above.
+The M5 results reopen representation, not acceptance, the full-rebuild oracle,
+the 2.5× series criterion or the obligation to retain identical proof parents.
+A1 and B remain deferred. No design/log.md or spec/log.md entry is written in
+this task, as the owner explicitly prohibited both.
 
 ## Prototype and required validation
 
-The production change is confined to the shared affine query preparation in
-`flow.rs`, `flow/prover.rs` and `flow/certificates.rs`. The full index
-builder and all proof-family loops are unchanged. The join prototype and its
-two state tests plus one source test were removed because they no longer
-implement the selected experiment, not because of a failed verdict. Existing
-join differentials and source conformance remain wired. The three existing
-`proof_closure_tests` retain their closure assertions; artificial insertion of
-an empty certificate-only index is replaced by real index differentials.
+The implementation changes `flow.rs`, `flow/prover.rs` and the certificate
+call site. The full builder is retained unchanged under `cfg(test)`. No
+specification, conformance verdict, join algorithm or proof-family rule changes.
 
-New tests in `compiler/src/semantic/entailment/flow/prover/tests.rs`:
+The reported failing test `affine_index_cache_rebuilds_on_inventory_revisions_and_contradiction`
+had a wrong expectation, not an omitted cache invalidation. `GoalTable::intern`
+increments its revision when adding a projection; `close` includes that
+revision, and `establish_goal` clears its remembered view. A positive opaque
+goal does not publish its projection back into L0: source comparison
+establishment publishes that relation separately. Attaching `fresh <= 2` to
+an already-held goal therefore leaves fresh's upper bound at u64::MAX, not 2.
+The test now asserts that bound and absence of the supposed new L0 fact, keeps
+the positive-goal assertion, checks new memo identity, and still establishes
+the opposite sign and compares contradiction parents. The expectation is
+supported by ENT-3 source establishment and ENT-4's L0-to-goal projection rule;
+no verdict was relaxed to accommodate a compiler limitation.
 
-| Test (prefix `affine_index_cache_`) | Observation and failure on a wrong index |
-| --- | --- |
-| `matches_full_rebuild_for_ordered_images` | Measures, source-ordered integer bindings, aliases, constants, negative/multiple coefficients and overflowing images. Compares every ordered entry, lookup map, selected endpoint/bound and exact-vector query at the bound and ±1. Pins strongest replacement and first equal witness. A missing image, wrong bound/order or skipped later representable image fails. |
-| `rebuilds_after_facts_kills_and_joins` | Reuses an unchanged clone, then strengthens a bound, snapshots, kills, revisits a sibling and joins. Full rebuild and boundary queries follow each transition. A stale index either misses a new proof or retains a killed one; Rc assertions also detect unintended reuse or no reuse. |
-| `keys_complete_current_images_even_with_a_closed_context` | Leaves the closed Rc unchanged while a binding's constant, coefficient or atom changes, a measure image is killed/reminted, an identical image moves to a different registered term, and a binding disappears. Both ordinary and explicit closed contexts are exercised. A key using only closure identity, revisions, counts or coefficient vectors fails. |
-| `rebuilds_on_inventory_revisions_and_contradiction` | Adds a measure, changes a standing bound without changing term count, gives an existing positive goal a new projection without changing goal count, then establishes its opposite. Detects omitted new images, stale inventory matches and stale combined-state parents. |
-| `preserves_direct_auto_families_and_selected_parents` | Primes the ordinary memo, compares proof answers and source/L0 parents with a forced full rebuild for DIRECT, single, unordered-pair, integer-tightening and final-L0-image routes, and pins accepted/boundary-rejected answers. In particular two multi-atom L0 images must compose although intervals alone cannot prove the target. No target answer is memoized. |
+The existing five cache tests remain. Their index helper now demands every
+full-builder vector in reverse order, compares selected endpoints/bounds,
+then exhausts the lazy cursor and compares every ordered entry and lookup map.
+It also compares bound and ±1 exact-vector answers/parents. This discriminates
+query-order pollution, omitted aliases, stale keys, overflow skipping and tie
+changes across facts, images, inventory revisions, snapshots, kills and joins.
+The proof-family test starts with an empty lazy cache for each case and injects
+a separately computed full oracle for the comparison, rather than clearing the
+memo and accidentally comparing two lazy executions.
 
-The oracle calls the original `affine_l0_index` without the cache, not a
-second cache lookup. Ordered entry/map equality catches a dropped image even
-if another AUTO route can recover the same final answer. Boundary checks
-prevent an always-successful comparator from passing. The full builder itself
-is unchanged; these tests establish memo equivalence, not an independent
-proof of that preexisting builder. The independent specification/conformance
-expectations and retained-derivation validators remain required.
+Additional tests:
 
-CI must first construct the unit executable separately, run the smallest new
-case, inspect its duration, then run the new group and the ordinary gate on
-hosted Linux and macOS. These commands are **CI only**, with the gate's normal
-toolchain, dependencies, submodule, `main` and review-base setup:
+- `affine_index_cache_demands_only_requested_vectors_and_memoizes_absence`:
+  one DIRECT target amid unrelated measures creates one entry and leaves the
+  final cursor untouched; an absent vector is memoized and reused.
+- `affine_index_cache_lazy_final_family_keeps_disjoint_images_and_late_winners`:
+  b<=-1 and a-b<=1 prove a<=0 but not a<=-1. The winning b image is a later
+  shifted alias. Cold/warm lazy proofs must match full-builder parents; target
+  overlap pruning or using the first bound before finding its winner fails.
 
-```sh
-make -C compiler test-build-unit
-perl .github/run-check.pl compiler/test-unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib affine_index_cache_matches_full_rebuild_for_ordered_images
-perl .github/run-check.pl compiler/test-unit cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib affine_index_cache_
-make check
-```
+CI must construct the unit executable separately, run the smallest cache case,
+inspect its duration, then run `affine_index_cache_`, retained derivation and
+certificate coverage, and the exact-revision `make check` gate on Linux/macOS.
+Formatting, clippy, static/design lint and their actual results also remain
+unverified here. No command, including a whitespace check, ran locally.
 
-Require the full gate for the exact prototype revision and the requested base,
-including the existing eager transition comparisons, retained-derivation
-validation, certificate failures, corpus and native conformance adapter.
-No expected verdict, fixture or invocation is narrowed. The base and prototype
-must have identical specification, conformance, library, compiler dependency
-and build-profile inputs.
+CI must demonstrate sensitivity on disposable copies before the green gate:
+remove a demanded nonzero image; omit candidate-vector matching; omit the
+closed-Rc match; use first encountered rather than strongest witness; and
+advance final-family order from DIRECT demand order. Require semantic assertion
+failures in the affected cases, not a compilation error. Restore the source
+before the final gate. Also exercise workflow guard refusal for disallowed
+compiler/spec/library inputs and malformed/missing timing rows. These are
+required future checks, not reported observations.
 
-CI must also demonstrate that the new artifact guard refuses a missing or
-wrong base and a disallowed compiler input change, then verify that the normal
-package contains both executable arm64 binaries and matching recorded
-revisions/checksums. None of those new workflow paths has been executed here.
+## CI artifact construction and 14900K timing
 
-Also demonstrate test sensitivity on disposable CI copies, restoring the
-source before the green gate: (1) remove a nonzero canonical image from the
-memo's newly built result while leaving the full builder alone; the ordered
-image differential must fail; (2) omit the candidate-vector match; the
-current-images case must fail; (3) omit the closed-Rc match; the facts/kills
-and inventory cases must fail. Require the named semantic assertion failure,
-not a build/formation error. These deliberate faults never ship. This is a
-requirement for new check evidence, not a claim that these runs occurred.
+The former `.github/workflows/check-time-artifacts.yml` is removed. It was
+not on the default branch, so changing it to dispatch-only would leave no
+runnable timing entry point. Temporary `check-time` jobs and inputs instead
+live in the existing manual `.github/workflows/compute-bench.yml`; select
+`experiment=check-time` on the work branch. Its hosted Linux job resolves the merge base with main and refuses differing
+compiler inputs outside the four C3 source/test files, including differing
+specification, dependencies, profiles, library or conformance inputs. It builds
+base/head sequentially with the same toolchain, gate profile, debug=1 and
+incremental=0, and packages binaries, revisions/trees, source checksums and the
+compiler diff. Twin is a byte copy of base. Build time is separate from checks.
 
-## CI artifact construction
+The timing job selects `[self-hosted, 14900k]` through `check_time_runner`. Reserve
+that runner with the coordinator before dispatch; the job refuses an occupied
+shared checker lock and runs the whole panel under `.github/run-check.pl`.
+It changes no machine settings and installs no tools. The default `check_time_max_arms=40`,
+`check_time_natural=false`, `check_time_rounds=3` is the sample. Inspect wall/CPU spread and timer
+resolution before selecting a larger width or more rounds (multiples of 3).
+Use `check_time_max_arms=640` and `check_time_natural=true` for the full requested panel after that
+inspection. For example, after pushing this patch, dispatch
+`gh workflow run compute-bench.yml --ref claude/check-time -f experiment=check-time`
+for the sample. This task performs no push or dispatch; existing scoreboard
+and placement jobs are excluded from the C3 selection.
 
-The temporary workflow
-`.github/workflows/check-time-artifacts.yml` builds the requested base and
-the prototype sequentially on one native macOS arm64 runner, with the same
-Rust toolchain, `gate` profile, `CARGO_INCREMENTAL=0` and
-`CARGO_PROFILE_GATE_DEBUG=1`. It downloads locked dependencies before offline
-construction and uses the existing host-lock wrapper. It uploads both binaries
-in one tar archive (preserving executable bits), full revisions/tree IDs,
-toolchain and host data, the compiler diff and checksums. It runs no research
-workload and is not wired into the gate. It runs only when the requester pushes
-its file to `claude/check-time`, so no default-branch workflow installation is
-needed for this experiment.
+`measure.py` generates the same input paths for all three binaries. The copied
+`series-gen.py` is the supplied constant-assignment generator; the natural
+interpreter is the current `research/experiments/match-dispatch/wasm/gen.py`
+output without instrumentation or inline flags. Generator sources and generated
+inputs are retained with SHA-256 identities. Natural output is a new workload
+revision, not assumed byte-identical to historical M5 `nat.wf`.
 
-The workflow rejects a prototype that does not descend from
-`13bb0d572522c4c52342e87d90e50db7ffe90a79` or changes other compiler,
-specification, library or test inputs. The requester must first place this
-uncommitted patch on that base, commit and push the reviewable work branch;
-this session does none of those actions. That push starts artifact construction;
-inspect its run and use its successful ID below:
+Each input rotates base/twin/head, twin/head/base, head/base/twin. GNU time
+records wall/user/system/RSS; raw rows record order and child exit status, with
+stdout/stderr/time files retained. No cold observation is discarded. Counters
+and compiler disk caching are absent. A failed or timed-out check completes
+its paired round then stops scaling and fails the job; a timeout is missing
+performance evidence, never source rejection. Summary reports spread, ratios
+and adjacent-width head ratios only for complete successful panels; failed
+checks never contribute a speed ratio. All raw rows remain available to compare order and
+noise. A 120-second per-check timeout and 30-minute panel limit bound the
+experiment, not acceptance. Ratios do not select workflow success.
 
-```sh
-gh run list --workflow check-time-artifacts.yml --branch claude/check-time
-# Set C3_RUN_ID to the successful run whose recorded prototype is the reviewed commit.
-gh run view "$C3_RUN_ID" --exit-status
-# To repeat construction of this exact revision after investigating a failure:
-# gh run rerun "$C3_RUN_ID"
-```
+The prior criterion remains: a mismatch rejects the implementation, improvement
+within twin variation does not support a speedup, and a doubling above 2.5
+rejects the series scaling claim. Base/twin/head distinguish aggregate C3 cost
+from runner noise; an additional previous-prototype comparison would be needed
+to isolate lazy construction from unchanged-state reuse alone. Remove the
+temporary C3 jobs/inputs and timing driver before readiness after retaining results;
+retain the input generator while the investigation still uses the series.
 
-The temporary workflow builds outside the gate's time budgets and adds no
-budget row. Remove the workflow before marking the branch ready; preserve
-the resulting experiment artifacts. Any later tree change still needs the
-exact-revision gate.
-
-## M5 timing commands for the requester
-
-Only timing of the CI-produced binaries runs on the M5. No local Cargo,
-Make, rustc, clang, test executable or locally built compiler is involved.
-Prerequisites: an idle M5, GitHub CLI authenticated to this repository,
-Python 3 for the supplied source generator, Perl, and macOS BSD
-`/usr/bin/time`. Run from the repository root. Set `C3_RUN_ID` to the
-successful artifact run, `C3_INPUTS` to a directory containing the supplied
-`series-gen.py` and `nat.wf`, and `C3_PROTOTYPE_REV` to the full reviewed
-commit the artifact should name. They are required inputs, not inferred refs.
-
-Download, verify and prepare once; no command below builds a compiler:
-
-```sh
-set -eu
-: "${C3_RUN_ID:?set the successful artifact run ID}"
-: "${C3_INPUTS:?set the supplied input directory}"
-: "${C3_PROTOTYPE_REV:?set the full reviewed prototype commit}"
-export C3_ROOT="$(git rev-parse --show-toplevel)"
-export C3_BASE_REV=13bb0d572522c4c52342e87d90e50db7ffe90a79
-export C3_WORK="$(mktemp -d /tmp/whitefoot-c3.XXXXXX)"
-gh run view "$C3_RUN_ID" --exit-status
-gh run download "$C3_RUN_ID" --name c3-macos-arm64 --dir "$C3_WORK/download"
-tar -xzf "$C3_WORK/download/c3-macos-arm64.tar.gz" -C "$C3_WORK"
-(cd "$C3_WORK" && shasum -a 256 -c SHA256SUMS)
-grep -Fx "base=$C3_BASE_REV" "$C3_WORK/identity.txt"
-grep -Fx "prototype=$C3_PROTOTYPE_REV" "$C3_WORK/identity.txt"
-test "$(uname -m)" = arm64
-cp "$C3_WORK/bin/base" "$C3_WORK/bin/twin"
-cmp "$C3_WORK/bin/base" "$C3_WORK/bin/twin"
-mkdir "$C3_WORK/inputs" "$C3_WORK/results"
-printf '%s  %s\n' \
-  d77434bb9fd46c6e1698fbd5d006033568cd437ea52ccae67567f6f913491e57 "$C3_INPUTS/series-gen.py" \
-  dc8c0e703bcf9df033d992a27c755f70407c46adbe23e2ab8fe97a91f4d39f71 "$C3_INPUTS/nat.wf" \
-  > "$C3_WORK/supplied-sha256.txt"
-shasum -a 256 -c "$C3_WORK/supplied-sha256.txt"
-for n in 40 80 160 320 640; do
-  python3 "$C3_INPUTS/series-gen.py" "$n" > "$C3_WORK/inputs/plain-$n.wf"
-  python3 "$C3_INPUTS/series-gen.py" "$n" loop > "$C3_WORK/inputs/loop-$n.wf"
-done
-cp "$C3_INPUTS/nat.wf" "$C3_WORK/inputs/nat.wf"
-git show "$C3_BASE_REV":.github/run-check.pl > "$C3_WORK/run-check.pl"
-{
-  sw_vers
-  uname -a
-  sysctl -n machdep.cpu.brand_string
-  sysctl hw.memsize hw.logicalcpu
-  pmset -g
-  shasum -a 256 "$C3_WORK/bin/"* "$C3_WORK/inputs/"* "$C3_WORK/run-check.pl"
-  printf 'cwd=%s\nno --cache; serial checks; counters absent in primary panel\n' "$C3_ROOT"
-} > "$C3_WORK/results/m5-identity.txt"
-```
-
-The following scratch driver is used by this experiment and removed with its
-scratch directory after retaining results. BSD time's `-l -p` writes real,
-user and system seconds plus maximum RSS (bytes on macOS) to stderr; keep that
-raw file separate from the compiler's stderr. Child status is captured outside
-any pipeline. Three rotating orders give every variant each position once;
-the twin is the exact same binary bytes, not a second build. There is no
-compiler disk-cache flag and every executable sees the same source path/cwd.
-
-```sh
-cat > "$C3_WORK/time-budgets.txt" <<'BUDGETS'
-label linux macos windows
-c3-sample - 120 -
-c3-panel - 1800 -
-BUDGETS
-cat > "$C3_WORK/measure.sh" <<'MEASURE'
-#!/usr/bin/env bash
-set -eu
-cd "$C3_ROOT"
-out="$C3_WORK/results/$C3_PHASE"
-mkdir "$out"
-printf 'input\tround\tposition\tvariant\tstatus\n' > "$out/status.tsv"
-for input in "$@"; do
-  for round in 0 1 2; do
-    case "$round" in
-      0) order='base twin prototype' ;;
-      1) order='twin prototype base' ;;
-      2) order='prototype base twin' ;;
-    esac
-    position=0
-    for variant in $order; do
-      stem="$out/$input-$round-$variant"
-      status=0
-      /usr/bin/time -l -p sh -c '
-        if [ "$C3_COUNTERS" = 1 ]; then
-          export WHITEFOOT_CHECK_WORK="$3.work.tsv"
-        else
-          unset WHITEFOOT_CHECK_WORK
-        fi
-        unset WHITEFOOT_TEST_TIMINGS
-        exec "$1" --check "$2" > "$3.stdout" 2> "$3.stderr"
-      ' c3-time "$C3_WORK/bin/$variant" "$C3_WORK/inputs/$input.wf" "$stem" \
-        2> "$stem.time" || status=$?
-      printf '%s\t%s\t%s\t%s\t%s\n' "$input" "$round" "$position" "$variant" "$status" >> "$out/status.tsv"
-      [ "$status" -eq 0 ] || exit "$status"
-      position=$((position + 1))
-    done
-  done
-done
-MEASURE
-export WHITEFOOT_TIME_BUDGET_FILE="$C3_WORK/time-budgets.txt"
-# Use the default shared /tmp/whitefoot-check-<uid>.lock. A busy lock exits 75;
-# inspect its owner and wait. Never remove another run's lock.
-WHITEFOOT_CHECK_TIMEOUT=120 C3_PHASE=sample C3_COUNTERS=0 \
-  perl "$C3_WORK/run-check.pl" c3-sample bash "$C3_WORK/measure.sh" plain-40
-cat "$C3_WORK/results/sample/status.tsv" "$C3_WORK/results/sample/"*.time
-```
-
-Inspect all nine smallest-input times and the base/twin spread before scaling.
-If resolution or spread prevents comparison, repeat only that panel under a
-new phase name or lengthen that panel; do not launch the larger panel first.
-After the sample supports scaling, run one width at a time and inspect it
-before continuing. These are the exact remaining timing invocations:
-
-```sh
-export WHITEFOOT_CHECK_TIMEOUT=1800
-C3_PHASE=plain80 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" plain-80
-C3_PHASE=plain160 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" plain-160
-C3_PHASE=plain320 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" plain-320
-C3_PHASE=plain640 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" plain-640
-C3_PHASE=nat C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" nat
-```
-
-The loop series is a separate panel, beginning with its own small sample;
-its results are not pooled with the plain series:
-
-```sh
-WHITEFOOT_CHECK_TIMEOUT=120 C3_PHASE=loop40 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-sample bash "$C3_WORK/measure.sh" loop-40
-C3_PHASE=loop80 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" loop-80
-C3_PHASE=loop160 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" loop-160
-C3_PHASE=loop320 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" loop-320
-C3_PHASE=loop640 C3_COUNTERS=0 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" loop-640
-```
-
-Optional counter attribution is timed separately under the same lock after
-the primary panel; no local sampling/profile command is authorized here.
-Start its own small sample and inspect it before the remaining instrumented
-runs. The existing counters do not count affine cache hits or pair builds,
-so they cannot establish this cache's hit rate:
-
-```sh
-WHITEFOOT_CHECK_TIMEOUT=120 C3_PHASE=work40 C3_COUNTERS=1 perl "$C3_WORK/run-check.pl" c3-sample bash "$C3_WORK/measure.sh" plain-40
-C3_PHASE=work C3_COUNTERS=1 perl "$C3_WORK/run-check.pl" c3-panel bash "$C3_WORK/measure.sh" plain-80 plain-160 plain-320 plain-640 nat
-```
-
-Report all statuses (including crashes, timeouts or missing runs), per-variant
-median/minimum/maximum wall and CPU time, peak RSS, prototype/base and twin/base
-ratios in run order, and every adjacent-width prototype median ratio. No
-startup subtraction or discarded slow observations. A timeout is missing
-performance evidence, never source rejection. If the twin spread could
-explain an improvement or crossing 2.5×, repeat or lengthen only that panel
-and report the uncertainty. Compare counter-on against counter-off times to
-quantify instrumentation overhead; never pool them. The natural interpreter
-has its own speed ratio, not an arm-count scaling point. Retain the tar archive,
-identity/checksum records, generated inputs, scripts, raw times and statuses
-before deleting the scratch directory.
-
-## Read-only review and disposition
+## Historical full-index prototype review
 
 The replacement separate read-only Codex reviewer (exact model identifier
 unavailable) inspected `8e33ca2987af9e62fa5eb3efa2959e157d91fdc7..working tree`:
@@ -708,13 +507,13 @@ remain required; the review is neither owner approval nor a measured result.
 
 - Q140: investigation authorized; keep the existing counters for the paired
   comparison, then remove them when their owning investigation finishes.
-- Q155: open; A2 recommended and prototyped under the requester's direction.
+- Q155 at that review: open; subsequently ruled above.
   A1 is removed from this diff and deferred; B remains a design alternative.
 - Found along the way: the previous advice attributed the real program too
   strongly to join costs; the new profile corrects that advice. Dense
   single-input snapshots, candidate formation and per-event rebuilds remain
   deferred in `docs/todo.md` until their elapsed cost is material.
-- Baseline mismatch: requester must place the patch on 13bb0d572 before CI;
+- Baseline mismatch at that review: requester had to place the patch on 13bb0d572 before CI;
   the new workflow refuses the old baseline and unrelated compiler changes.
 - Oversized state/test modules remain recorded; no unrelated file split.
 - Specification delta: none. ENT-4/ENT-5/ENT-6, MSR-4, PRF-1 and DIAG-2 have
@@ -750,3 +549,39 @@ still rebuild the index. The remaining cost is the rebuild itself, all
 candidate pairs per query, and its next candidates are building only the
 part a target can use or updating the index across events.
 
+
+## Lazy-index read-only review and remaining evidence
+
+A separate read-only GPT-6-based Codex agent reviewed
+`70f8b19d5f283e6384713af7a330bb722083d984..working tree`, including the complete
+tracked diff, both new scripts, direct consumers, affine arithmetic, closure
+invalidation, ENT-3/ENT-4/ENT-6/MSR-4 and the timing workflow. It read design
+nodes `compiler`, `proof-query-context`, `incremental-closure`,
+`closure-evaluation`, `engine-components`, `fact-map-hashing` and `verification`.
+Its limited rereview confirmed these fixes:
+
+- F1: failed checks were eligible for timing ratios. Raw failures remain, but
+  only complete successful panels produce comparative ratios.
+- F2: a standalone dispatch-only workflow absent from main was not a runnable
+  work-branch entry point. C3 now uses the existing manual compute-bench
+  workflow; the old temporary workflow is deleted.
+- F3: the design node contained progress/approval prose. It now states the
+  enduring choice, grounds, alternatives and reopening condition only.
+
+No findings remain within the inspected scope. A4, D2, T4, T6, T7, G1, G2 and
+DC1–DC3 passed source inspection; T5 passed after the workflow fixes but its
+execution remains unverified. C4 found no unsafe, weakened proof, heuristic
+cutoff or alternate acceptance path, while universal preservation and DC4
+remain unverified pending CI. G3's design examination and worst-case final
+family cost are recorded above; performance remains unverified. D1, T1, V3 and
+new verification-stage T8 are not applicable. Design-lint counts and readiness
+are unverified. The reviewer used source/Git reads and official GitHub
+reference lookup, with no execution of builds, tests, checks or measurements.
+
+The implementer likewise performed reads and edits only, without local Cargo,
+Make, rustfmt, checks, timing, staging or commits. The changed tests have not
+run, the workflow has not been dispatched, and there is no measured lazy-index
+speedup. CI must supply the validation listed above on the eventual exact
+revision. Specification delta: none; no approval logs were written. Work stops
+at the requested read/edit boundary, with CI and owner-controlled branch
+publication remaining.

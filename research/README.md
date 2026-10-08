@@ -131,8 +131,8 @@ the work-branch and merge boundary.
   remain.
 - [Wide-match checking cost](investigations/check-time/DESIGN.md): the Q140
   attribution, Q155 comparison of join reduction, affine-index reuse and
-  backward proof queries, the index differential prototype, and CI-built
-  macOS binaries for the requester's paired M5 timing.
+  backward proof queries, the lazy-index differentials, historical M5 reuse results, and the
+  manual base/twin/head timing panel on the CI 14900K runner.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are in [todo](../docs/todo.md).

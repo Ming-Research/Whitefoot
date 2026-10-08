@@ -247,10 +247,11 @@ impl Vocabulary {
     pub(super) fn affine_l0_proof(
         &mut self,
         inequality: &AffineInequality,
-        index: &AffineL0Index,
+        index: &LazyAffineL0Index,
         closed: &ClosedState,
+        check: &mut AffineCheckState,
     ) -> Result<Option<Vec<DerivationId>>, AffineCheckError> {
-        let Some(entry) = index.entry(inequality.terms()) else {
+        let Some(entry) = index.entry(inequality.terms(), closed, check) else {
             return Ok(None);
         };
         if entry.inequality.upper() > inequality.upper() {
@@ -2944,7 +2945,7 @@ impl Reasoning<'_, '_, '_> {
         }
         if let Some(parents) =
             self.vocabulary
-                .affine_l0_proof(inequality, query.l0, query.closed)?
+                .affine_l0_proof(inequality, query.l0, query.closed, check)?
         {
             return Ok(Some(parents));
         }
@@ -2991,7 +2992,9 @@ impl Reasoning<'_, '_, '_> {
         query: &mut AffineDirectQuery<'_>,
         check: &mut AffineCheckState,
     ) -> Option<Vec<DerivationId>> {
-        for entry in &query.l0.entries {
+        let mut ordinal = 0;
+        while let Some(entry) = query.l0.ordered_entry(ordinal, query.closed, check) {
+            ordinal += 1;
             let Some(mut parents) =
                 self.affine_candidate_residual_proof(target, &entry.inequality, query, check)
             else {
@@ -3013,7 +3016,7 @@ impl Reasoning<'_, '_, '_> {
         None
     }
 
-    /// Reuse the complete ordered index only for exactly the same closed
+    /// Reuse the demanded index entries only for exactly the same closed
     /// facts and candidate images. Candidate formation comes first: it may
     /// register a term or mint a current measure image. Exact vector equality
     /// includes term identity, coefficients, constants and traversal order;
@@ -3021,8 +3024,7 @@ impl Reasoning<'_, '_, '_> {
     pub(super) fn affine_query_view(
         &mut self,
         context: ProofContext<'_>,
-        check: &mut AffineCheckState,
-    ) -> (Rc<ClosedState>, Rc<AffineL0Index>) {
+    ) -> (Rc<ClosedState>, Rc<LazyAffineL0Index>) {
         let candidates = self.affine_l0_candidates(context.affine);
         let closed = context.close(
             &self.vocabulary.terms,
@@ -3031,14 +3033,13 @@ impl Reasoning<'_, '_, '_> {
         );
         if let Some(cached) = &self.vocabulary.affine_l0_cache
             && Rc::ptr_eq(&cached.closed, &closed)
-            && cached.candidates == candidates
+            && cached.index.candidates == candidates
         {
             return (closed, Rc::clone(&cached.index));
         }
-        let index = Rc::new(affine_l0_index(&candidates, &closed, check));
+        let index = Rc::new(LazyAffineL0Index::new(candidates));
         self.vocabulary.affine_l0_cache = Some(AffineL0Cache {
             closed: Rc::clone(&closed),
-            candidates,
             index: Rc::clone(&index),
         });
         (closed, index)
@@ -3052,7 +3053,7 @@ impl Reasoning<'_, '_, '_> {
     ) -> Option<AffineConsequenceProof> {
         let values = context.affine;
         let mut check = AffineCheckState::new();
-        let (closed, l0) = self.affine_query_view(context, &mut check);
+        let (closed, l0) = self.affine_query_view(context);
         let mut query = AffineDirectQuery::new(&l0, values, &closed);
         if let Ok(Some(parents)) = self.affine_residual_proof(target, &mut query, &mut check) {
             return Some(AffineConsequenceProof {
@@ -3145,6 +3146,161 @@ pub(super) fn first_two_premise_candidate<T>(
     None
 }
 
+impl LazyAffineL0Index {
+    fn new(candidates: Vec<AffineL0Candidate>) -> Self {
+        let mut by_image: WordHashMap<Vec<(AffineTermId, i128)>, Vec<usize>> =
+            WordHashMap::default();
+        for (ordinal, candidate) in candidates.iter().enumerate() {
+            let key = candidate
+                .value
+                .terms()
+                .iter()
+                .map(|term| (term.term(), term.coefficient()))
+                .collect::<Vec<_>>();
+            by_image.entry(key).or_default().push(ordinal);
+        }
+        Self {
+            candidates,
+            by_image,
+            exact: RefCell::default(),
+            ordered: RefCell::default(),
+        }
+    }
+
+    /// Only pairs with left coefficients - right coefficients == requested
+    /// can contribute. Grouping ignores constants, but the original checked
+    /// constructor still decides representability and the shifted bound.
+    /// Visit matching pairs in original left/right order, replacing strictly
+    /// stronger bounds only, so endpoints and equal-bound ties are identical.
+    fn entry(
+        &self,
+        terms: &[AffineCoefficient],
+        closed: &ClosedState,
+        check: &mut AffineCheckState,
+    ) -> Option<AffineL0Entry> {
+        if let Some(entry) = self.exact.borrow().get(terms) {
+            return entry.clone();
+        }
+        let mut selected: Option<AffineL0Entry> = None;
+        let mut right_key = Vec::new();
+        for left in &self.candidates {
+            if !affine_l0_right_key(left.value.terms(), terms, &mut right_key) {
+                continue;
+            }
+            let Some(rights) = self.by_image.get(&right_key) else {
+                continue;
+            };
+            for &right in rights {
+                let right = &self.candidates[right];
+                let Some(bound) = closed.tight_bound(left.term, right.term) else {
+                    continue;
+                };
+                let Ok(inequality) =
+                    AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
+                else {
+                    continue;
+                };
+                if selected
+                    .as_ref()
+                    .is_none_or(|old| inequality.upper() < old.inequality.upper())
+                {
+                    selected = Some(AffineL0Entry {
+                        inequality,
+                        left: left.term,
+                        right: right.term,
+                        bound,
+                    });
+                }
+            }
+        }
+        // None is also memoized: repeating an absent DIRECT vector should
+        // not repeat the candidate search on an unchanged state.
+        self.exact
+            .borrow_mut()
+            .insert(terms.into(), selected.clone());
+        selected
+    }
+
+    /// The final AUTO family can use *any* image, including images disjoint
+    /// from the target's atoms. Discover its next vector in the full builder's
+    /// row-major first-occurrence order, then demand that vector's strongest
+    /// witness (which may occur later). Earlier DIRECT lookups do not change
+    /// this cursor or order. Stop scanning as soon as the caller has a proof.
+    fn ordered_entry(
+        &self,
+        ordinal: usize,
+        closed: &ClosedState,
+        check: &mut AffineCheckState,
+    ) -> Option<AffineL0Entry> {
+        let mut order = self.ordered.borrow_mut();
+        while order.terms.len() <= ordinal {
+            let left = self.candidates.get(order.left)?;
+            let right = &self.candidates[order.right];
+            order.right += 1;
+            if order.right == self.candidates.len() {
+                order.left += 1;
+                order.right = 0;
+            }
+            let Some(bound) = closed.tight_bound(left.term, right.term) else {
+                continue;
+            };
+            let Ok(inequality) =
+                AffineInequality::from_bounded_forms(&left.value, &right.value, bound, check)
+            else {
+                continue;
+            };
+            if order.seen.insert(inequality.terms().into()) {
+                order.terms.push(inequality.terms().into());
+            }
+        }
+        self.entry(&order.terms[ordinal], closed, check)
+    }
+}
+
+/// Solve right = left - requested in coefficient space only. This is a
+/// lookup key, not an affine derivation: checked_sub accepts MIN - MIN = 0,
+/// whereas negating requested first would lose a representable right image.
+/// An out-of-range result cannot equal any candidate's i128 coefficient.
+/// The actual pair always passes the original affine constructor afterwards,
+/// including its stricter intermediate-overflow and formation-limit checks.
+fn affine_l0_right_key(
+    left: &[AffineCoefficient],
+    requested: &[AffineCoefficient],
+    result: &mut Vec<(AffineTermId, i128)>,
+) -> bool {
+    result.clear();
+    let (mut l, mut r) = (0, 0);
+    while l < left.len() || r < requested.len() {
+        let term = match (left.get(l), requested.get(r)) {
+            (Some(a), Some(b)) => a.term().min(b.term()),
+            (Some(a), None) => a.term(),
+            (None, Some(b)) => b.term(),
+            (None, None) => break,
+        };
+        let a = if left.get(l).is_some_and(|a| a.term() == term) {
+            let coefficient = left[l].coefficient();
+            l += 1;
+            coefficient
+        } else {
+            0
+        };
+        let b = if requested.get(r).is_some_and(|b| b.term() == term) {
+            let coefficient = requested[r].coefficient();
+            r += 1;
+            coefficient
+        } else {
+            0
+        };
+        let Some(coefficient) = a.checked_sub(b) else {
+            return false;
+        };
+        if coefficient != 0 {
+            result.push((term, coefficient));
+        }
+    }
+    true
+}
+
 /// Builds the goal-query index for ordinary difference bounds.
 ///
 /// This is an ephemeral view over the already-closed L0 state, not a copy
@@ -3152,6 +3308,7 @@ pub(super) fn first_two_premise_candidate<T>(
 /// affine coefficient vector it retains the strongest live L0 image. A
 /// target or residual can therefore query exactly its own vector without
 /// making every L0 edge participate in affine premise enumeration.
+#[cfg(test)]
 pub(super) fn affine_l0_index(
     candidates: &[AffineL0Candidate],
     closed: &ClosedState,
@@ -3197,7 +3354,7 @@ pub(super) fn affine_l0_index(
 
 /// Collects only explicit source-affine facts and automatic value images.
 /// Ordinary difference bounds remain in L0 and are queried through
-/// [`Self::affine_l0_index`] for the concrete target or residual.
+/// the lazy index for the concrete target or residual.
 /// x1 retires the capacity identity. [MSR-2] used to make
 /// `P.len + P.room = P.cap` a standing fact of every window and [ENT-6]
 /// appended it here as two inequalities over the place's three measure
