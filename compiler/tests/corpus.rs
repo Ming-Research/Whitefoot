@@ -22,6 +22,7 @@ mod programs {
     #[cfg(unix)]
     mod contexts;
     mod file_replacement;
+    mod stop_signals;
     #[cfg(unix)]
     mod hashing;
     #[cfg(unix)]

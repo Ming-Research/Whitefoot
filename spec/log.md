@@ -11,6 +11,22 @@ specification changes; it cannot tell whether `Rules:` names every changed
 rule. Earlier versions are the released archives beside this
 file; git holds the rest of the history.
 
+## 2026-10-08 v0.103: stop signals
+
+Rules: changed PRE-2
+
+Owner-approved: In the Firn session of 2026-10-08, written in Chinese, after the report that presented stop signals as Q222 option A, recommended: "222 agreed" (translated); after the completion report that presented runtime-observation order with host-merged requests counted once as Q228, holding the Windows close, logoff and shutdown handlers until the listener closes as Q229, PR #273's specification text and its two design-tree nodes as Q233 and the merge order as Q234, each recommended: "Q225–Q234 all approved" (translated).
+
+Summary: PRE-2's `std::process` gains the capability `StopSignals`, carried by `Inputs.stops`, the linear handle `StopListener`, the enum `StopKind` with `Interrupt` and `Terminate`, and `stop_listen`, `stop_next` and `close_stop_listener`. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. While a listener is open, `stop_next` returns the requests in the order the runtime observed them, keeping those observed between calls and counting requests the host merged before observation once, and bounds its wait by its deadline; while none is open the host default applies, on POSIX ending the program, and a termination the host imposes after its grace period ends the program then. A stop request is an input of the execution [WAIT-2]. Before the change a program had no way to learn of a host's request to stop, so a server could not run its own orderly stop ([design](../research/investigations/stop-signals/README.md)).
+
+## 2026-10-08 v0.102: indexed reductions in counted loops
+
+Rules: changed PAR-2, OP-12, RANGE-5
+
+Owner-approved: In the session of 2026-10-07, written in Chinese, after the classification of Snowghost's denied loops that presented indexed reductions as the next PAR-2 extension, recorded as Q148: "approve them all" (translated); in the paged session of 2026-10-08, after the card that presented the lowering as Q153 with private copies per split leaf combined in leaf order recommended, and the investigation's open choices: "agree to all" (translated); on the status board, after the cards that presented a scalar accumulator beside indexed accumulators and deferring constant marks: "choose A" and "choose A" (translated); in the paged session after the report of the CI-green PRs: "from now on I authorize you to merge every PR whose CI is green yourself, without updating the board and waiting for me" (translated).
+
+Summary: PAR-2 admits indexed accumulators: a family of integer or `Bool` cells of one binding declared outside the loop, reached through a fixed field and `Box` content path into an `Array` or `Slots`, each updated only by `set R[e] = R[e] op x` or `set R[e] = x op R[e]` with one operation fixed per root from the scalar accumulator's admitted set, a subscript and contribution that read nothing of the root, an unchanged path and length, and the ordinary OP-4 bound; no injectivity is asked, any number may sit beside the scalar accumulator, and the recombination argument holds per cell. The affine family's refusals now establish no affine-element permission rather than denying the loop, since such a write may be an indexed accumulator; OP-12 points to PAR-2 for an atomic update's classification instead of restating it; RANGE-5 excludes only whole-binding scalar accumulator writes from a certificate. The selection ground is Snowghost's 32 histogram-like denied loops, the largest family of rule gaps, and the investigation's criterion ([design](../research/investigations/indexed-reductions/DESIGN.md)). Constant marks `set flags[e] = True()` are not admitted (`docs/todo.md`). No existing verdict changes; 23 cases are added.
+
 ## 2026-10-08 v0.101: continue, and loop relations carried through joins
 
 Rules: changed DIAG-1, ENT-2, ENT-5, ENT-6, FN-1, FORM-2, GIVE-1, GRAM-4, GRAM-6, INV-1, LIV-1, OWN-11, PAR-2, RANGE-3, REF-2, STOR-3, TYPE-6, TYPE-11

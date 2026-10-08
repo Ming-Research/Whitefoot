@@ -99,22 +99,6 @@ rarely insert at the same place.
   future extension against the finite candidate boundary conformance cases,
   large gaps, later strengthening, delivery, kills and retained derivations.
 
-- **Invariant/L0 publication awaits CI confirmation.** The owner selected
-  ordinary source-fact publication of proved invariant difference bounds
-  (option A), now specified by ENT-3.S16 and installed at successful header
-  and local invariant activation. General affine conclusions remain affine
-  premises. CI must confirm the equality-sentinel witness
-  `ent4-pos-offset-loop`, its existing wrong-guard twin, two-term bounds,
-  local publication and joins, replacement kills, equality's two directions, excluded
-  three-term and scaled conclusions, and retained derivations. No local
-  build or check was run; remove this entry after those CI results confirm
-  the implementation, or reopen the implementation against any failure.
-  Before branch readiness, consolidate the design log against its review
-  base after approval of every branch decision: the current branch also
-  adds the origin-transport node, whose approval is not recorded in the
-  existing log. This task's option A approves only the new invariant source;
-  `spec/log.md` records that approval, not approval of the earlier changes.
-
 - **A header relation about the current element of a whole-table counted
   loop is refused.** Over `for (i in 0_u64..n, invariant fits:
   rows^[i].len <= 4_u64)` with `n = rows^.len`, the final header's instance
@@ -745,24 +729,16 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
-- **S16 certificate conformance awaits CI confirmation.** The owner accepted
-  ENT-3.S16's consequence: AUTO subtracts `P + P` from `T = 3*P`, and
-  DIRECT proves the residual P when the invariant is also an L0 difference
-  bound; PRF-1 rejects the written block as redundant. The three former
-  positive sources now expect PRF-1 rejection as
-  `prf1-neg-certificate-redundant-after-l0-header`,
-  `prf1-neg-certificate-redundant-after-l0-exhaustion` and
-  `inv1-neg-proof-names-redundant-after-l0-header`. The positive replacements
-  `prf1-pos-active-scaled-header-reference`,
-  `prf1-pos-scaled-certificate-after-exhaustion` and
-  `inv1-pos-scaled-operation-and-mode-proof-names` preserve active-header,
-  post-exhaustion and operation/mode proof-name coverage with `sum <= 2*i`
-  or `sum <= 2*limit`. Those scaled premises stay outside S16, leaving
-  AUTO's residual unproved and requiring the written multiplicity three.
-  Confirm all six cases, the existing certificate negatives and the full
-  gate in CI; remove this entry after confirmation, or reopen against any
-  failure. Only source inspection was performed for these edits; no local
-  build or check ran.
+- **A const generic argument refuses a type-suffixed literal.** The call
+  fragment `aof_map_len::<K, V, 4294967296_u64>` is refused with GRAM-3 at
+  the literal: `targ`'s `const` admits only unsuffixed decimals or names as operands,
+  while numeric value literals require their suffix [FORM-5]. A writer who
+  writes the suffix everywhere meets a refusal at a const argument. The
+  owner's witness is Firn-wf commit `430b25b90`, which replaced the literal
+  with a name; that downstream run has not been reproduced here. Change:
+  admit a suffixed literal whose suffix matches the const parameter's type.
+  Validate matching suffixes, wrong suffixes and out-of-range values, keeping
+  named arguments covered. Reopen with the next grammar change.
 
 ## Containers and storage lowering
 
@@ -2095,15 +2071,57 @@ rarely insert at the same place.
 
 - **The call-offer grain is provisional.** `--par` now offers a
   statement-group call only when its callee reaches a cyclic call component
-  or its static work reaches the 150,000 work unit
+  that offers its own calls or its static work reaches the 150,000 work unit
   ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
-  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
-  non-recursive helper whose work is large only through its runtime extents
-  loses its offer, and a cheap call into a recursive component keeps one;
-  and a callee that reaches recursion only by starting a waiting context is
-  not seen as recursive, since neither this pass nor the recursion frontier
-  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md#proposed-rule),
+  `design/compiler/parallel-lowering.md`). Known limits no measured program
+  exercises: a helper whose work is large only through its runtime extents,
+  a loop over a large argument or a long recursion that offers nothing,
+  loses its offer; a cheap call into a recursion that offers its own calls
+  keeps one; a callee that reaches recursion only by starting a waiting
+  context is not seen as recursive, since neither this pass nor the
+  recursion frontier follows a context start as a call edge; and a
+  recursion counts as offering its own calls when its group survives the
+  grain but the emitter later drops it for an oversized lane frame, so a
+  small call reaching it keeps its offer. Validate any of
+  them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
+
+- **Spinning workers may slow the main thread on a two-thread-per-core
+  host.** With the call grain's recursion fix, Snowghost-wf's edit pair on a
+  hosted runner of 2 cores with 2 threads each takes 504 microseconds
+  sequentially, 506 at two workers and 728 at four, with about six steals
+  per edit and 39 percent of samples in `wf__par_worker_main`
+  ([recursive offers, D3](../research/investigations/recursive-offer-grain/DESIGN.md#d3-result)).
+  The idle window is chosen when the lane count fits the usable CPUs, and
+  four lanes fit four CPUs that are two cores, so one spinning worker can
+  share the main thread's core. Unseparated: the cost may instead be the
+  wake-up of the six stolen tasks per edit. Impact: small `--par` work
+  between sequential phases runs about 1.4 times slower at four workers on
+  such hosts, GitHub's 4-vCPU runners among them. Change, if the 14900K
+  run shows no such cost: count physical cores, not CPUs, when choosing
+  the idle window, or spin only up to one lane per core. Validate with the
+  edit pair at W1, W2 and W4 on the hosted runner and the 14900K, and the
+  formal kernels' paired comparison. Reopen with the 14900K pair result.
+
+- **A recursion without a sequential clone offers without a budget.**
+  `--par-ledger` of Snowghost-wf's layout at `3ec4bb491` excludes
+  `publish_reference_owner_suffix`, an AVL suffix recursion whose left and
+  right calls are each in a permitted group, from the budget-carrying family
+  because it "has no sequential clone" (`compiler/src/backend/emitter/frontier.rs`),
+  so its offers nest at every depth, as a `--par-recursive-frontier off`
+  build's do. The clone set holds the entry-reachable functions that reach a
+  hand-out, so a recursion that reaches its own hand-outs is expected in it;
+  why this one is not is unexplained. Impact: an edit that publishes a
+  reference suffix may hand out a task per tree node, the cost
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)
+  measured as about nine times the sequential edit. Change: find why the
+  component has no clone and give it one, or bound the offers of a
+  clone-less component another way. Validate with a minimal program whose
+  forking recursion is reached only through the path this one is, checking
+  that it gets a budget family, and with Snowghost-wf's publishing edits at
+  one and four workers. Reopen when the publishing edits are timed under
+  `--par`, or with the next recursion-budget change.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family
@@ -2144,6 +2162,26 @@ rarely insert at the same place.
   calls on disjoint storage: permitted as a pair and splitting, with the
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
+
+- **Paged indexed storage is absent in this checkout (Q2).** The active
+  specification and checked type model define Array, Slots and Ring, with no
+  Paged type or storage path. Impact: the selected indexed reduction rule can
+  cover Array and Slots here, but cannot yet name or lower Paged cells.
+  Change: apply the same cell rule to Paged once its owning definition and
+  checked storage representation arrive. Reopen when PR #263 lands on main;
+  validate cross-page cell updates, unchanged length and private-copy
+  recombination against sequential execution in CI.
+
+- **Constant idempotent indexed marks remain deferred.** A repeated
+  `set flags[e] = True();` cannot use the indexed accumulator family, so
+  coverage-mark loops with colliding indices remain sequential. Proposed
+  change: select a rule admitting constant idempotent stores, potentially by
+  normalizing this form to Boolean OR with a proved-true contribution;
+  neither that normalization nor other constant stores are admitted now.
+  Validate a positive colliding mark, false and nonconstant stores, mixed
+  operations and reads of partial marks, plus sequential/parallel equality.
+  Reopen when a real coverage-mark loop needs permission after the explicit
+  indexed operations have been implemented and qualified.
 
 ## Platforms and host interfaces
 
@@ -2774,7 +2812,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,276 lines: the file
+  `compiler/src/backend/completion/bridge.c` exceeds 4,000 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
@@ -3735,18 +3773,23 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
-- **The paired comparison compiles both arms' runtime with the candidate's
-  flags.** `tests/performance/Makefile` includes the candidate's
-  `compiler/runtime.mk`, so the baseline's runtime sources compile with the
-  candidate's `NATIVE_OPTIMIZATION_FLAGS` and against the candidate's unit
-  list. A change to how the driver compiles the runtime, as
-  `-falign-functions=64` in the code-placement change, reaches both arms and
-  the comparison cannot see it, and a runtime unit added or removed would
-  fail the baseline's build. The change: include each arm's own
-  `runtime.mk`, from `$(ROOT)`, so each arm builds its runtime as its own
-  driver does; validate that a flag change in the candidate's `runtime.mk`
-  then differs between the arms' native objects. Reopen at the next change to
-  the runtime's compile flags or unit list.
+- **`compute-regression` on AMD hosts reacts to where the launch places
+  data.** A change that only created one idle thread before the entry made
+  stencil 9 to 30 percent slower at width 1 on Zen 3 and Zen 4 hosted
+  runners and not at all on Zen 5 or Intel
+  ([stop-signals record](../research/investigations/stop-signals/README.md#startup-cost-on-amd-hosts)).
+  The placement control shifts code by 96 bytes and leaves data, stacks and
+  heap mappings where they were, so a change that reorders startup mappings
+  can fail the instrument without changing generated code, and a real
+  regression can hide behind the same variance. A data-placement control
+  (for example a padded first mapping, or a fixed-size allocation before the
+  entry) would show whether a host is placement-sensitive before a verdict.
+  Uncertainty: the cache structure involved is not identified; hosted VMs
+  expose no counters. Validate by rerunning the stop-signals probe with the
+  control on Zen 3 hosts and checking the control flags the receiver-first
+  layout. Reopen when another startup or allocator change trips stencil on
+  AMD hosts only.
+
 - **The first cold compiler build in `compute-regression` is 10–15% slower.**
   Whichever compiler the job builds first takes longer, so the candidate's
   build time carries a bias its budget now covers
@@ -4090,18 +4133,17 @@ condition under which it is taken up.
   shared statement on each command, which would serialize every connection.
   Reopen when firn is monitored through `INFO`, or with the next work on
   firn's statistics.
-- **A signal stops firn without writing its pending append-only bytes.**
-  firn handles no signal, and the standard library's `std::process`
-  delivers none, so SIGTERM or SIGINT ends it at once, losing the changes its
-  writer (`write_log` in `apps/firn/persistence/persistence.wf`) has not yet
-  appended, up to one 10-millisecond cycle, and the bytes not yet synced,
-  where Redis on SIGTERM appends and syncs its file before it exits, as its
-  `SHUTDOWN` command does, which firn lacks. Seen on 2026-10-03: a `SET` sent
-  a few milliseconds before a SIGTERM was absent after the replay. A signal
-  delivered to a context could set the keyspace's `stopping`, which makes the
-  writer append, sync and close, as it does once the client limit is
-  reached. Reopen with `SHUTDOWN`, or when firn runs under a service manager
-  that stops it with SIGTERM.
+- **firn must connect stop requests to its append-only writer.** The
+  standard library now exposes `std::process::stop_listen` and `stop_next`
+  [PRE-2], but `apps/firn/server/server.wf` still does not open a listener.
+  Its host default therefore still ends it on SIGTERM or SIGINT, losing
+  changes its writer has not appended or synced. The 2026-10-03 witness was
+  a `SET` acknowledged a few milliseconds before SIGTERM and absent after
+  replay. Connect a waiting stop context to the keyspace's `stopping` state,
+  join its writer's append, sync and close, and close the listener before
+  returning. Validate a stop after acknowledged writes and replay every one
+  after restart. Reopen with firn's next orderly-stop change; the host
+  capability is implemented here, its application integration is not.
 - **firn writes decimals and reads `CONFIG SET`'s integers in repeated
   code.** `text_reserve` and `text_number` in `apps/firn/commands/info.wf`
   copy `log_reserve` and `log_number` in `apps/firn/store/store.wf`, the one

@@ -2962,11 +2962,10 @@ static int test_directory_progress_is_internal(void) {
 }
 
 
-/* The name of the test now running, for the watchdog below.  Written by the
- * main thread and read by a signal handler, which is why it is a plain
- * pointer to a string literal: the store is a single aligned word and the
- * handler only prints it. */
-static const char *volatile wf_harness_running = "startup";
+/* The entry publishes a literal; SIGALRM may run on the launcher or another
+ * runtime thread. The handler must read it without a data race or a lock. */
+_Static_assert(ATOMIC_POINTER_LOCK_FREE == 2, "watchdog pointer must be lock-free");
+static _Atomic(const char *) wf_harness_running = "startup";
 
 /* A deadlock is a failure mode of this suite, so it gets a name.
  *
@@ -2980,8 +2979,9 @@ static void wf_harness_watchdog(int signal_number) {
     static const char message[] = "completion harness: no progress in test: ";
     ssize_t ignored;
     (void)signal_number;
+    const char *running = atomic_load(&wf_harness_running);
     ignored = write(2, message, sizeof(message) - 1u);
-    ignored = write(2, wf_harness_running, strlen(wf_harness_running));
+    ignored = write(2, running, strlen(running));
     ignored = write(2, "\n", 1);
     (void)ignored;
     _exit(9);
@@ -2989,20 +2989,12 @@ static void wf_harness_watchdog(int signal_number) {
 
 int wf_ordinary_values_tests(const char *scratch, const char *group);
 
-int main(int argc, char **argv) {
+int wf__main_body(int argc, char **argv) {
     unsigned cases = 0;
     int trace = getenv("WF_COMPLETION_TRACE") != NULL;
-    struct sigaction watchdog;
-    memset(&watchdog, 0, sizeof(watchdog));
-    watchdog.sa_handler = wf_harness_watchdog;
-    if (sigaction(SIGALRM, &watchdog, NULL) != 0) {
-        fprintf(stderr, "completion harness: no watchdog\n");
-        return 2;
-    }
-    (void)alarm(300u);
 #define RUN_TEST(...)                                                         \
     do {                                                                      \
-        wf_harness_running = #__VA_ARGS__;                                    \
+        atomic_store(&wf_harness_running, #__VA_ARGS__);                       \
         if (trace) {                                                          \
             fprintf(stderr, "completion harness: begin %s\n", #__VA_ARGS__); \
         }                                                                     \
@@ -3093,10 +3085,60 @@ int main(int argc, char **argv) {
         RUN_TEST(wf_ordinary_values_tests(argv[1], "tcp"));
     }
 #undef RUN_TEST
-    (void)alarm(0);
     printf("completion-core-harness: PASS group=%s cases=%u racers=%d "
            "native=%" PRIu64 " adapter=%" PRIu64 "\n", group, cases,
            WF_HARNESS_RACERS, wf__completion_native_ring_submissions(),
            wf__completion_file_fallback_submissions());
+    if (ordinary) {
+        /* Native callers can return with host state still open, unlike a WF
+         * entry whose linear listener must be consumed. Leave an observation
+         * queued too: launcher teardown must restore the default and release
+         * the queue before returning to main. */
+        CHECK(wf__stop_listen_begin() == 0);
+        CHECK(wf__stop_listen_finish(1) == 0);
+        wf__stop_observe(1);
+    }
     return 0;
+}
+
+int wf__floor_run(int argc, char **argv);
+
+int main(int argc, char **argv) {
+    struct sigaction watchdog;
+    memset(&watchdog, 0, sizeof(watchdog));
+    watchdog.sa_handler = wf_harness_watchdog;
+    if (sigaction(SIGALRM, &watchdog, NULL) != 0) {
+        fprintf(stderr, "completion harness: no watchdog\n");
+        return 2;
+    }
+    (void)alarm(300u);
+    const char *group = argc == 3 ? argv[2] : "all";
+    int ordinary = strcmp(group, "all") == 0 || strcmp(group, "bridge") == 0
+        || strcmp(group, "ordinary-io") == 0;
+    if (!ordinary) return wf__main_body(argc, argv);
+    /* The stop probes need the same launcher loop as WF programs. Before it
+     * exists, native initialization must preserve the caller's host state and
+     * refuse a listener instead of waiting forever for a control consumer. */
+    sigset_t before, after;
+    struct sigaction old_interrupt, old_terminate, action;
+    CHECK(pthread_sigmask(SIG_BLOCK, NULL, &before) == 0);
+    CHECK(sigaction(SIGINT, NULL, &old_interrupt) == 0);
+    CHECK(sigaction(SIGTERM, NULL, &old_terminate) == 0);
+    CHECK(wf__stop_initialize() == 0);
+    CHECK(wf__stop_listen_begin() == 0);
+    CHECK(wf__stop_listen_finish(1) == ENOTSUP);
+    CHECK(pthread_sigmask(SIG_BLOCK, NULL, &after) == 0);
+    CHECK(sigismember(&before, SIGINT) == sigismember(&after, SIGINT));
+    CHECK(sigismember(&before, SIGTERM) == sigismember(&after, SIGTERM));
+    CHECK(sigaction(SIGINT, NULL, &action) == 0 && action.sa_handler == old_interrupt.sa_handler);
+    CHECK(sigaction(SIGTERM, NULL, &action) == 0 && action.sa_handler == old_terminate.sa_handler);
+    int result = wf__floor_run(argc, argv);
+    CHECK(pthread_sigmask(SIG_BLOCK, NULL, &after) == 0);
+    CHECK(sigismember(&after, SIGINT) == 0 && sigismember(&after, SIGTERM) == 0);
+    CHECK(sigaction(SIGINT, NULL, &action) == 0 && action.sa_handler == SIG_DFL);
+    CHECK(sigaction(SIGTERM, NULL, &action) == 0 && action.sa_handler == SIG_DFL);
+    CHECK(wf__stop_listen_begin() == 0);
+    CHECK(wf__stop_listen_finish(1) == ENOTSUP);
+    (void)alarm(0);
+    return result;
 }

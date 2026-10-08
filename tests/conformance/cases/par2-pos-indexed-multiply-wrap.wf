@@ -1,0 +1,16 @@
+fn reduce() -> result: u64 pure {
+  doc "PAR-2 permits colliding indexed *wrap updates; the incoming cell value participates once.";
+  let cells = box_array_filled::<u64>(count: 2_u64, value: 3_u64);
+  for (i in 0_u64..4_u64) {
+    set cells.inner[0_u64] = cells.inner[0_u64] *wrap 2_u64;
+  }
+  return cells.inner[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = reduce();
+  if result != 48_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

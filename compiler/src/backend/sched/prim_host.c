@@ -19,6 +19,7 @@
 #include "prim.h"
 #include <fcntl.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,7 +58,25 @@ int wf_prim_thread_start(
         return 1;
     }
     (void)pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+#if defined(__linux__)
+    /* Inherit blocked stop signals before the child can execute anything,
+     * even when this is a probe or a native caller outside the WF launcher.
+     * The launcher alone unblocks them while no listener exists. Outside the
+     * launcher, the native caller keeps its previous mask and responsibility
+     * for host defaults; opening a stop listener reports ENOTSUP. */
+    sigset_t stops, previous;
+    sigemptyset(&stops);
+    sigaddset(&stops, SIGINT);
+    sigaddset(&stops, SIGTERM);
+    if (pthread_sigmask(SIG_BLOCK, &stops, &previous) != 0) {
+        (void)pthread_attr_destroy(&attributes);
+        return 1;
+    }
+#endif
     error = pthread_create(&created, &attributes, wf_prim_thread_main, thread);
+#if defined(__linux__)
+    if (pthread_sigmask(SIG_SETMASK, &previous, NULL) != 0) abort();
+#endif
     (void)pthread_attr_destroy(&attributes);
     return error != 0 ? 1 : 0;
 }

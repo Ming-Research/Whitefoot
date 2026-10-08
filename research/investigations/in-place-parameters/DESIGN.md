@@ -240,3 +240,27 @@ The change's independent parts are on main:
 - the corrected one-word test comment;
 - the `place_back` test's locator fix;
 - this record and its two todo entries.
+
+## Reopened: functions with branches, measured on Halo
+
+The rule above applied only to functions without a branch: lowering an `if`
+or `match` carries every binding into the continuation block, and the
+storage plan coalesces that block parameter into the parameter's slot, so
+the slot held two values and the copy stayed. Halo's `push_frame(vm, frame:
+Frame)` branches and copied its 80-byte `Frame` on every Lua call. The
+widened rule qualifies a slot when every value it holds originates from the
+parameter through block transfers alone (branch `claude/in-place-branches`,
+gate run 37761168412; the witness tests failed under the old rule in run
+37761192907).
+
+Measured by Halo-wf on the 14900K with a criterion recorded before
+measuring ([run 37771086458](https://github.com/Ming-Research/Halo-wf/actions/runs/37771086458),
+Halo-wf `research/experiments/halo-bench/RESULTS.md`, "Reading by-value
+parameters in place, measured"): Halo main built by `wf-c18e6708b6cc` and
+by `wf-exp-8eaba144a41f`, six interleaved pairs. `push_frame` lost its entry
+copy (91 instructions to 85); fib's median fell 3.8% (0.1055 s to 0.1014 s),
+beyond both ranges (2.57%, 0.77%) and the twin's 0.9%; the six other kernels
+stayed within their ranges. The gain is the widened rule's across every
+function that receives an aggregate by value, not `push_frame`'s copy alone.
+The owner reopened the rejection and adopted the rule, with firn measured
+for no slowdown before merging.

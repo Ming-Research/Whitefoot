@@ -755,7 +755,7 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &uniq OutputStream, err: &uni
 
 fn main(inputs: own Inputs) -> status: own ExitStatus pure {
   doc "PRE-1 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin, ..) = move inputs;
   region {
     let outcome = exercise(args: &args, cwd: &cwd, out: &uniq out, err: &uniq err, files: &uniq files);
     close_directory(factory: &uniq files, directory: move cwd);
