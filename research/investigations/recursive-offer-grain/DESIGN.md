@@ -243,6 +243,16 @@ handful of keys per call to check results, so its offers measure nothing a
 performance criterion protects, and the criterion's wording ("timed") is not
 met for it.
 
+That run measured the single-pass grain (`95be0340e`). After the fixed point
+was added, the comparison ran again on `76649d32a` (run
+[37786236991](https://github.com/Ming-Research/Whitefoot/actions/runs/37786236991))
+over `tests/programs` only, since the repository forbids a workflow input
+from `research/`: 96 single-file programs and the five multi-file sets stay
+byte-identical, and `ordered-map-program.wf` loses one more offer, a call of
+`ordered_map_free` (static work 816) whose recursion offered its own calls
+only through a group the grain dissolves. par-quicksort is not rerun: its
+only group pairs its two recursive calls, so no pass can dissolve it.
+
 ## Candidate on the D1 workload (validation 3)
 
 The owner chose the proposed rule on 2026-10-08. Experiment release
@@ -264,6 +274,25 @@ recursion offering none of its own calls, `reference_owner_cursor` among
 them) and takes the four-worker edit from 10.2 to 1.36 times sequential.
 Criterion 3 (at most 1.1 times) is not met: about 94 microseconds per edit
 remain at four workers.
+
+## Full builds on the 14900K (validation 4)
+
+Snowghost-wf ran its full-layout and style timing on the 14900K (run
+37783423140): Snowghost main `8fbc160` built with `wf-c18e6708b6cc`, a twin
+of that build, and with `wf-exp-95be0340e904`; three interleaved rounds,
+best round, layout on ecma262 and html5 and style on ecma262, html5 and
+apollo11, sequential and four workers. Every candidate-to-base ratio lies
+within the twin's own spread, which reaches 3.3 percent: the whole layout
+stage reads 1.004 and 0.992 (ecma262, sequential and W4) and 1.014 and 1.014
+(html5), against twins of 0.996, 1.000, 1.010 and 1.021; style reads 0.989
+to 1.008. Omitting the 22 Snowghost offers, `style.applied_value` and
+`inherited_float_reach` among them, costs nothing measurable on full builds.
+
+The same session timed the edit pair on main's source (run 37788438619),
+which lacks the suffix recursion: best of three rounds, base 77 sequential,
+93 at W4; candidate 78 and 96. Main's edit path pays about 15 microseconds
+per edit at two and at four workers with either compiler, a fixed cost the
+grain does not touch.
 
 ## D3: the residual four-worker cost
 
