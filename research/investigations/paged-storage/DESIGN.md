@@ -348,3 +348,31 @@ port with one `Paged` per existing store stays 1 to 9 percent slower with
 the header-first cell; that its 82,907 per-owner stores with full first
 pages cause this is a hypothesis for the smaller-first-page item in
 `docs/todo.md`, which the page-fault counts can reject.
+
+### C3 on the i9-14900K: both lowerings fail
+
+2026-10-08, run `37725144848` on the i9-14900K, the same builds, three
+interleaved rounds, best round per cell; Snowghost-wf commit `5b517e7`,
+[`research/investigations/storage-layout/c3-14900k/`](https://github.com/Ming-Research/Snowghost-wf/tree/5b517e7/research/investigations/storage-layout/c3-14900k)
+holds every round, the page-fault counts and box-build profiles. Ratios to
+`pages`, recomputed from the committed rounds:
+
+| layout | twin | paged | hf |
+|---|---|---|---|
+| html5 sequential | 1.000 | 1.093 | 1.098 |
+| html5, four workers | 1.009 | 1.114 | 1.076 |
+| ecma262 sequential | 0.990 | 1.031 | 1.021 |
+| ecma262, four workers | 1.010 | 1.079 | 1.049 |
+
+The html5 sequential rounds are tight (pages 0.683 to 0.687 s, both
+built-in builds 0.747 to 0.757 s), so C3 fails on the precise machine for
+the separate directory and for the header-first cell alike, and this run
+supersedes the M5 Air reading above. Box construction is noisier (twin 0.91
+to 1.10) and slower still for both (1.06 to 1.58). Its profiles are
+dominated by the allocator in every build, more so for the built-in ports,
+and the html5 box build takes 123,490 page faults with `pages`, 186,919
+with `paged` and 292,328 with `hf`; the header-first cell adds a cell
+reallocation on every directory doubling. The layout loss is not yet
+attributed: no layout-phase profile was taken, and the port also moved the
+payload pools onto `Paged`. Under the criterion this rejects the built-in
+form unless an attributed, fixable cause is found; the owner decides.
