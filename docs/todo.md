@@ -2653,6 +2653,12 @@ rarely insert at the same place.
   the tag to the variant count and order fields to pack, a layout decision
   for compiler/payload-enum-layout. Validate with Halo's dispatch timings and
   the wasm interpreter's `Op` stride. Reopen with that layout decision.
+  The handler word adds 8 bytes to every dispatched cell (Halo's `Cell`
+  becomes 20 bytes), and Halo's `fib` ran 1.5% slower with it, outside
+  both spreads ([match-dispatch](../research/investigations/match-dispatch/DESIGN.md#outcome-of-the-handler-word-on-the-natural-form));
+  the wider stride is the unverified suspect. Packing the tag, or a
+  handler word narrower than an address (an offset from the dispatch
+  family's first handler), would test it with the same Halo comparison.
 
 - **A loop-carried index is recomputed into an address in every arm.** The
   C experiment's `u8` form, `code[pc]` and `regs[base + a]` from indices,

@@ -1421,8 +1421,30 @@ every final CRC 0x4983.
 The natural form gains 1.099 over its base, ahead in all 7 launch pairs,
 with the twin equal to the base: the criterion's CoreMark half is met, and
 the phase's exit value, the prototype's 1.10, is reproduced on the natural
-form. The criterion's Halo half waits for Halo's interpreter written as
-`loop { match }`. The remaining gap to wasmi is 0.763 to 0.847.
+form. The remaining gap to wasmi is 0.763 to 0.847.
+
+The Halo half, observed on the 14900K by Halo-wf
+([run 37837639995](https://github.com/Ming-Research/Halo-wf/actions/runs/37837639995)):
+Halo-wf main `c78426ef8`, whose `run` is `loop { match }`, built full-LTO by
+release `wf-691ea8106920` (main `691ea8106`) and by experiment release
+`wf-exp-78ff1a001486` (the same base plus only the handler word's two
+commits), 6 interleaved launch pairs with a twin of the base. The handler
+word's ledger line appears for `run` under the experiment and not under the
+base, and the binaries differ.
+
+| kernel | base median (s) | ratio | base spread | handler-word spread | twin |
+|---|---:|---:|---:|---:|---:|
+| `fib` | 0.1030 | 1.015 | 0.45% | 0.94% | 0.999 |
+| `loop` | 0.4346 | 0.978 | 1.50% | 0.95% | 1.001 |
+
+Halo's other kernels (integer-table 0.992, string-key 1.001, concat 1.000,
+sort 0.999, binary-trees 1.001) stay within noise. Neither kernel is more
+than 2% slower, so the criterion's Halo half is met and phase 2 exits.
+`fib`'s 1.5% slowdown is outside both spreads, the opposite direction of
+the prototype's 2.3% `fib` gain on the `musttail` spelling. One unverified
+cause: the word widens Halo's `Cell` from 12 to 20 bytes, so `fib`'s
+call-heavy path fetches more bytes per instruction. B8's tag packing
+(12 to 8 bytes) or a narrower handler word would test it.
 
 ## Phase 3: the interpreter's design follows wasmi
 
