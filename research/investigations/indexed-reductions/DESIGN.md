@@ -3,8 +3,8 @@
 Status: the owner selected the Proposal, lowering A (private copies combined
 in leaf order), and choice 3 (scalar and indexed accumulators in one body).
 Choice 2 (constant idempotent marks) is deferred. Permission and the private-range
-lowering path are implemented on the work branch. Compilation, execution and
-CI verification remain pending. The Criterion below is unchanged.
+lowering path merged to main as v0.102 (#274). The Criterion below is
+unchanged; its results are under Results.
 
 ## Question
 
@@ -193,9 +193,5 @@ truly too wide. The
 whole-program oracle checks colliding histogram updates, positive minima,
 negative maxima, odd wrapping products, untouched cells and an independent
 scalar count against fixed expected values and a sequential build. These
-checks have not been run in this worktree: the owner prohibits local builds,
-compilation, tests and lint, and prohibits committing or pushing this round.
-CI must establish the emitted IR's validity and the native observations before
-this implementation is qualified. The performance and downstream permission
-criteria above remain unmeasured. Paged remains deferred until PR #263 lands
-on main; it is not a type or storage path in this checkout.
+checks pass in the gate of #274's merged head; the criterion results are under
+Results above. Paged remains deferred until PR #263 lands on main.

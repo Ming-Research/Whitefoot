@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The timing experiment of research/experiments/indexed-reduction-timing/README.md,
-# dispatched by .github/workflows/indexed-reduction-timing.yml. Explicit
-# research only: no gate runs it.
+# run on CI through a temporary workflow since removed (see its README).
+# Explicit research only: no gate runs it.
 #
 # usage: run.sh probe|measure WFC WORK [ROUNDS]
 #

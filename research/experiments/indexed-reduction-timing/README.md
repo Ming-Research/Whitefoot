@@ -2,9 +2,8 @@
 
 Serves the performance criterion of
 [indexed reductions](../../investigations/indexed-reductions/DESIGN.md#criterion).
-Temporary: the workflow `.github/workflows/indexed-reduction-timing.yml` that
-runs it is removed before the branch is ready; this directory stays as the
-measurement's record.
+It was run through a temporary workflow on the research branch, since
+removed; this directory stays as the measurement's record.
 
 ## Question
 
@@ -86,8 +85,10 @@ not reliably bracket the histogram. The programs now contain no clock reads
 and report no in-program interval. That probe is invalid timing evidence.
 
 `summarize.py` forms each baseline-subtracted pair before computing medians,
-minima, maxima, spreads and the paired per-round ratios. Missing or duplicate
-runs and inconsistent REPS values are invalid data. A nonpositive paired
+minima, maxima, spreads and the paired per-round ratios. A duplicate run, a
+round missing a build or K value, and inconsistent REPS values are invalid
+data; whether every requested round was recorded is checked by the round count
+in `manifest.txt`, not by `summarize.py`. A nonpositive paired
 difference is retained in the timing statistics and reported as unresolved;
 any ratio involving that build and round is reported unavailable, without
 dropping noisy rounds or using them to judge the criterion.
@@ -142,11 +143,14 @@ in-program timing was dropped for the paired K=0 / K=20 process timing above.
 All runs at main `691ea8106` (the #274 merge), through the temporary workflow
 on this branch, since removed.
 
-| Run | Host | Rounds | 256 cells seq/par8 median (min..max) | 4096 cells seq/par8 median (min..max) | seq/twin 256 / 4096 |
-|---|---|---|---|---|---|
-| 37832422819 | GitHub ubuntu-24.04, 4 vCPU, 4 workers | 3 | 1.722 (1.592..1.878) | 1.695 (1.671..1.732) | 0.989 / 1.005 |
-| 37834742412 | i9-14900K VM, cpus 0-7, 8 workers | 3 | 2.328 (1.895..3.212) | 2.000 (1.789..2.310) | 0.976 / 1.004 |
-| 37835484141 | i9-14900K VM, cpus 0-7, 8 workers | 10 | 2.377 (2.152..3.342) | 1.878 (1.582..2.169) | 0.955 / 0.999 |
+| Run | Host | Rounds | 256 cells seq/par8 | 256 cells seq/twin | 4096 cells seq/par8 | 4096 cells seq/twin |
+|---|---|---|---|---|---|---|
+| 37832422819 | GitHub ubuntu-24.04, 4 vCPU, 4 workers | 3 | 1.722 (1.592..1.878) | 0.989 (0.968..0.998) | 1.695 (1.671..1.732) | 1.005 (0.922..1.007) |
+| 37834742412 | i9-14900K VM, cpus 0-7, 8 workers | 3 | 2.328 (1.895..3.212) | 0.976 (0.959..1.000) | 2.000 (1.789..2.310) | 1.004 (1.003..1.005) |
+| 37835484141 | i9-14900K VM, cpus 0-7, 8 workers | 10 | 2.377 (2.152..3.342) | 0.955 (0.916..1.033) | 1.878 (1.582..2.169) | 0.999 (0.941..1.066) |
+
+Each cell is the median of the paired per-round ratios with their minimum and
+maximum; every seq/par8 range on the i9-14900K lies outside its twin range.
 
 Sequential time per histogram on the i9-14900K: 1.98 ms (256 cells) and
 2.19 ms (4096 cells), median of 10 rounds. The scheduler report showed 8
