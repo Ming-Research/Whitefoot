@@ -132,7 +132,7 @@ once) stencil was slower at two or three widths (wall ratio 0.85 to 0.93,
 every pair lower), while each host's identical-image and placement controls
 passed; the runs on Intel Xeon hosts and the interleaved comparison on the
 i9-14900K (Whitefoot run 37748947950: 0.994, 1.004, 1.011) showed no
-slowdown. On Linux the branch starts a receiver thread in every program at
+slowdown. On Linux the measured branch started a receiver thread in every program at
 launch, before the entry, whether or not the program ever listens.
 
 Question, stated before measuring: is the receiver thread the cause? The
@@ -168,6 +168,20 @@ and what follows it are mapped at other addresses than on the merge base.
 Whether the cost is that placement or the thread's existence is not
 separated here; a remedy that starts no thread before the entry removes
 both.
+
+The owner selected the launcher's original thread for POSIX stop reception,
+with no receiver thread created before the entry. Linux blocks the stop
+signals before creating the entry and unblocks only the launcher's mask
+while no listener exists. Entry return wakes the loop, which releases any
+open listener's host state before joining the entry. PRE-2's observable
+behavior is unchanged. Failure to create the entry now reports a startup
+failure, since executing it on the original thread would strand reception;
+floor-only probes retain no-op hooks, and native callers without a launcher
+loop receive ENOTSUP when opening a listener. Windows already uses the host's
+console callback and creates no stop-receiver thread at launch, so it is
+unchanged. This implementation still needs CI correctness and performance
+validation; the measurements above establish the removed thread's cost, not
+the replacement's measured performance.
 
 ## Status
 

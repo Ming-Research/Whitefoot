@@ -7,9 +7,18 @@
 extern "C" {
 #endif
 
-/* Invocation stop source; initialization precedes program-created threads. */
+/* Invocation stop source; initialization alone is safe for native callers. */
 struct wf_completion_record;
 int wf__stop_initialize(void);
+#if !defined(_WIN32)
+/* One launcher invocation: prepare on the floor-attached original thread
+ * before creating the entry or any other thread, then receive on that same
+ * thread. The entry calls entry_returned after its body, before being joined.
+ * Without this loop, opening a listener returns ENOTSUP. */
+int wf__stop_prepare(void);
+void wf__stop_receive(void);
+void wf__stop_entry_returned(void);
+#endif
 /* begin holds the lifecycle lock on success; finish releases it, starting
  * interception only if the ordinary library acquired a factory credit. */
 int wf__stop_listen_begin(void);

@@ -201,6 +201,12 @@ int main(int argc, char **argv) {
         finish("", 0, 0);
         return 0;
     }
+    /* Returning without ever opening a listener must wake a launcher already
+     * waiting for stop requests and preserve the entry's ordinary exit. */
+    start(argv[1]);
+    checkpoint('B');
+    gate('E');
+    finish("", 0, 0);
     for (int interrupt = 0; interrupt < 2; ++interrupt) {
         start(argv[1]);
         checkpoint('B');

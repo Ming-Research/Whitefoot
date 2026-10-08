@@ -61,7 +61,9 @@ int wf_prim_thread_start(
 #if defined(__linux__)
     /* Inherit blocked stop signals before the child can execute anything,
      * even when this is a probe or a native caller outside the WF launcher.
-     * The invocation receiver alone unblocks them while no listener exists. */
+     * The launcher alone unblocks them while no listener exists. Outside the
+     * launcher, the native caller keeps its previous mask and responsibility
+     * for host defaults; opening a stop listener reports ENOTSUP. */
     sigset_t stops, previous;
     sigemptyset(&stops);
     sigaddset(&stops, SIGINT);

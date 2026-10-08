@@ -93,6 +93,7 @@ COMPLETION_RUNTIME_SOURCES := \
 	$(COMPLETION_DIR)/stop_signals.c \
 	$(COMPLETION_DIR)/linux_io_uring.c
 COMPLETION_SOURCES := $(COMPLETION_RUNTIME_SOURCES) \
+	src/backend/wf_floor.c \
 	src/backend/ordinary_values.c src/backend/ordinary_values_probe.c \
 	src/backend/ordinary_values.ll src/backend/ordinary_values_probe.ll \
 	$(COMPLETION_DIR)/harness.c

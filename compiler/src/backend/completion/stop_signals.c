@@ -165,18 +165,25 @@ static int wf_stop_host_change(int open_listener) {
 
 static int wf_stop_busy_error(void) { return ERROR_BUSY; }
 #else
-/* Only the receiver ever unblocks SIGINT/SIGTERM on Linux. The entry blocks
- * them before creating it and before starting WF code; all runtime threads
+/* Only the launcher's original thread unblocks SIGINT/SIGTERM on Linux.
+ * It blocks them before creating the entry thread; all runtime threads
  * are also created with this mask by wf_prim_thread_start. Thus opening on
  * any driver needs no asynchronous alteration of another thread's mask.
  * With no listener the receiver is unblocked with SIG_DFL, so the kernel
  * itself supplies the normal signal exit status. */
 static wf_prim_wait wf_stop_control;
-static wf_prim_thread wf_stop_receiver;
 static int wf_stop_pipe[2];
-static int wf_stop_command = -1;
+enum {
+    WF_STOP_IDLE = -1,
+    WF_STOP_CLOSE,
+    WF_STOP_OPEN,
+    WF_STOP_ENTRY_RETURNED
+};
+static int wf_stop_command = WF_STOP_IDLE;
 static int wf_stop_command_error;
-static int wf_stop_receiver_ready;
+/* Protected by the control lock. Preparation promises that the launcher
+ * will enter the loop; callers can submit before it reaches its first poll. */
+static int wf_stop_launcher_available;
 static sigset_t wf_stop_mask;
 
 static void wf_stop_mask_change(int how) {
@@ -278,15 +285,11 @@ static int wf_stop_wait_kqueue(int descriptor) {
 }
 #endif
 
-static void wf_stop_receiver_main(void *unused) {
-    (void)unused;
+void wf__stop_receive(void) {
     int descriptor = -1;
-    wf_prim_floor_attach();
+    /* wf__floor_run already attached this thread to the exhaustion floor,
+     * including the completion submit/join path used for signalfd reads. */
     wf_stop_mask_change(SIG_UNBLOCK);
-    wf_prim_wait_lock(&wf_stop_control);
-    wf_stop_receiver_ready = 1;
-    wf_prim_wait_signal(&wf_stop_control);
-    wf_prim_wait_unlock(&wf_stop_control);
     for (;;) {
         struct pollfd watches[2] = {
             {wf_stop_pipe[0], POLLIN, 0}, {descriptor, POLLIN, 0}
@@ -313,16 +316,23 @@ static void wf_stop_receiver_main(void *unused) {
             if (read(wf_stop_pipe[0], &byte, 1) != 1) wf_stop_fail("control pipe read failed");
             wf_prim_wait_lock(&wf_stop_control);
             wf_stop_command_error = 0;
-            if (wf_stop_command == 1) {
+            int returned = wf_stop_command == WF_STOP_ENTRY_RETURNED;
+            if (wf_stop_command == WF_STOP_OPEN) {
                 descriptor = wf_stop_host_open();
                 if (descriptor < 0) wf_stop_command_error = errno;
-            } else {
+            } else if (descriptor >= 0) {
                 wf_stop_host_release(descriptor);
                 descriptor = -1;
             }
-            wf_stop_command = -1;
+            if (returned) wf_stop_launcher_available = 0;
+            wf_stop_command = WF_STOP_IDLE;
             wf_prim_wait_signal(&wf_stop_control);
             wf_prim_wait_unlock(&wf_stop_control);
+            if (returned) {
+                close(wf_stop_pipe[0]);
+                close(wf_stop_pipe[1]);
+                return;
+            }
 #if defined(__linux__)
         } else if (watches[1].revents & POLLIN) {
             wf_stop_read_observed(descriptor);
@@ -334,11 +344,18 @@ static void wf_stop_receiver_main(void *unused) {
 }
 
 static int wf_stop_host_initialize(void) {
+    /* Inputs and native runtime probes may initialize without a launcher.
+     * Do not change their signal masks or dispositions or create a receiver. */
+    return wf_prim_wait_init(&wf_stop_control) == 0 ? 0 : ENOMEM;
+}
+
+int wf__stop_prepare(void) {
+    int error = wf__stop_initialize();
+    if (error != 0) return error;
     sigemptyset(&wf_stop_mask);
     sigaddset(&wf_stop_mask, SIGINT);
     sigaddset(&wf_stop_mask, SIGTERM);
     wf_stop_disposition(SIG_DFL);
-    if (wf_prim_wait_init(&wf_stop_control) != 0) return ENOMEM;
     if (pipe(wf_stop_pipe) != 0) return errno;
     for (unsigned index = 0; index < 2; ++index) {
         if (fcntl(wf_stop_pipe[index], F_SETFD, FD_CLOEXEC) < 0) {
@@ -351,28 +368,25 @@ static int wf_stop_host_initialize(void) {
 #if defined(__linux__)
     wf_stop_mask_change(SIG_BLOCK);
 #endif
-    if (wf_prim_thread_start(&wf_stop_receiver, wf_stop_receiver_main, NULL, 0) != 0) {
-        close(wf_stop_pipe[0]);
-        close(wf_stop_pipe[1]);
-#if defined(__linux__)
-        wf_stop_mask_change(SIG_UNBLOCK);
-#endif
-        return EAGAIN;
-    }
     wf_prim_wait_lock(&wf_stop_control);
-    while (!wf_stop_receiver_ready) wf_prim_wait_sleep(&wf_stop_control);
+    wf_stop_launcher_available = 1;
     wf_prim_wait_unlock(&wf_stop_control);
     return 0;
 }
 
-static int wf_stop_host_change(int open_listener) {
+/* The lifecycle lock serializes commands, including entry return. */
+static int wf_stop_host_change(int command) {
     wf_prim_wait_lock(&wf_stop_control);
-    wf_stop_command = open_listener;
+    if (!wf_stop_launcher_available) {
+        wf_prim_wait_unlock(&wf_stop_control);
+        return ENOTSUP;
+    }
+    wf_stop_command = command;
     char byte = 0;
     ssize_t sent;
     do { sent = write(wf_stop_pipe[1], &byte, 1); } while (sent < 0 && errno == EINTR);
     if (sent != 1) wf_stop_fail("control pipe write failed");
-    while (wf_stop_command != -1) wf_prim_wait_sleep(&wf_stop_control);
+    while (wf_stop_command != WF_STOP_IDLE) wf_prim_wait_sleep(&wf_stop_control);
     int error = wf_stop_command_error;
     wf_prim_wait_unlock(&wf_stop_control);
     return error;
@@ -388,8 +402,8 @@ static void wf_stop_initialize_once(void) {
 }
 
 int wf__stop_initialize(void) {
-    /* The launcher calls this on the entry thread, before WF code can create
-     * workers, drivers or helpers. A failed invocation never enters WF code. */
+    /* Shared by the launcher and ordinary Inputs construction. Only POSIX
+     * launcher preparation changes masks, before it creates any threads. */
     wf__sched_once(&wf_stop_once, wf_stop_initialize_once);
     return wf_stop_initial_error;
 }
@@ -424,9 +438,8 @@ int wf__stop_listen_finish(int has_credit) {
     return error;
 }
 
-int wf__stop_close(void) {
-    wf_prim_wait_lock(&wf_stop_lifecycle);
-    int error = wf_stop_host_change(0);
+/* The lifecycle lock is held and the host has stopped interception. */
+static void wf_stop_clear(void) {
     wf_prim_wait_lock(&wf_stop_queue);
     if (wf_stop_waiter != NULL) wf_stop_fail("closing a borrowed listener");
     wf_stop_active = 0;
@@ -437,9 +450,27 @@ int wf__stop_close(void) {
     }
     wf_stop_tail = NULL;
     wf_prim_wait_unlock(&wf_stop_queue);
+}
+
+int wf__stop_close(void) {
+    wf_prim_wait_lock(&wf_stop_lifecycle);
+    int error = wf_stop_host_change(0);
+    wf_stop_clear();
     wf_prim_wait_unlock(&wf_stop_lifecycle);
     return error;
 }
+
+#if !defined(_WIN32)
+void wf__stop_entry_returned(void) {
+    wf_prim_wait_lock(&wf_stop_lifecycle);
+    if (wf_stop_host_change(WF_STOP_ENTRY_RETURNED) != 0)
+        wf_stop_fail("entry returned without a launcher receiver");
+    /* A native entry may leave a listener open. Restore its host state before
+     * acknowledging return; release retained observations before the join. */
+    wf_stop_clear();
+    wf_prim_wait_unlock(&wf_stop_lifecycle);
+}
+#endif
 
 void wf__stop_next(wf_completion_record *record) {
     wf_prim_wait_lock(&wf_stop_queue);

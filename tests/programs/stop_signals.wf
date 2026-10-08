@@ -200,6 +200,9 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   std::fs::close_directory(factory: &factory, directory: move root);
   let before = stop_byte(factory: &factory, output: &errors, value: 66_u8);
   let mode = stop_gate(factory: &factory, input: &input);
+  if mode == 69_u8 {
+    return std::process::exit_status(code: 0_u8);
+  }
   match std::process::stop_listen(factory: &factory, stops: &stops) {
     Ok(value: listener) => {
       let busy = False();

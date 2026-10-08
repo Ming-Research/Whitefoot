@@ -1,6 +1,8 @@
 //! Stop requests cross the real host boundary into a compiled waiting context.
 //! The C supervisor owns an isolated console on Windows and uses kill on POSIX;
-//! it checks host-default status, exact stdout, and synchronized request order.
+//! it checks host-default status, listener-free entry return, exact stdout,
+//! and synchronized request order. Native open-listener return and missing
+//! launcher coverage belong to the completion harness.
 
 use std::process::Command;
 
