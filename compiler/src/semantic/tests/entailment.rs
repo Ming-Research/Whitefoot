@@ -3176,7 +3176,6 @@ fn through_loop(i: u64) -> result: i32 pure {
     }
     set holder^ = True();
   }
-  return 0_i32;
 }
 
 fn other_holder(i: u64) -> result: i32 pure {
