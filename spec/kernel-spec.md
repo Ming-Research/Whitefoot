@@ -2885,11 +2885,11 @@ A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root 
 
 Alternative (j) is a compiler-owned target-instance measure term used while forming or proving an [INV-1] counted next-header relation.
 For a measure factor whose place contains the counted binder in a subscript offset, each measure of that selected measured place, and each measure prefix needed to discharge its subscripts, has a target-instance term when its own path contains that offset.
-The term is identified by the concrete function instance, the for statement, the incoming induction edge, the ordinary source root's declaration event and canonical source path with every counted-binder offset replaced by the one next-binder selector for that loop and edge, and the selected measure member.
+The term is identified by the concrete function instance, the for statement, the incoming induction edge, the selected place's proof path, as a place is identified below, with every counted-binder offset replaced by the one next-binder selector for that loop and edge, and the selected measure member.
 That selector denotes [INV-1]'s checked current-binder plus one value; all its occurrences on the edge denote that one value.
 Prefixes without a substituted offset use their ordinary terms.
-Other source offsets keep their ordinary declaration and spelling identities.
-Resolved storage paths serve validity and support checking, and establish no additional equality between different source spellings.
+Other offsets keep their ordinary index-step identities, so a place written through an exact reference variable and the place it names share one target-instance term.
+Resolved storage paths serve validity and support checking, and establish no equality beyond proof-path identity.
 
 A target-instance place is formed from base to leaf, proving each [OP-4] bound in the frozen incoming state using these substituted operands before the selected measure term becomes available.
 The term has the measure's ordinary u64 type, a current affine image belonging to this target instance, and exactly [MSR-1] and [MSR-2]'s applicable standing images and relations for that measured place.
