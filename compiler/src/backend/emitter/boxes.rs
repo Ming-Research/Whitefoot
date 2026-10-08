@@ -31,10 +31,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             let emission_argument_1 = self.value_name(result);
 
             {
-                self.output.symbol("malloc");
+                self.output.symbol("wf__heap_take");
                 write!(
                     self.output,
-                    "  {emission_argument_0} = call ptr @malloc(i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))\n  %{nonnull} = icmp ne ptr {emission_argument_1}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
+                    "  {emission_argument_0} = call ptr @wf__heap_take(i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))\n  %{nonnull} = icmp ne ptr {emission_argument_1}, null\n  br i1 %{nonnull}, label %{ready}, label %{oom}\n"
                 )
             }?;
             self.output.open_block(oom.to_string());
@@ -86,10 +86,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
         if release == crate::IrReleaseClass::General {
             {
-                self.output.symbol("free");
+                let referent_type = self.output.type_name(self.program, ty)?;
+                self.output.symbol("wf__heap_give");
                 writeln!(
                     self.output,
-                    "  call void @free(ptr {})",
+                    "  call void @wf__heap_give(ptr {}, i64 ptrtoint (ptr getelementptr ({referent_type}, ptr null, i64 1) to i64))",
                     self.value_name(value)
                 )
             }

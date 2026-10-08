@@ -66,7 +66,8 @@ void *wf_observe_allocate(size_t bytes) {
     return pointer;
 }
 
-void wf_observe_release(void *pointer) {
+void wf_observe_release(void *pointer, uint64_t bytes) {
+    if (bytes != sizeof(uint64_t)) fail("unexpected Box release size", 0);
     if (!pointer) fail("null release", 0);
     unsigned id = 0;
     for (unsigned candidate = 1; candidate <= requests; ++candidate) {
