@@ -745,29 +745,24 @@ rarely insert at the same place.
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
 
-- **Reconcile invariant L0 publication with existing explicit certificates.**
-  The v0.102 ENT-3.S16 rule publishes `P: sum - i <= 0` both as the
-  existing affine premise and as an ordinary L0 bound. ENT-6 AUTO tries
-  the permitted pair `P + P` for `T: 3*sum - 3*i <= 0`; its residual
-  `T - (P + P)` is exactly the L0 image P, so DIRECT succeeds. PRF-1 then
-  requires rejecting the explicit `use 3 times sum_bound` block as
-  redundant. The same derivation applies to `sum <= limit` after exhaustion.
-  CI at `47f682ef4c56336b48c0f26f1ca6d8ec6d530c47` reports this precise
-  `RedundantUseBlock` reason in the existing accepted cases
-  `prf1-pos-active-header-reference`, `prf1-pos-certificate-after-exhaustion`
-  and `inv1-pos-operation-and-mode-proof-names`. The implementation path is
-  `establish_invariant_l0`, `first_two_premise_candidate`,
-  `affine_candidate_residual_proof`, then `affine_residual_proof` in
-  `compiler/src/semantic/entailment/flow/{invariants,prover}.rs`.
-  This is a specification/evidence conflict, not a displaced named premise:
-  the redundant-block judgment precedes named-premise admission. Preserving
-  these unchanged sources and verdicts needs an owner-selected adjustment
-  to S16, AUTO or redundancy; suppressing this candidate only in the
-  implementation would contradict the current rules. Reopen immediately
-  when that rule choice is settled, implement it with its corresponding
-  conformance boundary, and run the three unchanged cases, certificate
-  negative cases and the full gate in CI. The rule derivation and code path
-  were inspected; no local execution was performed for this investigation.
+- **S16 certificate conformance awaits CI confirmation.** The owner accepted
+  ENT-3.S16's consequence: AUTO subtracts `P + P` from `T = 3*P`, and
+  DIRECT proves the residual P when the invariant is also an L0 difference
+  bound; PRF-1 rejects the written block as redundant. The three former
+  positive sources now expect PRF-1 rejection as
+  `prf1-neg-certificate-redundant-after-l0-header`,
+  `prf1-neg-certificate-redundant-after-l0-exhaustion` and
+  `inv1-neg-proof-names-redundant-after-l0-header`. The positive replacements
+  `prf1-pos-active-scaled-header-reference`,
+  `prf1-pos-scaled-certificate-after-exhaustion` and
+  `inv1-pos-scaled-operation-and-mode-proof-names` preserve active-header,
+  post-exhaustion and operation/mode proof-name coverage with `sum <= 2*i`
+  or `sum <= 2*limit`. Those scaled premises stay outside S16, leaving
+  AUTO's residual unproved and requiring the written multiplicity three.
+  Confirm all six cases, the existing certificate negatives and the full
+  gate in CI; remove this entry after confirmation, or reopen against any
+  failure. Only source inspection was performed for these edits; no local
+  build or check ran.
 
 ## Containers and storage lowering
 
