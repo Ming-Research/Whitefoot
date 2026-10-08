@@ -123,7 +123,8 @@ fn paged_empty_growth_defers_pages_until_first_placement_and_reuses_them() {
     invariant length: p.inner.len == 1025_u64 - i
   ) {
     let value = take_back(window: &p.inner);
-    if value != 1024_u64 - i {
+    let expected = 1024_u64 - i;
+    if value != expected {
       return std::process::exit_status(code: 1_u8);
     }
   }
