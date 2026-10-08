@@ -601,7 +601,23 @@ jobs:
             perf record -q -e cpu-clock -F 20000 -o "$out/$engine.data" $cmd coremark.wasm 0x0 0x0 0x66 2000 > "$out/$engine.rec.out" 2>&1 || { echo "perf record failed"; tail -5 "$out/$engine.rec.out"; continue; }
             perf report -q -i "$out/$engine.data" --stdio --sort symbol --percent-limit 0.4 2>/dev/null | head -60 > "$out/$engine.top"
             if [ "$engine" = v2h ]; then
-              awk -v names="$out/names.txt" 'BEGIN { while ((getline n < names) > 0) name[i++] = n }
+              python3 - "$out/v2h.wf" > "$out/arms.txt" <<'PY'
+          import re, sys
+          src = open(sys.argv[1]).read()
+          i = src.index("fn run(")
+          j = src.index("match code^.inner[pc] {", i)
+          indent, arms = None, []
+          for line in src[src.index("\n", j) + 1:].split("\n"):
+              m = re.match(r"^(\s+)([A-Z]\w*)\(.*\)\s*=>\s*\{", line)
+              if m:
+                  indent = indent or len(m.group(1))
+                  if len(m.group(1)) == indent:
+                      arms.append(m.group(2))
+              if indent is not None and re.match(r"^\s{%d}\}\s*$" % (indent - 2), line):
+                  break
+          print("\n".join(arms))
+          PY
+              awk -v names="$out/arms.txt" 'BEGIN { while ((getline n < names) > 0) name[i++] = n }
                 { line = $0; if (match(line, /wf_run[.](body[.])?arm[.][0-9]+/)) { a = substr(line, RSTART, RLENGTH); sub(/.*arm[.]/, "", a); line = line "  <" name[a + 0] ">" } print line }' "$out/$engine.top"
             else
               cat "$out/$engine.top"

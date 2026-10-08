@@ -1517,3 +1517,30 @@ CoreMark on the 14900K, while step 1 gained 3.7%. The M5 prices do not
 transfer to this core, where store-to-load forwarding is cheap. The
 remaining gap to wasmi (0.795 to 0.850) is attributed next on the 14900K
 itself, per handler, before any further interpreter change.
+
+**Attribution on the 14900K** ([run 37820226964](https://github.com/Ming-Research/Whitefoot/actions/runs/37820226964)):
+`perf record -e cpu-clock` (software clock, no hardware counters) on
+CoreMark 2000 for v2h at `4cad9dab9`'s `gen.py` and for wasmi 2.0.0; each
+of v2h's arms is its own symbol, named by the order of `run`'s match arms
+(not by `gen.py --names`, whose enum order differs after step 1's
+variants), with step 0's dispatch counts per kind. v2h runs 337 ms of
+cpu-clock, wasmi 303 ms, an 11% gap; v2h averages 0.67 ns per dispatch.
+
+| v2h handler | share | dispatches | ns per dispatch |
+|---|---:|---:|---:|
+| `I32LoadSD` | 9.9% | 29.6M | 1.13 |
+| `BrTable` | 8.4% | 10.8M | 2.63 |
+| `I32AddSD` | 5.9% | 38.8M | 0.51 |
+| `Call` | 4.4% | 3.0M | about 5 |
+| `Copy` | 4.3% | 32.0M | 0.46 |
+| `I32LoadD` | 3.8% | 19.1M | 0.67 |
+| `I32Load8USD` | 3.2% | 9.0M | 1.20 |
+| `I32AddD` | 3.1% | 8.3M | 1.27 |
+
+Against wasmi's comparable handlers in absolute time, the largest single
+difference is the jump table: v2h's `BrTable` takes 28.4 ms, wasmi's
+`branch_table_s` and `branch_table_r` 14.9 ms together, about 13.5 ms of
+the 34 ms gap. Calls follow: 14.9 ms against `call_internal`'s 11.6 ms.
+`I32AddD` costs 1.27 ns a dispatch against `I32AddSD`'s 0.51, which also
+asks for its machine code. The next step reads `BrTable`'s and `Call`'s
+arms against wasmi's handlers before changing anything.
