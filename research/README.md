@@ -64,6 +64,10 @@ the work-branch and merge boundary.
   images, canonical merge boundaries, per-input induction, the independent
   scheduling model, counted next-slot identities and the proposed
   specification and checker changes.
+- [Testing compiler implementations and programs](investigations/test-system/DESIGN.md):
+  compiler-test and application needs under R1, independent host oracles,
+  alternatives to a source testing privilege, Q158/Q159 proposals and a
+  migration contract that preserves runtime observations.
 - [Aggregate postconditions](investigations/aggregate-postconditions/DESIGN.md):
   integer fields of struct results and routed Ok payloads as relation data,
   the placement transport they need, and the separate lockstep-join limit.

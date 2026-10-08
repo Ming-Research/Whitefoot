@@ -3788,6 +3788,20 @@ condition under which it is taken up.
   measurement needs byte-identical images, or with the next change to the
   release workflow.
 
+- **The CoreMark research harness ignores a failed process's status.**
+  `launch` in `research/experiments/match-dispatch/wasm/coremark.py` reads
+  `subprocess.run(..., check=False).stdout` without checking the return code.
+  A process that prints the expected component CRCs, a score and a final CRC,
+  then exits unsuccessfully can count as a valid launch. This follows from
+  source inspection in the [test-system investigation](../research/investigations/test-system/DESIGN.md#dispositions-and-remaining-work);
+  no failing recorded launch has been demonstrated. Retain the process
+  outcome and require successful termination as well as the existing CRC
+  observations, reporting stderr on failure. Validate on CI with a synthetic
+  command that prints valid-looking output then exits nonzero, a successful
+  control and missing/malformed CRC controls. Reopen before the next CoreMark
+  measurement; keep this research check outside the canonical gate and remove
+  this entry when the repair and its evidence land.
+
 ## firn
 
 - **Complete firn's standalone deployment workloads.** The
