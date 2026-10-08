@@ -3146,6 +3146,36 @@ each is resolved by a discussion and a tree change.
   the other variant still refused. Reopen when a program forwards a
   producer's result through a wrapper.
 
+- **A Bool comparison origin survives a write through a reference
+  (soundness).** ENT-3's comparison origin (b) for a bare `own Bool`
+  binding ends only at a `set` that targets the binding or an ENT-5 kill of
+  an operand term of its relation, so a write that reaches the binding
+  through a reference keeps the origin. `whitefootc` on `main` accepts
+
+  ```text
+  fn probe(table: &Array<u64, 4>, x: u64) -> result: u64 reads(table) {
+    let inside = x < 4_u64;
+    let writer = &inside;
+    set writer^ = True();
+    if inside {
+      return table^[x];
+    }
+    return 0_u64;
+  }
+  ```
+
+  and the same with `truth(flag: &inside);` for a callee that writes
+  `flag^`, so `probe(table: &table, x: 7_u64)` reads outside `table`. The
+  checker follows the rule as written: `FactState::origins` is cleared by a
+  whole-binding `set` and a loop's set bindings, never by a write event.
+  Change: end origin (b) at every ENT-5 write event that reaches the
+  binding, as goal origins already end
+  (`event_kills_goal_origin_binding` in
+  `compiler/src/semantic/entailment/flow/events.rs`), with the
+  specification amended to say so. Validate by the two programs above
+  refused with OP-4 and a direct `set inside = ...` still refused. Needs
+  the owner's specification change; reopen at once.
+
 ## Ownership redesign (candidate x1) follow-ups
 
 Items the owner asked to be kept on this list during the redesign recorded in
