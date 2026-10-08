@@ -1479,3 +1479,13 @@ at `9b9f14ac3`):
   the reader only by falling through from the `SD` operation, and the slot
   always holds the same value, so the slot stays correct for every other
   reader.
+
+**Step 1, observed on the 14900K**
+([run 37801224942](https://github.com/Ming-Research/Whitefoot/actions/runs/37801224942)):
+`gen.py` at `11ef14391` against `6575d3260`, both compiled by this
+branch's compiler, CoreMark 2000 iterations, 7 interleaved launches, every
+final CRC 0x4983. The step scores 6211.2 against 5988.0 (twin 5988.0),
+1.037, ahead in all 7 launch pairs (1.025 to 1.050): adopted. v2h is now
+0.795 of Silverfir-nano and wasmi 0.850. The split grew from 318 to 360
+arms; compiling and checking the interpreter takes 22.8 s against 19.1 s
+on that host.
