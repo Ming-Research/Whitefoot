@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn truth(flag: &Bool) -> result: unit writes(flag) {
+  doc "Writes True through its reference parameter.";
+  set flag^ = True();
+  return unit;
+}
+
+fn probe(table: &Array<u64, 4>, x: u64) -> result: u64 reads(table) {
+  doc "The callee's projected writes reach the Bool binding through its reference actual, so the binding no longer holds its initializer comparison and has no comparison origin at the branch [ENT-3, ENT-5]. With x at 7 the subscript would read outside the table.";
+  let inside = x < 4_u64;
+  truth(flag: &inside);
+  if inside {
+    return table^[x];
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The out-of-range call the rejected subscript would admit.";
+  let table = array_filled::<u64, 4>(value: 0_u64);
+  let got = probe(table: &table, x: 7_u64);
+  return exit_status(code: 0_u8);
+}
