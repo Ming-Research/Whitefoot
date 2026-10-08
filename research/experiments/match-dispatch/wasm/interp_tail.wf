@@ -1564,7 +1564,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
 
 fn set_local(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, local: u64) -> ok: Bool writes(st), writes(provs), writes(code) {
   doc "local.set: the operation that computed the top operand into its temporary writes the local instead when it is the last one emitted, in its form also leaving the value in acc when it has one, acc then holding the local; otherwise a copy or a constant writes it.";
-  if local >= st^.l {
+  if local >= st^.cslot {
     return False();
   }
   if provs^.inner.len == 0_u64 {
@@ -1687,7 +1687,7 @@ fn step_data(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, consts: &Bo
     if op <= 36_u8 {
       let index = read_uleb(r: r, bytes: bytes);
       if op == 32_u8 {
-        if index >= st^.l {
+        if index >= st^.cslot {
           return 2_u64;
         }
         let p = Prov(kind: 1_u64, value: index);
