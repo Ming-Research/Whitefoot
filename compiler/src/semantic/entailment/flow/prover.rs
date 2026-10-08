@@ -3013,6 +3013,37 @@ impl Reasoning<'_, '_, '_> {
         None
     }
 
+    /// Reuse the complete ordered index only for exactly the same closed
+    /// facts and candidate images. Candidate formation comes first: it may
+    /// register a term or mint a current measure image. Exact vector equality
+    /// includes term identity, coefficients, constants and traversal order;
+    /// equal lengths or an unchanged L0 closure alone are insufficient.
+    pub(super) fn affine_query_view(
+        &mut self,
+        context: ProofContext<'_>,
+        check: &mut AffineCheckState,
+    ) -> (Rc<ClosedState>, Rc<AffineL0Index>) {
+        let candidates = self.affine_l0_candidates(context.affine);
+        let closed = context.close(
+            &self.vocabulary.terms,
+            &self.vocabulary.goals,
+            &mut self.vocabulary.derivations,
+        );
+        if let Some(cached) = &self.vocabulary.affine_l0_cache
+            && Rc::ptr_eq(&cached.closed, &closed)
+            && cached.candidates == candidates
+        {
+            return (closed, Rc::clone(&cached.index));
+        }
+        let index = Rc::new(affine_l0_index(&candidates, &closed, check));
+        self.vocabulary.affine_l0_cache = Some(AffineL0Cache {
+            closed: Rc::clone(&closed),
+            candidates,
+            index: Rc::clone(&index),
+        });
+        (closed, index)
+    }
+
     pub(super) fn affine_target_proof(
         &mut self,
         target: &AffineInequality,
@@ -3021,30 +3052,7 @@ impl Reasoning<'_, '_, '_> {
     ) -> Option<AffineConsequenceProof> {
         let values = context.affine;
         let mut check = AffineCheckState::new();
-        let candidates = self.affine_l0_candidates(values);
-        let closed = context.close(
-            &self.vocabulary.terms,
-            &self.vocabulary.goals,
-            &mut self.vocabulary.derivations,
-        );
-        // Every relation-form use in a certificate sees the same entering
-        // facts and value images. Its target and residual still run through
-        // all ordinary rules; only the unchanged ordered query index is
-        // shared. Candidate formation precedes the revision check because it
-        // may register a previously unseen term.
-        let l0 = context
-            .closed
-            .and_then(|view| view.affine_index(&self.vocabulary.terms, &self.vocabulary.goals))
-            .unwrap_or_else(|| {
-                let index = Rc::new(affine_l0_index(&candidates, &closed, &mut check));
-                if let Some(view) = context
-                    .closed
-                    .filter(|view| view.matches(&self.vocabulary.terms, &self.vocabulary.goals))
-                {
-                    *view.affine_index.borrow_mut() = Some(Rc::clone(&index));
-                }
-                index
-            });
+        let (closed, l0) = self.affine_query_view(context, &mut check);
         let mut query = AffineDirectQuery::new(&l0, values, &closed);
         if let Ok(Some(parents)) = self.affine_residual_proof(target, &mut query, &mut check) {
             return Some(AffineConsequenceProof {

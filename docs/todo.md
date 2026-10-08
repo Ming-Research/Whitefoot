@@ -77,27 +77,24 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
-- **Checking one function grows faster than its size.** The stage-3 wasm
-  interpreter's interpreter function, a `match` whose arms each hold their
-  handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s
-  with 20 and 144.6 s with 40 (M1 Pro, `whitefootc --check`), and the full
-  178-arm form had not finished after several minutes at 5 GB. A
-  15-second profile of the 20-arm check spends most of its samples in the
-  entailment closure (`close_with_row_pruning` and `DerivationLedger::intern`
-  in `compiler/src/semantic/entailment/state.rs`). Moving each handler's
-  body into its own function, the arm keeping only the stack-depth test and
-  the tail call, checks 20 arms in 3.7 s and 40 in 7.2 s, but the full
-  interpreter (8,500 lines, one 178-arm function) still takes about 100 s.
-  These measurements predate the narrower closures of
-  compiler/incremental-closure and were not repeated with them.
-  Impact: a writer of a large dispatch function, the shape an interpreter
-  has, must split it to check it at all, and each change costs minutes.
-  Change: find what the closure's cost scales with (the function's term
-  count against the facts live on the path being checked) and bound it by
-  the latter. Validate with the 10/20/40-arm series growing linearly and the
-  interpreter's verdicts unchanged. Reopen when the next stage-3 step needs
-  repeated checks of the interpreter, or another program meets the same
-  growth.
+- **Wide-match checking still has unresolved scaling costs.** Q140's
+  [stage-3 profile](../research/investigations/check-time/DESIGN.md#profile-of-the-stage-3-interpreters-check)
+  attributes 64% of checking-thread samples to rebuilding the complete affine
+  L0 index, which ordinary queries do not reuse; joins are not among the
+  leaders. Impact: large dispatch functions make source-check iteration
+  costly. The Q155 prototype shares the most recent index only when its
+  retained closure and complete ordered candidate images match; correctness
+  and speed remain unverified. The implicit-singleton join prototype was
+  removed because the real arms do not supply the synthetic series' constants
+  and it cannot reach this measured hotspot. Validate the affine memo with
+  full-rebuild differentials, valid retained derivations, unchanged corpus
+  and conformance verdicts, then requester-run M5 timings of CI-built base
+  13bb0d572 and prototype on the same 40-to-640-arm series and `nat.wf`.
+  Reopen on that evidence and Q155. Defer target-directed or event-incremental
+  indexes until misses are shown material; they need complete final-L0-image
+  traversal and invalidation arguments. Dense single-input snapshots, image
+  formation, inventory scans and the series' cubic join work also remain;
+  revisit each only when its elapsed share warrants another experiment.
 
 - **A disequality with a constant does not tighten a bound.** Under the
   header `invariant bounded: cursor <= 4_u64`, the body
@@ -2713,12 +2710,11 @@ rarely insert at the same place.
   datum shape is added, such as a fact at an element read.
 
 - **The entailment state module and its tests have outgrown one reader.**
-  `compiler/src/semantic/entailment/state.rs` has 9,574 lines, including a
-  2,136-line inline test module (the compile-speed work added its slot
-  layouts, dormant components and implicit structure), and the tests in
-  `compiler/src/semantic/tests/entailment.rs` have 11,238 lines and 162
-  tests. The flow itself is divided into its sub-contexts and component
-  modules (`design/compiler/engine-components.md`), none over 3,200 lines.
+  `compiler/src/semantic/entailment/state.rs`, including its inline tests,
+  and `compiler/src/semantic/tests/entailment.rs` both exceed 4,000 lines.
+  Slot layouts, dormant components, implicit structure and join construction
+  share the first module. The flow itself is divided into its sub-contexts
+  and component modules (`design/compiler/engine-components.md`).
   `state.rs` can move its test module to its own file and its dense-closure
   algorithms apart from the fact state and ledger types; the tests can group
   by the flow component they exercise. Validate that each move changes no

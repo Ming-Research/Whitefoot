@@ -125,6 +125,10 @@ the work-branch and merge boundary.
   concurrent module verdicts, closure seeds and implicit-only snapshots that
   removed most of it with unchanged verdicts and LLVM, and the costs that
   remain.
+- [Wide-match checking cost](investigations/check-time/DESIGN.md): the Q140
+  attribution, Q155 comparison of join reduction, affine-index reuse and
+  backward proof queries, the index differential prototype, and CI-built
+  macOS binaries for the requester's paired M5 timing.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are in [todo](../docs/todo.md).

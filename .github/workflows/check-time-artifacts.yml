@@ -1,0 +1,92 @@
+# Explicit C3 experiment construction, removed before the branch is ready.
+# Correctness stays in gate.yml; the requester alone times these on the M5.
+name: check-time artifacts
+
+on:
+  # The requester's first push of this file runs the experiment without
+  # installing a dispatch-only workflow on the default branch first.
+  push:
+    branches: [claude/check-time]
+    paths: [.github/workflows/check-time-artifacts.yml]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  C3_BASE_REV: 13bb0d572522c4c52342e87d90e50db7ffe90a79
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_GATE_DEBUG: 1
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Verify the experiment baseline and native target
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          git merge-base --is-ancestor "$C3_BASE_REV" HEAD
+          # The prototype must contain only C3 compiler changes over the
+          # requested base. A branch still based on 8e33ca298 is not that pair.
+          git diff --name-only "$C3_BASE_REV" HEAD -- compiler/ spec/ lib/ tests/ > "$RUNNER_TEMP/c3-input-changes.txt"
+          test -s "$RUNNER_TEMP/c3-input-changes.txt"
+          while IFS= read -r changed; do
+            case "$changed" in
+              compiler/src/semantic/entailment/flow.rs|compiler/src/semantic/entailment/flow/prover.rs|compiler/src/semantic/entailment/flow/prover/tests.rs|compiler/src/semantic/entailment/flow/certificates.rs) ;;
+              *) echo "Unexpected experiment input change: $changed" >&2; exit 1 ;;
+            esac
+          done < "$RUNNER_TEMP/c3-input-changes.txt"
+          echo "C3_WORK=$RUNNER_TEMP/c3" >> "$GITHUB_ENV"
+          git worktree add --detach "$RUNNER_TEMP/c3-base" "$C3_BASE_REV"
+          rustup default stable
+          cargo fetch --manifest-path compiler/Cargo.toml --locked
+
+      - name: Build the base
+        run: |
+          set -euo pipefail
+          CARGO_TARGET_DIR="$C3_WORK/base-target" make -C "$RUNNER_TEMP/c3-base/compiler" build
+
+      - name: Build the prototype with the same toolchain and profile
+        run: |
+          set -euo pipefail
+          CARGO_TARGET_DIR="$C3_WORK/prototype-target" make -C compiler build
+
+      - name: Package both native binaries and their identities
+        run: |
+          set -euo pipefail
+          mkdir -p "$C3_WORK/package/bin"
+          cp "$C3_WORK/base-target/gate/whitefootc" "$C3_WORK/package/bin/base"
+          cp "$C3_WORK/prototype-target/gate/whitefootc" "$C3_WORK/package/bin/prototype"
+          {
+            printf 'base=%s\nprototype=%s\n' "$C3_BASE_REV" "$(git rev-parse HEAD)"
+            printf 'base-tree=%s\nprototype-tree=%s\n' "$(git rev-parse "$C3_BASE_REV^{tree}")" "$(git rev-parse HEAD^{tree})"
+            printf 'profile=gate; debug=1; incremental=0; target=native aarch64-apple-darwin\n'
+            rustc -vV
+            cargo -vV
+            uname -a
+            sw_vers
+            file "$C3_WORK/package/bin/base" "$C3_WORK/package/bin/prototype"
+          } > "$C3_WORK/package/identity.txt"
+          git diff --binary "$C3_BASE_REV" HEAD -- compiler/ > "$C3_WORK/package/compiler.diff"
+          shasum -a 256 spec/kernel-spec.md compiler/Cargo.lock .github/run-check.pl > "$C3_WORK/package/source-sha256.txt"
+          cd "$C3_WORK/package"
+          shasum -a 256 bin/base bin/prototype identity.txt compiler.diff source-sha256.txt > SHA256SUMS
+          tar -czf "$RUNNER_TEMP/c3-macos-arm64.tar.gz" bin identity.txt compiler.diff source-sha256.txt SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: c3-macos-arm64
+          path: ${{ runner.temp }}/c3-macos-arm64.tar.gz
+          if-no-files-found: error
