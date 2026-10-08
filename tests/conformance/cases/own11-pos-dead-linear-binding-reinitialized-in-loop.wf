@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Token {
+  value: u8;
+}
+
+fn step(input: Token) -> advanced: Token pure {
+  let Token(value: prior) = move input;
+  let incremented = prior +wrap 1_u8;
+  return Token(value: incremented);
+}
+
+fn close(finished: Token) -> closed: u8 pure {
+  let Token(value: observed) = move finished;
+  return observed;
+}
+
+fn main() -> status: ExitStatus pure {
+  let log = Token(value: 0_u8);
+  loop @advance {
+    if log.value == 3_u8 {
+      break @advance;
+    }
+    let next = step(input: move log);
+    set log = move next;
+  }
+  let final_value = close(finished: move log);
+  if final_value != 3_u8 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
