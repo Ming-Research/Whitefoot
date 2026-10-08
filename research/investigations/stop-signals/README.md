@@ -145,6 +145,30 @@ and S against N shows N faster by about as much; if S against N shows no
 difference while B against S still fails, the thread is not the cause and
 the next suspect is the placement of data the launch allocates.
 
+Result (Whitefoot run 37761168172, a temporary workflow on branch
+`claude/stop-probe` at 624f496c6, six hosted jobs, all of which landed on AMD
+hosts: EPYC 7763 four times, EPYC 9V74 twice; each job's identical-image
+control passed). stencil's wall ratios, width 1 / 2 / 4:
+
+| job | host | B to S | S to N | B to N |
+|---|---|---|---|---|
+| 1 | 7763 | 0.79 / 0.99 / 0.98 (suspect) | 1.28 / 1.09 / 1.04 | 1.00 / 0.97 / 0.96 |
+| 2 | 9V74 | 0.82 / 0.92 / 0.97 (fail) | 1.26 / 1.10 / 1.11 | 1.01 / 1.00 / 1.01 |
+| 3 | 9V74 | 0.79 / 0.82 / 0.90 (fail) | 1.26 / 1.21 / 1.04 | 0.98 / 0.99 / 1.01 |
+| 4 | 7763 | 0.89 / 0.96 / 0.96 (fail) | 1.40 / 1.26 / 1.04 | 1.00 / 0.99 / 0.99 |
+| 5 | 7763 | 0.81 / 0.92 / 1.04 (fail) | 1.06 / 1.08 / 1.10 | 1.03 / 1.03 / 0.98 |
+| 6 | 7763 | 0.72 / 0.91 / 0.95 (fail) | 1.10 / 1.08 / 1.01 | 0.99 / 1.01 / 0.99 |
+
+S to N recovers what B to S loses in every job, and B to N passes in every
+job, so the receiver thread is the cause on these hosts. (Job 6's S to N
+verdict failed on records at widths 2 and 4, 0.94 and 0.97, which no other
+job shows.) The thread itself is idle in `poll`; it is created before the
+floor creates the entry thread with its declared stack, so the entry's stack
+and what follows it are mapped at other addresses than on the merge base.
+Whether the cost is that placement or the thread's existence is not
+separated here; a remedy that starts no thread before the entry removes
+both.
+
 ## Status
 
 Adopted by the owner: proposal A, with requests returned in runtime observation order and requests the host merged before observation counted once, and the Windows close, logoff and shutdown handlers held until their listener closes; specified in PRE-2, whose approval [`spec/log.md`](../../../spec/log.md) records.
