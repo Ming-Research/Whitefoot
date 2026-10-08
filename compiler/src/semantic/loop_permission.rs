@@ -12,17 +12,18 @@
 //! The unit is one `for_stmt` L with body B, and every written, read, and
 //! operand-read footprint of a statement of B is formed exactly as [PAR-1]
 //! forms one. Writing an *iteration-own* place for one rooted in a binding B
-//! itself introduces, permission holds exactly when all four conditions hold:
+//! itself introduces, permission holds exactly when all five conditions hold:
 //!
 //! 1. **One accumulator, or none.** "Among whole-place writes of B, at most
 //!    one place is rooted in a binding declared outside L; that binding is
 //!    L's accumulator, and every occurrence of it in B is one operand of one
 //!    `set` statement whose target is that whole binding and whose right-hand
 //!    side is one operation applied to that operand and to a second operand
-//!    reaching the accumulator nowhere." The operation is one of ten fixed
-//!    for the accumulator across the whole of B. Indexed roots independently
-//!    admit only matching cell updates with one such operation, fixed storage
-//!    and length, discharged bounds and root-independent indices/contributions.
+//!    reaching the accumulator nowhere." The operation is from the admitted
+//!    set, fixed for the accumulator across B. Indexed roots independently
+//!    admit matching direct or one-step temporary updates and root measures,
+//!    with fixed storage and length, discharged bounds and root-independent
+//!    indices/contributions.
 //! 2. **Every written place is admitted.** "Every place a footprint of B
 //!    writes is iteration-own storage, the accumulator's whole place, an indexed
 //!    accumulator cell, a place
@@ -112,8 +113,9 @@
 //!   tree over them. **No float operation is admitted.** `fadd.strict` is the
 //!   pointed example: floating-point addition is not associative, so a
 //!   schedule that regrouped it would move a published byte. `+`, `+defined`,
-//!   `+checked`, and `+sat` are absent because each application carries an
-//!   obligation, a `Result` route, or a clamp that regrouping moves.
+//!   `+checked`, and signed `+sat` are absent because each application carries
+//!   an obligation, a `Result` route, or a clamp that regrouping moves.
+//!   Unsigned `+sat` computes min(sum, max), with identity zero.
 //! - No entailment fact established inside one counted iteration survives to
 //!   a later head or to the continuation, so a regrouped accumulator can
 //!   falsify no surviving proof.
@@ -201,11 +203,12 @@ pub(crate) struct IndexedReduction {
 }
 
 /// The closed set of operations an accumulator may be combined under: exactly
-/// the ten [PAR-2] admits, named once so the judgment, the ledger, and the
+/// those [PAR-2] admits, named once so the judgment, the ledger, and the
 /// emitted combination tree cannot hold three drifting copies of it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LoopCombine {
     AddWrap,
+    AddSaturating,
     MultiplyWrap,
     BitAnd,
     BitOr,
@@ -222,6 +225,7 @@ impl LoopCombine {
     pub(crate) const fn spelling(self) -> &'static str {
         match self {
             Self::AddWrap => "+wrap",
+            Self::AddSaturating => "+sat",
             Self::MultiplyWrap => "*wrap",
             Self::BitAnd => "iand",
             Self::BitOr => "ior",
@@ -429,6 +433,8 @@ fn judge<'check>(
         accumulates: Vec::new(),
         indexed: Vec::new(),
         indexed_denial: None,
+        indexed_temporaries: Vec::new(),
+        write_events: Vec::new(),
         written_places: Vec::new(),
         carried: None,
         shared: None,
@@ -553,6 +559,15 @@ struct IndexedAccumulator {
     statement: NodePath,
 }
 
+/// A one-step initializer still available on this block's straight-line path.
+/// Ordinary read/write footprints invalidate it before a later set can use it.
+struct IndexedTemporary<'check> {
+    binding: BindingId,
+    value: &'check CheckedExpression,
+    root: usize,
+    dependencies: Vec<ResolvedPlace>,
+}
+
 struct Survey<'check, 'run> {
     program: &'run Program<'check>,
     places: &'run PlaceMap,
@@ -582,6 +597,10 @@ struct Survey<'check, 'run> {
     accumulates: Vec<Accumulate>,
     indexed: Vec<IndexedAccumulator>,
     indexed_denial: Option<LoopDenial>,
+    indexed_temporaries: Vec<(BindingId, NodePath)>,
+    /// Unlike the retained write set, this records repeated commits too.
+    /// A repeated write between a temporary and its set still invalidates it.
+    write_events: Vec<ResolvedPlace>,
     written_places: Vec<ResolvedPlace>,
     carried: Option<NodePath>,
     shared: Option<NodePath>,
@@ -809,9 +828,10 @@ impl<'check> Survey<'check, '_> {
         let (combine, arguments) = match value {
             CheckedExpression::IntegerOperation {
                 operation,
+                operand_type,
                 arguments,
                 ..
-            } => (integer_combine(*operation), arguments),
+            } => (integer_combine(*operation, *operand_type), arguments),
             CheckedExpression::BooleanOperation {
                 operation,
                 arguments,
@@ -819,7 +839,7 @@ impl<'check> Survey<'check, '_> {
             } => (boolean_combine(*operation), arguments),
             _ => {
                 return Err(
-                    "each indexed write must combine its cell under an admitted operation; a constant mark is not an update",
+                    "each indexed write requires an admitted operation directly or through one fresh, unchanged, single-use temporary",
                 );
             }
         };
@@ -895,27 +915,51 @@ impl<'check> Survey<'check, '_> {
         if let Some(denial) = &self.indexed_denial {
             return Some(denial.clone());
         }
+        for (binding, statement) in &self.indexed_temporaries {
+            let uses = self
+                .reads
+                .iter()
+                .filter(|read| read.binding == *binding)
+                .count();
+            let place = ResolvedPlace::binding(*binding);
+            if uses != 1
+                || self
+                    .written_places
+                    .iter()
+                    .any(|written| self.places.overlaps(&UnprovedSeparations, &place, written))
+            {
+                return Some(LoopDenial::IndexedReduction {
+                    statement: statement.clone(),
+                    reason: "an indexed update temporary must be immutable and used exactly once by its set",
+                });
+            }
+        }
         for root in &self.indexed {
             let reads = self
                 .reads
                 .iter()
                 .filter(|read| {
-                    read.binding == root.binding
-                        || read
+                    (read.places.is_empty()
+                        || !read
                             .places
                             .iter()
-                            .any(|place| self.indexed_overlaps(root, place))
-                        || self
-                            .places
-                            .resolve(PlaceRoot::Binding(read.binding), &[])
-                            .iter()
-                            .any(|place| self.indexed_overlaps(root, place))
+                            .all(|place| read.is_root_measure(place, &root.origin)))
+                        && (read.binding == root.binding
+                            || read
+                                .places
+                                .iter()
+                                .any(|place| self.indexed_overlaps(root, place))
+                            || self
+                                .places
+                                .resolve(PlaceRoot::Binding(read.binding), &[])
+                                .iter()
+                                .any(|place| self.indexed_overlaps(root, place)))
                 })
                 .count();
             if reads != root.updates {
                 return Some(LoopDenial::IndexedReduction {
                     statement: root.statement.clone(),
-                    reason: "every occurrence of the indexed root must belong to its cell update; prefix reads, checks and root-dependent subscripts or contributions are not permitted",
+                    reason: "every occurrence of the indexed root must be a root measure or belong to its cell update; prefix reads, checks of cells and root-dependent subscripts or contributions are not permitted",
                 });
             }
         }
@@ -934,22 +978,80 @@ impl<'check> Survey<'check, '_> {
     /// is reckoned from L's body, which is why judging a nested loop starts
     /// it again at zero.
     fn walk(&mut self, statements: &'check [CheckedStatement], initializers: usize) {
+        let mut pending: Vec<IndexedTemporary<'check>> = Vec::new();
         for statement in statements {
             if let Some(node) = statement_node(statement) {
                 self.cite = node.clone();
             }
-            self.statement(statement, initializers);
+            let temporary = match statement {
+                CheckedStatement::Set {
+                    value: CheckedExpression::Binding { binding, .. },
+                    ..
+                } => pending
+                    .iter()
+                    .find(|temporary| temporary.binding == *binding),
+                _ => None,
+            };
+            let read_start = self.reads.len();
+            let write_start = self.write_events.len();
+            self.statement(statement, initializers, temporary);
             let inside = initializers
                 + usize::from(matches!(statement, CheckedStatement::ValueMatchLet { .. }));
             for nested in nested_bodies(statement) {
                 self.walk(nested, inside);
+            }
+            // Include nested footprints: an intervening branch or loop can
+            // read the root or change an index/contribution's support too.
+            pending.retain(|temporary| {
+                let root = &self.indexed[temporary.root];
+                !self.reads[read_start..].iter().any(|read| {
+                    read.binding == root.binding
+                        || read
+                            .places
+                            .iter()
+                            .any(|place| self.indexed_overlaps(root, place))
+                }) && !self.write_events[write_start..].iter().any(|write| {
+                    self.indexed_overlaps(root, write)
+                        || temporary.dependencies.iter().any(|dependency| {
+                            self.places
+                                .overlaps(&UnprovedSeparations, dependency, write)
+                        })
+                })
+            });
+            if let CheckedStatement::Let { binding, value, .. } = statement
+                && matches!(
+                    value,
+                    CheckedExpression::IntegerOperation { .. }
+                        | CheckedExpression::BooleanOperation { .. }
+                )
+                && let Some(root) = self
+                    .indexed
+                    .iter()
+                    .position(|root| self.indexed_mentions(root, value))
+            {
+                let mut dependencies = self.reads[read_start..]
+                    .iter()
+                    .flat_map(|read| read.places.iter().cloned())
+                    .collect::<Vec<_>>();
+                dependencies.push(ResolvedPlace::binding(*binding));
+                pending.push(IndexedTemporary {
+                    binding: *binding,
+                    value,
+                    root,
+                    dependencies,
+                });
             }
         }
     }
 
     /// One body statement. The match is exhaustive on purpose: every form is
     /// either given a footprint here or refused here.
-    fn statement(&mut self, statement: &'check CheckedStatement, initializers: usize) {
+    fn statement(
+        &mut self,
+        statement: &'check CheckedStatement,
+        initializers: usize,
+        temporary: Option<&IndexedTemporary<'check>>,
+    ) {
         match statement {
             CheckedStatement::Let {
                 node_path,
@@ -999,7 +1101,12 @@ impl<'check> Survey<'check, '_> {
                     self.expression(value);
                     return;
                 }
-                if self.indexed_target(target, value, node_path) {
+                let update = temporary.map_or(value, |temporary| temporary.value);
+                if self.indexed_target(target, update, node_path) {
+                    if let Some(temporary) = temporary {
+                        self.indexed_temporaries
+                            .push((temporary.binding, node_path.clone()));
+                    }
                     self.moved_places(value, node_path);
                     self.expression(value);
                     return;
@@ -1807,6 +1914,7 @@ impl<'check> Survey<'check, '_> {
     }
 
     fn record_written_place(&mut self, place: &ResolvedPlace) {
+        self.write_events.push(place.clone());
         if !self.written_places.contains(place) {
             self.written_places.push(place.clone());
         }
@@ -2361,15 +2469,16 @@ fn same_update_path(left: &[CheckedPlaceStep], right: &[CheckedPlaceStep]) -> bo
         })
 }
 
-/// The combine of `set acc = <op>(acc, rest)`, when `op` is one of the ten
+/// The combine of `set acc = <op>(acc, rest)`, when `op` is one of those
 /// [PAR-2] admits and `rest` reaches `acc` nowhere.
 fn combine_of(accumulator: BindingId, value: &CheckedExpression) -> Option<LoopCombine> {
     let (combine, arguments) = match value {
         CheckedExpression::IntegerOperation {
             operation,
+            operand_type,
             arguments,
             ..
-        } => (integer_combine(*operation)?, arguments),
+        } => (integer_combine(*operation, *operand_type)?, arguments),
         CheckedExpression::BooleanOperation {
             operation,
             arguments,
@@ -2404,18 +2513,24 @@ fn reads_only(operand: &CheckedExpression, binding: BindingId) -> bool {
     matches!(operand, CheckedExpression::Binding { binding: read, .. } if *read == binding)
 }
 
-/// The seven integer operations [PAR-2] admits.
+/// The integer operations [PAR-2] admits at this operand type.
 ///
 /// The list is closed and every entry is here for the same stated reason:
 /// each is total, associative, and commutative on the complete value set of
 /// its type and carries a two-sided identity, so regrouping its applications
 /// produces the same bits. `+`, `+defined`, and `+checked` are associative in
 /// Z and are still absent, because each application attaches a domain
-/// obligation or a `Result` route that regrouping moves. `+sat` fails
-/// associativity outright.
-const fn integer_combine(operation: CheckedIntegerOperation) -> Option<LoopCombine> {
+/// obligation or a `Result` route that regrouping moves. Unsigned `+sat`
+/// computes min(sum, max); signed `+sat` can move its clamp under regrouping.
+const fn integer_combine(
+    operation: CheckedIntegerOperation,
+    ty: CheckedType,
+) -> Option<LoopCombine> {
     Some(match operation {
         CheckedIntegerOperation::AddWrap => LoopCombine::AddWrap,
+        CheckedIntegerOperation::AddSaturating if matches!(ty, CheckedType::Integer(integer) if !integer.signed()) => {
+            LoopCombine::AddSaturating
+        }
         CheckedIntegerOperation::MultiplyWrap => LoopCombine::MultiplyWrap,
         CheckedIntegerOperation::BitAnd => LoopCombine::BitAnd,
         CheckedIntegerOperation::BitOr => LoopCombine::BitOr,

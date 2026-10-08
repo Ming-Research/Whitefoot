@@ -254,6 +254,26 @@ impl FunctionEmitter<'_, '_> {
             let opcode = match spec.operation {
                 Ok(IrIntegerOperation::AddWrap) => "add",
                 Ok(IrIntegerOperation::MultiplyWrap) => "mul",
+                Ok(IrIntegerOperation::AddSaturating) => {
+                    let IrType::Integer {
+                        width,
+                        signed: false,
+                    } = spec.element_type
+                    else {
+                        return Err(BackendFailure::InvalidIr);
+                    };
+                    let intrinsic = format!("llvm.uadd.sat.i{width}");
+                    self.intrinsics.insert(IntrinsicDeclaration::Binary {
+                        name: intrinsic.clone(),
+                        ty: ty.clone(),
+                    });
+                    self.output.symbol(&intrinsic);
+                    writeln!(
+                        self.output,
+                        "  %{prefix}.value = call {ty} @{intrinsic}({ty} %{prefix}.left, {ty} %{prefix}.right)"
+                    )?;
+                    ""
+                }
                 Ok(IrIntegerOperation::BitAnd) | Err(IrBooleanOperation::And) => "and",
                 Ok(IrIntegerOperation::BitOr) | Err(IrBooleanOperation::Or) => "or",
                 Ok(IrIntegerOperation::BitXor) | Err(IrBooleanOperation::ExclusiveOr) => "xor",

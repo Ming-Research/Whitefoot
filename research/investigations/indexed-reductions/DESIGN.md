@@ -1,10 +1,10 @@
 # Indexed reductions in counted loops
 
-Status: the owner selected the Proposal, lowering A (private copies combined
-in leaf order), and choice 3 (scalar and indexed accumulators in one body).
-Choice 2 (constant idempotent marks) is deferred. Permission and the private-range
-lowering path are implemented on the work branch. Compilation, execution and
-CI verification remain pending. The Criterion below is unchanged.
+Status: lowering A and scalar/indexed composition remain selected. The owner
+reported that the merged rule permits none of Snowghost's 32 counted sites
+and selected the extensions below. The original Proposal and Criterion record
+that earlier experiment; the extension implementation and open interface
+boundary are recorded in [Extensions after the count](#extensions-after-the-count).
 
 ## Question
 
@@ -116,9 +116,9 @@ Recorded before any implementation or measurement:
 ## Owner selections
 
 1. Lowering strategy: A selected. B and C remain comparison alternatives.
-2. Constant idempotent marks (`set flags[e] = True()`) are deferred;
-   normalizing them to `bor` with a proved-`True` contribution needs a rule
-   about stores that are not written as an operation.
+2. The original choice deferred constant idempotent marks
+   (`set flags[e] = True()`). The owner reopened and selected them in
+   [Extensions after the count](#extensions-after-the-count).
 3. A loop may also carry a scalar accumulator in the same body; the two
    recombine independently.
 
@@ -178,3 +178,128 @@ CI must establish the emitted IR's validity and the native observations before
 this implementation is qualified. The performance and downstream permission
 criteria above remain unmeasured. Paged remains deferred until PR #263 lands
 on main; it is not a type or storage path in this checkout.
+
+## Extensions after the count
+
+### Evidence and selected direction
+
+The owner reports 0 permitted sites out of Snowghost's 32 G-indexed sites
+after the original rule merged in Whitefoot's indexed-reduction change. That
+fails the pre-registered permission criterion of at least 16. The cited
+per-site record is Snowghost-wf branch `research/par-count-274`, revision
+`80345cb`, file
+`research/investigations/storage-layout/par-classification/g-indexed-274.md`.
+That record was not available in this checkout or the inspected local source
+roots; no remote was contacted. The count is owner-supplied evidence, not a
+new compiler run.
+
+The owner selected five extensions, keeping the per-cell order-independence
+argument: root len/cap reads, a one-step immutable single-use temporary,
+constant integer/Bool marks, integer/Bool fields below record elements, and
+unsigned saturating addition for both scalar and indexed accumulators. The
+question for a recount is whether those forms recover at least 16 of the
+same 32 sites without source rewrites beyond local helper narrowing. A lower
+count still rejects the permission criterion. No new count or performance
+claim is made here; the original performance comparison remains required.
+
+### Implemented changes awaiting execution
+
+PAR-2 now admits a measure read of the exact indexed root. Its descriptor is
+unchanged by the permitted writes. The checker separates those occurrences
+from cell reads using the existing measure/place representation. A bound
+check that reads `starts.inner.len` may precede a colliding cell update.
+
+An indexed update can use `let t = R[e] op x; set R[e] = t;`, or the commuted
+initializer, in one block. The checker retains candidate initializers while
+walking ordinary read/write footprints. Any intervening root access or write
+to a place the initializer reads invalidates the candidate. Every commit is
+recorded, including a repeated write to a place already in the retained write
+set. At completion, t must have one runtime use and no writes after initialization;
+forming a reference to t is a use even when it reads no contents.
+The checker admits exactly one step, not a chain. Lowering preserves the
+written let and set; its existing root-to-private-range mapping redirects the
+initializer's read and the set's write together. The diagnostic names an
+invalid update/temporary instead of describing a computed value as a constant
+mark.
+
+Unsigned `+sat` now belongs to the scalar/indexed operation set with identity
+zero. Type checking distinguishes it from signed saturation. The scalar join
+uses the ordinary saturation operation; the indexed join emits the unsigned
+saturating-add intrinsic, rather than wrapping addition. The algebra is
+`min(sum, MAX)` over nonnegative inputs. At i8, `(127 +sat 1) +sat -1` differs
+from `127 +sat (1 +sat -1)`, so signed saturation remains outside the set.
+
+The formal fixtures cover len/cap, direct and commuted temporaries, Bool
+temporaries, temporary duplication/borrowing/rebinding/chaining, intervening root reads
+and repeated writes, index and contribution mutation, and signed versus
+unsigned saturation. The existing indexed wrong-operation fixture now uses
+signed saturation; its unsigned form is a positive under the amended rule.
+Compiler permission assertions consume these fixtures. Backend tests add
+private-range IR assertions and a forced-four-leaf native observer with
+literal expected cell counts, untouched cells, and scalar/indexed u32 sums
+that remain below the maximum in each leaf and saturate only at the join.
+The identity table covers every unsigned width independently of emission.
+
+### Interface boundary: constant marks and record fields
+
+These two parts are stopped under the owner's instruction to report an
+insufficient interface before extending it. Their spec/checker/lowering
+changes and fixtures have not been applied. Minimal fragments are:
+
+```whitefoot
+set cells[0_u64] = 1_u8;
+set rows[0_u64].count = rows[0_u64].count +wrap 1_u64;
+```
+
+`IndexedReduction` retains a container root and `LoopCombine` only;
+`IrIndexedReduction` retains a range capture, count, one element type,
+identity and binary operation. `indexed_capture` and the backend select the
+original range when no private split runs. Thus a Bool mask for a u8 mark
+cannot inhabit that same typed capture. The backend also assumes identical
+private and destination strides. `indexed_slice` maps a container prefix,
+and storage redirection recognizes a terminal subscript; it cannot select a
+field-specific private range or combine a scalar range into strided record
+fields.
+
+Recommended extension for owner review: make a family retain its checked
+container plus field path and either a combine operation or a typed mark
+constant. Give lowering distinct private-storage and destination descriptions,
+so a mark can write a Bool mask while its unsplit execution still stores the
+source constant, and a field can use packed private scalars while its join
+projects the original record field. Nested splits must preserve that mapping;
+a mark joining into an enclosing mask combines by OR, and the outermost join
+stores the constant. Zero-budget and declined splits must retain source
+semantics. The user has been asked whether to extend this interface; elapsed
+time supplies no approval.
+
+Required qualification after that extension: colliding and untouched integer
+and Bool marks, named constants, different constants and operation/mark mixes,
+root-dependent mark indices, independent record field families, unchanged
+sibling fields, and whole-element writes mixed with field families. Force
+splits, zero budget, nested splits and allocation failure. The masks must be
+released after structured joins and introduce no atomics.
+
+### Verification status
+
+All additions in this round are uncommitted and unexecuted. The owner
+prohibits local builds, compilation, tests, lint, whitefootc, CI, external
+services, commits and pushes. Only edited Rust-file formatting is allowed.
+The specification title and archives, design/log.md and spec/log.md are left
+for the owner; the edited design decisions are proposed records. A future CI
+run must check acceptance, permissions, IR validity and native observations
+before these changes are qualified, followed by the downstream recount.
+
+Independent read-only completion review covered the complete uncommitted diff
+and new fixtures against `db72af4347a44de7d389d97ca28efd661a7c59b3`, using an
+inherited Codex model whose exact model identifier was unavailable. It read
+the repository review groups A, D, C, T and V and design checks G1–G3/DC1–DC4,
+plus the changed regions and their direct consumers; it ran no commands that
+build, compile, execute, test or lint. The review found one correspondence
+issue: “operand-read occurrence” did not clearly exclude an extra reference
+formation. The rule now requires exactly one runtime use, and a borrowed-
+temporary negative pins that distinction. The reviewer inspected that fix and
+the separate fixture repair adding explicit returned-array length guards
+before the native oracle's subscript reads. No findings remain within the
+implemented scope. Actual source acceptance, diagnostics, IR validity, native
+results, mechanical design/spec checks and overall safety qualification
+remain unverified. No design-lint statistics were collected.

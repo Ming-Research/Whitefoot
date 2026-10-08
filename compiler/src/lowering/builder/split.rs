@@ -1394,6 +1394,7 @@ fn prune_capture_parameters(
 const fn operation(combine: LoopCombine) -> Result<IrIntegerOperation, IrBooleanOperation> {
     match combine {
         LoopCombine::AddWrap => Ok(IrIntegerOperation::AddWrap),
+        LoopCombine::AddSaturating => Ok(IrIntegerOperation::AddSaturating),
         LoopCombine::MultiplyWrap => Ok(IrIntegerOperation::MultiplyWrap),
         LoopCombine::BitAnd => Ok(IrIntegerOperation::BitAnd),
         LoopCombine::BitOr => Ok(IrIntegerOperation::BitOr),
@@ -1438,6 +1439,8 @@ const fn identity(combine: LoopCombine, ty: IrType) -> Option<IrConstant> {
         ty,
         bits: match combine {
             LoopCombine::AddWrap | LoopCombine::BitOr | LoopCombine::BitXor => 0,
+            LoopCombine::AddSaturating if !signed => 0,
+            LoopCombine::AddSaturating => return None,
             LoopCombine::MultiplyWrap => 1,
             LoopCombine::BitAnd => all_ones,
             LoopCombine::Minimum if signed => sign_bit - 1,
@@ -1832,8 +1835,9 @@ mod tests {
 
     /// Every admitted combine, so a widening of the set has to come through
     /// here and answer the property below for its new entry.
-    const ADMITTED: [LoopCombine; 10] = [
+    const ADMITTED: [LoopCombine; 11] = [
         LoopCombine::AddWrap,
+        LoopCombine::AddSaturating,
         LoopCombine::MultiplyWrap,
         LoopCombine::BitAnd,
         LoopCombine::BitOr,
@@ -1942,6 +1946,11 @@ mod tests {
         mask(
             match operation {
                 IrIntegerOperation::AddWrap => left.wrapping_add(right),
+                IrIntegerOperation::AddSaturating => {
+                    assert!(!signed);
+                    (u128::from(left) + u128::from(right)).min(u128::from(mask(u64::MAX, width)))
+                        as u64
+                }
                 IrIntegerOperation::MultiplyWrap => left.wrapping_mul(right),
                 IrIntegerOperation::BitAnd => left & right,
                 IrIntegerOperation::BitOr => left | right,

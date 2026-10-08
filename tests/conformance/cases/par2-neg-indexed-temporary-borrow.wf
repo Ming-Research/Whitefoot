@@ -1,0 +1,16 @@
+fn reduce() -> result: u64 pure {
+  doc "Forming an unused reference is a second runtime use of the update temporary.";
+  let cells = box_array_filled::<u64>(count: 4_u64, value: 5_u64);
+  for (i in 0_u64..4_u64) {
+    let updated = cells.inner[0_u64] +wrap 1_u64;
+    let alias = &updated;
+    set cells.inner[0_u64] = updated;
+  }
+  return cells.inner[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The borrowed temporary remains valid sequential source.";
+  let reduced = reduce();
+  return std::process::exit_status(code: 0_u8);
+}

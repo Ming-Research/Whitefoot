@@ -1067,22 +1067,14 @@ fn a_float_accumulator_is_denied_by_condition_one() {
     assert_eq!(permitted(integral, "main").combines, vec!["+wrap"]);
 }
 
-/// An integer operation that is associative over the integers is still
-/// refused when each application carries an obligation or a clamp that
-/// regrouping moves. `+sat` is the pointed one: it is not even associative.
+/// Signed saturation can move its clamp under regrouping. Unsigned
+/// saturation is covered with both accumulator forms in conformance below.
 #[test]
-fn a_saturating_accumulator_is_denied_by_condition_one() {
-    let source = b"fn main() -> status: std::process::ExitStatus pure {
-  let total = 0_u64;
-  for @sum (i in 0_u64..16_u64) {
-    let step = 1_u64;
-    set total = total +sat step;
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-";
+fn a_signed_saturating_accumulator_is_denied_by_condition_one() {
+    let source =
+        include_bytes!("../../../../tests/conformance/cases/par2-neg-signed-saturating.wf");
     assert!(matches!(
-        denied(source, "main", 1),
+        denied(source, "reduce", 1),
         LoopDenial::NotAReduction { .. }
     ));
 }
@@ -3255,7 +3247,7 @@ fn indexed_denials_name_the_failed_condition_after_ordinary_checking() {
         (
             include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-constant-mark.wf")
                 .as_slice(),
-            "constant mark",
+            "each indexed write",
         ),
         (
             include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-length-change.wf")
@@ -3348,4 +3340,72 @@ fn continue_keeps_the_counted_update_but_an_outer_continue_leaves_the_range() {
         panic!("expected the counted-loop exit denial");
     };
     assert_eq!(edge, "a continue to an enclosing loop");
+}
+
+#[test]
+fn indexed_measures_temporaries_and_unsigned_saturation_are_permitted() {
+    for (source, names, combine) in [
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-measures.wf")
+                .as_slice(),
+            &["reduce", "capacities"][..],
+            "+wrap",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-temporary.wf")
+                .as_slice(),
+            &["reduce", "commuted"][..],
+            "+wrap",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-temporary.wf")
+                .as_slice(),
+            &["boolean_temporary"][..],
+            "bor",
+        ),
+        (
+            include_bytes!("../../../../tests/conformance/cases/par2-pos-unsigned-saturating.wf")
+                .as_slice(),
+            &["reduce", "scalar"][..],
+            "+sat",
+        ),
+    ] {
+        let table = permission_of(source);
+        for name in names {
+            let judged = only_loop(&table, name);
+            assert_eq!(
+                judged.verdict,
+                LoopVerdict::PermittedEligible,
+                "{name}: {judged:?}"
+            );
+            assert_eq!(judged.combines, vec![combine], "{name}");
+            assert!(judged.actualization.is_some(), "{name}");
+            assert_eq!(
+                judged.indexed.len(),
+                usize::from(*name != "scalar"),
+                "{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn indexed_temporary_denials_report_the_temporary_contract() {
+    for (source, reason_fragment) in [
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-twice.wf").as_slice(), "used exactly once"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-borrow.wf").as_slice(), "used exactly once"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-rebound.wf").as_slice(), "immutable"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-root-write.wf").as_slice(), "single-use temporary"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-root-read.wf").as_slice(), "single-use temporary"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-index-write.wf").as_slice(), "single-use temporary"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-contribution-write.wf").as_slice(), "single-use temporary"),
+        (include_bytes!("../../../../tests/conformance/cases/par2-neg-indexed-temporary-chain.wf").as_slice(), "single-use temporary"),
+    ] {
+        let refused = denied(source, "reduce", 1);
+        let LoopDenial::IndexedReduction { reason, .. } = refused else {
+            panic!("expected an indexed temporary denial, got {refused:?}");
+        };
+        assert!(reason.contains(reason_fragment), "{reason_fragment}: {reason}");
+        assert!(!reason.contains("constant mark"), "{reason}");
+    }
 }

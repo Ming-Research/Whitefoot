@@ -1,0 +1,18 @@
+fn reduce() -> result: u64 pure {
+  doc "An indexed update has exactly one temporary step; a copy chain remains sequential.";
+  let cells = box_array_filled::<u64>(count: 4_u64, value: 5_u64);
+  for (i in 0_u64..4_u64) {
+    let bucket = 0_u64;
+    let amount = 1_u64;
+    let updated = cells.inner[bucket] +wrap amount;
+    let forwarded = updated;
+    set cells.inner[bucket] = forwarded;
+  }
+  return cells.inner[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check the independent expected results.";
+  let reduced = reduce();
+  return std::process::exit_status(code: 0_u8);
+}
