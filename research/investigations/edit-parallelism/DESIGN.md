@@ -62,4 +62,78 @@ Readings, fixed now:
 
 ## Results
 
-None yet.
+Snowghost-wf run
+[37840469770](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37840469770)
+(branch `research/gran-profile`, hosted `ubuntu-24.04`): `perf record -F 4999
+-g` of the sequential image over the 2,000-edit pair and over its first pair
+alone. The full run counts 21,500 listed samples and the setup run 16,436,
+so 5,064 samples (about 1.0 CPU second, roughly 510 microseconds per edit on
+this host under the profiler) belong to the edits. Per-edit self samples:
+
+| Function | Samples | Share |
+|---|---:|---:|
+| `translate_reference_payload` | 1,638 | 32.3% |
+| `reference_owner_cursor` | 1,297 | 25.6% |
+| `translate_reference_owner_suffix` | 811 | 16.0% |
+| `slot_read` (the lookup both of the above call) | 310 | 6.1% |
+| `__libc_calloc` | 207 | 4.1% |
+| everything else, each at most 2.3% | 801 | 15.8% |
+
+The caller-inclusive report lacks frame pointers and is not used; the four
+translation functions' self time alone is 80 percent of the edit.
+
+The suffix translation walks the owner AVL tree past the edited entry and
+moves every later block, paragraph and child down by the edit's height
+change. Its work per subtree is independent in principle: each entry names a
+distinct block, paragraph or child, so the left subtree, the node's own
+payload and the right subtree write disjoint targets. `--par-ledger` of the
+`--par` build shows none of it is permitted:
+
+- The two recursive calls each write `context` as a whole
+  (`writes(context)`), so PAR-1's path test finds them overlapping. Proving
+  them disjoint needs the fact that each block's owner sequence holds it
+  once, an invariant over stored data that the writers establish and that no
+  source form lets a caller assume; Snowghost-wf's write-up is
+  `research/investigations/m2-edit-cost/inverse-proof/call-site.md` on its
+  branch `research/m2-frag-a-proof` (`ad6108a`), and the Whitefoot session
+  that owns proof work carries it as its stored-invariant card.
+- Independently of that proof, the compiler forms no run through the left
+  call: it sits in `if skip < before { ... }`, and the permission planner
+  (`compiler/src/semantic/permission.rs`, `classify`) gives a footprint to a
+  `match` only when its scrutinee is a call and refuses every other
+  `if`/`match` statement as "a match statement". PAR-1 permits such a
+  statement with the footprint of its condition and every arm that may
+  execute, so the implementation admits less than the specification.
+- The per-atomic loop of `translate_reference_payload` (line 388) is denied
+  for the same reason as the calls: its body writes `context` without an
+  admitted element family.
+- The one permitted group, the two cursor reads, is a few loads; the call
+  grain now omits its offer.
+
+The same work written as the dense variant's counted loop
+(`translate_dense_reference_suffix`, line 512) is permitted, because a counted
+loop over slots needs no proof that the owner sequence names each target once.
+
+Classification of the per-edit time:
+
+- **G, about 80 percent**: the suffix translation, independent in principle,
+  denied for want of the stored-data invariant, and additionally unreachable
+  for statement groups because the planner refuses `if` statements.
+- **C, at most about 20 percent**: reshaping the edited paragraph, finishing
+  its lines and the ancestor chain, whose levels feed one another, plus
+  allocation.
+- **O, about 0 percent** after the grain fix: the `--par` build at four
+  workers steals about seven tasks per edit; its whole run uses 11.2 CPU
+  seconds over 3.8 seconds against 4.6 over 4.6 at one worker, the extra
+  CPU being workers searching for work that is not offered.
+
+By the readings fixed above, C does not hold and G is material. The Amdahl
+bound with G perfectly parallel at four workers and C sequential is 1 /
+(0.2 + 0.8 / 4) = 2.5 times; real tasks would be coarser than the 13,600
+entries, so the attainable gain is below that.
+
+Answer to the question: the edit is not faster because about 80 percent of
+it, the suffix translation, is independent work that the program cannot
+prove independent in today's language, and the compiler would not form the
+group even with the proof. It is neither a dependency chain nor lost to
+scheduling overhead.
