@@ -2555,16 +2555,26 @@ fn main() -> status: std::process::ExitStatus pure {
 /// borrow, conflict only when their resolved storage overlaps.
 #[test]
 fn release_borrow_conflicts_check_every_member_and_restart_groups() {
-    for (first, last) in [
-        ("replace(cell: left)", "ignore(part: &left^.inner)"),
-        ("ignore(part: &right^.inner)", "replace(cell: right)"),
+    for (first, last, row) in [
+        (
+            "replace(cell: left)",
+            "ignore(part: &left^.inner)",
+            "writes(left)",
+        ),
+        (
+            "ignore(part: &right^.inner)",
+            "replace(cell: right)",
+            "writes(right)",
+        ),
         (
             "both(cell: left, part: &right^.inner)",
             "both(cell: right, part: &left^.inner)",
+            "writes(left), writes(right)",
         ),
         (
             "both(cell: left, part: &right^.inner)",
             "replace(cell: right)",
+            "writes(left), writes(right)",
         ),
     ] {
         let source = format!(
@@ -2591,7 +2601,7 @@ fn plain(value: u64) -> result: u64 pure {{
   return value;
 }}
 
-fn grouped(left: &Box<u64>, right: &Box<u64>) -> result: u64 writes(left), writes(right) {{
+fn grouped(left: &Box<u64>, right: &Box<u64>) -> result: u64 {row} {{
   doc "Keeps neutral members on each side of a storage conflict.";
   let a = {first};
   let b = plain(value: 0_u64);
