@@ -8,8 +8,8 @@ use whitefoot::{
     Architecture, BuildCache, COMPLETION_BRIDGE_HEADER, COMPLETION_BRIDGE_SOURCE,
     COMPLETION_CONTRACT_HEADER, COMPLETION_FILE_ADAPTER_HEADER, COMPLETION_FILE_ADAPTER_SOURCE,
     COMPLETION_FILE_POSIX_HEADER, COMPLETION_LINUX_IO_URING_HEADER, COMPLETION_RUNTIME_SOURCE,
-    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_WINDOWS_IOCP_HEADER, CONCURRENT_MAP_HEADER,
-    CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
+    COMPLETION_SOCKET_ADDRESS_HEADER, COMPLETION_STOP_SIGNALS_SOURCE, COMPLETION_WINDOWS_IOCP_HEADER,
+    CONCURRENT_MAP_HEADER, CONCURRENT_MAP_SOURCE, CallGrain, CheckOutcome, CheckVerdict, CompilationFailure,
     CompilerLimits, DISPATCH_LEDGER_PREFIX, DiagnosticFormat, FLOOR_STACK_BYTES,
     FragmentGranularity, HOST_OPTIMIZATION_ARGUMENTS, KEYED_TABLE_SOURCE, ModuleEntry,
     ModuleProgramFailure, ORDINARY_VALUES_HEADER, ORDINARY_VALUES_LLVM, ORDINARY_VALUES_SOURCE,
@@ -143,6 +143,7 @@ const COMPLETION_SHARED_UNITS: &[RuntimeUnit] = &[
     unit("completion/runtime.c", COMPLETION_RUNTIME_SOURCE),
     unit("completion/file_adapter.c", COMPLETION_FILE_ADAPTER_SOURCE),
     unit("completion/bridge.c", COMPLETION_BRIDGE_SOURCE),
+    unit("completion/stop_signals.c", COMPLETION_STOP_SIGNALS_SOURCE),
     unit("concurrent_map.h", CONCURRENT_MAP_HEADER),
     unit("concurrent_map.c", CONCURRENT_MAP_SOURCE),
     unit("keyed_table.c", KEYED_TABLE_SOURCE),
@@ -164,6 +165,7 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_posix.c",
     "completion/bridge.c",
+    "completion/stop_signals.c",
     "completion/linux_io_uring.c",
     "keyed_table.c",
 ];
@@ -181,6 +183,7 @@ const COMPLETION_COMPILE_UNITS: &[&str] = &[
     "completion/file_adapter.c",
     "completion/file_windows.c",
     "completion/bridge.c",
+    "completion/stop_signals.c",
     "completion/windows_iocp.c",
     "keyed_table.c",
 ];
@@ -1851,6 +1854,7 @@ mod tests {
             "sched/core.c",
             "sched/entry.c",
             "completion/bridge.c",
+            "completion/stop_signals.c",
         ] {
             assert!(
                 compiled.contains(&required),

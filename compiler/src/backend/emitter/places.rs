@@ -386,6 +386,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         let mut moves = Vec::new();
         for (position, ((parameter, ty), argument)) in parameters.iter().zip(arguments).enumerate()
         {
+            // The storage plan proved every incoming value is the original
+            // argument's unchanged contents. Its caller's storage already
+            // holds those bytes, even if this edge's source has another slot.
+            if self
+                .storage
+                .slot(*parameter)
+                .is_some_and(|slot| self.incoming_places.contains_key(&slot))
+            {
+                continue;
+            }
             if self.storage.slot(*parameter).is_some()
                 && self.storage.slot(*parameter) != self.storage.slot(*argument)
             {
@@ -622,6 +632,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             self.binding_place(destination)
         } else if Some(slot) == self.result_slot {
             Ok(RESULT_POINTER.to_owned())
+        } else if let Some(incoming) = self.incoming_places.get(&slot) {
+            Ok(incoming.clone())
         } else {
             self.entry_slot(FunctionSlot::OwnedValue(slot))
         }
