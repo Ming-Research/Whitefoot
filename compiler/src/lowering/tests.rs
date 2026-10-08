@@ -2133,6 +2133,124 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_release_and_borrow_are_separate(source, "replace");
 }
 
+/// An Entries descriptor owns nothing, but writing through it can release
+/// an entry's Box payload. Scalar entries retain the permitted overlap.
+#[test]
+fn entries_payload_release_preserves_borrowed_call_entry_order() {
+    for (value_type, value, borrowed, releases) in [
+        (
+            "Box<u64>",
+            "box_new::<u64>(value: 0_u64)",
+            "&b^.inner",
+            true,
+        ),
+        ("u64", "0_u64", "&b^", false),
+    ] {
+        let payload = if releases { "move value" } else { "value" };
+        let source = format!(
+            r#"const names: Array<u8, 1> =[97_u8];
+
+fn ignore(part: &u64) -> result: unit pure {{
+  doc "Borrows without reading.";
+  return unit;
+}}
+
+fn clear(entries: &Entries<{value_type}>) -> result: unit writes(entries) {{
+  doc "Replaces entries and releases their previous payloads.";
+  for (i in 0_u64..entries^.len) {{
+    set entries^[i] = None<{value_type}>();
+  }}
+  return unit;
+}}
+
+fn borrow_then_clear(entries: &Entries<{value_type}>) -> result: unit writes(entries) {{
+  doc "Keeps entry payloads alive until the borrowed call enters.";
+  if entries^.len > 0_u64 {{
+    match entries^[0_u64] {{
+      Some(value: b) => {{
+        ignore(part: {borrowed});
+        clear(entries: entries);
+      }}
+      None() => {{
+      }}
+    }}
+  }}
+  return unit;
+}}
+
+fn main() -> status: std::process::ExitStatus pure waits {{
+  doc "Exercises a borrowed Entries view containing one payload.";
+  let store = shared_map_new::<{value_type}>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 1_u64);
+  let index = key_set_insert(keys: &keys, key: &names[0_u64..1_u64]);
+  atomic entries = &store[keys] {{
+    if entries^.len > 0_u64 {{
+      let value = {value};
+      set entries^[0_u64] = Some<{value_type}>(value: {payload});
+    }}
+    borrow_then_clear(entries: entries);
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        with_checked(source.as_bytes(), |checked| {
+            let permission = checked
+                .data
+                .permission
+                .named("borrow_then_clear")
+                .expect("the helper has permission metadata");
+            let pairs = permission
+                .pairs
+                .iter()
+                .filter(|pair| {
+                    pair.first.callee_name == "ignore" && pair.second.callee_name == "clear"
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(pairs.len(), 1, "{value_type}: one adjacent call pair");
+            assert!(
+                pairs[0].verdict.is_eligible(),
+                "{value_type}: source permission must remain eligible: {:?}",
+                pairs[0].verdict
+            );
+
+            let program = lower_checked(checked, OverlapLowering::On)
+                .expect("the Entries witness must lower");
+            let helper = function(&program, "borrow_then_clear");
+            let calls = helper
+                .blocks()
+                .iter()
+                .flat_map(IrBlock::instructions)
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Call { function, .. },
+                        ..
+                    } if matches!(
+                        program.functions()[*function as usize].name(),
+                        "ignore" | "clear"
+                    ) =>
+                    {
+                        Some(*result)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(calls.len(), 2, "{value_type}: both calls must be lowered");
+            let grouped = helper
+                .overlaps()
+                .iter()
+                .any(|group| calls.iter().all(|call| group.members.contains(call)));
+            assert_eq!(
+                grouped,
+                !releases,
+                "{value_type}: only storage-releasing entry writes cut the group: {:?}",
+                helper.overlaps()
+            );
+        });
+    }
+}
+
 /// The review's selected-field witness: ProjectStruct does not retain the
 /// root reached by the borrowed field's address chain.
 #[test]

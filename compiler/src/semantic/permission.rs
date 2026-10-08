@@ -109,8 +109,9 @@ pub(crate) struct PermissionSignature {
     pub(crate) name: String,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
-    /// Whether each parameter's type can execute a storage release. Used
-    /// only by the lowering boundary, never by the permission verdict.
+    /// Whether consuming each owned parameter, or writing through each
+    /// reference parameter (including view elements), can release storage.
+    /// Used only by the lowering boundary, never by the permission verdict.
     pub(crate) parameter_releases: Vec<bool>,
     pub(crate) reads: Vec<CheckedStatePath>,
     pub(crate) writes: Vec<CheckedStatePath>,

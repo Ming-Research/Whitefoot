@@ -1204,7 +1204,9 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     parameter_releases: signature
                         .parameters
                         .iter()
-                        .map(|parameter| self.types.may_release_storage(parameter.ty))
+                        .map(|parameter| {
+                            self.types.may_release_storage(parameter.ty, parameter.mode)
+                        })
                         .collect::<Result<Vec<_>, CheckStop>>()?,
                     reads: signature.declared_effects.reads.clone(),
                     writes: signature.declared_effects.writes.clone(),

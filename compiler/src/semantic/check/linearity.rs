@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use crate::syntax::NodeId;
 use crate::{Production, SemanticIssueKind, SemanticRule, TerminalPredicate};
 
-use super::super::model::{CheckedNominalKind, CheckedType, NominalId};
+use super::super::model::{CheckedMode, CheckedNominalKind, CheckedType, NominalId};
 use super::CheckStop;
 
 /// [OWN-1, PROV-6] the class read from a type's two capabilities, copy and
@@ -127,11 +127,21 @@ impl<'unit> TypeContext<'unit> {
         &self,
         ty: CheckedType,
     ) -> Result<Vec<CheckedType>, CheckStop> {
+        self.storage_type_nodes(ty, false)
+    }
+    /// Share the owned release walk with the scheduling query for writes
+    /// through references. That query also follows view elements: replacing
+    /// an entry can release its payload even though the view owns nothing.
+    fn storage_type_nodes(
+        &self,
+        ty: CheckedType,
+        through_views: bool,
+    ) -> Result<Vec<CheckedType>, CheckStop> {
         let mut nodes = Vec::new();
         let mut seen_nominals = HashSet::new();
         let mut pending = vec![ty];
         while let Some(current) = pending.pop() {
-            if self.is_loan_bearing(current)? {
+            if !through_views && self.is_loan_bearing(current)? {
                 continue;
             }
             if let CheckedType::Nominal(id) = current
@@ -149,6 +159,9 @@ impl<'unit> TypeContext<'unit> {
                 // A run owns the elements of its window [BLK-1], so its
                 // element is a sub-node exactly as a field is.
                 CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => {
+                    pending.push(self.element_type(element)?);
+                }
+                CheckedType::Entries { element } if through_views => {
                     pending.push(self.element_type(element)?);
                 }
                 CheckedType::Nominal(id) => pending.extend(self.owned_components(id)?),
@@ -172,11 +185,17 @@ impl<'unit> TypeContext<'unit> {
         }
         Ok(None)
     }
-    /// Whether a type's release graph may reclaim storage [STOR-3, SHARE-1].
+    /// Whether consuming an owned value or writing through a reference may
+    /// reclaim storage [STOR-3, SHARE-1]. Reference writes follow fields,
+    /// payloads and elements, including those reached through borrowed views.
     /// Scheduling uses this conservative classification only to narrow
     /// overlap; even a statically empty run retains its element's actions.
-    pub(super) fn may_release_storage(&self, ty: CheckedType) -> Result<bool, CheckStop> {
-        for node in self.release_graph_nodes(ty)? {
+    pub(super) fn may_release_storage(
+        &self,
+        ty: CheckedType,
+        mode: CheckedMode,
+    ) -> Result<bool, CheckStop> {
+        for node in self.storage_type_nodes(ty, mode.is_reference())? {
             match node {
                 CheckedType::Buffer { .. }
                 | CheckedType::Segments { .. }
