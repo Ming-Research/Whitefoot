@@ -2800,6 +2800,19 @@ rarely insert at the same place.
 
 ## Code structure
 
+- **Comparison origins are removed twice, and one origin map is never
+  read.** Since comparison origins end at every kill event that reaches
+  their binding (`apply_kills_one` in
+  `compiler/src/semantic/entailment/flow/events.rs`, and the loop-head kill
+  in `loop_summary.rs`), two older removals duplicate it: the whole-binding
+  removal in `collect_target_kill` and the loop's `set_bindings` retain.
+  `FactState::ambiguous_goal_origins` is inserted, removed, joined and
+  cloned but read by no decision. Change: delete the two removals, then
+  `set_bindings` if nothing else needs it, and the unread map. Validate with
+  the direct-`set`, loop and Bool-origin tests in
+  `compiler/src/semantic/tests/entailment.rs` and the `ent3-*-bool-origin-*`
+  conformance cases. Reopen with the next change to origin bookkeeping.
+
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
   parameter zero with `substitute_goal`, `construct_goal`, `binder_goal`,
