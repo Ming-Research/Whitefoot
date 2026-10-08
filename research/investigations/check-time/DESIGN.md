@@ -720,3 +720,33 @@ remain required; the review is neither owner approval nor a measured result.
 - Specification delta: none. ENT-4/ENT-5/ENT-6, MSR-4, PRF-1 and DIAG-2 have
   identical required behavior; only reuse of query preparation changes.
 - No owner approval/log entry, ready transition, commit, push or merge.
+
+## M5 timing results
+
+Observed on 2026-10-08 on the Apple M5 under the host lock, with the
+binaries of CI run 37713758139 (base 13bb0d572, prototype 305e474e8, both
+the gate profile with line information, built on GitHub's macos-15 arm64
+runner; checksums verified) and the twin a byte copy of the base. Each
+panel ran three rounds, rotating base, twin and prototype through every
+position. Wall seconds, median (minimum to maximum), and peak RSS:
+
+| input | base | twin | prototype | RSS |
+|---|---|---|---|---|
+| plain-40 | 0.01 | 0.01 | 0.01 | — |
+| plain-160 | 0.20 (0.20–0.20) | 0.19 (0.19–0.21) | 0.19 (0.19–0.20) | 90 MB |
+| plain-320 | 1.79 (1.64–1.80) | 1.68 (1.65–1.80) | 1.66 (1.66–1.69) | 433 MB |
+| plain-640 | 17.70 (15.57–17.96) | 16.70 (15.40–18.01) | 16.85 (16.02–18.22) | 2.7 GB |
+| nat.wf | 9.73 (9.72–9.96) | 9.76 (9.69–9.77) | 8.75 (8.74–8.86) | 0.57 GB |
+
+The first three runs of the 40-arm sample took 0.15 to 0.33 s (a cold start)
+and are not comparable. On nat.wf the prototype is 10% faster than the base,
+with the twin within 0.3%. The series is unchanged within its spread: its
+cost is the join, which this prototype does not touch, and it still grows
+about 9 to 10 times per doubling, so the 2.5x criterion is not met.
+
+The index is 64% of the profile, yet reusing it at an unchanged state
+recovers 10%: nearly every statement changes the state, so most queries
+still rebuild the index. The remaining cost is the rebuild itself, all
+candidate pairs per query, and its next candidates are building only the
+part a target can use or updating the index across events.
+
