@@ -294,6 +294,26 @@ which lacks the suffix recursion: best of three rounds, base 77 sequential,
 per edit at two and at four workers with either compiler, a fixed cost the
 grain does not touch.
 
+## The edit pair on the 14900K
+
+Snowghost-wf timed the pair on the 14900K (run 37794254936): source
+`3ec4bb491`, built with `wf-c18e6708b6cc`, a twin of that build, and
+`wf-exp-95be0340e904`; three interleaved rounds, median microseconds per
+edit per round, best round shown, steals from a separate untimed pass:
+
+| Compiler | Sequential | W1 | W2 | W4 | W4 steals |
+|---|---:|---:|---:|---:|---:|
+| base | 242 | 237 | 2,320 | 3,128 | 19.2 M |
+| twin | 234 | 240 | 2,286 | 3,105 | 19.2 M |
+| candidate | 248 | 235 | 267 | 274 | 78 k |
+
+The candidate's four-worker edit is 1.10 times sequential on the best rounds
+and 1.08 on the median of rounds, two workers 1.08, against 12.9 and 9.6
+times for the base; rounds spread by 5 to 10 percent at these sizes, so the
+result is at the criterion rather than clearly under it. The hosted runner's
+four-worker residual does not appear on this host, which agrees with, but
+does not establish, the spinning-worker attribution below.
+
 ## D3: the residual four-worker cost
 
 Recorded before the run. On the candidate's images, three rounds of: the
