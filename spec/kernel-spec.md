@@ -1,4 +1,4 @@
-# Kernel Specification v0.97
+# Kernel Specification v0.104
 
 Rule IDs are stable; diagnostics cite rule IDs.
 
@@ -59,7 +59,7 @@ Every nonempty physical line begins with exactly two ASCII spaces for each enclo
 A closing brace is rendered after reducing the depth for the block it closes.
 A match-arm header is therefore one level inside its match, and statements in the arm body are two levels inside it.
 
-The line-bearing simple productions are `field`, `type_invariant`, `variant`, `fn_bind`, `const_decl`, `heap_decl`, `alias_decl`, `package_decl`, `module_row`, `doc`, `contract_define`, `requires_clause`, `ensures_clause`, `set_stmt`, `expr_stmt`, `return_stmt`, `proof_use`, `break_stmt`, and `give_stmt`, plus a `let_stmt` whose selected right-hand side is `ordinary_let_rhs` or `propagate_let_rhs` and a `let_stmt` whose selected binder is a parenthesized binder list or a destructuring consume [GRAM-4].
+The line-bearing simple productions are `field`, `type_invariant`, `variant`, `fn_bind`, `const_decl`, `heap_decl`, `alias_decl`, `package_decl`, `module_row`, `doc`, `contract_define`, `requires_clause`, `ensures_clause`, `set_stmt`, `expr_stmt`, `return_stmt`, `proof_use`, `break_stmt`, `continue_stmt`, and `give_stmt`, plus a `let_stmt` whose selected right-hand side is `ordinary_let_rhs` or `propagate_let_rhs` and a `let_stmt` whose selected binder is a parenthesized binder list or a destructuring consume [GRAM-4].
 Each renders completely on one line, including its final semicolon.
 A `fn_sig` renders its signature inline, with a result-list space after `->` just as a `fn_decl` does. Its optional `contract_block` uses the ordinary block layout. In an interface body each member starts a new line and the following semicolon attaches to the signature or its contract's closing brace. In a `gparam` the signature stays in the surrounding generic header; no member semicolon is inserted.
 
@@ -246,7 +246,7 @@ Results follow [FN-1]'s value-only rule. In these rules, `own T` denotes a seman
 
 ```wf-ebnf GRAM-4
 stmt        := let_stmt | set_stmt | expr_stmt | return_stmt | loop_stmt
-             | for_stmt | invariant_stmt | break_stmt
+             | for_stmt | invariant_stmt | break_stmt | continue_stmt
              | if_stmt | match_stmt | give_stmt | atomic_stmt
 let_stmt    := "let" ( IDENT "="
                ( ordinary_let_rhs | propagate_let_rhs
@@ -276,6 +276,7 @@ affine_term := affine_factor ("*" affine_factor)?
 affine_factor := atom | call | "(" affine_expr ")"
 affine_add_op := "+" | "-"
 break_stmt  := "break" LABEL? ";"
+continue_stmt := "continue" LABEL? ";"
 give_stmt   := "give" expr ";"
 atomic_stmt := "atomic" IDENT "=" "&" place ("," IDENT "=" "&" place)* ("when" expr)?
                "{" stmt* "}"
@@ -334,7 +335,7 @@ An `if` condition must have exact value mode and type `own Bool` under exactly t
 An `if_stmt` `else` whose block is empty is a hard error citing GRAM-6 at that `if_stmt` node, with a repair [DIAG-1]; a `value_if`'s undelivering else is [GIVE-1]'s rejection, not this one.
 An `else` whose block contains exactly one `if_stmt` and nothing else is a hard error citing GRAM-6 at that nested `if_stmt` node, with a repair [DIAG-1]; in a `value_if` whose else block is exactly one else-free `if_stmt`, the branch cannot deliver, [GIVE-1] owns the rejection, and GRAM-6 forms no candidate there, so no repair demands a chain form that could not be spelled.
 A conditional value is a `let`-initializer `match` or `if` [GRAM-7, GIVE-1].
-The only iteration forms are the ordinary `loop` plus `break`, and the counted ascending half-open `for` form whose complete semantics are [TYPE-5, TYPE-6, OWN-11, FN-1, ENT-2, ENT-3, ENT-5]; there is no step, reverse, iterator, or `continue` form.
+The iteration forms are the ordinary `loop` and the counted ascending half-open `for`, with `break` and `continue` transfers whose complete semantics are [TYPE-5, TYPE-6, OWN-11, FN-1, ENT-2, ENT-3, ENT-5].
 The subscript suffix, the range step, and the enum payload step are place forms (their sole home); bounds semantics are [OP-4].
 A `clause_expr` is the contract-clause shape and its sole home is a `requires_clause` and an `ensures_clause` [GRAM-2]: one `affine_expr`, or two around one `clause_op`.
 Its side is [GRAM-4]'s own `affine_expr` [INV-1] and its factor is an `atom`, a `call`, or a constructor `call`, where the `call` factor stands for a constructor `call` and the domain-query rows while a measure reaches a clause as an `atom` [MSR-5].
@@ -353,9 +354,9 @@ A value initializer bound by its own inner `let` delivers only to that inner bin
 `give` is legal only inside a value initializer's arm or branch — a checker-scoped restriction exactly as `break`'s enclosing-loop rule [TYPE-6]: the grammar admits `give_stmt` and the checker restricts it, which is META-2-clean by the `break` precedent.
 The binding's mode and type are derived from the delivery set [TYPE-5]: every delivering `give` of one value initializer must have one identical exact mode and type, and that is the binding's derived mode and type; a delivering `give` whose exact mode or type differs from an earlier delivering `give` of the same initializer is a hard error citing GIVE-1 at the later `give_stmt` node — derivation is agreement over the closed delivery set, never a join, widening, or common-supertype rule.
 When every delivering `give` of one initializer delivers a reference, that agreement is agreement of reference kind — `&T` with the same `&T`, `&[T]` with the same `&[T]` — and the binder's path set is [REF-1]'s union over the delivery set.
-A value initializer whose delivery set is empty — every arm or branch leaves by `return` or by `break` to an enclosing loop — is a hard error citing GIVE-1 at the `let_stmt` node, with a repair [DIAG-1].
+A value initializer whose delivery set is empty — every arm or branch leaves by `return`, `break` or `continue` to an enclosing loop — is a hard error citing GIVE-1 at the `let_stmt` node, with a repair [DIAG-1].
 On every control path an arm or branch terminates in exactly one `give e;` or cannot reach the initializer's continuation; a give-free continuing path, a statement following a `give` in the same block, and a second `give` on one path are each a hard error citing GIVE-1 — the value analog of match exhaustiveness [ERR-2].
-Give-completeness is a structural last-statement recursion: an arm or branch delivers when its final statement is a `give_stmt`, a `return_stmt`, a `break_stmt` whose resolved target loop lexically encloses the same value initializer, a `match_stmt` every arm of which delivers, an `if_stmt` with `else` both branches of which deliver, or an `atomic_stmt` whose block delivers, relative to that same value initializer; an else-free `if_stmt` has a continuing false edge and never delivers.
+Give-completeness is a structural last-statement recursion: an arm or branch delivers when its final statement is a `give_stmt`, a `return_stmt`, a `break_stmt` or `continue_stmt` whose resolved target loop lexically encloses the same value initializer, a `match_stmt` every arm of which delivers, an `if_stmt` with `else` both branches of which deliver, or an `atomic_stmt` whose block delivers, relative to that same value initializer; an else-free `if_stmt` has a continuing false edge and never delivers.
 A final nested value initializer bound by its own `let` delivers only to its own inner let and therefore does not make the outer arm or branch deliver.
 A call with a normal result edge does not itself count as delivery or must-divergence.
 No `loop_stmt` or `for_stmt` is assumed to diverge.
@@ -425,7 +426,7 @@ For a value V of the struct's type, the invariant over V is its relation with ea
 - For each such reference parameter whose row declares a write rooted at it, each type invariant over the parameter's exit state [MSR-3], and for each result ordinal whose declared type is the struct, each type invariant over that ordinal [CALL-4], is an unrouted postcondition of the function [FN-9], after its written postconditions, selecting every explicit return and every propagated error exit; a caller receives it as it receives a written postcondition [ENT-3.S12].
 - A call of `shared_new` whose type argument is the struct owes each type invariant over its argument as an [FN-8] requirement. Each target of an atomic statement whose handle place has type `Shared` of the struct [SHARE-2] establishes each type invariant over its binding's referent at the block's entry, as a guard's comparison is established there [ENT-3.S1], and each edge leaving the block owes it as an [INV-1] invariant stated at that edge.
 
-Each occurrence of a type invariant is identified by its function instance, the `type_invariant`, and its site: the parameter or result ordinal it is taken over, the construction, or the edge leaving the atomic block. A requirement's failure and a postcondition's failure are the rejections of [FN-8] and [FN-9]. A construction's failure and a leaving edge's failure are each a hard error citing TYPE-11: at the construction, at the complete `atomic_stmt` for its block's end, and at the leaving `return_stmt`, `break_stmt`, `give_stmt` or `let_stmt` for every other edge. Each failure names the type invariant, with a repair [DIAG-1].
+Each occurrence of a type invariant is identified by its function instance, the `type_invariant`, and its site: the parameter or result ordinal it is taken over, the construction, or the edge leaving the atomic block. A requirement's failure and a postcondition's failure are the rejections of [FN-8] and [FN-9]. A construction's failure and a leaving edge's failure are each a hard error citing TYPE-11: at the construction, at the complete `atomic_stmt` for its block's end, and at the leaving `return_stmt`, `break_stmt`, `continue_stmt`, `give_stmt` or `let_stmt` for every other edge. Each failure names the type invariant, with a repair [DIAG-1].
 
 [TYPE-3] Nameability: every constructible type, parameter kind and effect has a canonical, finite source spelling requiring no compiler execution [GRAM-3, EFF-1].
 A capability modifier and a generic parameter's capability bound are properties of a declaration and not components of a type name: two instances of one nominal have one name whether or not its declaration is marked, and no name spells a capability [PROV-6].
@@ -469,7 +470,7 @@ The grammar role, never an inferred type or expected result, selects the domain 
 | nominal-type TYPEID | source `struct_decl` and `enum_decl` names; source interface and binding groups; PRE-1 nominal types; lexical type `gparam`s overlay this domain while live | a runtime `type` or generic-numeric suffix admits only its ordinary type class; an explicit `targ` additionally admits a interface or binding abbreviation; a `pack_use` admits a interface or binding group, with FN-3/FN-5 checking its position and member selection |
 | constructor TYPEID | each source struct constructor under its struct TYPEID; PRE-1 variants, classified as struct-constructor or enum-variant; an opaque struct's constructor, existing only to be refused [TYPE-2] | the constructor TYPEID of a `call`, `cvalue` or destructuring `let_stmt` admits either class |
 | numeric-bound TYPEID | the two built-in bounds `Int` and `Float` [PRE-1] | the bound TYPEID of a type `gparam`; a capability bound instead uses its fixed grammar spelling [GRAM-2, PROV-6] |
-| LABEL | an optional LABEL written by `loop_stmt` or `for_stmt` | an optional LABEL written by `break_stmt` |
+| LABEL | an optional LABEL written by `loop_stmt` or `for_stmt` | an optional LABEL written by `break_stmt` or `continue_stmt` |
 | invariant IDENT | names written by `header_invariant` and `invariant_stmt` | the IDENT premise alternative of `use_premise` |
 
 A source struct contributes one declaration event that adds one nominal-type entry and one constructor entry with the same spelling.
@@ -506,8 +507,8 @@ A match binder becomes visible in its arm body only after the complete fieldbind
 A `for_binding` binder becomes visible after its complete `for_binding`, including both endpoint atoms, through the remaining `header_invariant` clauses and the counted body; it is not visible in either endpoint.
 An ordinary or counted loop label, when written, is visible only in its loop body; a counted label is not visible in the binding or invariant header.
 A loop label is an optional lexical name, never the identity of the loop: every `loop_stmt` and `for_stmt` has one distinct compiler-owned structural loop identity whether or not it writes a LABEL.
-An unlabeled `break;` must be lexically inside at least one ordinary or counted loop and resolves to the nearest such enclosing loop.
-A labeled `break @name;` performs the ordinary LABEL-domain lookup below and may therefore resolve past one or more inner loops to an enclosing loop carrying that spelling.
+An unlabeled `break;` or `continue;` must be lexically inside at least one ordinary or counted loop and resolves to the nearest such enclosing loop.
+A labeled `break @name;` or `continue @name;` performs the ordinary LABEL-domain lookup below and may therefore resolve past one or more inner loops to an enclosing loop carrying that spelling.
 The resolved loop's structural identity, not a LABEL declaration, is the target retained by the semantic checker.
 A `header_invariant` name is a proof-only declaration in a separate invariant-name domain.
 All names in one header must be distinct; none is visible in the header itself or before the loop, and after the complete header all become visible simultaneously throughout that loop body only.
@@ -591,16 +592,15 @@ Field suffixes introduce no runtime evaluation.
 This rule judges a value target; a `set` whose target is a reference variable and whose right-hand side is a `borrow_expr` rebinds that name and is judged by [REF-1] instead.
 A `set` whose target is a reference variable and whose right-hand side is a value is not a rebinding: it is a hard error citing TYPE-7 at the target `place`, with a repair [DIAG-1].
 The value target's final selected type is T.
-The target is writable exactly when it is rooted in a live own-mode value binding or in the state of a shared object [SHARE-1], or is `p^` or a path below it where `p` is a reference parameter whose declared row carries `writes` of that path [EFF-1, EFF-5] or a local reference variable whose named path is itself writable.
-Fields and indices inherit the writability of their selected base.
+The target satisfies the writable-root condition exactly when it is rooted in an own-mode value binding or in the state of a shared object [SHARE-1], or is `p^` or a path below it where `p` is a reference parameter whose declared row carries `writes` of that path [EFF-1, EFF-5] or a local reference variable whose named path is itself writable.
+Fields and indices inherit the writable-root condition of their selected base.
 A named const is never writable [CONST-2], and a target path that ends at or passes through a readonly field is refused by [TYPE-2].
 A `for_stmt` binder is compiler-updated state and is never source-writable; a target rooted there is a SET-1 rejection at the complete target `place`.
-A place projected, dereferenced, or subscripted from a dead root is never writable; a dead binding is writable only as the complete binding, and that commit reinitializes it [OWN-1, OWN-11].
+A target satisfying the writable-root condition is writable exactly when its root is live or it is the complete own-mode value binding [OWN-1, OWN-11].
 These specific rules own their stated violations; every other failure of this closed writability relation cites SET-1 at the complete target `place` child of the `set_stmt`, carrying the resolved root class and the required writable classes.
 
-T is copy or affine under [OWN-1].
 The right-hand side is then checked under [TYPE-5] and evaluated under its ordinary expression, ownership, effect, and partial-operation domain rules.
-The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable and that the target root is live.
+The checker analyzes the normal continuation of `e` and re-establishes there that the resolved target remains writable under the same writable-root and live-or-complete-binding conditions.
 If the right-hand side moved a strict prefix of the target place, the commit is a later write of a dead root under OWN-1.
 If it invalidated a reference the target path is reached through, [REF-2] rejects the commit.
 This is a static acceptance check: at runtime every target component is evaluated exactly once before `e`, and lowering carries the resulting target address and offset values across `e` rather than evaluating source again.
@@ -609,8 +609,8 @@ No root-liveness or writability fact from before the right-hand side bypasses th
 On successful revalidation, assignment performs exactly one write of the resulting value into `p`.
 The old value's disposition at the commit is [WIN-3]'s.
 A commit derives no drop, release, finalizer, or cleanup edge beyond that disposition.
-The new value occupies the same place and the target root is live after the commit.
-The store occurs only after right-hand-side evaluation completes; until that commit point the target retains its previous value.
+The new value occupies the same place and the target root is live after the commit, reinitializing a dead complete binding [OWN-1, OWN-11].
+The store occurs only after right-hand-side evaluation completes; until that commit point a live target retains its previous value.
 The checked program retains the exact target path, each required target check, the right-hand-side value, the post-right-hand-side liveness and writability judgments, and the single store before lowering [DIAG-2].
 
 [CONST-1] The grammar production `const` of the fence below is usable at `Array<T, N>` sizes and `const` targs, and, being the `const` alternative of `targ` [GRAM-3], at every const argument of a compiler-owned storage nominal [TYPE-9].
@@ -682,6 +682,7 @@ A summarized description separately retains the referent type, every readonly re
 Formation checks the existence of the selected place. An already selected payload remains that place when its selecting arm ends; the disappearance of the lexical refinement fact alone does not invalidate its reference. Selecting that payload again still requires a current [ENT-3.S15] fact. Replacing its enum or any containing owner invalidates the existing reference normally. No selected-place witness publishes a variant or arithmetic fact.
 Writing the storage at `p`'s path or below it is a content write and does not invalidate `p`.
 For a summarized path, a potentially overlapping structural write invalidates its witness unless the written place is proved at or below its captured target, or disjoint from its cover. A write through one cursor therefore preserves that cursor and proved aliases, but invalidates unrelated possibly overlapping descendant cursors. An ordinary store to an existing primitive leaf [TYPE-1] cannot remove a selected path and preserves its witness; this exception excludes measures, window boundary operations, moves and releases. It does not preserve facts about the old contents: [ENT-5] still kills every overlapping support. Ancestor events above the cover's anchor count, and compound actions apply every member's invalidation; preservation by one write does not exempt a reference from another.
+The scope-exit invalidations on a `continue` [STOR-3] participate in the target header's validity meet [REF-1] before a reference is used in the next iteration.
 Using an invalid reference is a hard error citing REF-2 at the offending `place`, carrying the invalidating event and a repair [DIAG-1].
 Prefix and overlap are judged by [OWN-7], conservatively: two indexed positions on one storage are taken to overlap unless proved distinct.
 Validity is re-established only by forming the reference again, and a move never re-roots an existing reference: after `let w = move v;`, references formed from `v` are invalid and are not reinterpreted as references into `w`.
@@ -726,6 +727,7 @@ Rejection of a sound-but-unprovable program is not a defect; the diagnostic name
 
 [OWN-11] Loops: the body of an ordinary `loop_stmt` or a counted `for_stmt` is an ordinary block whose own bindings begin and end with one iteration.
 A binding declared outside that body may be moved inside it, and the per-iteration judgment is [LIV-1]'s liveness agreement read at this loop's head: a binding declared outside the body whose live-or-dead status on the backedge differs from its status on the entering edge is a hard error citing OWN-11 at the loop, naming that binding, because one iteration would then start in a state the previous one did not leave.
+Every `continue` additionally owes this agreement on the state it delivers to its target loop, after scope-exit reference invalidation [REF-2].
 A body that moves such a binding and reinitializes it before the backedge [SET-1] agrees and is admitted; a body that leaves it dead does not.
 The backedge read here is the structural one [FN-1]: it carries the state the body reached whether or not the body's own fallthrough is executable, so a body that consumes such a binding and then leaves by `break` or `return` is judged on that state exactly as a body that falls through is.
 A counted binder may be copied and may have a reference formed to it [REF-1], but it may not be moved and may not be passed to a callee whose row declares a write of it [EFF-1]; source writes are independently forbidden by [SET-1].
@@ -742,7 +744,7 @@ A binding's live-or-dead status is a property of a program point, not of a path:
 A disagreement is a hard error naming the binding and the two disagreeing predecessors.
 The loop-head instance is [OWN-11]'s per-iteration judgment, which owns its stated violation, reads the structural backedge stated there, and cites OWN-11 at the loop; every other join cites LIV-1 at the join and takes the predecessors that reach it.
 This agreement is judged before any capability limit of a conforming checker reports an unsupported join, so a disagreeing predecessor pair is a source rejection and never a stop.
-Because the status agrees at every join, whether a compiler-derived release runs on an edge leaving a scope is not runtime state: on every edge leaving a scope — a `break`, a `give`, a `propagate` error edge, the function-return edge, and a block exit — every binding of that scope that is live on that edge takes its compiler-derived release there, unconditionally, and a binding that is dead takes none [STOR-3].
+Because the status agrees at every join, whether a compiler-derived release runs on an edge leaving a scope is not runtime state: on every edge leaving a scope — a `break`, a `continue`, a `give`, a `propagate` error edge, the function-return edge, and a block exit — every binding of that scope that is live on that edge takes its compiler-derived release there, unconditionally, and a binding that is dead takes none [STOR-3].
 Which release runs inside a live value may still be selected by that value's own discriminant, exactly as an enum's derived drop selects on its variant today.
 A binding whose value is linear [PROV-6] takes no compiler-derived release on such an edge and is refused there instead, because the compiler never releases a linear value.
 This rule states the liveness premise [SET-1] rechecks after a right-hand side, and the premise [OWN-11] reads at a backedge; it adds no scope-exit action and removes none.
@@ -820,7 +822,8 @@ This vocabulary is ordinary: a user function may declare the same rows a built-i
 A move out of a field or out of `Box` content consumes the whole owner: the owner ceases to exist, its other affine parts take their compiler-derived release [STOR-3], and a remaining linear part is a hard error citing WIN-3 at the complete consumed `place`, with a repair [DIAG-1].
 A destructuring consume binds the fields it names and covers the rest with `..` [GRAM-4], and an own-place `arm` does the same [GRAM-10].
 A move out of a window slot or an array element is a hard error citing WIN-3 at that `place`, with a repair [DIAG-1].
-Assigning over any owned place releases the old value when it is affine and is a hard error citing WIN-3 at the target `place` when it is linear.
+Assigning over a live owned place releases the old value when it is affine and is a hard error citing WIN-3 at the target `place` when it is linear.
+A dead binding holds no old value, and its reinitialization [SET-1] releases nothing.
 At scope exit the compiler releases the slots inside the window recursively and frees the block; an `Array` releases every slot.
 No operation releases a linear element: a storage whose element type is linear is itself linear [PROV-6] and the program must take every element out and consume it, and then, with the storage proved empty, call `free_empty` [OP-14].
 That one route also consumes a `Box` whose content is such a window, freeing the cell with it [OP-14].
@@ -840,12 +843,12 @@ A function of that closure uses the heap on its own when its body calls an alloc
 A component of the closure's call graph introduces the requirement when its functions require the heap and no function of another component that they call does; the first such component a breadth-first walk from the entry reaches is a hard error citing STOR-8 at the declaration of its first function in that walk that uses the heap on its own, reporting the call path from the entry. Definitions the closure does not reach impose nothing on the entry.
 
 [STOR-3] Deallocation and resource release are compiler-derived and explicit in the checked program [DIAG-2]: every release is represented before lowering.
-Release actions run on every source control-flow edge that leaves their owner scope, in reverse declaration order; [FN-10] places a guaranteed self-tail transfer's releases before that transfer.
+Release actions run exactly once on every source control-flow edge that leaves their owner scope, including `continue`, innermost scope first and in reverse declaration order within each scope; [FN-10] places a guaranteed self-tail transfer's releases before that transfer.
 Host termination caused solely by unavailable external resources under [SCOPE-3] is not a Whitefoot control-flow edge, and this specification makes no source-level cleanup promise for that case.
 A binding's value is released at points the checked program fixes; the state of a shared object belongs to no binding, and [SHARE-1] fixes its release.
 
-Every edge that leaves one entered `for_stmt` body normally — its fallthrough, a `break` resolved to that counted loop or an enclosing loop, a `return`, or a `propagate` error edge — carries exactly once every compiler-derived release for the body scopes that edge leaves, innermost scope first and in reverse declaration order within each scope.
-On body fallthrough those actions complete before the hidden counted update [FN-1].
+Every edge that leaves one entered `for_stmt` body normally — its fallthrough, a `continue`, a `break` resolved to that counted loop or an enclosing loop, a `return`, or a `propagate` error edge — carries exactly once every compiler-derived release for the body scopes that edge leaves, innermost scope first and in reverse declaration order within each scope.
+On body fallthrough and on a `continue` to that counted loop those actions complete before the hidden counted update [FN-1].
 The header's false edge never enters the body and therefore carries no body-scope cleanup.
 An external-resource termination under [SCOPE-3] likewise creates no source edge on which these actions could run.
 No exit duplicates an action already carried by an inner scope edge.
@@ -1203,7 +1206,7 @@ Its effect is `writes(p)`.
 Nothing is said about termination.
 A failure is an enum in the place, not a second result.
 A call that fails the result condition is not an atomic update and is judged as an ordinary `set` [SET-1], in which the consumed argument would kill the target root [OWN-1]; the resulting rejection cites OWN-1 at the argument `atom`.
-An atomic update is not a [PAR-2] accumulator form: that rule's accumulator combines by one operation fixed for it from a closed associative and commutative set, and `f` is not a member of that set.
+The parallel-permission classification of an atomic update is governed by [PAR-2].
 
 [OP-13] Construction.
 The construction functions are the [PRE-1] records `box_new`, `slots_new`, `ring_new`, `array_filled`, `box_array_filled`, `box_segments_filled`, `box_slots_new`, `box_ring_new`, `slots_from_array`, and `slots_into_array`; there is no `Type::name` spelling and no element-list literal in expression position [FORM-5].
@@ -1260,9 +1263,9 @@ The compiler then initializes the fixed `own u64` binder to the lower capture.
 At each header it performs one pure mathematical comparison of the binder with the upper capture.
 A false result reaches the counted continuation without entering the body; a true result enters the body.
 Thus lower greater than or equal to upper executes zero iterations after still evaluating both endpoints.
-On normal body fallthrough, body-scope cleanup completes first [STOR-3], then the compiler updates the binder exactly once to its mathematical value plus one and returns to the header.
+On normal body fallthrough and on a `continue` resolved to that counted loop, body-scope cleanup completes first [STOR-3], then the compiler updates the binder exactly once to its mathematical value plus one and returns to the header.
 The true guard proves the old binder is less than the u64 upper capture, so that increment is representable; it is a pure compiler operation with no hidden trap, wrap, saturation, operation-table call, or effect, including when the upper capture is max(u64).
-An edge leaving the counted body by `break` to that loop or an enclosing loop, `return`, or `propagate`'s `Err` path performs its ordinary cleanup exactly once and performs no hidden update.
+An edge leaving the counted body by `break` to that loop or an enclosing loop, `continue` to an enclosing loop, `return`, or `propagate`'s `Err` path performs its ordinary cleanup exactly once and performs no hidden update.
 The counted header's carried-identity set is exactly the bindings carried into the construct plus both captures and the binder; the continuation interface and a break resolved to that counted loop carry only the incoming identities after their path-specific ownership, cleanup, and effect judgments, with any counted label, the binder, and captures all out of scope.
 Ordinary `loop_stmt` execution is unchanged.
 
@@ -1273,11 +1276,13 @@ An ordinary `let`, `set`, an expression statement, and an `invariant_stmt` have 
 A call with a normal result edge never proves divergence merely because external resource availability is outside this cycle's guarantee [SCOPE-3].
 A `return_stmt` has an edge only to the function-return sink.
 A `match_stmt` enters every arm body, using an arm's normal exit when that body contains no statement, and each arm's normal exit reaches `normal_successor(match_stmt)`.
-A `let_stmt` selecting `value_match` enters every arm body the same way and follows [GIVE-1]: each `give` edge reaches `normal_successor` of that enclosing `let_stmt`, each return edge reaches the function-return sink, and each resolved break edge reaches `normal_successor` of its target loop.
+A `let_stmt` selecting `value_match` enters every arm body the same way and follows [GIVE-1]: each `give` edge reaches `normal_successor` of that enclosing `let_stmt`, each return edge reaches the function-return sink, and each resolved break edge reaches `normal_successor` of its target loop, and each continue follows its target edge below.
 An `if_stmt` enters its then-block, and its else-block when it has one, using a block's normal exit when that block contains no statement; each block's normal exit reaches `normal_successor(if_stmt)`, and an else-free `if_stmt` also has its false edge directly to `normal_successor(if_stmt)`.
 A `let_stmt` selecting `value_if` enters both branch blocks the same way and follows [GIVE-1] exactly as the `value_match` sentence above does; an else-position `value_if` of a chain contributes its own branch edges to the same enclosing `let_stmt` [GIVE-1], not to a nested one.
 A `let_stmt` selecting `propagate_let_rhs` has an `Ok` edge to `normal_successor` of that enclosing `let_stmt` and an `Err` edge to the function-return sink [ERR-3].
 A `break_stmt` reaches `normal_successor` of its resolved target loop, ordinary or counted.
+A `continue_stmt` has only the next-iteration edge of its resolved target: the body entry for an ordinary loop, or the compiler-owned update for a counted loop, carrying the current values of that loop's carried bindings after [STOR-3] cleanup; no intervening inner counted loop is updated.
+Every atomic block that this edge leaves completes its ordinary exit, including [TYPE-11] obligations and [SHARE-2] release.
 A `loop_stmt` reaches its body entry, or its body's normal exit when the body contains no statement; the loop-body normal exit reaches the body entry again, or itself when the body contains no statement.
 For this conservative judgment every `loop_stmt` also has an edge to `normal_successor(loop_stmt)`; no ordinary loop is assumed to diverge [GIVE-1].
 A `for_stmt` reaches its compiler-owned preheader, the preheader reaches its header after both endpoint evaluations and binder initialization, and the header has both a true edge to its body entry (or the body's normal exit when empty) and a false edge to `normal_successor(for_stmt)`.
@@ -1372,7 +1377,7 @@ Two predicates are equal only by exact typed-tree equality: there is no commutat
 Signed decomposition, exact comparison-root L0 projection, and the fixed query-time Boolean introduction over independently proved children remain exactly [ENT-3, ENT-4, ENT-6].
 
 At an ordinary source call, resolution, concrete instantiation, named arguments, exact types, borrow feasibility, and all actual-expression obligations complete first.
-For every GoalTemplate in requires-clause source order, substitute each formal with that actual's Goal value identity in the same pre-transfer fact state: a borrow formal uses its resolved referent and an own actual its value before transfer.
+For every GoalTemplate in requires-clause source order, substitute each formal with that actual's Goal value identity in the same pre-transfer fact state: a borrow formal uses the place its actual names, identified by its [ENT-2] proof path, and an own actual its value before transfer.
 A literal, named const, or place with field and `^` projections remains an ordinary datum.
 After every actual-expression obligation succeeds, an own actual whose complete
 checked value belongs to [ENT-2]'s admitted exact-operation or index tree uses
@@ -1430,7 +1435,7 @@ At a selected return, each result datum the clause names evaluates to one [ENT-2
 For an ordinary inhabited instance, each clause's selected-return set is independently nonempty; an empty set rejects at that `ensures_clause`.
 An [FN-8] uninhabited instance still checks route, type, expression, and return-shape source judgments, but is exempt from nonempty and proof requirements and publishes no relation.
 
-A referenced `own` parameter's measure, a measure member of a reference parameter whose row declares no write rooted at it, or a measure member or fragment-integer place explicitly rooted at `entry(parameter)`, is that parameter's entry datum [MSR-3], which is minted at body entry, contains no place, and is therefore killed by nothing. A bare measure member or fragment-integer place of a reference parameter whose row declares a write rooted at it instead evaluates over that parameter's resolved referent immediately before each selected return, after the return's ordinary effects and kills; a write of that referent changes this exit term and never retargets the entry datum. Every other parameter datum retains the entry-image stability rule below.
+A referenced `own` parameter's measure, a measure member of a reference parameter whose row declares no write rooted at it, or a measure member or fragment-integer place explicitly rooted at `entry(parameter)`, is that parameter's entry datum [MSR-3], which is minted at body entry, contains no place, and is therefore killed by nothing. A bare measure member or fragment-integer place of a reference parameter whose row declares a write rooted at it instead evaluates over the storage that parameter received, as it stands immediately before each selected return, after the return's ordinary effects and kills; a write of that storage changes this exit term and never retargets the entry datum. When some `set` in the body rebinds that parameter, a place written through it names its current target rather than that storage [ENT-2], no term of the body names that storage, and a relation over such an exit term is unproved at every selected return. Every other parameter datum retains the entry-image stability rule below.
 Every other referenced parameter entry image creates no snapshot term.
 Its stability begins live at body entry and becomes permanently unavailable on the first structural edge whose [ENT-5] kill overlaps the datum, a holder used by it, or its support; join is intersection and contradiction never restores it.
 An element write does not invalidate such an image, while a write to the place's own descriptor storage or to any prefix of it, or killing its root or holder, does [MSR-2]; at a call, which of the two a projected callee write is, is [CALL-1] through [CALL-3]'s classification and never the argument's shape [CALL-5].
@@ -1899,7 +1904,7 @@ LABEL uses instead follow the separate current-function rule below.
 For one lexical-use event the closed lookup rank is:
 
 1. the candidate universe has at least one declaration in an admissible class but its admissible visible subset is empty; cite the role-attribution table below and carry every invisible admissible origin in declaration-event order;
-2. for LABEL only, the current function has at least one exact-spelling label but none declares a loop lexically enclosing the `break`; cite TYPE-6 and carry every such current-function label origin in declaration-event order; and
+2. for LABEL only, the current function has at least one exact-spelling label but none declares a loop lexically enclosing the `break` or `continue`; cite TYPE-6 and carry every such current-function label origin in declaration-event order; and
 3. the visible admissible subset is empty and neither rank 1 nor rank 2 applies; cite the role-attribution table below.
 
 | lexical-use role | rule cited by rank 1 or rank 3 |
@@ -2145,11 +2150,16 @@ Every construct of this specification defines one total sequential order over it
 This rule uses [CAP-1]'s ordinary ownership boundary directly; it introduces no additional sharing classification.
 The counted permission [PAR-2] forms every statement's read and write paths exactly as this rule does.
 
-[PAR-2] An implementation may execute two iterations of one `for_stmt` body with overlapping execution, and may recombine that loop's accumulator across them, only when the permission this rule defines holds for that counted loop.
+[PAR-2] An implementation may execute two iterations of one `for_stmt` body with overlapping execution, and may recombine that loop's scalar accumulator and indexed accumulators across them, only when the permission this rule defines holds for that counted loop.
 Permission holds for a `for_stmt` L exactly when all of the following hold, writing B for L's body and forming every written, read, and operand-read footprint of a statement of B exactly as [PAR-1] forms one.
 Among whole-place writes of B, at most one place is rooted in a binding declared outside L; that binding is L's accumulator, and every occurrence of it in B is one operand of one `set` statement whose target is that whole binding and whose right-hand side is one operation applied to that operand and to a second operand reaching the accumulator nowhere.
 That operation is one operation fixed for the accumulator across the whole of B, and is exactly one of `+wrap`, `*wrap`, `iand`, `ior`, `ixor`, `imin`, `imax`, `band`, `bor`, and `bxor` [OP-1].
-Every place a footprint of B writes is iteration-own storage, the accumulator's whole place, a place in one proved single-binder affine element, a place in one proved range reference, or a place in one certified element.
+An indexed accumulator is a family of cells of one binding declared outside L, selected through a fixed field and `Box` content path R whose indexed storage is an `Array` or `Slots` of one integer or `Bool` element type [TYPE-9].
+Every occurrence of that binding in B belongs to an update `set R[e] = R[e] op x` or `set R[e] = x op R[e]`, with the operation's [OP-1] spelling: the target and the accumulator operand name the same subscripted place [REF-1, OWN-7], and e and x read nothing of that binding or its resolved storage.
+One operation from the scalar accumulator's admitted set is fixed for each indexed accumulator throughout B; every write to its binding is such an update, and its storage path and current length remain unchanged throughout B.
+Each update's ordinary [OP-4] subscript bound is discharged as for any write; this family imposes no injectivity condition on e.
+A loop may have any number of indexed accumulators alongside its scalar accumulator, each governed independently by these conditions.
+Every place a footprint of B writes is iteration-own storage, the scalar accumulator's whole place, a cell of an indexed accumulator, a place in one proved single-binder affine element, a place in one proved range reference, or a place in one certified element.
 A proved single-binder affine element is one subscript whose base is an `Array`, a `Slots`, the run a range reference names [OP-4], or a `Segments` [TYPE-9], rooted in an own binding declared outside L or reached through `^` of a reference parameter whose row declares the write [EFF-5], whose exact [OP-4] bounds obligation at that subscript is discharged in the current ProofContext and retains the offset's canonical exact value `a*i + b`: i is L's compiler-owned binder, a and b are mathematical integer constants, a is nonzero, and no other symbolic term occurs. The place that subscript selects from is the element's mapped root.
 A place is in that element when its resolved path [REF-1] is the element's path or continues it by any further field, payload, `Box` content, index, or range steps, and it is in the element of the outermost such subscript of its path. Every aggregate holds only owned values [TYPE-8] and a `Box` has one owner [TYPE-9], so nothing in one element of a root is reachable from another element of it.
 A footprint reaches a place in an element through a `set_stmt` target, an operand read, and a reference argument, whose callee row is projected onto the argument's actual path exactly as [EFF-5] projects it.
@@ -2158,7 +2168,7 @@ For permission only, this fixed form refines the ordinary whole-collection footp
 The counted recurrence of [FN-1] gives distinct binder values to distinct iterations, and multiplication by the same nonzero integer a preserves distinctness, so their refined ranges do not overlap; statement order within one iteration is unchanged.
 This refinement proves only the source element-range and cross-iteration disjointness. The selected-target [STOR-6] check must still prove the concrete element stride, layout, and address domain before emission; that later target check consumes the already-permitted source access and never grants PAR-2 permission retroactively.
 Every write by B to one mapped root must be to a place in a proved single-binder affine element of it carrying exactly the same a and b; different resolved roots may carry different maps. Every read through that same root binding must be a measure read [MSR-1] or a place in a proved single-binder affine element of it carrying exactly the same a and b. A measure read of the mapped root touches its descriptor storage, disjoint from its element storage under [MSR-2]; the write condition confines every write by B to an element, so no iteration writes that descriptor storage. For permission only, an element read footprint is refined to the same single-element range, so it overlaps writes of its own iteration in source order and no access of another iteration. A whole-root read, a subscript carrying a different or unavailable map, any other access overlapping the resolved root, or an unresolved place denies.
-The element family admits one affine map per root, including same-index read-modify-write and writes reached through `^` of a reference parameter whose row declares the write. A constant element image, two different element maps of one root, and every other element injectivity argument deny permission rather than starting proof search. A `Ring` in an element-map position denies permission, because a `Ring` subscript selects the slot `(r.head + i) mod r.cap` [WIN-1], a wrapping map onto storage rather than a linear offset.
+The element family admits one affine map per root, including same-index read-modify-write and writes reached through `^` of a reference parameter whose row declares the write. A constant element image, two different element maps of one root, and every other element injectivity argument establish no affine-element permission and start no proof search. A `Ring` in an element-map position denies permission, because a `Ring` subscript selects the slot `(r.head + i) mod r.cap` [WIN-1], a wrapping map onto storage rather than a linear offset.
 
 A proved range reference is a range reference `&r[s*i+b..s*i+b+s]` [REF-4] passed as an ordinary argument, whose discharged endpoint domain retains the exact mathematical images `[s*i+b, s*i+b+s)`, where i is L's binder, and s and b are fixed throughout L with proved `0 <= s` and `0 <= b`. The indexable place or range reference it is formed from is declared outside B and retains its resolved origin; a range reference formed inside B instead inherits an existing proved range reference only when its complete origin path is a descendant of that range reference. Each further formation's own [REF-4] endpoint obligation establishes containment. No child call, read, or write gains a wider extent than its actual origin path.
 The automatic image family is finite and fixed. At L's preheader after continuing kills, the immutable numeric value atoms still available to surviving scalar bindings and measures are fixed. Canonical checked affine sums and scalar multiples preserve exact value images. A recorded admitted exact multiplication may be expanded through its two operand value images, including the checked transparent images behind copied-value handles. A product of two fixed operands is fixed. Otherwise exactly one operand may depend on i, and multiplying its coefficient and constant part by the fixed operand must leave both parts affine: each such multiplication has a mathematical constant on at least one side. This rule recursively traverses the finite checked value graph, rejects a cyclic or unknown image, and introduces no arbitrary-degree polynomial or injectivity search. Normalized constants and coefficients use [ENT-6]'s checked mathematical integer domain. Each active counted binder is considered once, endpoint coefficients must agree, and the ending constant part must equal the starting constant part plus s. Both sign goals are submitted to the existing ProofContext and their successful derivations are retained with the formation's bounds result. Permission consumes those checked images and proofs; it neither reinterprets source spelling nor reruns arithmetic proof.
@@ -2167,7 +2177,7 @@ Among proved range references through which B writes, all whose resolved origins
 A certified element is the element one `set_stmt`, or one call through a reference argument naming one element, writes in B when L carries an `apart_clause` whose certificate holds [RANGE-5] and that certificate's judgment placed this write at one element of storage declared outside B. Its root is the resolved place above the first index or range step of the written path [REF-1]. Every read of B overlapping a certified root must be a measure read [MSR-1] or an element read the same certificate placed; a whole-root read, any other access overlapping the root, or a proved affine element or written proved range reference overlapping it denies. The certificate's two-iteration judgment is what separates the elements of two iterations; this rule adds no proof of its own.
 A footprint element whose caller place the implementation does not resolve overlaps every place, so an unresolved element denies permission rather than granting it.
 Effects and path overlap decide interference between iterations exactly as they do between [PAR-1] statements. An implementation retains each iteration's live storage for that complete extent.
-Every normal continuation of every statement of B reaches L's compiler-owned binder update, so no statement of B is a `return_stmt`, a `give_stmt`, a `break_stmt` resolved to L or a loop enclosing L, or a `let_stmt` selecting `propagate_let_rhs` [FN-1, GIVE-1, ERR-3].
+Every normal continuation of every statement of B reaches L's compiler-owned binder update, so no statement of B is a `return_stmt`, a `give_stmt`, a `break_stmt` resolved to L or a loop enclosing L, a `continue_stmt` resolved to a loop enclosing L, or a `let_stmt` selecting `propagate_let_rhs` [FN-1, GIVE-1, ERR-3].
 B contains no waiting call [WAIT-1].
 
 Under a permitted overlap every state-place observable is the one produced by executing L's iterations in index order.
@@ -2177,6 +2187,7 @@ An implementation may instead apply that operation over any binary tree whose le
 Every admitted operation is a total function on the complete value set of its type, carries no domain obligation, and is associative and commutative on that set with a two-sided identity element — `+wrap` and `*wrap` are the ring operations of the integers modulo two to the width, with identities zero and one; `iand`, `ior`, and `ixor` are the meet, join, and group operations of the bit vector, with identities the all-ones vector, zero, and zero; `imin` and `imax` are the meet and join of that type's total order, with identities the type's greatest and least values; and `band`, `bor`, and `bxor` are the two-element cases of the same three, with identities `true`, `false`, and `false` — so every such tree denotes one value of that type and the accumulator's value at L's continuation is that one value in every execution.
 No further operation is admitted: `+`, `+defined`, and `+checked` each attach a domain obligation or a `Result` route to every application, `+sat` is not associative, and no float operation of [OP-1] is associative, so recombining a `fadd.strict` or `fmul.strict` fold could change published bytes.
 This rule uses associativity, commutativity, and the identity together: commutativity is what admits any leaf order and the fold of the second operand position, and the identity is what lets an implementation seed a subrange of iterations before knowing whether that subrange writes, so a range of iterations that writes the accumulator not at all contributes either nothing or identity leaves that change nothing.
+For an indexed accumulator, the same combination argument applies independently to each cell, using that cell's incoming value and exactly the contributions whose subscripts select it; the occurrence restriction keeps both that selection and those contributions independent of partial results. Associativity, commutativity and the two-sided identity therefore preserve the sequential value of every cell, including cells receiving no contributions, independently of the scalar accumulator's recombination.
 That identity is conditional on contract compliance exactly as [PAR-1]'s is; every partial operation in the admitted loop has already been discharged before lowering.
 Both endpoint atoms are still evaluated exactly once each in [FN-1]'s order before any iteration begins, and the binder still takes each value of the half-open range exactly once; this rule relaxes only the order in which iterations execute and the shape of the accumulator's combination, never the set of iterations, the values the binder takes, or either endpoint evaluation.
 The number of workers, the identity of the host thread that executes an iteration, the schedule, how the index range is divided, and whether any overlap or recombination was performed at all are not observable, and no rule of this specification is stated in terms of them.
@@ -2474,9 +2485,10 @@ A host handle is an opaque struct [TYPE-2] a host module declares with no fields
 An opaque struct a host module declares with fields, `Instant` alone, has the representation and capabilities its fields give it [PROV-6]; its fields are private to a module with no implementation record [MOD-6], and only a host function returns one.
 A host function that carries `waits` [WAIT-1] completes once the host has produced its outcome, and its context may wait for the host meanwhile [WAIT-2]; a host function that does not wait completes without waiting for the host.
 The host has one monotonic clock, whose reading never decreases, and every `Instant` is one of its readings or an instant `instant_after` forms from one. `now` writes its `Clock`, which orders two reads through one clock [HOST-1]; reads through two clocks that `clock_share` relates are ordered only as [HOST-1] orders them. A context executes its waiting calls one at a time and no statement overlaps one [WAIT-2, PAR-1], so a `now` it executes after `sleep_until(d)` has completed, or after an operation has produced `DeadlinePassed` for `d`, returns a reading not before `d`. The calendar time `unix_nanoseconds` reads is a separate host value, which the host may move in either direction between reads.
-A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
+A host function with a parameter `deadline: Option<Instant>` bounds its wait by it. With `None` the function waits as it would without the parameter. With `Some(d)`, an outcome the host has not produced before the monotonic clock reaches `d` is produced then as `DeadlinePassed`, carried by `ReadFailed` where the error type is `ReadStop`, and the function has transferred nothing: it read, wrote, received or sent no byte and accepted or opened no connection and consumed no stop request; the call then completes as every waiting call completes once its outcome has been produced [WAIT-2]. `DeadlinePassed` is produced in no other way. A function whose own outcome the host produces while `d` is reached produces that outcome instead, so a deadline never discards a completed transfer; which of the two outcomes a context observes is an input of the execution [WAIT-2].
 Which of the bytes `sync_file` and directory entries `sync_directory` hand to the host's durability mechanism survive a failure of the host is outside this specification [SCOPE-3].
-A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is replaced by `rename_file` or removed by `remove_file`.
+A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
+A name given with a root to a `std::fs` operation denotes an entry directly below that root exactly when it is one nonempty path component other than `.` and `..`; an operation given a name that denotes no such entry returns `InvalidPath`.
 Factories that `factory_share` relates draw on one budget, so whether an acquisition through one of them finds a credit depends on what the others hold; within one context their operations are ordered only as [HOST-1] orders them.
 `TcpConnection`, `AcceptedConnection`, `Directory` and `Inputs` have ordinary public constructors, fields, partial-move and destructuring rules. Their linearity follows their fields. No relation between two fields is implied by constructing a struct.
 
@@ -2683,6 +2695,11 @@ public fn open_directory(factory: &HandleFactory, root: &DirectoryRead, name: &[
   requires end <= name^.len;
 } doc "Opens the directory that the bytes of name from start to end name below root.";
 
+public fn open_directory_write(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<DirectoryWrite, IoError> reads(root), reads(name), writes(factory) waits contract {
+  requires start <= end;
+  requires end <= name^.len;
+} doc "Opens the write half of the directory that the bytes of name from start to end name below root, as open_append names a file [PRE-2], creating it empty when no entry has that name. An existing directory is opened with its entries kept. A host refusal, including a name that names a file or other non-directory entry, is an IoError.";
+
 public fn open_directory_source(factory: &HandleFactory, directory: &DirectoryRead) -> result: Result<DirectorySource, IoError> reads(directory), writes(factory) waits doc "Opens the listing of the entries of directory.";
 
 public fn directory_next(source: &DirectorySource, destination: &[u8], start: u64, end: u64) -> (result: Result<unit, ListStop>, next: u64, entries: u64) writes(source), writes(destination) waits contract {
@@ -2719,6 +2736,13 @@ public fn rename_file(factory: &HandleFactory, root: &DirectoryWrite, from: &[u8
   requires to_start <= to_end;
   requires to_end <= to^.len;
 } doc "Renames the file selected by from[from_start..from_end] to to[to_start..to_end], both names below root as open_append names a file [PRE-2], replacing any entry at the destination atomically: an observer sees the whole old file or the whole renamed file at the destination, with no absent or partial intermediate state. Ok reports that the host renamed the file; a host refusal, including a missing source name, is an IoError.";
+
+public fn move_file(factory: &HandleFactory, from_root: &DirectoryWrite, from: &[u8], from_start: u64, from_end: u64, to_root: &DirectoryWrite, to: &[u8], to_start: u64, to_end: u64) -> result: Result<unit, IoError> reads(from), reads(to), writes(factory), writes(from_root), writes(to_root) waits contract {
+  requires from_start <= from_end;
+  requires from_end <= from^.len;
+  requires to_start <= to_end;
+  requires to_end <= to^.len;
+} doc "Renames the file selected by from[from_start..from_end] below from_root to to[to_start..to_end] below to_root, each name below its root as open_append names a file, with the atomic replacement and outcome of rename_file [PRE-2]. The two directories must be on one host file system; a move between file systems is a host refusal.";
 
 public fn remove_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<unit, IoError> reads(name), writes(factory), writes(root) waits contract {
   requires start <= end;
@@ -2799,9 +2823,13 @@ public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result:
 public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the sending half of a connection.";
 ```
 
+`StopSignals` is a capability of the invocation. While no `StopListener` is open, the host default applies; on POSIX, the signal's default action ends the program. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. A stop request is an input of the execution [WAIT-2]. A termination the host imposes after its grace period ends the program then.
+
 `std::process`, the record `process/module.wfm`:
 
 ```
+alias IoError = pkg::io::IoError;
+alias Instant = pkg::time::Instant;
 alias HandleFactory = pkg::io::HandleFactory;
 alias InputStream = pkg::io::InputStream;
 alias OutputStream = pkg::io::OutputStream;
@@ -2813,6 +2841,17 @@ alias WallClock = pkg::time::WallClock;
 public opaque nocopy struct ExitStatus {
 }
 
+public opaque nocopy struct StopSignals {
+}
+
+public opaque nodrop struct StopListener {
+}
+
+public enum StopKind {
+  Interrupt();
+  Terminate();
+}
+
 public struct Inputs {
   public args: Args;
   public cwd: Directory;
@@ -2822,9 +2861,16 @@ public struct Inputs {
   public stdin: InputStream;
   public clock: Clock;
   public wall_clock: WallClock;
+  public stops: StopSignals;
 }
 
 public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
+
+public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
+
+public fn stop_next(factory: &HandleFactory, listener: &StopListener, deadline: Option<Instant>) -> result: Result<StopKind, IoError> writes(factory), writes(listener) waits doc "Returns the next stop request in runtime observation order, keeping requests observed while no context waits; requests the host merged before runtime observation arrive as one.";
+
+public fn close_stop_listener(factory: &HandleFactory, listener: StopListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener, restores the host default and returns its handle credit.";
 ```
 
 ## 15. Obligation discharge: deterministic facts, invariants, and local certificates (normative)
@@ -2863,9 +2909,37 @@ No caller fact is copied into a callee: an ordinary call judges its instantiated
 A fragment type is one member of the closed integer set [OP-2]; relations are over mathematical values, so relations between terms of different fragment types are well-formed and are created only by the sources and flow transports [ENT-3, ENT-5] admit.
 A widening conversion is a bare `cvt::<S, D>(e)` with integer S and D whose pair is whole-type total [OP-6]; it denotes the mathematical value of e, so wherever an [FN-9] relation term or a comparison-origin operand [ENT-3] admits a term or constant, a widening conversion of one is that term or constant itself.
 
-A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, its result ordinal and projection [CALL-4], and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant bounds and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, whether it denotes the endpoint's value or one measure of it)`. The final alternative (i) is a term of the private success-payload root of an ENT-5 conditional context, typed by the success payload, `Ok` or `Some`, and scoped to that context: one term for each datum [CALL-4] gives that payload type, the value of a fragment-integer place and each measure of a measured place, identified by its projection and whether it denotes the place's value or one measure of it; the same root in two contexts does not identify their values.
+A term is exactly one of: (a) a tracked place — a `place` [GRAM-5] whose root `pbase` IDENT resolves to any `let_stmt` binding, a `for_stmt` binder, an `atomic_stmt` binder, a `param`, any match binder regardless of its [OWN-13]-derived mode, or a named const [CONST-2], formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and no subscript suffix, whose final selected type is one fragment type; (b) a subscripted readonly field — a `place` [GRAM-5] whose root resolves as in (a), formed with any number of field-selection and enum-payload `psuffix`es and `^` suffixes and at least one subscript, whose final step selects a readonly field [TYPE-2] of one fragment type, `table[i].len` [MSR-1] and a writer's `nodes[i].count` alike; (c) a constant — the mathematical value of an integer literal or of an integer-typed named const, or symbolically an in-scope integer-typed const-generic parameter; (d) one of the two compiler-owned u64 capture terms belonging to an admitted `for_stmt`, identified exactly by `(that for_stmt's NodePath, lower)` or `(that for_stmt's NodePath, upper)`; (e) one compiler-owned symbolic result datum of an admitted FN-9 clause while its RelationTemplate is formed, identified by that `ensures_clause`, its route or unrouted class, its result ordinal and projection [CALL-4], and fragment type; (f) the one compiler-owned commit value of an admitted [SET-1] `set` whose right-hand side has one fragment type, or the one compiler-owned given value of a `give` whose operand is a [GIVE-1] carrier, each identified exactly by `(that statement's NodePath, that fragment type)`; (g) the distinguished zero term Z, used only to carry constant bounds and [ENT-6]'s normalized integer-domain components; or (h) one compiler-owned measure datum [MSR-3], which is a call datum [ENT-3.S13], identified exactly by `(that call's NodePath, the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; an entry datum, identified exactly by `(the formal ordinal, that operand's ordered projections, whether it denotes the operand's value or one measure of it)`; or a placement datum, identified exactly by `(that statement's NodePath, which placement of [MSR-3]'s placement table it stands at, the ordinal within that statement, the ordered owned descendant projection, whether it denotes the endpoint's value or one measure of it)`. Alternative (i) is a term of the private success-payload root of an ENT-5 conditional context, typed by the success payload, `Ok` or `Some`, and scoped to that context: one term for each datum [CALL-4] gives that payload type, the value of a fragment-integer place and each measure of a measured place, identified by its projection and whether it denotes the place's value or one measure of it; the same root in two contexts does not identify their values.
+
+Alternative (j) is a compiler-owned target-instance measure term used while forming or proving an [INV-1] counted next-header relation.
+For a measure factor whose place contains the counted binder in a subscript offset, each measure of that selected measured place, and each measure prefix needed to discharge its subscripts, has a target-instance term when its own path contains that offset.
+The term is identified by the concrete function instance, the for statement, the incoming induction edge, the selected place's proof path, as a place is identified below, with every counted-binder offset replaced by the one next-binder selector for that loop and edge, and the selected measure member.
+That selector denotes [INV-1]'s checked current-binder plus one value; all its occurrences on the edge denote that one value.
+Prefixes without a substituted offset use their ordinary terms.
+Other offsets keep their ordinary index-step identities, so a place written through an exact reference variable and the place it names share one target-instance term.
+Resolved storage paths serve validity and support checking, and establish no equality beyond proof-path identity.
+
+A target-instance place is formed from base to leaf, proving each [OP-4] bound in the frozen incoming state using these substituted operands before the selected measure term becomes available.
+The term has the measure's ordinary u64 type, a current affine image belonging to this target instance, and exactly [MSR-1] and [MSR-2]'s applicable standing images and relations for that measured place.
+Measures of one target-instance place share that place's standing relations.
+These are available only in the query's formation view.
+A term in this namespace is distinct from every ordinary current-place term, including one with the same source spelling.
+Existing ordinary bounds, atoms and measure datums keep their current-place denotations.
+No equality or relation between a target-instance measure and a current-place measure is established by their spelling or by this instantiation.
+
+A formed target-instance measure is a live measure candidate for [MSR-4] in that formation view, and is the side term submitted by a normalized component naming it.
+It participates in the same numeric disposition and receives no query against the ordinary current-place term in its place.
+Target-instance terms and their private standing facts add no premise to another batch member's frozen input and leave no ordinary fact at the continuation or next header.
+Their identities and proofs remain in the retained derivation.
+They evaluate no runtime expression and introduce no writer-visible binding or offset form.
+
 The FN-9 result datum occurs only in its template: every selected-return or caller query substitutes it with an ordinary term, constant or the corresponding term of the private payload root of ENT-5's conditional context. That typed root denotes only the success payload of the value associated with its context; roots of distinct contexts have no shared value identity. Its terms are compiler-owned, unwritable, carry their fragment type's standing bounds, and are substituted away at an ordinary success delivery. Neither symbolic datum creates runtime storage.
-Two places are the same term exactly when their roots resolve to the same declaration event [TYPE-6, DIAG-1] and their canonical source spellings [FORM-2] are byte-identical; a fresh binding legally reusing an expired spelling is a distinct term, and distinct spellings are distinct terms even when they resolve to overlapping storage.
+A place is identified, as a term and as a Goal datum, by its proof path, formed where the place is evaluated; admission under clauses (a) and (b) is judged on the place as written, and the proof path only identifies an admitted place.
+A path [REF-1] is exact when it has no `R.**` cover, each of its index steps selects by a literal, a const or a binding its formation read and each of its range steps by endpoints its formation evaluated, so that no step is a loop header's opaque identity, a keyed entry's position [SHARE-2] or a run of every segment, and it starts at a local variable, a named const, or a parameter or `atomic_stmt` binder that no `set` in its function body rebinds, reachable or not.
+A `&T` reference variable is exact at a point when no `set` in its function body rebinds it, reachable or not, and its path set there is one exact path.
+The proof path of a place written through a reference variable exact at that point is that path followed by the place's steps below the variable's `^`; the proof path of every other place is its root declaration event [TYPE-6, DIAG-1] with its canonical source spelling [FORM-2], so a place written through a rebound reference variable, through one whose path set is not one exact path, or through a `&[T]` reference, whose `len` is the value its formation captured [REF-4], is identified through that variable.
+Two places are the same term exactly when their proof paths have the same root declaration event and the same steps in order, where two index steps are the same when they are one literal or const value, when they read one binding to which no assignment has intervened since either was formed, or when they are one formation's evaluation; a fresh binding legally reusing an expired spelling is a distinct term, and places with distinct proof paths are distinct terms even when they resolve to overlapping storage.
+These conditions keep apart two places one declaration event could otherwise name: a rebound variable names one storage before a rebinding and another after it, and a rebound parameter or `atomic_stmt` binder also roots the path of every reference formed from it.
 Term identity thus under-approximates aliasing, while kills [ENT-5] use [OWN-7]'s resolved-place overlap relation and over-approximate it.
 A readonly field below a subscript is a term because every event that changes one writes a place containing its storage: outside its declaring module it is never a write target [TYPE-2], so the event is a replaced value holding it [SET-1], an element exchanged or updated with it [OP-11, OP-12], a window part an [OP-10] operation moves, or the field itself under a row that writes it [EFF-2], and inside that module an assignment to it writes its own place; the ordinary [ENT-5] kill reaches every term over it in either case.
 Each subscript in a clause (b) place is an [OP-4] occurrence like every other and owes that rule's own obligation against the base it indexes, submitted to [MSR-4] where the place is formed; a place whose subscripts are not all discharged is no term, exactly as an undischarged subscript in read position is no value.
@@ -2890,7 +2964,7 @@ An FN-9 parameter datum denotes its function-entry image in the RelationTemplate
 Local proof may reuse the ordinary parameter term only while FN-9's entry-image stability remains live; caller publication substitutes the corresponding pre-transfer actual image independently for each referenced formal.
 
 A concrete goal is one finite typed expression tree with exact result `own Bool` formed under [FN-8]'s structural identity, either by concrete substitution of a GoalTemplate, by [ENT-3]'s goal-origin judgment in the current function, or as the canonical total predicate of an [ENT-6] operation obligation.
-A concrete place datum retains the resolved root declaration event and its ordered field, enum-payload, and `^` projections, and the subscripts of a clause (b) place; an actual substituted for a reference formal uses the resolved referent datum, while an own actual uses its pre-transfer datum.
+A concrete place datum is identified by its proof path above, the subscripts of a clause (b) place included; an actual substituted for a reference formal uses the proof path of the place it names, which for a reference-variable actual is that variable's path when it is exact and its own spelling when it is not, while an own actual uses its pre-transfer datum.
 Named consts and typed literals retain the identities FN-8 fixes.
 
 A direct value expression is the finite typed tree formed from those datums and the pure total operation rows admitted by [FN-8].
@@ -3115,11 +3189,14 @@ Nothing else is a fact: a writer's `ensures_clause` is only an FN-9 proof obliga
 S11 is only the compiler-owned consequence of the counted operations [FN-1] actually executes, and S12 exists only from the declaration relations available under FN-9: a separately verified earlier-SCC summary or a PRE-1 or PRE-2 supplied declaration, under the publication formula below.
 Each accepted fact retains the constructor identity and direct parents that already produced it; this diagnostic information establishes and kills no additional relation or signed goal, and no [ENT-4] answer depends on a second provenance state.
 
-A comparison origin is defined first.
-An expression has comparison origin R when (a) it is an `infix` expression whose operator is a `compare_op` — `==`, `!=`, `<`, `<=`, `>`, `>=` [OP-2] — and whose two operands are each a term, a constant, or a widening conversion of one [ENT-2], R the corresponding relation over them; or (b) it is a bare IDENT naming a `let` binding of type `own Bool` whose initializer right-hand side satisfies (a) with relation R, no [ENT-5] kill event (a)–(d) applies to a fact supported by an operand term of R on any path from that initializer to the use, and the binding is the target of no `set` on any such path.
+An ordinary-let binding b holds its initializer right-hand side E at a use when, on every path from that initializer to the use that does not execute the initializer again, no [ENT-5] kill event (a)–(d) applies to a fact supported by b or by any member of E's opaque-goal support [ENT-5].
+Thus a `set` commit through a reference whose resolved place is b, a call whose projected `writes` reach b through a reference actual, and a write to any place E reads each end the hold exactly as a direct `set` of b does.
+
+A comparison origin is defined next.
+An expression has comparison origin R when (a) it is an `infix` expression whose operator is a `compare_op` — `==`, `!=`, `<`, `<=`, `>`, `>=` [OP-2] — and whose two operands are each a term, a constant, or a widening conversion of one [ENT-2], R the corresponding relation over them; or (b) it is a bare IDENT naming an ordinary-let binding of type `own Bool` that holds at the use an initializer right-hand side satisfying (a) with relation R.
 No other shape has one: `band`, `bor`, `bxor`, `bnot`, `eeq`, `ene`, user-function results, and deeper indirection chains contribute no L0 comparison origin in this version; an established Boolean goal contributes relations only through the members of its signed decomposition set.
 
-An expression has operation-domain-predicate origin G when (a) it is one total `+defined`, `-defined`, `*defined`, `/defined`, `%defined`, `ineg.defined`, `iabs.defined`, `ishl.defined`, `ishr.defined`, or `cvt.defined` operation with its selected types and complete ordered admitted value-expression identities, after every nested obligation in those operands has succeeded, G that exact typed GoalExpression; or (b) it is a bare IDENT naming an own-Bool ordinary-let binding whose initializer satisfies (a), no [ENT-5] kill event applies to G's support on any path from that initializer to the use, and the binding is the target of no `set` on any such path.
+An expression has operation-domain-predicate origin G when (a) it is one total `+defined`, `-defined`, `*defined`, `/defined`, `%defined`, `ineg.defined`, `iabs.defined`, `ishl.defined`, `ishr.defined`, or `cvt.defined` operation with its selected types and complete ordered admitted value-expression identities, after every nested obligation in those operands has succeeded, G that exact typed GoalExpression; or (b) it is a bare IDENT naming an own-Bool ordinary-let binding that holds at the use an initializer satisfying (a) with goal G.
 This origin is one ordinary exact goal, not a second fact channel.
 Its support, expansion, kills, scope exit, joins, and signed establishment are the ordinary goal rules below.
 
@@ -3127,10 +3204,10 @@ A Bool expression has an ordinary goal origin G when, after its ordinary express
 Construction, an ordinary function call, a move or borrow, an undischarged partial operation, an expression requiring occurrence-local evaluated-value identity, and every other expression shape has no goal origin.
 A checked exact integer operation or subscript may therefore occur only below that total root and only through the admitted structure above; it never establishes its own safety merely by occurring in G.
 The unexpanded tree G is the direct goal.
-Starting from that direct goal, its complete origin expansion recursively replaces an ordinary-let datum by that binding's unique defining right-hand side exactly when the right-hand side itself has an admitted value expression formed after its own nested obligations succeeded, the binding is no `set` target on any path from that initializer to this use, and no [ENT-5] kill event applies to the replacement's support on any such path.
+Starting from that direct goal, its complete origin expansion recursively replaces an ordinary-let datum by that binding's unique defining right-hand side exactly when the right-hand side itself has an admitted value expression formed after its own nested obligations succeeded and the binding holds it at this use.
 Expansion continues to a fixed point and is all-or-nothing for every eligible leaf; it never performs an algebraic rewrite.
 The goal-origin set is the direct goal plus that one complete valid expansion when it differs.
-Thus a condition binding's own Bool value and its still-valid computation origin are both retained: a later write to an origin place kills the expanded goal but not the already-computed binding goal, while a write to the binding kills the latter normally.
+Thus a condition binding's own Bool value and its still-valid computation origin are both retained: a later write to an origin place kills the expanded goal but not the already-computed binding goal, while a write that reaches the binding [ENT-5] kills the latter normally.
 Definition expansion in FN-8 is unconditional because every `contract_define` is erased pure proof syntax and the admitted block contains no mutation.
 
 Signed Boolean decomposition applies at every ordinary establishment of a signed goal fact by the sources below.
@@ -3273,7 +3350,7 @@ It establishes no L0 relation and no signed goal; it is an ownership-side refine
 Every published relation in this document is published by exactly one route — [ENT-3.S12]'s, with [ENT-3.S13]'s substitution — and nothing else publishes anything.
 This rule states that route's four points once, so no rule computes a fact at one program point and uses it at another without naming both.
 
-A declared relation is **instantiated at the call**, by substituting each operand at the denotation [MSR-3]'s table gives it: an `own` measure or an explicitly entry-qualified measure or fragment-integer place of a written reference parameter by that call's pre-transfer datum [ENT-3.S13], a measure at a reference parameter the row only reads by its live resolved referent, a bare measure or fragment-integer place at a written reference parameter by the actual's resolved exit place, and a referenced result datum by its destination below. Entry and exit terms are distinct even when they name one formal.
+A declared relation is **instantiated at the call**, by substituting each operand at the denotation [MSR-3]'s table gives it: an `own` measure or an explicitly entry-qualified measure or fragment-integer place of a written reference parameter by that call's pre-transfer datum [ENT-3.S13], a measure at a reference parameter the row only reads by its live resolved referent, a bare measure or fragment-integer place at a written reference parameter by the actual's resolved exit place, and a referenced result datum by its destination below; each place an actual names is identified by its [ENT-2] proof path. Entry and exit terms are distinct even when they name one formal.
 Its **support** is the ordinary L0 support of the substituted terms. The immutable call datums have empty support; an exit term at a written reference parameter has the support of the resolved place after the call's projected write kills. Those writes kill pre-call facts, not the exit relation that the verified callee establishes afterwards. A later target commit or other write to that place kills the exit relation normally.
 It is **established** on the call's normal continuation, after the call's ordinary transfer, consumes, borrow commits, target commit and kills, exactly in [ENT-5]'s call-boundary order.
 A relation routed to a success variant is instantiated at the call in the same order and is **restricted** to that value's conditional success context [ENT-5]. A later success selection activates surviving evidence; it never performs the call substitution again. An intervening event therefore kills the conclusions whose support it removes before they can be selected.
@@ -3315,7 +3392,7 @@ These three dispositions are complete and exclusive [FN-8, FN-9].
 The least closure is unique and finite up to L0 subsumption because only the finite terms and goals [ENT-2] participate and the rules are monotone.
 Implementations may compute lazily or incrementally, but every derivability and disposition answer must equal this least-closure answer.
 
-[ENT-5] The support of an L0 fact is every tracked place occurring in its terms; every compiler-owned counted capture term occurring in its terms; for each [ENT-2] clause (b) term, the storage of the readonly field its final step selects — for a measure term over P, P's descriptor storage but not P's element storage [MSR-2] — and the support of every offset occurring in its place; and every reference variable [REF-1] and every `Box` binding [TYPE-7] any of its places reads through, a bound call-result binding included — its resolved place is the candidate actual's complete resolved place, so a `set` commit or projected callee write through the chain kills exactly the facts supported by that storage.
+[ENT-5] The support of an L0 fact is every tracked place occurring in its terms; every compiler-owned counted capture term occurring in its terms; for each [ENT-2] clause (b) term, the storage of the readonly field its final step selects — for a measure term over P, P's descriptor storage but not P's element storage [MSR-2] — and the support of every offset occurring in its place; and every reference variable [REF-1] and every `Box` binding [TYPE-7] the proof path [ENT-2] of any of its places reads through, a bound call-result binding included — its resolved place is the candidate actual's complete resolved place, so a `set` commit or projected callee write through the chain kills exactly the facts supported by that storage.
 Z, literals, named const values, and every measure datum of [MSR-3] — a call datum, an entry datum, and a placement datum alike — have empty support and never die.
 A counted capture is immutable and can die only on an edge leaving its compiler-owned construct scope.
 
@@ -3333,7 +3410,9 @@ A requirement or verified postcondition fact has exactly the ordinary L0 or opaq
 An affine invariant conclusion is different: it is a theorem over the immutable mathematical value-image atoms captured when that invariant occurrence was proved, not a proposition that rereads the mutable source bindings whose spellings formed it.
 A write, consume, or scope exit changes or removes the current binding-to-image map but does not make an already proved theorem about the old image false; a live alias may therefore continue to use it, and a named `proof_use` source denotes exactly that immutable theorem while its invariant declaration remains in lexical scope [INV-1, PRF-1].
 Without a current value image or another retained theorem connecting an old atom to a submitted target, an unreachable old atom cannot help prove that target.
-Header invariant conclusions and local invariant conclusions alike follow [ENT-5]'s canonical control-flow intersection on every edge, each edge leaving their loop included, independently of their proof-only names; a header invariant's name still leaves lexical scope with the loop body [INV-1].
+Header and local invariant conclusions retain their immutable value-image meaning on every edge, including edges leaving their loop; their ordinary survival at a join is the canonical intersection specified below and in [ENT-6].
+The additional transport below proves fresh instances of active header relations.
+A header invariant's name leaves lexical scope with its loop body [INV-1].
 The compiler neither removes one constructor and reruns the body nor computes a masked fact state to decide whether any fact was necessary.
 
 An S12 relation, a narrow-receiver relation, and a relation transported through a value initializer have exactly the ordinary L0 support of their terms after the route's stated substitutions.
@@ -3391,12 +3470,56 @@ An all-contradictory image set is contradictory; an absent eligible relation on 
 Add exactly the joined L0 relations to the receiver's ordinary continuation state and close once.
 This transport reads no pre-existing fact on x, identifies x with no later value of d, copies no unrelated relation, and creates no runtime operation.
 
-Joins: at the continuation of a `match_stmt` or `value_match`, the fact state is the join of the states on every arm exit edge reaching that continuation on the conservative structural graph [FN-1], each taken after that edge's pre-exit closure, scope-exit kills, and surviving-state closure above; an arm every path of which leaves by `return`, `break` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
+A canonical join frontier is defined on the conservative structural graph [FN-1].
+Starting at a continuation that merges control inputs, replace an incoming merge-only continuation by its incoming edges, repeatedly, in source edge order.
+A merge-only continuation performs control merging and the compiler-derived releases [STOR-3], pre-exit closure, lexical scope kills and surviving-state closure of this rule, and has one successor.
+Apply those edge events separately to every input routed through it, in their original order.
+The expansion ends at an incoming source action, control split, value transfer, required source judgment (including an atomic block's exit judgment [TYPE-11]), or loop-header environment boundary.
+Compiler-derived releases and lexical scope kills are edge events that preserve the merge-only region.
+These endpoints and the region's final continuation are its cut points.
+Documentation and administrative block boundaries add no cut point.
+A maximal expanded region has one semantic join at its final continuation and has no intermediate joined fact state.
+Every new control split consumes one state at its cut point, so this expansion contains incoming structural edges, not combinations of earlier branch histories.
+Edge order is the source NodePath order specified below; each routed edge also retains its ordered cleanup sequence.
+
+At a cut point with an ordinary continuation, form the ordinary join of that frontier using the domain rules below and [ENT-6], before adding transported header relations.
+At a cut point whose continuation is solely a next-header induction judgment, apply [INV-1]'s per-input batch to the frontier.
+A loop's entry and exit each delimit the active header environment.
+A loop continuation still joins its own exit edges; the active environment there is that of its enclosing body.
+
+The transport candidates are exactly the affine header relations of loops lexically enclosing the destination whose complete base batch succeeded.
+Visit enclosing loops from outermost to innermost and their written relations in source order.
+Each candidate denotes its written relation instantiated with the current operand values at this point; a counted binder here denotes its current value.
+Local invariant declarations, requirements, postconditions and range clauses supply their ordinary facts, and supply no additional transport templates.
+Header templates remain active independently of whether the current iteration's original theorem survives ordinary intersection.
+
+A candidate is eligible when every operand is live and admitted by [INV-1], [ENT-2] and [MSR-1] on each non-contradictory input and in the ordinary joined state.
+For each such state, form the candidate in a separate view of that frozen state, visiting written operands left to right and subscript prefixes from base outward.
+Each subscript bound is submitted to [MSR-4] before the measure below it is formed.
+Formation uses current resolved places, reference validity, offset values and measure images, together with the existing standing facts for admitted terms.
+These views publish no fact into another candidate's view.
+An unavailable operand, unproved formation bound or unrepresentable affine form makes this optional candidate ineligible.
+The source formation ceilings and checked integer arithmetic of [INV-1] also apply to these forms.
+
+For each eligible relation, instantiate its [INV-1] normalized components separately with every non-contradictory input's current images and submit each component to [MSR-4].
+Each query retains the source side's L0 term when available, including the side required by the bridge.
+A relation is transported exactly when every component is proved on every such input.
+The ordered relation's one component, or the equality's complete pair, is then established over the ordinary joined current images with a derivation recording the template, each input's substitution and proof, the output substitution, and the contradictory inputs' dispositions.
+All candidates read frozen inputs and the ordinary joined state; publish successful relations together in candidate and component order, as [ENT-6] specifies.
+A failed optional candidate publishes nothing and creates no source rejection.
+A frontier with no non-contradictory input has the contradictory state and an empty transported sequence.
+
+Transport establishes a new immutable theorem about the current joined values.
+It changes neither the denotation of an existing named proof nor any input value's identity.
+A later write or scope exit follows the ordinary image and support rules above.
+Transport changes no runtime operation, evaluation, effect, reference or control edge.
+
+Joins: at the continuation of a `match_stmt` or `value_match`, the ordinary fact state is the join over its canonical frontier, initially comprising every arm exit edge reaching that continuation on the conservative structural graph [FN-1], each taken after its applicable edge events; an arm every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
 In any nonempty join with at least one non-contradictory input, a contradictory all-derivable input imposes no constraint.
 Over the non-contradictory inputs, the L0 join keeps for each ordered term pair the weakest (largest-constant) bound held by all and each disequality held by all; the opaque join keeps one signed fact exactly when that identical goal and sign are held by all.
 The join of closed states is closed.
 A nonempty join whose every input is contradictory, and an empty join with no reaching edge, are each the contradictory all-derivable state.
-At the continuation of an `if_stmt` or `value_if`, this same join is taken over every branch exit edge reaching that continuation — for an else-free `if_stmt`, the false edge is such an edge — each after its pre-exit closure, scope-exit kills, and surviving-state closure; a branch every path of which leaves by `return`, `break` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
+At the continuation of an `if_stmt` or `value_if`, this same join is taken over every branch exit edge reaching that continuation — for an else-free `if_stmt`, the false edge is such an edge — each after its pre-exit closure, scope-exit kills, and surviving-state closure; a branch every path of which leaves by `return`, `break` or `continue` to an enclosing loop, or `propagate`'s error edge contributes nothing there.
 The continuation of a `loop_stmt` uses the same join over its `break` edges.
 A `loop_stmt` with no `break` resolved to it has an empty join and therefore the contradictory state, consistent with that continuation being unreachable in truth while the conservative graph keeps it reachable.
 A `propagate` right-hand side's `Err` edge leaves the function; its normal continuation keeps the preceding state subject to the initializer call's own kill events (b) and (c), and its binder selects the evaluated outcome's conditional success evidence as specified above.
@@ -3405,33 +3528,33 @@ For every join above, contributing arm, branch, `give`, and `break` edges use th
 The continuation of a `for_stmt` is the join of its structural false-header edge and every `break` edge resolved to that counted loop, each taken after the applicable pre-exit closure, all binder, capture, and body-scope exit kills, and surviving-state closure.
 The false edge always exists in the conservative graph [FN-1], so this join is never empty.
 A counted continuation orders that false-header edge first and its contributing `break` edges in source `NodePath` order after it.
-A `break` resolved to an enclosing loop, a `return`, or a `propagate` error edge contributes nothing there.
+A `continue`, a `break` resolved to an enclosing loop, a `return`, or a `propagate` error edge contributes nothing there.
 Because the counted binder and both captures are out of scope before the join, no S11 body fact, capture fact, or raw `binder = upper_capture` fact reaches the continuation.
 An [INV-1] exact-exhaustion conclusion reaches the continuation only when the identical outer-value conclusion is present on every reaching input of this join; in particular, a `break` edge receives no conclusion from the false header and therefore removes a conclusion not independently true on that edge.
 
 For an ordinary loop L, the conservative head state is the state before L minus every fact having a support member that a continuing kill event of L may kill.
 A kill event (a)–(d) placed inside L's body, at any nesting depth, is continuing for L exactly when some path of the conservative structural normal-control graph [FN-1] leads from the edge carrying that event to L's body entry without leaving L's body — that is, exactly when an execution taking that edge can reach a later iteration head of the same loop.
-Every other kill event inside the body is not continuing and is not scanned: an event on or reachable only through a `break` edge resolved to L or any enclosing loop, a `return` edge, or a `propagate` error edge leaves L for the loop's continuation or the function-return sink [FN-1, ERR-3], and no iteration head of L is reached from it without first re-entering L from outside, where the enclosing flow supplies the state.
+Every other kill event inside the body is not continuing and is not scanned: an event on or reachable only through a `continue` to a loop enclosing L, a `break` edge resolved to L or any enclosing loop, a `return` edge, or a `propagate` error edge leaves L for the resolved target or the function-return sink [FN-1, ERR-3], and no iteration head of L is reached from it without first re-entering L from outside, where the enclosing flow supplies the state.
 A kill inside a nested ordinary or counted loop whose continuation lies inside L's body is continuing for L, including the kills carried on that nested loop's own `break` edges, because L's body entry is reached from that nested loop's continuation without leaving L.
 Without a parenthesized invariant header, exactly those surviving facts hold at every iteration head; establishment and kills then proceed ordinarily within the iteration, and no fact established inside an iteration survives to the next iteration's head.
 With a header, [INV-1] first proves every header invariant simultaneously in the complete state before L without assuming any invariant from that header.
 After that base batch succeeds, the complete header batch is added to the conservative head state as the assumptions for an arbitrary iteration.
-At every reachable normal body fallthrough, after ordinary statement effects, closures, and body-scope cleanup, [INV-1] proves the complete header batch again over the current value images while assuming the current-iteration header batch.
+Preservation is proved at the ordinary loop's induction frontier [INV-1].
 Only the proved header batch, not an arbitrary body-established fact, is reintroduced at the next ordinary-loop head.
-If no normal fallthrough reaches the backedge, the preservation batch is vacuous.
+Vacuity is determined from that frontier [INV-1].
 A fact a non-continuing edge kills is still removed on that edge: the continuation join above takes each `break` edge after that edge's scope-exit kills, and an edge to the function-return sink reaches no queried program point, so narrowing this scan opens no path on which a dead fact is read.
 
 A counted `for_stmt` uses one compiler-owned structural binder recurrence.
 An [INV-1] header invariant changes no runtime edge or recurrence: the writer supplies the proposition, while the checker proves its base and arbitrary-backedge obligations against this fixed recurrence rather than inventing an induction hypothesis.
 First its preheader establishes the S11 capture equalities and binder initialization and closes that complete post-capture state under [ENT-4].
 Second, [INV-1] proves the complete header batch simultaneously in that closed post-capture preheader state, without assuming any member of the batch.
-An event in the body, including the hidden normal-fallthrough binder update and body-scope cleanup, is continuing exactly when some path of the conservative structural normal-control graph [FN-1] leads from its edge through the counted header to a later entry of that same body without leaving the counted body; an event on or reachable only through a `break` resolved to that counted loop or an enclosing loop, a `return`, or a `propagate` error edge is not continuing.
+An event in the body, including the hidden fallthrough-or-continue binder update and body-scope cleanup, is continuing exactly when some path of the conservative structural normal-control graph [FN-1] leads from its edge through the counted header to a later entry of that same body without leaving the counted body; an event on or reachable only through a `continue` to an enclosing loop, a `break` resolved to that counted loop or an enclosing loop, a `return`, or a `propagate` error edge is not continuing.
 Kills inside a nested ordinary or counted loop are classified by that same positive reachability predicate.
 Third, its conservative head state is the closed post-capture state minus every fact having a support member that a continuing kill event may kill, and the complete proved header batch is then activated there.
 On each true header edge, S11 adds the two structural body-entry bounds to that state.
 The hidden binder update kills every fact supported by the binder before a later header, while S11 re-establishes only its two stated bounds after the next true guard.
-At every reachable normal body fallthrough, [INV-1] proves the complete next-header batch after ordinary body effects and cleanup and after substituting the compiler-owned `binder + 1` image for the binder; the complete current header batch is available as an assumption, and no target may assume its own next-header conclusion.
-This order is fixed: preheader establishment and closure, simultaneous base proof, continuing-kill subtraction, header-batch activation, S11 body-entry establishment, body flow including body-scope cleanup, formation of the compiler-owned `binder + 1` image and proof of the hidden update's representability, then simultaneous next-header proof over that image.
+The counted next-header batch is proved on each induction input, including the hidden next-binder image and its representability judgment [INV-1].
+The order is preheader establishment and closure, simultaneous base proof, continuing-kill subtraction, header-batch activation, S11 body-entry establishment, body flow, and [INV-1]'s per-input induction judgment.
 Neither endpoint is evaluated again and neither capture-to-endpoint equality is re-established after the preheader.
 Therefore a continuing write to a mutable endpoint source kills the direct capture-to-source equality, while a consequence already closed in the preheader whose support contains only immutable captures and other still-live terms may soundly survive.
 No other fact established inside one counted iteration survives to a later counted head; a body `invariant_stmt` may nevertheless serve as an ordinary proved premise for the next-header batch at the backedge where it is live.
@@ -3458,20 +3581,25 @@ An ordinary `let` installs the initializer image at its new binding after the in
 A whole-binding `set` first forms the right-hand-side image from the entering values, performs the ordinary target kill, then makes the target denote that image; a projected or indexed set does not replace the root binding's scalar image.
 A consume or scope exit removes the affected binding-to-image entry but does not alter an immutable theorem over the former atoms.
 
-At a control-flow join, a binding keeps an identical image held on every non-contradictory input.
+At an [ENT-5] canonical join, a binding keeps an identical image held on every non-contradictory frontier input.
 Otherwise every input image is first normalized: each delta atom an earlier join minted is folded back into the constant interval it stands for — that atom's coefficient times its interval, added to the input's constant — leaving one non-delta nonconstant form and one closed constant interval.
 If every normalized input then has one identical non-delta nonconstant form, the joined image is that common form plus one fresh delta atom whose interval is exactly the minimum through maximum of the inputs' constant intervals; otherwise the binding receives one fresh full-type atom.
 An input carrying no delta atom normalizes to its own nonconstant form and the closed interval of its own constant.
-A delta atom is an ordinary shared atom everywhere except a join, so a relation formed over it after one join still holds at the next; folding at the join is what makes the joined image the same whether the writer spells one branch set as nested conditionals or as one flat `match`, so acceptance never depends on the shape of the join.
+A delta atom is an ordinary shared atom at query points; at a later join it is folded as above.
+The frontier of [ENT-5] fixes the input states and the placement of added premises: regrouping the same ordered incoming edges solely by merge-only continuations gives the same joined images and automatic facts, up to renaming fresh atoms, and the same dispositions.
 The join never equates distinct atoms merely because two source expressions have the same spelling.
 A loop's continuing-kill construction similarly replaces every loop-carried mutable binding by a fresh header atom; proved header invariants are the only source-written relations reintroduced over those header images.
 The counted binder uses the captured lower image for its base, one fresh header image for an arbitrary iteration, and the exact `header_image + 1` form for a reachable next-header obligation.
 
 All of these transfers are source-structural, checked to the same affine formation ceilings, and independent of proof success order.
-They create no independently selectable premise except the invariant conclusions and specification-fixed automatic images expressly listed below.
+These transfers create independently selectable premises exactly for invariant conclusions, the specification-fixed automatic images below, and the transported header relations of [ENT-5].
 
-Every live measure term carries one compiler-owned immutable affine atom as its image, over the complete `u64` interval, minted once per measure term and never retargeted [MSR-4].
-That atom is not a source binding and is not a written `affine_factor` [INV-1]; it exists so that the automatic derivation below can range over measure terms, and it dies exactly when its measure term's support dies [MSR-2].
+A live measure term has its current immutable affine image.
+A measure whose [MSR-1] rule supplies a standing constant or captured range image uses that rule.
+Every other measure uses a fresh atom over the complete u64 interval when its current image is first required.
+A kill of the measure term's support [MSR-2] removes its current-image association; the atom and any retained theorem about its former value stay immutable.
+A canonical join retains a measure's image when every non-contradictory input has that identical image, and otherwise supplies a fresh joined atom when required.
+This association is shared by every consumer at that point and establishes no equality with a predecessor's different image.
 The closed L0-to-affine index is formed on demand from exactly Z, each live measure term, and each live own integer binding having both its ordinary [ENT-2] place term and a current affine value image.
 For every ordered pair of those candidates whose closed L0 state has a tightest bound `left_term - right_term <= c`, substitute the candidates' current affine images to form `left_image - right_image <= c`.
 For one canonical affine coefficient vector retain only the smallest upper bound; a single image whose coefficients or bound are unrepresentable in i128 is skipped and cannot suppress another image.
@@ -3481,11 +3609,13 @@ They are an ephemeral goal-query index over already-closed L0, not copies publis
 For a normalized affine inequality A, `DIRECT(A)` is exactly the following nonrecursive check, in this order: a contradictory current combined state under [ENT-4]; the strongest canonical L0 image having exactly A's canonical coefficient vector and an upper bound no greater than A's; or fixed interval substitution of every remaining atom, using its lower endpoint for a negative coefficient and upper endpoint for a positive coefficient, where each endpoint is the strongest closed L0/type bound for that atom.
 `DIRECT` never selects or subtracts a published affine premise.
 Every invariant conclusion and specification-fixed automatic image is appended when established to one automatic affine-premise sequence; its source category is diagnostic evidence and never partitions proof authority.
-At a join, an inequality survives exactly when the canonically identical inequality is present on every non-contradictory input under [ENT-5]'s all-predecessor rule; contradictory inputs are neutral, and if every input is contradictory the affine sequence is empty because L0 already proves every target.
-The surviving sequence is ordered by the first occurrence of each canonical inequality in the first non-contradictory structural predecessor under the edge orders fixed above.
-For each surviving inequality and each non-contradictory predecessor, the retained representative is that predecessor's first occurrence in insertion order; source and derivation evidence selects diagnostic parents only.
-At every query, canonically identical inequalities are represented once at their first occurrence in this sequence.
-Ordinary L0 relations are not copied into that list.
+At a canonical join, the ordinary surviving affine sequence consists of exactly the inequalities canonically identical on every non-contradictory frontier input.
+It is ordered by first occurrence in the first such input, using [ENT-5]'s edge order, and its representative on each input is that input's first occurrence.
+Append the relations transported under [ENT-5] in that rule's candidate and component order.
+The complete sequence represents each canonical inequality once, at its first occurrence.
+Contradictory inputs are neutral; an entirely contradictory frontier has an empty affine sequence because L0 already proves every target.
+Source and derivation categories determine evidence, not proof authority.
+Ordinary L0 relations stay in their closed domain and its query index.
 
 `AUTO(T)` for one affine target T exhausts exactly these finite families: `DIRECT(T)`; for every listed premise P, form `S = P` and check `DIRECT(T - S)`; for every unordered listed pair P,Q including P equal to Q, form `S = P + Q` in pair order and check `DIRECT(T - S)`; and for every strongest canonical L0 image R, form `S = R` and check `DIRECT(T - S)`.
 Every premise has coefficient one; forming S and then the one residual uses checked `i128` arithmetic in the stated order.
@@ -3611,8 +3741,12 @@ A `call` in `affine_factor` position is a hard error citing INV-1 at the `call` 
 An `affine_factor` `atom` is admitted exactly when it is one `place` formed from an admitted measure place [MSR-1] by one measure-member `psuffix` [OP-15], one bare `place` whose `pbase` is an IDENT and which carries no `psuffix`, or one integer literal; [GRAM-4]'s production is shared with a contract clause [MSR-5] and carries the wider factor set that clause needs.
 A bare `pbase` resolves to a live own-mode integer value as this rule states above, or to an in-scope integer-typed const generic [MSR-6], whose image is the constant [ENT-2] clause (c) already fixes: a concrete instance reads its mathematical value and the one source-canonical symbolic instance reads the symbolic constant term, which no [ENT-5] event kills and whose support is empty.
 A measure place's root resolves in exactly that same context, except that it names a live own-mode value of measured type, or a live reference whose referent is reached through `^` [REF-1, TYPE-7] as section 16's example writes `p^.len`, rather than a live own-mode integer, and it is never a counted header's `for_binding`.
-Such an atom denotes the [ENT-2] measure term over that place, of fragment type u64, lifted to its mathematical integer value like every other atom, and its support is [MSR-2]'s: an event killing that term retargets the atom's image exactly as a write to a named local retargets that local's, so no conclusion resting on it survives the write.
-A subscript inside a measure place is an ordinary [OP-4] occurrence: its offset resolves in that same context and is one of the offsets [ENT-2] clause (b) admits, and it owes `i < base.len` against the prefix reaching its base, judged where the relation is written — at the loop header in its entering ProofContext, at an `invariant_stmt` in that statement's entering one — exactly as one written at a measure read the program executes is judged at the read [MSR-4].
+A measure factor denotes its current [ENT-2] measure term, or that rule's target-instance term at a counted next-header substitution, lifted from u64 to its mathematical integer value.
+Support is fixed by [MSR-2], and [ENT-6] fixes the lifetime of its current-image association and the immutable meaning of a theorem about a former image.
+A subscript inside a measure place owes [OP-4]'s bound with offsets and prefixes resolved in the relation's current value environment.
+At a local invariant it is judged in the entering state.
+At a loop header its base and next-header instances are judged in the corresponding induction input below, before any target from that batch is published; a counted next-header instance uses the next-binder substitution also in offsets.
+The formability checks of optional transport instances belong to [ENT-5].
 A measure over a place whose subscripts are not all discharged is no term here either, so the relation names a slot the window has or it names nothing.
 A const generic is not an integer literal, so it never supplies the one direct literal operand a non-unit `*` requires.
 An integer-typed named const is admitted and denotes the one closed value it declares, folded to that value at formation; it is already an [ENT-2] constant term, so it means in a relation exactly what it means everywhere else. An integer-typed const generic is admitted as the paragraph above states [MSR-6], symbolic in the source-canonical instance and its value in a concrete one, and is not the closed-value admission. Construction, allocation, a field selection not ending in a measure member, a subscript outside a measure place, a reference expression, a moved value, and every other runtime expression form are not admitted as affine atoms in this version, and each is a hard error citing INV-1 at that `affine_factor`.
@@ -3629,16 +3763,39 @@ A header invariant has no proof block and no `proof_use`; a complex base is stat
 All invariant names in one header are distinct and enter scope simultaneously only after the complete header [INV-1].
 Their conclusions form one simultaneous batch.
 
-For the base batch, the checker submits every header target to [MSR-4]'s disposition in the complete preheader state and assumes no conclusion from that same header.
-If any base target fails, no header conclusion is published.
-After all bases succeed, the complete batch is available as the current-iteration assumption throughout the body, and its conclusions leave the loop as [ENT-5] fixes.
-For every reachable normal backedge, the checker proves every next-header target in one batch from the complete state on that edge while the current-iteration header batch is available; a target never assumes its own unproved next-header result.
-For an ordinary loop the next-header target is the same written relation over the current backedge value images.
-For a counted loop each binder occurrence in the source relation is rendered and proved as the current binder's exact mathematical `+ 1` image, and every other mutable atom uses its current backedge image.
-This is the induction step for an arbitrary iteration, not a check of a particular second iteration.
-A backedge batch is vacuous when no normal body fallthrough reaches it.
-A `break`, `return`, or `propagate` error edge creates no backedge obligation.
-Failure reports the invariant name, whether the failed incoming edge is base or backedge, and the complete required source-level relation after the counted next-state substitution; an internal affine term or value-image identifier is never the writer-facing residual.
+For the base batch, form and submit every header target to [MSR-4] in the complete preheader state, using the counted initialization where [ENT-5] supplies one.
+Every target reads that same state.
+The batch is published as the current-iteration assumptions exactly when all bases succeed.
+No target assumes a conclusion of its own base batch.
+The formed operand instances accompany those assumptions.
+Their formation obligations are part of the same base and next-header induction: they license the header's measure images and publish no additional numeric inequality beyond its written relations.
+
+A loop's induction frontier consists of the normal body-fallthrough edges and every `continue` resolved to that loop [FN-1] reaching its next header, expanded through merge-only continuations by [ENT-5].
+Each input first performs the ordinary body effects and its applicable edge cleanup in source order.
+On each non-contradictory input, form and prove the complete next-header batch against that frozen complete state while retaining the current-iteration assumptions.
+Successful members supply no premise to another member or input.
+The next-header batch succeeds exactly when every member is proved on every input.
+A contradictory input is discharged by its contradiction.
+With no reaching input the batch is vacuous.
+A `break`, `return`, or `propagate` error edge creates no induction input.
+
+An ordinary next-header target uses the current operand values on its input.
+A counted input first forms the exact mathematical current-binder plus one and proves that hidden update representable in u64; it then substitutes that next value for every binder occurrence in the target, including occurrences in indexed operands, and uses the current values of other operands.
+Formation and proof use this target substitution while the premise state still denotes pre-update values.
+A measure selected by a changed offset denotes the selected next place, not the measure at the old offset, through [ENT-2]'s target-instance term.
+This is induction for an arbitrary iteration; neither a particular second iteration nor endpoint re-evaluation supplies a premise.
+
+No joined numeric state or optional transport batch is formed solely for this induction judgment.
+Other required source judgments on its inputs still run at their specified points.
+After successful induction, exactly [ENT-5]'s head facts are available at another iteration; arbitrary body facts and optional successes are not additional induction hypotheses.
+
+Failure reports the invariant name, base or backedge, the failing incoming edge's source location and route, and the complete required source relation after any next-binder substitution.
+Inputs follow [ENT-5]'s edge order, and each owning relation reports its first failing input.
+On that input the disposition is its first failing component's, an equality's forward component before its reverse.
+Selection among violations at distinct source nodes follows [DIAG-1].
+The residual uses source bindings and paths; it contains no internal atom identifier.
+Failure to form an indexed operand identifies its subscript and required bound under [OP-4]; a normalized-relation formation failure keeps this rule's owning-invariant location.
+Required formation or proof failure rejects even when optional transport previously failed silently at another point.
 
 A reachable `invariant_stmt` is checked exactly once in its entering ProofContext.
 Without a proof block its target must succeed under [MSR-4]'s disposition.
@@ -3758,7 +3915,7 @@ The state after a loop is the join, as at an `if`, of the states that leave it: 
 A call forgets every location the callee's row writes through a reference argument [EFF-5], one element where the argument names one element; an `atomic_stmt` and every write the walk cannot place forget every location.
 An affine requirement of the function and every published [INV-1] target are path conditions where they hold.
 
-[RANGE-3] A range fact is owed at four sites, and the range judgment proves it at each: a callee's range requirement at every call, with each parameter denoting its argument; a range invariant at its loop's entry, with a counted loop's binder at the lower endpoint; a range invariant on every normal backedge, with a counted loop's binder at its next value; and a range postcondition at every exit that selects it, with each result ordinal denoting the value the return hands back at it. An unrouted range postcondition is selected by every explicit return and every propagated error exit [ERR-3]. One routed through `when V(value: r)` is selected by every explicit return whose value at the routed ordinal is not a construction of another variant and is not known by the walk's state to hold another variant, and r denotes the payload of variant V in that value. A return the walk does not reach, such as one in a `match` arm the state excludes, selects nothing. For an inhabited instance [FN-8], a range postcondition that no exit selects is a hard error citing RANGE-3 at its `range_clause` node.
+[RANGE-3] A range fact is owed at four sites, and the range judgment proves it at each: a callee's range requirement at every call, with each parameter denoting its argument; a range invariant at its loop's entry, with a counted loop's binder at the lower endpoint; a range invariant on every normal backedge, including `continue` [FN-1], with a counted loop's binder at its next value; and a range postcondition at every exit that selects it, with each result ordinal denoting the value the return hands back at it. An unrouted range postcondition is selected by every explicit return and every propagated error exit [ERR-3]. One routed through `when V(value: r)` is selected by every explicit return whose value at the routed ordinal is not a construction of another variant and is not known by the walk's state to hold another variant, and r denotes the payload of variant V in that value. A return the walk does not reach, such as one in a `match` arm the state excludes, selects nothing. For an inhabited instance [FN-8], a range postcondition that no exit selects is a hard error citing RANGE-3 at its `range_clause` node.
 An owed clause holds when, for fresh bound variables within their ranges whose guards hold and whose reads select existing elements, every conclusion follows by this fixed derivation, together with the state's path conditions and joins and each typed value's range:
 
 1. Instances. Every active fact is instantiated once at each tuple whose every bound variable takes a value that an element read already in the problem selects through one of the fact's own element reads whose index is that bare bound variable, after every definition below has been added; an instance's own reads form no further instance. An instance asserts its conclusions where its ranges, its guards and its reads' existence hold.
@@ -3777,7 +3934,7 @@ A written instance joins the instances [RANGE-3] forms for each of the certifica
 In L's entry state, after its endpoints are evaluated, the walk executes L's body once with its binder at i and once at j, each within L's range, and records every element read and write each makes of storage that exists before L's body runs.
 The certificate holds when, for every write of the i-execution and every access of the j-execution to the same location, the two index tuples are proved different by [RANGE-3]'s derivation under both executions' path conditions and `i != j`, with the entry state's facts and the written instances [RANGE-4] active; because i and j are any two distinct iterations, this covers both orders.
 An access to storage some iteration writes that is not one element — a write of a whole place, a call through a reference argument naming a run or a place that the callee's row reads or writes [EFF-5], an `atomic_stmt` or a write the walk cannot place — leaves the certificate unproved, as does a written instance whose fact is not active at L's entry.
-Writes of bindings declared outside L, which [PAR-2] judges as an accumulator, are no part of the certificate.
+Whole-binding writes that [PAR-2] judges as the scalar accumulator are no part of the certificate.
 A certificate that does not hold is a hard error citing RANGE-5 at the `apart_clause`, naming the first pair of accesses left overlapping, with a repair [DIAG-1].
 A holding certificate is retained for [PAR-2]'s certified elements and grants nothing by itself; like every proof form it is erased before lowering and evaluates, reads, writes and calls nothing.
 

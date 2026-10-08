@@ -162,6 +162,8 @@ pub(super) struct Modified {
     pub(super) descriptors: BTreeSet<ContainerId>,
     pub(super) bindings: BTreeSet<BindingId>,
     pub(super) slots: BTreeSet<Location>,
+    /// Scalar bindings a reference was taken to [`State::exposed`].
+    pub(super) exposed: BTreeMap<BindingId, Option<IntegerType>>,
     /// A write whose target the judgment cannot place.
     pub(super) everything: bool,
 }
@@ -428,6 +430,11 @@ pub(super) struct State {
     /// Facts that hold once a match finds `location` holding `variant`.
     pub(super) routed: Vec<(Location, u32, FactId)>,
     pub(super) variants: BTreeMap<Location, u32>,
+    /// Scalar bindings a reference has been taken to, with their integer
+    /// type. The walk holds a scalar binding's value directly rather than
+    /// as storage, so a reference to one is a view it cannot place, and
+    /// every write it cannot place may change these values.
+    pub(super) exposed: BTreeMap<BindingId, Option<IntegerType>>,
 }
 
 impl State {
@@ -556,7 +563,8 @@ impl State {
         self.routed.retain(|(at, _, _)| !at.starts_with(location));
     }
 
-    /// Forgets every container's contents: a write the judgment cannot place.
+    /// Forgets every container's contents and every exposed scalar
+    /// binding's value: a write the judgment cannot place.
     pub(super) fn havoc_everything(&mut self, world: &mut World) {
         for container in 0..world.containers.len() as ContainerId {
             self.havoc_container(world, container, true);
@@ -564,8 +572,35 @@ impl State {
         self.slots.retain(|_, slot| matches!(slot, Slot::Alias(_)));
         self.variants.clear();
         self.routed.clear();
+        let exposed: Vec<(BindingId, Option<IntegerType>)> = self
+            .exposed
+            .iter()
+            .map(|(binding, ty)| (*binding, *ty))
+            .collect();
+        for (binding, ty) in exposed {
+            let fresh = match self.values.get(&binding) {
+                Some(Value::Int(_)) => Value::Int(world.opaque(ty)),
+                Some(Value::Bool(_)) => Value::Bool(Cond::Unknown),
+                _ => continue,
+            };
+            // Logged as a written binding, so a loop header forgets it too.
+            self.set_value(world, binding, fresh);
+        }
         if let Some(log) = &mut world.log {
             log.everything = true;
+        }
+    }
+
+    /// Records a reference taken to the scalar binding `binding`.
+    pub(super) fn expose(
+        &mut self,
+        world: &mut World,
+        binding: BindingId,
+        ty: Option<IntegerType>,
+    ) {
+        self.exposed.insert(binding, ty);
+        if let Some(log) = &mut world.log {
+            log.exposed.insert(binding, ty);
         }
     }
 
@@ -683,6 +718,11 @@ pub(super) fn join_states(
         .filter(|earlier| arms.iter().all(|arm| arm.disjunctions.contains(earlier)))
         .collect();
     out.disjunctions.push(join);
+    // A reference one arm took may survive the join through a joined value.
+    for arm in &arms {
+        out.exposed
+            .extend(arm.exposed.iter().map(|(binding, ty)| (*binding, *ty)));
+    }
     out.routed = first
         .routed
         .iter()

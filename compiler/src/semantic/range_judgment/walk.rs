@@ -7,8 +7,8 @@
 //! requirements, forgets what the callee writes and takes its
 //! postconditions; an exit discharges the function's own. Every expression
 //! the walk does not model evaluates to a fresh opaque value, and every
-//! write it cannot place forgets every container, so what the walk does not
-//! know it never assumes.
+//! write it cannot place forgets every container and every scalar binding a
+//! reference was taken to, so what the walk does not know it never assumes.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -81,6 +81,7 @@ pub(super) struct Walker<'program> {
     recording: Option<Recording>,
     /// The state at each `break`, by the loop it leaves.
     breaks: BTreeMap<u32, Vec<State>>,
+    continues: BTreeMap<u32, Vec<State>>,
     /// One sink per open value initializer: each `give`'s state and value.
     gives: Vec<Vec<(State, Value)>>,
     /// Each parameter's value at entry.
@@ -168,6 +169,7 @@ impl<'program> Walker<'program> {
             dry: 0,
             recording: None,
             breaks: BTreeMap::new(),
+            continues: BTreeMap::new(),
             gives: Vec::new(),
             entry: BTreeMap::new(),
             cite: empty_path(),
@@ -622,6 +624,10 @@ impl<'program> Walker<'program> {
                 self.counted_loop(
                     state, *id, node_path, *binder, lower, upper, invariants, body,
                 )
+            }
+            CheckedStatement::Continue { target, .. } => {
+                self.continues.entry(target.0).or_default().push(state);
+                None
             }
             CheckedStatement::Break { target, .. } => {
                 self.breaks.entry(target.0).or_default().push(state);
@@ -1490,6 +1496,19 @@ impl<'program> Walker<'program> {
                 }
             }
             CheckedExpression::BorrowAddressed { root, .. } => {
+                if let PlaceRoot::Binding(binding) = root.root
+                    && root.path.is_empty()
+                    && matches!(
+                        state.values.get(&binding),
+                        Some(Value::Int(_) | Value::Bool(_))
+                    )
+                {
+                    let ty = match root.ty {
+                        CheckedType::Integer(integer) => Some(integer),
+                        _ => None,
+                    };
+                    state.expose(&mut self.world, binding, ty);
+                }
                 Value::Ref(self.view_of(state, root.root, &root.path))
             }
             CheckedExpression::BorrowSegment { root, segment, .. } => {
@@ -1559,6 +1578,7 @@ impl<'program> Walker<'program> {
                 carrier,
                 binding,
                 ty,
+                ..
             } => match state.values.get(binding).cloned() {
                 Some(Value::Ref(View::Place(location))) => {
                     self.read_location(state, &location, *ty)
@@ -1965,6 +1985,7 @@ impl<'program> Walker<'program> {
         let saved_log = self.world.log.take();
         let saved_recording = self.recording.take();
         let saved_breaks = std::mem::take(&mut self.breaks);
+        let saved_continues = std::mem::take(&mut self.continues);
         let mark = self.world.origin_mark();
         let looped = self.cite.clone();
         let mut total = Modified::default();
@@ -1982,6 +2003,7 @@ impl<'program> Walker<'program> {
             let _ = self.block(dry, body);
             self.gives.pop();
             self.breaks.clear();
+            self.continues.clear();
             self.dry -= 1;
             let log = self.world.log.take().unwrap_or_default();
             let deciding = self.absorb(&mut total, log, state, mark);
@@ -2001,10 +2023,14 @@ impl<'program> Walker<'program> {
             outer.descriptors.extend(total.descriptors.iter().copied());
             outer.bindings.extend(total.bindings.iter().copied());
             outer.slots.extend(total.slots.iter().cloned());
+            outer
+                .exposed
+                .extend(total.exposed.iter().map(|(binding, ty)| (*binding, *ty)));
             outer.everything |= total.everything;
         }
         self.recording = saved_recording;
         self.breaks = saved_breaks;
+        self.continues = saved_continues;
         total
     }
 
@@ -2034,6 +2060,11 @@ impl<'program> Walker<'program> {
                 deciding = true;
             }
         }
+        for (binding, ty) in log.exposed {
+            if total.exposed.insert(binding, ty).is_none() && entry.values.contains_key(&binding) {
+                deciding = true;
+            }
+        }
         deciding
     }
 
@@ -2041,6 +2072,11 @@ impl<'program> Walker<'program> {
     /// and the variants of every written enum.
     fn header(&mut self, entry: &State, modified: &Modified) -> State {
         let mut header = entry.clone();
+        // A reference the body takes to a scalar binding can reach it on a
+        // later iteration.
+        header
+            .exposed
+            .extend(modified.exposed.iter().map(|(binding, ty)| (*binding, *ty)));
         if modified.everything {
             header.havoc_everything(&mut self.world);
         }
@@ -2101,7 +2137,9 @@ impl<'program> Walker<'program> {
         let fork = header.conds.len();
         let saved = self.breaks.remove(&id.0);
         let end = self.block(header, body);
-        if let Some(end) = end {
+        let mut backedges = self.continues.remove(&id.0).unwrap_or_default();
+        backedges.extend(end);
+        for end in backedges {
             for clause in &invariants {
                 let mut scratch = end.clone();
                 let frame = self.frame(&mut scratch, clause, &|root| binding_value(&end, root));
@@ -2181,7 +2219,9 @@ impl<'program> Walker<'program> {
             .push(literal(index.clone(), Relation::Less, high.clone()));
         let saved = self.breaks.remove(&id.0);
         let end = self.block(body_state, body);
-        if let Some(mut end) = end {
+        let mut backedges = self.continues.remove(&id.0).unwrap_or_default();
+        backedges.extend(end);
+        for mut end in backedges {
             let next = index
                 .plus_constant(1)
                 .unwrap_or_else(|| self.world.opaque(None));
@@ -2269,12 +2309,14 @@ impl<'program> Walker<'program> {
                 .push(literal(iteration.clone(), Relation::Less, high.clone()));
             let saved_recording = self.recording.replace(Recording::default());
             let saved_breaks = std::mem::take(&mut self.breaks);
+            let saved_continues = std::mem::take(&mut self.continues);
             self.dry += 1;
             self.gives.push(Vec::new());
             let _ = self.block(state, body);
             self.gives.pop();
             self.dry -= 1;
             self.breaks = saved_breaks;
+            self.continues = saved_continues;
             let recording =
                 std::mem::replace(&mut self.recording, saved_recording).unwrap_or_default();
             runs.push(recording);

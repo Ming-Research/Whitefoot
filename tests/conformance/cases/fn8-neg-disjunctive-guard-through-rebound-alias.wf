@@ -1,0 +1,33 @@
+fn count(x: &Box<Array<u64>>, i: u64) -> result: u64 reads(x) contract {
+  define room = i < x^.inner.len;
+  define first = i == 0_u64;
+  requires bor(room, first);
+} {
+  doc "Returns the length of the run x names under a disjunctive requirement, which no L0 relation states.";
+  let n = x^.inner.len;
+  return n;
+}
+
+fn probe(cells: &Box<Array<u64>>, i: u64) -> result: u64 reads(cells) {
+  doc "q is rebound, even to the same path, so the disjunction read through q keeps q's spelling and is not the goal count's requirement is instantiated at.";
+  let q = &cells^;
+  set q = &cells^;
+  let room = i < q^.inner.len;
+  let first = i == 0_u64;
+  let either = bor(room, first);
+  if either {
+    let n = count(x: cells, i: i);
+    return n;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The run holds three elements; the program is refused before it runs.";
+  let cells = box_array_filled::<u64>(count: 3_u64, value: 5_u64);
+  let r = probe(cells: &cells, i: 1_u64);
+  if r == 3_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

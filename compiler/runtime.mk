@@ -4,7 +4,8 @@
 # provides a reusable linked-library artifact for these callers.
 NATIVE_ROOT := $(ROOT)/compiler/src/backend
 NATIVE_C := ordinary_values.c sched/core.c sched/entry.c \
-            completion/runtime.c completion/file_adapter.c completion/bridge.c
+            completion/runtime.c completion/file_adapter.c completion/bridge.c \
+            completion/stop_signals.c
 ifeq ($(OS),Windows_NT)
 NATIVE_C += wf_floor_windows.c windows_runtime.c sched/prim_windows.c \
             completion/wait_windows.c completion/file_windows.c completion/windows_iocp.c

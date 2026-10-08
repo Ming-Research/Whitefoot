@@ -1,0 +1,14 @@
+fn reduce() -> result: Bool pure {
+  doc "A constant idempotent mark is not an indexed accumulator update.";
+  let seed = False();
+  let flags = array_filled::<Bool, 4>(value: seed);
+  for (i in 0_u64..4_u64) {
+    set flags[0_u64] = True();
+  }
+  return flags[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let result = reduce();
+  return std::process::exit_status(code: 0_u8);
+}

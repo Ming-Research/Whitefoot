@@ -77,6 +77,20 @@ rarely insert at the same place.
 
 ## Checker precision and proof cost
 
+- **RANGE-2's unplaced write forgets every location, the range walk only
+  every exposed one.** "An `atomic_stmt` and every write the walk cannot
+  place forget every location" [RANGE-2]. Read with a binding as a
+  location, that also forgets the value of a scalar binding no reference
+  has reached, which the walk keeps: such a binding can change only through
+  a `set` the walk places. The walk is therefore more precise than the text
+  for a value read after an `atomic` or an unplaced write, so it can accept
+  a range obligation the text leaves unproved. Change: state the rule as
+  forgetting every location the write can reach, with a binding reachable
+  once a reference to it is formed (`design/compiler/range-judgment.md`,
+  the exposed-binding decision). Validate with a range requirement over a
+  binding read after an `atomic` with and without a reference to it.
+  Reopen with the next RANGE-2 amendment.
+
 - **Checking one function grows faster than its size.** The stage-3 wasm
   interpreter's interpreter function, a `match` whose arms each hold their
   handler's whole body, checked in 18.4 s with 10 generated arms, 54.5 s
@@ -99,46 +113,64 @@ rarely insert at the same place.
   repeated checks of the interpreter, or another program meets the same
   growth.
 
-- **A loop invariant is lost where a guarded update joins an untouched path.**
-  Minimal witness:
+- **A disequality with a constant does not tighten a bound.** Under the
+  header `invariant bounded: cursor <= 4_u64`, the body
+  `if cursor == 4_u64 { break; }` followed by `set cursor = cursor + 1_u64;`
+  is refused [INV-1], while the guard `if 4_u64 <= cursor { break; }` is
+  accepted (compiler at 026074111). The false edge holds
+  `cursor != 4`, but [ENT-4]'s atomic disequality is `t1 != t2` between two
+  terms and a constant operand folds through Z (`a <= 7` is `a - Z <= 7`),
+  so `cursor != 4` gives L0 no fact that closure rule (2), which tightens
+  `t1 - t2 <= 0` with `t1 != t2` to `t1 - t2 <= -1`, can use. Impact: a loop
+  that stops at a sentinel tested with `==`, the form a writer reaches for
+  first, loses its bound. Change, a language decision (Q148): an L0
+  disequality may carry a constant offset, `t1 - t2 != c`, and rule (2)
+  tightens `t1 - t2 <= c` to `t1 - t2 <= c - 1` and `t2 - t1 <= -c` to
+  `t2 - t1 <= -c - 1`. Validate with the witness accepted, the same body
+  refused when the guard tests 3 instead of 4, and joins keeping a common
+  offset disequality. Reopen when the owner rules on Q148.
 
-  ```wf
-  fn walk(room: u64, t0: u64, c: u64) -> r: u64 pure {
-    let j = 0_u64;
-    loop (
-      invariant jb: j <= room
-    ) {
-      let t = t0;
-      if c == 1_u64 {
-        if t <= room {
-          set j = t;
-        } else {
-          return j;
-        }
-      } else if c == 2_u64 {
-        return j;
-      }
-    }
-    return j;
-  }
-  ```
+- **A header relation about the current element of a whole-table counted
+  loop is refused.** Over `for (i in 0_u64..n, invariant fits:
+  rows^[i].len <= 4_u64)` with `n = rows^.len`, the final header's instance
+  names `rows^[n]`, which does not exist, so it is refused with OP-4
+  `(i + 1_u64) < rows^.len` [ENT-2, INV-1]. Before the target-instance
+  terms, a nonempty table was accepted by forming that slot without a
+  bounds proof; with a possibly empty table it was refused at the base.
+  Impact: a writer who states a property of the current row as a header
+  invariant is refused at the last iteration. Change, a language decision
+  (Q154): keep the refusal and point the repair at a range fact over the
+  rows [RANGE-1], or require such a relation only at headers that enter the
+  body and export none at exhaustion. Validate with the witness and a
+  relation joining a carried value to the current row. Reopen when the
+  owner rules on Q154.
 
-  is refused with `INV-1 UndischargedLoopInvariant`, obligation `Backedge`,
-  on `jb` (compiler at 648338c31). Two paths reach the back edge, and each
-  alone re-proves `j <= room`: the update from `t <= room` with `j == t`,
-  the fallthrough from the assumed invariant. Each path alone is accepted:
-  making the fallthrough return, so that only the update reaches the back
-  edge, passes, and so does removing the update. The loss is therefore at
-  the join of the two paths, where neither path's own fact survives. The
-  program is sound; a
-  checker could accept it by proving the header batch on each input of the
-  final join, or by closing each input's facts under its value images before
-  joining. Impact: an interpreter written as `loop { match }` whose arms
-  update different loop variables needs a run-time re-check of the invariant
-  per dispatch; Halo's interpreter (Ming-Research/Halo-wf#2) is written as a
-  self-tail call instead.
-  Reopen when a loop-shaped program cannot be rewritten that way, or with
-  the INV-1 join rules.
+- **The induction inventory repeats the walker's frontier structure.**
+  `induction_inputs` in `compiler/src/semantic/check/obligations.rs` forms
+  each loop's incoming edges, with their sites, branch labels and the
+  atomic-exit rule, independently of the entailment walker's frontiers, and
+  `answer_records` matches the two by exact equality. A divergence is loud
+  (an unanswered INV-1 obligation), and it is kept as an independent
+  structural oracle, but every frontier rule must be changed in both.
+  Change: derive the inventory from the walker's recorded frontiers, or add
+  a differential test over the conformance corpus that compares them.
+  Validate with `arm_releases_preserve_each_nested_induction_input`, which
+  fails when the two disagree on release paths. Reopen when another
+  frontier rule changes.
+
+- **A rejection after a join does not name the input that failed to carry a
+  header relation.** When a join cannot carry a loop header's written
+  relation because one input does not prove it [ENT-5], a later rejection
+  that needed it (OP-4 or OP-2, for example `stack^.inner[fp]` after a
+  conditional helper call whose contract lacks the length-preserving
+  `ensures`) reports only its own residual. Impact: the writer cannot see
+  which branch lost the relation. Change: keep the failed transport's input
+  and component as explanatory data and add them to the later consumer's
+  repair, never as acceptance authority, as the
+  [join-relations design](../research/investigations/join-relations/DESIGN.md#checker-mechanisms-and-interfaces)
+  plans. Reopen when a writer trial or program stalls on such a rejection.
+  Validate with the helper witness without its `ensures`: the diagnostic
+  names the call edge.
 
 - **A direct call result loses its struct invariant at a reference target.**
   For a `nocopy Pair` with private `left` and `right` fields and invariant
@@ -156,36 +188,37 @@ rarely insert at the same place.
   route. Validate direct-set and let-then-set positives, false callee results,
   alias writes and stale destination facts under the existing rules.
 
-- **A length guard written through a reference holder stops proving the
-  requirement of a call passing that holder once a write reaches the
-  referent.** Minimal witness: in a function with `value: &Value` and
-  `writes(value)`, an arm of `match value^` binding `Items(items: list)` that
-  guards two `deque_pop_front::<u8>(values: list)` calls, each under
-  `if list^.inner.len > 0_u64`, refuses the second [FN-8], instantiated goal
-  `value^.Items.items.inner.len > 0_u64`; a loop with one guarded pop per
-  iteration refuses its first. This is the specified verdict, not a checker
-  defect. The call instantiates the formal at the holder's resolved referent
-  [FN-8, ENT-2]; `list^.inner.len` and `value^.Items.items.inner.len` are
-  distinct terms, "distinct spellings are distinct terms even when they
-  resolve to overlapping storage" [ENT-2]; and the one relation between them
-  is the PAYLOAD placement datum [MSR-3], established at arm entry and killed
-  by the first write through the binder, in the loop by the head's
-  continuing kill [ENT-5]. A `let q = p;` alias, under the REBIND placement,
-  behaves the same; a holder formed by `let q = &x;`, which no placement
-  covers, proves nothing even before a write; a guard on a reference
-  parameter does prove it, the parameter's resolved referent being spelled
-  through the parameter itself. [ENT-1] fixes every call goal's disposition,
-  so the checker cannot accept these on its own. Writers match the enum
-  again before each later pop, or pass the
-  binder to a helper taking a reference parameter, as firn's `pop_items`
-  does with `pop_one` (`apps/firn/commands/lists.wf`). Accepting them is a
-  specification change for the owner, for example giving a place written
-  through a holder whose path is one exact place that place's term identity
-  [REF-1, ENT-2]. Not yet checked: such a rule would also accept
-  `fn8-neg-reference-guard-after-conditional-offset-write`, and it needs the
-  holder's path at the use, not the function-wide origin inventory. Reopen
-  with the owner's decision or the next program that needs the helper or
-  the second match.
+- **A guard on a rebound reference's current target and a call through the
+  reference do not meet.** Minimal witness:
+  `fn8-neg-guard-through-rebound-local-holder` (`let q = &a^; set q = &b^;
+  if q^ != 0_u64 { need(x: b) }` refuses [FN-8]), and the reverse, a guard on
+  `b^` with a call through `q`. [ENT-2] identifies a place written through a
+  reference variable that some `set` rebinds by its spelling at every point,
+  so the guard and the call name different terms although `q` names `b`
+  there. Identifying the variable's current target at each read instead
+  loses a header invariant read through a variable rebound in the loop, whose
+  identity would switch at the header
+  (`inv1-pos-header-invariant-through-rebound-reference`). The change would
+  judge exactness at each read and re-form every invariant and placement at
+  each point it is checked; validate with both witnesses and the invariant
+  case. Reopen when a program guards a rebound cursor's target directly.
+
+- **Rebinding a reference kills the facts about its old target.** Minimal
+  witness: in `fn pick(a: &u64, b: &u64)`, `let q = &a^; if a^ != 0_u64 {
+  set q = &b^; let r = need(x: a); }` refuses the call [FN-8], while the
+  same function without the `set` accepts it. [REF-1] says a rebinding writes
+  no storage, and [ENT-5] puts in a fact's support the places it reads and
+  the reference variables it reads through, so `a^ != 0_u64` survives the
+  rebinding of `q`. The commit kill (`commit_kill` in
+  `compiler/src/semantic/entailment/flow/events.rs`) treats the rebinding as
+  a whole write of the holder resolved through the function-wide origin
+  inventory, which reaches every place the holder ever names. The verdict is
+  conservative; the gap is acceptance only. The change would give a
+  rebinding its own kill event that removes the terms and goals spelled
+  through that holder and nothing below its targets; validate with this
+  witness, its control, and a fact spelled through the holder that must
+  still die. Reopen when a program rebinds a cursor between a guard on its
+  old target and a use of it.
 
 - **A widening conversion's operand is read as any affine side.**
   [ENT-2] admits `cvt::<S, D>(e)` as a relation term or comparison-origin
@@ -726,6 +759,17 @@ rarely insert at the same place.
   Validate by counting closure routes with the test route recorder on the
   synthetic series before and after. Reopen when a profile of a real program
   attributes a substantial share to complete closures of unchanged states.
+
+- **A const generic argument refuses a type-suffixed literal.** The call
+  fragment `aof_map_len::<K, V, 4294967296_u64>` is refused with GRAM-3 at
+  the literal: `targ`'s `const` admits only unsuffixed decimals or names as operands,
+  while numeric value literals require their suffix [FORM-5]. A writer who
+  writes the suffix everywhere meets a refusal at a const argument. The
+  owner's witness is Firn-wf commit `430b25b90`, which replaced the literal
+  with a name; that downstream run has not been reproduced here. Change:
+  admit a suffixed literal whose suffix matches the const parameter's type.
+  Validate matching suffixes, wrong suffixes and out-of-range values, keeping
+  named arguments covered. Reopen with the next grammar change.
 
 ## Containers and storage lowering
 
@@ -2058,15 +2102,57 @@ rarely insert at the same place.
 
 - **The call-offer grain is provisional.** `--par` now offers a
   statement-group call only when its callee reaches a cyclic call component
-  or its static work reaches the 150,000 work unit
+  that offers its own calls or its static work reaches the 150,000 work unit
   ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
-  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
-  non-recursive helper whose work is large only through its runtime extents
-  loses its offer, and a cheap call into a recursive component keeps one;
-  and a callee that reaches recursion only by starting a waiting context is
-  not seen as recursive, since neither this pass nor the recursion frontier
-  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md#proposed-rule),
+  `design/compiler/parallel-lowering.md`). Known limits no measured program
+  exercises: a helper whose work is large only through its runtime extents,
+  a loop over a large argument or a long recursion that offers nothing,
+  loses its offer; a cheap call into a recursion that offers its own calls
+  keeps one; a callee that reaches recursion only by starting a waiting
+  context is not seen as recursive, since neither this pass nor the
+  recursion frontier follows a context start as a call edge; and a
+  recursion counts as offering its own calls when its group survives the
+  grain but the emitter later drops it for an oversized lane frame, so a
+  small call reaching it keeps its offer. Validate any of
+  them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
+
+- **Spinning workers may slow the main thread on a two-thread-per-core
+  host.** With the call grain's recursion fix, Snowghost-wf's edit pair on a
+  hosted runner of 2 cores with 2 threads each takes 504 microseconds
+  sequentially, 506 at two workers and 728 at four, with about six steals
+  per edit and 39 percent of samples in `wf__par_worker_main`
+  ([recursive offers, D3](../research/investigations/recursive-offer-grain/DESIGN.md#d3-result)).
+  The idle window is chosen when the lane count fits the usable CPUs, and
+  four lanes fit four CPUs that are two cores, so one spinning worker can
+  share the main thread's core. Unseparated: the cost may instead be the
+  wake-up of the six stolen tasks per edit. Impact: small `--par` work
+  between sequential phases runs about 1.4 times slower at four workers on
+  such hosts, GitHub's 4-vCPU runners among them. Change, if the 14900K
+  run shows no such cost: count physical cores, not CPUs, when choosing
+  the idle window, or spin only up to one lane per core. Validate with the
+  edit pair at W1, W2 and W4 on the hosted runner and the 14900K, and the
+  formal kernels' paired comparison. Reopen with the 14900K pair result.
+
+- **A recursion without a sequential clone offers without a budget.**
+  `--par-ledger` of Snowghost-wf's layout at `3ec4bb491` excludes
+  `publish_reference_owner_suffix`, an AVL suffix recursion whose left and
+  right calls are each in a permitted group, from the budget-carrying family
+  because it "has no sequential clone" (`compiler/src/backend/emitter/frontier.rs`),
+  so its offers nest at every depth, as a `--par-recursive-frontier off`
+  build's do. The clone set holds the entry-reachable functions that reach a
+  hand-out, so a recursion that reaches its own hand-outs is expected in it;
+  why this one is not is unexplained. Impact: an edit that publishes a
+  reference suffix may hand out a task per tree node, the cost
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)
+  measured as about nine times the sequential edit. Change: find why the
+  component has no clone and give it one, or bound the offers of a
+  clone-less component another way. Validate with a minimal program whose
+  forking recursion is reached only through the path this one is, checking
+  that it gets a budget family, and with Snowghost-wf's publishing edits at
+  one and four workers. Reopen when the publishing edits are timed under
+  `--par`, or with the next recursion-budget change.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family
@@ -2107,6 +2193,26 @@ rarely insert at the same place.
   calls on disjoint storage: permitted as a pair and splitting, with the
   sequential build's output. Reopen when a program's pair of such calls
   costs measurable time.
+
+- **Paged indexed storage is absent in this checkout (Q2).** The active
+  specification and checked type model define Array, Slots and Ring, with no
+  Paged type or storage path. Impact: the selected indexed reduction rule can
+  cover Array and Slots here, but cannot yet name or lower Paged cells.
+  Change: apply the same cell rule to Paged once its owning definition and
+  checked storage representation arrive. Reopen when PR #263 lands on main;
+  validate cross-page cell updates, unchanged length and private-copy
+  recombination against sequential execution in CI.
+
+- **Constant idempotent indexed marks remain deferred.** A repeated
+  `set flags[e] = True();` cannot use the indexed accumulator family, so
+  coverage-mark loops with colliding indices remain sequential. Proposed
+  change: select a rule admitting constant idempotent stores, potentially by
+  normalizing this form to Boolean OR with a proved-true contribution;
+  neither that normalization nor other constant stores are admitted now.
+  Validate a positive colliding mark, false and nonconstant stores, mixed
+  operations and reads of partial marks, plus sequential/parallel equality.
+  Reopen when a real coverage-mark loop needs permission after the explicit
+  indexed operations have been implemented and qualified.
 
 ## Platforms and host interfaces
 
@@ -2398,15 +2504,27 @@ rarely insert at the same place.
   holding a link, with an enumerated link left unfollowed. Reopen when a
   program must open data-named files below linked directories.
 
-- **Files have no positioned writes or directory creation.** `std::fs` still
-  lacks writing at an offset, creating a directory, descending into a
-  subdirectory for writing, and create rules other than create-if-missing
-  [PRE-2]. A program needing a writable directory hierarchy or exclusive
-  creation cannot express it. Add the needed operations through the write
-  half when a program supplies that witness; compare their authority and
+- **Files have no positioned writes or exclusive creation.** `std::fs` still
+  lacks writing at an offset and create rules other than create-if-missing,
+  such as exclusive creation [PRE-2]. A program needing in-place updates or
+  exclusive creation cannot express it. Add the needed operations through the
+  write half when a program supplies that witness; compare their authority and
   failure rules with the existing component operations, and validate with
   that program plus conformance cases for the selected rules. Positioned
   writes reopen when a program needs in-place updates rather than replacement.
+
+- **A path given to `open_read` can leave its root.** A name given with a
+  root denotes only an entry directly below it, so `.` and `..` are refused
+  [PRE-2], but `relative_path` keeps every component, and `open_read`
+  follows `..` as the host does (`run-syspath-dotdot-preserved`). A function
+  given only a directory's read half can therefore read files above it,
+  while one given a write half cannot write there. Uncertain: whether any
+  program relies on reading through `..`. The change would be either to
+  refuse `..` components in `open_read`'s paths, as the name operations
+  refuse it, or to state that a read half grants reading of everything the
+  host reaches from it; validate with a conformance case for the selected
+  rule on every host. Reopen when a program is given a read half that must
+  not reach its parent, or with the next change to the path library.
 
 - **A clock's readings cannot be replaced for a test.** `now` and the
   deadline heap read the host's monotonic clock, so a program's behavior at
@@ -2681,6 +2799,19 @@ rarely insert at the same place.
 
 ## Code structure
 
+- **Comparison origins are removed twice, and one origin map is never
+  read.** Since comparison origins end at every kill event that reaches
+  their binding (`apply_kills_one` in
+  `compiler/src/semantic/entailment/flow/events.rs`, and the loop-head kill
+  in `loop_summary.rs`), two older removals duplicate it: the whole-binding
+  removal in `collect_target_kill` and the loop's `set_bindings` retain.
+  `FactState::ambiguous_goal_origins` is inserted, removed, joined and
+  cloned but read by no decision. Change: delete the two removals, then
+  `set_bindings` if nothing else needs it, and the unread map. Validate with
+  the direct-`set`, loop and Bool-origin tests in
+  `compiler/src/semantic/tests/entailment.rs` and the `ent3-*-bool-origin-*`
+  conformance cases. Reopen with the next change to origin bookkeeping.
+
 - **Five parallel substitution walkers over a type invariant.**
   `compiler/src/semantic/check/type_invariants.rs` rewrites the invariant's
   parameter zero with `substitute_goal`, `construct_goal`, `binder_goal`,
@@ -2726,7 +2857,7 @@ rarely insert at the same place.
   with a stated consumer.
 
 - **The completion bridge has grown past one reader.**
-  `compiler/src/backend/completion/bridge.c` has 4,254 lines: the file
+  `compiler/src/backend/completion/bridge.c` exceeds 4,000 lines: the file
   submits and joins, the context drivers, their pools and parking, shared
   objects and, since keyed tables, the guards' watches. The shared objects
   and the watches touch the contexts only through `wf_context_ready`,
@@ -3687,18 +3818,23 @@ condition under which it is taken up.
   incremental rebuild in CI or in `make check` if daily rebuilds grow past
   about 30 s; validate that the measurement fails when incremental state is
   discarded.
-- **The paired comparison compiles both arms' runtime with the candidate's
-  flags.** `tests/performance/Makefile` includes the candidate's
-  `compiler/runtime.mk`, so the baseline's runtime sources compile with the
-  candidate's `NATIVE_OPTIMIZATION_FLAGS` and against the candidate's unit
-  list. A change to how the driver compiles the runtime, as
-  `-falign-functions=64` in the code-placement change, reaches both arms and
-  the comparison cannot see it, and a runtime unit added or removed would
-  fail the baseline's build. The change: include each arm's own
-  `runtime.mk`, from `$(ROOT)`, so each arm builds its runtime as its own
-  driver does; validate that a flag change in the candidate's `runtime.mk`
-  then differs between the arms' native objects. Reopen at the next change to
-  the runtime's compile flags or unit list.
+- **`compute-regression` on AMD hosts reacts to where the launch places
+  data.** A change that only created one idle thread before the entry made
+  stencil 9 to 30 percent slower at width 1 on Zen 3 and Zen 4 hosted
+  runners and not at all on Zen 5 or Intel
+  ([stop-signals record](../research/investigations/stop-signals/README.md#startup-cost-on-amd-hosts)).
+  The placement control shifts code by 96 bytes and leaves data, stacks and
+  heap mappings where they were, so a change that reorders startup mappings
+  can fail the instrument without changing generated code, and a real
+  regression can hide behind the same variance. A data-placement control
+  (for example a padded first mapping, or a fixed-size allocation before the
+  entry) would show whether a host is placement-sensitive before a verdict.
+  Uncertainty: the cache structure involved is not identified; hosted VMs
+  expose no counters. Validate by rerunning the stop-signals probe with the
+  control on Zen 3 hosts and checking the control flags the receiver-first
+  layout. Reopen when another startup or allocator change trips stencil on
+  AMD hosts only.
+
 - **The first cold compiler build in `compute-regression` is 10–15% slower.**
   Whichever compiler the job builds first takes longer, so the candidate's
   build time carries a bias its budget now covers
@@ -4042,18 +4178,17 @@ condition under which it is taken up.
   shared statement on each command, which would serialize every connection.
   Reopen when firn is monitored through `INFO`, or with the next work on
   firn's statistics.
-- **A signal stops firn without writing its pending append-only bytes.**
-  firn handles no signal, and the standard library's `std::process`
-  delivers none, so SIGTERM or SIGINT ends it at once, losing the changes its
-  writer (`write_log` in `apps/firn/persistence/persistence.wf`) has not yet
-  appended, up to one 10-millisecond cycle, and the bytes not yet synced,
-  where Redis on SIGTERM appends and syncs its file before it exits, as its
-  `SHUTDOWN` command does, which firn lacks. Seen on 2026-10-03: a `SET` sent
-  a few milliseconds before a SIGTERM was absent after the replay. A signal
-  delivered to a context could set the keyspace's `stopping`, which makes the
-  writer append, sync and close, as it does once the client limit is
-  reached. Reopen with `SHUTDOWN`, or when firn runs under a service manager
-  that stops it with SIGTERM.
+- **firn must connect stop requests to its append-only writer.** The
+  standard library now exposes `std::process::stop_listen` and `stop_next`
+  [PRE-2], but `apps/firn/server/server.wf` still does not open a listener.
+  Its host default therefore still ends it on SIGTERM or SIGINT, losing
+  changes its writer has not appended or synced. The 2026-10-03 witness was
+  a `SET` acknowledged a few milliseconds before SIGTERM and absent after
+  replay. Connect a waiting stop context to the keyspace's `stopping` state,
+  join its writer's append, sync and close, and close the listener before
+  returning. Validate a stop after acknowledged writes and replay every one
+  after restart. Reopen with firn's next orderly-stop change; the host
+  capability is implemented here, its application integration is not.
 - **firn writes decimals and reads `CONFIG SET`'s integers in repeated
   code.** `text_reserve` and `text_number` in `apps/firn/commands/info.wf`
   copy `log_reserve` and `log_number` in `apps/firn/store/store.wf`, the one

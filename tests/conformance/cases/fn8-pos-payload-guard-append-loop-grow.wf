@@ -1,0 +1,31 @@
+enum Store {
+  Vacant();
+  Pages(storage: Box<Slots<u64>>);
+}
+
+fn probe_append(store: &Store, required: u64) -> result: unit writes(store) {
+  doc "After grow, each iteration's guard read through the payload binder discharges that iteration's place_back requirement.";
+  match store^ {
+    Vacant() => {
+    }
+    Pages(storage: values) => {
+      if values^.inner.cap < required {
+        grow(cell: values, capacity: required);
+      }
+      let start = values^.inner.len;
+      for (at in start..required) {
+        if values^.inner.len < values^.inner.cap {
+          place_back(window: &values^.inner, value: 0_u64);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = box_slots_new::<u64>(capacity: 4_u64);
+  let store = Store::Pages(storage: move values);
+  probe_append(store: &store, required: 8_u64);
+  return std::process::exit_status(code: 0_u8);
+}

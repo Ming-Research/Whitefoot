@@ -252,6 +252,11 @@ compiler with optimization, debug assertions and overflow checks; it does
 not change how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
 records the phases of the shared test helpers for a slow compiler test.
 
+`WHITEFOOT_CHECK_WORK=<scratch TSV>` appends the checker's per-join,
+snapshot and closure work counters, whose columns
+`compiler/src/semantic/entailment/work.rs` documents; it is a temporary
+instrument for the many-arm join cost, removed after that fix.
+
 ## Review
 
 The completion review checks every applicable group of

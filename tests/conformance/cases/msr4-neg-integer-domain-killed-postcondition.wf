@@ -1,0 +1,34 @@
+fn touch(stack: &Box<Array<u64>>) -> result: unit writes(stack.inner) contract {
+  ensures stack^.inner.len == entry(stack)^.inner.len;
+} {
+  doc "Exercises the declared descriptor write while preserving its length.";
+  if 0_u64 < stack^.inner.len {
+    set stack^.inner[0_u64] = 1_u64;
+  }
+  return unit;
+}
+
+fn walk(stack: &Box<Array<u64>>, fp0: u64) -> result: u64 writes(stack) contract {
+  requires fp0 + 4_u64 <= stack^.inner.len;
+} {
+  doc "Replacing the box after the verified call kills the postcondition. The old header theorem cannot bound the new empty allocation.";
+  let fp = fp0;
+  loop (
+    invariant frame_bound: fp + 4_u64 <= stack^.inner.len
+  ) {
+    touch(stack: stack);
+    let empty = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
+    swap(first: stack, second: &empty);
+    let remaining = stack^.inner.len - 4_u64;
+    set stack^.inner[0_u64] = remaining;
+    if remaining == 7_u64 {
+      return remaining;
+    }
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The function body is the conformance obligation.";
+  return std::process::exit_status(code: 0_u8);
+}

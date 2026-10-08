@@ -172,7 +172,9 @@ pub(crate) fn for_each_call(
                 }
                 for_each_call(body, visit);
             }
-            CheckedStatement::Proof(_) | CheckedStatement::Break { .. } => {}
+            CheckedStatement::Proof(_)
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => {}
         }
     }
 }

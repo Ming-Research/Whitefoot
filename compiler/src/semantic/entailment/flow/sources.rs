@@ -486,7 +486,7 @@ impl Reasoning<'_, '_, '_> {
     /// One atom read as an admitted [ENT-2] term or constant: a measure term
     /// through its [MSR-1] former, otherwise a tracked place or constant. This
     /// is the one complete reader every value image and S7 operand uses.
-    fn copy_operand(&mut self, value: &CheckedExpression) -> Option<TermId> {
+    pub(super) fn copy_operand(&mut self, value: &CheckedExpression) -> Option<TermId> {
         self.measure_operand(value)
             .or_else(|| self.read_operand(value))
     }
@@ -1154,7 +1154,7 @@ impl Reasoning<'_, '_, '_> {
             {
                 (
                     *measure,
-                    ResolvedPlace::from_path(root.binding, root.place_path()),
+                    root.proof_place(),
                     MeasuredKind::RuntimeArray,
                     None,
                 )

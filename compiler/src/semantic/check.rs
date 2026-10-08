@@ -630,6 +630,13 @@ struct BodyChecker {
     /// [RANGE-1, RANGE-4] the range facts that state nothing at this
     /// concrete instance, which a certificate's `use` of them skips.
     unformed_range_facts: HashSet<DeclarationId>,
+    /// [ENT-2, REF-1] the declarations some `set` of the function being
+    /// checked names as its bare target; such a reference variable is never
+    /// exact.
+    rebound_declarations: HashSet<DeclarationId>,
+    /// [ENT-2] the rebound reference parameters and `atomic` binders, whose
+    /// own binding roots the path they name; no exact path starts at one.
+    rebound_anchors: HashSet<BindingId>,
 }
 
 /// Program-wide judgments and reuse records, published after checking succeeds.
@@ -1705,6 +1712,15 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             });
         }
 
+        self.body.rebound_declarations = self
+            .types
+            .declarations
+            .rebound_declarations(check_context, signature.node)?;
+        for local in bindings.values() {
+            if local.reference.is_some() {
+                self.body.note_anchor(local.binding, local.declaration);
+            }
+        }
         let mut counters = ControlCounters {
             next_binding: &mut next_binding,
             next_loop: &mut next_loop,
@@ -2001,7 +2017,8 @@ impl<'check, 'unit> Checker<'check, 'unit> {
             | CheckedStatement::Proof(_)
             | CheckedStatement::Return { .. }
             | CheckedStatement::Give { .. }
-            | CheckedStatement::Break { .. } => false,
+            | CheckedStatement::Break { .. }
+            | CheckedStatement::Continue { .. } => false,
         })
     }
 
@@ -2249,7 +2266,7 @@ impl<'check, 'unit> Checker<'check, 'unit> {
                     self.install_statement_call_requirements(check_context, body, requirements)?;
                 }
                 CheckedStatement::Proof(_) => {}
-                CheckedStatement::Break { .. } => {}
+                CheckedStatement::Break { .. } | CheckedStatement::Continue { .. } => {}
             }
         }
         Ok(())

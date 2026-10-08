@@ -72,6 +72,9 @@ static int probe_getstack(const pthread_attr_t *attributes, void **base, size_t 
 static int probe_setstacksize(pthread_attr_t *attr, size_t size) {
     return probe_fault == 8 ? EINVAL : pthread_attr_setstacksize(attr, size);
 }
+static int probe_attr_init(pthread_attr_t *attr) {
+    return probe_fault == 10 ? ENOMEM : pthread_attr_init(attr);
+}
 static int probe_create(pthread_t *t, const pthread_attr_t *attr, void *(*run)(void *), void *arg) {
     return probe_fault == 9 ? EAGAIN : pthread_create(t, attr, run, arg);
 }
@@ -90,6 +93,7 @@ static int probe_pause(void) {
 #define sigaction(...) probe_sigaction(__VA_ARGS__)
 #define sysconf probe_sysconf
 #define pthread_attr_setstacksize probe_setstacksize
+#define pthread_attr_init probe_attr_init
 #define pthread_create probe_create
 #define pause probe_pause
 #endif
@@ -100,6 +104,7 @@ static int probe_pause(void) {
 #undef sigaction
 #undef sysconf
 #undef pthread_attr_setstacksize
+#undef pthread_attr_init
 #undef pthread_create
 #undef pause
 #if defined(__APPLE__)
@@ -217,7 +222,6 @@ int wf__main_body(int argc, char **argv) {
         wf__par_join(frame);
         wf__par_release(frame);
     }
-    if (!strcmp(probe_mode, "fallback") && !pthread_equal(pthread_self(), probe_initial_thread)) return 96;
     if (write(1, "ran\n", 4) != 4) return 97;
     return 73;
 }
@@ -290,8 +294,12 @@ int main(int argc, char **argv) {
                      73, fault ? "" : "ran\n", fault ? setup_error : "", 0);
         }
     }
-    run_case(argv[0], "fallback", 8, 0, 73, "ran\n", "", 0);
-    run_case(argv[0], "fallback", 9, 0, 73, "ran\n", "", 0);
+    /* Running the entry after a launch failure would leave the original
+     * thread unavailable for stop reception. No body output is permitted. */
+    const char *launch_error =
+        "whitefoot floor: stop receiver or program entry thread could not be started\n";
+    for (unsigned fault = 8; fault <= 10; ++fault)
+        run_case(argv[0], "launch", fault, SIGABRT, 0, "", launch_error, 0);
     run_case(argv[0], "latch", (unsigned)sysconf(_SC_PAGESIZE), SIGTERM, 0, "", "", 1);
 #else
     run_case(argv[0], "provision", 0, 0, 73, "ran\n", "", 0);

@@ -1,0 +1,19 @@
+fn probe(limit: u64, flag: Bool) -> result: u64 pure {
+  doc "The header relation can be false at an internal join and restored before induction.";
+  let value = limit;
+  loop (
+    invariant bounded: value <= limit
+  ) {
+    if flag {
+      set value = 18446744073709551615_u64;
+    }
+    let marker = 0_u8;
+    set value = limit;
+  }
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checks the source relation without executing the probe.";
+  return std::process::exit_status(code: 0_u8);
+}

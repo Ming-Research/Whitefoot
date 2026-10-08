@@ -168,7 +168,7 @@ fn a_supplied_requirement_is_quoted_from_its_declaring_record() {
 "#;
     let detail = stop("walk.wf", host).detail();
     assert!(
-        detail.contains("requires_clause: std/fs/module.wfm:65:3 \"requires end <= name^.len;\"\n"),
+        detail.contains("requires_clause: std/fs/module.wfm:70:3 \"requires end <= name^.len;\"\n"),
         "{detail}"
     );
 }
@@ -245,6 +245,7 @@ fn main() -> status: std::process::ExitStatus pure {
   marker:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   name: behind
   obligation: Backedge
+  incoming_edge: fallthrough from the `else` branch at line 12
   required_relation: kept <= (at + 1_u64)
   disposition: Unproved
   mechanical_fix: `behind` is not proved preserved at the next loop header: strengthen the invariant prefix, weaken or correct it, or establish in the body the facts from which every reachable fallthrough preserves it"

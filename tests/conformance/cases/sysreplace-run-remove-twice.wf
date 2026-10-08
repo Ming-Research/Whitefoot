@@ -193,7 +193,7 @@ fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryW
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall) = move inputs;
+  let Inputs(args: args, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops) = move inputs;
   let std::fs::Directory(read: reader, write: writer) = move directory;
   let first = array_filled::<u8, 64>(value: 0_u8);
   let second = array_filled::<u8, 64>(value: 0_u8);

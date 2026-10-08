@@ -18,7 +18,7 @@ use super::super::super::places::PlaceStep;
 use super::super::super::tree::ConditionalAlternative;
 use super::super::references::{ReferenceInfo, RequiredReferent};
 use super::super::{CheckStop, Checker, EffectSet, LocalBinding, RefinementWitness};
-use super::{BlockResult, BreakState, ControlCounters, ControlScope, GiveContext};
+use super::{BlockResult, ControlCounters, ControlScope, GiveContext, LoopTransferState};
 
 #[derive(Clone)]
 struct VariantDescriptor {
@@ -46,7 +46,7 @@ pub(super) struct MatchResult {
     pub(super) all_paths_deliver: bool,
     pub(super) effects: EffectSet,
     pub(super) give_states: Vec<HashMap<DeclarationId, LocalBinding>>,
-    pub(super) break_states: Vec<BreakState>,
+    pub(super) loop_transfers: Vec<LoopTransferState>,
 }
 
 /// How a `match` scrutinee is written, which is what [OWN-13] and [REF-1]
@@ -202,7 +202,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut normal_labels: Vec<String> = Vec::new();
         let mut give_states = Vec::new();
         let mut give_labels: Vec<String> = Vec::new();
-        let mut break_states = Vec::new();
+        let mut loop_transfers = Vec::new();
         let mut effects = scrutinee.effects.clone();
         let mut all_paths_deliver = true;
         for (arm_node, variant) in arm_nodes.into_iter().zip(&resolved_variants) {
@@ -236,7 +236,7 @@ impl<'unit> Checker<'_, 'unit> {
             Checker::invalidate_control_exits(
                 &mut arm_bindings,
                 &mut checked.give_states,
-                &mut checked.break_states,
+                &mut checked.loop_transfers,
                 arm_scope.give_context,
                 &leaving,
             );
@@ -262,8 +262,10 @@ impl<'unit> Checker<'_, 'unit> {
                 checked.give_states.len(),
             ));
             give_states.extend(checked.give_states);
-            break_states.extend(checked.break_states);
+            loop_transfers.extend(checked.loop_transfers);
             arms.push(CheckedMatchArm {
+                node_path: self.types.declarations.tree.path(arm_node)?.clone(),
+                label,
                 tag: variant.tag,
                 binders,
                 covered,
@@ -311,7 +313,7 @@ impl<'unit> Checker<'_, 'unit> {
             all_paths_deliver,
             effects,
             give_states: if value_match { Vec::new() } else { give_states },
-            break_states,
+            loop_transfers,
         })
     }
 
@@ -465,7 +467,7 @@ impl<'unit> Checker<'_, 'unit> {
                     effects: chained.effects,
                     all_paths_deliver: chained.all_paths_deliver,
                     give_states: chained.give_states,
-                    break_states: chained.break_states,
+                    loop_transfers: chained.loop_transfers,
                 }
             }
         };
@@ -475,7 +477,7 @@ impl<'unit> Checker<'_, 'unit> {
         let mut normal_labels: Vec<String> = Vec::new();
         let mut give_states = Vec::new();
         let mut give_labels: Vec<String> = Vec::new();
-        let mut break_states = Vec::new();
+        let mut loop_transfers = Vec::new();
         let mut effects = condition.effects.clone();
         let mut all_paths_deliver = true;
         // The then-block is the `True` arm and the alternative is the `False`
@@ -492,7 +494,7 @@ impl<'unit> Checker<'_, 'unit> {
             Checker::invalidate_control_exits(
                 &mut branch_bindings,
                 &mut checked.give_states,
-                &mut checked.break_states,
+                &mut checked.loop_transfers,
                 arm_scope.give_context,
                 &leaving,
             );
@@ -522,8 +524,10 @@ impl<'unit> Checker<'_, 'unit> {
                 checked.give_states.len(),
             ));
             give_states.extend(checked.give_states);
-            break_states.extend(checked.break_states);
+            loop_transfers.extend(checked.loop_transfers);
             arms.push(CheckedMatchArm {
+                node_path: self.types.declarations.tree.path(node)?.clone(),
+                label,
                 tag: variant.tag,
                 binders: Vec::new(),
                 covered: Vec::new(),
@@ -575,7 +579,7 @@ impl<'unit> Checker<'_, 'unit> {
             } else {
                 give_states
             },
-            break_states,
+            loop_transfers,
         })
     }
 
@@ -691,8 +695,9 @@ impl<'unit> Checker<'_, 'unit> {
                 u32::try_from(index).map_err(|_| SemanticCompilerFailure::CounterOverflow)?;
             // [OWN-13] matching through a reference leaves the scrutinee live
             // and binds each payload as a reference naming the scrutinee path
-            // extended by that payload step [REF-1], valid exactly while the
-            // arm's refinement fact holds [REF-2, ENT-3.S15]. Matching an own
+            // extended by that payload step [REF-1]. The arm's refinement fact
+            // admits the selection [ENT-3.S15]; the selected place outlives
+            // the arm until its enum is replaced [REF-2]. Matching an own
             // place moves it instead, and its binders receive own payloads.
             let reference = if mode.is_reference() {
                 let parent = scrutinee
@@ -811,7 +816,7 @@ impl<'unit> Checker<'_, 'unit> {
     pub(super) fn invalidate_control_exits(
         bindings: &mut HashMap<DeclarationId, LocalBinding>,
         give_states: &mut [HashMap<DeclarationId, LocalBinding>],
-        break_states: &mut [BreakState],
+        loop_transfers: &mut [LoopTransferState],
         give_context: Option<&GiveContext>,
         leaving: &[super::super::super::model::BindingId],
     ) {
@@ -819,7 +824,7 @@ impl<'unit> Checker<'_, 'unit> {
         for state in give_states.iter_mut() {
             Checker::invalidate_references_leaving_scope(state, leaving);
         }
-        for state in break_states.iter_mut() {
+        for state in loop_transfers.iter_mut() {
             state.invalidate_references_leaving_scope(leaving);
         }
         if let Some(context) = give_context
