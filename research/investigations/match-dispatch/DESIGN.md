@@ -1489,3 +1489,16 @@ final CRC 0x4983. The step scores 6211.2 against 5988.0 (twin 5988.0),
 0.795 of Silverfir-nano and wasmi 0.850. The split grew from 318 to 360
 arms; compiling and checking the interpreter takes 22.8 s against 19.1 s
 on that host.
+
+**Step 2, observed on the 14900K and not adopted**
+([run 37807864380](https://github.com/Ming-Research/Whitefoot/actions/runs/37807864380)):
+i32 immediate operands (94 variants, 454 arms) at `e44f21820` against step
+1 at `1cb4edb32`, same compiler, 7 interleaved launches, every final CRC
+0x4983. The step scores 6269.6 against 6230.5 (twin 6192.0), 1.006, with
+launch ratios from 0.964 to 1.016: below the +2% criterion, so it is
+reverted. A hosted EPYC sample had shown about +5% with a 1.3% twin gap,
+which the 14900K does not reproduce. A plausible reading, not tested: on
+this core a constant's frame-slot load issues early, off the dependency
+chain, so reading it from the operation instead saves little. The revert
+keeps one fix found with it: a local index is bounded by the constant
+slots' start, so a malformed module cannot reach a constant slot.
