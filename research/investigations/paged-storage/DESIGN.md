@@ -119,11 +119,12 @@ opaque nocopy struct Paged<T> {
 - **Growth.** `grow_paged<T>(cell: &Box<Paged<T>>, capacity: u64)` with the
   row `writes(cell)` and the contract of `grow`: `capacity >= cap` before,
   `cap == capacity` and `len` unchanged after. It allocates pages and may
-  reallocate the directory; no element moves (R3). The row writes the whole
-  cell, so growth invalidates every reference into the storage and kills its
-  facts exactly as `grow` does for `Slots`; it also overlaps every element
-  access, which keeps an address formation (which reads the directory) from
-  overlapping a directory reallocation under [PAR-1].
+  reallocate the cell that holds the directory; no element moves (R3). The
+  row writes the whole cell, so growth invalidates every reference into the
+  storage and kills its facts exactly as `grow` does for `Slots`; it also overlaps every element
+  access. Lowering additionally cuts an overlap group before forming a
+  Paged address through the owner or directory, because reference formation
+  itself has no source content read under [PAR-1].
 - **Window operations.** `place_back` and `take_back` admit `Paged<T>` as
   their window argument with their existing records, rows and contracts
   (`place_back` requires `len < cap`). `insert_at`, `remove_at`, `append`,
@@ -170,24 +171,44 @@ opaque nocopy struct Paged<T> {
 
 ### Lowering
 
-- The descriptor in the `Box` content holds `len`, `cap`, the directory
-  pointer and the directory's capacity in pages.
+- A `Box<Paged<T>>` owner is one pointer to one header-first allocation:
+  `{ len: i64, cap: i64, dircap: i64, pages: [dircap x ptr] }`. The directory
+  starts at `cell + 24`; it has no separate pointer or allocation.
 - B is the largest power of two with `B * stride_ceiling(T) <= 4096`, and
   at least 1, using [OP-9]'s language stride ceiling so that B, which a
   program can observe, is the same on every target (owner ruling Q135);
   the actual stride, at or below the ceiling, addresses the elements.
-  Pages hold `B` elements each; `grow_paged` allocates pages up to
-  `ceil(cap / B)` and doubles the directory when it is full, copying page
-  pointers only.
-- An element address is `directory[i >> s] + (i & (B - 1)) * stride`: two
-  dependent loads from the descriptor.
-- A `&Run<T>` is passed as the directory pointer, `lo` and `len`; growth
-  invalidates it, so its directory pointer cannot go stale.
+  Pages hold `B` elements each. Construction doubles `dircap` from one until
+  it covers `ceil(cap / B)`, then allocates the cell and those pages.
+- `grow_paged` retains the cell while its directory has room. When it needs
+  more entries, it doubles `dircap` until it fits, allocates a new cell,
+  copies the header and existing page pointers only, frees the old cell and
+  stores the replacement through its `&Box<Paged<T>>` parameter. It then
+  allocates the missing pages and records the exact requested capacity.
+  `place_back` and `take_back` never reallocate the cell.
+- An element address loads the page pointer at `cell + 24 + 8 * (i >> s)`,
+  then adds `(i & (B - 1)) * stride`: one dependent load from the cell,
+  matching the hand-written header-first page table.
+- A `&Run<T>` is passed as the directory pointer `cell + 24`, `lo` and
+  `len`; growth invalidates it before replacing the cell, so its directory
+  pointer cannot go stale. The directory pointer retains `nonnull`,
+  `readonly` and the ordinary no-capture boundary, with no `noalias` or
+  `dereferenceable` promise; readonly concerns accesses through this pointer,
+  not a separate allocation.
 - `&p.pages[k]` lowers to an ordinary `&[T]` (page pointer and its
-  initialized length).
-- Release drops the initialized elements in index order, frees each page and
-  the directory, then the cell. Allocation sizes are checked as [STOR-6]
-  states and exhaustion is a resource failure ([STOR-8]).
+  initialized length). Parallel captures retain the same owner and run
+  forms, and overlap lowering joins before a later argument forms a Paged
+  address through an owner pointer or directory that growth may replace. A
+  call taking a Paged cell reference ends its overlap group: even a pure
+  callee that ignores it must enter while the cell still exists for its
+  ordinary reference attributes. This covers later growth inside a wrapper
+  and a refused hand-out executed at the join.
+- Release drops the initialized elements in index order and frees each page;
+  the Box then frees the cell, which includes the directory. The cell size
+  `24 + 8 * dircap` and each page size use checked arithmetic against the
+  target allocation maximum [STOR-6]; exhaustion is a resource failure
+  [STOR-8]. A zero-capacity cell still reserves one directory entry, while a
+  zero-stride page uses one allocation byte and zero element displacement.
 
 ## Boundary choices for specification and lowering
 
@@ -277,3 +298,16 @@ The design is rejected if C1 fails for any reason other than an
 implementation defect, or if C3 shows `Paged` access materially slower than
 the hand-written pages. Either would send the question back to a library
 page table plus quotient and remainder facts.
+
+### C3 result and header-first response
+
+2026-10-07: Snowghost reported i9-14900K run `37610930210` with a
+built-in/hand-written geometric mean of **1.061** and a base-twin ratio of
+**0.991**; layout was up to 12% slower and box construction up to 42% slower.
+This fails the original C3 criterion for the separate-directory lowering.
+Code inspection identifies one structural difference: the built-in access
+loaded `dir_ptr` from its descriptor before loading a page pointer, while
+`Box<Slots<Box<Slots<T>>>>` stored its page pointers after the header. The
+header-first cell above removes that extra dependent load and is the owner's
+selected response to be measured against the same criterion. The C3 result
+does not yet measure this response or isolate the whole loss to that load.

@@ -83,10 +83,10 @@ impl RunShape {
         }
     }
 
-    /// The aggregate field index of the slots.
+    /// The aggregate field index of the slots, or the Paged directory tail.
     const fn slots_field(self) -> u32 {
         match (self.shape, self.capacity) {
-            (IrWindowShape::Paged, _) => 2,
+            (IrWindowShape::Paged, _) => 3,
             (IrWindowShape::Slots, Some(_)) => 1,
             (IrWindowShape::Slots, None) | (IrWindowShape::Ring, Some(_)) => 2,
             (IrWindowShape::Ring, None) => 3,

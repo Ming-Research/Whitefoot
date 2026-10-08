@@ -280,8 +280,9 @@ pub(super) fn shared_runtime_declarations() -> Module {
 /// read. The physical slot of logical offset `i` is `(head + i) mod cap`,
 /// which is the one conditional subtract a subscript already emits.
 ///
-/// This helper visits elements only. A Box owner releases its allocation after
-/// the walk; an inline array or window has no separate backing action.
+/// Contiguous helpers visit elements only; Paged also frees its pages. A Box
+/// owner releases its cell after the walk; an inline array or window has no
+/// separate backing action.
 fn emit_run_drop_helper(
     program: &IrProgram,
     target: TargetLayout,
@@ -1149,7 +1150,7 @@ fn emit_enum_cleanup_body(
 }
 
 /// Drop initialized Paged elements in logical order, then free all allocated
-/// pages and the directory. The Box caller subsequently frees the descriptor.
+/// pages. The Box caller subsequently frees the cell, including its directory.
 fn emit_paged_drop_helper(
     program: &IrProgram,
     target: TargetLayout,
@@ -1171,7 +1172,7 @@ fn emit_paged_drop_helper(
     );
     signature.linkage = Linkage::Private;
     output.open_block("entry".to_owned());
-    output.push_str("  %len = load i64, ptr %value\n  %cap.ptr = getelementptr inbounds { i64, i64, ptr, i64 }, ptr %value, i32 0, i32 1\n  %cap = load i64, ptr %cap.ptr\n  %dir.ptr = getelementptr inbounds { i64, i64, ptr, i64 }, ptr %value, i32 0, i32 2\n  %dir = load ptr, ptr %dir.ptr\n");
+    writeln!(output, "  %len = load i64, ptr %value\n  %cap.ptr = getelementptr inbounds {cell}, ptr %value, i32 0, i32 1\n  %cap = load i64, ptr %cap.ptr\n  %dir = getelementptr inbounds {cell}, ptr %value, i32 0, i32 3, i64 0", cell = super::paged::CELL).map_err(|_| BackendFailure::TextEmission)?;
     if type_requires_cleanup(program, element)? {
         output.push_str("  br label %elements\n");
         output.open_block("elements".to_owned());
@@ -1198,11 +1199,11 @@ fn emit_paged_drop_helper(
     output.open_block("pages.start".to_owned());
     writeln!(output, "  %quotient = lshr i64 %cap, {shift}\n  %remainder = and i64 %cap, {mask}\n  %partial = icmp ne i64 %remainder, 0\n  %carry = zext i1 %partial to i64\n  %count = add nuw i64 %quotient, %carry\n  br label %pages").map_err(|_| BackendFailure::TextEmission)?;
     output.open_block("pages".to_owned());
-    output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.free ]\n  %allocated = icmp ult i64 %p, %count\n  br i1 %allocated, label %page.free, label %directory.free\n");
+    output.push_str("  %p = phi i64 [ 0, %pages.start ], [ %p.next, %page.free ]\n  %allocated = icmp ult i64 %p, %count\n  br i1 %allocated, label %page.free, label %done\n");
     output.open_block("page.free".to_owned());
     output.instructions("  %slot = getelementptr inbounds ptr, ptr %dir, i64 %p\n  %allocation = load ptr, ptr %slot\n  call void @free(ptr %allocation)\n  %p.next = add nuw i64 %p, 1\n  br label %pages\n", &["free"]);
-    output.open_block("directory.free".to_owned());
-    output.instructions("  call void @free(ptr %dir)\n  ret void\n", &["free"]);
+    output.open_block("done".to_owned());
+    output.push_str("  ret void\n");
     signature.references = output.references.clone();
     module.define(signature.define(output, "")?);
     module.text("\n");
