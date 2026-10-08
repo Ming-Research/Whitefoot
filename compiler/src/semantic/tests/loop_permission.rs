@@ -1560,6 +1560,7 @@ fn mapped_root_measure_reads_are_permitted() {
             Some(LoopActualization::IndependentMap),
             "{function}"
         );
+        assert!(judged.indexed.is_empty(), "{function}: {judged:?}");
     }
 }
 

@@ -154,8 +154,7 @@ fn indexed_split_executes_private_leaves_and_zero_budget_executes_source() {
     std::fs::remove_dir_all(directory).expect("remove indexed native artifacts");
 }
 
-const TWO_ROOTS: &str = r#"
-fn main() -> status: std::process::ExitStatus pure {
+const TWO_ROOTS: &str = r#"fn main() -> status: std::process::ExitStatus pure {
   doc "Two live private roots exercise release when the second allocation fails.";
   let low = array_filled::<i64, 4>(value: 100_i64);
   let high = array_filled::<i64, 4>(value: -100_i64);
@@ -228,6 +227,8 @@ fn indexed_storage_shapes_and_all_operations_emit_private_ranges() {
         "several_roots",
         "branches",
         "overlapping_maps",
+        "measured_index",
+        "borrowed_index",
     ] {
         let body = super::emitted_body(&module, name);
         assert!(
@@ -246,5 +247,61 @@ fn indexed_storage_shapes_and_all_operations_emit_private_ranges() {
         let module = emit_with_overlap(source);
         assert!(module.contains(".fill.head:"));
         assert!(module.contains(".combine.head:"));
+    }
+}
+
+#[test]
+fn indexed_capture_pruning_keeps_counts_and_rebinds_refused_roots() {
+    for (length, splits) in [(1, true), (256, false)] {
+        // A live by-value array forces the shared target-layout query after
+        // pruning. The small one fits; the wide one must reuse the body with
+        // indexed ranges rebound to the original cells.
+        let source = format!(
+            r#"fn folded(values: Array<u8, {length}>) -> result: u64 pure {{
+  let cells = array_filled::<u64, 4>(value: 3_u64);
+  for (i in 0_u64..262144_u64) {{
+    let copied = values;
+    let byte = copied[0_u64];
+    let word = cvt::<u8, u64>(byte);
+    set cells[0_u64] = cells[0_u64] +wrap word;
+  }}
+  return cells[0_u64];
+}}
+
+fn main() -> status: std::process::ExitStatus pure {{
+  let values = array_filled::<u8, {length}>(value: 19_u8);
+  let total = folded(values: values);
+  if total != 4980739_u64 {{
+    return std::process::exit_status(code: 1_u8);
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+        );
+        let module = emit_with_overlap(source.as_bytes());
+        let body = super::emitted_body(&module, "folded");
+        assert_eq!(
+            body.contains(".allocation = call ptr @malloc"),
+            splits,
+            "length={length}: {body}"
+        );
+        let directory = test_directory();
+        let executable =
+            build_linked_executable(&observed(&module), Some(OBSERVER), &[], &directory);
+        let mut command = Command::new(&executable);
+        command.env("WF_WORKERS", "4");
+        if !splits {
+            command.env("WF_TEST_ZERO", "1");
+        }
+        let output = command.bounded_output().expect("run indexed capture frame");
+        assert_eq!(output.status.code(), Some(0), "length={length}: {output:?}");
+        let report = String::from_utf8_lossy(&output.stderr);
+        let expected = if splits {
+            "indexed allocations=1 leaves=4"
+        } else {
+            "indexed allocations=0 leaves=0"
+        };
+        assert!(report.contains(expected), "length={length}: {report}");
+        std::fs::remove_dir_all(directory).expect("remove capture frame artifacts");
     }
 }

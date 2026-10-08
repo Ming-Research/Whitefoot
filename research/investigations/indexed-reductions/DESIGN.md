@@ -152,10 +152,23 @@ Heap exhaustion during leaf execution, in a leaf's own allocation or a
 nested split's, terminates the program from the trusted base [STOR-8], so no
 private storage needs release on that path, as for every other live owner.
 
+Indexed frames use the existing needed-capture pruning and selected-target
+layout check. A conservative estimate charges any inline aggregate a whole
+lane slot, so refusing before those checks incorrectly leaves the Slots
+fixture sequential merely because its scope retains the initializer array.
+Pruning retains the indexed ranges and initialized counts consumed by the
+splitter and allocation site, and remaps their capture positions. A genuinely
+oversized candidate reuses its completed body with indexed ranges rebound to
+the original storage, or the enclosing split's private storage. This restores
+the existing frame-fitting and refusal behavior without changing permission
+or the private-slab lowering choice.
+
 The maintained compiler tests inspect private fill, leaf-order combine, frees,
 all operations and storage shapes; native observers force a split budget,
 count private allocations and leaves, force zero budget, refuse a tiny loop
-over many cells, and fail each temporary allocation in a two-root loop. The
+over many cells, fail each temporary allocation in a two-root loop, and check
+a live aggregate capture that fits after pruning against one whose frame is
+truly too wide. The
 whole-program oracle checks colliding histogram updates, positive minima,
 negative maxima, odd wrapping products, untouched cells and an independent
 scalar count against fixed expected values and a sequential build. These

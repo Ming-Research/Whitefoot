@@ -423,15 +423,6 @@ impl<'program> IrBuilder<'program> {
                 });
             }
         }
-        // The existing capture-pruning fallback splices a source CFG. Private
-        // root captures must retain their count even when only the splitter
-        // uses it; refuse an oversized indexed frame before building a CFG.
-        if !indexed_roots.is_empty()
-            && let Some(decline) = self.frame_decline(result_type, &captures)?
-        {
-            self.note(node_path, &format!("declined: {}", decline.reason()));
-            return Ok(false);
-        }
         let prune_captures = self.frame_decline(result_type, &captures)?.is_some();
         // Preserve the established preorder names and complete fitting ABI.
         // Only a still-undecided wide frame delays its helper reservation.
@@ -457,6 +448,16 @@ impl<'program> IrBuilder<'program> {
             prune_captures,
             &indexed_roots,
         )?;
+        for root in &mut indexed {
+            root.capture = candidate.needed[..root.capture]
+                .iter()
+                .filter(|needed| **needed)
+                .count();
+            root.count = candidate.needed[..root.count]
+                .iter()
+                .filter(|needed| **needed)
+                .count();
+        }
         captures = captures
             .into_iter()
             .zip(candidate.needed.iter().copied())
@@ -481,7 +482,15 @@ impl<'program> IrBuilder<'program> {
             // Keep the ordinary ledger order: this refusal precedes the
             // nested decisions that remain in its reused body.
             self.synthesis.borrow_mut().ledger[ledger_start..].rotate_right(1);
-            self.splice_chunk(candidate, reduction_seed, lower, upper, accumulator)?;
+            self.splice_chunk(
+                candidate,
+                reduction_seed,
+                lower,
+                upper,
+                accumulator,
+                &captures,
+                &indexed_roots,
+            )?;
             return Ok(true);
         }
 
@@ -508,21 +517,7 @@ impl<'program> IrBuilder<'program> {
             let stored = self.bindings[&capture.binding];
             let value = match capture.reconstruction {
                 CaptureReconstruction::IndexedRoot { index } => {
-                    let root = &indexed_roots[index];
-                    if let Some(slice) = self.indexed_slice(root.root, &root.path) {
-                        slice
-                    } else {
-                        let address = self.lower_place_address(root)?;
-                        let operation = if matches!(
-                            super::lower_type(self.erasure, root.ty)?,
-                            IrType::Buffer { .. }
-                        ) {
-                            IrOperation::SliceFromBuffer { buffer: address }
-                        } else {
-                            IrOperation::SliceFromRun { run: address }
-                        };
-                        self.define(capture.ty, operation)?
-                    }
+                    self.indexed_capture(&indexed_roots[index], capture.ty)?
                 }
                 CaptureReconstruction::IndexedCount => {
                     let slice = *capture_values
@@ -598,6 +593,28 @@ impl<'program> IrBuilder<'program> {
         };
         self.note(node_path, &detail);
         Ok(true)
+    }
+
+    /// Borrow the current root, including an enclosing split's private range.
+    /// Both a split capture and a spliced refusal use this same projection.
+    fn indexed_capture(
+        &mut self,
+        root: &crate::semantic::CheckedContainerRoot,
+        ty: IrType,
+    ) -> Result<IrValueId, LoweringFailure> {
+        if let Some(slice) = self.indexed_slice(root.root, &root.path) {
+            return Ok(slice);
+        }
+        let address = self.lower_place_address(root)?;
+        let operation = if matches!(
+            super::lower_type(self.erasure, root.ty)?,
+            IrType::Buffer { .. }
+        ) {
+            IrOperation::SliceFromBuffer { buffer: address }
+        } else {
+            IrOperation::SliceFromRun { run: address }
+        };
+        self.define(ty, operation)
     }
 
     /// The actualization payload of the permitted loop at this statement, when
@@ -793,7 +810,21 @@ impl<'program> IrBuilder<'program> {
         let call_results = std::mem::take(&mut builder.call_results);
         let mut function = builder.finish(String::new(), overlaps, Some(IrSynthesis::Chunk))?;
         let needed = if prune_captures {
-            prune_capture_parameters(&mut function, reconstruction_count)?
+            // The splitter and allocation site also consume these captures.
+            // In particular, the initialized count need not occur in the chunk.
+            let retained = function.parameters[3..]
+                .iter()
+                .zip(captures)
+                .filter_map(|((value, _), capture)| {
+                    matches!(
+                        capture.reconstruction,
+                        CaptureReconstruction::IndexedRoot { .. }
+                            | CaptureReconstruction::IndexedCount
+                    )
+                    .then_some(*value)
+                })
+                .collect::<Vec<_>>();
+            prune_capture_parameters(&mut function, reconstruction_count, &retained)?
         } else {
             vec![true; captures.len()]
         };
@@ -810,6 +841,7 @@ impl<'program> IrBuilder<'program> {
     /// has already been lowered, including nested candidates. PAR-2 excludes
     /// exits to the enclosing source context, so the chunk's return is the
     /// only interface that needs reconnecting to the parent continuation.
+    #[allow(clippy::too_many_arguments)]
     fn splice_chunk(
         &mut self,
         candidate: BuiltChunk,
@@ -817,6 +849,8 @@ impl<'program> IrBuilder<'program> {
         lower: IrValueId,
         upper: IrValueId,
         accumulator: Option<BindingId>,
+        captures: &[Capture],
+        indexed_roots: &[crate::semantic::CheckedContainerRoot],
     ) -> Result<(), LoweringFailure> {
         let BuiltChunk {
             function,
@@ -839,6 +873,24 @@ impl<'program> IrBuilder<'program> {
         }
         for (binding, root) in binding_roots {
             values[root.index()] = self.bindings[&binding];
+        }
+        let mut indexed_range = None;
+        for ((parameter, _), capture) in function.parameters[3..].iter().zip(captures) {
+            let actual = match capture.reconstruction {
+                CaptureReconstruction::IndexedRoot { index } => {
+                    let range = self.indexed_capture(&indexed_roots[index], capture.ty)?;
+                    indexed_range = Some(range);
+                    range
+                }
+                CaptureReconstruction::IndexedCount => self.define(
+                    U64,
+                    IrOperation::SliceMeasure {
+                        slice: indexed_range.ok_or(LoweringFailure::InvalidCheckedProgram)?,
+                    },
+                )?,
+                _ => continue,
+            };
+            values[parameter.index()] = actual;
         }
         let value = |original: IrValueId| values[original.index()];
         let mut reconstruction = vec![false; values.len()];
@@ -1245,12 +1297,14 @@ impl<'program> IrBuilder<'program> {
 fn prune_capture_parameters(
     function: &mut IrFunction,
     reconstruction_count: usize,
+    retained: &[IrValueId],
 ) -> Result<Vec<bool>, LoweringFailure> {
     let mut dependencies = vec![Vec::new(); function.values.len()];
     let mut pending = function.parameters[..3]
         .iter()
         .map(|(value, _)| *value)
         .collect::<Vec<_>>();
+    pending.extend_from_slice(retained);
     for (block_index, block) in function.blocks.iter().enumerate() {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
             if block_index == 0 && instruction_index < reconstruction_count {
@@ -1734,7 +1788,7 @@ mod tests {
                 },
             ],
         };
-        let needed = prune_capture_parameters(&mut function, 2).expect("valid chunk graph");
+        let needed = prune_capture_parameters(&mut function, 2, &[]).expect("valid chunk graph");
         assert_eq!(needed, [true, true, true, false, true, false]);
         assert_eq!(function.readonly_reference_parameters, [value(3)]);
         assert_eq!(
