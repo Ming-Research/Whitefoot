@@ -1,6 +1,8 @@
 # Integer fields below range elements
 
-Status: investigation and proposed rule text, awaiting the owner's choices.
+Status: the owner selected, on 2026-10-08, the enum-payload scope with copy
+provenance (board card on scope, option A) and precise field support (board
+card on support, option A); implementation in progress.
 Baseline: Whitefoot `1a6a96c5bba34cac2ed056a4c49d3073e0f1a0a7`, specification
 v0.101. No implementation, specification amendment, conformance change or
 measurement accompanies this draft. Code below is specification fragments,

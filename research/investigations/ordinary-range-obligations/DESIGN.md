@@ -1,6 +1,7 @@
 # Range facts for ordinary obligations
 
-Status: investigation, awaiting the owner's choice of route. Baseline:
+Status: route A selected by the owner on 2026-10-08 (board card "how range
+facts reach ordinary proofs", option A); not yet implemented. Baseline:
 branch `claude/checker-completion` at 375eec894 (specification v0.102), whose
 range rules match main's v0.101. No implementation or measurement
 accompanies this draft.
