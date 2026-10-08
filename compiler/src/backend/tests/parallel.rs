@@ -2239,8 +2239,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
 
 /// Omitting offers below the call grain must preserve the last join site and
 /// the ordinary evaluation of every removed member, including members inside
-/// a mixed run. `counted` recurses, so its offers stay; `increment` is a few
-/// instructions and loses its offers; `e`, the join site, is never published.
+/// a mixed run. `counted` is a recursion that offers its own calls, so its
+/// offers stay; `increment` is a few instructions and loses its offers; `e`,
+/// the join site, is never published.
 #[test]
 fn call_grain_keeps_mixed_chain_results_and_join_boundary() {
     let source = br#"fn increment(x: u64) -> result: u64 pure {
@@ -2252,15 +2253,16 @@ fn counted(x: u64, steps: u64) -> result: u64 pure {
     return x;
   }
   let fewer = steps -wrap 1_u64;
-  let below = counted(x: x, steps: fewer);
-  return below +wrap steps;
+  let left = counted(x: x, steps: fewer);
+  let right = counted(x: x, steps: fewer);
+  return left +wrap right;
 }
 
 fn mixed(x: u64) -> result: u64 pure {
   let a = increment(x: x);
-  let b = counted(x: x, steps: 16_u64);
+  let b = counted(x: x, steps: 4_u64);
   let c = increment(x: x);
-  let d = counted(x: x, steps: 16_u64);
+  let d = counted(x: x, steps: 4_u64);
   let e = increment(x: x);
   let first = a +wrap b;
   let second = c +wrap d;
@@ -2270,7 +2272,7 @@ fn mixed(x: u64) -> result: u64 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let result = mixed(x: 3_u64);
-  if result == 290_u64 {
+  if result == 108_u64 {
     return std::process::exit_status(code: 0_u8);
   }
   return std::process::exit_status(code: 1_u8);
@@ -2440,6 +2442,79 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     let retained = super::emit_lowered(source, crate::OverlapLowering::On);
     assert!(module_requires_parallel_runtime(&retained));
+}
+
+/// A recursion that offers none of its own calls spends no budget level at any
+/// depth, so it is no ground to keep an offer: a few instructions that reach
+/// only such a descent lose their offer like any other small callee, while a
+/// callee reaching a recursion that offers its own calls keeps it. Under the
+/// former rule `lookup`'s pair was handed out at every call because `descend`
+/// recurses, which is how a suffix walk calling a tree lookup at each node
+/// handed out ten thousand microsecond tasks per edit in Snowghost's layout.
+#[test]
+fn call_grain_prices_callees_reaching_only_unoffered_recursion() {
+    let linear = br#"fn descend(n: u64) -> result: u64 pure {
+  if n == 0_u64 {
+    return 1_u64;
+  }
+  let m = n -wrap 1_u64;
+  let below = descend(n: m);
+  return below +wrap 1_u64;
+}
+
+fn lookup(n: u64) -> result: u64 pure {
+  let found = descend(n: n);
+  return found;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let a = lookup(n: 3_u64);
+  let b = lookup(n: 4_u64);
+  let value = a +wrap b;
+  if value == 9_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+    let every = super::emit_lowered(linear, crate::OverlapLowering::On);
+    assert!(
+        function_body(&every, "@wf_main").contains("call void @wf__par_publish("),
+        "the pair is permitted and handed out when every offer is kept"
+    );
+    let filtered = super::emit_lowered(linear, crate::OverlapLowering::OnWithCallGrain);
+    let sequential = super::emit_lowered(linear, crate::OverlapLowering::Off);
+    assert_eq!(
+        filtered, sequential,
+        "a lookup reaching only a recursion that offers nothing loses its offer"
+    );
+    let (_, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new("test.wf", linear)],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::OnWithCallGrain,
+    )
+    .expect("the linear recursion compiles");
+    assert!(
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  main  call grain: omitted offer of lookup (static work "
+        ) && line
+            .ends_with(", reaches only recursion that offers none of its own calls)")),
+        "the omitted offer names the recursion it reaches: {ledger:?}"
+    );
+    let forking = String::from_utf8(linear.to_vec()).unwrap().replace(
+        "  let below = descend(n: m);\n  return below +wrap 1_u64;",
+        "  let left = descend(n: m);\n  let right = descend(n: m);\n  return left +wrap right;",
+    );
+    let forking = forking.replace("value == 9_u64", "value == 24_u64");
+    let kept = super::emit_lowered(forking.as_bytes(), crate::OverlapLowering::OnWithCallGrain);
+    assert!(
+        function_body(&kept, "@wf_main").contains("call void @wf__par_publish("),
+        "a lookup reaching a recursion that offers its own calls keeps its offer"
+    );
+    for module in [&filtered, &kept] {
+        let output = compile_and_run(module);
+        assert!(output.status.success(), "{output:?}");
+    }
 }
 
 /// The recursion budget bounds how deep offers nest, so only a call in a group

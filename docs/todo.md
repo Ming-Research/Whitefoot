@@ -2059,15 +2059,37 @@ rarely insert at the same place.
 
 - **The call-offer grain is provisional.** `--par` now offers a
   statement-group call only when its callee reaches a cyclic call component
-  or its static work reaches the 150,000 work unit
+  that offers its own calls or its static work reaches the 150,000 work unit
   ([call-offer grain](../research/investigations/call-offer-grain/DESIGN.md#implementation-results),
-  `design/compiler/parallel-lowering.md`). Two known limits no measured program exercises: a
-  non-recursive helper whose work is large only through its runtime extents
-  loses its offer, and a cheap call into a recursive component keeps one;
-  and a callee that reaches recursion only by starting a waiting context is
-  not seen as recursive, since neither this pass nor the recursion frontier
-  follows a context start as a call edge. Validate any of them by a program whose four-worker time loses to its
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md#proposed-rule),
+  `design/compiler/parallel-lowering.md`). Known limits no measured program
+  exercises: a helper whose work is large only through its runtime extents,
+  a loop over a large argument or a long recursion that offers nothing,
+  loses its offer; a cheap call into a recursion that offers its own calls
+  keeps one; and a callee that reaches recursion only by starting a waiting
+  context is not seen as recursive, since neither this pass nor the
+  recursion frontier follows a context start as a call edge. Validate any of
+  them by a program whose four-worker time loses to its
   `--par-call-grain off` build; reopen when one appears.
+
+- **A recursion without a sequential clone offers without a budget.**
+  `--par-ledger` of Snowghost-wf's layout at `3ec4bb491` excludes
+  `publish_reference_owner_suffix`, an AVL suffix recursion whose left and
+  right calls are each in a permitted group, from the budget-carrying family
+  because it "has no sequential clone" (`compiler/src/backend/emitter/frontier.rs`),
+  so its offers nest at every depth, as a `--par-recursive-frontier off`
+  build's do. The clone set holds the entry-reachable functions that reach a
+  hand-out, so a recursion that reaches its own hand-outs is expected in it;
+  why this one is not is unexplained. Impact: an edit that publishes a
+  reference suffix may hand out a task per tree node, the cost
+  [recursive offers](../research/investigations/recursive-offer-grain/DESIGN.md)
+  measured as about nine times the sequential edit. Change: find why the
+  component has no clone and give it one, or bound the offers of a
+  clone-less component another way. Validate with a minimal program whose
+  forking recursion is reached only through the path this one is, checking
+  that it gets a budget family, and with Snowghost-wf's publishing edits at
+  one and four workers. Reopen when the publishing edits are timed under
+  `--par`, or with the next recursion-budget change.
 
 - **Offers beneath a waiting recursion carry no recursion budget.** A
   cyclic component with a waiting member gets no budget-carrying family
